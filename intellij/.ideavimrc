@@ -1,0 +1,79 @@
+"" Source your .vimrc
+"source ~/.vimrc
+
+" Set leader
+let mapleader = " "
+
+" Plugins
+set commentary
+set NERDTree
+set ideajoin
+set highlightedyank
+set argtextobj
+
+" Configs
+set number
+set relativenumber
+set ignorecase
+set smartcase
+set incsearch
+
+"" -- Suggested options --
+" Show a few lines of context around the cursor. Note that this makes the
+" text scroll if you mouse-click near the start or end of the window.
+set scrolloff=5
+
+" Do incremental searching.
+set incsearch
+
+" Don't use Ex mode, use Q for formatting.
+map Q gq
+
+" Reload
+nnoremap <leader>so :source ~/.ideavimrc<CR>
+
+" Better indentation
+vnoremap < <gv
+vnoremap > >gv
+
+" -- Keybindings
+
+" Navigation
+nmap <C-h> <c-w>h
+nmap <C-j> <c-w>j
+nmap <C-k> <c-w>k
+nmap <C-l> <c-w>l
+
+nmap <C-o> <Action>(Back)
+nmap <C-i> <Action>(Forward)
+
+nmap <leader>fa <Action>(GotoAction)
+
+nmap <leader>ws <Action>(SplitHorizontally)
+nmap <leader>wv <Action>(SplitVertically)
+
+nmap [[ <Action>(MethodUp)
+nmap ]] <Action>(MethodDown)
+
+nmap zc <Action>(CollapseRegion)
+nmap zo <Action>(ExpandRegion)
+
+" Code navigation
+map gd <Action>(GotoDeclaration)
+map gi <Action>(GotoImplementation)
+map gt <Action>(GotoTest)
+map ge <Action>(GotoNextError)
+map gE <Action>(GotoPreviousError)
+
+"" -- Map IDE actions to IdeaVim -- https://jb.gg/abva4t
+"" Map \r to the Reformat Code action
+"map \r <Action>(ReformatCode)
+
+"" Map <leader>d to start debug
+"map <leader>d <Action>(Debug)
+
+"" Map \b to toggle the breakpoint on the current line
+"map \b <Action>(ToggleLineBreakpoint)
+
+
+" Find more examples here: https://jb.gg/share-ideavimrc
