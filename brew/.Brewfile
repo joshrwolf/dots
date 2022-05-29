@@ -5,6 +5,7 @@ tap "homebrew/services"
 tap "koekeishiya/formulae"
 tap "homebrew/cask-fonts"
 
+brew "bash"
 brew "jq"
 brew "exa"
 brew "fzf"
