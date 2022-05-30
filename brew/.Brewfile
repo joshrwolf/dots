@@ -24,9 +24,12 @@ brew "terraform"
 brew "nvm"
 brew "ripgrep"
 brew "gh"
+brew "awscli"
+brew "azure-cli"
 
 cask "kitty"
 cask "slack"
 cask "font-fira-code-nerd-font"
 cask "goland"
-
+cask "raycast"
+cask "google-cloud-sdk"

@@ -54,5 +54,6 @@ yabai -m space 5 --label float
 yabai -m rule --add app="^System Preferences$" manage=off
 yabai -m rule --add app="Activity Monitor" manage=off
 yabai -m rule --add app="Finder" manage=off
+yabai -m rule --add app="Raycast" manage=off
 
 echo "yabai configuration loaded.."
