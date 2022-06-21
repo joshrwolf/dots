@@ -1,25 +1,14 @@
---[[
+local impatient_ok, impatient = pcall(require, "impatient")
+if impatient_ok then
+  impatient.enable_profile()
+end
 
-  Neovim init file
-  Version: 0.0.1 - 4/23/2022
-  Maintainer: joshrwolf
-
---]]
-
--- Import lua modules
-require('packer_init')
-
--- Import core stuff
-require('core.options')
-require('core.autocmds')
-require('core.colors')
-require('core.keymaps')
-
--- Import plugins
-require('plugins.treesitter')
-require('plugins.telescope')
-require('plugins.lspconfig')
-require('plugins.cmp')
-require('plugins.which-key')
-require('plugins.lualine')
-require('plugins.autopairs')
+for _, source in ipairs {
+	"core.plugins",
+  "core.autocmds",
+} do
+  local status_ok, fault = pcall(require, source)
+  if not status_ok then
+    vim.api.nvim_err_writeln("Failed to load " .. source .. "\n\n" .. fault)
+  end
+end

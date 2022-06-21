@@ -48,6 +48,7 @@ nmap <C-o> <Action>(Back)
 nmap <C-i> <Action>(Forward)
 
 nmap <leader>fa <Action>(GotoAction)
+nmap <leader>ff <Action>(GotoFile)
 
 nmap <leader>ws <Action>(SplitHorizontally)
 nmap <leader>wv <Action>(SplitVertically)
@@ -64,6 +65,12 @@ map gi <Action>(GotoImplementation)
 map gt <Action>(GotoTest)
 map ge <Action>(GotoNextError)
 map gE <Action>(GotoPreviousError)
+
+map <leader>t <Action>(ActivateTerminalToolWindow)
+
+
+" Code Actions
+map <leader>cr <Action>(RenameElement)
 
 "" -- Map IDE actions to IdeaVim -- https://jb.gg/abva4t
 "" Map \r to the Reformat Code action
