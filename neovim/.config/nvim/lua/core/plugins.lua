@@ -345,7 +345,7 @@ return packer.startup(function(use)
     end
   }
 
-  -- Trials
+  -- Leap
   use {
     "ggandor/leap.nvim",
     event = "VimEnter",
@@ -353,6 +353,8 @@ return packer.startup(function(use)
       require("leap").set_default_keymaps() 
     end
   }
+
+  -- Trials
 
 	-- Automatically set up config after cloning packer.nvim
 	if PACKER_BOOTSTRAP then
