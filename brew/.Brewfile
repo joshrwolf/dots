@@ -48,7 +48,6 @@ brew "cosign"
 brew "syft"
 brew "aquasecurity/trivy/trivy"
 
-cask "kitty"
 cask "slack"
 cask "font-fira-code-nerd-font"
 cask "goland"

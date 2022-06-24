@@ -6,8 +6,12 @@ function M.setup()
       treesitter = true,
       neotree = {
         enabled = true,
-        show_root = false,
+        show_root = true,
         transparent_panel = false,
+      },
+      indent_blankline = {
+        enabled = true,
+        colored_indent_levels = true,
       },
       which_key = true,
     },

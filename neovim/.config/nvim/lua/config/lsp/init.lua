@@ -28,6 +28,7 @@ local servers = {
       },
     },
   },
+  terraformls = {},
   tsserver = {},
   vimls = {},
   dockerls = {},

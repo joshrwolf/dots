@@ -92,25 +92,23 @@ return packer.startup(function(use)
   }
 
   -- Colorscheme
+  -- use {
+  --   "EdenEast/nightfox.nvim",
+  --   config = function()
+  --     require("config.colors.nightfox").setup()
+  --   end
+  -- }
   use {
-    "EdenEast/nightfox.nvim",
+    "catppuccin/nvim",
+    as = "catppuccin",
     config = function()
-      require("config.colors.nightfox").setup()
+      require("config.colors.catpuccin").setup()
     end
   }
   -- use {
-  --   "catppuccin/nvim",
-  --   as = "catppuccin",
+  --   "shaunsingh/nord.nvim",
   --   config = function()
-  --     require("config.colors.catpuccin").setup()
-  --   end
-  -- }
-  -- use {
-  --   "andersevenrud/nordic.nvim",
-  --   config = function()
-  --     require("nordic").colorscheme({
-  --       italic = false,
-  --     })
+  --     vim.cmd[[colorscheme nord]]
   --   end
   -- }
 
@@ -134,19 +132,6 @@ return packer.startup(function(use)
       require("config.feline").setup()
     end
   }
-
-  -- Smooth scrolling
-  use {
-    "declancm/cinnamon.nvim",
-    event = { "BufRead", "BufNewFile" },
-    config = function()
-      require("cinnamon").setup({
-        default_delay = 3,
-      })
-    end
-  }
-
-  -- Smooth escaping
 
   -- Colorizer
   use {
@@ -194,6 +179,7 @@ return packer.startup(function(use)
       "honza/vim-snippets",
     },
   }
+  use "onsails/lspkind.nvim"
 
   -- Lsp status
   use {
@@ -230,6 +216,29 @@ return packer.startup(function(use)
     end
   }
 
+  -- Github integrations
+  use {
+    "pwntester/octo.nvim",
+    cmd = "Octo",
+    wants = { "telescope.nvim", "plenary.nvim", "nvim-web-devicons" },
+    requires = {
+      "nvim-lua/plenary.nvim",
+      "nvim-telescope/telescope.nvim",
+      "kyazdani42/nvim-web-devicons"
+    },
+    config = function ()
+      require("octo").setup() 
+    end
+  }
+
+  -- symbols-outline
+  use {
+    "simrat39/symbols-outline.nvim",
+    cmd = { "SymbolsOutline" },
+    config = function ()
+    end
+  }
+
   -- Parenthesis highlighting
   use {
     "p00f/nvim-ts-rainbow",
@@ -255,8 +264,31 @@ return packer.startup(function(use)
       require("config.treesitter").setup()
     end,
     requires = {
-      "nvim-treesitter/playground",
+      { "nvim-treesitter/nvim-treesitter-textobjects", event = "BufRead" },
+      { "nvim-treesitter/playground" },
     },
+  }
+
+  -- Indent blankline
+  use {
+    "lukas-reineke/indent-blankline.nvim",
+    event = "BufReadPre",
+    config = function ()
+      require("indent_blankline").setup {
+        filetype_excludes = {
+          "lspinfo",
+          "packer",
+          "checkhealth",
+          "help",
+          "dashboard",
+          "telescope",
+          "neo-tree",
+        },
+        show_current_context = true,
+        show_current_context_start = false,
+        use_treesitter = true,
+      }
+    end
   }
 
   -- Builtin LSP
@@ -350,7 +382,11 @@ return packer.startup(function(use)
     "ggandor/leap.nvim",
     event = "VimEnter",
     config = function()
-      require("leap").set_default_keymaps() 
+      local leap = require("leap")
+      leap.setup {
+        case_insensitive = false,
+      }
+      leap.set_default_keymaps()
     end
   }
 

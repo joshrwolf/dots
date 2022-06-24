@@ -12,6 +12,7 @@ opt.clipboard = 'unnamedplus' 		        -- Copy/paste to system clipboard
 opt.swapfile = false 			            -- Don't use a swapfile
 opt.undofile = true                   -- Save the undo file
 opt.timeoutlen = 300                  -- Time in milliseconds to wait for a mapped key sequence
+opt.updatetime = 50
 
 -- Neovim UI
 opt.number = true                           -- Show line numbers
