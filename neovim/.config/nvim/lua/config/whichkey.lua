@@ -28,6 +28,9 @@ function M.setup()
     e = { "<cmd>Neotree toggle<cr>", "Toggle Explorer" },
     o = { "<cmd>Neotree focus<cr>", "Focus Explorer" },
 
+    ["<leader>"] = { "<cmd>lua require('telescope.builtin').find_files()<cr>", "Find Files" },
+    ["."] = { "<cmd>lua require('telescope.builtin').buffers()<cr>", "Buffers" },
+
     b = {
       name = "Buffers",
       c = { "<cmd>bd!<CR>", "Close current buffer" },
@@ -38,6 +41,8 @@ function M.setup()
       f = { "<cmd>lua require('telescope.builtin').find_files()<cr>", "Files" },
       w = { "<cmd>lua require('telescope.builtin').live_grep()<cr>", "Live Grep" },
       b = { "<cmd>lua require('telescope.builtin').buffers()<cr>", "Bufers" },
+      d = { "<cmd>lua require('telescope').extensions.file_browser.file_browser()<cr>", "File Browser" },
+      D = { "<cmd>lua require('telescope').extensions.file_browser.file_browser( { path = '%:p:h' } )<cr>", "File Browser" },
     },
 
     p = {
@@ -55,6 +60,18 @@ function M.setup()
       h = { "<cmd>ToggleTerm size=10 direction=horizontal<cr>", "New Horizontal" },
       v = { "<cmd>ToggleTerm size=80 direction=vertical<cr>", "New Vertical" },
     },
+
+    j = {
+      name = "Jump",
+      a = { "<cmd>lua require('harpoon.mark').add_file()<cr>", "Add File" },
+      j = { "<cmd>lua require('harpoon.ui').toggle_quick_menu()<cr>", "UI Menu" },
+      o = { "<cmd>lua require('harpoon.cmd-ui').toggle_quick_menu()<cr>", "Command Menu" },
+    },
+    ["1"] = { "<cmd>lua require('harpoon.ui').nav_file(1)<cr>", "Harpoon 1" },
+    ["2"] = { "<cmd>lua require('harpoon.ui').nav_file(2)<cr>", "Harpoon 2" },
+    ["3"] = { "<cmd>lua require('harpoon.ui').nav_file(3)<cr>", "Harpoon 3" },
+    ["9"] = { "<cmd>lua require('harpoon.term').gotoTerminal(1)<cr>", "Terminal 1" },
+    ["0"] = { "<cmd>lua require('harpoon.term').gotoTerminal(2)<cr>", "Terminal 2" },
 
     g = {
       name = "Git",

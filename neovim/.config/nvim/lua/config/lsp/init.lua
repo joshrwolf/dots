@@ -1,10 +1,39 @@
 local M = {}
 
+local util = require 'lspconfig/util'
+
+local dirname = function (pathname)
+  if not pathname or #pathname == 0 then
+    return
+  end
+  local result = pathname:gsub(strip_sep_pat, ''):gsub(strip_dir_pat, '')
+  if #result == 0 then
+    return '/'
+  end
+  return result
+end
+
 local servers = {
-  -- gopls = {},
+  gopls = {
+    cmd = { "gopls", "-remote=auto" },
+    -- settings = {
+    -- },
+    root_dir = function (fname)
+      -- return util.root_pattern('.git')(fname)
+      -- return util.root_pattern 'go.work'(fname) or  util.root_pattern('go.mod', '.git')(fname)
+      return util.root_pattern('.git', 'go.mod')(fname) or dirname(fname)
+    end,
+    -- },
+  },
   rust_analyzer = {},
   html = {},
-  jsonls = {},
+  jsonls = {
+    settings = {
+      json = {
+        schemas = require("schemastore").json.schemas()
+      }
+    }
+  },
   pyright = {},
   sumneko_lua = {
     settings = {

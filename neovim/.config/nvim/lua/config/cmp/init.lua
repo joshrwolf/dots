@@ -33,13 +33,13 @@ local icons = {
 	TypeParameter = "t ",
 }
 
--- vim.highlight.create("PmenuSel", { guifg = "NONE", guibg = "#282C34" }, false)
--- vim.highlight.create("Pmenu", { guifg = "#C5CDD9", guibg = "#22252A" }, false)
+vim.highlight.create("PmenuSel", { guifg = "#C3E88D", guibg = "#282C34" }, false)
+vim.highlight.create("Pmenu", { guifg = "#EADFF0", guibg = "#22252A" }, false)
 --
--- vim.highlight.create("CmpItemAbbrDeprecated", { guifg = "#7E8294", guibg = "NONE", gui = "strikethrough" }, false)
--- vim.highlight.create("CmpItemAbbrMatch", { guifg = "#82AAFF", guibg = "NONE", gui = "bold" }, false)
--- vim.highlight.create("CmpItemAbbrMatchFuzzy", { guifg = "#82AAFF", guibg = "NONE", gui = "bold" }, false)
--- vim.highlight.create("CmpItemMenu", { guifg = "#C792EA", guibg = "NONE", gui = "italic" }, false)
+vim.highlight.create("CmpItemAbbrDeprecated", { guifg = "#7E8294", guibg = "NONE", gui = "strikethrough" }, false)
+vim.highlight.create("CmpItemAbbrMatch", { guifg = "#82AAFF", guibg = "NONE", gui = "bold" }, false)
+vim.highlight.create("CmpItemAbbrMatchFuzzy", { guifg = "#82AAFF", guibg = "NONE", gui = "bold" }, false)
+vim.highlight.create("CmpItemMenu", { guifg = "#C792EA", guibg = "NONE", gui = "italic" }, false)
 --
 -- vim.highlight.create("CmpItemKindField", { guifg = "#EED8DA", guibg = "#B5585F" }, false)
 -- vim.highlight.create("CmpItemKindProperty", { guifg = "#EED8DA", guibg = "#B5585F" }, false)
@@ -112,7 +112,7 @@ function M.setup()
       --   end
       -- }),
       format = function (entry, vim_item)
-        local kind = require("lspkind").cmp_format({ mode = "symbol_text", maxwidth = 50 })(entry, vim_item) 
+        local kind = require("lspkind").cmp_format({ mode = "symbol_text", maxwidth = 50 })(entry, vim_item)
         local strings = vim.split(kind.kind, "%s", { trimempty = true })
         kind.kind = " " .. strings[1] .. " "
         kind.menu = "    (" .. strings[2] .. ")"
@@ -141,7 +141,7 @@ function M.setup()
         else
           fallback()
         end
-      end),
+      end, {"i", "s"}),
     },
     sources = {
       { name = "nvim_lsp", priority_weight = 110, group_index = 1, max_item_count = 25 },
@@ -174,17 +174,17 @@ function M.setup()
   }
 
   -- Use buffer source for `/`
-  cmp.setup.cmdline("/", {
-    mapping = cmp.mapping.preset.cmdline(),
-    sources = cmp.config.sources(
-      {
-        { name = "buffer" },
-      },
-      {
-        { name = "nvim_lsp_document_symbol" },
-      }
-    )
-  })
+  -- cmp.setup.cmdline("/", {
+  --   mapping = cmp.mapping.preset.cmdline(),
+  --   sources = cmp.config.sources(
+  --     {
+  --       { name = "buffer" },
+  --     },
+  --     {
+  --       { name = "nvim_lsp_document_symbol" },
+  --     }
+  --   )
+  -- })
 
   -- Auto pairs
   local cmp_autopairs = require "nvim-autopairs.completion.cmp"

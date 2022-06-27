@@ -181,19 +181,6 @@ return packer.startup(function(use)
   }
   use "onsails/lspkind.nvim"
 
-  -- Lsp status
-  use {
-    "j-hui/fidget.nvim",
-    config = function ()
-      require("fidget").setup{
-        text = {
-          spinner = "dots",
-          done = "",
-        }
-      } 
-    end
-  }
-
   use {
     "windwp/nvim-autopairs",
     opt = true,
@@ -214,6 +201,16 @@ return packer.startup(function(use)
     config = function ()
       require("config.gitsigns").setup() 
     end
+  }
+
+  use {
+    "tpope/vim-fugitive",
+    opt = true,
+    cmd = { "Git", "GBrowse", "Gdiffsplit", "Gvdiffsplit" },
+    requires = {
+      "tpope/vim-rhubarb",
+      "idanarye/vim-merginal",
+    }
   }
 
   -- Github integrations
@@ -295,6 +292,13 @@ return packer.startup(function(use)
   use {
     "neovim/nvim-lspconfig",
     event = "VimEnter",
+    requires = {
+      "folke/lua-dev.nvim",
+      "b0o/schemastore.nvim",
+    },
+    config = function()
+      require("config.lsp").setup()
+    end
   }
 
   -- Formatting and linting
@@ -310,8 +314,18 @@ return packer.startup(function(use)
   use {
     "williamboman/nvim-lsp-installer",
     after = "nvim-lspconfig",
-    config = function()
-      require("config.lsp").setup()
+  }
+
+  -- Lsp status
+  use {
+    "j-hui/fidget.nvim",
+    config = function ()
+      require("fidget").setup{
+        text = {
+          spinner = "dots",
+          done = "",
+        }
+      } 
     end
   }
 
@@ -330,6 +344,8 @@ return packer.startup(function(use)
       { "nvim-telescope/telescope-fzf-native.nvim", run = "make" },
       "nvim-telescope/telescope-file-browser.nvim",
       { "nvim-telescope/telescope-frecency.nvim", requires = "tami5/sqlite.lua" },
+      "nvim-telescope/telescope-symbols.nvim",
+      "nvim-telescope/telescope-ui-select.nvim",
     },
   }
 
@@ -368,12 +384,20 @@ return packer.startup(function(use)
   use 'christoomey/vim-tmux-navigator'
 
   -- go
+  -- use {
+  --   "ray-x/go.nvim",
+  --   event = "VimEnter",
+  --   ft = { "go" },
+  --   config = function()
+  --     require("config.go").setup()
+  --   end
+  -- }
   use {
-    "ray-x/go.nvim",
-    event = "VimEnter",
+    "fatih/vim-go",
     ft = { "go" },
-    config = function()
-      require("config.go").setup()
+    config = function ()
+      -- vim.g.go_code_completion_enabled = 0
+      -- vim.g.go_doc_popup_window = 0
     end
   }
 
@@ -391,6 +415,19 @@ return packer.startup(function(use)
   }
 
   -- Trials
+  use {
+    "ThePrimeagen/harpoon",
+    -- module = {
+    --   "harpoon",
+    --   "harpoon.cmd-ui",
+    --   "harpoon.mark",
+    --   "harpoon.ui",
+    --   "harpoon.term",
+    -- },
+    config = function()
+      require("harpoon").setup{}
+    end,
+  }
 
 	-- Automatically set up config after cloning packer.nvim
 	if PACKER_BOOTSTRAP then

@@ -7,6 +7,7 @@ local eopts = { noremap = true, expr = true, silent = true }
 -- keymap("n", "<C-j>", "<C-w>j", dopts)
 -- keymap("n", "<C-k>", "<C-w>k", dopts)
 -- keymap("n", "<C-l>", "<C-w>l", dopts)
+-- keymap("t", "<C-h>", "<C-\\><C-N><C-w>h", )
 
 -- Better escaping using jk in insert and terminal mode
 keymap("i", "jk", "<ESC>", dopts)

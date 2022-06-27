@@ -5,17 +5,20 @@ function M.setup()
   local trouble = require "trouble.providers.telescope"
   local telescope = require "telescope"
 
+  local tfb_actions = require("telescope").extensions.file_browser.actions
+
   telescope.setup {
     defaults = {
       vimgrep_arguments = {
         "rg",
+        "--follow",
         "--color=never",
         "--no-heading",
-        "--hidden",
         "--with-filename",
         "--line-number",
         "--column",
         "--smart-case",
+        "--hidden",
         "-u",
       },
       layout_strategy = "horizontal",
@@ -34,8 +37,12 @@ function M.setup()
           ["<C-n>"] = actions.cycle_history_next,
           ["<C-p>"] = actions.cycle_history_prev,
           ["<C-z>"] = trouble.open_with_trouble,
+          ["<C-u>"] = actions.preview_scrolling_up,
+          ["<C-d>"] = actions.preview_scrolling_down,
+          ["<C-h>"] = actions.which_key,
         },
       },
+      set_env = { ["COLORTERM"] = "truecolor" },
     },
     pickers = {
       find_files = {
@@ -44,6 +51,9 @@ function M.setup()
           ".git/",
           ".node_modules/",
         },
+      },
+      buffers = {
+        sort_lastused = true,
       },
       live_grep = {
         hidden = true,
@@ -56,6 +66,24 @@ function M.setup()
     extensions = {
       fzf = {
         fuzzy = true,
+        override_generic_sorter = true,
+        override_file_sorter = true,
+      },
+      ["ui-select"] = {
+        require("telescope.themes").get_dropdown({}),
+      },
+      file_browser = {
+        mappings = {
+          i = {
+            ["<c-n>"] = tfb_actions.create,
+            ["<c-r>"] = tfb_actions.rename,
+            ["<c-h>"] = tfb_actions.toggle_hidden,
+            ["<c-x>"] = tfb_actions.remove,
+            ["<c-p>"] = tfb_actions.move,
+            ["<c-y>"] = tfb_actions.copy,
+            ["<c-a>"] = tfb_actions.select_all,
+          },
+        },
       }
     },
   }
@@ -63,6 +91,8 @@ function M.setup()
   telescope.load_extension "fzf"
   telescope.load_extension "file_browser"
   telescope.load_extension "frecency"
+  telescope.load_extension "ui-select"
+  telescope.load_extension "harpoon"
 
 end
 

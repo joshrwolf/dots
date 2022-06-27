@@ -20,6 +20,7 @@ local function keymappings(client, bufnr)
     D = { vim.lsp.buf.declaration, "Declaration" },
     i = { vim.lsp.buf.implementation, "Implementation" },
     r = { "<cmd>Telescope lsp_references theme=ivy<cr>", "References" },
+    t = { vim.lsp.buf.type_definition, "Type Definition" },
   }, { buffer = bufnr, prefix = "g" })
 
   -- Register LEADER based keys
@@ -28,6 +29,7 @@ local function keymappings(client, bufnr)
       name = "LSP",
       a = { vim.lsp.buf.code_action, "Code Action" },
       r = { vim.lsp.buf.rename, "Rename" },
+      R = { "<cmd>LspRestart<cr>", "Restart" },
       d = { "<cmd>Telescope diagnostics<CR>", "Diagnostics" },
       s = { "<cmd>Telescope lsp_document_symbols<cr>", "Document Symbols" },
       i = { "<cmd>LspInfo<CR>", "Lsp Info" },
