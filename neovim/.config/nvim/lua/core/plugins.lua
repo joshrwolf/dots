@@ -98,17 +98,29 @@ return packer.startup(function(use)
   --     require("config.colors.nightfox").setup()
   --   end
   -- }
-  use {
-    "catppuccin/nvim",
-    as = "catppuccin",
-    config = function()
-      require("config.colors.catpuccin").setup()
-    end
-  }
+  -- use {
+  --   "catppuccin/nvim",
+  --   as = "catppuccin",
+  --   config = function()
+  --     require("config.colors.catpuccin").setup()
+  --   end
+  -- }
   -- use {
   --   "shaunsingh/nord.nvim",
   --   config = function()
   --     vim.cmd[[colorscheme nord]]
+  --   end
+  -- }
+  use {
+    "arcticicestudio/nord-vim",
+    config = function ()
+      vim.cmd[[colorscheme nord]]
+    end
+  }
+  -- use {
+  --   "NvChad/base46",
+  --   config = function ()
+  --     require("base46").load_theme() 
   --   end
   -- }
 
@@ -392,14 +404,14 @@ return packer.startup(function(use)
   --     require("config.go").setup()
   --   end
   -- }
-  use {
-    "fatih/vim-go",
-    ft = { "go" },
-    config = function ()
-      -- vim.g.go_code_completion_enabled = 0
-      -- vim.g.go_doc_popup_window = 0
-    end
-  }
+  -- use {
+  --   "fatih/vim-go",
+  --   ft = { "go" },
+  --   config = function ()
+  --     -- vim.g.go_code_completion_enabled = 0
+  --     -- vim.g.go_doc_popup_window = 0
+  --   end
+  -- }
 
   -- Leap
   use {
@@ -417,13 +429,6 @@ return packer.startup(function(use)
   -- Trials
   use {
     "ThePrimeagen/harpoon",
-    -- module = {
-    --   "harpoon",
-    --   "harpoon.cmd-ui",
-    --   "harpoon.mark",
-    --   "harpoon.ui",
-    --   "harpoon.term",
-    -- },
     config = function()
       require("harpoon").setup{}
     end,

@@ -1,29 +1,36 @@
 local M = {}
 
-local util = require 'lspconfig/util'
+local util = require('lspconfig/util')
 
-local dirname = function (pathname)
-  if not pathname or #pathname == 0 then
-    return
-  end
-  local result = pathname:gsub(strip_sep_pat, ''):gsub(strip_dir_pat, '')
-  if #result == 0 then
-    return '/'
-  end
-  return result
+local lastRootPath = nil
+local gopath = os.getenv("GOPATH")
+if gopath == nil then
+  gopath = ""
 end
+local gopathmod = gopath..'/pkg/mod'
 
 local servers = {
   gopls = {
     cmd = { "gopls", "-remote=auto" },
-    -- settings = {
-    -- },
+    settings = {
+      gopls = {
+        experimentalWorkspaceModule = true,
+      },
+    },
+    -- root_dir = function (fname)
+    --   local fullpath = vim.fn.expand(fname, ':p')
+    --   if string.find(fullpath, gopathmod) and lastRootPath ~= nil then
+    --   -- if lastRootPath ~= nil then
+    --     print("reused lsp: " .. lastRootPath)
+    --     return lastRootPath
+    --   end
+    --   lastRootPath = util.root_pattern("go.work", "go.mod", ".git")(fname)
+    --   print("new lsp loaded: " .. lastRootPath)
+    --   return lastRootPath
+    -- end,
     root_dir = function (fname)
-      -- return util.root_pattern('.git')(fname)
-      -- return util.root_pattern 'go.work'(fname) or  util.root_pattern('go.mod', '.git')(fname)
-      return util.root_pattern('.git', 'go.mod')(fname) or dirname(fname)
-    end,
-    -- },
+      return util.root_pattern('go.work')(fname) or util.root_pattern('go.mod', '.git')(fname)
+    end
   },
   rust_analyzer = {},
   html = {},
@@ -93,6 +100,20 @@ function M.on_attach(client, bufnr)
   -- Use LSP as the handler for formatexpr.
   -- See `:help formatexpr` for more information.
   vim.api.nvim_buf_set_option(0, "formatexpr", "v:lua.vim.lsp.formatexpr()")
+
+  vim.lsp.handlers['textDocument/hover'] = vim.lsp.with(
+    vim.lsp.handlers.hover,
+    {
+      border = 'rounded',
+    }
+  )
+
+  vim.lsp.handlers['textDocument/signatureHelp'] = vim.lsp.with(
+    vim.lsp.handlers.signature_help,
+    {
+      border = 'rounded',
+    }
+  )
 
   -- Configure LSP specific keymappings
   require("config.lsp.keymaps").setup(client, bufnr)
