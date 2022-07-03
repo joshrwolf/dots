@@ -10,9 +10,9 @@ end)
 
 return {
   font = wezterm.font("FiraCode Nerd Font"),
-  font_size = 14.0,
+  font_size = 15.0,
   cell_width = 1,
-  line_height = 1.15,
+  line_height = 1.1,
   color_scheme = "nord",
   
   hide_tab_bar_if_only_one_tab = true,
