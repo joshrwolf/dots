@@ -1,5 +1,13 @@
-local augroup = vim.api.nvim_create_augroup     -- Create/get autocommand group
-local autocmd = vim.api.nvim_create_autocmd     -- Create autocommand
+local autocmd = vim.api.nvim_create_autocmd			-- Create autocommand
+local augroup = vim.api.nvim_create_augroup			-- Create autocommand group
+local create_command = vim.api.nvim_create_user_command
+
+-- augroup("highlighturl", { clear = true })
+-- autocmd({ "VimEnter", "FileType", "BufEnter", "WinEnter" }, {
+--   desc = "URL Highlighting",
+--   group = "highlighturl",
+--   pattern = "*",
+-- })
 
 -- Highlight on yank
 augroup('YankHighlight', { clear = true })
@@ -17,7 +25,13 @@ autocmd('BufEnter', {
 })
 
 -- Close nvim if NvimTree is the only remaining buffer
-autocmd('BufEnter', {
-    command = [[if winnr('$') == 1 && bufname() == 'NvimTree_' . tabpagenr() | quit | endif ]]
-})
+-- autocmd('BufEnter', {
+--     command = [[if winnr('$') == 1 && bufname() == 'NvimTree_' . tabpagenr() | quit | endif ]]
+-- })
+
+-- Enter terminal in insert mode
+autocmd({ "TermOpen", "BufWinEnter", "BufEnter" }, { pattern = "term://*", command = "startinsert" })
+
+-- Autosave
+-- vim.cmd "autocmd TextChanged,TextChangedI * silent write"
 
