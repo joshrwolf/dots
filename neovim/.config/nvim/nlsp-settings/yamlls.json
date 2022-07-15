@@ -1,0 +1,8 @@
+{
+  "yaml.schemaStore.enable": true,
+  "yaml.schemaStore.url": "https://www.schemastore.org/api/json/catalog.json",
+  "yaml.completion": true,
+  "yaml.hover": true,
+  "yaml.format.enable": false,
+  "redhat.telemetry.enabled": false
+}

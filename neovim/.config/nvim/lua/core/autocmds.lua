@@ -25,7 +25,13 @@ autocmd('BufEnter', {
 })
 
 -- Close nvim if NvimTree is the only remaining buffer
-autocmd('BufEnter', {
-    command = [[if winnr('$') == 1 && bufname() == 'NvimTree_' . tabpagenr() | quit | endif ]]
-})
+-- autocmd('BufEnter', {
+--     command = [[if winnr('$') == 1 && bufname() == 'NvimTree_' . tabpagenr() | quit | endif ]]
+-- })
+
+-- Enter terminal in insert mode
+autocmd({ "TermOpen", "BufWinEnter", "BufEnter" }, { pattern = "term://*", command = "startinsert" })
+
+-- Autosave
+-- vim.cmd "autocmd TextChanged,TextChangedI * silent write"
 

@@ -61,6 +61,10 @@ function M.setup()
       },
     },
 
+    matchup = {
+      enable = true
+    }
+
     -- context_commentstring = {},
     -- rainbow = {},
     -- autopairs = {},

@@ -7,6 +7,8 @@ map({ "n", "v" }, "<Space>", "<Nop>", { noremap = true, silent = true })
 g.mapleader = " "
 g.maplocalleader = " "
 
+opt.cursorline = true                 -- Highlight current line
+opt.cursorlineopt = "both"
 opt.mouse = 'a' 			                -- Enable mouse mode
 opt.clipboard = 'unnamedplus' 		        -- Copy/paste to system clipboard
 opt.swapfile = false 			            -- Don't use a swapfile
@@ -24,7 +26,8 @@ opt.splitright = true                       -- Vertical split to the right
 opt.splitbelow = true                       -- Horizontal split to the bottom
 opt.ignorecase = true                       -- Ignore case letters when searching
 opt.smartcase = true                        -- Ignore lowercase for the whole pattern
-opt.linebreak = true                        -- Wrap on word boundary
+-- opt.linebreak = true                        -- Wrap on word boundary
+opt.wrap = true                             -- Wrap
 opt.termguicolors = true                    -- Enable 24-bit RGB colors
 opt.hlsearch = true                         -- Enable highlight on search
 opt.laststatus = 3                          -- Set global statusline
@@ -38,6 +41,8 @@ opt.smartindent = true			            -- Autoindent new lines
 opt.wildignorecase = true
 opt.wildignore:append "**/node_modules/*"
 opt.wildignore:append "**/.git/*"
+
+opt.lazyredraw = true
 
 -- Disable netrw
 g.loaded_netrw = 1

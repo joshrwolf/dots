@@ -50,6 +50,7 @@ function M.setup()
         file_ignore_patterns = {
           ".git/",
           ".node_modules/",
+          ".terraform/",
         },
       },
       buffers = {
@@ -60,6 +61,7 @@ function M.setup()
         file_ignore_patterns = {
           ".git/",
           ".node_modules/",
+          ".terraform/",
         },
       },
     },

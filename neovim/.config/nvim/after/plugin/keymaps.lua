@@ -40,3 +40,4 @@ keymap("n", "<Left>", ":vertical resize +5<CR>", dopts)
 keymap("n", "<Right>", ":vertical resize -5<CR>", dopts)
 keymap("n", "<Up>", ":resize -3<CR>", dopts)
 keymap("n", "<Down>", ":resize +3<CR>", dopts)
+

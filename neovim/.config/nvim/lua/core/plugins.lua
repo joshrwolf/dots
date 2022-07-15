@@ -92,37 +92,12 @@ return packer.startup(function(use)
   }
 
   -- Colorscheme
-  -- use {
-  --   "EdenEast/nightfox.nvim",
-  --   config = function()
-  --     require("config.colors.nightfox").setup()
-  --   end
-  -- }
-  -- use {
-  --   "catppuccin/nvim",
-  --   as = "catppuccin",
-  --   config = function()
-  --     require("config.colors.catpuccin").setup()
-  --   end
-  -- }
-  -- use {
-  --   "shaunsingh/nord.nvim",
-  --   config = function()
-  --     vim.cmd[[colorscheme nord]]
-  --   end
-  -- }
   use {
-    "arcticicestudio/nord-vim",
-    config = function ()
-      vim.cmd[[colorscheme nord]]
+    "EdenEast/nightfox.nvim",
+    config = function()
+      require("config.colors.nightfox").setup()
     end
   }
-  -- use {
-  --   "NvChad/base46",
-  --   config = function ()
-  --     require("base46").load_theme() 
-  --   end
-  -- }
 
   -- File explorer
   use {
@@ -135,13 +110,31 @@ return packer.startup(function(use)
       require("config.neotree").setup()
     end
   }
+  -- use {
+  --   "kyazdani42/nvim-tree.lua",
+  --   requires = {
+  --     "kyazdani42/nvim-web-devicons",
+  --   },
+  --   config = function ()
+  --     require("config.neotree").setup() 
+  --   end
+  -- }
 
   -- Statusline
+  -- use {
+  --   "feline-nvim/feline.nvim",
+  --   after = "nvim-web-devicons",
+  --   config = function ()
+  --     require("config.feline").setup()
+  --   end
+  -- }
   use {
-    "feline-nvim/feline.nvim",
-    after = "nvim-web-devicons",
+    "nvim-lualine/lualine.nvim",
+    requires = {
+      "kyazdani42/nvim-web-devicons",
+    },
     config = function ()
-      require("config.feline").setup()
+      require("lualine").setup()
     end
   }
 
@@ -162,11 +155,50 @@ return packer.startup(function(use)
     end
   }
 
+  -- Builtin LSP
+  use {
+    "neovim/nvim-lspconfig",
+    -- event = "VimEnter",
+    requires = {
+      "folke/lua-dev.nvim",
+      "b0o/schemastore.nvim",
+      "williamboman/nvim-lsp-installer",
+      "tamago324/nlsp-settings.nvim",
+      {
+        "j-hui/fidget.nvim",
+        config = function ()
+          require("fidget").setup{
+            text = {
+              spinner = "dots",
+              done = "",
+            }
+          }
+        end
+      }
+    },
+    config = function()
+      require("config.lsp").setup()
+    end
+  }
+
+  -- Formatting and linting
+  -- use {
+  --   "jose-elias-alvarez/null-ls.nvim",
+  --   event = { "BufRead", "BufNewFile" },
+  --   config = function()
+  --     require("config.lsp.null-ls").setup()
+  --   end
+  -- }
+
   -- Autocomplete
   use {
     "hrsh7th/nvim-cmp",
     event = "InsertEnter",
-    opt = true,
+    -- opt = true,
+    keys = {
+      { "n", ":" },
+      { "n", "/" },
+    },
     config = function()
       require("config.cmp").setup()
     end,
@@ -183,15 +215,13 @@ return packer.startup(function(use)
       {
         "L3MON4D3/LuaSnip",
         wants = { "friendly-snippets", "vim-snippets" },
-        config = function()
-          -- require("config.snip").setup()
-        end,
+        requires = {
+          "rafamadriz/friendly-snippets",
+          "honza/vim-snippets",
+        },
       },
-      "rafamadriz/friendly-snippets",
-      "honza/vim-snippets",
     },
   }
-  use "onsails/lspkind.nvim"
 
   use {
     "windwp/nvim-autopairs",
@@ -199,9 +229,9 @@ return packer.startup(function(use)
     event = "InsertEnter",
     module = { "nvim-autopairs.completion.cmp", "nvim-autopairs" },
     config = function()
-      local npairs = require "nvim-autopairs"
-      npairs.setup {
-        check_ts = true,
+      require("nvim-autopairs").setup {
+        -- map_cr = false,
+        enable_check_bracket_line = false,
       }
     end
   }
@@ -215,15 +245,15 @@ return packer.startup(function(use)
     end
   }
 
-  use {
-    "tpope/vim-fugitive",
-    opt = true,
-    cmd = { "Git", "GBrowse", "Gdiffsplit", "Gvdiffsplit" },
-    requires = {
-      "tpope/vim-rhubarb",
-      "idanarye/vim-merginal",
-    }
-  }
+  -- use {
+  --   "tpope/vim-fugitive",
+  --   opt = true,
+  --   cmd = { "Git", "GBrowse", "Gdiffsplit", "Gvdiffsplit" },
+  --   requires = {
+  --     "tpope/vim-rhubarb",
+  --     "idanarye/vim-merginal",
+  --   }
+  -- }
 
   -- Github integrations
   use {
@@ -236,7 +266,7 @@ return packer.startup(function(use)
       "kyazdani42/nvim-web-devicons"
     },
     config = function ()
-      require("octo").setup() 
+      require("octo").setup()
     end
   }
 
@@ -245,30 +275,23 @@ return packer.startup(function(use)
     "simrat39/symbols-outline.nvim",
     cmd = { "SymbolsOutline" },
     config = function ()
+      vim.g.symbols_outline = {
+        auto_preview = false,
+      }
     end
   }
 
   -- Parenthesis highlighting
-  use {
-    "p00f/nvim-ts-rainbow",
-    after = "nvim-treesitter",
-  }
+  -- use {
+  --   "p00f/nvim-ts-rainbow",
+  --   after = "nvim-treesitter",
+  -- }
 
   -- Syntax highlighting
   use {
     "nvim-treesitter/nvim-treesitter",
     run = ":TSUpdate",
     event = { "BufRead", "BufNewFile" },
-    cmd = {
-      "TSInstall",
-      "TSInstallInfo",
-      "TSInstallSync",
-      "TSUninstall",
-      "TSUpdate",
-      "TSUpdateSync",
-      "TSDisableAll",
-      "TSEnableAll",
-    },
     config = function()
       require("config.treesitter").setup()
     end,
@@ -297,47 +320,6 @@ return packer.startup(function(use)
         show_current_context_start = false,
         use_treesitter = true,
       }
-    end
-  }
-
-  -- Builtin LSP
-  use {
-    "neovim/nvim-lspconfig",
-    event = "VimEnter",
-    requires = {
-      "folke/lua-dev.nvim",
-      "b0o/schemastore.nvim",
-    },
-    config = function()
-      require("config.lsp").setup()
-    end
-  }
-
-  -- Formatting and linting
-  use {
-    "jose-elias-alvarez/null-ls.nvim",
-    event = { "BufRead", "BufNewFile" },
-    config = function()
-      require("config.lsp.null-ls").setup()
-    end
-  }
-
-  -- LSP manager
-  use {
-    "williamboman/nvim-lsp-installer",
-    after = "nvim-lspconfig",
-  }
-
-  -- Lsp status
-  use {
-    "j-hui/fidget.nvim",
-    config = function ()
-      require("fidget").setup{
-        text = {
-          spinner = "dots",
-          done = "",
-        }
-      } 
     end
   }
 
@@ -385,10 +367,9 @@ return packer.startup(function(use)
   -- Terminal
   use {
     "akinsho/toggleterm.nvim",
-    cmd = { "ToggleTerm", "TermExec" },
-    module = { "toggleterm", "toggleterm.terminal" },
+    -- cmd = "ToggleTerm",
     config = function ()
-      require("config.toggleterm").setup() 
+      require("config.toggleterm").setup()
     end,
   }
 
@@ -397,19 +378,24 @@ return packer.startup(function(use)
 
   -- go
   -- use {
-  --   "ray-x/go.nvim",
-  --   event = "VimEnter",
-  --   ft = { "go" },
-  --   config = function()
-  --     require("config.go").setup()
-  --   end
-  -- }
-  -- use {
   --   "fatih/vim-go",
-  --   ft = { "go" },
+  --   -- ft = { "go" },
   --   config = function ()
   --     -- vim.g.go_code_completion_enabled = 0
-  --     -- vim.g.go_doc_popup_window = 0
+  --     vim.g.go_doc_popup_window = 1
+  --     vim.g.go_auto_sameids = 0
+  --
+  --     vim.g.go_highlight_types = 1
+  --     vim.g.go_highlight_fields = 1
+  --     vim.g.go_highlight_functions = 1
+  --     vim.g.go_highlight_function_calls = 1
+  --     -- let g:go_list_type="quickfix"
+  --     -- let g:go_fmt_command="goimports"
+  --     -- let g:go_highlight_types=1
+  --     -- let g:go_highlight_fields=1
+  --     -- let g:go_highlight_functions=1
+  --     -- let g:go_highlight_function_calls=1
+  --     -- let g:go_fmt_fail_silently=1
   --   end
   -- }
 
@@ -426,13 +412,93 @@ return packer.startup(function(use)
     end
   }
 
-  -- Trials
   use {
     "ThePrimeagen/harpoon",
     config = function()
       require("harpoon").setup{}
     end,
   }
+
+  -- Trials
+  use {
+    "kylechui/nvim-surround",
+    config = function ()
+      require("nvim-surround").setup({
+      }) 
+    end
+  }
+
+  use {
+    "TimUntersberger/neogit",
+    cmd = "Neogit",
+    requires = {
+      "nvim-lua/plenary.nvim",
+      "sindrets/diffview.nvim",
+    },
+    config = function ()
+      require("neogit").setup({
+        integrations = {
+          diffview = true,
+        }
+      }) 
+    end
+  }
+
+  use "tpope/vim-fugitive"
+
+  use {
+    "andymass/vim-matchup",
+    keys = {
+      { "n", "%" },
+      { "v", "%" },
+    }
+  }
+
+  use {
+    "obaland/vfiler.vim",
+    cmd = "VFiler",
+    requires = {
+      "obaland/vfiler-column-devicons",
+    },
+    config = function ()
+      require("vfiler/config").setup {
+        options = {
+          auto_cd = true,
+          auto_resize = true,
+          columns = "indent,icon,name",
+        },
+      } 
+    end
+  }
+
+  use {
+    "AndrewRadev/splitjoin.vim",
+    keys = {
+      { "n", "gJ" },
+      { "n", "gS" },
+    },
+  }
+
+  -- Fix the CursorHold performance bug
+  use "antoinemadec/FixCursorHold.nvim"
+  
+  use {
+    "akinsho/nvim-bufferline.lua",
+    event = "BufRead",
+    config = function ()
+      require("bufferline").setup({
+        options = {
+          mode = "tabs",
+          offsets = {
+            { filetype = "neo-tree" },
+          }
+        }
+      }) 
+    end
+  }
+
+  -- Maybe
+  -- https://github.com/NTBBloodbath/rest.nvim
 
 	-- Automatically set up config after cloning packer.nvim
 	if PACKER_BOOTSTRAP then

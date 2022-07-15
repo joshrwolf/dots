@@ -3,8 +3,6 @@ local M = {}
 function M.setup()
   local whichkey = require "which-key"
 
-  local dopts = { silent = true }
-
   local conf = {
     window = {
       border = "single",
@@ -19,16 +17,26 @@ function M.setup()
   whichkey.setup(conf)
 
   -- Register generic mappings
-  -- whichkey.register({})
+  whichkey.register({
+    ["<C-e>"] = { "<cmd>Neotree toggle<cr>", "Toggle Explorer" },
+    ["<C-\\>"] = { "<cmd>ToggleTerm direction='float'<cr>", "Toggle Floating Terminal" },
+
+    t = {
+      name = "Tab",
+      d = { "<cmd>:tabclose<cr>", "Close Tab" },
+      h = { "<cmd>:tabfirst<cr>", "First Tab" },
+      j = { "<cmd>:tabprev<cr>", "Prev Tab" },
+      k = { "<cmd>:tabnext<cr>", "Next Tab" },
+      l = { "<cmd>:tablast<cr>", "Last Tab" },
+    }
+  })
 
   -- Register leader based mappings
   whichkey.register({
     w = { "<cmd>w<cr>", "Save" },
     q = { "<cmd>q<cr>", "Quit" },
-    e = { "<cmd>Neotree toggle<cr>", "Toggle Explorer" },
-    o = { "<cmd>Neotree focus<cr>", "Focus Explorer" },
 
-    ["<leader>"] = { "<cmd>lua require('telescope.builtin').find_files()<cr>", "Find Files" },
+    [","] = { "<cmd>lua require('telescope.builtin').find_files()<cr>", "Find Files" },
     ["."] = { "<cmd>lua require('telescope.builtin').buffers()<cr>", "Buffers" },
 
     b = {
@@ -42,7 +50,9 @@ function M.setup()
       w = { "<cmd>lua require('telescope.builtin').live_grep()<cr>", "Live Grep" },
       b = { "<cmd>lua require('telescope.builtin').buffers()<cr>", "Bufers" },
       d = { "<cmd>lua require('telescope').extensions.file_browser.file_browser()<cr>", "File Browser" },
-      D = { "<cmd>lua require('telescope').extensions.file_browser.file_browser( { path = '%:p:h' } )<cr>", "File Browser" },
+      a = { "<cmd>lua require('telescope').extensions.file_browser.file_browser( { path = '%:p:h' } )<cr>", "Active File Browser" },
+      D = { "<cmd>lua require('telescope').extensions.file_browser.file_browser( { path = '%:p:h' } )<cr>", "Active File Browser" },
+      t = { "<cmd>TodoTelescope<cr>", "Todos" },
     },
 
     p = {
@@ -52,6 +62,7 @@ function M.setup()
       s = { "<cmd>PackerSync<cr>", "Sync" },
       S = { "<cmd>PackerStatus<cr>", "Status" },
       u = { "<cmd>PackerUpdate<cr>", "Update" },
+      p = { "<cmd>PackerProfile<cr>", "Profile" },
     },
 
     t = {
@@ -59,6 +70,10 @@ function M.setup()
       f = { "<cmd>ToggleTerm direction=float<cr>", "New Float" },
       h = { "<cmd>ToggleTerm size=10 direction=horizontal<cr>", "New Horizontal" },
       v = { "<cmd>ToggleTerm size=80 direction=vertical<cr>", "New Vertical" },
+
+      F = { "<cmd>ToggleTerm direction=float dir='%:p:h'<cr>", "New Float $CWD"},
+      H = { "<cmd>ToggleTerm size=10 direction=horizontal dir='%:p:h'<cr>", "New Horizontal $CWD"},
+      V = { "<cmd>ToggleTerm size=80 direction=vertical dir='%:p:h'<cr>", "New Vertical $CWD"},
     },
 
     j = {
@@ -75,10 +90,21 @@ function M.setup()
 
     g = {
       name = "Git",
-      g = { "<cmd>lua require('utils.term').toggle_git()<cr>", "Status" },
+      g = { "<cmd>Neogit<cr>", "Neogit" },
+      l = { "<cmd>Neogit log<cr>", "Git Log" },
       c = { "<cmd>lua require('config.telescope').delta_git_commits()<cr>", "Delta Commits" },
       t = { "<cmd>lua require('config.telescope').delta_git_status()<cr>", "Delta Status" },
+      d = { "<cmd>DiffviewOpen<cr>", "Diff View" },
+      D = { "<cmd>DiffviewOpen main<cr>", "Diff View Main" },
+      f = { "<cmd>DiffviewFileHistory<cr>", "Diff View File History" },
+      F = { "<cmd>DiffviewFileHistory %<cr>", "Diff View File History Current File" },
     },
+
+    ["<leader>"] = {
+      name = "Woah",
+      ["s"] = { "<cmd>source ~/.config/nvim/after/plugin/luasnip.lua<CR>", "Reload Snippets" },
+      ["r"] = { ":source ~/.config/nvim/init.lua<cr>", "Reload Neovim Configs" },
+    }
   }, { prefix = "<leader>", mode = "n", buffer = nil, silent = true, noremap = true, nowait = false })
 end
 

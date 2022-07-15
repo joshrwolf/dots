@@ -3,43 +3,16 @@ local M = {}
 vim.o.completeopt = "menu,menuone,noinsert"
 
 local types = require "cmp.types"
-local lspkind = require("lspkind")
+-- local lspkind = require("lspkind")
+local icons = require("config.icons").icons
 
-local icons = {
-	Text = "  ",
-	Method = "  ",
-	Function = "  ",
-	Constructor = "⌘  ",
-	Field = "ﰠ  ",
-	Variable = "  ",
-	Class = "ﴯ  ",
-	Interface = "  ",
-	Module = "  ",
-	Property = "ﰠ  ",
-	Unit = "塞 ",
-	Value = "  ",
-	Enum = "  ",
-	Keyword = "廓 ",
-	Snippet = "  ",
-	Color = "  ",
-	File = "  ",
-	Reference = "  ",
-	Folder = "  ",
-	EnumMember = "  ",
-	Constant = "  ",
-	Struct = "פּ  ",
-	Event = " ",
-	Operator = "  ",
-	TypeParameter = "t ",
-}
-
-vim.highlight.create("PmenuSel", { guifg = "#C3E88D", guibg = "#282C34" }, false)
-vim.highlight.create("Pmenu", { guifg = "#EADFF0", guibg = "#22252A" }, false)
---
-vim.highlight.create("CmpItemAbbrDeprecated", { guifg = "#7E8294", guibg = "NONE", gui = "strikethrough" }, false)
-vim.highlight.create("CmpItemAbbrMatch", { guifg = "#82AAFF", guibg = "NONE", gui = "bold" }, false)
-vim.highlight.create("CmpItemAbbrMatchFuzzy", { guifg = "#82AAFF", guibg = "NONE", gui = "bold" }, false)
-vim.highlight.create("CmpItemMenu", { guifg = "#C792EA", guibg = "NONE", gui = "italic" }, false)
+-- vim.highlight.create("PmenuSel", { guifg = "#C3E88D", guibg = "#282C34" }, false)
+-- vim.highlight.create("Pmenu", { guifg = "#EADFF0", guibg = "#22252A" }, false)
+-- --
+-- vim.highlight.create("CmpItemAbbrDeprecated", { guifg = "#7E8294", guibg = "NONE", gui = "strikethrough" }, false)
+-- vim.highlight.create("CmpItemAbbrMatch", { guifg = "#82AAFF", guibg = "NONE", gui = "bold" }, false)
+-- vim.highlight.create("CmpItemAbbrMatchFuzzy", { guifg = "#82AAFF", guibg = "NONE", gui = "bold" }, false)
+-- vim.highlight.create("CmpItemMenu", { guifg = "#C792EA", guibg = "NONE", gui = "italic" }, false)
 --
 -- vim.highlight.create("CmpItemKindField", { guifg = "#EED8DA", guibg = "#B5585F" }, false)
 -- vim.highlight.create("CmpItemKindProperty", { guifg = "#EED8DA", guibg = "#B5585F" }, false)
@@ -91,45 +64,39 @@ function M.setup()
       end,
     },
     formatting = {
-      fields = { "kind", "abbr", "menu" },
-      -- format = lspkind.cmp_format({
-      --   icon = true,
-      --   with_text = true,
-      --   before = function(entry, vim_item)
-      --     local duplicates = {
-      --       buffers = 1,
-      --       luasnip = 1,
-      --       nvim_lsp = 0,
-      --       nvim_lua = 1,
-      --       nvim_lsp_document_symbol = 1,
-      --       nvim_lsp_signature_help = 1,
-      --       path = 1,
-      --     }
-      --
-      --     vim_item.dup = duplicates[entry.source_name] or 0
-      --     vim_item.kind = (icons[vim_item.kind] or '') .. vim_item.kind
-      --     return vim_item
-      --   end
-      -- }),
-      format = function (entry, vim_item)
-        local kind = require("lspkind").cmp_format({ mode = "symbol_text", maxwidth = 50 })(entry, vim_item)
-        local strings = vim.split(kind.kind, "%s", { trimempty = true })
-        kind.kind = " " .. strings[1] .. " "
-        kind.menu = "    (" .. strings[2] .. ")"
-        return kind
-      end
+      -- fields = { "kind", "abbr", "menu" },
+      format = function(entry, vim_item)
+        vim_item.kind = string.format("%s %s", icons.kind[vim_item.kind], vim_item.kind)
+        vim_item.menu = ({
+          nvim_lsp = "[LSP]",
+          luasnip = "[SNP]",
+          buffer = "[BUF]",
+          path = "[PTH]",
+        })[entry.source.name]
+
+        return vim_item
+      end,
     },
     mapping = {
-      ["<C-p>"] = {
-        i = cmp.mapping.select_prev_item { behavior = types.cmp.SelectBehavior.NoInsert },
-      },
-      ["<C-n>"] = {
-        i = cmp.mapping.select_next_item { behavior = types.cmp.SelectBehavior.NoInsert },
-      },
+      ["<C-e>"] = cmp.mapping { i = cmp.mapping.close(), c = cmp.mapping.close() },
+      ["<C-k>"] = cmp.mapping(cmp.mapping.select_prev_item(), { "i", "c" }),
+      ["<C-p>"] = cmp.mapping(cmp.mapping.select_prev_item(), { "i", "c" }),
+      ["<C-j>"] = cmp.mapping(cmp.mapping.select_next_item(), { "i", "c" }),
+      ["<C-n>"] = cmp.mapping(cmp.mapping.select_next_item(), { "i", "c" }),
       ["<C-u>"] = cmp.mapping.scroll_docs(-4),
       ["<C-d>"] = cmp.mapping.scroll_docs(4),
       ["<C-Space>"] = cmp.mapping(cmp.mapping.complete(), { "i", "c" }),
-      ["<CR>"] = cmp.mapping.confirm { select = false },
+      -- ["<CR>"] = cmp.mapping {
+      --   i = cmp.mapping.confirm { behavior = cmp.ConfirmBehavior.Replace, select = false },
+      --   c = function(fallback)
+      --     if cmp.visible() then
+      --       cmp.confirm { behavior = cmp.ConfirmBehavior.Replace, select = false }
+      --     else
+      --       fallback()
+      --     end
+      --   end,
+      -- },
+      ["<CR>"] = cmp.mapping.confirm { select = true },
       ["<Tab>"] = cmp.mapping(function(fallback)
         if cmp.visible() then
           local entry = cmp.get_selected_entry()
@@ -141,22 +108,23 @@ function M.setup()
         else
           fallback()
         end
-      end, {"i", "s"}),
+      end, {"i", "s", "c"}),
     },
     sources = {
-      { name = "nvim_lsp", priority_weight = 110, group_index = 1, max_item_count = 25 },
+      { name = "nvim_lsp", priority_weight = 110, group_index = 1 },
       { name = "luasnip", priority_weight = 105, group_index = 1 },
-      { name = "treesitter", priority_weight = 102, group_index = 1, max_item_count = 10, keyword_length = 2 },
-      { name = "nvim_lsp_document_symbol", priority_weight = 98, group_index = 1 },
-      { name = "nvim_lsp_signature_help", priority_weight = 97, group_index = 2 },
-      { name = "nvim_lua", priority_weight = 96, grou_index = 2 },
+      -- { name = "treesitter", priority_weight = 102, group_index = 1, max_item_count = 10, keyword_length = 2 },
+      -- { name = "nvim_lsp_document_symbol", priority_weight = 98, group_index = 1 },
+      { name = "nvim_lsp_signature_help", priority_weight = 97, group_index = 1 },
+      -- { name = "nvim_lua", priority_weight = 96, grou_index = 2 },
       { name = "buffer", priority_weight = 70, group_index = 2 },
+      { name = "path", priority_Weight = 60, group_index = 2, max_item_count = 10 },
     },
     window = {
       completion = {
-        winhighlight = "Normal:Pmenu,FloatBorder:Pmenu,Search:None",
-        col_offset = -3,
-        side_padding = 0,
+        -- winhighlight = "Normal:Pmenu,FloatBorder:Pmenu",
+        -- col_offset = -3,
+        -- side_padding = 0,
       },
       -- completion = vim.tbl_deep_extend("force", cmp.config.window.bordered(), { col_offset = -1 }),
       documentation = cmp.config.window.bordered(),
@@ -170,21 +138,30 @@ function M.setup()
       select = false,
     },
     experimental = { ghost_text = true },
-
   }
 
+  -- special ft completions
+  cmp.setup.filetype({ "markdown", "asciidoc", "text", "gitcommit" }, {
+    sources = {
+      { name = "path" },
+    }
+  })
+
   -- Use buffer source for `/`
-  -- cmp.setup.cmdline("/", {
-  --   mapping = cmp.mapping.preset.cmdline(),
-  --   sources = cmp.config.sources(
-  --     {
-  --       { name = "buffer" },
-  --     },
-  --     {
-  --       { name = "nvim_lsp_document_symbol" },
-  --     }
-  --   )
-  -- })
+  cmp.setup.cmdline("/", {
+    mapping = cmp.mapping.preset.cmdline(),
+    sources = {
+      { name = "buffer" },
+    },
+  })
+
+  cmp.setup.cmdline(":", {
+    -- mapping = cmp.mapping.preset.cmdline(),
+    sources = cmp.config.sources({
+      -- { name = "path" },
+      { name = "cmdline" },
+    })
+  })
 
   -- Auto pairs
   local cmp_autopairs = require "nvim-autopairs.completion.cmp"

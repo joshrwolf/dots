@@ -12,25 +12,44 @@ local gopathmod = gopath..'/pkg/mod'
 local servers = {
   gopls = {
     cmd = { "gopls", "-remote=auto" },
-    settings = {
-      gopls = {
-        experimentalWorkspaceModule = true,
-      },
-    },
-    -- root_dir = function (fname)
-    --   local fullpath = vim.fn.expand(fname, ':p')
-    --   if string.find(fullpath, gopathmod) and lastRootPath ~= nil then
-    --   -- if lastRootPath ~= nil then
-    --     print("reused lsp: " .. lastRootPath)
-    --     return lastRootPath
-    --   end
-    --   lastRootPath = util.root_pattern("go.work", "go.mod", ".git")(fname)
-    --   print("new lsp loaded: " .. lastRootPath)
-    --   return lastRootPath
-    -- end,
     root_dir = function (fname)
-      return util.root_pattern('go.work')(fname) or util.root_pattern('go.mod', '.git')(fname)
-    end
+      local fullpath = vim.fn.expand(fname, ':p')
+      if string.find(fullpath, gopathmod) and lastRootPath ~= nil then
+        -- print("reused lsp: " .. lastRootPath)
+        return lastRootPath
+      end
+      lastRootPath = util.root_pattern("go.work", "go.mod", ".git")(fname)
+      -- print("new lsp loaded: " .. lastRootPath)
+      return lastRootPath
+    end,
+    -- root_dir = function (fname)
+    --   -- return util.root_pattern('.git')(fname)
+    --   return util.root_pattern('go.work')(fname) or util.root_pattern('go.mod', '.git')(fname)
+    -- end,
+    -- workspace_folders = { 
+    --   {
+    --     name = "eots", 
+    --     uri = "file:///Users/wolf/dev/gh/chainguard/mono/eots",
+    --   },
+    --   {
+    --     name = "gulfstream",
+    --     uri = "file:///Users/wolf/dev/gh/chainguard/mono/gulfstream/api",
+    --   },
+    -- },
+    -- before_init  = function (initialize_params)
+    --   -- print(vim.inspect(initialize_params['workspaceFolders']))
+    --   initialize_params['workspaceFolders'] = {
+    --     {
+    --       name = "eots",
+    --       uri = "file:///Users/wolf/dev/gh/chainguard/mono/eots",
+    --     },
+    --     {
+    --       name = "gulfstream-api",
+    --       uri = "file:///Users/wolf/dev/gh/chainguard/mono/gulfstream/api",
+    --     },
+    --   }
+    --   print(vim.inspect(initialize_params))
+    -- end
   },
   rust_analyzer = {},
   html = {},
@@ -70,10 +89,6 @@ local servers = {
   dockerls = {},
   bashls = {},
   yamlls = {
-    schemaStore = {
-      enable = true,
-      url = "https://www.schemastore.org/api/json/catalog.json",
-    },
     schemas = {
       kubernetes = "*.yaml",
       ["http://json.schemastore.org/github-workflow"] = ".github/workflows/*",
@@ -85,10 +100,6 @@ local servers = {
       ["https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json"] = "*docker-compose*.{yml,yaml}",
       ["https://raw.githubusercontent.com/argoproj/argo-workflows/master/api/jsonschema/schema.json"] = "*flow*.{yml,yaml}",
     },
-    format = { enabled = false },
-    validate = false,
-    completion = true,
-    hover = true,
   },
 }
 
@@ -132,7 +143,6 @@ local opts = {
 }
 
 function M.setup()
-
   -- Installer
   require("config.lsp.installer").setup(servers, opts)
 end

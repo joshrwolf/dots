@@ -7,6 +7,15 @@ function M.setup(servers, options)
     automatic_installation = true,
   }
 
+  -- lsp config as json
+  require("nlspsettings").setup({
+    config_home = vim.fn.stdpath('config') .. '/nlsp-settings',
+    local_settings_dir = ".nlsp-settings",
+    local_settings_root_markers = { '.git' },
+    append_default_schemas = true,
+    loader = 'json',
+  })
+
   for server_name, _ in pairs(servers) do
     local opts = vim.tbl_deep_extend("force", options, servers[server_name] or {})
 

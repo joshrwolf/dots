@@ -25,7 +25,7 @@ function M.setup()
           j = { "<cmd>lua require('gitsigns').next_hunk()<cr>", "Next Hunk" },
           k = { "<cmd>lua require('gitsigns').prev_hunk()<cr>", "Prev Hunk" },
           p = { "<cmd>lua require('gitsigns').preview_hunk()<cr>", "Preview Hunk" },
-          l = { "<cmd>lua require('gitsigns').blame_line()<cr>", "Blame" },
+          -- l = { "<cmd>lua require('gitsigns').blame_line()<cr>", "Blame" },
           s = { "<cmd>lua require('gitsigns').stage_hunk()<cr>", "Stage Hunk" },
           u = { "<cmd>lua require('gitsigns').undo_stage_hunk()<cr>", "Undo Stage Hunk" },
         }
