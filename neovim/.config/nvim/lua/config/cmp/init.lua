@@ -1,6 +1,6 @@
 local M = {}
 
-vim.o.completeopt = "menu,menuone,noinsert"
+vim.opt.completeopt = "menu,menuone,noinsert"
 
 local types = require "cmp.types"
 -- local lspkind = require("lspkind")
@@ -85,25 +85,15 @@ function M.setup()
       ["<C-n>"] = cmp.mapping(cmp.mapping.select_next_item(), { "i", "c" }),
       ["<C-u>"] = cmp.mapping.scroll_docs(-4),
       ["<C-d>"] = cmp.mapping.scroll_docs(4),
-      ["<C-Space>"] = cmp.mapping(cmp.mapping.complete(), { "i", "c" }),
-      -- ["<CR>"] = cmp.mapping {
-      --   i = cmp.mapping.confirm { behavior = cmp.ConfirmBehavior.Replace, select = false },
-      --   c = function(fallback)
-      --     if cmp.visible() then
-      --       cmp.confirm { behavior = cmp.ConfirmBehavior.Replace, select = false }
-      --     else
-      --       fallback()
-      --     end
-      --   end,
-      -- },
-      ["<CR>"] = cmp.mapping.confirm { select = true },
+      ["<C-Space>"] = cmp.mapping(cmp.mapping.complete(), { "i", "s", "c" }),
+      ["<CR>"] = cmp.mapping.confirm({ select = true, behavior = cmp.ConfirmBehavior.Replace }),
       ["<Tab>"] = cmp.mapping(function(fallback)
         if cmp.visible() then
           local entry = cmp.get_selected_entry()
           if not entry then
             cmp.select_next_item({ behavior = cmp.SelectBehavior.Select })
           else
-            cmp.confirm()
+            cmp.confirm({ select = true, behavior = cmp.ConfirmBehavior.Replace })
           end
         else
           fallback()
