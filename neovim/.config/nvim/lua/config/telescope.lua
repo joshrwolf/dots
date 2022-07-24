@@ -49,8 +49,8 @@ function M.setup()
         hidden = true,
         file_ignore_patterns = {
           ".git/",
-          ".node_modules/",
-          ".terraform/",
+          "**/node_modules/**",
+          "**/.terraform/**",
         },
       },
       buffers = {
@@ -60,8 +60,8 @@ function M.setup()
         hidden = true,
         file_ignore_patterns = {
           ".git/",
-          ".node_modules/",
-          ".terraform/",
+          "**/node_modules/**",
+          "**/.terraform/**",
         },
       },
     },

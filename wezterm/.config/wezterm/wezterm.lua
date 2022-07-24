@@ -9,11 +9,11 @@ end)
 -- https://github.com/hurricanehrndz/cfg/blob/8993ea84ee04e2cf379d40a19851642078047e1e/dot_config/wezterm/wezterm.tmux.lua
 
 return {
-  font = wezterm.font("FiraCode Nerd Font"),
-  font_size = 15.0,
+  font = wezterm.font("Fira Code Retina"),
+  font_size = 18.0,
   cell_width = 1,
   line_height = 1.1,
-  color_scheme = "nord",
+  color_scheme = "github_dark",
   
   hide_tab_bar_if_only_one_tab = true,
   window_decorations = "RESIZE",

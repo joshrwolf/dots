@@ -51,7 +51,7 @@ function M.setup()
       b = { "<cmd>lua require('telescope.builtin').buffers()<cr>", "Bufers" },
       d = { "<cmd>lua require('telescope').extensions.file_browser.file_browser()<cr>", "File Browser" },
       a = { "<cmd>lua require('telescope').extensions.file_browser.file_browser( { path = '%:p:h' } )<cr>", "Active File Browser" },
-      D = { "<cmd>lua require('telescope').extensions.file_browser.file_browser( { path = '%:p:h' } )<cr>", "Active File Browser" },
+      h = { "<cmd>lua require('telescope.builtin').help_tags()<cr>", "Help Tags" },
       t = { "<cmd>TodoTelescope<cr>", "Todos" },
     },
 
@@ -88,6 +88,8 @@ function M.setup()
     ["9"] = { "<cmd>lua require('harpoon.term').gotoTerminal(1)<cr>", "Terminal 1" },
     ["0"] = { "<cmd>lua require('harpoon.term').gotoTerminal(2)<cr>", "Terminal 2" },
 
+
+
     g = {
       name = "Git",
       g = { "<cmd>Neogit<cr>", "Neogit" },
@@ -98,6 +100,8 @@ function M.setup()
       D = { "<cmd>DiffviewOpen main<cr>", "Diff View Main" },
       f = { "<cmd>DiffviewFileHistory<cr>", "Diff View File History" },
       F = { "<cmd>DiffviewFileHistory %<cr>", "Diff View File History Current File" },
+      b = { "<cmd>Gitsigns blame_line<cr>", "Blame Line" },
+      B = { "<cmd>G blame<cr>", "Blame File" },
     },
 
     ["<leader>"] = {

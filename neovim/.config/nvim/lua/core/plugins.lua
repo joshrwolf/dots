@@ -45,7 +45,6 @@ local conf = {
 
 packer.init(conf)
 
-
 return packer.startup(function(use)
 	-- Plugin Manager
 	use { "wbthomason/packer.nvim" }
@@ -92,12 +91,100 @@ return packer.startup(function(use)
   }
 
   -- Colorscheme
+  -- use {
+  --   "rmehri01/onenord.nvim",
+  --   config = function ()
+  --     require("onenord").setup({
+  --       theme = "light",
+  --       fade_nc = false,
+  --       styles = {
+  --         comments = "ITALIC",
+  --       }
+  --     }) 
+  --   end
+  -- }
+  -- use {
+  --   "EdenEast/nightfox.nvim",
+  --   config = function()
+  --     require("config.colors.nightfox").setup()
+  --   end
+  -- }
   use {
-    "EdenEast/nightfox.nvim",
-    config = function()
-      require("config.colors.nightfox").setup()
+    "projekt0n/github-nvim-theme",
+    config = function ()
+      require("github-theme").setup({
+        theme_style = "dark",
+      }) 
     end
   }
+  -- use {
+  --   "catppuccin/nvim",
+  --   as = "catppuccin",
+  --   config = function ()
+  --     require("config.colors.catpuccin") .setup()
+  --   end
+  -- }
+  -- use {
+  --   "ellisonleao/gruvbox.nvim",
+  --   config = function ()
+  --     require("gruvbox").setup({
+  --       italic = false,
+  --       contrast = "soft",
+  --     })
+  --     vim.o.background = "light"
+  --     vim.cmd[[colorscheme gruvbox]]
+  --   end
+  -- }
+  -- use {
+  --   "sainnhe/gruvbox-material",
+  --   config = function ()
+  --     vim.o.background = "light"
+  --     vim.g.gruvbox_material_background = "medium"
+  --     vim.g.gruvbox_material_better_performance = 1
+  --     vim.cmd[[colorscheme gruvbox-material]] 
+  --   end
+  -- }
+  -- use({
+  --   "themercorp/themer.lua",
+  --   config = function()
+  --   require("themer").setup({
+  --     colorscheme = "everforest",
+  --     -- styles = {
+  --     --   ["function"] = { style = 'italic' },
+  --     --   functionbuiltin = { style = 'italic' },
+  --     --   variable = { style = 'italic' },
+  --     --   variableBuiltIn = { style = 'italic' },
+  --     --   parameter  = { style = 'italic' },
+  --     -- },
+  --     dim_inactive = true,
+  --   })
+  --   end
+  -- })
+  -- use {
+  --   "sainnhe/everforest",
+  --   config = function ()
+  --     vim.o.background = "light"
+  --     vim.g.everforest_background = "soft"
+  --     vim.g.everforest_better_performance = 1
+  --     vim.cmd[[colorscheme everforest]]
+  --   end
+  -- }
+  -- use {
+  --   "mcchrish/zenbones.nvim",
+  --   requires = "rktjmp/lush.nvim",
+  --   config = function ()
+  --     vim.o.background = "light" 
+  --     vim.cmd[[colorscheme forestbones]]
+  --   end
+  -- }
+  -- use({
+  --   'projekt0n/github-nvim-theme',
+  --   config = function()
+  --     require('github-theme').setup({
+  --       theme_style = "light_default"
+  --     })
+  --   end
+  -- })
 
   -- File explorer
   use {
@@ -244,16 +331,6 @@ return packer.startup(function(use)
       require("config.gitsigns").setup() 
     end
   }
-
-  -- use {
-  --   "tpope/vim-fugitive",
-  --   opt = true,
-  --   cmd = { "Git", "GBrowse", "Gdiffsplit", "Gvdiffsplit" },
-  --   requires = {
-  --     "tpope/vim-rhubarb",
-  --     "idanarye/vim-merginal",
-  --   }
-  -- }
 
   -- Github integrations
   use {
@@ -482,18 +559,31 @@ return packer.startup(function(use)
   -- Fix the CursorHold performance bug
   use "antoinemadec/FixCursorHold.nvim"
   
+  -- use {
+  --   "akinsho/nvim-bufferline.lua",
+  --   event = "BufRead",
+  --   config = function ()
+  --     require("bufferline").setup({
+  --       options = {
+  --         mode = "tabs",
+  --         offsets = {
+  --           { filetype = "neo-tree" },
+  --         }
+  --       }
+  --     }) 
+  --   end
+  -- }
   use {
-    "akinsho/nvim-bufferline.lua",
-    event = "BufRead",
+    "nanozuki/tabby.nvim",
     config = function ()
-      require("bufferline").setup({
-        options = {
-          mode = "tabs",
-          offsets = {
-            { filetype = "neo-tree" },
-          }
-        }
-      }) 
+      require("config.tabby").setup()
+    end
+  }
+
+  use {
+    'luukvbaal/nnn.nvim',
+    config = function ()
+      require("nnn").setup() 
     end
   }
 

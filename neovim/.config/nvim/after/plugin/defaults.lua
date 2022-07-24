@@ -48,3 +48,12 @@ opt.lazyredraw = true
 g.loaded_netrw = 1
 g.loaded_netrwPlugin = 1
 
+-- Neovide configs
+vim.o.guifont = "Fira Code Retina"
+vim.cmd([[
+set guifont=FiraCode\ Nerd\ Font:h18
+let g:neovide_transparency = 0.8
+let g:neovide_cursor_vfx_mode = "pixiedust"
+let g:neovide_cursor_animation_length = 0.05
+let g:neovide_cursor_trail_length = 0.2
+]])

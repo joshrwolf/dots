@@ -17,7 +17,7 @@ function M.setup()
     },
   } 
 
-  vim.g.catppuccin_flavour = "frappe"  -- latte, frappe, macchiato, mocha
+  vim.g.catppuccin_flavour = "latte"  -- latte, frappe, macchiato, mocha
   vim.cmd([[colorscheme catppuccin]])
 end
 
