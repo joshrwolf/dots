@@ -249,7 +249,8 @@ return packer.startup(function(use)
     requires = {
       "folke/lua-dev.nvim",
       "b0o/schemastore.nvim",
-      "williamboman/nvim-lsp-installer",
+      "williamboman/mason.nvim",
+      "williamboman/mason-lspconfig.nvim",
       "tamago324/nlsp-settings.nvim",
       {
         "j-hui/fidget.nvim",
@@ -269,13 +270,13 @@ return packer.startup(function(use)
   }
 
   -- Formatting and linting
-  -- use {
-  --   "jose-elias-alvarez/null-ls.nvim",
-  --   event = { "BufRead", "BufNewFile" },
-  --   config = function()
-  --     require("config.lsp.null-ls").setup()
-  --   end
-  -- }
+  use {
+    "jose-elias-alvarez/null-ls.nvim",
+    event = { "BufRead", "BufNewFile" },
+    config = function()
+      require("config.lsp.null-ls").setup()
+    end
+  }
 
   -- Autocomplete
   use {
@@ -514,6 +515,8 @@ return packer.startup(function(use)
     },
     config = function ()
       require("neogit").setup({
+        disable_commit_confirmation = true,
+        disable_insert_on_commit = false,
         integrations = {
           diffview = true,
         }
@@ -532,23 +535,6 @@ return packer.startup(function(use)
   }
 
   use {
-    "obaland/vfiler.vim",
-    cmd = "VFiler",
-    requires = {
-      "obaland/vfiler-column-devicons",
-    },
-    config = function ()
-      require("vfiler/config").setup {
-        options = {
-          auto_cd = true,
-          auto_resize = true,
-          columns = "indent,icon,name",
-        },
-      } 
-    end
-  }
-
-  use {
     "AndrewRadev/splitjoin.vim",
     keys = {
       { "n", "gJ" },
@@ -559,31 +545,10 @@ return packer.startup(function(use)
   -- Fix the CursorHold performance bug
   use "antoinemadec/FixCursorHold.nvim"
   
-  -- use {
-  --   "akinsho/nvim-bufferline.lua",
-  --   event = "BufRead",
-  --   config = function ()
-  --     require("bufferline").setup({
-  --       options = {
-  --         mode = "tabs",
-  --         offsets = {
-  --           { filetype = "neo-tree" },
-  --         }
-  --       }
-  --     }) 
-  --   end
-  -- }
   use {
     "nanozuki/tabby.nvim",
     config = function ()
       require("config.tabby").setup()
-    end
-  }
-
-  use {
-    'luukvbaal/nnn.nvim',
-    config = function ()
-      require("nnn").setup() 
     end
   }
 

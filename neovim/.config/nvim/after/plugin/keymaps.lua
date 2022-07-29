@@ -9,9 +9,12 @@ local eopts = { noremap = true, expr = true, silent = true }
 -- keymap("n", "<C-l>", "<C-w>l", dopts)
 -- keymap("t", "<C-h>", "<C-\\><C-N><C-w>h", )
 
--- Better escaping using jk in insert and terminal mode
-keymap("i", "jk", "<ESC>", dopts)
--- keymap("t", "jk", "<C-\\><C-n>", dopts)
+-- Don't move when *'ing
+keymap("n", "*", "*N", dopts)
+
+-- Keep cursor center when nN'ing
+keymap("n", "n", "nzz", dopts)
+keymap("n", "N", "Nzz", dopts)
 
 -- Center search results
 keymap("n", "k", "v:count == 0 ? 'gk' : 'k'", eopts)

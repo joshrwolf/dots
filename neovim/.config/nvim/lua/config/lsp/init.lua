@@ -12,16 +12,16 @@ local gopathmod = gopath..'/pkg/mod'
 local servers = {
   gopls = {
     cmd = { "gopls", "-remote=auto" },
-    root_dir = function (fname)
-      local fullpath = vim.fn.expand(fname, ':p')
-      if string.find(fullpath, gopathmod) and lastRootPath ~= nil then
-        -- print("reused lsp: " .. lastRootPath)
-        return lastRootPath
-      end
-      lastRootPath = util.root_pattern("go.work", "go.mod", ".git")(fname)
-      -- print("new lsp loaded: " .. lastRootPath)
-      return lastRootPath
-    end,
+    -- root_dir = function (fname)
+    --   local fullpath = vim.fn.expand(fname, ':p')
+    --   if string.find(fullpath, gopathmod) and lastRootPath ~= nil then
+    --     -- print("reused lsp: " .. lastRootPath)
+    --     return lastRootPath
+    --   end
+    --   lastRootPath = util.root_pattern("go.work", "go.mod", ".git")(fname)
+    --   -- print("new lsp loaded: " .. lastRootPath)
+    --   return lastRootPath
+    -- end,
     -- root_dir = function (fname)
     --   -- return util.root_pattern('.git')(fname)
     --   return util.root_pattern('go.work')(fname) or util.root_pattern('go.mod', '.git')(fname)
