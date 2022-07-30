@@ -109,21 +109,21 @@ return packer.startup(function(use)
 	--     require("config.colors.nightfox").setup()
 	--   end
 	-- }
+	-- use({
+	-- 	"projekt0n/github-nvim-theme",
+	-- 	config = function()
+	-- 		require("github-theme").setup({
+	-- 			theme_style = "dark",
+	-- 		})
+	-- 	end,
+	-- })
 	use({
-		"projekt0n/github-nvim-theme",
+		"catppuccin/nvim",
+		as = "catppuccin",
 		config = function()
-			require("github-theme").setup({
-				theme_style = "dark",
-			})
+			require("config.colors.catpuccin").setup()
 		end,
 	})
-	-- use {
-	--   "catppuccin/nvim",
-	--   as = "catppuccin",
-	--   config = function ()
-	--     require("config.colors.catpuccin") .setup()
-	--   end
-	-- }
 	-- use {
 	--   "ellisonleao/gruvbox.nvim",
 	--   config = function ()
@@ -177,14 +177,6 @@ return packer.startup(function(use)
 	--     vim.cmd[[colorscheme forestbones]]
 	--   end
 	-- }
-	-- use({
-	--   'projekt0n/github-nvim-theme',
-	--   config = function()
-	--     require('github-theme').setup({
-	--       theme_style = "light_default"
-	--     })
-	--   end
-	-- })
 
 	-- File explorer
 	use({
@@ -547,7 +539,8 @@ return packer.startup(function(use)
 	use({
 		"nanozuki/tabby.nvim",
 		config = function()
-			require("config.tabby").setup()
+			require("tabby").setup()
+			-- require("config.tabby").setup()
 		end,
 	})
 

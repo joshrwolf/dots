@@ -1,6 +1,6 @@
 local M = {}
 
-local whichkey = require "which-key"
+local whichkey = require("which-key")
 
 local function keymappings(client, bufnr)
   local opts = { noremap = true, silent = true }
@@ -10,15 +10,25 @@ local function keymappings(client, bufnr)
 
   vim.api.nvim_set_keymap("n", "[d", "<cmd>lua vim.diagnostic.goto_prev()<CR>", opts)
   vim.api.nvim_set_keymap("n", "]d", "<cmd>lua vim.diagnostic.goto_next()<CR>", opts)
-  vim.api.nvim_set_keymap("n", "[e", "<cmd>lua vim.diagnostic.goto_prev({ severity = vim.diagnostic.severity.ERROR })<CR>", opts)
-  vim.api.nvim_set_keymap("n", "]d", "<cmd>lua vim.diagnostic.goto_next({ severity = vim.diagnostic.severity.ERROR })<CR>", opts)
+  vim.api.nvim_set_keymap(
+    "n",
+    "[e",
+    "<cmd>lua vim.diagnostic.goto_prev({ severity = vim.diagnostic.severity.ERROR })<CR>",
+    opts
+  )
+  vim.api.nvim_set_keymap(
+    "n",
+    "]d",
+    "<cmd>lua vim.diagnostic.goto_next({ severity = vim.diagnostic.severity.ERROR })<CR>",
+    opts
+  )
 
   -- Register G based keys
   whichkey.register({
     name = "Goto",
     d = { vim.lsp.buf.definition, "Definition" },
     D = { vim.lsp.buf.declaration, "Declaration" },
-    i = { vim.lsp.buf.implementation, "Implementation" },
+    i = { "<cmd>Telescope lsp_implementations theme=ivy<cr>", "Implementations" },
     r = { "<cmd>Telescope lsp_references theme=ivy<cr>", "References" },
     t = { vim.lsp.buf.type_definition, "Type Definition" },
     l = { vim.lsp.diagnostics, "Diagnostics" },
@@ -35,7 +45,10 @@ local function keymappings(client, bufnr)
       w = {
         name = "Workspaces",
         a = { vim.lsp.buf.add_workspace_folder, "Add Workspace Folder" },
-        l = { "<cmd>lua print(vim.inspect(vim.lsp.buf.list_workspace_folders()))<cr>", "List Workspace Folders" },
+        l = {
+          "<cmd>lua print(vim.inspect(vim.lsp.buf.list_workspace_folders()))<cr>",
+          "List Workspace Folders",
+        },
         r = { vim.lsp.buf.remove_workspace_folder, "Remove Workspace Folder" },
         s = { "<cmd>Telescope lsp_dynamic_workspace_symbols<cr>", "Workspace Symbols" },
       },

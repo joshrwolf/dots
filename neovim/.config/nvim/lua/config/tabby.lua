@@ -60,14 +60,14 @@ end
 local function generate_pallet_from_colorscheme()
   -- stylua: ignore
   local color_map = {
-    black   = { index = 0, default = "#545d68" },
-    red     = { index = 1, default = "#f47067" },
-    green   = { index = 2, default = "#57ab5a" },
-    yellow  = { index = 3, default = "#c69026" },
-    blue    = { index = 4, default = "#539bf5" },
-    magenta = { index = 5, default = "#b083f0" },
-    cyan    = { index = 6, default = "#39c5cf" },
-    white   = { index = 7, default = "#909dab" },
+    black   = { index = 0, default = "#51576d" },
+    red     = { index = 1, default = "#e78284" },
+    green   = { index = 2, default = "#a6d189" },
+    yellow  = { index = 3, default = "#e5c890" },
+    blue    = { index = 4, default = "#8caaee" },
+    magenta = { index = 5, default = "#f4b8e4" },
+    cyan    = { index = 6, default = "#81c8be" },
+    white   = { index = 7, default = "#b5bfe2" },
   }
 
 	local pallet = {}
