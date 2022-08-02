@@ -111,8 +111,8 @@ _G._genreate_user_tabline_highlights = function()
 
 	local groups = {
 		-- tabline
-		UserTLHead = { fg = pal.fill.bg, bg = pal.blue },
-		UserTLHeadSep = { fg = pal.blue, bg = pal.fill.bg },
+		UserTLHead = { fg = pal.black, bg = "#babbf1" },
+		UserTLHeadSep = { fg = "#babbf1", bg = pal.fill.bg },
 		UserTLActive = { fg = pal.sel.fg, bg = pal.sel.bg, bold = true },
 		UserTLActiveSep = { fg = pal.sel.bg, bg = pal.fill.bg },
 		UserTLBoldLine = { fg = pal.tab.fg, bg = pal.tab.bg, bold = true },
