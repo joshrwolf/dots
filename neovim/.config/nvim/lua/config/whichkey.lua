@@ -57,6 +57,7 @@ function M.setup()
 			},
 			h = { "<cmd>lua require('telescope.builtin').help_tags()<cr>", "Help Tags" },
 			t = { "<cmd>TodoTelescope<cr>", "Todos" },
+			["."] = { "<cmd>lua require('telescope.builtin').resume()<cr>", "Resume" },
 		},
 
 		p = {

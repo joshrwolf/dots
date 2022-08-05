@@ -1,5 +1,11 @@
 {
   "gopls": {
-    "ui.documentation.linksInHover": false
+    "ui.documentation.linksInHover": false,
+    "ui.diagnostic.staticcheck": true,
+    "ui.diagnostic.analyses": {
+      "unusedwrite": true,
+      "nilness": true
+    },
+    "ui.completion.experimentalPostfixCompletions": true
   }
 }

@@ -2,7 +2,7 @@ local M = {}
 
 vim.opt.completeopt = "menu,menuone,noinsert"
 
-local types = require "cmp.types"
+local types = require("cmp.types")
 -- local lspkind = require("lspkind")
 local icons = require("config.icons").icons
 
@@ -48,11 +48,11 @@ local icons = require("config.icons").icons
 -- vim.highlight.create("CmpItemKindTypeParameter", { guifg = "#D8EEEB", guibg = "#58B5A8" }, false)
 
 function M.setup()
-  local luasnip = require "luasnip"
+  local luasnip = require("luasnip")
   -- local neogen = require "neogen"
-  local cmp = require "cmp"
+  local cmp = require("cmp")
 
-  cmp.setup {
+  cmp.setup({
     completion = {
       completeopt = "menu,menuone,noinsert",
       autocomplete = { types.cmp.TriggerEvent.TextChanged },
@@ -78,7 +78,7 @@ function M.setup()
       end,
     },
     mapping = {
-      ["<C-e>"] = cmp.mapping { i = cmp.mapping.close(), c = cmp.mapping.close() },
+      ["<C-e>"] = cmp.mapping({ i = cmp.mapping.close(), c = cmp.mapping.close() }),
       ["<C-k>"] = cmp.mapping(cmp.mapping.select_prev_item(), { "i", "c" }),
       ["<C-p>"] = cmp.mapping(cmp.mapping.select_prev_item(), { "i", "c" }),
       ["<C-j>"] = cmp.mapping(cmp.mapping.select_next_item(), { "i", "c" }),
@@ -98,7 +98,7 @@ function M.setup()
         else
           fallback()
         end
-      end, {"i", "s", "c"}),
+      end, { "i", "s", "c" }),
     },
     sources = {
       { name = "nvim_lsp", priority_weight = 110, group_index = 1 },
@@ -128,13 +128,21 @@ function M.setup()
       select = false,
     },
     experimental = { ghost_text = true },
-  }
+  })
 
   -- special ft completions
-  cmp.setup.filetype({ "markdown", "asciidoc", "text", "gitcommit" }, {
+  cmp.setup.filetype({ "markdown", "asciidoc", "text" }, {
     sources = {
       { name = "path" },
-    }
+    },
+  })
+
+  cmp.setup.filetype("gitcommit", {
+    sources = cmp.config.sources({
+      { name = "cmp_git" },
+    }, {
+      { name = "buffer" },
+    }),
   })
 
   -- Use buffer source for `/`
@@ -150,12 +158,14 @@ function M.setup()
     sources = cmp.config.sources({
       -- { name = "path" },
       { name = "cmdline" },
-    })
+    }),
   })
 
+  require("cmp_git").setup()
+
   -- Auto pairs
-  local cmp_autopairs = require "nvim-autopairs.completion.cmp"
-  cmp.event:on("confirm_done", cmp_autopairs.on_confirm_done { map_char = { tex = "" } })
+  local cmp_autopairs = require("nvim-autopairs.completion.cmp")
+  cmp.event:on("confirm_done", cmp_autopairs.on_confirm_done({ map_char = { tex = "" } }))
 end
 
 return M

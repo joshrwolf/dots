@@ -192,6 +192,9 @@ alt - r : yabai -m space --rotate 90
 # mirror tree y-axis
 alt - y : yabai -m space --mirror y-axis
 
+# balance
+alt - 0x18 : yabai -m space --balance
+
 # float / unfloat window and center on screen
 ctrl + cmd -t : yabai -m window --toggle float;\
 		yabai -m window --grid 10:10:1:1:8:8

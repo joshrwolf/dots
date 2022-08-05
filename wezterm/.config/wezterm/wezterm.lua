@@ -10,13 +10,17 @@ end)
 
 return {
 	font = wezterm.font_with_fallback({
-		"Fira Code Retina",
-		"FiraCode Nerd Font",
+		"JetBrains Mono",
+		-- "Operator Mono Lig Book",
+		-- "Fira Code",
+		-- "Liga SFMono Nerd Font",
+		-- "FiraCode Nerd Font",
 	}),
+
 	font_size = 16.0,
 	cell_width = 1,
-	line_height = 1.1,
-	color_scheme = "Catppuccin Frappe",
+	line_height = 1.15,
+	color_scheme = "nordfox",
 
 	hide_tab_bar_if_only_one_tab = true,
 	window_decorations = "RESIZE",

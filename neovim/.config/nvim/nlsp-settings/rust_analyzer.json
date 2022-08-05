@@ -1,0 +1,8 @@
+{
+  "rust-analyzer.semanticHighlighting.strings.enable": true,
+  "rust-analyzer.assist.expressionFillDefault": "default",
+  "rust-analyzer.hover.links.enable": false,
+  "rust-analyzer.cargo.autoreload": true,
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "rust-analyzer.inlayHints.typeHints.enable": true
+}
