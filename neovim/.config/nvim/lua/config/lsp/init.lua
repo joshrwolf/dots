@@ -1,13 +1,13 @@
 local M = {}
 
-local util = require('lspconfig/util')
+local util = require("lspconfig/util")
 
 local lastRootPath = nil
 local gopath = os.getenv("GOPATH")
 if gopath == nil then
   gopath = ""
 end
-local gopathmod = gopath..'/pkg/mod'
+local gopathmod = gopath .. "/pkg/mod"
 
 local servers = {
   gopls = {
@@ -26,9 +26,9 @@ local servers = {
     --   -- return util.root_pattern('.git')(fname)
     --   return util.root_pattern('go.work')(fname) or util.root_pattern('go.mod', '.git')(fname)
     -- end,
-    -- workspace_folders = { 
+    -- workspace_folders = {
     --   {
-    --     name = "eots", 
+    --     name = "eots",
     --     uri = "file:///Users/wolf/dev/gh/chainguard/mono/eots",
     --   },
     --   {
@@ -56,9 +56,9 @@ local servers = {
   jsonls = {
     settings = {
       json = {
-        schemas = require("schemastore").json.schemas()
-      }
-    }
+        schemas = require("schemastore").json.schemas(),
+      },
+    },
   },
   pyright = {},
   sumneko_lua = {
@@ -70,12 +70,18 @@ local servers = {
         },
         diagnostics = {
           globals = { "vim", "describe", "it", "before_each", "after_each", "packer_plugins" },
-          disable = { "lowercase-global", "undefined-global", "unused-local", "unused-vararg", "trailing-space" },
+          disable = {
+            "lowercase-global",
+            "undefined-global",
+            "unused-local",
+            "unused-vararg",
+            "trailing-space",
+          },
         },
         workspace = {
           library = {
-            [vim.fn.expand "$VIMRUNTIME/lua"] = true,
-            [vim.fn.expand "VIMRUNTIME/lua/vim/lsp"] = true,
+            [vim.fn.expand("$VIMRUNTIME/lua")] = true,
+            [vim.fn.expand("VIMRUNTIME/lua/vim/lsp")] = true,
           },
         },
         completion = { callSnippet = "Both" },
@@ -112,15 +118,21 @@ function M.on_attach(client, bufnr)
   -- See `:help formatexpr` for more information.
   vim.api.nvim_buf_set_option(0, "formatexpr", "v:lua.vim.lsp.formatexpr()")
 
-  vim.lsp.handlers['textDocument/hover'] = vim.lsp.with(
-    vim.lsp.handlers.hover,
-    { border = 'rounded' }
-  )
+  vim.lsp.handlers["textDocument/hover"] = vim.lsp.with(vim.lsp.handlers.hover, { border = "rounded" })
 
-  vim.lsp.handlers['textDocument/signatureHelp'] = vim.lsp.with(
-    vim.lsp.handlers.signature_help,
-    { border = 'rounded' }
-  )
+  vim.lsp.handlers["textDocument/signatureHelp"] =
+  vim.lsp.with(vim.lsp.handlers.signature_help, { border = "rounded" })
+
+  -- Activate codelense if capability exists
+  if client.server_capabilities.codeLensProvider then
+    vim.cmd([[
+      augroup lsp_document_codelens
+        au! * <buffer>
+        autocmd BufEnter ++once         <buffer> lua require"vim.lsp.codelens".refresh()
+        autocmd BufWritePost,CursorHold <buffer> lua require"vim.lsp.codelens".refresh()
+      augroup END
+    ]])
+  end
 
   -- Configure LSP specific keymappings
   require("config.lsp.keymaps").setup(client, bufnr)

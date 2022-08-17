@@ -40,6 +40,9 @@ function M.setup()
 					["<C-u>"] = actions.preview_scrolling_up,
 					["<C-d>"] = actions.preview_scrolling_down,
 					["<C-h>"] = actions.which_key,
+					["<C-s>"] = actions.file_split,
+					["<C-v>"] = actions.file_vsplit,
+					["<C-t>"] = actions.file_tab,
 				},
 			},
 			set_env = { ["COLORTERM"] = "truecolor" },
@@ -102,6 +105,7 @@ function M.setup()
 	telescope.load_extension("ui-select")
 	telescope.load_extension("live_grep_args")
 	telescope.load_extension("harpoon")
+	telescope.load_extension("persisted")
 end
 
 local previewers = require("telescope.previewers")
