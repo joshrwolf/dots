@@ -61,12 +61,12 @@ local function generate_pallet_from_colorscheme()
   -- stylua: ignore
   local color_map = {
     black   = { index = 0, default = "#51576d" },
-    red     = { index = 1, default = "#e78284" },
-    green   = { index = 2, default = "#a6d189" },
-    yellow  = { index = 3, default = "#e5c890" },
-    blue    = { index = 4, default = "#8caaee" },
+    red     = { index = 1, default = "#bf616a" },
+    green   = { index = 2, default = "#a3be8c" },
+    yellow  = { index = 3, default = "#ebcb8b" },
+    blue    = { index = 4, default = "#81a1c1" },
     magenta = { index = 5, default = "#f4b8e4" },
-    cyan    = { index = 6, default = "#81c8be" },
+    cyan    = { index = 6, default = "#88c0d0" },
     white   = { index = 7, default = "#b5bfe2" },
   }
 
@@ -111,8 +111,8 @@ _G._genreate_user_tabline_highlights = function()
 
 	local groups = {
 		-- tabline
-		UserTLHead = { fg = pal.black, bg = "#babbf1" },
-		UserTLHeadSep = { fg = "#babbf1", bg = pal.fill.bg },
+		UserTLHead = { fg = pal.black, bg = "#a3be8c" },
+		UserTLHeadSep = { fg = "#a3be8c", bg = pal.fill.bg },
 		UserTLActive = { fg = pal.sel.fg, bg = pal.sel.bg, bold = true },
 		UserTLActiveSep = { fg = pal.sel.bg, bg = pal.fill.bg },
 		UserTLBoldLine = { fg = pal.tab.fg, bg = pal.tab.bg, bold = true },

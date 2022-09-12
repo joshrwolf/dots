@@ -10,11 +10,11 @@ g.maplocalleader = " "
 opt.cursorline = true -- Highlight current line
 opt.cursorlineopt = "both"
 opt.mouse = "a" -- Enable mouse mode
-opt.clipboard = "unnamedplus" -- Copy/paste to system clipboard
+opt.clipboard = "unnamed,unnamedplus" -- Copy/paste to system clipboard
 opt.swapfile = false -- Don't use a swapfile
 opt.undofile = true -- Save the undo file
 opt.timeoutlen = 300 -- Time in milliseconds to wait for a mapped key sequence
-opt.updatetime = 50
+opt.updatetime = 100
 
 -- Neovim UI
 opt.number = true -- Show line numbers
@@ -42,7 +42,7 @@ opt.wildignorecase = true
 opt.wildignore:append("**/node_modules/*")
 opt.wildignore:append("**/.git/*")
 
-opt.lazyredraw = true
+opt.shortmess = opt.shortmess + { c = true }
 
 -- Sessions: https://github.com/rmagatti/auto-session#recommended-sessionoptions-config
 vim.o.sessionoptions = "blank,buffers,curdir,folds,help,tabpages,winsize,winpos,terminal"
@@ -55,7 +55,7 @@ g.loaded_netrwPlugin = 1
 vim.o.guifont = "Fira Code Retina"
 vim.cmd([[
 set guifont=FiraCode\ Nerd\ Font:h18
-let g:neovide_transparency = 0.8
+" let g:neovide_transparency = 1.0
 let g:neovide_cursor_vfx_mode = "pixiedust"
 let g:neovide_cursor_animation_length = 0.05
 let g:neovide_cursor_trail_length = 0.2

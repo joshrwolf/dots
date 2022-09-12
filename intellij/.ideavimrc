@@ -38,7 +38,7 @@ nnoremap <leader>so :source ~/.ideavimrc<CR>
 vnoremap < <gv
 vnoremap > >gv
 
-" -- Keybindings
+map <leader>w :w<CR>
 
 " Navigation
 nmap <C-h> <c-w>h
@@ -52,8 +52,7 @@ nmap <C-i> <Action>(Forward)
 nmap <leader>fa <Action>(GotoAction)
 nmap <leader>ff <Action>(GotoFile)
 
-nmap <leader>ws <Action>(SplitHorizontally)
-nmap <leader>wv <Action>(SplitVertically)
+nmap <C-\> <Action>(ActivateTerminalToolWindow)
 
 nmap [[ <Action>(MethodUp)
 nmap ]] <Action>(MethodDown)
@@ -71,9 +70,9 @@ map g; <Action>(JumpToLastChange)
 
 map <leader>t <Action>(ActivateTerminalToolWindow)
 
-
 " Code Actions
-map <leader>cr <Action>(RenameElement)
+map <leader>lr <Action>(RenameElement)
+map <leader>la <Action>(ShowIntentionActions)
 
 "" -- Map IDE actions to IdeaVim -- https://jb.gg/abva4t
 "" Map \r to the Reformat Code action

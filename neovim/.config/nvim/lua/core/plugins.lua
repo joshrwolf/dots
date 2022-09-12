@@ -101,15 +101,6 @@ return packer.startup(function(use)
       require("config.neotree").setup()
     end,
   })
-  -- use {
-  --   "kyazdani42/nvim-tree.lua",
-  --   requires = {
-  --     "kyazdani42/nvim-web-devicons",
-  --   },
-  --   config = function ()
-  --     require("config.neotree").setup()
-  --   end
-  -- }
 
   -- Statusline
   use({
@@ -260,28 +251,19 @@ return packer.startup(function(use)
     "simrat39/symbols-outline.nvim",
     cmd = { "SymbolsOutline" },
     config = function()
-      vim.g.symbols_outline = {
-        auto_preview = false,
-      }
+      require("symbols-outline").setup()
     end,
   })
-
-  -- Parenthesis highlighting
-  -- use {
-  --   "p00f/nvim-ts-rainbow",
-  --   after = "nvim-treesitter",
-  -- }
 
   -- Syntax highlighting
   use({
     "nvim-treesitter/nvim-treesitter",
     run = ":TSUpdate",
-    event = { "BufRead", "BufNewFile" },
     config = function()
       require("config.treesitter").setup()
     end,
     requires = {
-      { "nvim-treesitter/nvim-treesitter-textobjects", event = "BufRead" },
+      { "nvim-treesitter/nvim-treesitter-textobjects" },
       { "nvim-treesitter/playground" },
     },
   })
@@ -449,11 +431,7 @@ return packer.startup(function(use)
     },
     config = function()
       require("neogit").setup({
-        disable_commit_confirmation = true,
-        disable_insert_on_commit = false,
-        integrations = {
-          diffview = true,
-        },
+        require("config.neogit").setup(),
       })
     end,
   })
@@ -487,99 +465,28 @@ return packer.startup(function(use)
   })
 
   -- Colorscheme
-  -- use {
-  --   "rmehri01/onenord.nvim",
-  --   config = function ()
-  --     require("onenord").setup({
-  --       theme = "light",
-  --       fade_nc = false,
-  --       styles = {
-  --         comments = "ITALIC",
-  --       }
-  --     })
-  --   end
-  -- }
   use({
     "EdenEast/nightfox.nvim",
     config = function()
       require("config.colors.nightfox").setup()
     end,
   })
+  use({
+    "catppuccin/nvim",
+    as = "catppuccin",
+    config = function()
+      require("config.colors.catppuccin").setup()
+    end,
+  })
   -- use({
-  -- 	"projekt0n/github-nvim-theme",
+  -- 	"andersevenrud/nordic.nvim",
   -- 	config = function()
-  -- 		require("github-theme").setup({
-  -- 			theme_style = "dark",
+  -- 		require("nordic").colorscheme({
+  -- 			underline_option = "undercurl",
+  -- 			italic_comments = true,
   -- 		})
   -- 	end,
   -- })
-  -- use({
-  --   "catppuccin/nvim",
-  --   as = "catppuccin",
-  --   config = function()
-  --     require("config.colors.catpuccin").setup()
-  --   end,
-  -- })
-  -- use({
-  --   "folke/tokyonight.nvim",
-  --   config = function()
-  --     vim.g.tokyonight_style = "storm"
-  --     vim.cmd([[colorscheme tokyonight]])
-  --   end,
-  -- })
-  -- use {
-  --   "ellisonleao/gruvbox.nvim",
-  --   config = function ()
-  --     require("gruvbox").setup({
-  --       italic = false,
-  --       contrast = "soft",
-  --     })
-  --     vim.o.background = "light"
-  --     vim.cmd[[colorscheme gruvbox]]
-  --   end
-  -- }
-  -- use {
-  --   "sainnhe/gruvbox-material",
-  --   config = function ()
-  --     vim.o.background = "light"
-  --     vim.g.gruvbox_material_background = "medium"
-  --     vim.g.gruvbox_material_better_performance = 1
-  --     vim.cmd[[colorscheme gruvbox-material]]
-  --   end
-  -- }
-  -- use({
-  --   "themercorp/themer.lua",
-  --   config = function()
-  --   require("themer").setup({
-  --     colorscheme = "everforest",
-  --     -- styles = {
-  --     --   ["function"] = { style = 'italic' },
-  --     --   functionbuiltin = { style = 'italic' },
-  --     --   variable = { style = 'italic' },
-  --     --   variableBuiltIn = { style = 'italic' },
-  --     --   parameter  = { style = 'italic' },
-  --     -- },
-  --     dim_inactive = true,
-  --   })
-  --   end
-  -- })
-  -- use {
-  --   "sainnhe/everforest",
-  --   config = function ()
-  --     vim.o.background = "light"
-  --     vim.g.everforest_background = "soft"
-  --     vim.g.everforest_better_performance = 1
-  --     vim.cmd[[colorscheme everforest]]
-  --   end
-  -- }
-  -- use {
-  --   "mcchrish/zenbones.nvim",
-  --   requires = "rktjmp/lush.nvim",
-  --   config = function ()
-  --     vim.o.background = "light"
-  --     vim.cmd[[colorscheme forestbones]]
-  --   end
-  -- }
 
   -- Maybe
   -- https://github.com/NTBBloodbath/rest.nvim

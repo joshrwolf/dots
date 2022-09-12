@@ -44,3 +44,9 @@ keymap("n", "<Right>", ":vertical resize -5<CR>", dopts)
 keymap("n", "<Up>", ":resize -3<CR>", dopts)
 keymap("n", "<Down>", ":resize +3<CR>", dopts)
 
+-- Open links under the cursor
+if vim.fn.has("macunix") == 1 then
+	keymap("n", "gx", "<cmd>silent execute '!open ' . shellescape('<cWORD>')<CR>", dopts)
+else
+	keymap("n", "gx", "<cmd>silent execute '!xdg-open ' . shellescape('<cWORD>')<CR>", dopts)
+end

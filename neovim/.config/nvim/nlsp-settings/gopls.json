@@ -6,6 +6,17 @@
       "unusedwrite": true,
       "nilness": true
     },
+    "ui.semanticTokens": true,
+    "build.expandWorkspaceToModule": true,
+    "ui.codelenses": {
+      "tidy": true,
+      "upgrade_dependency": true,
+      "generate": true,
+      "gc_details": true,
+      "regenerate_cgo": true,
+      "test": true,
+      "vendor": false
+    },
     "ui.completion.experimentalPostfixCompletions": true
   }
 }
