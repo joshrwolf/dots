@@ -138,6 +138,7 @@ return packer.startup(function(use)
       "williamboman/mason.nvim",
       "williamboman/mason-lspconfig.nvim",
       "tamago324/nlsp-settings.nvim",
+      "lukas-reineke/lsp-format.nvim",
       {
         "j-hui/fidget.nvim",
         config = function()
@@ -471,6 +472,7 @@ return packer.startup(function(use)
       require("config.colors.nightfox").setup()
     end,
   })
+
   use({
     "catppuccin/nvim",
     as = "catppuccin",
@@ -478,15 +480,6 @@ return packer.startup(function(use)
       require("config.colors.catppuccin").setup()
     end,
   })
-  -- use({
-  -- 	"andersevenrud/nordic.nvim",
-  -- 	config = function()
-  -- 		require("nordic").colorscheme({
-  -- 			underline_option = "undercurl",
-  -- 			italic_comments = true,
-  -- 		})
-  -- 	end,
-  -- })
 
   -- Maybe
   -- https://github.com/NTBBloodbath/rest.nvim

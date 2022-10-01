@@ -30,6 +30,26 @@ function M.setup()
       k = { "<cmd>:tabnext<cr>", "Next Tab" },
       l = { "<cmd>:tablast<cr>", "Last Tab" },
     },
+
+    ["["] = {
+      name = "Left Pair",
+      t = { "<cmd>:tabprev<cr>", "Prev Tab" },
+      T = { "<cmd>:tabfirst<cr>", "First Tab" },
+      q = { "<cmd>:cprevious<cr>", "Prev QF" },
+      Q = { "<cmd>:cfirst<cr>", "First QF" },
+      a = { "<cmd>:bprevious<cr>", "Prev Buffer" },
+      A = { "<cmd>:bfirst<cr>", "First Buffer" },
+    },
+
+    ["]"] = {
+      name = "Right Pair",
+      t = { "<cmd>:tabnext<cr>", "Prev Tab" },
+      T = { "<cmd>:tablast<cr>", "Last Tab" },
+      q = { "<cmd>:cnext<cr>", "Next QF" },
+      Q = { "<cmd>:clast<cr>", "Last QF" },
+      a = { "<cmd>:bnext<cr>", "Next Buffer" },
+      A = { "<cmd>:blast<cr>", "Last Buffer" },
+    },
   })
 
   -- Register leader based mappings

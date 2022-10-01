@@ -22,16 +22,22 @@ autocmd CursorHold * lua vim.diagnostic.open_float(nil, { focusable = false })
 -- Highlight on yank
 augroup("YankHighlight", { clear = true })
 autocmd("TextYankPost", {
-	group = "YankHighlight",
-	callback = function()
-		vim.highlight.on_yank({ higroup = "IncSearch", timeout = "250" })
-	end,
+  group = "YankHighlight",
+  callback = function()
+    vim.highlight.on_yank({ higroup = "IncSearch", timeout = "250" })
+  end,
 })
 
 -- Don't auto comment new lines
 autocmd("BufEnter", {
-	pattern = "*",
-	command = "set fo-=c fo-=r fo-=o",
+  pattern = "*",
+  command = "set fo-=c fo-=r fo-=o",
+})
+
+-- Properly detect *.cue
+vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
+  pattern = { "*.cue" },
+  command = "set filetype=cue",
 })
 
 -- Close nvim if NvimTree is the only remaining buffer
@@ -44,17 +50,23 @@ autocmd({ "TermOpen", "BufWinEnter", "BufEnter" }, { pattern = "term://*", comma
 
 -- Autosave on lose focus, except for certain filetypes
 autocmd({ "BufLeave", "FocusLost" }, {
-	pattern = "*",
-	callback = function()
-		if string.match(vim.bo.filetype, "Neogit") then
-			return
-		elseif string.match(vim.bo.filetype, "Telescope") then
-			return
-		elseif string.match(vim.bo.filetype, "neo-tree") then
-			return
-		elseif string.match(vim.bo.filetype, "Trouble") then
-			return
-		end
-		vim.cmd("silent! update")
-	end,
+  pattern = "*",
+  callback = function()
+    if string.match(vim.bo.filetype, "Neogit") then
+      return
+    elseif string.match(vim.bo.filetype, "Telescope") then
+      return
+    elseif string.match(vim.bo.filetype, "neo-tree") then
+      return
+    elseif string.match(vim.bo.filetype, "Trouble") then
+      return
+    end
+    vim.cmd("silent! update")
+  end,
 })
+
+-- Sync instead of :wq
+-- ref: https://github.com/lukas-reineke/lsp-format.nvim#wq-will-not-format-when-not-using-sync
+vim.cmd [[cabbrev wq execute "Format sync" <bar> wq]]
+
+-- Recognize terraform files
