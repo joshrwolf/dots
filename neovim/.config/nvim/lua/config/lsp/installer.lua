@@ -29,6 +29,8 @@ local function get_python_path(workspace)
 end
 
 function M.setup(servers, options)
+  require("neodev").setup({})
+
 	local lspconfig = require("lspconfig")
 
 	require("mason").setup()
@@ -48,10 +50,7 @@ function M.setup(servers, options)
 	for server_name, _ in pairs(servers) do
 		local opts = vim.tbl_deep_extend("force", options, servers[server_name] or {})
 
-		if server_name == "sumneko_lua" then
-			local luadev = require("lua-dev").setup({ lspconfig = opts })
-			lspconfig[server_name].setup(luadev)
-		elseif server_name == "rust_analyzer" then
+		if server_name == "rust_analyzer" then
 			require("rust-tools").setup({
 				server = {
 					capabilities = opts.capabilities,

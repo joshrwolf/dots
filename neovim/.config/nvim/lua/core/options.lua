@@ -64,9 +64,12 @@ let g:neovide_cursor_trail_length = 0.2
 -- Set additional filetypes
 g.do_filetype_lua = 1
 vim.filetype.add({
-  extension = {},
-  filename = {},
-  pattern = {
-    ["*.tfstate.*"] = "json",
-  },
+	extension = {},
+	filename = {},
+	pattern = {
+		["*.tfstate.*"] = "json",
+	},
 })
+
+-- Highlight trailing spaces
+vim.fn.matchadd("errorMsg", [[\s\+$]])

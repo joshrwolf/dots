@@ -1,7 +1,6 @@
 local M = {}
 
 local whichkey = require("which-key")
-local util = require("config.lsp.utils")
 
 local function keymappings(client, bufnr)
   local opts = { noremap = true, silent = true }

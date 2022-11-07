@@ -1,6 +1,16 @@
 local M = {}
 
 function M.setup()
+	local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
+	parser_config.cue = {
+		install_info = {
+			url = "https://github.com/eonpatapon/tree-sitter-cue", -- local path or git repo
+			files = { "src/parser.c", "src/scanner.c" },
+			branch = "main",
+		},
+		filetype = "cue", -- if filetype does not agrees with parser name
+	}
+
 	require("nvim-treesitter.configs").setup({
 		ensure_installed = "all",
 
@@ -12,7 +22,7 @@ function M.setup()
 
 		highlight = {
 			enable = true,
-			additional_vim_regex_highlighting = false,
+			additional_vim_regex_highlighting = { "markdown" },
 		},
 
 		textobjects = {
@@ -76,8 +86,20 @@ function M.setup()
 		-- rainbow = {},
 		-- autopairs = {},
 		-- autotag = {},
-		-- incremental_selection = {},
-		-- indent = {},
+
+		incremental_selection = {
+			enable = true,
+			keymaps = {
+				init_selection = "gnn",
+				node_incremental = "grn",
+				scope_incremental = "grc",
+				node_decremental = "grm",
+			},
+		},
+
+		indent = {
+			enable = true,
+		},
 	})
 end
 

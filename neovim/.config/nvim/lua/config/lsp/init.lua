@@ -154,13 +154,11 @@ function M.on_attach(client, bufnr)
   require("config.lsp.keymaps").setup(client, bufnr)
 
   -- Configure formatting
-  require("lsp-format").setup {}
-  require("lsp-format").on_attach(client)
+  -- require("lsp-format").setup {}
+  -- require("lsp-format").on_attach(client)
 end
 
-local capabilities = vim.lsp.protocol.make_client_capabilities()
--- capabilities.textDocument.completion.completionItem.snippetSupport = true
-M.capabilities = require("cmp_nvim_lsp").update_capabilities(capabilities)
+M.capabilities = require("cmp_nvim_lsp").default_capabilities()
 
 local opts = {
   on_attach = M.on_attach,

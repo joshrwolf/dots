@@ -23,8 +23,7 @@ function M.setup()
 		direction = "float",
 		close_on_exit = true,
 		float_opts = {
-			border = "single",
-			winblend = 3,
+			border = "curved",
 			highlights = {
 				border = "Normal",
 				background = "Normal",

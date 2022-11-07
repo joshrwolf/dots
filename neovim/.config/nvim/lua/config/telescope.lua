@@ -76,13 +76,14 @@ function M.setup()
 			},
 			frecency = {
 				ignore_patterns = { "*.git/*", "*/tmp/*" },
+				db_safe_mode = false,
 			},
 			["ui-select"] = {
 				require("telescope.themes").get_dropdown({}),
 			},
 			file_browser = {
 				theme = "ivy",
-				hijack_netrw = true,
+				-- hijack_netrw = true,
 				hidden = true,
 				mappings = {
 					["i"] = {
@@ -105,7 +106,6 @@ function M.setup()
 	telescope.load_extension("ui-select")
 	telescope.load_extension("live_grep_args")
 	telescope.load_extension("harpoon")
-	telescope.load_extension("persisted")
 end
 
 local previewers = require("telescope.previewers")

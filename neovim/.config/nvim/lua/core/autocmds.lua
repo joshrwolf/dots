@@ -67,6 +67,4 @@ autocmd({ "BufLeave", "FocusLost" }, {
 
 -- Sync instead of :wq
 -- ref: https://github.com/lukas-reineke/lsp-format.nvim#wq-will-not-format-when-not-using-sync
-vim.cmd [[cabbrev wq execute "Format sync" <bar> wq]]
-
--- Recognize terraform files
+-- vim.cmd [[cabbrev wq execute "Format sync" <bar> wq]]
