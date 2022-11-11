@@ -8,89 +8,9 @@
 #
 # All imports must either be absolute paths starting with `/`, or paths relative
 # to the user's home directory starting with `~/`.
-#import:
-#  - /path/to/alacritty.yml
-color_schemes:
-  frappe: &frappe
-    # Default colors
-    primary:
-      background: '#303446' # base
-      foreground: '#C6D0F5' # text
-      # Bright and dim foreground colors
-      dim_foreground: '#C6D0F5' # text
-      bright_foreground: '#C6D0F5' # text
+import:
+ - ~/.config/alacritty/nord.yml
 
-    # Cursor colors
-    cursor:
-      text: '#303446' # base
-      cursor: '#F2D5CF' # rosewater
-    vi_mode_cursor:
-      text: '#303446' # base
-      cursor: '#BABBF1' # lavender
-
-    # Search colors
-    search:
-      matches:
-        foreground: '#303446' # base
-        background: '#A5ADCE' # subtext0
-      focused_match:
-        foreground: '#303446' # base
-        background: '#A6D189' # green
-      footer_bar:
-        foreground: '#303446' # base
-        background: '#A5ADCE' # subtext0
-
-    # Keyboard regex hints
-    hints:
-      start:
-        foreground: '#303446' # base
-        background: '#E5C890' # yellow
-      end:
-        foreground: '#303446' # base
-        background: '#A5ADCE' # subtext0
-
-    # Selection colors
-    selection:
-      text: '#303446' # base
-      background: '#F2D5CF' # rosewater
-
-    # Normal colors
-    normal:
-      black:   '#51576D' # surface1
-      red:     '#E78284' # red
-      green:   '#A6D189' # green
-      yellow:  '#E5C890' # yellow
-      blue:    '#8CAAEE' # blue
-      magenta: '#F4B8E4' # pink
-      cyan:    '#81C8BE' # teal
-      white:   '#B5BFE2' # subtext1
-
-    # Bright colors
-    bright:
-      black:   '#626880' # surface2
-      red:     '#E78284' # red
-      green:   '#A6D189' # green
-      yellow:  '#E5C890' # yellow
-      blue:    '#8CAAEE' # blue
-      magenta: '#F4B8E4' # pink
-      cyan:    '#81C8BE' # teal
-      white:   '#A5ADCE' # subtext0
-
-    # Dim colors
-    dim:
-      black:   '#51576D' # surface1
-      red:     '#E78284' # red
-      green:   '#A6D189' # green
-      yellow:  '#E5C890' # yellow
-      blue:    '#8CAAEE' # blue
-      magenta: '#F4B8E4' # pink
-      cyan:    '#81C8BE' # teal
-      white:   '#B5BFE2' # subtext1
-
-    indexed_colors:
-      - { index: 16, color: '#EF9F76' }
-      - { index: 17, color: '#F2D5CF' }
-colors: *frappe
 
 # Any items in the `env` entry below will be added as
 # environment variables. Some entries may override variables
@@ -127,8 +47,8 @@ window:
   # Blank space added around the window in pixels. This padding is scaled
   # by DPI and the specified value is always added at both opposing sides.
   padding:
-    x: 15
-    y: 12
+    x: 10
+    y: 10
 
   # Spread additional padding evenly around the terminal content.
   #dynamic_padding: false
@@ -148,7 +68,7 @@ window:
   #
   # Window opacity as a floating point number from `0.0` to `1.0`.
   # The value `0.0` is completely transparent and `1.0` is opaque.
-  #opacity: 1.0
+  opacity: 1.0
 
   # Startup Mode (changes require restart)
   #
@@ -180,10 +100,11 @@ window:
   # and `light`. Set this to `None` to use the default theme variant.
   #gtk_theme_variant: None
 
-#scrolling:
+scrolling:
   # Maximum number of lines in the scrollback buffer.
   # Specifying '0' will disable scrolling.
-  #history: 10000
+  # Use tmux scrollback buffer for this
+  history: 0
 
   # Scrolling distance multiplier.
   #multiplier: 3
@@ -198,11 +119,11 @@ font:
     #   - (macOS) Menlo
     #   - (Linux/BSD) monospace
     #   - (Windows) Consolas
-    family: JetBrains Mono NL
+    family: FiraCode Nerd Font Mono
 
     # The `style` can be specified to pick a specific face.
     style: Regular
-    # weight: 1000
+    # weight: 100
 
   # Bold font face
   #bold:
@@ -238,14 +159,14 @@ font:
     #style: Bold Italic
 
   # Point size
-  size: 15.0
+  size: 14.0
 
   # Offset is the extra space around each character. `offset.y` can be thought
   # of as modifying the line spacing, and `offset.x` as modifying the letter
   # spacing.
   offset:
-   x: 1
-   y: 2
+   x: 0
+   y: 1
 
   # Glyph offset determines the locations of the glyphs within their cells with
   # the default being at the bottom. Increasing `x` moves the glyph to the
@@ -838,7 +759,35 @@ draw_bold_text_with_bright_colors: true
 #
 # If the same trigger is assigned to multiple actions, all of them are executed
 # in the order they were defined in.
-#key_bindings:
+key_bindings:
+  - { key: Key1, mods: Command, chars: "\x01\x31" }
+  - { key: Key2, mods: Command, chars: "\x01\x32" }
+  - { key: Key3, mods: Command, chars: "\x01\x33" }
+  - { key: Key4, mods: Command, chars: "\x01\x34" }
+  - { key: Key5, mods: Command, chars: "\x01\x35" }
+  - { key: Key8, mods: Command, chars: "\x01\x38" }
+  - { key: Key9, mods: Command, chars: "\x01\x39" }
+  - { key: Key0, mods: Command, chars: "\x01\x30" }
+
+  # New tmux session
+  - { key: T, mods: Command, chars: "\x01\x63" }
+
+  # Last tmux session
+  - { key: Z, mods: Command, chars: "\x01\x7a" }
+
+  # Toggle maximize window
+  - { key: M, mods: Command, chars: "\x01\x6d" }
+
+  # Fuzzy find zoxide sessionizer
+  - { key: F, mods: Command, chars: "\x01\x66" }
+
+  # Magit sidebar popup
+  - { key: G, mods: Command, chars: "\x01\x67" }
+
+  # cmd-p
+  - { key: P, mods: Command, chars: "\x10" }
+
+
   #- { key: Paste,                                       action: Paste          }
   #- { key: Copy,                                        action: Copy           }
   #- { key: L,         mods: Control,                    action: ClearLogNotice }
