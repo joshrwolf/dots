@@ -4,9 +4,10 @@ if impatient_ok then
 end
 
 for _, source in ipairs({
+	"core.globals",
+	"core.plugins",
 	"core.options",
 	"core.keymaps",
-	"core.plugins",
 	"core.autocmds",
 }) do
 	local status_ok, fault = pcall(require, source)

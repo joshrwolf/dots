@@ -4,6 +4,7 @@ function M.setup()
 	local actions = require("telescope.actions")
 	local trouble = require("trouble.providers.telescope")
 	local telescope = require("telescope")
+	local lga_actions = require("telescope-live-grep-args.actions")
 
 	local tfb_actions = require("telescope").extensions.file_browser.actions
 
@@ -21,12 +22,18 @@ function M.setup()
 				"--hidden",
 				"-u",
 			},
-			layout_strategy = "horizontal",
+			layout_strategy = "vertical",
 			layout_config = {
 				horizontal = {
 					prompt_position = "bottom",
 					preview_width = 0.55,
 					results_width = 0.8,
+				},
+				vertical = {
+					width = 0.95,
+					height = 0.95,
+					preview_height = 0.65,
+					preview_cutoff = 0,
 				},
 			},
 			mappings = {
@@ -43,6 +50,7 @@ function M.setup()
 					["<C-s>"] = actions.file_split,
 					["<C-v>"] = actions.file_vsplit,
 					["<C-t>"] = actions.file_tab,
+					["<C-q>"] = actions.send_to_qflist,
 				},
 			},
 			set_env = { ["COLORTERM"] = "truecolor" },
@@ -94,6 +102,21 @@ function M.setup()
 						["<c-p>"] = tfb_actions.move,
 						["<c-y>"] = tfb_actions.copy,
 						["<c-a>"] = tfb_actions.select_all,
+					},
+				},
+			},
+			live_grep_args = {
+				auto_quoting = true,
+				hidden = true,
+				file_ignore_patterns = {
+					".git/",
+					"**/node_modules/**",
+					"**/.terraform/**",
+				},
+				mappings = {
+					i = {
+						["<C-i>"] = lga_actions.quote_prompt(),
+						["<C-k>"] = actions.move_selection_previous,
 					},
 				},
 			},

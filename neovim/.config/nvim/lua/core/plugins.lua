@@ -35,6 +35,7 @@ local conf = {
 	profile = {
 		enable = true,
 		threshold = 0,
+		max_jobs = 20,
 	},
 	display = {
 		open_fn = function()
@@ -77,18 +78,18 @@ return packer.startup(function(use)
 
 	-- Bufferline
 
-	-- Commenting
-	use({
-		"numToStr/Comment.nvim",
-		module = {
-			"Comment",
-			"Comment.api",
-		},
-		keys = { "gc", "gb", "g<", "g>" },
-		config = function()
-			require("Comment").setup({})
-		end,
-	})
+	-- -- Commenting
+	-- use({
+	-- 	"numToStr/Comment.nvim",
+	-- 	module = {
+	-- 		"Comment",
+	-- 		"Comment.api",
+	-- 	},
+	-- 	keys = { "gc", "gb", "g<", "g>" },
+	-- 	config = function()
+	-- 		require("Comment").setup({})
+	-- 	end,
+	-- })
 
 	-- File explorer
 	use({
@@ -103,6 +104,7 @@ return packer.startup(function(use)
 	})
 
 	-- Statusline
+
 	use({
 		"feline-nvim/feline.nvim",
 		after = "nvim-web-devicons",
@@ -110,6 +112,13 @@ return packer.startup(function(use)
 			require("config.feline").setup()
 		end,
 	})
+
+	-- use({
+	-- 	"rebelot/heirline.nvim",
+	-- 	config = function()
+	-- 		require("config.heirline").setup()
+	-- 	end,
+	-- })
 
 	-- Colorizer
 	use({
@@ -154,6 +163,11 @@ return packer.startup(function(use)
 		config = function()
 			require("config.lsp").setup()
 		end,
+	})
+
+	use({
+		"SmiteshP/nvim-navic",
+		requires = "neovim/nvim-lspconfig",
 	})
 
 	-- Formatting and linting
@@ -210,18 +224,18 @@ return packer.startup(function(use)
 		},
 	})
 
-	use({
-		"windwp/nvim-autopairs",
-		opt = true,
-		event = "InsertEnter",
-		module = { "nvim-autopairs.completion.cmp", "nvim-autopairs" },
-		config = function()
-			require("nvim-autopairs").setup({
-				-- map_cr = false,
-				enable_check_bracket_line = false,
-			})
-		end,
-	})
+	-- use({
+	-- 	"windwp/nvim-autopairs",
+	-- 	opt = true,
+	-- 	event = "InsertEnter",
+	-- 	module = { "nvim-autopairs.completion.cmp", "nvim-autopairs" },
+	-- 	config = function()
+	-- 		require("nvim-autopairs").setup({
+	-- 			-- map_cr = false,
+	-- 			enable_check_bracket_line = false,
+	-- 		})
+	-- 	end,
+	-- })
 
 	-- Git integrations
 	use({
@@ -298,8 +312,6 @@ return packer.startup(function(use)
 		end,
 	})
 
-	use({ "yioneko/nvim-yati", requires = "nvim-treesitter/nvim-treesitter" })
-
 	-- Fuzzy Finder
 	use({
 		"nvim-telescope/telescope.nvim",
@@ -359,6 +371,14 @@ return packer.startup(function(use)
 		end,
 	})
 
+	-- Hydra
+	use({
+		"anuvyklack/hydra.nvim",
+		config = function()
+			require("config.hydra")
+		end,
+	})
+
 	-- go
 	-- use {
 	--   "fatih/vim-go",
@@ -407,7 +427,6 @@ return packer.startup(function(use)
 		end,
 	})
 
-	-- Trials
 	use({
 		"kylechui/nvim-surround",
 		config = function()
@@ -415,36 +434,37 @@ return packer.startup(function(use)
 		end,
 	})
 
-	use({
-		"TimUntersberger/neogit",
-		cmd = "Neogit",
-		requires = {
-			"nvim-lua/plenary.nvim",
-			{
-				"sindrets/diffview.nvim",
-				config = function()
-					local actions = require("diffview.actions")
-					require("diffview").setup({
-						keymaps = {
-							file_panel = {
-								["k"] = actions.select_prev_entry,
-								["j"] = actions.select_next_entry,
-								["s"] = actions.toggle_stage_entry,
-								["u"] = actions.toggle_stage_entry,
-								["<c-u>"] = actions.scroll_view(-0.25),
-								["<c-d>"] = actions.scroll_view(0.25),
-							},
-						},
-					})
-				end,
-			},
-		},
-		config = function()
-			require("neogit").setup({
-				require("config.neogit").setup(),
-			})
-		end,
-	})
+	-- Trials
+	-- use({
+	-- 	"TimUntersberger/neogit",
+	-- 	cmd = "Neogit",
+	-- 	requires = {
+	-- 		"nvim-lua/plenary.nvim",
+	-- 		{
+	-- 			"sindrets/diffview.nvim",
+	-- 			config = function()
+	-- 				local actions = require("diffview.actions")
+	-- 				require("diffview").setup({
+	-- 					keymaps = {
+	-- 						file_panel = {
+	-- 							["k"] = actions.select_prev_entry,
+	-- 							["j"] = actions.select_next_entry,
+	-- 							["s"] = actions.toggle_stage_entry,
+	-- 							["u"] = actions.toggle_stage_entry,
+	-- 							["<c-u>"] = actions.scroll_view(-0.25),
+	-- 							["<c-d>"] = actions.scroll_view(0.25),
+	-- 						},
+	-- 					},
+	-- 				})
+	-- 			end,
+	-- 		},
+	-- 	},
+	-- 	config = function()
+	-- 		require("neogit").setup({
+	-- 			require("config.neogit").setup(),
+	-- 		})
+	-- 	end,
+	-- })
 
 	use("tpope/vim-fugitive")
 
@@ -467,13 +487,6 @@ return packer.startup(function(use)
 	-- Fix the CursorHold performance bug
 	use("antoinemadec/FixCursorHold.nvim")
 
-	use({
-		"nanozuki/tabby.nvim",
-		config = function()
-			require("config.tabby").setup()
-		end,
-	})
-
 	-- Obsidian
 	-- use({
 	--   "epwalsh/obsidian.nvim",
@@ -488,26 +501,63 @@ return packer.startup(function(use)
 	-- })
 
 	-- Colorscheme
+
+	-- use({
+	-- 	"EdenEast/nightfox.nvim",
+	-- 	config = function()
+	-- 		require("config.themes.nightfox").setup()
+	-- 	end,
+	-- })
+
+	-- use({
+	-- 	"catppuccin/nvim",
+	-- 	as = "catppuccin",
+	-- 	config = function()
+	-- 		require("config.themes.catppuccin").setup()
+	-- 	end,
+	-- })
+
 	use({
-		"EdenEast/nightfox.nvim",
+		"gbprod/nord.nvim",
 		config = function()
-			require("config.colors.nightfox").setup()
+			require("config.themes.nord").setup()
 		end,
 	})
 
-	use({
-		"catppuccin/nvim",
-		as = "catppuccin",
-		config = function()
-			require("config.colors.catppuccin").setup()
-		end,
-	})
+	-- use({
+	-- 	"rebelot/kanagawa.nvim",
+	-- 	config = function()
+	-- 		require("config.themes.kanagawa").setup()
+	-- 	end,
+	-- })
 
+	-- use({
+	-- 	"rmehri01/onenord.nvim",
+	-- 	config = function()
+	-- 		require("config.themes.onenord").setup()
+	-- 	end,
+	-- })
+
+	-- -- Smoothscroll
+	-- use({
+	-- 	"declancm/cinnamon.nvim",
+	-- 	config = function()
+	-- 		require("config.cinnamon").setup()
+	-- 	end,
+	-- })
+
+	-- Better quickfix
 	use({
-		"rmehri01/onenord.nvim",
-		config = function()
-			require("onenord").setup()
-		end,
+		"kevinhwang91/nvim-bqf",
+		ft = "qf",
+		requires = {
+			{
+				"junegunn/fzf",
+				run = function()
+					vim.fn["fzf#install"]()
+				end,
+			},
+		},
 	})
 
 	-- use({ 'shaunsingh/nord.nvim',
@@ -525,7 +575,9 @@ return packer.startup(function(use)
 	use({
 		"echasnovski/mini.nvim",
 		config = function()
-			require("mini.trailspace").setup()
+			-- require("mini.trailspace").setup()
+			require("mini.pairs").setup()
+			require("mini.comment").setup()
 		end,
 	})
 

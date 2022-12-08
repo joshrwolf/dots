@@ -48,10 +48,29 @@ local components = {
 }
 
 function M.setup()
+	local navic = require("nvim-navic")
+
 	require("feline").setup({
 		disable = { filetypes = { "^NvimTree$", "^neo%-tree$", "^dashboard$", "^Outline$", "^aerial$" } },
 		theme = hl.group("StatusLine"),
 		components = components,
+	})
+
+	require("feline").winbar.setup({
+		components = {
+			active = {
+				{
+					{
+						provider = function()
+							return navic.get_location()
+						end,
+						enabled = function()
+							return navic.is_available()
+						end,
+					},
+				},
+			},
+		},
 	})
 end
 

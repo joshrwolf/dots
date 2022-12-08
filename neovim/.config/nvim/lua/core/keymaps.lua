@@ -1,4 +1,5 @@
-local keymap = vim.api.nvim_set_keymap
+-- local keymap = vim.api.nvim_set_keymap
+local keymap = vim.keymap.set
 local dopts = { noremap = true, silent = true }
 local eopts = { noremap = true, expr = true, silent = true }
 
@@ -16,6 +17,10 @@ keymap("n", "*", "*N", dopts)
 keymap("n", "n", "nzz", dopts)
 keymap("n", "N", "Nzz", dopts)
 
+-- -- Keep cursor centered when paging
+-- keymap("n", "<C-d>", "<cmd>lua Scroll('<C-d>', 1, 1)<CR>zz", dopts)
+-- keymap("n", "<C-u>", "<cmd>lua Scroll('<C-u>', 1, 1)<CR>zz", dopts)
+
 -- Center search results
 keymap("n", "k", "v:count == 0 ? 'gk' : 'k'", eopts)
 keymap("n", "j", "v:count == 0 ? 'gj' : 'j'", eopts)
@@ -25,11 +30,17 @@ keymap("v", "<", "<gv", dopts)
 keymap("v", ">", ">gv", dopts)
 
 -- Paste over currently select text without yanking it
-keymap("v", "p", '"_dP', dopts)
+keymap("v", "p", '"_dp', dopts)
+keymap("v", "P", '"_dP', dopts)
 
 -- Switch buffer
 keymap("n", "<S-h>", ":bprevious<CR>", dopts)
 keymap("n", "<S-l>", ":bnext<CR>", dopts)
+
+-- -- Move over a closing element in insert mode
+keymap("i", "<C-l>", function()
+	return require("utils").escapePair()
+end, dopts)
 
 -- Cancel search highlights with ESC
 keymap("n", "<ESC>", ":nohlsearch<Bar>:echo<CR>", dopts)
@@ -48,7 +59,7 @@ keymap("n", "<C-p>", "<cmd>lua require('telescope.builtin').find_files()<cr>", d
 
 -- Open links under the cursor
 if vim.fn.has("macunix") == 1 then
-  keymap("n", "gx", "<cmd>silent execute '!open ' . shellescape('<cWORD>')<CR>", dopts)
+	keymap("n", "gx", "<cmd>silent execute '!open ' . shellescape('<cWORD>')<CR>", dopts)
 else
-  keymap("n", "gx", "<cmd>silent execute '!xdg-open ' . shellescape('<cWORD>')<CR>", dopts)
+	keymap("n", "gx", "<cmd>silent execute '!xdg-open ' . shellescape('<cWORD>')<CR>", dopts)
 end

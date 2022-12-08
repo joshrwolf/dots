@@ -3,6 +3,19 @@ local autocmd = vim.api.nvim_create_autocmd -- Create autocommand
 local augroup = vim.api.nvim_create_augroup -- Create autocommand group
 local create_command = vim.api.nvim_create_user_command
 
+--- Remove all trailing whitespace on save
+local TrimWhiteSpaceGrp = augroup("TrimWhiteSpaceGrp", { clear = true })
+autocmd("BufWritePre", {
+	command = [[:%s/\s\+$//e]],
+	group = TrimWhiteSpaceGrp,
+})
+
+-- go to last loc when opening a buffer
+autocmd(
+	"BufReadPost",
+	{ command = [[if line("'\"") > 1 && line("'\"") <= line("$") | execute "normal! g`\"" | endif]] }
+)
+
 -- augroup("highlighturl", { clear = true })
 -- autocmd({ "VimEnter", "FileType", "BufEnter", "WinEnter" }, {
 --   desc = "URL Highlighting",
@@ -22,22 +35,22 @@ autocmd CursorHold * lua vim.diagnostic.open_float(nil, { focusable = false })
 -- Highlight on yank
 augroup("YankHighlight", { clear = true })
 autocmd("TextYankPost", {
-  group = "YankHighlight",
-  callback = function()
-    vim.highlight.on_yank({ higroup = "IncSearch", timeout = "250" })
-  end,
+	group = "YankHighlight",
+	callback = function()
+		vim.highlight.on_yank({ higroup = "IncSearch", timeout = "250" })
+	end,
 })
 
 -- Don't auto comment new lines
 autocmd("BufEnter", {
-  pattern = "*",
-  command = "set fo-=c fo-=r fo-=o",
+	pattern = "*",
+	command = "set fo-=c fo-=r fo-=o",
 })
 
 -- Properly detect *.cue
 vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
-  pattern = { "*.cue" },
-  command = "set filetype=cue",
+	pattern = { "*.cue" },
+	command = "set filetype=cue",
 })
 
 -- Close nvim if NvimTree is the only remaining buffer
@@ -50,19 +63,19 @@ autocmd({ "TermOpen", "BufWinEnter", "BufEnter" }, { pattern = "term://*", comma
 
 -- Autosave on lose focus, except for certain filetypes
 autocmd({ "BufLeave", "FocusLost" }, {
-  pattern = "*",
-  callback = function()
-    if string.match(vim.bo.filetype, "Neogit") then
-      return
-    elseif string.match(vim.bo.filetype, "Telescope") then
-      return
-    elseif string.match(vim.bo.filetype, "neo-tree") then
-      return
-    elseif string.match(vim.bo.filetype, "Trouble") then
-      return
-    end
-    vim.cmd("silent! update")
-  end,
+	pattern = "*",
+	callback = function()
+		if string.match(vim.bo.filetype, "Neogit") then
+			return
+		elseif string.match(vim.bo.filetype, "Telescope") then
+			return
+		elseif string.match(vim.bo.filetype, "neo-tree") then
+			return
+		elseif string.match(vim.bo.filetype, "Trouble") then
+			return
+		end
+		vim.cmd("silent! update")
+	end,
 })
 
 -- Sync instead of :wq

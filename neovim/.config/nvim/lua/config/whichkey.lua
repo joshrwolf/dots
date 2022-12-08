@@ -55,7 +55,6 @@ function M.setup()
 	-- Register leader based mappings
 	whichkey.register({
 		w = { "<cmd>:update<cr>", "Save" },
-		q = { "<cmd>q<cr>", "Quit" },
 
 		[","] = { "<cmd>lua require('telescope.builtin').find_files()<cr>", "Find Files" },
 		["."] = { "<cmd>lua require('telescope.builtin').buffers()<cr>", "Buffers" },
@@ -68,7 +67,7 @@ function M.setup()
 		f = {
 			name = "Find",
 			f = { "<cmd>lua require('telescope.builtin').find_files()<cr>", "Files" },
-			w = { "<cmd>lua require('telescope.builtin').live_grep()<cr>", "Live Grep" },
+			w = { "<cmd>lua require('telescope').extensions.live_grep_args.live_grep_args()<cr>", "Live Grep" },
 			b = { "<cmd>lua require('telescope.builtin').buffers()<cr>", "Bufers" },
 			d = { "<cmd>lua require('telescope').extensions.file_browser.file_browser()<cr>", "File Browser" },
 			a = {

@@ -1,0 +1,11 @@
+#!/bin/sh
+
+P=$(tmux show -wqv @magit)
+
+if [ -n "$P" ] && tmux lsp -F'#{pane_id}' | grep -q ^$P; then
+  tmux killp -t$P
+  tmux set -wu @magit
+else
+  P=$(tmux splitw -h -c "#{pane_current_path}" -PF'#{pane_id}' -- "emacsclient -t -a emacs --eval '(magit)' -nw")
+  tmux set -w @magit "$P"
+fi

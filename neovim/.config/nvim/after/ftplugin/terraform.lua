@@ -5,3 +5,4 @@ bo.tabstop = 2
 bo.softtabstop = 2
 bo.textwidth = 120
 
+vim.bo.commentstring = "#%s"

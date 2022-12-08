@@ -24,7 +24,7 @@ function M.setup()
 			local maps = {
 				g = {
 					name = "Git",
-					p = { "<cmd>lua require('gitsigns').preview_hunk_inline()<cr>", "Preview Hunk" },
+					p = { "<cmd>lua require('gitsigns').preview_hunk()<cr>", "Preview Hunk" },
 					-- l = { "<cmd>lua require('gitsigns').blame_line()<cr>", "Blame" },
 					s = { "<cmd>lua require('gitsigns').stage_hunk()<cr>", "Stage Hunk" },
 					u = { "<cmd>lua require('gitsigns').undo_stage_hunk()<cr>", "Undo Stage Hunk" },
@@ -36,7 +36,7 @@ function M.setup()
 		end,
 		preview_config = {
 			border = "single",
-			style = "minimal",
+			-- style = "minimal",
 			relative = "cursor",
 			row = 0,
 			col = 1,
