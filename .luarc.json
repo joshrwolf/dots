@@ -1,5 +1,6 @@
 {
     "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
+    "Lua.completion.autoRequire": false,
     "Lua.workspace.library": [
         "/Users/wolf/.local/share/nvim/site/pack/packer/start/neodev.nvim/types/stable",
         "/opt/homebrew/Cellar/neovim/0.8.0/share/nvim/runtime",

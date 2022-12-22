@@ -123,8 +123,11 @@ font:
     # family: FiraCode Nerd Font Mono
     # style: Regular
 
-    family: OperatorMono Nerd Font
-    style: Book
+    family: FiraCode Nerd Font Mono
+    style: Regular
+
+    # family: BlexMono Nerd Font Mono
+    # style: Book
 
     # weight: 100
 
@@ -134,10 +137,10 @@ font:
     #
     # If the bold family is not specified, it will fall back to the
     # value specified for the normal font.
-    family: OperatorMono Nerd Font
+    family: FiraCode Nerd Font Mono
 
     # The `style` can be specified to pick a specific face.
-    style: Medium
+    style: Bold
 
   # Italic font face
   italic:
@@ -145,10 +148,10 @@ font:
     #
     # If the italic family is not specified, it will fall back to the
     # value specified for the normal font.
-    family: OperatorMono Nerd Font
+    family: FiraCode Nerd Font Mono
 
     # The `style` can be specified to pick a specific face.
-    style: Book Italic
+    style: Italic
 
   # Bold italic font face
   bold_italic:
@@ -156,21 +159,21 @@ font:
     #
     # If the bold italic family is not specified, it will fall back to the
     # value specified for the normal font.
-    family: OperatorMono Nerd Font
+    family: FiraCode Nerd Font Mono
 
     # The `style` can be specified to pick a specific face.
     style: Bold Italic
 
   # Point size
   # size: 14.75
-  size: 15
+  size: 14
 
   # Offset is the extra space around each character. `offset.y` can be thought
   # of as modifying the line spacing, and `offset.x` as modifying the letter
   # spacing.
   offset:
    x: 0
-   y: 1
+   y: 8
 
   # Glyph offset determines the locations of the glyphs within their cells with
   # the default being at the bottom. Increasing `x` moves the glyph to the

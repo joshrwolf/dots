@@ -6,7 +6,7 @@ let mapleader = " "
 
 " Plugins
 set commentary
-set NERDTree
+" set NERDTree
 set ideajoin
 set highlightedyank
 set argtextobj
@@ -49,18 +49,40 @@ nmap <C-l> <c-w>l
 nmap <C-o> <Action>(Back)
 nmap <C-i> <Action>(Forward)
 
+nmap <C-\> <Action>(ActivateProjectToolWindow)
+
+" Finds
 nmap <leader>fa <Action>(GotoAction)
 nmap <leader>ff <Action>(GotoFile)
+nmap <leader>fo <Action>(RecentFiles)
+nmap <leader>fd <Action>(ShowNavBar)
+nmap <leader>fs <Action>(FileStructurePopup)
+nmap <leader>fw <Action>(FindInPath)
+nmap <leader>fr <Action>(ReplaceInPath)
 
-nmap <C-\> <Action>(ActivateTerminalToolWindow)
+" nmap <C-\> <Action>(ActivateTerminalToolWindow)
 
-nmap [[ <Action>(MethodUp)
-nmap ]] <Action>(MethodDown)
-nmap [e <Action>(GotoPreviousError)
-nmap ]e <Action>(GotoNextError)
+nmap [d <Action>(GotoPreviousError)
+nmap ]d <Action>(GotoNextError)
+
+nmap [f <Action>(MethodUp)
+nmap ]f <Action>(Methdown)
+
+nmap [c <Action>(VcsShowPrevChangeMarker)
+nmap ]c <Action>(VcsShowNextChangeMarker)
 
 nmap zc <Action>(CollapseRegion)
 nmap zo <Action>(ExpandRegion)
+
+nmap H <Action>(PreviousTab)
+nmap L <Action>(NextTab)
+
+" Git
+nmap <leader>gg <Action>(VcsGroups)
+nmap <leader>gc <Action>(CheckinProject)
+nmap <leader>gb <Action>(Git.Branches)
+nmap <leader>gd <Action>(Compare.SameVersion)
+nmap <leader>gB <Action>(Git.CompareWithBranch)
 
 " Code navigation
 map gd <Action>(GotoDeclaration)
