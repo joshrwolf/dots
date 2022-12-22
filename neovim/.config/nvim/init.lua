@@ -1,17 +1,40 @@
-local impatient_ok, impatient = pcall(require, "impatient")
-if impatient_ok then
-	impatient.enable_profile()
+local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
+if not vim.loop.fs_stat(lazypath) then
+	vim.fn.system({
+		"git",
+		"clone",
+		"--filter=blob:none",
+		"--single-branch",
+		"https://github.com/folke/lazy.nvim.git",
+		lazypath,
+	})
 end
+vim.opt.runtimepath:prepend(lazypath)
 
-for _, source in ipairs({
-	"core.globals",
-	"core.plugins",
-	"core.options",
-	"core.keymaps",
-	"core.autocmds",
-}) do
-	local status_ok, fault = pcall(require, source)
-	if not status_ok then
-		vim.api.nvim_err_writeln("Failed to load " .. source .. "\n\n" .. fault)
-	end
-end
+vim.g.mapleader = " "
+vim.g.maplocalleader = " "
+
+require("lazy").setup("wolf.plugins", {
+	defaults = { lazy = true },
+	checker = {
+		enabled = true,
+		notify = false,
+	},
+	performance = {
+		rtp = {
+			disabled_plugins = {
+				"gzip",
+				"matchit",
+				"matchparen",
+				"netrwPlugin",
+				"tarPlugin",
+				"tohtml",
+				"tutor",
+				"zipPlugin",
+			},
+		},
+	},
+})
+
+require("wolf.options")
+require("wolf.mappings")
