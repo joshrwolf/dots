@@ -34,6 +34,7 @@ function M.config()
 					g = {
 						p = { gs.preview_hunk, "Preview Hunk" },
 						r = { gs.reset_hunk, "Reset Hunk" },
+						d = { gs.diffthis, "Diff File" },
 					},
 				},
 				["[c"] = { gs.prev_hunk, "Prev Hunk" },

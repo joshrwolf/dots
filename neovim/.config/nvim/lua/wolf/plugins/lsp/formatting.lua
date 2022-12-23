@@ -6,6 +6,7 @@ function M.setup(client, buf)
 
 	local fmt = nls.builtins.formatting
 	local dgn = nls.builtins.diagnostics
+	local ca = nls.builtins.code_actions
 
 	nls.setup({
 		debounce = 200,
@@ -29,11 +30,23 @@ function M.setup(client, buf)
 		sources = {
 			-- Formatters
 			fmt.stylua,
+			fmt.terraform_fmt,
+			fmt.goimports,
+			fmt.gofumpt,
+			fmt.rustfmt,
 
-			-- Linters
+			fmt.trim_whitespace,
+			fmt.trim_newlines,
+
+			-- Code Actions
+			ca.shellcheck,
+			ca.gitrebase,
+			-- ca.gomodifytags,
 
 			-- Diagnostics
 			dgn.actionlint,
+			dgn.buf,
+			dgn.vale,
 		},
 	})
 end

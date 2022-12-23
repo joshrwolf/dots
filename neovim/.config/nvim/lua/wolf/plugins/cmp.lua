@@ -11,6 +11,7 @@ local M = {
 		"lukas-reineke/cmp-rg",
 		"L3MON4D3/LuaSnip",
 		"saadparwaiz1/cmp_luasnip",
+		"petertriho/cmp-git",
 	},
 }
 
@@ -19,6 +20,10 @@ function M.config()
 
 	local cmp = require("cmp")
 	local luasnip = require("luasnip")
+
+	require("cmp_git").setup({
+		filetypes = { "*" },
+	})
 
 	cmp.setup({
 		completion = {
@@ -43,9 +48,11 @@ function M.config()
 		sources = {
 			{ name = "nvim_lsp" },
 			{ name = "nvim_lsp_signature_help" },
-			{ name = "buffer", keyword_length = 4 },
 			{ name = "luasnip" },
+			{ name = "path" },
+			{ name = "buffer", keyword_length = 4 },
 			{ name = "rg", keyword_length = 5 },
+			{ name = "git" }, -- only triggers on @,#,!,:
 		},
 		formatting = {
 			format = function(_, vim_item)
@@ -55,6 +62,13 @@ function M.config()
 				return vim_item
 			end,
 		},
+	})
+
+	cmp.setup.filetype("gitcommit", {
+		sources = cmp.config.sources({
+			{ name = "git" },
+			{ name = "buffer" },
+		}),
 	})
 end
 

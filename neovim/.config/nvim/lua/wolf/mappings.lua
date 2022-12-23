@@ -28,11 +28,19 @@ vim.keymap.set("v", ">", ">gv")
 
 -- Register leader keys
 wk.register({
+	[","] = { require("telescope.builtin").buffers, "Find Buffers" },
+	["<space>"] = { require("telescope.builtin").find_files, "Find Files" },
+
 	f = {
 		name = "+file",
-		f = { require("telescope.builtin").find_files, "Find file" },
-		u = { "<cmd>lua require('telescope').extensions.undo.undo()<cr>", "Find undos" },
+		f = { require("telescope.builtin").find_files, "File" },
+		b = { require("telescope.builtin").buffers, "Buffers" },
+		o = { require("telescope.builtin").oldfiles, "Old" },
+		w = { require("telescope.builtin").live_grep, "Words" },
+		h = { require("telescope.builtin").help_tags, "Help" },
+		u = { "<cmd>lua require('telescope').extensions.undo.undo()<cr>", "Undos" },
 		t = { "<cmd>TodoTelescope<cr>", "Todos" },
+		["."] = { require("telescope.builtin").resume, "Resume" },
 	},
 	p = {
 		name = "+plugins",
@@ -41,17 +49,25 @@ wk.register({
 	},
 	g = {
 		name = "+git",
-		g = { "<cmd>:G<cr>", "Git" },
+		g = { "<cmd>:0Git<cr>", "Git" },
 		b = { require("telescope.builtin").git_branches, "Branches" },
 	},
+
+	j = { require("harpoon.ui").toggle_quick_menu, "Harpoon UI" },
+	a = { require("harpoon.mark").add_file, "Add Harpoon File" },
+	["1"] = { "<cmd>lua require('harpoon.ui').nav_file(1)<cr>", "Nav 1" },
+	["2"] = { "<cmd>lua require('harpoon.ui').nav_file(2)<cr>", "Nav 2" },
 }, { prefix = "<leader>" })
 
 -- Register non leader keys
 wk.register({
-	["\\"] = { "<cmd>NnnPicker<cr>", "Picker" },
+	["\\"] = { "<cmd>NnnPicker %:p:h<cr>", "Picker" },
 	-- ["]q"] = { vim.}
 	["[b"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
 	["H"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
 	["]b"] = { "<cmd>:bnext<cr>", "Next Buffer" },
 	["L"] = { "<cmd>:bnext<cr>", "Next Buffer" },
+
+	["]q"] = { "<cmd>:cnext<cr>", "Next Quickfix" },
+	["[q"] = { "<cmd>:cprev<cr>", "Prev Quickfix" },
 })

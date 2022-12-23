@@ -1,5 +1,5 @@
 return {
-	"folke/which-key.nvim",
+	{ "folke/which-key.nvim" },
 	{
 		"christoomey/vim-tmux-navigator",
 		config = function()
@@ -7,6 +7,7 @@ return {
 		end,
 		lazy = false,
 	},
+	{ "ThePrimeagen/harpoon" },
 	{
 		"luukvbaal/nnn.nvim",
 		cmd = "NnnPicker",
@@ -28,6 +29,6 @@ return {
 	},
 	{
 		"tpope/vim-fugitive",
-		lazy = false,
+		cmd = { "Git" },
 	},
 }

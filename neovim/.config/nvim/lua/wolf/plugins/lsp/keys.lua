@@ -37,6 +37,7 @@ function M.setup(client, buffer)
 		},
 		g = {
 			name = "+goto",
+			a = { vim.lsp.buf.code_action, "Code Action" },
 			d = { require("telescope.builtin").lsp_definitions, "Definition" },
 			r = { require("telescope.builtin").lsp_references, "References" },
 			i = { require("telescope.builtin").lsp_implementations, "Implementations" },
