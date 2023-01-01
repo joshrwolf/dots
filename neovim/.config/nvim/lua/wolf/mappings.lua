@@ -34,13 +34,20 @@ wk.register({
 	f = {
 		name = "+file",
 		f = { require("telescope.builtin").find_files, "File" },
+		d = { "<cmd>Telescope file_browser path=%:p:h<cr>", "Browser" },
 		b = { require("telescope.builtin").buffers, "Buffers" },
 		o = { require("telescope.builtin").oldfiles, "Old" },
-		w = { require("telescope.builtin").live_grep, "Words" },
+		w = { require("telescope").extensions.live_grep_args.live_grep_args, "Words" },
 		h = { require("telescope.builtin").help_tags, "Help" },
 		u = { "<cmd>lua require('telescope').extensions.undo.undo()<cr>", "Undos" },
 		t = { "<cmd>TodoTelescope<cr>", "Todos" },
 		["."] = { require("telescope.builtin").resume, "Resume" },
+		n = {
+			name = "+notes",
+			n = { "<cmd>ObsidianNew<cr>", "New Obsidian Note" },
+			d = { "<cmd>ObsidianToday<cr>", "Daily Obsidian Note" },
+			s = { "<cmd>ObsidianYesterday<cr>", "Yesterday's Obsidian Note" },
+		},
 	},
 	p = {
 		name = "+plugins",
@@ -49,7 +56,7 @@ wk.register({
 	},
 	g = {
 		name = "+git",
-		g = { "<cmd>:0Git<cr>", "Git" },
+		g = { "<cmd>Neogit kind=replace<cr>", "Git" },
 		b = { require("telescope.builtin").git_branches, "Branches" },
 	},
 
@@ -61,13 +68,14 @@ wk.register({
 
 -- Register non leader keys
 wk.register({
-	["\\"] = { "<cmd>NnnPicker %:p:h<cr>", "Picker" },
+	["\\"] = { require("telescope").extensions.file_browser.file_browser, "Picker" },
 	-- ["]q"] = { vim.}
 	["[b"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
 	["H"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
 	["]b"] = { "<cmd>:bnext<cr>", "Next Buffer" },
 	["L"] = { "<cmd>:bnext<cr>", "Next Buffer" },
-
 	["]q"] = { "<cmd>:cnext<cr>", "Next Quickfix" },
 	["[q"] = { "<cmd>:cprev<cr>", "Prev Quickfix" },
+	["[t"] = { "<cmd>:tprev<cr>", "Prev Tab" },
+	["]t"] = { "<cmd>:tnext<cr>", "Next Tab" },
 })

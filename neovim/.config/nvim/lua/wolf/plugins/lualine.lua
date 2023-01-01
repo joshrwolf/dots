@@ -1,11 +1,12 @@
 local M = {
 	"nvim-lualine/lualine.nvim",
+	event = "VeryLazy",
 	dependencies = {
 		"kyazdani42/nvim-web-devicons",
 	},
 }
 
-function M.init()
+function M.config()
 	require("lualine").setup({
 		options = {
 			theme = "nord",
@@ -35,7 +36,9 @@ function M.init()
 			lualine_z = {},
 		},
 		tabline = {},
-		winbar = {},
+		winbar = {
+			lualine_a = {},
+		},
 		inactive_winbar = {},
 		extensions = {
 			"fugitive",

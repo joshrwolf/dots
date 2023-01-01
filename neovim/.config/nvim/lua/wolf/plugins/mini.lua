@@ -1,5 +1,6 @@
 local M = {
 	"echasnovski/mini.nvim",
+	event = "VeryLazy",
 	dependencies = {
 		{ "JoosepAlviste/nvim-ts-context-commentstring" },
 	},
@@ -23,7 +24,7 @@ function M.ai()
 	require("mini.ai").setup({})
 end
 
-function M.init()
+function M.config()
 	M.pairs()
 	M.comment()
 end

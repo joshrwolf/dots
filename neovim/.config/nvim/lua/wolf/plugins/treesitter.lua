@@ -38,6 +38,7 @@ function M.config()
 			"sql",
 			"toml",
 			"tsx",
+			"terraform",
 			"typescript",
 			"vim",
 			"yaml",

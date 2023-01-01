@@ -2,33 +2,64 @@ return {
 	{ "folke/which-key.nvim" },
 	{
 		"christoomey/vim-tmux-navigator",
+		event = "VeryLazy",
 		config = function()
 			vim.g.tmux_navigator_save_on_switch = 1
 		end,
-		lazy = false,
 	},
 	{ "ThePrimeagen/harpoon" },
 	{
-		"luukvbaal/nnn.nvim",
-		cmd = "NnnPicker",
+		"tpope/vim-fugitive",
+		cmd = { "Git" },
+	},
+	{
+		"TimUntersberger/neogit",
+		cmd = "Neogit",
 		config = function()
-			local builtin = require("nnn").builtin
-			require("nnn").setup({
-				picker = {
-					session = "shared",
-					style = { border = "rounded" },
-				},
-				replace_netrw = "picker",
-				mappings = {
-					{ "<C-v>", builtin.open_in_vsplit },
-					{ "<C-p>", builtin.open_in_preview },
-					{ "<C-y>", builtin.copy_to_clipboard },
+			require("neogit").setup({
+				kind = "replace",
+				disable_insert_on_commit = false,
+				disable_commit_confirmation = true,
+				integrations = {
+					diffview = true,
 				},
 			})
 		end,
 	},
 	{
-		"tpope/vim-fugitive",
-		cmd = { "Git" },
+		"RRethy/vim-illuminate",
+		event = "VeryLazy",
+		config = function()
+			require("illuminate").configure({
+				providers = {
+					"lsp",
+					"treesitter",
+					"regexp",
+				},
+			})
+		end,
+	},
+	{
+		"epwalsh/obsidian.nvim",
+		cmd = { "ObsidianNew", "ObsidianOpen", "ObsidianToday", "ObsidianYesterday", "ObsidianSearch" },
+		config = function()
+			require("obsidian").setup({
+				dir = "~/.brain",
+				completion = {
+					nvim_cmp = true,
+				},
+				daily_notes = { folder = "dailies" },
+			})
+		end,
+	},
+	{
+		"m-demare/hlargs.nvim",
+		event = "VeryLazy",
+		config = function()
+			local nf = require("nightfox.palette").load("nordfox")
+			require("hlargs").setup({
+				color = nf.white.dim,
+			})
+		end,
 	},
 }

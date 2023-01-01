@@ -13,6 +13,7 @@ local M = {
 		"jose-elias-alvarez/null-ls.nvim",
 
 		"b0o/SchemaStore.nvim",
+		"SmiteshP/nvim-navic",
 
 		{
 			"kosayoda/nvim-lightbulb",
@@ -33,6 +34,11 @@ local on_attach = function(client, bufnr)
 				require("vim.lsp.codelens").refresh()
 			end,
 		})
+	end
+
+	-- setup nvim-navic if documentSymbolProvider exists
+	if client.server_capabilities.documentSymbolProvider then
+		require("nvim-navic").attach(client, bufnr)
 	end
 
 	require("nvim-lightbulb").setup({
@@ -74,6 +80,7 @@ function M.config()
 				},
 			},
 		},
+		rust_analyzer = {},
 		gopls = {
 			cmd = { "gopls", "--remote=auto" },
 			settings = {
@@ -104,7 +111,7 @@ function M.config()
 					workspace = { checkThirdParty = false },
 					telemetry = { enable = false },
 					format = { enable = false },
-					diagnostics = { globals = { "vim" } },
+					diagnostics = { globals = { "vim", "require" } },
 				},
 			},
 		},

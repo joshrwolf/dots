@@ -17,6 +17,7 @@ local M = {
 
 function M.config()
 	vim.o.completeopt = "menuone,noselect"
+	vim.opt.shortmess = vim.opt.shortmess + { c = true }
 
 	local cmp = require("cmp")
 	local luasnip = require("luasnip")
@@ -27,7 +28,7 @@ function M.config()
 
 	cmp.setup({
 		completion = {
-			completeopt = "menu,menuone,noinsert",
+			completeopt = "menu,menuone,noselect",
 		},
 		snippet = {
 			expand = function(args)
@@ -38,8 +39,21 @@ function M.config()
 			["<C-space>"] = cmp.mapping.complete(),
 			["<CR>"] = cmp.mapping.confirm({
 				behavior = cmp.ConfirmBehavior.Replace,
-				select = true,
+				select = false,
 			}),
+			["<Tab>"] = cmp.mapping(function(fallback)
+				if cmp.visible() then
+					local entry = cmp.get_selected_entry()
+					if not entry then
+						cmp.select_next_item({ behavior = cmp.SelectBehavior.Select })
+						cmp.confirm()
+					else
+						cmp.confirm()
+					end
+				else
+					fallback()
+				end
+			end, { "i", "s", "c" }),
 			["<C-u>"] = cmp.mapping.scroll_docs(-4),
 			["<C-d>"] = cmp.mapping.scroll_docs(4),
 			["<C-j>"] = cmp.mapping.select_next_item(),
@@ -51,7 +65,7 @@ function M.config()
 			{ name = "luasnip" },
 			{ name = "path" },
 			{ name = "buffer", keyword_length = 4 },
-			{ name = "rg", keyword_length = 5 },
+			{ name = "rg", keyword_length = 5, option = { additional_arguments = "--max-depth 8" } },
 			{ name = "git" }, -- only triggers on @,#,!,:
 		},
 		formatting = {
