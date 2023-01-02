@@ -55,20 +55,6 @@ function M.config()
 				},
 				previewer = false,
 			}),
-			git_status = {
-				layout_strategy = "vertical",
-				layout_config = {
-					vertical = {
-						height = 0.9,
-					},
-				},
-			},
-			git_bcommits = {
-				layout_strategy = "vertical",
-				layout_config = {
-					preview_height = 0.8,
-				},
-			},
 			git_branches = {
 				layout_strategy = "vertical",
 				layout_config = {
@@ -149,57 +135,8 @@ function M.config()
 	--- otherwise the result will be cached without the updates
 	--- from the setup call
 	local builtins = require("telescope.builtin")
-
-	local function delta_opts(opts, is_buf)
-		local previewers = require("telescope.previewers")
-		local delta = previewers.new_termopen_previewer({
-			get_command = function(entry)
-				local args = {
-					"git",
-					"-c",
-					"core.pager=delta",
-					"-c",
-					"delta.side-by-side=true",
-					"diff",
-					entry.value .. "^!",
-				}
-				if is_buf then
-					vim.list_extend(args, { "--", entry.current_file })
-				end
-				return args
-			end,
-		})
-		opts = opts or {}
-		opts.previewer = {
-			delta,
-			previewers.git_commit_message.new(opts),
-		}
-		return opts
-	end
-
-	local function delta_git_commits(opts)
-		builtins.git_commits(delta_opts(opts))
-	end
-
-	local function delta_git_bcommits(opts)
-		builtins.git_bcommits(delta_opts(opts, true))
-	end
-
-	local wk = require("which-key")
-
-	wk.register({
-		g = {
-			s = { delta_git_bcommits, "Buffer Commits" },
-			c = { delta_git_commits, "Commits" },
-		},
-	}, { prefix = "<leader>" })
 end
 
 function M.init() end
-
-function M.git()
-	local previewers = require("telescope.previewers")
-	local builtin = require("telescope.builtin")
-end
 
 return M

@@ -23,20 +23,6 @@ return {
       })
     end
 	},
-	-- {
-	-- 	"TimUntersberger/neogit",
-	-- 	cmd = "Neogit",
-	-- 	config = function()
-	-- 		require("neogit").setup({
-	-- 			kind = "replace",
-	-- 			disable_insert_on_commit = false,
-	-- 			disable_commit_confirmation = true,
-	-- 			integrations = {
-	-- 				diffview = true,
-	-- 			},
-	-- 		})
-	-- 	end,
-	-- },
 	{
 		"RRethy/vim-illuminate",
 		event = "VeryLazy",
