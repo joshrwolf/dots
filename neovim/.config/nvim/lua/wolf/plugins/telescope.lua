@@ -56,15 +56,23 @@ function M.config()
 				previewer = false,
 			}),
 			git_status = {
+				layout_strategy = "vertical",
 				layout_config = {
-					preview_height = 0.7,
+					vertical = {
+						height = 0.9,
+					},
 				},
 			},
 			git_bcommits = {
+				layout_strategy = "vertical",
 				layout_config = {
-					horizontal = {
-						preview_width = 0.7,
-					},
+					preview_height = 0.8,
+				},
+			},
+			git_branches = {
+				layout_strategy = "vertical",
+				layout_config = {
+					preview_height = 0.8,
 				},
 			},
 		},
@@ -151,7 +159,7 @@ function M.config()
 					"-c",
 					"core.pager=delta",
 					"-c",
-					"delta.side-by-side=false",
+					"delta.side-by-side=true",
 					"diff",
 					entry.value .. "^!",
 				}

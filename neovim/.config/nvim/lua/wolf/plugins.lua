@@ -11,21 +11,32 @@ return {
 	{
 		"tpope/vim-fugitive",
 		cmd = { "Git" },
+    config = function ()
+      vim.api.nvim_create_autocmd("FileType", {
+        pattern = "fugitive",
+        callback =function (ctx)
+          vim.keymap.set("n", "<Tab>", "=", { remap = true,  buffer = ctx.buf })
+          vim.keymap.set("n", "q", ":q<cr>", { buffer = ctx.buf })
+
+          vim.keymap.set("n", "dt", ":Gtabedit <Plug><cfile><Bar>Gdiffsplit<CR>", { buffer = ctx.buf })
+        end
+      })
+    end
 	},
-	{
-		"TimUntersberger/neogit",
-		cmd = "Neogit",
-		config = function()
-			require("neogit").setup({
-				kind = "replace",
-				disable_insert_on_commit = false,
-				disable_commit_confirmation = true,
-				integrations = {
-					diffview = true,
-				},
-			})
-		end,
-	},
+	-- {
+	-- 	"TimUntersberger/neogit",
+	-- 	cmd = "Neogit",
+	-- 	config = function()
+	-- 		require("neogit").setup({
+	-- 			kind = "replace",
+	-- 			disable_insert_on_commit = false,
+	-- 			disable_commit_confirmation = true,
+	-- 			integrations = {
+	-- 				diffview = true,
+	-- 			},
+	-- 		})
+	-- 	end,
+	-- },
 	{
 		"RRethy/vim-illuminate",
 		event = "VeryLazy",

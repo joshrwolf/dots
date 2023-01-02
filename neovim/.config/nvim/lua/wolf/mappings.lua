@@ -30,6 +30,7 @@ vim.keymap.set("v", ">", ">gv")
 wk.register({
 	[","] = { require("telescope.builtin").buffers, "Find Buffers" },
 	["<space>"] = { require("telescope.builtin").find_files, "Find Files" },
+	["q"] = { ":q<cr>", "Quit" },
 
 	f = {
 		name = "+file",
@@ -56,7 +57,7 @@ wk.register({
 	},
 	g = {
 		name = "+git",
-		g = { "<cmd>Neogit kind=replace<cr>", "Git" },
+		g = { "<cmd>Git<cr>", "Git Status" },
 		b = { require("telescope.builtin").git_branches, "Branches" },
 	},
 

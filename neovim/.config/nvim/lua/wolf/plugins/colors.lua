@@ -25,6 +25,7 @@ local M = {
 				},
 				palettes = {
 					nordfox = {
+						bg1 = "#2E3440",
 						bg2 = "#2E3440",
 						bg3 = "#3B4252",
 						bg4 = "#434C5E",
@@ -44,7 +45,7 @@ local M = {
 							builtin2 = "blue",
 							-- comment = "white",
 							conditional = "blue",
-							const = "orange",
+							const = "white",
 							-- dep = "white",
 							field = "white",
 							func = "cyan",

@@ -11,6 +11,7 @@ local M = {
 		"folke/neodev.nvim",
 
 		"jose-elias-alvarez/null-ls.nvim",
+		"lvimuser/lsp-inlayhints.nvim",
 
 		"b0o/SchemaStore.nvim",
 		"SmiteshP/nvim-navic",
@@ -40,6 +41,9 @@ local on_attach = function(client, bufnr)
 	if client.server_capabilities.documentSymbolProvider then
 		require("nvim-navic").attach(client, bufnr)
 	end
+
+	-- setup inlay hints
+	require("lsp-inlayhints").on_attach(client, bufnr)
 
 	require("nvim-lightbulb").setup({
 		sign = { enabled = true }, -- "text" doesn't work here :(
