@@ -45,9 +45,11 @@ yabai -m config left_padding                 3
 yabai -m config right_padding                3
 yabai -m config window_gap                   06
 
-# desktop labels
+# desktops
 yabai -m space 1 --label code
+
 yabai -m space 2 --label web
+
 yabai -m space 4 --label float
 yabai -m config --space 4 layout float
 
@@ -58,6 +60,7 @@ ignored_apps=(
   "Raycast"
   "System Information"
   "System Preferences"
+  "System Settings"
   "Zoom"
 )
 
@@ -66,7 +69,6 @@ do yabai -m rule --add app="${app}" manage=off;
 done;
 
 echo "yabai configuration loaded.."
-
 
 # inspirations:
 #   - https://gist.github.com/eramdam/b19034a625a72a268989b6cda16c2627
