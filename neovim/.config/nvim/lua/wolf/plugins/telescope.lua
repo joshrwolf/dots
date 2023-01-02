@@ -119,6 +119,7 @@ function M.config()
 						["l"] = actions.select_default,
 						["n"] = fb_actions.create_from_prompt,
 						["."] = fb_actions.toggle_hidden,
+						["-"] = fb_actions.goto_cwd,
 					},
 				},
 			},

@@ -35,7 +35,6 @@ wk.register({
 	f = {
 		name = "+file",
 		f = { require("telescope.builtin").find_files, "File" },
-		d = { "<cmd>Telescope file_browser path=%:p:h<cr>", "Browser" },
 		b = { require("telescope.builtin").buffers, "Buffers" },
 		o = { require("telescope.builtin").oldfiles, "Old" },
 		w = { require("telescope").extensions.live_grep_args.live_grep_args, "Words" },
@@ -69,7 +68,7 @@ wk.register({
 
 -- Register non leader keys
 wk.register({
-	["\\"] = { require("telescope").extensions.file_browser.file_browser, "Picker" },
+	["\\"] = { "<cmd>Telescope file_browser path=%:p:h<cr>", "Browser" },
 	-- ["]q"] = { vim.}
 	["[b"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
 	["H"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
