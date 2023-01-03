@@ -12,16 +12,6 @@ vim.api.nvim_create_autocmd({ "InsertLeave", "WinEnter" }, {
 	end,
 })
 
-vim.api.nvim_create_autocmd({ "InsertEnter", "WinLeave" }, {
-	callback = function()
-		local cl = vim.wo.cursorline
-		if cl then
-			vim.api.nvim_win_set_var(0, "auto-cursorline", cl)
-			vim.wo.cursorline = false
-		end
-	end,
-})
-
 -- go to last loc when opening a buffer
 vim.api.nvim_create_autocmd("BufReadPre", {
 	pattern = "*",
@@ -49,8 +39,5 @@ vim.api.nvim_create_autocmd("TextYankPost", {
 	pattern = "*",
 })
 
--- [[ Don't auto comment new lines ]]
-vim.api.nvim_create_autocmd("BufEnter", {
-	pattern = "*",
-	command = "set fo-=c fo-=r fo-=o",
-})
+-- Don't auto comment new line
+vim.api.nvim_create_autocmd("BufEnter", { command = [[set formatoptions-=cro]] })

@@ -6,6 +6,7 @@ require("wolf.lazy")
 vim.api.nvim_create_autocmd("User", {
 	pattern = "VeryLazy",
 	callback = function()
+		require("wolf.commands")
 		require("wolf.mappings")
 	end,
 })
