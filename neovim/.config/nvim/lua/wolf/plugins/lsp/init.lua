@@ -24,8 +24,18 @@ local M = {
 }
 
 local on_attach = function(client, bufnr)
+	require("wolf.plugins.lsp.diagnostics").setup()
 	require("wolf.plugins.lsp.formatting").setup(client, bufnr)
 	require("wolf.plugins.lsp.keys").setup(client, bufnr)
+
+	if client.server_capabilities.completionProvider then
+		vim.bo[bufnr].omnifunc = "v:lua.vim.lsp.omnifunc"
+		vim.bo[bufnr].completefunc = "v:lua.vim.lsp.omnifunc"
+	end
+
+	if client.server_capabilities.definitionProvider then
+		vim.bo[bufnr].tagfunc = "v:lua.vim.lsp.tagfunc"
+	end
 
 	if client.server_capabilities["textDocument/codeLens"] then
 		vim.api.nvim_create_autocmd({ "CursorHold", "CompleteDone" }, {
@@ -57,7 +67,6 @@ end
 function M.config()
 	require("neodev").setup()
 	require("mason").setup()
-	require("wolf.plugins.lsp.diagnostics").setup()
 
 	local mason_lspconfig = require("mason-lspconfig")
 
