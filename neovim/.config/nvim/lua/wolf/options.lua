@@ -41,3 +41,8 @@ vim.opt.splitright = true
 
 vim.o.timeoutlen = 300
 vim.opt.updatetime = 50
+
+-- Set treesitter based folds
+vim.opt.foldlevel = 20
+vim.opt.foldmethod = "expr"
+vim.opt.foldexpr = "nvim_treesitter#foldexpr()"

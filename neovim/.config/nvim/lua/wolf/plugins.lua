@@ -9,19 +9,20 @@ return {
 	},
 	{ "ThePrimeagen/harpoon" },
 	{
+		-- Git
 		"tpope/vim-fugitive",
 		cmd = { "Git" },
-    config = function ()
-      vim.api.nvim_create_autocmd("FileType", {
-        pattern = "fugitive",
-        callback =function (ctx)
-          vim.keymap.set("n", "<Tab>", "=", { remap = true,  buffer = ctx.buf })
-          vim.keymap.set("n", "q", ":q<cr>", { buffer = ctx.buf })
+		config = function()
+			vim.api.nvim_create_autocmd("FileType", {
+				pattern = "fugitive",
+				callback = function(ctx)
+					vim.keymap.set("n", "<Tab>", "=", { remap = true, buffer = ctx.buf })
+					vim.keymap.set("n", "q", ":q<cr>", { buffer = ctx.buf })
 
-          vim.keymap.set("n", "dt", ":Gtabedit <Plug><cfile><Bar>Gdiffsplit<CR>", { buffer = ctx.buf })
-        end
-      })
-    end
+					vim.keymap.set("n", "dt", ":Gtabedit <Plug><cfile><Bar>Gdiffsplit<CR>", { buffer = ctx.buf })
+				end,
+			})
+		end,
 	},
 	{
 		"RRethy/vim-illuminate",
@@ -37,6 +38,7 @@ return {
 		end,
 	},
 	{
+		-- Note taking
 		"epwalsh/obsidian.nvim",
 		cmd = { "ObsidianNew", "ObsidianOpen", "ObsidianToday", "ObsidianYesterday", "ObsidianSearch" },
 		config = function()
@@ -50,6 +52,7 @@ return {
 		end,
 	},
 	{
+		-- Adds special HL to args using treesitter
 		"m-demare/hlargs.nvim",
 		event = "VeryLazy",
 		config = function()
@@ -58,5 +61,16 @@ return {
 				color = nf.white.dim,
 			})
 		end,
+	},
+	{
+		-- More matches
+		"andymass/vim-matchup",
+		event = "VeryLazy",
+		config = function()
+			vim.g.matchup_matchparen_offscreen = { method = nil }
+		end,
+		dependencies = {
+			"nvim-treesitter/nvim-treesitter",
+		},
 	},
 }

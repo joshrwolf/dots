@@ -92,6 +92,9 @@ function M.config()
 				[";"] = "textsubjects-container-outer",
 			},
 		},
+		matchup = {
+			enable = true,
+		},
 	})
 end
 
