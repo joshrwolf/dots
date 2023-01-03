@@ -63,6 +63,14 @@ return {
 		end,
 	},
 	{
+		-- Surrounds
+		"kylechui/nvim-surround",
+		event = "VeryLazy",
+		config = function()
+			require("nvim-surround").setup()
+		end,
+	},
+	{
 		-- More matches
 		"andymass/vim-matchup",
 		event = "VeryLazy",
