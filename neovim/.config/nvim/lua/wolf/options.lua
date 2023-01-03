@@ -10,6 +10,14 @@ vim.opt.shiftwidth = 4
 vim.opt.expandtab = true
 
 vim.opt.wrap = false
+-- Wrapped lines continue with the same indent
+vim.opt.breakindent = true
+
+-- Words from these languages are recognized when spell checking
+vim.opt.spelllang = { "en" }
+
+-- Apparently used to get rid of some redundant messages
+vim.opt.shortmess = vim.opt.shortmess + "c"
 
 vim.opt.termguicolors = true
 
@@ -26,12 +34,13 @@ vim.opt.showmode = false
 
 vim.opt.hidden = true
 vim.opt.ignorecase = true
+vim.opt.smartcase = true
 vim.opt.mouse = "a"
 
 vim.opt.scrolloff = 8
 vim.opt.signcolumn = "yes"
 
-vim.opt.hlsearch = false
+vim.opt.hlsearch = true
 vim.opt.incsearch = true
 
 vim.opt.grepprg = "rg --vimgrep"
@@ -41,8 +50,3 @@ vim.opt.splitright = true
 
 vim.o.timeoutlen = 300
 vim.opt.updatetime = 50
-
--- Set treesitter based folds
-vim.opt.foldlevel = 20
-vim.opt.foldmethod = "expr"
-vim.opt.foldexpr = "nvim_treesitter#foldexpr()"

@@ -17,7 +17,6 @@ local M = {
 
 function M.config()
 	vim.o.completeopt = "menuone,noselect"
-	vim.opt.shortmess = vim.opt.shortmess + { c = true }
 
 	local cmp = require("cmp")
 	local luasnip = require("luasnip")

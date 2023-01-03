@@ -39,5 +39,16 @@ vim.api.nvim_create_autocmd("TextYankPost", {
 	pattern = "*",
 })
 
+-- Windows to close with "q"
+vim.api.nvim_create_autocmd({ "InsertEnter", "WinLeave" }, {
+	callback = function()
+		local cl = vim.wo.cursorline
+		if cl then
+			vim.api.nvim_win_set_var(0, "auto-cursorline", cl)
+			vim.wo.cursorline = false
+		end
+	end,
+})
+
 -- Don't auto comment new line
 vim.api.nvim_create_autocmd("BufEnter", { command = [[set formatoptions-=cro]] })
