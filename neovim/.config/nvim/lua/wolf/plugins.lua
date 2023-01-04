@@ -10,7 +10,7 @@ return {
 	{
 		-- Git
 		"tpope/vim-fugitive",
-		cmd = { "Git" },
+		event = "VeryLazy",
 		config = function()
 			vim.api.nvim_create_autocmd("FileType", {
 				pattern = "fugitive",
@@ -25,7 +25,7 @@ return {
 	},
 	{
 		"RRethy/vim-illuminate",
-		event = "VeryLazy",
+		event = "BufReadPost",
 		config = function()
 			require("illuminate").configure({
 				providers = {
@@ -72,7 +72,7 @@ return {
 	{
 		-- More matches
 		"andymass/vim-matchup",
-		event = "VeryLazy",
+		event = "BufReadPost",
 		config = function()
 			vim.g.matchup_matchparen_offscreen = { method = nil }
 		end,

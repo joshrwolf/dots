@@ -58,7 +58,7 @@ function M.config()
 			git_branches = {
 				layout_strategy = "vertical",
 				layout_config = {
-					preview_height = 0.8,
+					preview_height = 0.7,
 				},
 			},
 		},
@@ -120,6 +120,25 @@ function M.config()
 						["n"] = fb_actions.create_from_prompt,
 						["."] = fb_actions.toggle_hidden,
 						["-"] = fb_actions.goto_cwd,
+            -- TODO: Trying to get the git root of the current path
+						-- ["="] = function(prompt_buf)
+						-- 	local current_picker = require("telescope.actions.state").get_current_picker(prompt_buf)
+						-- 	local finder = current_picker.finder
+						-- 	local git_root_path = vim.fs.find(".git", {
+						-- 		path = vim.fn.expand("%:p"),
+						-- 		upward = true,
+						-- 		type = "directory",
+						-- 	})
+						-- 	if not git_root_path then
+						-- 		print("[telescope] Not in a git repository")
+						-- 		return
+						-- 	end
+						-- 	print(vim.inspect(git_root_path))
+						-- 	git_root_path = vim.fs.dirname(git_root_path[0])
+						-- 	finder.cwd = git_root_path
+						-- 	require("telescope._extensions.file_browser.utils").redraw_border_title(current_picker)
+						-- 	current_picker:refresh(finder, { reset_prompt = true, multi = current_picker._multi })
+						-- end,
 					},
 				},
 			},

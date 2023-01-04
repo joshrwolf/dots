@@ -59,7 +59,7 @@ wk.register({
 	},
 	g = {
 		name = "+git",
-		g = { "<cmd>Git<cr>", "Git Status" },
+		g = { ":Gedit :<cr>", "Git Status" },
 		b = { require("telescope.builtin").git_branches, "Branches" },
 	},
 }, { prefix = "<leader>" })
@@ -67,7 +67,6 @@ wk.register({
 -- Register non leader keys
 wk.register({
 	["\\"] = { "<cmd>Telescope file_browser path=%:p:h<cr>", "Browser" },
-	-- ["]q"] = { vim.}
 	["[b"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
 	["H"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
 	["]b"] = { "<cmd>:bnext<cr>", "Next Buffer" },

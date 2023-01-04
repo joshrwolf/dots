@@ -17,6 +17,12 @@ function M.config()
 			lualine_a = { "mode" },
 			lualine_b = { "branch" },
 			lualine_c = {
+				-- Display cwd basename only
+				{
+					function()
+						return " " .. vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
+					end,
+				},
 				{ "diagnostics", sources = { "nvim_diagnostic" } },
 				{ "diff" },
 			},
