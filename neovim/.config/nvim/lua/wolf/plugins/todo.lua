@@ -9,13 +9,13 @@ function M.config()
 end
 
 function M.init()
-    local todo = require("todo-comments")
-    vim.keymap.set("n", "]t", function ()
-        todo.jump_next()
-    end, { desc = "Next Todo" })
-    vim.keymap.set("n", "[t", function ()
-        todo.jump_prev()
-    end, { desc = "Prev Todo" })
+	local todo = require("todo-comments")
+	vim.keymap.set("n", "]x", function()
+		todo.jump_next()
+	end, { desc = "Next Todo" })
+	vim.keymap.set("n", "[x", function()
+		todo.jump_prev()
+	end, { desc = "Prev Todo" })
 end
 
 return M

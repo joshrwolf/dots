@@ -120,8 +120,8 @@ function M.config()
 						["n"] = fb_actions.create_from_prompt,
 						["."] = fb_actions.toggle_hidden,
 						["-"] = fb_actions.goto_cwd,
-            -- TODO: Trying to get the git root of the current path
-            -- ref: https://www.reddit.com/r/neovim/comments/zy5s0l/you_dont_need_vimrooter_usually_or_how_to_set_up/
+						-- TODO: Trying to get the git root of the current path
+						-- ref: https://www.reddit.com/r/neovim/comments/zy5s0l/you_dont_need_vimrooter_usually_or_how_to_set_up/
 						-- ["="] = function(prompt_buf)
 						-- 	local current_picker = require("telescope.actions.state").get_current_picker(prompt_buf)
 						-- 	local finder = current_picker.finder
@@ -151,6 +151,7 @@ function M.config()
 	telescope.load_extension("file_browser")
 	telescope.load_extension("undo")
 	telescope.load_extension("live_grep_args")
+	telescope.load_extension("yank_history")
 
 	--- NOTE: this must be required after setting up telescope
 	--- otherwise the result will be cached without the updates

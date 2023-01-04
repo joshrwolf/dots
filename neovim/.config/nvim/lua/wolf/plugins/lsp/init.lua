@@ -15,7 +15,10 @@ local M = {
 
 		"b0o/SchemaStore.nvim",
 		"SmiteshP/nvim-navic",
-
+		{
+			"stevearc/aerial.nvim",
+			dependencies = { "onsails/lspkind.nvim" },
+		},
 		{
 			"kosayoda/nvim-lightbulb",
 			dependencies = { "antoinemadec/FixCursorHold.nvim" },
@@ -61,6 +64,17 @@ local on_attach = function(client, bufnr)
 		status_text = { enable = false },
 		virtual_text = { enable = false },
 		autocmd = { enabled = true },
+	})
+
+	require("aerial").setup({
+		backends = { "lsp", "treesitter" },
+		filter_kind = false,
+		highlight_on_hover = true,
+		show_guides = true,
+		layout = {
+			max_width = { 60, 0.3 },
+			default_direction = "prefer_left",
+		},
 	})
 end
 

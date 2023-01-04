@@ -24,6 +24,9 @@ function M.config()
 			untracked = { hl = "GitSignsAdd", text = "▍", numhl = "GitSignsAddNr", linehl = "GitSignsAddLn" },
 		},
 		current_line_blame = true,
+		current_line_blame_opts = {
+			delay = 500,
+		},
 		on_attach = function(bufnr)
 			local gs = require("gitsigns")
 			local wk = require("which-key")

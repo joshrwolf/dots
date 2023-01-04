@@ -8,9 +8,17 @@ return {
 		end,
 	},
 	{
+		"tpope/vim-unimpaired",
+		event = "VeryLazy",
+	},
+	{
 		-- Git
 		"tpope/vim-fugitive",
 		event = "VeryLazy",
+		dependencies = {
+			"tpope/vim-rhubarb",
+			"rhysd/git-messenger.vim",
+		},
 		config = function()
 			vim.api.nvim_create_autocmd("FileType", {
 				pattern = "fugitive",
@@ -91,6 +99,31 @@ return {
 		},
 		config = function()
 			require("octo").setup({})
+		end,
+	},
+	{
+		-- Better yanking
+		"gbprod/yanky.nvim",
+		event = "BufReadPost",
+		config = function()
+			require("yanky").setup({
+				highlight = { timer = 250 },
+			})
+
+			vim.keymap.set({ "n", "x" }, "y", "<Plug>(YankyYank)")
+			vim.keymap.set({ "n", "x" }, "p", "<Plug>(YankyPutAfter)")
+			vim.keymap.set({ "n", "x" }, "P", "<Plug>(YankyPutBefore)")
+			vim.keymap.set({ "n", "x" }, "gp", "<Plug>(YankyGPutAfter)")
+			vim.keymap.set({ "n", "x" }, "gP", "<Plug>(YankyGPutBefore)")
+
+			vim.keymap.set("n", "<C-n>", "<Plug>(YankyCycleForward)")
+			vim.keymap.set("n", "<C-p>", "<Plug>(YankyCycleBackward)")
+
+			vim.keymap.set(
+				"n",
+				"<leader>fy",
+				"<cmd>lua require('telescope').extensions.yank_history.yank_history()<cr>"
+			)
 		end,
 	},
 }

@@ -65,6 +65,7 @@ local M = {
 				groups = {
 					nordfox = {
 						CmpItemKindFunction = { fg = "palette.magenta" },
+						GitSignsCurrentLineBlame = { fg = "palette.fg3" },
 					},
 				},
 			})

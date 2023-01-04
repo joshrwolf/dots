@@ -29,6 +29,9 @@ vim.keymap.set("n", "<esc>", ":noh<cr>", { noremap = true, silent = true })
 vim.keymap.set("v", "<", "<gv")
 vim.keymap.set("v", ">", ">gv")
 
+-- Git Messenger
+vim.keymap.set("n", "gk", ":GitMessenger<cr>", { silent = true })
+
 -- Register leader keys
 wk.register({
 	[","] = { require("telescope.builtin").buffers, "Find Buffers" },
@@ -59,20 +62,20 @@ wk.register({
 	},
 	g = {
 		name = "+git",
-		g = { ":Gedit :<cr>", "Git Status" },
+		g = { ":Gedit :<cr>", "Git" },
 		b = { require("telescope.builtin").git_branches, "Branches" },
+		f = { "<cmd>DiffviewFileHistory %<cr>", "File History" },
+		h = {
+			name = "+github",
+			y = { ":GBrowse!<cr>", "Copy permalink", mode = { "n", "v" } },
+			Y = { ":GBrowse! @upstream<cr>", "Copy upstream permalink", mode = { "n", "v" } },
+		},
 	},
 }, { prefix = "<leader>" })
 
 -- Register non leader keys
 wk.register({
 	["\\"] = { "<cmd>Telescope file_browser path=%:p:h<cr>", "Browser" },
-	["[b"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
 	["H"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
-	["]b"] = { "<cmd>:bnext<cr>", "Next Buffer" },
 	["L"] = { "<cmd>:bnext<cr>", "Next Buffer" },
-	["]q"] = { "<cmd>:cnext<cr>", "Next Quickfix" },
-	["[q"] = { "<cmd>:cprev<cr>", "Prev Quickfix" },
-	["[t"] = { "<cmd>:tprev<cr>", "Prev Tab" },
-	["]t"] = { "<cmd>:tnext<cr>", "Next Tab" },
 })

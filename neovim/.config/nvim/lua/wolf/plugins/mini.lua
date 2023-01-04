@@ -20,10 +20,6 @@ local function comment()
 	})
 end
 
-local function ai()
-	require("mini.ai").setup({})
-end
-
 function M.config()
 	pairs()
 	comment()

@@ -19,6 +19,7 @@ function M.setup(client, buffer)
 					{ vim.lsp.buf.code_action, "Code Action" },
 					{ "<cmd>lua vim.lsp.buf.code_action()<cr>", "Code Action", mode = "v" },
 				},
+				s = { "<cmd>AerialToggle!<cr>", "Symbols Outline" },
 				d = { vim.diagnostic.open_float, "Line Diagnostics" },
 				D = { "<cmd>Neogen<cr>", "Create docs" },
 				i = { "<cmd>LspInfo<cr>", "Lsp Info" },
