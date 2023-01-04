@@ -31,8 +31,10 @@ function M.setup(client, buf)
 			-- Formatters
 			fmt.stylua,
 			fmt.terraform_fmt,
+
 			fmt.goimports,
 			fmt.gofumpt,
+
 			fmt.rustfmt,
 
 			fmt.trim_whitespace,
@@ -46,6 +48,7 @@ function M.setup(client, buf)
 			-- Diagnostics
 			dgn.actionlint,
 			dgn.buf,
+			-- dgn.golangci_lint, -- NOTE: This doesn't work in mono because null-ls always attaches to the folder where .git is
 			dgn.vale,
 		},
 	})

@@ -59,11 +59,6 @@ wk.register({
 		g = { "<cmd>Git<cr>", "Git Status" },
 		b = { require("telescope.builtin").git_branches, "Branches" },
 	},
-
-	j = { require("harpoon.ui").toggle_quick_menu, "Harpoon UI" },
-	a = { require("harpoon.mark").add_file, "Add Harpoon File" },
-	["1"] = { "<cmd>lua require('harpoon.ui').nav_file(1)<cr>", "Nav 1" },
-	["2"] = { "<cmd>lua require('harpoon.ui').nav_file(2)<cr>", "Nav 2" },
 }, { prefix = "<leader>" })
 
 -- Register non leader keys

@@ -6,11 +6,11 @@ local M = {
 	},
 }
 
-function M.pairs()
+local function pairs()
 	require("mini.pairs").setup({})
 end
 
-function M.comment()
+local function comment()
 	require("mini.comment").setup({
 		hooks = {
 			pre = function()
@@ -20,13 +20,13 @@ function M.comment()
 	})
 end
 
-function M.ai()
+local function ai()
 	require("mini.ai").setup({})
 end
 
 function M.config()
-	M.pairs()
-	M.comment()
+	pairs()
+	comment()
 end
 
 return M

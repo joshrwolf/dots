@@ -16,6 +16,7 @@ local M = {
 }
 
 function M.config()
+	local utils = require("wolf.utils")
 	vim.o.completeopt = "menuone,noselect"
 
 	local cmp = require("cmp")
@@ -69,8 +70,8 @@ function M.config()
 		},
 		formatting = {
 			format = function(_, vim_item)
-				if M.icons[vim_item.kind] then
-					vim_item.kind = M.icons[vim_item.kind] .. vim_item.kind
+				if utils.icons[vim_item.kind] then
+					vim_item.kind = utils.icons[vim_item.kind] .. vim_item.kind
 				end
 				return vim_item
 			end,
@@ -84,29 +85,5 @@ function M.config()
 		}),
 	})
 end
-
-M.icons = {
-	Class = " ",
-	Color = " ",
-	Constant = " ",
-	Constructor = " ",
-	Enum = "了 ",
-	EnumMember = " ",
-	Field = " ",
-	File = " ",
-	Folder = " ",
-	Function = " ",
-	Interface = "ﰮ ",
-	Keyword = " ",
-	Method = "ƒ ",
-
-	Property = " ",
-	Snippet = "﬌ ",
-	Struct = " ",
-	Text = " ",
-	Unit = " ",
-	Value = " ",
-	Variable = " ",
-}
 
 return M

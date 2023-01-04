@@ -7,7 +7,6 @@ return {
 			vim.g.tmux_navigator_save_on_switch = 1
 		end,
 	},
-	{ "ThePrimeagen/harpoon" },
 	{
 		-- Git
 		"tpope/vim-fugitive",
@@ -80,5 +79,18 @@ return {
 		dependencies = {
 			"nvim-treesitter/nvim-treesitter",
 		},
+	},
+	{
+		-- GH integration
+		"pwntester/octo.nvim",
+		cmd = { "Octo" },
+		dependencies = {
+			"nvim-lua/plenary.nvim",
+			"nvim-telescope/telescope.nvim",
+			"kyazdani42/nvim-web-devicons",
+		},
+		config = function()
+			require("octo").setup({})
+		end,
 	},
 }
