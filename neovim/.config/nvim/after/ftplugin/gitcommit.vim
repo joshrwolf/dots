@@ -1,0 +1,2 @@
+startinsert
+setl spell
