@@ -17,8 +17,8 @@ return {
 				callback = function(ctx)
 					vim.keymap.set("n", "<Tab>", "=", { remap = true, buffer = ctx.buf })
 					vim.keymap.set("n", "q", ":q<cr>", { buffer = ctx.buf })
-
 					vim.keymap.set("n", "dt", ":Gtabedit <Plug><cfile><Bar>Gdiffsplit<CR>", { buffer = ctx.buf })
+					vim.keymap.set("n", "S", "<cmd>silent !git add -A<cr>", { buffer = ctx.buf })
 				end,
 			})
 		end,
