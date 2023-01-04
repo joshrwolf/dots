@@ -121,6 +121,7 @@ function M.config()
 						["."] = fb_actions.toggle_hidden,
 						["-"] = fb_actions.goto_cwd,
             -- TODO: Trying to get the git root of the current path
+            -- ref: https://www.reddit.com/r/neovim/comments/zy5s0l/you_dont_need_vimrooter_usually_or_how_to_set_up/
 						-- ["="] = function(prompt_buf)
 						-- 	local current_picker = require("telescope.actions.state").get_current_picker(prompt_buf)
 						-- 	local finder = current_picker.finder
