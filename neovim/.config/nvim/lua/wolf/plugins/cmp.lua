@@ -12,11 +12,11 @@ local M = {
 		"L3MON4D3/LuaSnip",
 		"saadparwaiz1/cmp_luasnip",
 		"petertriho/cmp-git",
+		"onsails/lspkind.nvim",
 	},
 }
 
 function M.config()
-	local utils = require("wolf.utils")
 	vim.o.completeopt = "menuone,noselect"
 
 	local cmp = require("cmp")
@@ -69,18 +69,25 @@ function M.config()
 			{ name = "git" }, -- only triggers on @,#,!,:
 		},
 		formatting = {
-			format = function(_, vim_item)
-				if utils.icons[vim_item.kind] then
-					vim_item.kind = utils.icons[vim_item.kind] .. vim_item.kind
-				end
-				return vim_item
-			end,
+			fields = { "kind", "abbr", "menu" },
+			format = require("lspkind").cmp_format({
+				mode = "symbol",
+				menu = {
+					nvim_lsp = "[LSP]",
+					buffer = "[BUF]",
+					luasnip = "[SNIP]",
+					nvim_lua = "[LUA]",
+					git = "[GIT]",
+					path = "[PATH]",
+					rg = "[RG]",
+				},
+			}),
 		},
 	})
 
 	cmp.setup.filetype("gitcommit", {
 		sources = cmp.config.sources({
-			{ name = "git" },
+			{ name = "git" }, -- only triggers on @,#,!,:
 			{ name = "buffer" },
 		}),
 	})

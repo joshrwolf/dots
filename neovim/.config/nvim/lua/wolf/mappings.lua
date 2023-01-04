@@ -22,6 +22,9 @@ vim.keymap.set("n", "<C-u>", "<C-u>zz")
 vim.keymap.set("n", "n", "nzzzv")
 vim.keymap.set("n", "N", "Nzzzv")
 
+-- Clear search highlights on esc
+vim.keymap.set("n", "<esc>", ":noh<cr>", { noremap = true, silent = true })
+
 -- Better indenting
 vim.keymap.set("v", "<", "<gv")
 vim.keymap.set("v", ">", ">gv")

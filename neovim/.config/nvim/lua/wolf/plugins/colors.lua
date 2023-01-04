@@ -63,7 +63,9 @@ local M = {
 					},
 				},
 				groups = {
-					nordfox = {},
+					nordfox = {
+						CmpItemKindFunction = { fg = "palette.magenta" },
+					},
 				},
 			})
 			vim.cmd("colorscheme nordfox")

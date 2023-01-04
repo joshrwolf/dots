@@ -11,9 +11,12 @@ local M = {
 }
 
 function M.config()
+	setup_cue()
+
 	require("nvim-treesitter.configs").setup({
 		ensure_installed = {
 			"bash",
+			"cue",
 			"diff",
 			"gitignore",
 			"go",
@@ -43,7 +46,12 @@ function M.config()
 			"vim",
 			"yaml",
 		},
-		highlight = { enable = true },
+		highlight = {
+      enable = true,
+      custom_captures = {
+        ["definition"] = "Bold",  -- This doesn't actually work... idk why
+      },
+    },
 		indent = { enable = true },
 		incremental_selection = {
 			enable = true,
@@ -96,6 +104,18 @@ function M.config()
 			enable = true,
 		},
 	})
+end
+
+function setup_cue()
+	local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
+	parser_config.cue = {
+		install_info = {
+			url = "https://github.com/eonpatapon/tree-sitter-cue", -- local path or git repo
+			files = { "src/parser.c", "src/scanner.c" },
+			branch = "main",
+		},
+		filetype = "cue",
+	}
 end
 
 return M

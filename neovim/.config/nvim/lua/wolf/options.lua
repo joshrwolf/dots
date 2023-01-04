@@ -35,6 +35,7 @@ vim.opt.showmode = false
 vim.opt.hidden = true
 vim.opt.ignorecase = true
 vim.opt.smartcase = true
+vim.opt.autoindent = true
 vim.opt.mouse = "a"
 
 vim.opt.scrolloff = 8
