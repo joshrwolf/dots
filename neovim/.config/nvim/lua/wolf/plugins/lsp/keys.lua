@@ -40,7 +40,7 @@ function M.setup(client, buffer)
 			a = { vim.lsp.buf.code_action, "Code Action" },
 			d = { require("telescope.builtin").lsp_definitions, "Definition" },
 			r = { require("telescope.builtin").lsp_references, "References" },
-			i = { require("telescope.builtin").lsp_implementations, "Implementations" },
+			s = { require("telescope.builtin").lsp_implementations, "Implementations" },  -- Avoid using "i" to not overlap with "gi"
 			t = { require("telescope.builtin").lsp_type_definitions, "Type Definitions" },
 		},
 		["<C-h>"] = { vim.lsp.buf.signature_help, "Signature Help", mode = { "i" } },

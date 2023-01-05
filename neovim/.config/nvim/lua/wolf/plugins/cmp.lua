@@ -39,7 +39,7 @@ function M.config()
 			["<C-space>"] = cmp.mapping.complete(),
 			["<CR>"] = cmp.mapping.confirm({
 				behavior = cmp.ConfirmBehavior.Replace,
-				select = false,
+				select = true,
 			}),
 			["<Tab>"] = cmp.mapping(function(fallback)
 				if cmp.visible() then
@@ -62,11 +62,15 @@ function M.config()
 		sources = {
 			{ name = "nvim_lsp" },
 			{ name = "nvim_lsp_signature_help" },
-			{ name = "luasnip" },
-			{ name = "path" },
-			{ name = "buffer", keyword_length = 4 },
-			{ name = "rg", keyword_length = 5, option = { additional_arguments = "--max-depth 8" } },
-			{ name = "git" }, -- only triggers on @,#,!,:
+			{ name = "luasnip", keyword_length = 2, max_item_count = 2 },
+			{ name = "path" }, -- only triggers on .
+			{ name = "buffer", keyword_length = 4, max_item_count = 2 },
+			{ name = "rg", max_item_count = 2, keyword_length = 5, option = { additional_arguments = "--max-depth 8" } },
+			{ name = "git", entry_filter = function (_, _)
+        -- Only use this source in comments
+        local context = require("cmp.config.context")
+        return context.in_treesitter_capture("comment") == true or context.in_syntax_group("Comment")
+			end }, -- only triggers on @,#,!,:
 		},
 		formatting = {
 			fields = { "kind", "abbr", "menu" },

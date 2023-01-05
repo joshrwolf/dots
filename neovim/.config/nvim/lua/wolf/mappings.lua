@@ -14,7 +14,9 @@ vim.keymap.set("n", "<C-k>", "<C-w>k")
 vim.keymap.set("n", "<C-l>", "<C-w>l")
 
 vim.keymap.set("n", "<C-h>", "<cmd>:TmuxNavigateLeft<cr>", { silent = true })
+vim.keymap.set("n", "<C-j>", "<cmd>:TmuxNavigateDown<cr>", { silent = true })
 vim.keymap.set("n", "<C-l>", "<cmd>:TmuxNavigateRight<cr>", { silent = true })
+vim.keymap.set("n", "<C-k>", "<cmd>:TmuxNavigateUp<cr>", { silent = true })
 
 vim.keymap.set("n", "J", "mzJ`z")
 vim.keymap.set("n", "<C-d>", "<C-d>zz")
@@ -68,7 +70,7 @@ wk.register({
 	},
 	g = {
 		name = "+git",
-		g = { ":Gedit :<cr>", "Git" },
+		g = { ":tab G<cr>", "Git" },
 		b = { require("telescope.builtin").git_branches, "Branches" },
 		f = { "<cmd>DiffviewFileHistory %<cr>", "File History" },
 		h = {

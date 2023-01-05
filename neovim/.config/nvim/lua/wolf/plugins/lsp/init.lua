@@ -75,6 +75,12 @@ local on_attach = function(client, bufnr)
 			max_width = { 60, 0.3 },
 			default_direction = "prefer_left",
 		},
+		guides = {
+			mid_item = "├ ",
+			last_item = "└ ",
+			nested_top = "│ ",
+			whitespace = "  ",
+		},
 	})
 end
 

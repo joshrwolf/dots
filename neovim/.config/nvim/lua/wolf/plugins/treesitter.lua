@@ -66,8 +66,9 @@ function M.config()
 			select = {
 				enable = true,
 				lookahead = true,
+				include_surrounding_whitespace = true,
 				keymaps = {
-					["aa"] = "@parameter.out",
+					["aa"] = "@parameter.outer",
 					["ia"] = "@parameter.inner",
 					["af"] = "@function.outer",
 					["if"] = "@function.inner",
