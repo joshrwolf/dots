@@ -1,5 +1,15 @@
 return {
-	{ "folke/which-key.nvim" },
+	{
+		"folke/which-key.nvim",
+		event = "VeryLazy",
+		config = function()
+			require("which-key").setup({
+				show_help = false,
+				key_labels = { ["<leader>"] = "SPC" },
+				triggers = "auto",
+			})
+		end,
+	},
 	{
 		"christoomey/vim-tmux-navigator",
 		event = "VeryLazy",

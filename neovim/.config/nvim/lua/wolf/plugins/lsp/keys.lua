@@ -1,8 +1,7 @@
-local wk = require("which-key")
-
 local M = {}
 
 function M.setup(client, buffer)
+	local wk = require("which-key")
 	local keymap = {
 		buffer = buffer,
 		["<leader>"] = {

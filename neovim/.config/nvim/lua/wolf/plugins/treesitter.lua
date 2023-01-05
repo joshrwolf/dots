@@ -47,11 +47,11 @@ function M.config()
 			"yaml",
 		},
 		highlight = {
-      enable = true,
-      custom_captures = {
-        ["definition"] = "Bold",  -- This doesn't actually work... idk why
-      },
-    },
+			enable = true,
+			custom_captures = {
+				["definition"] = "Bold", -- This doesn't actually work... idk why
+			},
+		},
 		indent = { enable = true },
 		incremental_selection = {
 			enable = true,

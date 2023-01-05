@@ -1,5 +1,5 @@
 -- Check if we need to reload the file when it changed
-vim.cmd("au FocusGained * :checktime")
+vim.api.nvim_create_autocmd("FocusGained", { command = "checktime" })
 
 -- show cursor line only in active window
 vim.api.nvim_create_autocmd({ "InsertLeave", "WinEnter" }, {
@@ -28,25 +28,30 @@ vim.api.nvim_create_autocmd("BufReadPre", {
 	end,
 })
 
--- -- [[ Highlight on yank ]]
--- -- See `:help vim.highlight.on_yank()`
--- local highlight_group = vim.api.nvim_create_augroup("YankHighlight", { clear = true })
--- vim.api.nvim_create_autocmd("TextYankPost", {
--- 	callback = function()
--- 		vim.highlight.on_yank({ higroup = "IncSearch", timeout = 300 })
--- 	end,
--- 	group = highlight_group,
--- 	pattern = "*",
--- })
---
--- Windows to close with "q"
-vim.api.nvim_create_autocmd({ "InsertEnter", "WinLeave" }, {
-	callback = function()
-		local cl = vim.wo.cursorline
-		if cl then
-			vim.api.nvim_win_set_var(0, "auto-cursorline", cl)
-			vim.wo.cursorline = false
-		end
+-- windows to close with "q"
+vim.api.nvim_create_autocmd("FileType", {
+	pattern = {
+		"OverseerForm",
+		"OverseerList",
+		"floggraph",
+		"fugitive",
+		"git",
+		"help",
+		"lspinfo",
+		"man",
+		"neotest-output",
+		"neotest-summary",
+		"qf",
+		"query",
+		"spectre_panel",
+		"startuptime",
+		"toggleterm",
+		"tsplayground",
+		"vim",
+	},
+	callback = function(event)
+		vim.bo[event.buf].buflisted = false
+		vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = event.buf, silent = true })
 	end,
 })
 
@@ -57,4 +62,30 @@ vim.api.nvim_create_autocmd("BufEnter", { command = [[set formatoptions-=cro]] }
 vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
 	pattern = { "*.cue" },
 	command = "set filetype=cue",
+})
+
+-- Properly identify dag files
+vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {
+	pattern = { "*.dag" },
+	command = "set filetype=yaml",
+})
+
+-- show cursor line only in active window
+vim.api.nvim_create_autocmd({ "InsertLeave", "WinEnter" }, {
+	callback = function()
+		local ok, cl = pcall(vim.api.nvim_win_get_var, 0, "auto-cursorline")
+		if ok and cl then
+			vim.wo.cursorline = true
+			vim.api.nvim_win_del_var(0, "auto-cursorline")
+		end
+	end,
+})
+vim.api.nvim_create_autocmd({ "InsertEnter", "WinLeave" }, {
+	callback = function()
+		local cl = vim.wo.cursorline
+		if cl then
+			vim.api.nvim_win_set_var(0, "auto-cursorline", cl)
+			vim.wo.cursorline = false
+		end
+	end,
 })

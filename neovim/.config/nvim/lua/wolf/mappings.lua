@@ -22,6 +22,12 @@ vim.keymap.set("n", "<C-u>", "<C-u>zz")
 vim.keymap.set("n", "n", "nzzzv")
 vim.keymap.set("n", "N", "Nzzzv")
 
+-- Resize windows
+vim.keymap.set("n", "<S-Up>", "<cmd>resize +2<cr>")
+vim.keymap.set("n", "<S-Down>", "<cmd>resize -2<cr>")
+vim.keymap.set("n", "<S-Left>", "<cmd>vertical resize -2<cr>")
+vim.keymap.set("n", "<S-Right>", "<cmd>vertical resize +2<cr>")
+
 -- Clear search highlights on esc
 vim.keymap.set("n", "<esc>", ":noh<cr>", { noremap = true, silent = true })
 
