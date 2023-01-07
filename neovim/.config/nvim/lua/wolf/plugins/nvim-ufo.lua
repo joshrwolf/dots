@@ -6,6 +6,9 @@ local M = {
 	},
 }
 
+-- here is a
+-- long comment
+-- that should get folded
 function M.config()
 	require("ufo").setup({
 		close_fold_kinds = { "comment" },

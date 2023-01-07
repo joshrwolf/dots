@@ -22,6 +22,27 @@ return {
 		event = "VeryLazy",
 	},
 	{
+		"tpope/vim-projectionist",
+		cmd = { "A", "AV", "AS" },
+		event = "VeryLazy",
+		config = function()
+			-- TODO: There's probably a smarter way to do this with lua
+			vim.cmd([[
+let g:projectionist_heuristics = {
+  \ '*.go': {
+  \   '*.go': {
+  \       'alternate': '{}_test.go',
+  \       'type': 'source'
+  \   },
+  \   '*_test.go': {
+  \       'alternate': '{}.go',
+  \       'type': 'test'
+  \   },
+  \ }}
+]])
+		end,
+	},
+	{
 		-- Git
 		"tpope/vim-fugitive",
 		event = "VeryLazy",
@@ -36,7 +57,7 @@ return {
 					vim.keymap.set("n", "<Tab>", "=", { remap = true, buffer = ctx.buf })
 					vim.keymap.set("n", "q", ":q<cr>", { buffer = ctx.buf })
 					vim.keymap.set("n", "dt", ":Gtabedit <Plug><cfile><Bar>Gdiffsplit<CR>", { buffer = ctx.buf })
-					vim.keymap.set("n", "S", "<cmd>silent !git add -A<cr>", { buffer = ctx.buf })
+					vim.keymap.set("n", "S", "<cmd>silent !git add -A<cr>", { buffer = ctx.buf, desc = "Add All" })
 				end,
 			})
 		end,

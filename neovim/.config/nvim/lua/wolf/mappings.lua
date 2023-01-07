@@ -42,7 +42,6 @@ vim.keymap.set("n", "gk", ":GitMessenger<cr>", { silent = true })
 
 -- Register leader keys
 wk.register({
-	[","] = { require("telescope.builtin").buffers, "Find Buffers" },
 	["<space>"] = { require("telescope.builtin").find_files, "Find Files" },
 	["q"] = { ":q<cr>", "Quit" },
 
@@ -78,12 +77,22 @@ wk.register({
 			y = { ":GBrowse!<cr>", "Copy permalink", mode = { "n", "v" } },
 			Y = { ":GBrowse! @upstream<cr>", "Copy upstream permalink", mode = { "n", "v" } },
 		},
+    a = { ":Gwrite<cr>", "Write" },
+	},
+	t = {
+		name = "+test",
+		r = { "<cmd>lua require('neotest').run.run()<cr>", "Run Nearest" },
+		f = { "<cmd>lua require('neotest').run.run(vim.fn.expand('%'))<cr>", "Run File" },
+		l = { "<cmd>lua require('neotest').run.run_last()<cr>", "Run Last" },
+		t = { "<cmd>lua require('neotest').summary.toggle()<cr>", "Toggle Summary" },
 	},
 }, { prefix = "<leader>" })
 
 -- Register non leader keys
 wk.register({
 	["\\"] = { "<cmd>Telescope file_browser path=%:p:h<cr>", "Browser" },
-	["H"] = { "<cmd>:bprev<cr>", "Prev Buffer" },
-	["L"] = { "<cmd>:bnext<cr>", "Next Buffer" },
+	["<C-,>"] = { require("telescope.builtin").buffers, "Find Buffers" },
+	g = {
+		a = { ":A<cr>", "Goto Alternate" },
+	},
 })

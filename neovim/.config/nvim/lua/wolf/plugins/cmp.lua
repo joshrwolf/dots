@@ -17,7 +17,7 @@ local M = {
 }
 
 function M.config()
-	vim.o.completeopt = "menuone,noselect"
+	vim.o.completeopt = "menu,menuone,noinsert"
 
 	local cmp = require("cmp")
 	local luasnip = require("luasnip")
@@ -28,7 +28,7 @@ function M.config()
 
 	cmp.setup({
 		completion = {
-			completeopt = "menu,menuone,noselect",
+			completeopt = "menu,menuone,noinsert",
 		},
 		snippet = {
 			expand = function(args)
@@ -42,35 +42,55 @@ function M.config()
 				select = true,
 			}),
 			["<Tab>"] = cmp.mapping(function(fallback)
-				if cmp.visible() then
-					local entry = cmp.get_selected_entry()
-					if not entry then
-						cmp.select_next_item({ behavior = cmp.SelectBehavior.Select })
-						cmp.confirm()
+				if vim.fn.mode() == "i" then
+					if cmp.visible() then
+						local entry = cmp.get_selected_entry()
+						if not entry then
+							cmp.select_next_item({ behavior = cmp.SelectBehavior.Select })
+							cmp.confirm()
+						else
+							cmp.confirm()
+						end
 					else
-						cmp.confirm()
+						fallback()
 					end
-				else
-					fallback()
+				elseif vim.fn.mode() == "c" then
+					if cmp.visible() then
+						cmp.select_next_item()
+					else
+						cmp.complete()
+					end
 				end
-			end, { "i", "s", "c" }),
+			end, { "i", "c" }),
 			["<C-u>"] = cmp.mapping.scroll_docs(-4),
 			["<C-d>"] = cmp.mapping.scroll_docs(4),
 			["<C-j>"] = cmp.mapping.select_next_item(),
 			["<C-k>"] = cmp.mapping.select_prev_item(),
 		}),
 		sources = {
-			{ name = "nvim_lsp" },
+			{ name = "nvim_lsp", max_item_count = 15 },
 			{ name = "nvim_lsp_signature_help" },
 			{ name = "luasnip", keyword_length = 2, max_item_count = 2 },
 			{ name = "path" }, -- only triggers on .
 			{ name = "buffer", keyword_length = 4, max_item_count = 2 },
-			{ name = "rg", max_item_count = 2, keyword_length = 5, option = { additional_arguments = "--max-depth 8" } },
-			{ name = "git", entry_filter = function (_, _)
-        -- Only use this source in comments
-        local context = require("cmp.config.context")
-        return context.in_treesitter_capture("comment") == true or context.in_syntax_group("Comment")
-			end }, -- only triggers on @,#,!,:
+			-- { name = "rg", max_item_count = 2, keyword_length = 5, option = { additional_arguments = "--max-depth 8" } },
+			-- { name = "git", entry_filter = function (_, _)
+			--      -- Only use this source in comments
+			--      local context = require("cmp.config.context")
+			--      return context.in_treesitter_capture("comment") == true or context.in_syntax_group("Comment")
+			-- end }, -- only triggers on @,#,!,:
+		},
+		sorting = {
+			-- TODO: Refine this over time
+			-- refs:
+			--  - https://github.com/Bekaboo/nvim/blob/master/lua/modules/completion/configs.lua#L127
+			comparators = {
+				cmp.config.compare.kind,
+				cmp.config.compare.locality,
+				cmp.config.compare.recently_used,
+				cmp.config.compare.exact,
+				cmp.config.compare.score,
+			},
 		},
 		formatting = {
 			fields = { "kind", "abbr", "menu" },

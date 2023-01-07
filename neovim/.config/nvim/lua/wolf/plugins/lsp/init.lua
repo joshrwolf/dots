@@ -119,7 +119,6 @@ function M.config()
 		},
 		rust_analyzer = {},
 		gopls = {
-			cmd = { "gopls", "--remote=auto" },
 			settings = {
 				gopls = {
 					["ui.documentation.linksInHover"] = false,

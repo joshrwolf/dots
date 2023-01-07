@@ -797,6 +797,9 @@ key_bindings:
   # cmd-p
   - { key: P, mods: Command, chars: "\x10" }
 
+  # CSU Overrides
+  # ref: https://alpha2phi.medium.com/neovim-101-terminal-and-shell-5be83b9f2b88
+  - { key: Comma, mods: Control, chars: "\x1b[44;5u" }
 
   #- { key: Paste,                                       action: Paste          }
   #- { key: Copy,                                        action: Copy           }

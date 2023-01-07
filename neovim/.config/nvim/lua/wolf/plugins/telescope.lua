@@ -23,6 +23,7 @@ function M.config()
 			mappings = {
 				n = {
 					["<C-c>"] = actions.close,
+					["q"] = actions.close,
 				},
 				i = {
 					["<C-j>"] = actions.move_selection_next,
@@ -46,14 +47,17 @@ function M.config()
 			find_files = {
 				hidden = true,
 			},
-			buffers = require("telescope.themes").get_dropdown({
+			buffers = require("telescope.themes").get_ivy({
 				sort_mru = true,
 				sort_lastused = true,
 				ignore_current_buffer = true,
 				mappings = {
 					i = { ["<c-x>"] = "delete_buffer" },
+					["n"] = {
+						["<C-,>"] = actions.close,
+					},
 				},
-				previewer = false,
+				initial_mode = "normal",
 			}),
 			git_branches = {
 				layout_strategy = "vertical",
@@ -109,7 +113,7 @@ function M.config()
 				hidden = true,
 				hide_parent_dir = true,
 				initial_mode = "normal",
-				collapse_dirs = true,
+				collapse_dirs = false,
 				mappings = {
 					-- ["i"] = {},
 					["n"] = {
@@ -151,6 +155,7 @@ function M.config()
 	telescope.load_extension("file_browser")
 	telescope.load_extension("undo")
 	telescope.load_extension("live_grep_args")
+	telescope.load_extension("dap")
 	telescope.load_extension("yank_history")
 
 	--- NOTE: this must be required after setting up telescope

@@ -1,6 +1,6 @@
 local M = {
 	"utilyre/barbecue.nvim",
-	event = "VeryLazy",
+	event = "BufReadPost",
 	dependencies = {
 		"neovim/nvim-lspconfig",
 		"smiteshp/nvim-navic",

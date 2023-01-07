@@ -31,6 +31,30 @@ function M.config()
 			local gs = require("gitsigns")
 			local wk = require("which-key")
 
+			-- Navigate hunks (and center after jump)
+			-- NOTE: We need this fancy stuff b/c some jumps happen async
+			vim.keymap.set("n", "]c", function()
+				if vim.wo.diff then
+					return "]czz"
+				end
+				vim.schedule(function()
+					gs.next_hunk()
+					vim.fn.feedkeys("zz")
+				end)
+				return "<Ignore>"
+			end, { desc = "Next Hunk", expr = true })
+
+			vim.keymap.set("n", "[c", function()
+				if vim.wo.diff then
+					return "[czz"
+				end
+				vim.schedule(function()
+					gs.prev_hunk()
+					vim.fn.feedkeys("zz")
+				end)
+				return "<Ignore>"
+			end, { desc = "Prev Hunk", expr = true })
+
 			wk.register({
 				buffer = bufnr,
 				["<leader>"] = {
@@ -40,8 +64,6 @@ function M.config()
 						d = { gs.diffthis, "Diff File" },
 					},
 				},
-				["[c"] = { gs.prev_hunk, "Prev Hunk" },
-				["]c"] = { gs.next_hunk, "Next Hunk" },
 				["ih"] = { gs.select_hunk, "Select Inside Hunk", mode = { "o", "x" } },
 				["oh"] = { gs.select_hunk, "Select Outside Hunk", mode = { "o", "x" } },
 			})

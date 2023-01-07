@@ -1,3 +1,6 @@
+-- TODO: Convert to this!
+-- require("wolf.config.lazy")
+
 -- Options must be set first since it sets up things like leader
 require("wolf.options")
 require("wolf.lazy")

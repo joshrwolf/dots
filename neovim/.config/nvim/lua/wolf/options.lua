@@ -38,7 +38,7 @@ vim.opt.smartcase = true
 vim.opt.autoindent = true
 vim.opt.mouse = "a"
 
-vim.opt.scrolloff = 8
+vim.opt.scrolloff = 4
 vim.opt.signcolumn = "yes"
 
 vim.opt.hlsearch = true
