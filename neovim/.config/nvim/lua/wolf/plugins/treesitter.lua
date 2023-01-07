@@ -48,6 +48,7 @@ function M.config()
 		},
 		highlight = {
 			enable = true,
+			additional_vim_regex_highlighting = { "markdown" },
 			custom_captures = {
 				["definition"] = "Bold", -- This doesn't actually work... idk why
 			},

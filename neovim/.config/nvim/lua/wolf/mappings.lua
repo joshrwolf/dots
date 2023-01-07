@@ -57,6 +57,7 @@ wk.register({
 		["."] = { require("telescope.builtin").resume, "Resume" },
 		n = {
 			name = "+notes",
+			w = { "<cmd>ObsidianSearch<cr>", "Search Obsidian" },
 			n = { "<cmd>ObsidianNew<cr>", "New Obsidian Note" },
 			d = { "<cmd>ObsidianToday<cr>", "Daily Obsidian Note" },
 			s = { "<cmd>ObsidianYesterday<cr>", "Yesterday's Obsidian Note" },
@@ -77,7 +78,7 @@ wk.register({
 			y = { ":GBrowse!<cr>", "Copy permalink", mode = { "n", "v" } },
 			Y = { ":GBrowse! @upstream<cr>", "Copy upstream permalink", mode = { "n", "v" } },
 		},
-    a = { ":Gwrite<cr>", "Write" },
+		a = { ":Gwrite<cr>", "Write" },
 	},
 	t = {
 		name = "+test",

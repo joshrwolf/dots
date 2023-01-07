@@ -3,7 +3,7 @@ local M = {
 	event = "BufReadPost",
 	dependencies = {
 		"neovim/nvim-lspconfig",
-		"smiteshp/nvim-navic",
+		"SmiteshP/nvim-navic",
 		"nvim-tree/nvim-web-devicons", -- optional dependency
 	},
 }

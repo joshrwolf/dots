@@ -148,6 +148,9 @@ function M.config()
 					telemetry = { enable = false },
 					format = { enable = false },
 					diagnostics = { globals = { "vim", "require" } },
+					completion = {
+						callSnippet = "Replace",
+					},
 				},
 			},
 		},
