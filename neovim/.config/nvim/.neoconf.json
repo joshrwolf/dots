@@ -14,7 +14,16 @@
   },
   "lspconfig": {
     "bashls": {},
-    "yamlls": {},
+    "yamlls": {
+      "yaml.validate": false,
+      "yaml.format.enable": false,
+      "yaml.schemas": {
+        "http://json.schemastore.org/github-workflow": ".github/workflows/*",
+        "http://json.schemastore.org/github-action": ".github/action.{yml,yaml}",
+        "http://json.schemastore.org/chart": "Chart.{yml,yaml}",
+        "http://json.schemastore.org/kustomization": "kustomization.{yml,yaml}"
+      }
+    },
     "jsonls": {},
     "rust_analyzer": {},
     "terraformls": {},

@@ -95,7 +95,26 @@ return {
 				},
 			},
 			yamlls = {},
-			gopls = {},
+			gopls = {
+				settings = {
+					gopls = {
+						["ui.documentation.linksInHover"] = false,
+						["ui.diagnostics.staticcheck"] = true,
+						semanticTokens = false, -- turn on when 0.9 is stable
+						analyses = {
+							assign = true,
+							unreachable = true,
+							unusedparams = true,
+							bools = true,
+							nilness = true,
+							nilfunc = true,
+							shadow = true,
+							unusedwrite = true,
+							unusedvariable = true,
+						},
+					},
+				},
+			},
 			rust_analyzer = {},
 			terraformls = {},
 			sumneko_lua = {
