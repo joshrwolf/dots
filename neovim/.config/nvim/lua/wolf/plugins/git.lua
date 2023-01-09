@@ -2,7 +2,6 @@ return {
 	{
 		"lewis6991/gitsigns.nvim",
 		event = "BufReadPre",
-		version = false,
 		config = function()
 			require("gitsigns").setup({
 				signs = {
@@ -81,7 +80,6 @@ return {
 
 	{
 		"tpope/vim-fugitive",
-		version = false,
 		dependencies = {
 			{
 				"tpope/vim-rhubarb",
@@ -141,7 +139,6 @@ return {
 	{
 		-- ref: https://github.com/rhysd/git-messenger.vim
 		"rhysd/git-messenger.vim",
-		version = false,
 		keys = {
 			{ "gk", ":GitMessenger<cr>" },
 		},

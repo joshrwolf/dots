@@ -6,7 +6,6 @@ return {
 		{ "nvim-telescope/telescope-fzf-native.nvim", build = "make" },
 		{
 			"nvim-telescope/telescope-live-grep-args.nvim",
-			version = false,
 			keys = {
 				{ "<leader>fw", "<cmd> Telescope live_grep_args<cr>", "Find workds" },
 			},
@@ -37,10 +36,18 @@ return {
 				selection_caret = " ",
 				mappings = {
 					n = {
+						["<cr>"] = actions.select_default + actions.center,
+						["<c-x>"] = actions.select_horizontal + actions.center,
+						["<c-v>"] = actions.select_vertical + actions.center,
+						["<c-t>"] = actions.select_tab + actions.center,
 						["<c-c>"] = actions.close,
 						["q"] = actions.close,
 					},
 					i = {
+						["<cr>"] = actions.select_default + actions.center,
+						["<c-x>"] = actions.select_horizontal + actions.center,
+						["<c-v>"] = actions.select_vertical + actions.center,
+						["<c-t>"] = actions.select_tab + actions.center,
 						["<c-j>"] = actions.move_selection_next,
 						["<c-k>"] = actions.move_selection_previous,
 					},
@@ -78,9 +85,6 @@ return {
 						width = 150,
 					},
 				}),
-				lsp_references = {
-					include_current_line = true, -- this seems to do the opposite of what it says it does...
-				},
 			},
 			extensions = {
 				file_browser = {
