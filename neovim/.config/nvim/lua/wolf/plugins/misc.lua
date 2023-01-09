@@ -62,7 +62,6 @@ return {
 			{ "aI", mode = { "x", "o" } },
 			{ "iI", mode = { "x", "o" } },
 		},
-		version = false,
 	},
 	{
 		"kylechui/nvim-surround",
@@ -71,7 +70,6 @@ return {
 	},
 	{
 		"RRethy/vim-illuminate",
-		version = false,
 		event = "BufReadPost",
 		config = function()
 			require("illuminate").configure({
@@ -97,6 +95,7 @@ return {
 	},
 	{
 		"folke/which-key.nvim",
+		version = "*",
 		event = "VeryLazy",
 		config = function()
 			local wk = require("which-key")
@@ -125,6 +124,7 @@ return {
 	},
 	{
 		"lukas-reineke/indent-blankline.nvim",
+		version = "*",
 		event = "BufReadPre",
 		opts = {
 			buftype_exclude = { "terminal", "nofile" },
@@ -137,7 +137,6 @@ return {
 	},
 	-- {
 	-- 	"folke/noice.nvim",
-	-- 	version = false,
 	-- 	event = "VeryLazy",
 	-- 	dependencies = {
 	-- 		"MunifTanjim/nui.nvim",
@@ -181,7 +180,6 @@ return {
 	{
 		"andymass/vim-matchup",
 		event = "BufReadPost",
-		version = false,
 		config = function()
 			vim.g.matchup_matchparen_offscreen = { method = nil }
 		end,
@@ -205,11 +203,11 @@ return {
 	},
 	{
 		"tpope/vim-unimpaired",
+		version = "*",
 		event = "BufReadPost",
 	},
 	{
 		"tpope/vim-projectionist",
-		version = false,
 		keys = {
 			{ "ga", "<cmd>:A<cr>", "Alternate" },
 		},
@@ -234,7 +232,6 @@ let g:projectionist_heuristics = {
 	{
 		-- Note taking
 		"epwalsh/obsidian.nvim",
-		version = false,
 		keys = {
 			{ "<leader>fnw", "<cmd>ObsidianSearch<cr>", "Search Obsidian" },
 			{ "<leader>fnn", "<cmd>ObsidianNew<cr>", "New Notes" },
@@ -319,7 +316,6 @@ let g:projectionist_heuristics = {
 	},
 	{
 		"dstein64/vim-startuptime",
-		version = false,
 		cmd = "StartupTime",
 		config = function()
 			vim.g.startuptime_tries = 20

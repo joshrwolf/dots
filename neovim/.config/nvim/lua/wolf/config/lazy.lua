@@ -13,7 +13,7 @@ require("lazy").setup({
 	install = { colorscheme = { "nordfox", "nightfox" } },
 	defaults = {
 		lazy = true, -- load every plugin lazily by default
-		version = "*", -- try installing the latest stable version for plugins that use semver
+		-- version = "*", -- try installing the latest stable version for plugins that use semver
 	},
 	checker = { enabled = true, notify = false },
 	performance = {

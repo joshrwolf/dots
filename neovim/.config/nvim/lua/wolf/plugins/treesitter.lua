@@ -15,7 +15,6 @@ return {
 		"nvim-treesitter/nvim-treesitter",
 		build = ":TSUpdate",
 		event = "BufReadPost",
-		version = false, -- use the latest version
 		dependencies = {
 			{ "nvim-treesitter/playground", cmd = "TSPlaygroundToggle" },
 			"nvim-treesitter/nvim-treesitter-textobjects",
