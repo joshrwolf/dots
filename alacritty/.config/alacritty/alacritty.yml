@@ -800,6 +800,8 @@ key_bindings:
   # CSU Overrides
   # ref: https://alpha2phi.medium.com/neovim-101-terminal-and-shell-5be83b9f2b88
   - { key: Comma, mods: Control, chars: "\x1b[44;5u" }
+  - { key: Period, mods: Control, chars: "\x1b[46;5u" }
+  - { key: Semicolon, mods: Control, chars: "\x1b[59;5u" }
   - { key: Key6,        mods: Control, chars: "\x1e"                     }
 
   #- { key: Paste,                                       action: Paste          }

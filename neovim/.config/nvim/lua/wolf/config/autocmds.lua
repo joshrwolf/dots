@@ -87,3 +87,11 @@ vim.api.nvim_create_autocmd({ "InsertEnter", "WinLeave" }, {
 		end
 	end,
 })
+
+-- Close terminal when exited
+vim.api.nvim_create_autocmd({ "TermClose" }, {
+	pattern = { "term://*" },
+	callback = function()
+		vim.api.nvim_input("<cr>")
+	end,
+})

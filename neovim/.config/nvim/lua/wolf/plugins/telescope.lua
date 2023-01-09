@@ -21,7 +21,7 @@ return {
 		{ "<leader>fo", "<cmd>Telescope oldfiles<cr>", desc = "Find oldfiles" },
 		{ "<leader>f.", "<cmd>Telescope resume<cr>", desc = "Find resume" },
 		{ "\\", "<cmd>Telescope file_browser path=%:p:h<cr>", desc = "Browser" },
-		{ "<c-,>", "<cmd>Telescope buffers<cr>", desc = "Find buffers" },
+		{ "<c-,>", "<cmd>Telescope buffers<cr>", desc = "Find buffers", mode = { "n", "t" } },
 		{ "<leader>hh", "<cmd>Telescope help_tags<cr>", desc = "Help pages" },
 		{ "<leader>hc", "<cmd>Telescope commands<cr>", desc = "Help commands" },
 		{ "<leader>ha", "<cmd>Telescope autocommands<cr>", desc = "Help autocommands" },

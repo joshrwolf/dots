@@ -347,7 +347,7 @@ function M.config()
 		c.Pad,
 		c.Diagnostics,
 		c.Snippets,
-		c.Dap,
+		-- c.Dap,
 		c.Fill,
 		c.LspActive,
 		c.Pad,

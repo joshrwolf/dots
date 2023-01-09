@@ -28,3 +28,8 @@ vim.keymap.set("n", "[T", ":tabfirst<cr>", { desc = "First Tab" })
 vim.keymap.set("n", "[t", ":tabp<cr>", { desc = "Prev Tab" })
 vim.keymap.set("n", "]t", ":tabn<cr>", { desc = "Next Tab" })
 vim.keymap.set("n", "]T", ":tablast<cr>", { desc = "Last Tab" })
+
+-- Terminal
+vim.keymap.set("n", "<c-;>", "<cmd>vsplit | terminal<cr>", { desc = "New Vertical Terminal" })
+vim.keymap.set("n", "<c-.>", "<cmd>split | resize 20 | terminal<cr>", { desc = "New Horizontal Terminal" })
+vim.keymap.set("t", "<esc>", [[<C-\><C-n>]])
