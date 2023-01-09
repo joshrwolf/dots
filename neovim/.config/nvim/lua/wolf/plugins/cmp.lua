@@ -14,26 +14,20 @@ return {
 		},
 		keys = {
 			{
-				"<tab>",
+				"<c-n>",
 				function()
-					return require("luasnip").jumpable(1) and require("luasnip").jump(1) or "<tab>"
+					if require("luasnip").jumpable(1) then
+						require("luasnip").jump(1)
+					end
 				end,
-				expr = true,
-				remap = true,
-				silent = true,
-				mode = "i",
+				mode = { "i", "s" },
 			},
 			{
-				"<tab>",
+				"<c-p>",
 				function()
-					require("luasnip").jump(1)
-				end,
-				mode = "s",
-			},
-			{
-				"<s-tab>",
-				function()
-					require("luasnip").jump(-1)
+					if require("luasnip").jumpable(-1) then
+						require("luasnip").jump(-1)
+					end
 				end,
 				mode = { "i", "s" },
 			},
@@ -72,8 +66,8 @@ return {
 					end,
 				},
 				mapping = cmp.mapping.preset.insert({
-					["<c-b>"] = cmp.mapping.scroll_docs(-4),
-					["<c-f>"] = cmp.mapping.scroll_docs(4),
+					["<c-u>"] = cmp.mapping.scroll_docs(-4),
+					["<c-d>"] = cmp.mapping.scroll_docs(4),
 					["<c-space>"] = cmp.mapping.complete({}),
 					["<c-e>"] = cmp.mapping.abort(),
 					["<cr>"] = cmp.mapping.confirm({ select = true, behavior = cmp.ConfirmBehavior.Replace }),
@@ -84,9 +78,10 @@ return {
 				sources = cmp.config.sources({
 					{ name = "nvim_lsp" },
 					{ name = "nvim_lsp_signature_help" },
-					{ name = "buffer", keyword_length = 3, max_item_count = 3 },
 					{ name = "luasnip", keyword_length = 2, max_item_count = 3 },
-					{ name = "path" },
+					{ name = "path" }, -- triggers on "."
+				}, {
+					{ name = "buffer", keyword_length = 3 },
 				}),
 				formatting = {
 					fields = { "abbr", "kind", "menu" },
