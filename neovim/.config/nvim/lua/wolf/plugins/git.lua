@@ -71,7 +71,7 @@ return {
 					map("n", "<leader>gd", gs.diffthis, "Diff File")
 					map("n", "<leader>gl", function()
 						gs.blame_line({ full = true })
-					end, "Diff File")
+					end, "Full Blame Line")
 					map({ "o", "x" }, "ih", ":<C-U>Gitsigns select_hunk<CR>", "Hunk Text Object")
 					map({ "o", "x" }, "oh", ":<C-U>Gitsigns select_hunk<CR>", "Hunk Text Object")
 				end,
@@ -95,6 +95,7 @@ return {
 		keys = {
 			{ "<leader>gg", ":tab G<cr>", "Git" },
 			{ "<leader>ga", ":Gwrite<cr>", "Write file" },
+			{ "<leader>gL", ":0Git log<cr>", "Git Log" },
 		},
 		config = function()
 			vim.api.nvim_create_autocmd("FileType", {

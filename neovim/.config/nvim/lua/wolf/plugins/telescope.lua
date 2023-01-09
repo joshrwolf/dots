@@ -78,6 +78,9 @@ return {
 						width = 150,
 					},
 				}),
+				lsp_references = {
+					include_current_line = true, -- this seems to do the opposite of what it says it does...
+				},
 			},
 			extensions = {
 				file_browser = {
