@@ -1,115 +1,3 @@
-local M = {
-	"nvim-treesitter/nvim-treesitter",
-	build = ":TSUpdate",
-	event = "BufReadPost",
-
-	dependencies = {
-		"nvim-treesitter/nvim-treesitter-textobjects",
-		"RRethy/nvim-treesitter-textsubjects",
-		{ "nvim-treesitter/playground", cmd = "TSPlaygroundToggle" },
-	},
-}
-
-function M.config()
-	setup_cue()
-
-	require("nvim-treesitter.configs").setup({
-		ensure_installed = {
-			"bash",
-			"cue",
-			"diff",
-			"gitignore",
-			"go",
-			"gomod",
-			"gowork",
-			"graphql",
-			"hcl",
-			"help",
-			"html",
-			"http",
-			"javascript",
-			"json",
-			"jsonc",
-			"lua",
-			"markdown",
-			"markdown_inline",
-			"nix",
-			"python",
-			"regex",
-			"rust",
-			"scss",
-			"sql",
-			"toml",
-			"tsx",
-			"terraform",
-			"typescript",
-			"vim",
-			"yaml",
-		},
-		highlight = {
-			enable = true,
-			additional_vim_regex_highlighting = { "markdown" },
-			custom_captures = {
-				["definition"] = "Bold", -- This doesn't actually work... idk why
-			},
-		},
-		indent = { enable = false },
-		incremental_selection = {
-			enable = true,
-			keymaps = {
-				init_selection = "<C-space>",
-				node_incremental = "<C-space>",
-				scope_incremental = "<C-s>",
-				node_decremental = "<C-backspace>",
-			},
-		},
-		textobjects = {
-			select = {
-				enable = true,
-				lookahead = true,
-				include_surrounding_whitespace = true,
-				keymaps = {
-					["aa"] = "@parameter.outer",
-					["ia"] = "@parameter.inner",
-					["af"] = "@function.outer",
-					["if"] = "@function.inner",
-					["ac"] = "@class.outer",
-					["ic"] = "@class.inner",
-				},
-			},
-			move = {
-				enable = true,
-				set_jumps = false,
-				goto_next_start = {
-					["]f"] = "@function.outer",
-					["]a"] = "@parameter.inner",
-				},
-				goto_next_end = {
-					["]F"] = "@function.outer",
-				},
-				goto_previous_start = {
-					["[f"] = "@function.outer",
-					["[a"] = "@parameter.inner",
-				},
-				goto_previous_end = {
-					["[F"] = "@function.outer",
-				},
-			},
-		},
-		textsubjects = {
-			enable = true,
-			prev_selection = ",",
-			keymaps = {
-				["."] = "textsubjects-smart",
-				[";"] = "textsubjects-container-outer",
-			},
-		},
-		matchup = {
-			enable = true,
-		},
-	})
-end
-
 function setup_cue()
 	local parser_config = require("nvim-treesitter.parsers").get_parser_configs()
 	parser_config.cue = {
@@ -122,4 +10,101 @@ function setup_cue()
 	}
 end
 
-return M
+return {
+	{
+		"nvim-treesitter/nvim-treesitter",
+		build = ":TSUpdate",
+		event = "BufReadPost",
+		version = false, -- use the latest version
+		dependencies = {
+			{ "nvim-treesitter/playground", cmd = "TSPlaygroundToggle" },
+			"nvim-treesitter/nvim-treesitter-textobjects",
+			"RRethy/nvim-treesitter-textsubjects",
+		},
+		opts = {
+			sync_install = false, -- allows async downloading
+			ensure_installed = {
+				"bash",
+				"diff",
+				"gitignore",
+				"go",
+				"gomod",
+				"gowork",
+				"graphql",
+				"hcl",
+				"help",
+				"html",
+				"http",
+				"javascript",
+				"json",
+				"jsonc",
+				"json5",
+				"lua",
+				"markdown",
+				"markdown_inline",
+				"nix",
+				"python",
+				"query",
+				"regex",
+				"rust",
+				"scss",
+				"sql",
+				"toml",
+				"terraform",
+				"tsx",
+				"typescript",
+				"vim",
+				"yaml",
+
+				-- customs
+				"cue",
+			},
+			highlight = {
+				enable = true,
+				-- additional_vim_regex_highlighting = { "markdown" },
+				indent = { enable = false },
+			},
+			textobjects = {
+				select = {
+					enable = true,
+					lookahead = true,
+					include_surrounding_whitespace = false,
+					keymaps = {
+						["aa"] = "@parameter.outer",
+						["ia"] = "@parameter.inner",
+						["af"] = "@function.outer",
+						["if"] = "@function.inner",
+						["ac"] = "@class.outer",
+						["ic"] = "@class.inner",
+						["ao"] = "@conditional.outer",
+						["io"] = "@conditional.inner",
+					},
+				},
+				move = {
+					enable = true,
+					set_jumps = false,
+					goto_next_start = {
+						["]f"] = "@function.outer",
+						["]a"] = "@parameter.inner",
+					},
+					goto_previous_start = {
+						["[f"] = "@function.outer",
+						["[a"] = "@parameter.inner",
+					},
+				},
+			},
+			textsubjects = {
+				enable = true,
+				prev_selection = ",",
+				keymaps = {
+					["."] = "textsubjects-smart",
+					[";"] = "textsubjects-container-outer",
+				},
+			},
+		},
+		config = function(plugin, opts)
+			setup_cue()
+			require("nvim-treesitter.configs").setup(opts)
+		end,
+	},
+}

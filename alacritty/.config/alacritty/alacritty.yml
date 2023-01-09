@@ -140,7 +140,7 @@ font:
     #
     # If the bold family is not specified, it will fall back to the
     # value specified for the normal font.
-    family: Fisa Code
+    family: FiraCode Nerd Font Mono
 
     # The `style` can be specified to pick a specific face.
     style: Bold
@@ -800,6 +800,7 @@ key_bindings:
   # CSU Overrides
   # ref: https://alpha2phi.medium.com/neovim-101-terminal-and-shell-5be83b9f2b88
   - { key: Comma, mods: Control, chars: "\x1b[44;5u" }
+  - { key: Key6,        mods: Control, chars: "\x1e"                     }
 
   #- { key: Paste,                                       action: Paste          }
   #- { key: Copy,                                        action: Copy           }

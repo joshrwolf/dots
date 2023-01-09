@@ -1,14 +1,12 @@
--- Check if we need to reload the file when it changed
-vim.api.nvim_create_autocmd("FocusGained", { command = "checktime" })
+-- This file is automatically loaded by wolf.plugins.config
 
--- show cursor line only in active window
-vim.api.nvim_create_autocmd({ "InsertLeave", "WinEnter" }, {
+-- Check if we need to reload the file when it changed
+vim.api.nvim_create_autocmd({ "FocusGained", "TermClose", "TermLeave" }, { command = "checktime" })
+
+-- Highlight on yank
+vim.api.nvim_create_autocmd("TextYankPost", {
 	callback = function()
-		local ok, cl = pcall(vim.api.nvim_win_get_var, 0, "auto-cursorline")
-		if ok and cl then
-			vim.wo.cursorline = true
-			vim.api.nvim_win_del_var(0, "auto-cursorline")
-		end
+		vim.highlight.on_yank()
 	end,
 })
 
@@ -27,6 +25,9 @@ vim.api.nvim_create_autocmd("BufReadPre", {
 		})
 	end,
 })
+
+-- Don't auto comment new line
+vim.api.nvim_create_autocmd("BufEnter", { command = [[set formatoptions-=cro]] })
 
 -- windows to close with "q"
 vim.api.nvim_create_autocmd("FileType", {
@@ -54,9 +55,6 @@ vim.api.nvim_create_autocmd("FileType", {
 		vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = event.buf, silent = true })
 	end,
 })
-
--- Don't auto comment new line
-vim.api.nvim_create_autocmd("BufEnter", { command = [[set formatoptions-=cro]] })
 
 -- Properly identify cue files
 vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter" }, {

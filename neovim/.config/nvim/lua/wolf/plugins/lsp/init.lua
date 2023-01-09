@@ -1,196 +1,220 @@
-local M = {
-	"neovim/nvim-lspconfig",
-	name = "lsp",
-	event = "BufReadPre",
+return {
+	-- lspconfig
+	{
+		"neovim/nvim-lspconfig",
+		event = "BufReadPre",
+		version = false,
+		dependencies = {
+			{ "folke/neoconf.nvim", cmd = "Neoconf", config = true },
+			{ "folke/neodev.nvim", config = true },
+			"williamboman/mason.nvim",
+			"williamboman/mason-lspconfig.nvim",
+			"hrsh7th/cmp-nvim-lsp", -- ensure lazy loads properly
 
-	dependencies = {
-		"williamboman/mason.nvim",
-		"williamboman/mason-lspconfig.nvim",
+			"b0o/SchemaStore.nvim",
 
-		"j-hui/fidget.nvim",
-		"folke/neodev.nvim",
-
-		"jose-elias-alvarez/null-ls.nvim",
-		"lvimuser/lsp-inlayhints.nvim",
-
-		"b0o/SchemaStore.nvim",
-		"SmiteshP/nvim-navic",
-		{
-			"stevearc/aerial.nvim",
-			dependencies = { "onsails/lspkind.nvim" },
+			{
+				"j-hui/fidget.nvim",
+				opts = { text = { spinner = "dots", done = "" } },
+			},
 		},
-		{
-			"kosayoda/nvim-lightbulb",
-			dependencies = { "antoinemadec/FixCursorHold.nvim" },
-		},
-	},
-}
+		config = function(plugin)
+			-- setup formatting and keymaps
+			vim.api.nvim_create_autocmd("LspAttach", {
+				callback = function(args)
+					local buf = args.buf
+					local client = vim.lsp.get_client_by_id(args.data.client_id)
+					require("wolf.plugins.lsp.format").on_attach(client, buf)
+					require("wolf.plugins.lsp.keymaps").on_attach(client, buf)
 
-local on_attach = function(client, bufnr)
-	require("wolf.plugins.lsp.diagnostics").setup()
-	require("wolf.plugins.lsp.formatting").setup(client, bufnr)
-	require("wolf.plugins.lsp.keys").setup(client, bufnr)
+					if client.server_capabilities.documentSymbolProvider then
+						require("nvim-navic").attach(client, buf)
+					end
+				end,
+			})
 
-	if client.server_capabilities.completionProvider then
-		vim.bo[bufnr].omnifunc = "v:lua.vim.lsp.omnifunc"
-		vim.bo[bufnr].completefunc = "v:lua.vim.lsp.omnifunc"
-	end
+			-- setup diagnostics
+			for name, icon in pairs(require("wolf.config.settings").icons.diagnostics) do
+				name = "DiagnosticSign" .. name
+				vim.fn.sign_define(name, { text = icon, texthl = name, numhl = "" })
+			end
+			vim.diagnostic.config({
+				underline = true,
+				update_in_insert = false,
+				virtual_text = { spacing = 4, prefix = "●", severity = vim.diagnostic.severity.ERROR },
+				severity_sort = true,
+				float = {
+					focusable = true,
+					style = "minimal",
+					border = "rounded",
+					source = "always",
+					header = "",
+					prefix = "",
+				},
+			})
 
-	if client.server_capabilities.definitionProvider then
-		vim.bo[bufnr].tagfunc = "v:lua.vim.lsp.tagfunc"
-	end
+			-- configure popup handler
+			local popup_config = {
+				focusable = true,
+				style = "minimal",
+				border = "rounded",
+			}
+			vim.lsp.handlers["textDocument/hover"] = vim.lsp.with(vim.lsp.handlers.hover, popup_config)
+			vim.lsp.handlers["textDocument/signatureHelp"] = vim.lsp.with(vim.lsp.handlers.signature_help, popup_config)
 
-	if client.server_capabilities["textDocument/codeLens"] then
-		vim.api.nvim_create_autocmd({ "CursorHold", "CompleteDone" }, {
-			buffer = bufnr,
-			desc = "LSP: Refresh Code Lens",
-			callback = function()
-				require("vim.lsp.codelens").refresh()
-			end,
-		})
-	end
+			-- setup servers
+			local servers = plugin.servers or {}
+			local capabilities =
+				require("cmp_nvim_lsp").default_capabilities(vim.lsp.protocol.make_client_capabilities())
 
-	-- setup nvim-navic if documentSymbolProvider exists
-	if client.server_capabilities.documentSymbolProvider then
-		require("nvim-navic").attach(client, bufnr)
-	end
-
-	-- setup inlay hints
-	require("lsp-inlayhints").on_attach(client, bufnr)
-
-	require("nvim-lightbulb").setup({
-		sign = { enabled = true }, -- "text" doesn't work here :(
-		float = { enabled = false, text = "" },
-		status_text = { enable = false },
-		virtual_text = { enable = false },
-		autocmd = { enabled = true },
-	})
-
-	require("aerial").setup({
-		backends = { "lsp", "treesitter" },
-		filter_kind = false,
-		highlight_on_hover = true,
-		show_guides = true,
-		layout = {
-			max_width = { 60, 0.3 },
-			default_direction = "prefer_left",
-		},
-		guides = {
-			mid_item = "├ ",
-			last_item = "└ ",
-			nested_top = "│ ",
-			whitespace = "  ",
-		},
-	})
-end
-
-function M.config()
-	require("neodev").setup()
-	require("mason").setup()
-
-	local mason_lspconfig = require("mason-lspconfig")
-
-	local capabilities = vim.lsp.protocol.make_client_capabilities()
-	capabilities = require("cmp_nvim_lsp").default_capabilities(capabilities)
-	capabilities.textDocument.foldingRange = {
-		dynamicRegistration = false,
-		lineFoldingOnly = true,
-	}
-
-	-- default_opts are deep merged as defaults with all servers
-	local default_opts = {
-		on_attach = on_attach,
-		capabilities = capabilities,
-		flags = {
-			debounce_text_changes = 150,
-		},
-	}
-
-	-- servers is a table passed directly into lspconfig[server].setup()
-	-- for example, setting up gopls looks like: lspconfig["gopls"].setup(servers["gopls"])
-	local servers = {
-		jsonls = {
-			settings = {
-				json = {
-					schemas = require("schemastore").json.schemas(),
+			require("mason-lspconfig").setup({ ensure_installed = vim.tbl_keys(servers) })
+			require("mason-lspconfig").setup_handlers({
+				function(server)
+					local opts = servers[server] or {}
+					opts.capabilities = capabilities
+					if not plugin.setup_server(server, opts) then
+						require("lspconfig")[server].setup(opts)
+					end
+				end,
+			})
+		end,
+		---@type lspconfig.options
+		servers = {
+			bashls = {},
+			jsonls = {
+				-- lazy-load the json schemastore only when needed
+				on_new_config = function(new_config, new_root_dir)
+					new_config.settings.json.schemas = new_config.settings.json.schemas or {}
+					vim.list_extend(new_config.settings.json.schemas, require("schemastore").json.schemas())
+				end,
+				settings = {
+					json = {
+						format = { enable = true },
+					},
 					validate = { enable = true },
 				},
 			},
-		},
-		rust_analyzer = {},
-		gopls = {
-			settings = {
-				gopls = {
-					["ui.documentation.linksInHover"] = false,
-					["ui.diagnostics.staticcheck"] = false,
-					codelenses = {
-						generate = true,
-					},
-					semanticTokens = true,
-					analyses = {
-						assign = true,
-						unreachable = true,
-						unusedparams = true,
-						bools = true,
-						nilness = true,
-						nilfunc = true,
-						shadow = true,
-						unusedwrite = true,
-						unusedvariable = true,
+			yamlls = {},
+			gopls = {},
+			rust_analyzer = {},
+			terraformls = {},
+			sumneko_lua = {
+				settings = {
+					Lua = {
+						workspace = {
+							checkThirdParty = false,
+						},
+						completion = {
+							callSnippet = "Replace",
+						},
 					},
 				},
 			},
 		},
-		sumneko_lua = {
-			settings = {
-				Lua = {
-					workspace = { checkThirdParty = false },
-					telemetry = { enable = false },
-					format = { enable = false },
-					diagnostics = { globals = { "vim", "require" } },
-					completion = {
-						callSnippet = "Replace",
-					},
-				},
-			},
-		},
-		yamlls = {
-			settings = {
-				yaml = {
-					schemaStore = {
-						enable = true,
-						url = "https://www.schemastore.org/api/json/catalog.json",
-					},
-					schemas = {
-						["http://json.schemastore.org/github-workflow"] = ".github/workflows/*",
-						["http://json.schemastore.org/github-action"] = ".github/action.{yml,yaml}",
-						["http://json.schemastore.org/chart"] = "Chart.{yml,yaml}",
-						["http://json.schemastore.org/kustomization"] = "kustomization.{yml,yaml}",
-					},
-					format = { enabled = false },
-					validate = false,
-					completion = true,
-					hover = true,
-				},
-			},
-		},
-	}
-
-	-- setup_handlers runs for each installed lsp_server
-	mason_lspconfig.setup_handlers({
-		function(server_name)
-			-- opts represents default_opts merged with server[server_name]
-			local opts = vim.tbl_deep_extend("force", {}, default_opts, servers[server_name] or {})
-			require("lspconfig")[server_name].setup(opts)
+		---@param server string lsp server name
+		---@param opts _.lspconfig.options any options set for the server
+		setup_server = function(server, opts)
+			-- return true if this server should skip lsp setup
+			return false
 		end,
-	})
+	},
 
-	require("fidget").setup({
-		text = {
-			spinner = "dots",
-			done = "",
+	-- null-ls
+	{
+		"jose-elias-alvarez/null-ls.nvim",
+		event = "BufReadPre",
+		dependencies = { "williamboman/mason.nvim" },
+		config = function()
+			local nls = require("null-ls")
+			nls.setup({
+				sources = {
+					nls.builtins.formatting.stylua,
+					nls.builtins.formatting.terraform_fmt,
+					nls.builtins.formatting.goimports,
+					nls.builtins.formatting.gofumpt,
+					nls.builtins.formatting.rustfmt,
+
+					nls.builtins.diagnostics.actionlint,
+					-- nls.builtins.diagnostics.buf,
+					-- nls.builtins.diagnostics.vale,
+
+					-- nls.builtins.code_actions.shellcheck,
+					-- nls.builtins.code_actions.gitrebase,
+				},
+				-- TODO: Try this out?
+				-- root_dir = require("null-ls.utils").root_pattern(".null-ls-root", ".neoconf.json", ".git"),
+			})
+		end,
+	},
+
+	-- mason
+	{
+		"williamboman/mason.nvim",
+		cmd = "Mason",
+		keys = {
+			{ "<leader>pm", "<cmd>Mason<cr>", desc = "Mason" },
 		},
-	})
-end
+		config = function(_self, opts)
+			require("mason").setup()
+			for _, tool in ipairs(_self.ensure_installed) do
+				local p = require("mason-registry").get_package(tool)
+				if not p:is_installed() then
+					p:install()
+				end
+			end
+		end,
+		ensure_installed = {
+			"stylua",
+			-- "terraform_fmt",   -- this just runs "terraform fmt"
+			"goimports",
+			"gofumpt",
+			"rustfmt",
 
-return M
+			"actionlint",
+			"shellcheck",
+			"buf",
+
+			"shellcheck",
+		},
+	},
+
+	{
+		"SmiteshP/nvim-navic",
+		init = function()
+			vim.g.navic_silence = true
+			vim.api.nvim_create_autocmd("LspAttach", {
+				callback = function(args)
+					local buf = args.buf
+					local client = vim.lsp.get_client_by_id(args.data.client_id)
+					if client.server_capabilities.documentSymbolProvider then
+						require("nvim-navic").attach(client, buf)
+					end
+				end,
+			})
+		end,
+		opts = {
+			highlight = true,
+			depth_limit = 5,
+		},
+	},
+
+	{
+		-- better folding
+		"kevinhwang91/nvim-ufo",
+		event = "VeryLazy",
+		enabled = false,
+		dependencies = {
+			"kevinhwang91/promise-async",
+		},
+		config = function()
+			require("ufo").setup({
+				close_fold_kinds = { "comment" },
+			})
+
+			vim.opt.foldcolumn = "1"
+			vim.opt.foldlevel = 99
+			vim.opt.foldlevelstart = -1
+			vim.opt.foldenable = true
+		end,
+	},
+}

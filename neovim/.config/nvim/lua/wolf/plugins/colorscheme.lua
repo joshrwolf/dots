@@ -1,19 +1,46 @@
-local M = {
+return {
+	-- tokyonight
 	{
-		"andersevenrud/nordic.nvim",
-		lazy = false,
+		"folke/tokyonight.nvim",
 		enabled = false,
-		priority = 999,
+		lazy = false,
+		priority = 1000,
 		config = function()
-			require("nordic").colorscheme({})
+			local tokyonight = require("tokyonight")
+			tokyonight.setup({
+				style = "moon",
+			})
+			tokyonight.load()
+		end,
+	},
+	{
+		"rose-pine/neovim",
+		enabled = false,
+		lazy = false,
+		priority = 1000,
+		config = function()
+			require("rose-pine").setup({
+				dark_variant = "main",
+			})
+			vim.cmd("colorscheme rose-pine")
+		end,
+	},
+	{
+		"projekt0n/github-nvim-theme",
+		enabled = false,
+		lazy = false,
+		priority = 1000,
+		config = function()
+			require("github-theme").setup({
+				theme_style = "dimmed",
+			})
 		end,
 	},
 	{
 		"EdenEast/nightfox.nvim",
-		-- stuff
 		enabled = true,
 		lazy = false,
-		priority = 999,
+		priority = 1000,
 		config = function()
 			require("nightfox").setup({
 				options = {
@@ -25,6 +52,7 @@ local M = {
 				},
 				palettes = {
 					nordfox = {
+						bg0 = "#2E3440",
 						bg1 = "#2E3440",
 						bg2 = "#2E3440",
 						bg3 = "#3B4252",
@@ -72,62 +100,4 @@ local M = {
 			vim.cmd("colorscheme nordfox")
 		end,
 	},
-	{
-		"arcticicestudio/nord-vim",
-		enabled = false,
-		lazy = false,
-		priority = 999,
-		config = function()
-			vim.cmd("colorscheme nord")
-		end,
-	},
-	{
-		"catppuccin/nvim",
-		enabled = false,
-		lazy = false,
-		priority = 999,
-		config = function()
-			require("catppuccin").setup({
-				flavour = "mocha",
-				styles = {
-					comments = { "italic" },
-					functions = { "bold" },
-					variables = {},
-				},
-				color_overrides = {
-					mocha = {
-						rosewater = "#8FBCBB",
-						flamingo = "#D8DEE9",
-						-- pink = "",
-						-- mauve = "",
-						red = "#BF616A",
-						-- maroon = "",
-						peach = "#B48EAD",
-						yellow = "#8FBCBB",
-						green = "#A3BE8C",
-						-- teal = "",
-						sky = "#81A1C1",
-						-- sapphire = "",
-						blue = "#88C0D0",
-						lavender = "#EBCB8B",
-						text = "#D8DEE9",
-						subtext1 = "#ECEFF4",
-						subtext0 = "#E5E9F0",
-						-- overlay2 = "",
-						-- overlay1 = "",
-						overlay0 = "#616E88",
-						-- surface2 = "",
-						-- surface1 = "",
-						-- surface0 = "",
-						base = "#2f343f",
-						mantle = "#3B4252",
-						crust = "#2E3440",
-					},
-				},
-			})
-			vim.cmd("colorscheme catppuccin")
-		end,
-	},
 }
-
-return M

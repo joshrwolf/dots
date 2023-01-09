@@ -1,169 +1,131 @@
-local M = {
+return {
 	"nvim-telescope/telescope.nvim",
-	cmd = { "Telescope" },
-
 	dependencies = {
-		{ "nvim-lua/plenary.nvim" },
+		"nvim-lua/plenary.nvim",
 		{ "nvim-telescope/telescope-file-browser.nvim" },
-		{ "nvim-telescope/telescope-symbols.nvim" },
 		{ "nvim-telescope/telescope-fzf-native.nvim", build = "make" },
-		{ "debugloop/telescope-undo.nvim" },
-		{ "nvim-telescope/telescope-ui-select.nvim" },
-		{ "nvim-telescope/telescope-live-grep-args.nvim" },
+		{
+			"nvim-telescope/telescope-live-grep-args.nvim",
+			version = false,
+			keys = {
+				{ "<leader>fw", "<cmd> Telescope live_grep_args<cr>", "Find workds" },
+			},
+		},
 	},
-}
+	cmd = "Telescope",
+	keys = {
+		{ "<leader><leader>", "<cmd>Telescope find_files<cr>", desc = "Find files" },
+		{ "<leader>ff", "<cmd>Telescope find_files<cr>", desc = "Find files" },
+		{ "<leader>gb", "<cmd>Telescope git_branches<cr>", "Git branches" },
+		{ "<leader>fb", "<cmd>Telescope buffers<cr>", desc = "Find buffers" },
+		{ "<leader>fo", "<cmd>Telescope oldfiles<cr>", desc = "Find oldfiles" },
+		{ "<leader>f.", "<cmd>Telescope resume<cr>", desc = "Find resume" },
+		{ "\\", "<cmd>Telescope file_browser path=%:p:h<cr>", desc = "Browser" },
+		{ "<c-,>", "<cmd>Telescope buffers<cr>", desc = "Find buffers" },
+		{ "<leader>hh", "<cmd>Telescope help_tags<cr>", desc = "Help pages" },
+		{ "<leader>hc", "<cmd>Telescope commands<cr>", desc = "Help commands" },
+		{ "<leader>ha", "<cmd>Telescope autocommands<cr>", desc = "Help autocommands" },
+	},
+	config = function()
+		local telescope = require("telescope")
+		local actions = require("telescope.actions")
+		local fb_actions = require("telescope._extensions.file_browser.actions")
 
-function M.config()
-	local telescope = require("telescope")
-	local actions = require("telescope.actions")
-	local fb_actions = require("telescope._extensions.file_browser.actions")
-
-	telescope.setup({
-		defaults = {
-			mappings = {
-				n = {
-					["<C-c>"] = actions.close,
-					["q"] = actions.close,
-				},
-				i = {
-					["<C-j>"] = actions.move_selection_next,
-					["<C-k>"] = actions.move_selection_previous,
-				},
-			},
-			file_ignore_patterns = {
-				"^node_modules/",
-				"^.git/",
-				"^.intellij/",
-				"vendor",
-				"packer_compiled",
-				"%.DS_Store",
-				"%.ttf",
-				"%.png",
-				"^site-packages/",
-				"^.yarn/",
-			},
-		},
-		pickers = {
-			find_files = {
-				hidden = true,
-			},
-			buffers = require("telescope.themes").get_ivy({
-				sort_mru = true,
-				sort_lastused = true,
-				ignore_current_buffer = true,
+		telescope.setup({
+			defaults = {
+				prompt_prefix = " ",
+				selection_caret = " ",
 				mappings = {
-					i = { ["<c-x>"] = "delete_buffer" },
-					["n"] = {
-						["<C-,>"] = actions.close,
-					},
-				},
-				initial_mode = "normal",
-			}),
-			git_branches = {
-				layout_strategy = "vertical",
-				layout_config = {
-					preview_height = 0.7,
-				},
-			},
-		},
-		extensions = {
-			undo = {
-				side_by_side = true,
-				layout_strategy = "vertical",
-				layout_config = {
-					preview_height = 0.8,
-				},
-				mappings = {
-					i = {
-						["<cr>"] = require("telescope-undo.actions").yank_additions,
-						["<C-cr>"] = require("telescope-undo.actions").restore,
-					},
-				},
-			},
-			["ui-select"] = {
-				require("telescope.themes").get_dropdown({}),
-			},
-			live_grep_args = {
-				mappings = {
-					i = {
-						["<C-k>"] = require("telescope-live-grep-args.actions").quote_prompt(),
-					},
-				},
-				vimgrep_arguments = {
-					"rg",
-					"--color=never",
-					"--no-heading",
-					"--with-filename",
-					"--line-number",
-					"--column",
-					"--smart-case",
-					"--hidden",
-				},
-				-- TODO: This doesn't work, we need to specify the entire "vimgrep_arguments" above :(
-				-- additional_args = function(_)
-				-- 	return { "--hidden" }
-				-- end,
-			},
-			file_browser = {
-				theme = "ivy",
-				layout_config = {
-					height = 50, -- make it take up 50% of the screen
-				},
-				hijack_netrw = true,
-				hidden = true,
-				hide_parent_dir = true,
-				initial_mode = "normal",
-				collapse_dirs = false,
-				mappings = {
-					-- ["i"] = {},
-					["n"] = {
-						["\\"] = actions.close,
+					n = {
+						["<c-c>"] = actions.close,
 						["q"] = actions.close,
-						["h"] = fb_actions.goto_parent_dir,
-						["l"] = actions.select_default,
-						["n"] = fb_actions.create_from_prompt,
-						["."] = fb_actions.toggle_hidden,
-						["-"] = fb_actions.goto_cwd,
-						-- TODO: Trying to get the git root of the current path
-						-- ref: https://www.reddit.com/r/neovim/comments/zy5s0l/you_dont_need_vimrooter_usually_or_how_to_set_up/
-						-- ["="] = function(prompt_buf)
-						-- 	local current_picker = require("telescope.actions.state").get_current_picker(prompt_buf)
-						-- 	local finder = current_picker.finder
-						-- 	local git_root_path = vim.fs.find(".git", {
-						-- 		path = vim.fn.expand("%:p"),
-						-- 		upward = true,
-						-- 		type = "directory",
-						-- 	})
-						-- 	if not git_root_path then
-						-- 		print("[telescope] Not in a git repository")
-						-- 		return
-						-- 	end
-						-- 	print(vim.inspect(git_root_path))
-						-- 	git_root_path = vim.fs.dirname(git_root_path[0])
-						-- 	finder.cwd = git_root_path
-						-- 	require("telescope._extensions.file_browser.utils").redraw_border_title(current_picker)
-						-- 	current_picker:refresh(finder, { reset_prompt = true, multi = current_picker._multi })
-						-- end,
+					},
+					i = {
+						["<c-j>"] = actions.move_selection_next,
+						["<c-k>"] = actions.move_selection_previous,
+					},
+				},
+				file_ignore_patterns = {
+					"^node_modules/",
+					"^.git/",
+					"^.intellij/",
+					"vendor",
+					"packer_compiled",
+					"%.DS_Store",
+					"%.ttf",
+					"%.png",
+					"^site-packages/",
+					"^.yarn/",
+				},
+			},
+			pickers = {
+				find_files = {
+					hidden = true,
+				},
+				buffers = require("telescope.themes").get_ivy({
+					sort_mru = true,
+					sort_lastused = true,
+					ignore_current_buffer = true,
+					mappings = {
+						i = {
+							["<c-x>"] = "delete_buffer",
+							["<c-,>"] = actions.close,
+						},
+					},
+				}),
+				git_branches = require("telescope.themes").get_dropdown({
+					layout_config = {
+						width = 150,
+					},
+				}),
+			},
+			extensions = {
+				file_browser = {
+					theme = "ivy",
+					layout_config = {
+						height = 50, -- make it take up 50% of the screen
+					},
+					hijack_netrw = true,
+					hidden = true,
+					hide_parent_dir = true,
+					initial_mode = "normal",
+					collapse_dirs = false,
+					mappings = {
+						-- ["i"] = {},
+						["n"] = {
+							["\\"] = actions.close,
+							["q"] = actions.close,
+							["h"] = fb_actions.goto_parent_dir,
+							["l"] = actions.select_default,
+							["n"] = fb_actions.create_from_prompt,
+							["."] = fb_actions.toggle_hidden,
+							["-"] = fb_actions.goto_cwd,
+						},
+					},
+				},
+				live_grep_args = {
+					mappings = {
+						i = {
+							["<c-l>"] = require("telescope-live-grep-args.actions").quote_prompt(),
+						},
+					},
+					vimgrep_arguments = {
+						"rg",
+						"--color=never",
+						"--no-heading",
+						"--with-filename",
+						"--line-number",
+						"--column",
+						"--smart-case",
+						"--hidden",
 					},
 				},
 			},
-		},
-	})
+		})
 
-	telescope.load_extension("fzf")
-	telescope.load_extension("ui-select")
-	telescope.load_extension("file_browser")
-	telescope.load_extension("undo")
-	telescope.load_extension("live_grep_args")
-	telescope.load_extension("dap")
-	telescope.load_extension("yank_history")
-
-	--- NOTE: this must be required after setting up telescope
-	--- otherwise the result will be cached without the updates
-	--- from the setup call
-	local builtins = require("telescope.builtin")
-end
-
-function M.init() end
-
-return M
+		telescope.load_extension("fzf")
+		telescope.load_extension("file_browser")
+		telescope.load_extension("live_grep_args")
+		telescope.load_extension("dap")
+	end,
+}
