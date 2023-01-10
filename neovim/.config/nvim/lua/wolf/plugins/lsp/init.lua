@@ -111,6 +111,9 @@ return {
 							unusedwrite = true,
 							unusedvariable = true,
 						},
+						env = {
+							GOFLAGS = "-tags=e2e",
+						},
 					},
 				},
 			},

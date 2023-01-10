@@ -98,8 +98,17 @@ return {
 					initial_mode = "normal",
 					collapse_dirs = false,
 					mappings = {
-						-- ["i"] = {},
+						["i"] = {
+							["<cr>"] = actions.select_default,
+							["<c-x>"] = actions.select_horizontal,
+							["<c-v>"] = actions.select_vertical,
+							["<c-t>"] = actions.select_tab,
+						},
 						["n"] = {
+							["<cr>"] = actions.select_default,
+							["<c-x>"] = actions.select_horizontal,
+							["<c-v>"] = actions.select_vertical,
+							["<c-t>"] = actions.select_tab,
 							["\\"] = actions.close,
 							["q"] = actions.close,
 							["h"] = fb_actions.goto_parent_dir,

@@ -202,6 +202,10 @@ return {
 		end,
 	},
 	{
+		"tpope/vim-rsi",
+		event = "InsertEnter",
+	},
+	{
 		"tpope/vim-unimpaired",
 		version = "*",
 		event = "BufReadPost",

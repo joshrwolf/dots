@@ -69,19 +69,19 @@ return {
 					nordfox = {
 						syntax = {
 							bracket = "cyan",
-							builtin0 = "blue.dim", -- go: "return"
+							builtin0 = "blue", -- go: "return"
 							builtin1 = "white",
 							builtin2 = "blue",
 							-- comment = "white",
 							conditional = "blue",
 							const = "white",
 							-- dep = "white",
-							field = "blue.dim",
+							-- field = "white",
 							func = "cyan",
 							-- ident = "white",
 							keyword = "blue",
 							number = "magenta.dim",
-							operator = "white.dim",
+							operator = "blue",
 							preproc = "blue.dim", -- go: "package"
 							-- regex = "white",
 							statement = "white",
@@ -95,6 +95,7 @@ return {
 					nordfox = {
 						CmpItemKindFunction = { fg = "palette.magenta" },
 						GitSignsCurrentLineBlame = { fg = "palette.fg3" },
+						["@property"] = { link = "@variable" }, -- changes things like pi.*Version* from matching @fields to something else
 					},
 				},
 			})

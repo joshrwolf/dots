@@ -120,6 +120,9 @@ return {
 					{ name = "buffer" },
 				}),
 			})
+
+			vim.cmd([[highlight! CmpItemAbbrMatch gui=bold]])
+			vim.cmd([[highlight! CmpItemAbbrMatchFuzzy gui=bold]])
 		end,
 	},
 

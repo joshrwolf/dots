@@ -89,7 +89,7 @@ return {
 				},
 			},
 		},
-		cmd = { "GBrowse" },
+		cmd = { "G", "Git", "GBrowse" },
 		keys = {
 			{ "<leader>gg", ":tab G<cr>", "Git" },
 			{ "<leader>ga", ":Gwrite<cr>", "Write file" },
