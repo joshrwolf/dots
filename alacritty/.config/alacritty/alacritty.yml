@@ -134,7 +134,7 @@ font:
     # family: Monaco
     # style: Regular
 
-    family: MonoLisa Nerd Font Mono
+    family: Liga SFMono Nerd Font
     style: Regular
 
     # family: Cascadia Code PL
@@ -146,7 +146,7 @@ font:
     #
     # If the bold family is not specified, it will fall back to the
     # value specified for the normal font.
-    family: FiraCode Nerd Font Mono
+    family: Liga SFMono Nerd Font
 
     # The `style` can be specified to pick a specific face.
     style: Bold
@@ -157,10 +157,10 @@ font:
     #
     # If the italic family is not specified, it will fall back to the
     # value specified for the normal font.
-    family: Fisa Code
+    family: Liga SFMono Nerd Font
 
     # The `style` can be specified to pick a specific face.
-    style: Book Italic
+    style: Italic
 
   # Bold italic font face
   bold_italic:
@@ -168,7 +168,7 @@ font:
     #
     # If the bold italic family is not specified, it will fall back to the
     # value specified for the normal font.
-    family: Fisa Code
+    family: Liga SFMono Nerd Font
 
     # The `style` can be specified to pick a specific face.
     style: Bold Italic
@@ -807,11 +807,11 @@ key_bindings:
   - { key: Semicolon, mods: Control, chars: "\x1b[59;5u" }
   - { key: Key6,        mods: Control, chars: "\x1e" }
 
-  # # readline
-  # - { key: F,        mods: Alt,     chars: "\x1bf" }
-  # - { key: B,        mods: Alt,     chars: "\x1bb" }
-  # - { key: D,        mods: Alt,     chars: "\x1bd" }
-  # - { key: Backslash, mods: Alt,       chars: "\x1b\\"                      } # Alt + \
+  # readline
+  - { key: F,        mods: Alt,     chars: "\x1bf" }
+  - { key: B,        mods: Alt,     chars: "\x1bb" }
+  - { key: D,        mods: Alt,     chars: "\x1bd" }
+  - { key: Backslash, mods: Alt,       chars: "\x1b\\"                      } # Alt + \
 
   #- { key: Paste,                                       action: Paste          }
   #- { key: Copy,                                        action: Copy           }
