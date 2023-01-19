@@ -17,6 +17,8 @@ vim.keymap.set("n", "<S-Right>", "<cmd>vertical resize +10<cr>")
 -- Clear search highlights on esc
 vim.keymap.set("n", "<esc>", ":noh<cr>", { noremap = true, silent = true })
 
+vim.keymap.set("v", "p", [["_dP]], { desc = "Keep the yanked text when pasting in visual  mode" })
+
 -- Better indenting
 vim.keymap.set("v", "<", "<gv")
 vim.keymap.set("v", ">", ">gv")
@@ -30,6 +32,15 @@ vim.keymap.set("n", "]t", ":tabn<cr>", { desc = "Next Tab" })
 vim.keymap.set("n", "]T", ":tablast<cr>", { desc = "Last Tab" })
 
 -- Terminal
-vim.keymap.set("n", "<c-;>", "<cmd>vsplit | terminal<cr>", { desc = "New Vertical Terminal" })
-vim.keymap.set("n", "<c-.>", "<cmd>split | resize 20 | terminal<cr>", { desc = "New Horizontal Terminal" })
-vim.keymap.set("t", "<esc>", [[<C-\><C-n>]])
+vim.keymap.set("t", "<esc><esc>", [[<C-\><C-n>]])
+
+-- user cmd to open new terminal in current buffer's directory
+vim.cmd(
+	[[command! LocalTermVertical let s:term_dir=expand('%:p:h') | vertical new | call termopen([&shell], {'cwd': s:term_dir })]]
+)
+vim.cmd(
+	[[command! LocalTerm let s:term_dir=expand('%:p:h') | new | resize 20 | call termopen([&shell], {'cwd': s:term_dir })]]
+)
+vim.keymap.set("n", "<leader>ot", ":LocalTerm<cr>", { desc = "Open" })
+vim.keymap.set("n", "<c-;>", ":LocalTermVertical<cr>", { desc = "New Vertical Terminal" })
+vim.keymap.set("n", "<c-.>", ":LocalTerm<cr>", { desc = "New Horizontal Terminal" })

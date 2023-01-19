@@ -19,12 +19,17 @@ function M.on_attach(client, buffer)
 
 	self:map("<leader>ca", vim.lsp.buf.code_action, { desc = "Code Action", mode = { "n", "v" }, has = "codeAction" })
 	self:map("<leader>cr", vim.lsp.buf.rename, { desc = "Rename", has = "rename" })
+	self:map("<leader>cR", function() end, { desc = "Restart Lsp" })
 	self:map("<leader>cd", vim.diagnostic.open_float, { desc = "Line Diagnostic" })
 	self:map("<leader>ci", "LspInfo", { desc = "Lsp Info" })
 
 	local format = require("wolf.plugins.lsp.format").format
 	self:map("<leader>cf", format, { desc = "Format Document", has = "documentFormatting" })
 	self:map("<leader>cf", format, { desc = "Format Range", mode = "v", has = "documentRangeFormatting" })
+	self:map("<leader>cf", format, { desc = "Format Range", mode = "v", has = "documentRangeFormatting" })
+	self:map("<leader>cF", function()
+		require("wolf.plugins.lsp.format").toggle()
+	end, { desc = "Toggle Formatting", has = "documentRangeFormatting" })
 end
 
 function M.new(client, buffer)

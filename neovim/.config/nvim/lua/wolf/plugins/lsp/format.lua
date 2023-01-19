@@ -2,6 +2,15 @@ local M = {}
 
 M.autoformat = true
 
+function M.toggle()
+	M.autoformat = not M.autoformat
+	if M.autoformat then
+		print("autoformat on")
+	else
+		print("autoformat off")
+	end
+end
+
 function M.format(buf)
 	local ft = vim.bo[buf].filetype
 	local have_nls = #require("null-ls.sources").get_available(ft, "NULL_LS_FORMATTING") > 0

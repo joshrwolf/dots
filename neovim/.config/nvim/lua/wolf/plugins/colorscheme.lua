@@ -14,26 +14,15 @@ return {
 		end,
 	},
 	{
-		"rose-pine/neovim",
+		"mcchrish/zenbones.nvim",
 		enabled = false,
 		lazy = false,
 		priority = 1000,
+		dependencies = {
+			"rktjmp/lush.nvim",
+		},
 		config = function()
-			require("rose-pine").setup({
-				dark_variant = "main",
-			})
-			vim.cmd("colorscheme rose-pine")
-		end,
-	},
-	{
-		"projekt0n/github-nvim-theme",
-		enabled = false,
-		lazy = false,
-		priority = 1000,
-		config = function()
-			require("github-theme").setup({
-				theme_style = "dimmed",
-			})
+			vim.cmd([[colorscheme zenbones]])
 		end,
 	},
 	{
@@ -47,11 +36,34 @@ return {
 				options = {
 					styles = {
 						comments = "italic",
-						-- keywords = "bold",
-						-- functions = "bold",
 					},
 				},
 				palettes = {
+					-- custom "everforest"
+					nightfox = {
+						bg0 = "#272e33",
+						bg1 = "#2d353b",
+						bg2 = "#3a464c",
+						bg3 = "#434f55",
+						bg4 = "#4d5960",
+						fg0 = "#D3C6AA",
+						fg1 = "#B9C0AB",
+						-- fg2 = "",
+						-- fg3 = "",
+						sel0 = "#3D484D",
+						sel1 = "#A7C080",
+						black = "#475258",
+						red = "#E67E80",
+						green = "#A7C080",
+						yellow = "#DBBC7F",
+						blue = "#7FBBB3",
+						magenta = "#D699B6",
+						cyan = "#83C092",
+						white = "#D3C6AA",
+						orange = "#E69875",
+						pink = "#D699B6",
+						comment = "#859289",
+					},
 					nordfox = {
 						bg0 = "#2E3440",
 						bg1 = "#2E3440",

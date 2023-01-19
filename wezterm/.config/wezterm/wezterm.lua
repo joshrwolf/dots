@@ -11,14 +11,15 @@ end)
 return {
 	font = wezterm.font_with_fallback({
 		-- { family = "JetBrains Mono", weight = "Medium" },
-		-- { family = "MonoLisa", weight = "Regular" },
-		{ family = "Fira Code", weight = "Regular" },
+		{ family = "MonoLisa" },
+		-- { family = "Fira Code", weight = "Regular" },
 	}),
 
-	font_size = 14.0,
-	cell_width = 1,
-	line_height = 1.05,
+	font_size = 13.0,
+	cell_width = 0.90,
+	line_height = 1.2,
 	color_scheme = "nord",
+	dpi = 144.0,
 
 	hide_tab_bar_if_only_one_tab = true,
 	window_decorations = "RESIZE",

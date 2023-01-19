@@ -1,6 +1,8 @@
 local M = {
 	"rebelot/heirline.nvim",
 	event = "VimEnter",
+	-- TODO: This requires latest statusline stuff on nightly, which we're not running...
+	commit = "556666aabb57c227cbb14a996b30b2934e5ff7b1",
 }
 
 local function components(opts)

@@ -10,6 +10,12 @@ return {
 				{ "<leader>fw", "<cmd> Telescope live_grep_args<cr>", "Find workds" },
 			},
 		},
+		{
+			"danielfalk/smart-open.nvim",
+			dependencies = {
+				"kkharji/sqlite.lua",
+			},
+		},
 	},
 	cmd = "Telescope",
 	keys = {
@@ -18,6 +24,8 @@ return {
 		{ "<leader>gb", "<cmd>Telescope git_branches<cr>", "Git branches" },
 		{ "<leader>fb", "<cmd>Telescope buffers<cr>", desc = "Find buffers" },
 		{ "<leader>fo", "<cmd>Telescope oldfiles<cr>", desc = "Find oldfiles" },
+		{ "<leader>fg", "<cmd>Telescope git_status<cr>", desc = "Find git status" },
+		{ "<leader>fs", "<cmd>Telescope smart_open<cr>", desc = "Find smart" },
 		{ "<leader>f.", "<cmd>Telescope resume<cr>", desc = "Find resume" },
 		{ "\\", "<cmd>Telescope file_browser path=%:p:h<cr>", desc = "Browser" },
 		{ "<c-,>", "<cmd>Telescope buffers<cr>", desc = "Find buffers", mode = { "n", "t" } },
@@ -85,6 +93,13 @@ return {
 						width = 150,
 					},
 				}),
+				lsp_references = require("telescope.themes").get_ivy({
+					layout_config = { height = 0.5 },
+					include_declaration = false,
+					trim_text = true,
+					-- show_line = false,
+					fname_width = 80,
+				}),
 			},
 			extensions = {
 				file_browser = {
@@ -136,6 +151,9 @@ return {
 						"--hidden",
 					},
 				},
+				smart_open = {
+					show_scores = true,
+				},
 			},
 		})
 
@@ -143,5 +161,6 @@ return {
 		telescope.load_extension("file_browser")
 		telescope.load_extension("live_grep_args")
 		telescope.load_extension("dap")
+		telescope.load_extension("smart_open")
 	end,
 }

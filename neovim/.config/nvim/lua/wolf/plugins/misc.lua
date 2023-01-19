@@ -128,7 +128,6 @@ return {
 		event = "BufReadPre",
 		opts = {
 			buftype_exclude = { "terminal", "nofile" },
-			char = "│",
 			show_current_context = true,
 			show_current_context_start = false,
 			use_treesitter = true,
@@ -229,6 +228,14 @@ let g:projectionist_heuristics = {
   \       'alternate': '{}.go',
   \       'type': 'test'
   \   },
+  \   '*.proto': {
+  \       'alternate': '{}.pb.go',
+  \       'type': 'source'
+  \   },
+  \   '*.pb.go': {
+  \       'alternate': '{}.proto',
+  \       'type': 'generated'
+  \   },
   \ }}
 ]])
 		end,
@@ -317,6 +324,26 @@ let g:projectionist_heuristics = {
 				},
 			})
 		end,
+	},
+	{
+		"ggandor/leap.nvim",
+		event = "BufReadPost",
+		dependencies = {
+			"tpope/vim-repeat",
+		},
+		config = function()
+			require("leap").add_default_mappings()
+		end,
+	},
+	{
+		"ggandor/flit.nvim",
+		event = "BufReadPost",
+		dependencies = {
+			"ggandor/leap.nvim",
+		},
+		opts = {
+			multiline = true,
+		},
 	},
 	{
 		"dstein64/vim-startuptime",

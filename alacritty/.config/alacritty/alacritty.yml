@@ -10,6 +10,7 @@
 # to the user's home directory starting with `~/`.
 import:
   - ~/.config/alacritty/nord.yml
+  # - ~/.config/alacritty/everforest.yml
   # - ~/.config/alacritty/kanagawa.yml
 
 
@@ -105,7 +106,7 @@ scrolling:
   # Maximum number of lines in the scrollback buffer.
   # Specifying '0' will disable scrolling.
   # Use tmux scrollback buffer for this
-  history: 0
+  history: 10000
 
   # Scrolling distance multiplier.
   #multiplier: 3
@@ -120,19 +121,24 @@ font:
     #   - (macOS) Menlo
     #   - (Linux/BSD) monospace
     #   - (Windows) Consolas
+
     # family: FiraCode Nerd Font Mono
     # style: Regular
 
-    family: Fisa Code
-    style: Regular
-
-    # family: BlexMono Nerd Font Mono
-    # style: Book
-
-    # family: MonoLisa Nerd Font Mono
+    # family: Fisa Code
     # style: Regular
 
-    # weight: 100
+    # family: JetBrains Mono NL
+    # style: Regular
+
+    # family: Monaco
+    # style: Regular
+
+    family: MonoLisa Nerd Font Mono
+    style: Regular
+
+    # family: Cascadia Code PL
+    # style: Regular
 
   # Bold font face
   bold:
@@ -169,7 +175,7 @@ font:
 
   # Point size
   # size: 14.75
-  size: 13.5
+  size: 13
 
   # Offset is the extra space around each character. `offset.y` can be thought
   # of as modifying the line spacing, and `offset.x` as modifying the letter
@@ -191,9 +197,6 @@ font:
   # characters (Unicode points 2500 - 259f).
   #
   #builtin_box_drawing: true
-
-# If `true`, bold text is drawn using the bright color variants.
-draw_bold_text_with_bright_colors: true
 
 # Colors (Tomorrow Night)
 #colors:

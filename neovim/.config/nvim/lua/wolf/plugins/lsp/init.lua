@@ -119,6 +119,7 @@ return {
 			},
 			rust_analyzer = {},
 			terraformls = {},
+			bufls = {},
 			sumneko_lua = {
 				settings = {
 					Lua = {
@@ -154,9 +155,12 @@ return {
 					nls.builtins.formatting.goimports,
 					nls.builtins.formatting.gofumpt,
 					nls.builtins.formatting.rustfmt,
+					nls.builtins.formatting.cue_fmt,
+					-- nls.builtins.formatting.cueimports,  -- doesn't support import aliases :(
 
 					nls.builtins.diagnostics.actionlint,
-					-- nls.builtins.diagnostics.buf,
+					nls.builtins.diagnostics.buf,
+					nls.builtins.diagnostics.cue_fmt,
 					-- nls.builtins.diagnostics.vale,
 
 					-- nls.builtins.code_actions.shellcheck,
