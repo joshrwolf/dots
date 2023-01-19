@@ -773,32 +773,32 @@ font:
 # If the same trigger is assigned to multiple actions, all of them are executed
 # in the order they were defined in.
 key_bindings:
-  - { key: Key1, mods: Command, chars: "\x01\x31" }
-  - { key: Key2, mods: Command, chars: "\x01\x32" }
-  - { key: Key3, mods: Command, chars: "\x01\x33" }
-  - { key: Key4, mods: Command, chars: "\x01\x34" }
-  - { key: Key5, mods: Command, chars: "\x01\x35" }
-  - { key: Key8, mods: Command, chars: "\x01\x38" }
-  - { key: Key9, mods: Command, chars: "\x01\x39" }
-  - { key: Key0, mods: Command, chars: "\x01\x30" }
+  - { key: Key1, mods: Command, chars: "\x13\x31" }
+  - { key: Key2, mods: Command, chars: "\x13\x32" }
+  - { key: Key3, mods: Command, chars: "\x13\x33" }
+  - { key: Key4, mods: Command, chars: "\x13\x34" }
+  - { key: Key5, mods: Command, chars: "\x13\x35" }
+  - { key: Key8, mods: Command, chars: "\x13\x38" }
+  - { key: Key9, mods: Command, chars: "\x13\x39" }
+  - { key: Key0, mods: Command, chars: "\x13\x30" }
 
   # New tmux session
-  - { key: T, mods: Command, chars: "\x01\x63" }
+  - { key: T, mods: Command, chars: "\x13\x63" }
 
   # Last tmux session
-  - { key: Z, mods: Command, chars: "\x01\x7a" }
+  - { key: Z, mods: Command, chars: "\x13\x7a" }
 
   # Toggle maximize window
-  - { key: M, mods: Command, chars: "\x01\x6d" }
+  - { key: M, mods: Command, chars: "\x13\x6d" }
 
   # Fuzzy find zoxide sessionizer
-  - { key: F, mods: Command, chars: "\x01\x66" }
+  - { key: F, mods: Command, chars: "\x13\x66" }
 
   # Magit sidebar popup
-  - { key: G, mods: Command, chars: "\x01\x67" }
+  - { key: G, mods: Command, chars: "\x13\x67" }
 
   # cmd-p
-  - { key: P, mods: Command, chars: "\x10" }
+  - { key: P, mods: Command, chars: "\x13" }
 
   # CSU Overrides
   # ref: https://alpha2phi.medium.com/neovim-101-terminal-and-shell-5be83b9f2b88
