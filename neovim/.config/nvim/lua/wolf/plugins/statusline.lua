@@ -266,7 +266,7 @@ local function components(opts)
 				for i, server in pairs(vim.lsp.buf_get_clients(0)) do
 					table.insert(names, server.name)
 				end
-				return " [" .. table.concat(names, ", ") .. "]"
+				return " " .. table.concat(names, " ")
 			end,
 			hl = { fg = palette.green.base },
 		},

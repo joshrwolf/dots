@@ -1,40 +1,8 @@
 local wezterm = require("wezterm")
-local mux = wezterm.mux
-
-wezterm.on("mux-startup", function()
-	local tab, pane, window = mux.spawn_window({})
-	pane:split({ direction = "Top" })
-end)
 
 -- https://github.com/hurricanehrndz/cfg/blob/8993ea84ee04e2cf379d40a19851642078047e1e/dot_config/wezterm/wezterm.tmux.lua
 
 return {
-	-- font = wezterm.font_with_fallback({
-	-- 	-- { family = "JetBrains Mono", weight = "Medium" },
-	-- 	{ family = "Liga SFMono Nerd Font" },
-	-- 	-- { family = "Fira Code", weight = "Regular" },
-	-- }),
-	--
-	-- -- font_rules = {
-	-- -- 	intensity = "Bold",
-	-- -- 	italic = false,
-	-- -- 	font = wezterm.font_with_fallback({
-	-- -- 		family = "Liga SFMono Nerd Font",
-	-- -- 		weight = 900,
-	-- -- 	}),
-	-- -- },
-	--
-	-- font_rules = {
-	-- 	{
-	-- 		intensity = "Bold",
-	-- 		italic = false,
-	-- 		font = wezterm.font_with_fallback({
-	-- 			family = "Liga SFMono Nerd Font",
-	-- 			weight = "Bold",
-	-- 		}),
-	-- 	},
-	-- },
-
 	font = wezterm.font_with_fallback({ { family = "Liga SFMono Nerd Font" } }),
 	font_rules = {
 		-- Bold-not-italic
@@ -128,11 +96,11 @@ return {
 
 		-- cmd p
 		{ key = "p", mods = "CMD", action = wezterm.action.SendString("\x10") }, -- <prefix>p
-	},
 
-	unix_domains = {
-		{
-			name = "test",
-		},
+		-- CSU Overrides
+		{ key = "Comma", mods = "CTRL", action = wezterm.action.SendString("\x1b[44;5u") }, -- <ctrl-,>
+		{ key = "Period", mods = "CTRL", action = wezterm.action.SendString("\x1b[46;5u") }, -- <ctrl-,>
+		{ key = "Semicolon", mods = "CTRL", action = wezterm.action.SendString("\x1b[59;5u") }, -- <ctrl-,>
+		{ key = "6", mods = "CTRL", action = wezterm.action.SendString("\x1e") }, -- <ctrl-,>
 	},
 }
