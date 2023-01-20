@@ -75,9 +75,11 @@ return {
 		{ key = "l", mods = "LEADER", action = wezterm.action.ShowLauncher },
 		{ key = "1", mods = "CMD", action = wezterm.action.SendString("\x13\x31") }, -- <prefix>1
 		{ key = "2", mods = "CMD", action = wezterm.action.SendString("\x13\x32") }, -- <prefix>2
-		{ key = "4", mods = "CMD", action = wezterm.action.SendString("\x13\x33") }, -- <prefix>3
+		{ key = "3", mods = "CMD", action = wezterm.action.SendString("\x13\x33") }, -- <prefix>3
 		{ key = "4", mods = "CMD", action = wezterm.action.SendString("\x13\x34") }, -- <prefix>4
+		{ key = "5", mods = "CMD", action = wezterm.action.SendString("\x13\x35") }, -- <prefix>5
 		{ key = "9", mods = "CMD", action = wezterm.action.SendString("\x13\x39") }, -- <prefix>9
+		{ key = "0", mods = "CMD", action = wezterm.action.SendString("\x13\x30") }, -- <prefix>0
 
 		-- New tmux tab
 		{ key = "t", mods = "CMD", action = wezterm.action.SendString("\x13\x63") }, -- <prefix>t
