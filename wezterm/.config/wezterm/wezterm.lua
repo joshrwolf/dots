@@ -89,7 +89,6 @@ return {
 
 		-- Fuzzy find zoxide sessionizer
 		{ key = "f", mods = "CMD", action = wezterm.action.SendString("\x13\x66") }, -- <prefix>f
-		{ key = "g", mods = "CMD", action = wezterm.action.SendString("\x13\x67") }, -- <prefix>g
 
 		{ key = "m", mods = "CMD", action = wezterm.action.SendString("\x13\x6d") }, -- <prefix>g
 
@@ -104,5 +103,6 @@ return {
 		{ key = "Period", mods = "CTRL", action = wezterm.action.SendString("\x1b[46;5u") }, -- <ctrl-,>
 		{ key = "Semicolon", mods = "CTRL", action = wezterm.action.SendString("\x1b[59;5u") }, -- <ctrl-,>
 		{ key = "6", mods = "CTRL", action = wezterm.action.SendString("\x1e") }, -- <ctrl-,>
+		{ key = "Backspace", mods = "CMD", action = wezterm.action.SendString("\x15") }, -- <ctrl-,>
 	},
 }
