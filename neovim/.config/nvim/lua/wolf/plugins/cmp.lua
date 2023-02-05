@@ -76,8 +76,8 @@ return {
 					["<c-k>"] = cmp.mapping.select_prev_item(),
 				}),
 				sources = cmp.config.sources({
-					{ name = "nvim_lsp" },
-					{ name = "nvim_lsp_signature_help" },
+					{ name = "nvim_lsp", max_item_count = 75 }, -- some lsp's return tons of crap (typescript)
+					{ name = "nvim_lsp_signature_help", max_item_count = 25 },
 					{ name = "luasnip", keyword_length = 2, max_item_count = 3 },
 					{ name = "path" }, -- triggers on "."
 				}, {
@@ -100,18 +100,18 @@ return {
 						return vim_item
 					end,
 				},
-				sorting = {
-					-- TODO: Refine this over time
-					-- refs:
-					--  - https://github.com/Bekaboo/nvim/blob/master/lua/modules/completion/configs.lua#L127
-					comparators = {
-						cmp.config.compare.kind,
-						cmp.config.compare.locality,
-						cmp.config.compare.recently_used,
-						cmp.config.compare.exact,
-						cmp.config.compare.score,
-					},
-				},
+				-- sorting = {
+				-- 	-- TODO: Refine this over time
+				-- 	-- refs:
+				-- 	--  - https://github.com/Bekaboo/nvim/blob/master/lua/modules/completion/configs.lua#L127
+				-- 	comparators = {
+				-- 		cmp.config.compare.kind,
+				-- 		cmp.config.compare.locality,
+				-- 		cmp.config.compare.recently_used,
+				-- 		cmp.config.compare.exact,
+				-- 		cmp.config.compare.score,
+				-- 	},
+				-- },
 			})
 
 			cmp.setup.filetype("gitcommit", {

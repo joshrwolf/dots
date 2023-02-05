@@ -10,7 +10,7 @@ function M.on_attach(client, buffer)
 	self:map("gt", "Telescope lsp_type_definitions", { desc = "Goto Type Definition" })
 	self:map("K", vim.lsp.buf.hover, { desc = "Hover" })
 	self:map("gK", vim.lsp.buf.signature_help, { desc = "Signature Help", has = "signatureHelp" })
-	self:map("<c-h>", vim.lsp.buf.signature_help, { desc = "Signature Help", mode = { "i" }, has = "signatureHelp" })
+	self:map("<c-k>", vim.lsp.buf.signature_help, { desc = "Signature Help", mode = { "i" }, has = "signatureHelp" })
 
 	self:map("[d", M.diagnostic_goto(false), { desc = "Prev Diagnostic" })
 	self:map("]d", M.diagnostic_goto(true), { desc = "Next Diagnostic" })

@@ -93,7 +93,6 @@ return {
 		keys = {
 			{ "<leader>gg", ":tab G<cr>", "Git" },
 			{ "<leader>ga", ":Gwrite<cr>", "Write file" },
-			{ "<leader>gL", ":0Git log<cr>", "Git Log" },
 		},
 		config = function()
 			vim.api.nvim_create_autocmd("FileType", {
@@ -141,6 +140,32 @@ return {
 		"rhysd/git-messenger.vim",
 		keys = {
 			{ "gk", ":GitMessenger<cr>" },
+		},
+	},
+
+	{
+		"rbong/vim-flog",
+		cmd = { "Flog", "Flogsplit" },
+		keys = {
+			{ "<leader>gL", "<cmd>Flog<cr>", "n", desc = "Git log" },
+		},
+		dependencies = {
+			"tpope/vim-fugitive",
+		},
+	},
+
+	{
+		"pwntester/octo.nvim",
+		cmd = { "Octo" },
+		dependencies = {
+			"nvim-lua/plenary.nvim",
+			"nvim-telescope/telescope.nvim",
+			"nvim-tree/nvim-web-devicons",
+		},
+		opts = {
+			pull_requests = {
+				always_select_remote_on_create = true,
+			},
 		},
 	},
 }

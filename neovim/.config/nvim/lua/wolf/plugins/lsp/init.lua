@@ -5,7 +5,15 @@ return {
 		event = "BufReadPre",
 		dependencies = {
 			{ "folke/neoconf.nvim", cmd = "Neoconf", config = true },
-			{ "folke/neodev.nvim", config = true },
+			{
+				"folke/neodev.nvim",
+				opts = {
+					library = {
+						plugins = { "neotest" },
+						types = true,
+					},
+				},
+			},
 			"williamboman/mason.nvim",
 			"williamboman/mason-lspconfig.nvim",
 			"hrsh7th/cmp-nvim-lsp", -- ensure lazy loads properly
@@ -119,6 +127,7 @@ return {
 			},
 			rust_analyzer = {},
 			terraformls = {},
+			tsserver = {},
 			bufls = {},
 			sumneko_lua = {
 				settings = {
@@ -160,11 +169,12 @@ return {
 
 					nls.builtins.diagnostics.actionlint,
 					nls.builtins.diagnostics.buf,
-					nls.builtins.diagnostics.cue_fmt,
+					-- nls.builtins.diagnostics.cue_fmt,
 					-- nls.builtins.diagnostics.vale,
 
 					-- nls.builtins.code_actions.shellcheck,
 					-- nls.builtins.code_actions.gitrebase,
+					nls.builtins.code_actions.gomodifytags,
 				},
 				-- TODO: Try this out?
 				-- root_dir = require("null-ls.utils").root_pattern(".null-ls-root", ".neoconf.json", ".git"),
@@ -190,13 +200,21 @@ return {
 		end,
 		ensure_installed = {
 			"stylua",
+
 			-- "terraform_fmt",   -- this just runs "terraform fmt"
+
 			"goimports",
 			"gofumpt",
+			"delve",
+			"gotests",
+			"iferr",
+			"gomodifytags",
+
 			"rustfmt",
+			"codelldb",
 
 			"actionlint",
-			"shellcheck",
+
 			"buf",
 
 			"shellcheck",

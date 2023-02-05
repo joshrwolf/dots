@@ -23,6 +23,13 @@ return {
 			-- adapters
 			{
 				"leoluz/nvim-dap-go",
+				keys = {
+					{
+						"<leader>dt",
+						"<cmd>lua require('dap-go').debug_test()<cr>",
+						desc = "Debug nearest",
+					},
+				},
 				config = function()
 					require("dap-go").setup()
 				end,
@@ -34,14 +41,14 @@ return {
 				function()
 					require("dap").toggle_breakpoint()
 				end,
-				{ desc = "Toggle Breakpoint" },
+				"Toggle Breakpoint",
 			},
 			{
 				"<leader>ds",
 				function()
 					require("dap").continue()
 				end,
-				{ desc = "Continue" },
+				"Continue",
 			},
 			{
 				"<leader>dl",

@@ -244,6 +244,7 @@ let g:projectionist_heuristics = {
 	{
 		-- Note taking
 		"epwalsh/obsidian.nvim",
+		version = "*",
 		keys = {
 			{ "<leader>fnw", "<cmd>ObsidianSearch<cr>", "Search Obsidian" },
 			{ "<leader>fnn", "<cmd>ObsidianNew<cr>", "New Notes" },
@@ -283,6 +284,8 @@ let g:projectionist_heuristics = {
 	},
 	{
 		"utilyre/barbecue.nvim",
+		name = "barbecue",
+		version = "*",
 		event = "BufReadPost",
 		dependencies = {
 			"neovim/nvim-lspconfig",
@@ -345,6 +348,35 @@ let g:projectionist_heuristics = {
 		opts = {
 			multiline = true,
 		},
+	},
+	{
+		"ThePrimeagen/refactoring.nvim",
+		dependencies = {
+			"nvim-lua/plenary.nvim",
+			"nvim-treesitter/nvim-treesitter",
+		},
+	},
+	{
+		"stevearc/oil.nvim",
+		cmd = { "Oil" },
+		opts = {
+			view_options = {
+				show_hidden = true,
+			},
+		},
+	},
+	{
+		"stevearc/overseer.nvim",
+		cmd = { "OverseerRun", "Overseer" },
+		opts = {},
+	},
+	{
+		"stevearc/resession.nvim",
+		keys = {
+			{ "<leader>ss", "<cmd>lua require('resession').save()<cr>", "n", desc = "Save Session" },
+			{ "<leader>sl", "<cmd>lua require('resession').load()<cr>", "n", desc = "Load Session" },
+		},
+		opts = {},
 	},
 	{
 		"dstein64/vim-startuptime",

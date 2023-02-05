@@ -806,6 +806,7 @@ key_bindings:
   - { key: Period, mods: Control, chars: "\x1b[46;5u" }
   - { key: Semicolon, mods: Control, chars: "\x1b[59;5u" }
   - { key: Key6,        mods: Control, chars: "\x1e" }
+  - { key: Back,        mods: Command, chars: "\x15" }
 
   # readline
   - { key: F,        mods: Alt,     chars: "\x1bf" }
