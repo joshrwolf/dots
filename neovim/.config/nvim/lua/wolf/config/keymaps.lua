@@ -51,5 +51,5 @@ vim.cmd(
 	[[command! LocalTerm let s:term_dir=expand('%:p:h') | new | resize 20 | call termopen([&shell], {'cwd': s:term_dir })]]
 )
 vim.keymap.set("n", "<leader>ot", ":LocalTerm<cr>", { desc = "Open" })
-vim.keymap.set("n", "<c-;>", ":LocalTermVertical<cr>", { desc = "New Vertical Terminal" })
-vim.keymap.set("n", "<c-.>", ":LocalTerm<cr>", { desc = "New Horizontal Terminal" })
+vim.keymap.set("n", "|", ":LocalTermVertical<cr>", { desc = "New Vertical Terminal" })
+vim.keymap.set("n", "_", ":LocalTerm<cr>", { desc = "New Horizontal Terminal" })

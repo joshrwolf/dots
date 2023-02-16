@@ -1,29 +1,51 @@
-local function load(name)
-	local Util = require("lazy.core.util")
-	-- always load lazyvim, then userfile
-	for _, mod in ipairs({ "wolf.config." .. name, "config." .. name }) do
-		Util.try(function()
-			require(mod)
-		end, {
-			msg = "Failed loading " .. mod,
-			on_error = function(msg)
-				local modpath = require("lazy.core.cache").find(mod)
-				if modpath then
-					Util.error(msg)
-				end
-			end,
-		})
-	end
-end
+vim.g.mapleader = " "
+vim.g.maplocalleader = " "
 
-load("options")
+vim.keymap.set(
+	"n",
+	"-",
+	"<cmd>call VSCodeCall('workbench.files.action.showActiveFileInExplorer')<cr>",
+	{ noremap = true, silent = true }
+)
+vim.keymap.set(
+	"n",
+	"]c",
+	"<cmd>call VSCodeCall('workbench.action.editor.nextChange')<cr>",
+	{ noremap = true, silent = true }
+)
+vim.keymap.set(
+	"n",
+	"[c",
+	"<cmd>call VSCodeCall('workbench.action.editor.previousChange')<cr>",
+	{ noremap = true, silent = true }
+)
+vim.keymap.set(
+	"n",
+	"<c-;>",
+	"<cmd>call VSCodeCall('workbench.action.showAllEditorsByMostRecentlyUsed')<cr>",
+	{ noremap = true, silent = true }
+)
 
-vim.api.nvim_create_autocmd("User", {
-	pattern = "VeryLazy",
-	callback = function()
-		load("autocmds")
-		load("keymaps")
-	end,
-})
+print("hello vscode")
 
-return {}
+return {
+	{
+		"wellle/targets.vim",
+		event = "BufReadPost",
+		verison = false,
+	},
+	{
+		"ggandor/leap.nvim",
+		event = "VeryLazy",
+		config = function()
+			require("leap").add_default_mappings()
+		end,
+	},
+	{
+		"andymass/vim-matchup",
+		event = "BufReadPost",
+		config = function()
+			vim.g.matchup_matchparen_offscreen = { method = nil }
+		end,
+	},
+}

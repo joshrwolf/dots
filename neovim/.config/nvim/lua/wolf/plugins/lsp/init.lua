@@ -20,12 +20,116 @@ return {
 
 			"b0o/SchemaStore.nvim",
 
+			"simrat39/rust-tools.nvim",
+
 			{
 				"j-hui/fidget.nvim",
 				opts = { text = { spinner = "dots", done = "" } },
 			},
 		},
-		config = function(plugin)
+		opts = {
+			diagnostics = {
+				underline = true,
+				update_in_insert = false,
+				virtual_text = { spacing = 4, prefix = "●", severity = vim.diagnostic.severity.ERROR },
+				severity_sort = true,
+				float = {
+					focusable = true,
+					style = "minimal",
+					border = "rounded",
+					source = "always",
+					header = "",
+					prefix = "",
+				},
+			},
+			servers = {
+				bashls = {},
+				jsonls = {
+					-- lazy-load the json schemastore only when needed
+					on_new_config = function(new_config, new_root_dir)
+						new_config.settings.json.schemas = new_config.settings.json.schemas or {}
+						vim.list_extend(new_config.settings.json.schemas, require("schemastore").json.schemas())
+					end,
+					settings = {
+						json = {
+							format = { enable = true },
+						},
+						validate = { enable = true },
+					},
+				},
+				yamlls = {},
+				gopls = {
+					settings = {
+						gopls = {
+							["ui.documentation.linksInHover"] = false,
+							["ui.diagnostics.staticcheck"] = true,
+							semanticTokens = false, -- turn on when 0.9 is stable
+							analyses = {
+								assign = true,
+								unreachable = true,
+								unusedparams = true,
+								bools = true,
+								nilness = true,
+								nilfunc = true,
+								shadow = true,
+								unusedwrite = true,
+								unusedvariable = true,
+							},
+							env = {
+								GOFLAGS = "-tags=e2e",
+							},
+						},
+					},
+				},
+				terraformls = {},
+				tsserver = {},
+				bufls = {},
+				lua_ls = {
+					settings = {
+						Lua = {
+							workspace = {
+								checkThirdParty = false,
+							},
+							completion = {
+								callSnippet = "Replace",
+							},
+						},
+					},
+				},
+			},
+			setup = {
+				rust_analyzer = function(_, opts)
+					local rust_tools_opts = vim.tbl_deep_extend("force", opts, {
+						settings = {
+							["rust-analyzer"] = {
+								cargo = {
+									allFeatures = true,
+									loadOutDirsFromCheck = true,
+									runBuildScripts = true,
+								},
+								-- Add clippy lints for Rust.
+								checkOnSave = {
+									allFeatures = true,
+									command = "clippy",
+									extraArgs = { "--no-deps" },
+								},
+								procMacro = {
+									enable = true,
+									ignored = {
+										["async-trait"] = { "async_trait" },
+										["napi-derive"] = { "napi" },
+										["async-recursion"] = { "async_recursion" },
+									},
+								},
+							},
+						},
+					})
+					require("rust-tools").setup(rust_tools_opts)
+					return true
+				end,
+			},
+		},
+		config = function(plugin, opts)
 			-- setup formatting and keymaps
 			vim.api.nvim_create_autocmd("LspAttach", {
 				callback = function(args)
@@ -45,20 +149,7 @@ return {
 				name = "DiagnosticSign" .. name
 				vim.fn.sign_define(name, { text = icon, texthl = name, numhl = "" })
 			end
-			vim.diagnostic.config({
-				underline = true,
-				update_in_insert = false,
-				virtual_text = { spacing = 4, prefix = "●", severity = vim.diagnostic.severity.ERROR },
-				severity_sort = true,
-				float = {
-					focusable = true,
-					style = "minimal",
-					border = "rounded",
-					source = "always",
-					header = "",
-					prefix = "",
-				},
-			})
+			vim.diagnostic.config(opts.diagnostics)
 
 			-- configure popup handler
 			local popup_config = {
@@ -70,83 +161,53 @@ return {
 			vim.lsp.handlers["textDocument/signatureHelp"] = vim.lsp.with(vim.lsp.handlers.signature_help, popup_config)
 
 			-- setup servers
-			local servers = plugin.servers or {}
+			local servers = opts.servers
 			local capabilities =
 				require("cmp_nvim_lsp").default_capabilities(vim.lsp.protocol.make_client_capabilities())
 
-			require("mason-lspconfig").setup({ ensure_installed = vim.tbl_keys(servers) })
-			require("mason-lspconfig").setup_handlers({
-				function(server)
-					local opts = servers[server] or {}
-					opts.capabilities = capabilities
-					if not plugin.setup_server(server, opts) then
-						require("lspconfig")[server].setup(opts)
+			local function setup(server)
+				local server_opts = vim.tbl_deep_extend("force", {
+					capabilities = vim.deepcopy(capabilities),
+				}, servers[server] or {})
+
+				if opts.setup[server] then
+					if opts.setup[server](server, server_opts) then
+						return
 					end
-				end,
-			})
-		end,
-		---@type lspconfig.options
-		servers = {
-			bashls = {},
-			jsonls = {
-				-- lazy-load the json schemastore only when needed
-				on_new_config = function(new_config, new_root_dir)
-					new_config.settings.json.schemas = new_config.settings.json.schemas or {}
-					vim.list_extend(new_config.settings.json.schemas, require("schemastore").json.schemas())
-				end,
-				settings = {
-					json = {
-						format = { enable = true },
-					},
-					validate = { enable = true },
-				},
-			},
-			yamlls = {},
-			gopls = {
-				settings = {
-					gopls = {
-						["ui.documentation.linksInHover"] = false,
-						["ui.diagnostics.staticcheck"] = true,
-						semanticTokens = false, -- turn on when 0.9 is stable
-						analyses = {
-							assign = true,
-							unreachable = true,
-							unusedparams = true,
-							bools = true,
-							nilness = true,
-							nilfunc = true,
-							shadow = true,
-							unusedwrite = true,
-							unusedvariable = true,
-						},
-						env = {
-							GOFLAGS = "-tags=e2e",
-						},
-					},
-				},
-			},
-			rust_analyzer = {},
-			terraformls = {},
-			tsserver = {},
-			bufls = {},
-			sumneko_lua = {
-				settings = {
-					Lua = {
-						workspace = {
-							checkThirdParty = false,
-						},
-						completion = {
-							callSnippet = "Replace",
-						},
-					},
-				},
-			},
-		},
-		---@param server string lsp server name
-		---@param opts _.lspconfig.options any options set for the server
-		setup_server = function(server, opts)
-			-- return true if this server should skip lsp setup
-			return false
+				elseif opts.setup["*"] then
+					if opts.setup["*"](server, server_opts) then
+						return
+					end
+				end
+				require("lspconfig")[server].setup(server_opts)
+			end
+
+			-- temp fix for lspconfig rename
+			-- https://github.com/neovim/nvim-lspconfig/pull/2439
+			local mappings = require("mason-lspconfig.mappings.server")
+			if not mappings.lspconfig_to_package.lua_ls then
+				mappings.lspconfig_to_package.lua_ls = "lua-language-server"
+				mappings.package_to_lspconfig["lua-language-server"] = "lua_ls"
+			end
+
+			local mlsp = require("mason-lspconfig")
+			local available = mlsp.get_available_servers()
+
+			local ensure_installed = {} ---@type string[]
+			for server, server_opts in pairs(servers) do
+				if server_opts then
+					server_opts = server_opts == true and {} or server_opts
+					-- run manual setup if mason=false or if this is a server that cannot be installed with mason-lspconfig
+					if server_opts.mason == false or not vim.tbl_contains(available, server) then
+						setup(server)
+					else
+						ensure_installed[#ensure_installed + 1] = server
+					end
+				end
+			end
+
+			require("mason-lspconfig").setup({ ensure_installed = ensure_installed })
+			require("mason-lspconfig").setup_handlers({ setup })
 		end,
 	},
 

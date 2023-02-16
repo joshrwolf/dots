@@ -1,30 +1,4 @@
 return {
-	-- tokyonight
-	{
-		"folke/tokyonight.nvim",
-		enabled = false,
-		lazy = false,
-		priority = 1000,
-		config = function()
-			local tokyonight = require("tokyonight")
-			tokyonight.setup({
-				style = "moon",
-			})
-			tokyonight.load()
-		end,
-	},
-	{
-		"mcchrish/zenbones.nvim",
-		enabled = false,
-		lazy = false,
-		priority = 1000,
-		dependencies = {
-			"rktjmp/lush.nvim",
-		},
-		config = function()
-			vim.cmd([[colorscheme zenbones]])
-		end,
-	},
 	{
 		"EdenEast/nightfox.nvim",
 		enabled = true,

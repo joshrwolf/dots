@@ -31,6 +31,19 @@ return {
 			"nvim-lua/plenary.nvim",
 			{ "nvim-telescope/telescope-file-browser.nvim" },
 			{ "nvim-telescope/telescope-fzf-native.nvim", build = "make" },
+			{
+				"stevearc/aerial.nvim",
+				keys = {
+					-- NOTE: Aerial doesn't respect lua table config for whatever reason, so we have to inline it in the call below
+					{
+						"<leader>fs",
+						-- "<cmd>lua require('telescope').extensions.aerial.aerial(require('telescope.themes').get_dropdown({layout_config={width=.9, height=.8}}))<cr>",
+						"<cmd>lua require('telescope').extensions.aerial.aerial({layout_strategy='vertical',layout_config={preview_height=0.6}})<cr>",
+						desc = "Code Outline",
+					},
+				},
+				config = true,
+			},
 		},
 		cmd = "Telescope",
 		keys = {
@@ -45,8 +58,9 @@ return {
 			{ "<leader>fd", "<cmd>Telescope diagnostics<cr>", desc = "Find diagnostics" },
 			{ "<leader>gs", git_delta_status, desc = "Git status" },
 			{ "<leader>f.", "<cmd>Telescope resume<cr>", desc = "Find resume" },
-			{ "\\", "<cmd>Telescope file_browser path=%:p:h<cr>", desc = "Browser" },
-			{ "<c-,>", "<cmd>Telescope buffers<cr>", desc = "Find buffers", mode = { "n", "t" } },
+			{ "<leader>f/", "<cmd>Telescope current_buffer_fuzzy_find<cr>", desc = "Find current buffer" },
+			{ ";", "<cmd>Telescope file_browser path=%:p:h<cr>", desc = "Browser" },
+			{ "<c-;>", "<cmd>Telescope buffers<cr>", desc = "Find buffers", mode = { "n", "t" } },
 			{ "<leader>hh", "<cmd>Telescope help_tags<cr>", desc = "Help pages" },
 			{ "<leader>hc", "<cmd>Telescope commands<cr>", desc = "Help commands" },
 			{ "<leader>ha", "<cmd>Telescope autocommands<cr>", desc = "Help autocommands" },
@@ -68,6 +82,8 @@ return {
 							["<c-t>"] = actions.select_tab + actions.center,
 							["<c-c>"] = actions.close,
 							["q"] = actions.close,
+							["gg"] = actions.move_to_top,
+							["G"] = actions.move_to_bottom,
 						},
 						i = {
 							["<cr>"] = actions.select_default + actions.center,
@@ -97,13 +113,16 @@ return {
 						hidden = true,
 					},
 					buffers = require("telescope.themes").get_ivy({
+						layout_config = {
+							height = 50,
+						},
 						sort_mru = true,
 						sort_lastused = true,
 						ignore_current_buffer = true,
 						mappings = {
 							i = {
 								["<c-x>"] = "delete_buffer",
-								["<c-,>"] = actions.close,
+								["<c-;>"] = actions.close,
 							},
 						},
 					}),
@@ -143,7 +162,7 @@ return {
 								["<c-x>"] = actions.select_horizontal,
 								["<c-v>"] = actions.select_vertical,
 								["<c-t>"] = actions.select_tab,
-								["\\"] = actions.close,
+								[";"] = actions.close,
 								["q"] = actions.close,
 								["h"] = fb_actions.goto_parent_dir,
 								["l"] = actions.select_default,
@@ -170,6 +189,11 @@ return {
 							"--hidden",
 						},
 					},
+					aerial = {
+						show_nesting = {
+							["_"] = true,
+						},
+					},
 				},
 			})
 
@@ -188,12 +212,5 @@ return {
 		config = function()
 			require("telescope").load_extension("live_grep_args")
 		end,
-	},
-	{
-		"stevearc/aerial.nvim",
-		keys = {
-			{ "<leader>fs", "<cmd>Telescope aerial<cr>", desc = "Code Outline" },
-		},
-		config = true,
 	},
 }

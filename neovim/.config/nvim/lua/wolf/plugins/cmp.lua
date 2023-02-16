@@ -112,6 +112,9 @@ return {
 				-- 		cmp.config.compare.score,
 				-- 	},
 				-- },
+				matching = {
+					disallow_partial_fuzzy_matching = false,
+				},
 			})
 
 			cmp.setup.filetype("gitcommit", {

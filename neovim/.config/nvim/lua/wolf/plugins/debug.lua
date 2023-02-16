@@ -93,6 +93,20 @@ return {
 				end,
 				{ desc = "Step Over" },
 			},
+			{
+				"<F4>",
+				function()
+					require("dap").continue()
+				end,
+				{ desc = "Continue" },
+			},
+			{
+				"<F5>",
+				function()
+					require("dap").terminate()
+				end,
+				{ desc = "Terminate" },
+			},
 		},
 		config = function()
 			local dap, dapui = require("dap"), require("dapui")
@@ -116,6 +130,4 @@ return {
 			vim.fn.sign_define("DapLogPoint", { text = "", texthl = "DiagnosticInfo", linehl = "", numhl = "" })
 		end,
 	},
-
-	{},
 }

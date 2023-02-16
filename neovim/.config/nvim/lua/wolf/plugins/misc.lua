@@ -12,37 +12,6 @@ return {
 			vim.g.tmux_navigator_save_on_switch = 1
 		end,
 	},
-	-- {
-	-- 	"echasnovski/mini.ai",
-	-- 	version = false,
-	-- 	-- keys = {
-	-- 	-- 	{ "a", mode = { "x", "o" } },
-	-- 	-- 	{ "i", mode = { "x", "o" } },
-	-- 	-- },
-	-- 	event = "VeryLazy",
-	-- 	enabled = true,
-	-- 	dependencies = {
-	-- 		"nvim-treesitter/nvim-treesitter-textobjects",
-	-- 		init = function()
-	-- 			-- we don't actually load the plugin, just the module
-	-- 			require("lazy.core.loader").disable_rtp_plugin("nvim-treesitter-textobjects")
-	-- 		end,
-	-- 	},
-	-- 	config = function()
-	-- 		local ai = require("mini.ai")
-	-- 		ai.setup({
-	-- 			n_lines = 500,
-	-- 			custom_textobjects = {
-	-- 				o = ai.gen_spec.treesitter({
-	-- 					a = { "@block.outer", "@conditional.outer", "@loop.outer" },
-	-- 					i = { "@block.inner", "@conditional.inner", "@loop.inner" },
-	-- 				}, {}),
-	-- 				f = ai.gen_spec.treesitter({ a = "@function.outer", i = "@function.inner" }, {}),
-	-- 				c = ai.gen_spec.treesitter({ a = "@class.outer", i = "@class.inner" }),
-	-- 			},
-	-- 		})
-	-- 	end,
-	-- },
 	{
 		"echasnovski/mini.comment",
 		keys = {
@@ -377,6 +346,13 @@ let g:projectionist_heuristics = {
 			{ "<leader>sl", "<cmd>lua require('resession').load()<cr>", "n", desc = "Load Session" },
 		},
 		opts = {},
+	},
+	{
+		"ThePrimeagen/harpoon",
+		keys = {
+			{ "<leader>0", "<cmd>lua require('harpoon.term').gotoTerminal(1)<cr>", "n", desc = "Goto Terminal 1" },
+			{ "<leader>9", "<cmd>lua require('harpoon.term').gotoTerminal(2)<cr>", "n", desc = "Goto Terminal 2" },
+		},
 	},
 	{
 		"dstein64/vim-startuptime",

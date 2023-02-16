@@ -3,14 +3,14 @@ local wezterm = require("wezterm")
 -- https://github.com/hurricanehrndz/cfg/blob/8993ea84ee04e2cf379d40a19851642078047e1e/dot_config/wezterm/wezterm.tmux.lua
 
 return {
-	font = wezterm.font_with_fallback({ { family = "Liga SFMono Nerd Font" } }),
+	font = wezterm.font_with_fallback({ { family = "FiraCode Nerd Font Mono" } }),
 	font_rules = {
 		-- Bold-not-italic
 		{
 			intensity = "Bold",
 			italic = false,
 			font = wezterm.font({
-				family = "Liga SFMono Nerd Font",
+				family = "FiraCode Nerd Font Mono",
 				weight = "Bold",
 			}),
 		},
@@ -20,7 +20,7 @@ return {
 			intensity = "Bold",
 			italic = true,
 			font = wezterm.font({
-				family = "Liga SFMono Nerd Font",
+				family = "FiraCode Nerd Font Mono",
 				italic = true,
 			}),
 		},
@@ -30,7 +30,7 @@ return {
 			intensity = "Normal",
 			italic = true,
 			font = wezterm.font({
-				family = "Liga SFMono Nerd Font",
+				family = "FiraCode Nerd Font Mono",
 				weight = "Regular",
 				italic = true,
 			}),
@@ -41,7 +41,7 @@ return {
 			intensity = "Half",
 			italic = true,
 			font = wezterm.font({
-				family = "Liga SFMono Nerd Font",
+				family = "FiraCode Nerd Font Mono",
 				weight = "Medium",
 				italic = true,
 			}),
@@ -52,7 +52,7 @@ return {
 			intensity = "Half",
 			italic = false,
 			font = wezterm.font({
-				family = "Liga SFMono Nerd Font",
+				family = "FiraCode Nerd Font Mono",
 				weight = "Medium",
 			}),
 		},
@@ -81,6 +81,9 @@ return {
 		{ key = "9", mods = "CMD", action = wezterm.action.SendString("\x13\x39") }, -- <prefix>9
 		{ key = "0", mods = "CMD", action = wezterm.action.SendString("\x13\x30") }, -- <prefix>0
 
+		{ key = "9", mods = "CTRL", action = wezterm.action.SendString("\x14\x39") }, -- <prefix>9
+		{ key = "0", mods = "CTRL", action = wezterm.action.SendString("\x14\x30") }, -- <prefix>0
+
 		-- New tmux tab
 		{ key = "t", mods = "CMD", action = wezterm.action.SendString("\x13\x63") }, -- <prefix>t
 
@@ -96,9 +99,10 @@ return {
 		{ key = "z", mods = "CMD", action = wezterm.action.SendString("\x13\x7a") }, -- <prefix>z
 
 		-- cmd p
-		{ key = "p", mods = "CMD", action = wezterm.action.SendString("\x10") }, -- <prefix>p
+		{ key = "p", mods = "CMD", action = wezterm.action.SendString("\x13") }, -- <prefix>p
 
 		-- CSU Overrides
+		-- ref: https://www.asciitable.com/
 		{ key = "Comma", mods = "CTRL", action = wezterm.action.SendString("\x1b[44;5u") }, -- <ctrl-,>
 		{ key = "Period", mods = "CTRL", action = wezterm.action.SendString("\x1b[46;5u") }, -- <ctrl-,>
 		{ key = "Semicolon", mods = "CTRL", action = wezterm.action.SendString("\x1b[59;5u") }, -- <ctrl-,>
