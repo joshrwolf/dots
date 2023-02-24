@@ -1,5 +1,27 @@
 return {
 	{
+		"sainnhe/everforest",
+		enabled = true,
+		lazy = false,
+		priority = 1000,
+		version = false,
+		config = function()
+			vim.g.everforest_background = "soft"
+			vim.cmd("colorscheme everforest")
+		end,
+	},
+	{
+		"sainnhe/gruvbox-material",
+		enabled = true,
+		lazy = false,
+		priority = 1001,
+		version = false,
+		config = function()
+			vim.g.gruvbox_material_background = "soft"
+			-- vim.cmd("colorscheme gruvbox-material")
+		end,
+	},
+	{
 		"EdenEast/nightfox.nvim",
 		enabled = true,
 		lazy = false,
@@ -85,7 +107,7 @@ return {
 					},
 				},
 			})
-			vim.cmd("colorscheme nordfox")
+			-- vim.cmd("colorscheme nordfox")
 		end,
 	},
 }

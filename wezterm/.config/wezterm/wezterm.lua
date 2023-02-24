@@ -61,7 +61,7 @@ return {
 	font_size = 13.0,
 	cell_width = 1,
 	line_height = 1.2,
-	color_scheme = "nord",
+	color_scheme = "Everforest Dark (Soft)",
 	-- dpi = 144.0,
 
 	hide_tab_bar_if_only_one_tab = true,
