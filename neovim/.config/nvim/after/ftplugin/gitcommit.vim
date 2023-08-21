@@ -1,2 +1,0 @@
-startinsert
-setl spell

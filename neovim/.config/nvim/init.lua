@@ -1,1 +1,0 @@
-require("wolf.config.lazy")
