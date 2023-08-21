@@ -8,4 +8,9 @@ opt.confirm = false
 opt.showtabline = 1 -- show tabline only when multiple tabs exist
 opt.jumpoptions = "view" -- restore location when jumping through buffers
 
-vim.lsp.set_log_level("OFF")
+-- opt.autoindent = true
+-- opt.smartindent = false
+-- opt.cindent = true
+-- opt.indentexpr = "nvim_treesitter#indent()"
+
+-- vim.lsp.set_log_level("OFF")

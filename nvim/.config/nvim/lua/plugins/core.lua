@@ -23,6 +23,10 @@ return {
   {
     "nvim-lualine/lualine.nvim",
     opts = {
+      options = {
+        component_separators = "",
+        section_separators = "",
+      },
       sections = {
         lualine_a = {},
         lualine_b = { { "branch", icon = "" } },
@@ -53,6 +57,7 @@ return {
           enable = true,
           lookahead = true,
           include_surrounding_whitespace = false,
+          indent = { enable = true },
           keymaps = {
             ["ak"] = { query = "@block.outer", desc = "around block" },
             ["ik"] = { query = "@block.inner", desc = "inside block" },
@@ -84,9 +89,40 @@ return {
 
   {
     "neovim/nvim-lspconfig",
-    servers = {
-      -- Add the things here
+    inlay_hints = { enabled = true },
+    opts = {
+      servers = {
+        terraformls = {
+          settings = {
+            terraformls = {
+              prefillRequiredFields = true,
+            },
+          },
+        },
+        gopls = {
+          settings = {
+            gopls = {
+              usePlaceholders = false,
+            },
+          },
+        },
+      },
     },
+  },
+  {
+    "jose-elias-alvarez/null-ls.nvim",
+    opts = function(_, opts)
+      -- Hacky way to remove terraform validate from null-ls sources, introduced by the terraform lazyvim lang pack
+      if type(opts.sources) == "table" then
+        local null_ls = require("null-ls")
+        for i, source in ipairs(opts.sources) do
+          if source == null_ls.builtins.diagnostics.terraform_validate then
+            table.remove(opts.sources, i)
+            break
+          end
+        end
+      end
+    end,
   },
 
   {
@@ -145,6 +181,42 @@ return {
           { "-", "<cmd>Telescope file_browser path=%:p:h<cr>", desc = "Browser" },
         },
         config = function()
+          local actions = require("telescope.actions")
+          local fb_actions = require("telescope._extensions.file_browser.actions")
+          require("telescope").setup({
+            extensions = {
+              file_browser = {
+                theme = "ivy",
+                hidden = true,
+                layout_config = { height = 50 },
+                hide_parent_dir = true,
+                collapse_dirs = false,
+                initial_mode = "normal",
+                mappings = {
+                  ["i"] = {
+                    ["<cr>"] = actions.select_default,
+                    ["<c-x>"] = actions.select_horizontal,
+                    ["<c-v>"] = actions.select_vertical,
+                    ["<c-h>"] = fb_actions.goto_parent_dir,
+                    ["<c-l>"] = actions.select_default,
+                  },
+                  ["n"] = {
+                    ["<cr>"] = actions.select_default,
+                    ["<c-x>"] = actions.select_horizontal,
+                    ["<c-v>"] = actions.select_vertical,
+                    ["<c-t>"] = actions.select_tab,
+                    ["q"] = actions.close,
+                    ["<c-c>"] = actions.close,
+                    ["h"] = fb_actions.goto_parent_dir,
+                    ["l"] = actions.select_default,
+                    ["n"] = fb_actions.create_from_prompt,
+                    ["."] = fb_actions.toggle_hidden,
+                    ["-"] = actions.close,
+                  },
+                },
+              },
+            },
+          })
           require("telescope").load_extension("file_browser")
         end,
       },
@@ -210,7 +282,6 @@ return {
     },
     opts = function()
       local actions = require("telescope.actions")
-      local fb_actions = require("telescope._extensions.file_browser.actions")
 
       return {
         defaults = {
@@ -263,38 +334,8 @@ return {
             ignore_current_buffer = true,
           },
         },
-        extensions = {
-          file_browser = {
-            theme = "ivy",
-            hidden = true,
-            layout_config = { height = 50 },
-            hide_parent_dir = true,
-            collapse_dirs = false,
-            initial_mode = "normal",
-            mappings = {
-              ["i"] = {
-                ["<cr>"] = actions.select_default,
-                ["<c-x>"] = actions.select_horizontal,
-                ["<c-v>"] = actions.select_vertical,
-                ["<c-h>"] = fb_actions.goto_parent_dir,
-                ["<c-l>"] = actions.select_default,
-              },
-              ["n"] = {
-                ["<cr>"] = actions.select_default,
-                ["<c-x>"] = actions.select_horizontal,
-                ["<c-v>"] = actions.select_vertical,
-                ["<c-t>"] = actions.select_tab,
-                ["q"] = actions.close,
-                ["<c-c>"] = actions.close,
-                ["h"] = fb_actions.goto_parent_dir,
-                ["l"] = actions.select_default,
-                ["n"] = fb_actions.create_from_prompt,
-                ["."] = fb_actions.toggle_hidden,
-                ["-"] = actions.close,
-              },
-            },
-          },
-        },
+        -- Define these in their respective extension modules
+        -- extensions = {},
       }
     end,
   },
@@ -524,6 +565,45 @@ return {
           "golang",
         },
       })
+    end,
+  },
+
+  {
+    "j-hui/fidget.nvim",
+    tag = "legacy",
+    event = "LspAttach",
+    opts = {
+      text = { spinner = "dots" },
+    },
+  },
+
+  -- Ripped from AstroVim
+  {
+    "windwp/nvim-autopairs",
+    event = "InsertEnter",
+    opts = {
+      check_ts = true,
+      ts_config = { java = false },
+      fast_wrap = {
+        map = "<M-e>",
+        chars = { "{", "[", "(", '"', "'" },
+        pattern = string.gsub([[ [%'%"%)%>%]%)%}%,] ]], "%s+", ""),
+        offset = 0,
+        end_key = "$",
+        keys = "qwertyuiopzxcvbnmasdfghjkl",
+        check_comma = true,
+        highlight = "PmenuSel",
+        highlight_grey = "LineNr",
+      },
+    },
+    config = function(_, opts)
+      local npairs = require("nvim-autopairs")
+      npairs.setup(opts)
+
+      local cmp_status_ok, cmp = pcall(require, "cmp")
+      if cmp_status_ok then
+        cmp.event:on("confirm_done", require("nvim-autopairs.completion.cmp").on_confirm_done({ tex = false }))
+      end
     end,
   },
 
