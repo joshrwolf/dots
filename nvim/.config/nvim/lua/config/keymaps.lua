@@ -6,7 +6,7 @@
 local function map(mode, lhs, rhs, opts)
   local keys = require("lazy.core.handler").handlers.keys
   ---@cast keys LazyKeysHandler
-  -- do not create the keymap if a lazy keys handler exists
+  -- do not create the keymap if a lazy keys handler existsrt
   if not keys.active[keys.parse({ lhs, mode = mode }).id] then
     opts = opts or {}
     opts.silent = opts.silent ~= false
@@ -16,6 +16,20 @@ local function map(mode, lhs, rhs, opts)
     vim.keymap.set(mode, lhs, rhs, opts)
   end
 end
+
+-- Smart splits
+map("n", "<C-h>", function()
+  require("smart-splits").move_cursor_left()
+end, { remap = true })
+map("n", "<C-j>", function()
+  require("smart-splits").move_cursor_down()
+end, { remap = true })
+map("n", "<C-k>", function()
+  require("smart-splits").move_cursor_up()
+end, { remap = true })
+map("n", "<C-l>", function()
+  require("smart-splits").move_cursor_right()
+end, { remap = true })
 
 map("n", "<C-d>", "<C-d>zz", { remap = true })
 map("n", "<C-u>", "<C-u>zz", { remap = true })

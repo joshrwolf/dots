@@ -3,6 +3,13 @@ keybinds {
     normal {
         // uncomment this and adjust key if using copy_on_select=false
         // bind "Alt c" { Copy; }
+        bind "Alt a" {
+          LaunchOrFocusPlugin "zellij:session-manager" {
+            floating true
+            move_to_focused_tab true
+          };
+          SwitchToMode "Normal"
+        }
         bind "Ctrl x" { SwitchToMode "Session"; }
         bind "Ctrl m" { SwitchToMode "Move"; }
         bind "Alt h" { MoveFocusOrTab "Left"; }

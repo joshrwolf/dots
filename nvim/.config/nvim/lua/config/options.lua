@@ -8,6 +8,8 @@ opt.confirm = false
 opt.showtabline = 1 -- show tabline only when multiple tabs exist
 opt.jumpoptions = "view" -- restore location when jumping through buffers
 
+opt.updatetime = 300 -- time before CursorHold is trigger
+
 -- opt.autoindent = true
 -- opt.smartindent = false
 -- opt.cindent = true

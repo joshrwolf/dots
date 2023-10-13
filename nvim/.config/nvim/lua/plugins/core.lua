@@ -7,16 +7,56 @@ return {
   { "echasnovski/mini.surround", enabled = false },
   { "echasnovski/mini.indentscope", enabled = false },
   { "echasnovski/mini.pairs", enabled = false },
-  { "folke/noice.nvim", enabled = false },
-  { "goolord/alpha-nvim", enabled = false },
+  { "glepnir/dashboard-nvim", enabled = false },
   { "akinsho/bufferline.nvim", enabled = false },
 
   -- customize things
   {
+    "folke/noice.nvim",
+    opts = {
+      notify = {
+        enabled = false,
+      },
+      -- TODO: This is hacked together
+      views = {
+        cmdline_popup = {
+          position = {
+            row = -50,
+            col = "50%",
+          },
+        },
+        cmdline_popupmenu = {
+          position = {
+            row = -33,
+            col = "50%",
+          },
+        },
+      },
+    },
+  },
+
+  -- copilot
+  -- {
+  --   "zbirenbaum/copilot.lua",
+  --   cmd = "Copilot",
+  --   build = ":Copilot auth",
+  --   event = "InsertEnter",
+  --   opts = {
+  --     suggestion = { auto_trigger = true, debounce = 150 },
+  --   },
+  -- },
+
+  {
     "lukas-reineke/indent-blankline.nvim",
     opts = {
-      show_current_context = true,
-      show_trailing_blankline_indent = false,
+      --     show_current_context = true,
+      --     show_trailing_blankline_indent = false,
+      scope = {
+        enabled = true,
+        show_exact_scope = true,
+        show_start = false,
+        highlight = { "SpecialKey", "SpecialKey", "SpecialKey" },
+      },
     },
   },
 
@@ -109,21 +149,23 @@ return {
       },
     },
   },
-  {
-    "jose-elias-alvarez/null-ls.nvim",
-    opts = function(_, opts)
-      -- Hacky way to remove terraform validate from null-ls sources, introduced by the terraform lazyvim lang pack
-      if type(opts.sources) == "table" then
-        local null_ls = require("null-ls")
-        for i, source in ipairs(opts.sources) do
-          if source == null_ls.builtins.diagnostics.terraform_validate then
-            table.remove(opts.sources, i)
-            break
-          end
-        end
-      end
-    end,
-  },
+
+  -- RIP
+  -- {
+  --   "jose-elias-alvarez/null-ls.nvim",
+  --   opts = function(_, opts)
+  --     -- Hacky way to remove terraform validate from null-ls sources, introduced by the terraform lazyvim lang pack
+  --     if type(opts.sources) == "table" then
+  --       local null_ls = require("null-ls")
+  --       for i, source in ipairs(opts.sources) do
+  --         if source == null_ls.builtins.diagnostics.terraform_validate then
+  --           table.remove(opts.sources, i)
+  --           break
+  --         end
+  --       end
+  --     end
+  --   end,
+  -- },
 
   {
     "lewis6991/gitsigns.nvim",
@@ -159,12 +201,12 @@ return {
 
         -- stylua: ignore start
         map({ "n", "v" }, "<leader>ghs", ":Gitsigns stage_hunk<CR>", "Stage Hunk")
-        map({ "n", "v" }, "<leader>ghr", ":Gitsigns reset_hunk<CR>", "Reset Hunk")
+        map({ "n", "v" }, "<leader>gr", ":Gitsigns reset_hunk<CR>", "Reset Hunk")
         map("n", "<leader>ghS", gs.stage_buffer, "Stage Buffer")
         map("n", "<leader>ghu", gs.undo_stage_hunk, "Undo Stage Hunk")
-        map("n", "<leader>ghR", gs.reset_buffer, "Reset Buffer")
-        map("n", "<leader>ghp", gs.preview_hunk, "Preview Hunk")
-        map("n", "<leader>ghb", function() gs.blame_line({ full = true }) end, "Blame Line")
+        map("n", "<leader>gR", gs.reset_buffer, "Reset Buffer")
+        map("n", "<leader>gp", gs.preview_hunk, "Preview Hunk")
+        map("n", "<leader>gl", function() gs.blame_line({ full = true }) end, "Blame Line")
         map("n", "<leader>ghd", gs.diffthis, "Diff This")
         map("n", "<leader>ghD", function() gs.diffthis("~") end, "Diff This ~")
         map({ "o", "x" }, "ih", ":<C-U>Gitsigns select_hunk<CR>", "GitSigns Select Hunk")
@@ -184,6 +226,39 @@ return {
           local actions = require("telescope.actions")
           local fb_actions = require("telescope._extensions.file_browser.actions")
           require("telescope").setup({
+            defaults = {
+              file_ignore_patterns = {
+                "^node_modules/",
+                "third_party/",
+                "^.git/",
+                "^.intellij/",
+                "vendor",
+                "packer_compiled",
+                "%.DS_Store",
+                "%.ttf",
+                "%.png",
+                "^site-packages/",
+                "^.yarn/",
+              },
+              vimgrep_arguments = {
+                "rg",
+                "--color=never",
+                "--no-heading",
+                "--with-filename",
+                "--line-number",
+                "--column",
+                "--smart-case",
+                "--hidden",
+              },
+            },
+            pickers = {
+              find_files = { hidden = true },
+              buffers = {
+                sort_mru = true,
+                sort_lastused = true,
+                ignore_current_buffer = true,
+              },
+            },
             extensions = {
               file_browser = {
                 theme = "ivy",
@@ -230,16 +305,17 @@ return {
     },
     keys = {
       -- find
+      { "<leader>ff", "<cmd>Telescope find_files<cr>", desc = "Find files" },
       { "<leader>fo", "<cmd>Telescope oldfiles<cr>", desc = "Recent" },
       { "<leader>fO", Util.telescope("oldfiles", { cwd = vim.loop.cwd() }), desc = "Recent (cwd)" },
       { '<leader>f"', "<cmd>Telescope registers<cr>", desc = "Registers" },
       { "<leader>fa", "<cmd>Telescope autocommands<cr>", desc = "Auto Commands" },
       { "<leader>fb", "<cmd>Telescope current_buffer_fuzzy_find<cr>", desc = "Buffer" },
-      { "<leader>fc", "<cmd>Telescope command_history<cr>", desc = "Command History" },
+      { "<leader>fc", "<cmd>Telescope command_history<cr>", desc = "Commtnd History" },
       { "<leader>fC", "<cmd>Telescope commands<cr>", desc = "Commands" },
       { "<leader>fd", "<cmd>Telescope diagnostics bufnr=0<cr>", desc = "Document diagnostics" },
       { "<leader>fD", "<cmd>Telescope diagnostics<cr>", desc = "Workspace diagnostics" },
-      { "<leader>fw", Util.telescope("live_grep"), desc = "Grep (root dir)" },
+      { "<leader>fw", "<cmd>Telescope live_grep<cr>", desc = "Grep (root dir)" },
       { "<leader>fW", Util.telescope("live_grep", { cwd = false }), desc = "Grep (cwd)" },
       { "<leader>f;", "<cmd>Telescope resume<cr>", desc = "Resume" },
       { "<leader>uC", Util.telescope("colorscheme", { enable_preview = true }), desc = "Colorscheme with preview" },
@@ -341,6 +417,13 @@ return {
   },
 
   {
+    "L3MON4D3/LuaSnip",
+    keys = function()
+      -- TODO: Define some keymaps
+      return {}
+    end,
+  },
+  {
     "hrsh7th/nvim-cmp",
     opts = function(_, opts)
       local cmp = require("cmp")
@@ -357,9 +440,13 @@ return {
         { name = "nvim_lsp" },
         { name = "luasnip", keyword_length = 2, max_item_count = 2 },
         { name = "path" },
+        { name = "copilot" },
       }, {
         { name = "buffer", keyword_length = 3 },
       })
+      opts.confirm_opts = {
+        behavior = cmp.ConfirmBehavior.Replace,
+      }
       opts.mapping = cmp.mapping.preset.insert({
         ["<C-j>"] = cmp.mapping.select_next_item({ behavior = cmp.SelectBehavior.Insert }),
         ["<C-k>"] = cmp.mapping.select_prev_item({ behavior = cmp.SelectBehavior.Insert }),
@@ -367,6 +454,7 @@ return {
         ["<C-d>"] = cmp.mapping.scroll_docs(4),
         ["<C-Space>"] = cmp.mapping.complete(),
         ["<C-e>"] = cmp.mapping.abort(),
+        -- ["<C-h>"] = vim.lsp.buf.signature_help,
         ["<CR>"] = cmp.mapping.confirm({ select = true }), -- Accept currently selected item. Set `select` to `false` to only confirm explicitly selected items.
       })
     end,
@@ -441,10 +529,15 @@ return {
   {
     "tpope/vim-fugitive",
     cmd = { "G", "Git", "Gbrowse" },
-    -- keys = {
-    --   { "<leader>gg", ":tab G<cr>", desc = "Fugitive" },
-    --   { "<leader>ga", ":Gwrite<cr>", desc = "Write file" },
-    -- },
+    keys = {
+      --   { "<leader>gg", ":tab G<cr>", desc = "Fugitive" },
+      --   { "<leader>ga", ":Gwrite<cr>", desc = "Write file" },
+      { "<leader>gx", ":GBrowse @upstream<cr>", desc = "Open in GH @upstream", mode = { "n", "v" } },
+      { "<leader>gX", ":GBrowse<cr>", desc = "Open in GH @origin", mode = { "n", "v" } },
+    },
+    dependencies = {
+      { "tpope/vim-rhubarb" },
+    },
     config = function()
       vim.api.nvim_create_autocmd("FileType", {
         pattern = "fugitive",
@@ -499,7 +592,6 @@ return {
       }
     end,
   },
-
   {
     "Wansmer/treesj",
     keys = {},
@@ -568,14 +660,14 @@ return {
     end,
   },
 
-  {
-    "j-hui/fidget.nvim",
-    tag = "legacy",
-    event = "LspAttach",
-    opts = {
-      text = { spinner = "dots" },
-    },
-  },
+  -- {
+  --   "j-hui/fidget.nvim",
+  --   tag = "legacy",
+  --   event = "LspAttach",
+  --   opts = {
+  --     text = { spinner = "dots" },
+  --   },
+  -- },
 
   -- Ripped from AstroVim
   {
@@ -620,6 +712,48 @@ return {
       symbols = {
         separator = "",
       },
+    },
+  },
+
+  -- Smart splits
+  {
+    "mrjones2014/smart-splits.nvim",
+    lazy = false,
+    opts = {
+      at_edge = "stop",
+    },
+  },
+
+  -- Obsidian
+  {
+    "epwalsh/obsidian.nvim",
+    dependencies = {
+      "nvim-lua/plenary.nvim",
+      "hrsh7th/nvim-cmp",
+      "nvim-telescope/telescope.nvim",
+    },
+    keys = {
+      { "<leader>fnw", "<cmd>ObsidianSearch<cr>", "Search Obsidian" },
+      { "<leader>fnn", "<cmd>ObsidianNew<cr>", "New Notes" },
+      { "<leader>fnd", "<cmd>ObsidianToday<cr>", "Daily Note" },
+      { "<leader>fns", "<cmd>ObsidianYesterday<cr>", "Yesterday Note" },
+    },
+    opts = {
+      dir = "~/.brain",
+      use_advanced_uri = true,
+      daily_notes = { folder = "dailies" },
+      note_frontmatter_func = function(note)
+        -- This is equivalent to the default frontmatter function.
+        local out = { id = note.id, aliases = note.aliases, tags = note.tags }
+        -- `note.metadata` contains any manually added fields in the frontmatter.
+        -- So here we just make sure those fields are kept in the frontmatter.
+        if note.metadata ~= nil and require("obsidian").util.table_length(note.metadata) > 0 then
+          for k, v in pairs(note.metadata) do
+            out[k] = v
+          end
+        end
+        return out
+      end,
     },
   },
 }

@@ -28,3 +28,6 @@ vim.api.nvim_create_autocmd("VimResized", {
   command = "wincmd =",
   desc = "equal size when host window size changes",
 })
+
+-- Don't auto comment new line
+vim.api.nvim_create_autocmd("BufEnter", { command = [[set formatoptions-=cro]] })
