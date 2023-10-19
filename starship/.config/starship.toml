@@ -1,6 +1,9 @@
 [character]
 success_symbol = "[➜](green)"
 
+# [line_break]
+# disabled = true
+
 [aws]
 disabled = true
 

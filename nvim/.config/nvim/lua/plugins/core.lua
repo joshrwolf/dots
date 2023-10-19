@@ -7,8 +7,9 @@ return {
   { "echasnovski/mini.surround", enabled = false },
   { "echasnovski/mini.indentscope", enabled = false },
   { "echasnovski/mini.pairs", enabled = false },
-  { "glepnir/dashboard-nvim", enabled = false },
+  { "nvimdev/dashboard-nvim", enabled = false },
   { "akinsho/bufferline.nvim", enabled = false },
+  { "justinsgithub/wezterm-types" },
 
   -- customize things
   {
@@ -166,6 +167,16 @@ return {
   --     end
   --   end,
   -- },
+
+  {
+    "mfussenegger/nvim-lint",
+    enabled = true,
+    -- opts = {
+    --   linters_by_ft = {
+    --     tf = { ""}
+    --   }
+    -- },
+  },
 
   {
     "lewis6991/gitsigns.nvim",
@@ -715,14 +726,16 @@ return {
     },
   },
 
-  -- Smart splits
-  {
-    "mrjones2014/smart-splits.nvim",
-    lazy = false,
-    opts = {
-      at_edge = "stop",
-    },
-  },
+  -- {
+  --   "Lilja/zellij.nvim",
+  --   cmd = { "ZellijNavigateLeft", "ZellijNavigateDown", "ZellijNavigateUp", "ZellijNavigateRight" },
+  --   keys = {
+  --     { "<C-h>", "<cmd>ZellijNavigateLeft<cr>", "Navigate Left" },
+  --     { "<C-j>", "<cmd>ZellijNavigateDown<cr>", "Navigate Down" },
+  --     { "<C-k>", "<cmd>ZellijNavigateUp<cr>", "Navigate Up" },
+  --     { "<C-l>", "<cmd>ZellijNavigateRight<cr>", "Navigate Right" },
+  --   },
+  -- },
 
   -- Obsidian
   {
