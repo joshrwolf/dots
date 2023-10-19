@@ -42,5 +42,14 @@ config.bold_brightens_ansi_colors = "BrightAndBold"
 -- config.default_cursor_style = "BlinkingBar"
 config.window_padding = { left = 0, right = 0, top = 0, bottom = 0 }
 config.scrollback_lines = 10000
+config.enable_scroll_bar = true
+config.audible_bell = "Disabled"
+-- config.hide_tab_bar_if_only_one_tab = true
+
+-- local mux = wezterm.mux
+-- wezterm.on("gui-startup", function()
+-- 	local _, _, window = mux.spawn_window({})
+-- 	window:gui_window():maximize()
+-- end)
 
 return config --[[@as Wezterm]]

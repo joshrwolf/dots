@@ -1,11 +1,84 @@
 local wezterm = require("wezterm")
-local workspace_switcher = wezterm.plugin.require("https://github.com/MLFlexer/smart_workspace_switcher.wezterm")
 
 local act = wezterm.action
 local M = {}
 
 M.mod = "CMD"
 M.ctrl = "CTRL"
+
+local last_workspace = nil
+
+local function get_zoxide_workspaces(workspace_formatter)
+	local handle = io.popen('/opt/homebrew/bin/zoxide query -l | sed -e "s|^' .. wezterm.home_dir .. '/|~/|"')
+	local output = handle:read("*a")
+	handle:close()
+
+	local workspace_table = {}
+	for _, workspace in ipairs(wezterm.mux.get_workspace_names()) do
+		table.insert(workspace_table, {
+			id = workspace,
+			label = workspace_formatter(workspace),
+		})
+	end
+	for _, path in ipairs(wezterm.split_by_newlines(output)) do
+		table.insert(workspace_table, {
+			id = path,
+			label = path,
+		})
+	end
+	return workspace_table
+end
+
+local function workspace_switcher(workspace_formatter)
+	return wezterm.action_callback(function(window, pane)
+		local workspaces = get_zoxide_workspaces(workspace_formatter)
+
+		window:perform_action(
+			act.InputSelector({
+				action = wezterm.action_callback(function(inner_window, inner_pane, id, label)
+					if not id and not label then -- do nothing
+					else
+						last_workspace = window:active_workspace()
+						local fullPath = string.gsub(label, "^~", wezterm.home_dir)
+						if fullPath:sub(1, 1) == "/" then
+							-- if path is choosen
+							inner_window:perform_action(
+								act.SwitchToWorkspace({
+									name = label,
+									spawn = {
+										label = "Workspace: " .. label,
+										cwd = fullPath,
+									},
+								}),
+								inner_pane
+							)
+							window:set_right_status(window:active_workspace())
+							-- increment path score
+							wezterm.run_child_process({
+								"zoxide",
+								"add",
+								fullPath,
+							})
+						else
+							-- if workspace is choosen
+							inner_window:perform_action(
+								act.SwitchToWorkspace({
+									name = id,
+								}),
+								inner_pane
+							)
+							window:set_right_status(window:active_workspace())
+						end
+					end
+				end),
+				title = "Choose Workspace",
+				choices = workspaces,
+				fuzzy = true,
+			}),
+			pane
+		)
+	end)
+end
 
 -- Splits things radially
 M.smart_split = wezterm.action_callback(function(window, pane)
@@ -15,6 +88,20 @@ M.smart_split = wezterm.action_callback(function(window, pane)
 	else
 		window:perform_action(act.SplitHorizontal({ domain = "CurrentPaneDomain" }), pane)
 	end
+end)
+
+M.toggle_last_workspace = wezterm.action_callback(function(window, pane)
+	local current_workspace = window:active_workspace()
+	if last_workspace and last_workspace ~= current_workspace then
+		wezterm.log_info("Switching to workspace " .. last_workspace)
+		window:perform_action(act.SwitchToWorkspace({ name = last_workspace }), pane)
+		last_workspace = current_workspace
+	else
+		last_workspace = current_workspace
+	end
+
+	wezterm.log_info("Last workspace: " .. last_workspace)
+	wezterm.log_info("Current workspace: " .. current_workspace)
 end)
 
 ---@param config Config
@@ -54,13 +141,19 @@ function M.setup(config)
 		{ mods = "LEADER", key = "d", action = act.ShowDebugOverlay },
 		-- Workspaces
 		{ mods = M.mod, key = "P", action = act.ActivateCommandPalette },
+		{ mods = M.mod, key = "z", action = M.toggle_last_workspace },
+		-- Copy pasted from https://github.com/MLFlexer/smart_workspace_switcher.wezterm/tree/main
+		{
+			mods = M.mod,
+			key = "p",
+			action = workspace_switcher(function(label)
+				return wezterm.format({
+					-- { Foreground = { Color = "green" } },
+					{ Text = "󱂬: " .. label },
+				})
+			end),
+		},
 	}
-
-	workspace_switcher.apply_to_config(config, "p", "CMD", function(label)
-		return wezterm.format({
-			{ Text = "󱂬: " .. label },
-		})
-	end)
 end
 
 ---@param resize_or_move "resize" | "move"
