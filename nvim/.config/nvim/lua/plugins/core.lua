@@ -14,44 +14,14 @@ return {
   -- customize things
   {
     "folke/noice.nvim",
-    opts = {
-      notify = {
-        enabled = false,
-      },
-      -- TODO: This is hacked together
-      views = {
-        cmdline_popup = {
-          position = {
-            row = -50,
-            col = "50%",
-          },
-        },
-        cmdline_popupmenu = {
-          position = {
-            row = -33,
-            col = "50%",
-          },
-        },
-      },
-    },
+    opts = function(_, opts)
+      opts.presets.lsp_doc_border = false
+    end,
   },
-
-  -- copilot
-  -- {
-  --   "zbirenbaum/copilot.lua",
-  --   cmd = "Copilot",
-  --   build = ":Copilot auth",
-  --   event = "InsertEnter",
-  --   opts = {
-  --     suggestion = { auto_trigger = true, debounce = 150 },
-  --   },
-  -- },
 
   {
     "lukas-reineke/indent-blankline.nvim",
     opts = {
-      --     show_current_context = true,
-      --     show_trailing_blankline_indent = false,
       scope = {
         enabled = true,
         show_exact_scope = true,
@@ -130,8 +100,11 @@ return {
 
   {
     "neovim/nvim-lspconfig",
-    inlay_hints = { enabled = true },
     opts = {
+      inlay_hints = { enabled = true },
+      format = {
+        timeout_ms = 200,
+      },
       servers = {
         terraformls = {
           settings = {
@@ -144,29 +117,28 @@ return {
           settings = {
             gopls = {
               usePlaceholders = false,
+              analyses = {
+                fieldalignment = false,
+                unusedparams = true,
+                unusedvariables = true,
+              },
+              hints = {
+                constantValues = false,
+                functionTypeParameters = true,
+                parameterNames = true,
+                rangeVariableTypes = true,
+                assignVariableTypes = false,
+              },
+              codelenses = {
+                generate = true,
+                tidy = true,
+              },
             },
           },
         },
       },
     },
   },
-
-  -- RIP
-  -- {
-  --   "jose-elias-alvarez/null-ls.nvim",
-  --   opts = function(_, opts)
-  --     -- Hacky way to remove terraform validate from null-ls sources, introduced by the terraform lazyvim lang pack
-  --     if type(opts.sources) == "table" then
-  --       local null_ls = require("null-ls")
-  --       for i, source in ipairs(opts.sources) do
-  --         if source == null_ls.builtins.diagnostics.terraform_validate then
-  --           table.remove(opts.sources, i)
-  --           break
-  --         end
-  --       end
-  --     end
-  --   end,
-  -- },
 
   {
     "mfussenegger/nvim-lint",
@@ -237,39 +209,6 @@ return {
           local actions = require("telescope.actions")
           local fb_actions = require("telescope._extensions.file_browser.actions")
           require("telescope").setup({
-            defaults = {
-              file_ignore_patterns = {
-                "^node_modules/",
-                "third_party/",
-                "^.git/",
-                "^.intellij/",
-                "vendor",
-                "packer_compiled",
-                "%.DS_Store",
-                "%.ttf",
-                "%.png",
-                "^site-packages/",
-                "^.yarn/",
-              },
-              vimgrep_arguments = {
-                "rg",
-                "--color=never",
-                "--no-heading",
-                "--with-filename",
-                "--line-number",
-                "--column",
-                "--smart-case",
-                "--hidden",
-              },
-            },
-            pickers = {
-              find_files = { hidden = true },
-              buffers = {
-                sort_mru = true,
-                sort_lastused = true,
-                ignore_current_buffer = true,
-              },
-            },
             extensions = {
               file_browser = {
                 theme = "ivy",
@@ -383,6 +322,7 @@ return {
             height = 0.80,
             preview_cutoff = 120,
           },
+          enable_preview = false,
           file_ignore_patterns = {
             "^node_modules/",
             "third_party/",
@@ -415,6 +355,7 @@ return {
         },
         pickers = {
           find_files = { hidden = true },
+          -- find_files = { preview = false },
           buffers = {
             sort_mru = true,
             sort_lastused = true,
@@ -439,6 +380,9 @@ return {
     opts = function(_, opts)
       local cmp = require("cmp")
       local compare = require("cmp.config.compare")
+      opts.completion = {
+        completeopt = "menu,menuone,noinsert",
+      }
       opts.sorting = {
         comparators = {
           compare.score,
@@ -449,14 +393,21 @@ return {
       }
       opts.sources = cmp.config.sources({
         { name = "nvim_lsp" },
-        { name = "luasnip", keyword_length = 2, max_item_count = 2 },
         { name = "path" },
-        { name = "copilot" },
       }, {
         { name = "buffer", keyword_length = 3 },
       })
       opts.confirm_opts = {
         behavior = cmp.ConfirmBehavior.Replace,
+      }
+      opts.formatting = {
+        format = function(_, item)
+          local icons = require("lazyvim.config").icons.kinds
+          if icons[item.kind] then
+            item.kind = icons[item.kind] .. item.kind
+          end
+          return item
+        end,
       }
       opts.mapping = cmp.mapping.preset.insert({
         ["<C-j>"] = cmp.mapping.select_next_item({ behavior = cmp.SelectBehavior.Insert }),
@@ -468,6 +419,12 @@ return {
         -- ["<C-h>"] = vim.lsp.buf.signature_help,
         ["<CR>"] = cmp.mapping.confirm({ select = true }), -- Accept currently selected item. Set `select` to `false` to only confirm explicitly selected items.
       })
+      vim.api.nvim_set_hl(0, "CmpGhostText", { link = "Comment", default = true })
+      opts.experimental = {
+        ghost_text = {
+          hl_group = "CmpGhostText",
+        },
+      }
     end,
   },
 
@@ -535,6 +492,19 @@ return {
       vim.cmd("colorscheme catppuccin")
     end,
   },
+
+  -- {
+  --   "projekt0n/github-nvim-theme",
+  --   lazy = false, -- make sure we load this during startup if it is your main colorscheme
+  --   priority = 1000, -- make sure to load this before all the other start plugins
+  --   config = function()
+  --     require("github-theme").setup({
+  --       -- ...
+  --     })
+  --
+  --     vim.cmd("colorscheme github_dark")
+  --   end,
+  -- },
 
   -- Git things
   {
@@ -634,6 +604,9 @@ return {
     opts = {
       view_options = {
         show_hidden = true,
+        is_always_hidden = function(name, bufnr)
+          return (name == "..")
+        end,
       },
       float = {
         win_options = { winblend = 0 },
@@ -670,15 +643,6 @@ return {
       })
     end,
   },
-
-  -- {
-  --   "j-hui/fidget.nvim",
-  --   tag = "legacy",
-  --   event = "LspAttach",
-  --   opts = {
-  --     text = { spinner = "dots" },
-  --   },
-  -- },
 
   -- Ripped from AstroVim
   {
@@ -726,16 +690,16 @@ return {
     },
   },
 
-  -- {
-  --   "Lilja/zellij.nvim",
-  --   cmd = { "ZellijNavigateLeft", "ZellijNavigateDown", "ZellijNavigateUp", "ZellijNavigateRight" },
-  --   keys = {
-  --     { "<C-h>", "<cmd>ZellijNavigateLeft<cr>", "Navigate Left" },
-  --     { "<C-j>", "<cmd>ZellijNavigateDown<cr>", "Navigate Down" },
-  --     { "<C-k>", "<cmd>ZellijNavigateUp<cr>", "Navigate Up" },
-  --     { "<C-l>", "<cmd>ZellijNavigateRight<cr>", "Navigate Right" },
-  --   },
-  -- },
+  {
+    "kylechui/nvim-surround",
+    version = "*", -- Use for stability; omit to use `main` branch for the latest features
+    event = "VeryLazy",
+    config = function()
+      require("nvim-surround").setup({
+        -- Configuration here, or leave empty to use defaults
+      })
+    end,
+  },
 
   -- Obsidian
   {
@@ -768,5 +732,32 @@ return {
         return out
       end,
     },
+  },
+
+  {
+    "github/copilot.vim",
+    config = function()
+      vim.keymap.set("i", "<c-r>", 'copilot#Accept("<CR>")', {
+        expr = true,
+        replace_keycodes = false,
+      })
+      vim.g.copilot_no_tab_map = true
+    end,
+  },
+  {
+    "jackMort/ChatGPT.nvim",
+    dependencies = {
+      "MunifTanjim/nui.nvim",
+      "nvim-lua/plenary.nvim",
+      "nvim-telescope/telescope.nvim",
+    },
+    event = "VeryLazy",
+    config = function()
+      require("chatgpt").setup({
+        openai_params = {
+          model = "gpt-4-1106-preview",
+        },
+      })
+    end,
   },
 }

@@ -1,3 +1,7 @@
+format = """$directory$character"""
+right_format = """$git_branch"""
+add_newline = false
+
 [character]
 success_symbol = "[➜](green)"
 
@@ -7,5 +11,18 @@ success_symbol = "[➜](green)"
 [aws]
 disabled = true
 
+[golang]
+disabled = true
+format = '[ ](bold cyan)'
+
+[git_branch]
+format = "[$symbol$branch(:$remote_branch)]($style) "
+symbol = " "
+style = "bold green"
+
 [gcloud]
 disabled = true
+
+[kubernetes]
+disabled = true
+symbol = '☸ '

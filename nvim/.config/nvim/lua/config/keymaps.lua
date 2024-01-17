@@ -2,6 +2,13 @@
 -- Default keymaps that are always set: https://github.com/LazyVim/LazyVim/blob/main/lua/lazyvim/config/keymaps.lua
 -- Add any additional keymaps here
 
+-- Configure any vscode specific keybindings then exit
+if vim.g.vscode then
+  vim.keymap.set("n", "<leader>fs", [[<cmd>call VSCodeNotify('workbench.action.gotoSymbol')<cr>]])
+  vim.keymap.set("n", "<leader>ff", [[<cmd>call VSCodeNotify('workbench.action.quickOpen')<cr>]])
+  return
+end
+
 local util = require("util")
 
 -- Copied from: https://www.lazyvim.org/configuration/general#keymaps

@@ -8,11 +8,10 @@ opt.confirm = false
 opt.showtabline = 1 -- show tabline only when multiple tabs exist
 opt.jumpoptions = "view" -- restore location when jumping through buffers
 
-opt.updatetime = 300 -- time before CursorHold is trigger
+opt.updatetime = 250 -- time before CursorHold is trigger
+opt.swapfile = false
+opt.writebackup = false
+opt.undofile = true
+opt.autoread = true -- auto reload file when changed outside of vim
 
--- opt.autoindent = true
--- opt.smartindent = false
--- opt.cindent = true
--- opt.indentexpr = "nvim_treesitter#indent()"
-
--- vim.lsp.set_log_level("OFF")
+require("config.hide")

@@ -100,8 +100,8 @@ M.toggle_last_workspace = wezterm.action_callback(function(window, pane)
 		last_workspace = current_workspace
 	end
 
-	wezterm.log_info("Last workspace: " .. last_workspace)
-	wezterm.log_info("Current workspace: " .. current_workspace)
+	-- wezterm.log_info("Last workspace: " .. last_workspace)
+	-- wezterm.log_info("Current workspace: " .. current_workspace)
 end)
 
 ---@param config Config
@@ -113,6 +113,7 @@ function M.setup(config)
 		-- Scrollback
 		{ mods = M.mod, key = "k", action = act.ScrollByPage(-0.5) },
 		{ mods = M.mod, key = "j", action = act.ScrollByPage(0.5) },
+		-- { mods = M.mod, key = "f", action = act.ActivateKeyTable({ name = "search_mode" }) },
 		-- New Tab
 		{ mods = M.mod, key = "t", action = act.SpawnTab("CurrentPaneDomain") },
 		-- Splits
@@ -170,7 +171,18 @@ function M.split_nav(resize_or_move, mods, key, dir)
 			if resize_or_move == "resize" then
 				win:perform_action({ AdjustPaneSize = { dir, 3 } }, pane)
 			else
+				local panes = pane:tab():panes_with_info()
+				local is_zoomed = false
+				for _, p in ipairs(panes) do
+					if p.is_zoomed then
+						is_zoomed = true
+					end
+				end
+				if is_zoomed then
+					dir = dir == "Up" or dir == "Right" and "Next" or "Prev"
+				end
 				win:perform_action({ ActivatePaneDirection = dir }, pane)
+				win:perform_action({ SetPaneZoomState = is_zoomed }, pane)
 			end
 		end
 	end)

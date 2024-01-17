@@ -1,0 +1,141 @@
+import = ["/Users/wolf/.config/alacritty/everforest.toml"]
+
+[env]
+TERM = "xterm-256color"
+
+[font]
+size = 13
+
+[font.normal]
+family = "GeistMono Nerd Font"
+style = "Regular"
+
+[font.offset]
+x = 0
+y = 10
+
+[[keyboard.bindings]]
+chars = "\u00131"
+key = "Key1"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u00132"
+key = "Key2"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u00133"
+key = "Key3"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u00134"
+key = "Key4"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u00135"
+key = "Key5"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u00138"
+key = "Key8"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u00139"
+key = "Key9"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u00130"
+key = "Key0"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u0013c"
+key = "T"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u0013z"
+key = "Z"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u0013m"
+key = "M"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u0013f"
+key = "F"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u0013g"
+key = "G"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u0013"
+key = "P"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u001B[44;5u"
+key = "Comma"
+mods = "Control"
+
+[[keyboard.bindings]]
+chars = "\u001B[46;5u"
+key = "Period"
+mods = "Control"
+
+[[keyboard.bindings]]
+chars = "\u001B[59;5u"
+key = "Semicolon"
+mods = "Control"
+
+[[keyboard.bindings]]
+chars = "\u001E"
+key = "Key6"
+mods = "Control"
+
+[[keyboard.bindings]]
+chars = "\u0015"
+key = "Back"
+mods = "Command"
+
+[[keyboard.bindings]]
+chars = "\u001Bf"
+key = "F"
+mods = "Alt"
+
+[[keyboard.bindings]]
+chars = "\u001Bb"
+key = "B"
+mods = "Alt"
+
+[[keyboard.bindings]]
+chars = "\u001Bd"
+key = "D"
+mods = "Alt"
+
+[[keyboard.bindings]]
+chars = "\u001B\\"
+key = "Backslash"
+mods = "Alt"
+
+[scrolling]
+history = 10000
+
+[window]
+decorations = "buttonless"
+opacity = 1.0
+
+[window.padding]
+x = 10
+y = 10
