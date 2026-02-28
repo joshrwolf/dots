@@ -22,12 +22,16 @@ vim.api.nvim_create_autocmd({ "InsertEnter", "WinLeave" }, {
   end,
 })
 
--- equal size when host window size changes
-vim.api.nvim_create_autocmd("VimResized", {
-  pattern = "*",
-  command = "wincmd =",
-  desc = "equal size when host window size changes",
-})
-
 -- Don't auto comment new line
 vim.api.nvim_create_autocmd("BufEnter", { command = [[set formatoptions-=cro]] })
+
+-- CUE-specific settings: use tabs instead of spaces
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "cue",
+  callback = function()
+    vim.bo.expandtab = false -- Use tabs instead of spaces
+    vim.bo.tabstop = 4 -- Display tabs as 4 spaces wide
+    vim.bo.shiftwidth = 4 -- Use 4 spaces for indentation commands
+    vim.bo.softtabstop = 4 -- Insert/delete 4 spaces when hitting Tab/Backspace
+  end,
+})

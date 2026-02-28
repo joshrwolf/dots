@@ -1,2 +1,10 @@
 /tmp
 /dev
+
+**/.claude/settings.local.json
+
+# Beads stealth mode configuration (added by bd init --stealth)
+**/.beads/
+
+# cw (claude workers) local tasks
+**/.cw/

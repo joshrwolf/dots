@@ -1,0 +1,104 @@
+# vi:ft=conf
+#
+# https://github.com/mitchellh/ghostty/blob/main/src/config/Config.zig
+#
+
+title = "Ghostty 👻"
+
+
+window-decoration = false
+window-theme = "light"
+confirm-close-surface = false
+# macos-option-as-alt = true
+
+cursor-style = block
+cursor-style-blink = false
+clipboard-read = "allow"
+clipboard-paste-protection = false
+
+cursor-color = #1F2328
+
+# Font
+font-size = 11.5
+font-thicken = false
+font-style = medium
+adjust-cell-height = 20%
+adjust-cell-width = 0%
+# font-family = GeistMono Nerd Font Mono
+# font-family = Monaspace Neon Var
+font-family = Jetbrains Mono
+
+font-family-bold = Jetbrains Mono Extra Bold
+
+theme =
+
+# Colors can be changed by setting the 16 colors of `palette`, which each color
+# being defined as regular and bold.
+#
+# adopted from: https://github.com/projekt0n/github-theme-contrib/blob/main/themes/wezterm/github_light.toml
+# background = #F6F8FA
+background = #ffffff
+foreground = #1F2328
+cursor-color = #1f2328
+selection-background = #bbdfff
+selection-foreground = #1F2328
+
+# black
+palette = 0=#484f58
+palette = 8=#6e7681
+# red
+palette = 1=#ff5e57
+palette = 9=#ff8575
+# green
+palette = 2=#3aa049
+palette = 10=#4db658
+# yellow
+palette = 3=#c0891e
+palette = 11=#cc9d3b
+# blue
+palette = 4=#4d8ad1
+palette = 12=#6ca0d1
+# purple
+palette = 5=#a97fd8
+palette = 13=#bd94d8
+# aqua
+palette = 6=#33b1b7
+palette = 14=#4cbec4
+# white
+palette = 7=#b1bac4
+palette = 15=#ffffff
+
+
+# Font awesome
+font-codepoint-map = U+f000-U+f2e0=Symbols Nerd Font Mono
+
+# Font awesome extension
+font-codepoint-map = U+e200-U+e2a9=Symbols Nerd Font Mono
+
+# Keybindings
+keybind = super+shift+w=reload_config
+keybind = alt+v=new_split:right
+
+window-padding-x = 6
+window-padding-y = 0
+
+# cmd+backspace to delete line
+keybind = cmd+backspace=text:\x15
+
+# cmd-p
+keybind = cmd+p=text:\x13P
+keybind = cmd+n=text:\x13n
+keybind = cmd+t=text:\x13t
+keybind = cmd+c=text:\x13c
+
+keybind = cmd+h=text:\x13H
+keybind = cmd+l=text:\x13L
+
+keybind = cmd+o=text:\x13o
+keybind = cmd+;=text:\x13;
+
+
+unfocused-split-opacity = 0.85
+
+
+keybind = shift+enter=text:\n

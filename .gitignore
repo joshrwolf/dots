@@ -1,10 +1,8 @@
 .DS_Store
 .idea/
+.claude/
+.envrc
 
 **/*.old
-
-# Devenv
-.devenv*
-devenv.local.nix
-
 **/*hide.lua
+**/keys/
