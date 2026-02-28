@@ -38,6 +38,7 @@ truncation_symbol = "…/"
 "~/dev/gh/chainguard" = "@cg"
 "~/dev/gh/wolfi" = "@wolfi"
 "~/dev/gh/joshrwolf" = "@personal"
+"~/dev/gh/kabbages-co" = "@lab"
 
 [kubernetes]
 disabled = true
