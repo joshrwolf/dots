@@ -97,6 +97,15 @@ keybind = cmd+l=text:\x13L
 keybind = cmd+o=text:\x13o
 keybind = cmd+;=text:\x13;
 
+# cmd+shift — forward to inner (remote) tmux
+keybind = cmd+shift+p=text:\x13\x13P
+keybind = cmd+shift+n=text:\x13\x13n
+keybind = cmd+shift+t=text:\x13\x13t
+keybind = cmd+shift+c=text:\x13\x13c
+keybind = cmd+shift+h=text:\x13\x13H
+keybind = cmd+shift+l=text:\x13\x13L
+keybind = cmd+shift+o=text:\x13\x13o
+keybind = cmd+shift+;=text:\x13\x13;
 
 unfocused-split-opacity = 0.85
 
