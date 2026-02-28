@@ -14,6 +14,7 @@ vim.g.lazyvim_python_lsp = "basedpyright"
 
 -- Use OSC 52 for clipboard when over SSH (dev VMs) — passes through tmux to Mac clipboard
 if os.getenv("SSH_TTY") then
+  vim.opt.clipboard = "unnamedplus"
   vim.g.clipboard = {
     name = "OSC 52",
     copy = {
