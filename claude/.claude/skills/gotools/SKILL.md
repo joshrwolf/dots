@@ -1,100 +1,73 @@
 ---
 name: gotools
-description: Tools for working with Go code beyond Read/Edit/Bash basics — symbol-aware rename across workspace, gopls-driven format and imports, and the LSP tool for navigation (definitions, references, implementations, call hierarchy, symbol search). MUST be loaded for ANY Go work — reading, editing, refactoring, or navigating .go files, or running Go tooling. Load this skill before touching Go code, not after.
-allowed-tools: Bash(gopls *), Bash(go list:*), Bash(go doc:*), Bash(go test:*), LSP, Read, Edit, Write, MultiEdit, Glob, Grep
+description: Go development toolchain for Claude Code — automatic syntax checking, import management, compilation diagnostics, modernization analysis, and LSP-powered navigation. MUST be loaded for ANY Go work.
+allowed-tools: Bash(gopls *), Bash(go list:*), Bash(go doc:*), Bash(go test:*), Bash(go mod tidy:*), LSP, Read, Edit, Write, MultiEdit, Glob, Grep
 ---
 
-# gotools
+# Go Toolchain
 
-Operations on Go code use specialized tools that beat Read+Edit+Grep.
+## What happens automatically
 
-## Diagnostics — automatic, deferred to end of turn
+Imports, formatting, and diagnostics are handled for you. Never think about
+them — never run `goimports`, `gofmt`, `go vet`, `go build`, or `gopls check`.
 
-A Stop hook runs `gopls check` on all `.go` files you edited during the turn.
-Diagnostics surface once after all your edits complete, not after each
-individual edit. This means you will NOT see transient errors mid-refactor —
-edit freely, and diagnostics arrive when you stop.
+**After every edit to a `.go` file** the PostToolUse hook:
+1. Validates syntax — exits with the parse error if broken, fix before continuing
+2. Auto-fixes imports and formatting in-place (adds missing, removes unused)
 
-Do not manually run `gopls check`, `go vet`, or `go build` to verify your
-own edits — the hook output is authoritative. Only run them if explicitly asked.
+The file on disk may differ from what you wrote. If your next `old_string`
+doesn't match, re-read the file — auto-formatting changed it.
 
-## Navigation — use LSP, not grep
+**When you finish a turn** the Stop hook checks all `.go` files you edited:
+1. `go vet` on affected packages (~1s) — compilation errors and vet diagnostics
+2. If vet is clean: `gopls check` for modernize, staticcheck, unused params (~4s)
+3. On retry turns: only `go vet` (skips the slower gopls pass)
 
-The `LSP` tool wraps gopls navigation. It is **deferred** — you must load
-its schema first:
+Output is filtered to files you edited — pre-existing issues don't appear.
 
+## go doc
+
+`go doc` resolves packages through the module in the current directory.
+Run it from the module that imports the package:
+
+```bash
+cd /path/to/module && go doc pkg.Symbol
 ```
-ToolSearch query="select:LSP"
-```
 
-Then call with `operation`, `filePath`, `line`, `character` (1-based).
+If you get "no such package", you're in the wrong module. Find one that
+imports it (`grep -r "import-path" --include='*.go' -l`), then cd to
+its module root.
 
-| Operation | When |
+## When to run go mod tidy
+
+If the Stop hook reports "no required module provides package X", the fix is
+`go mod tidy` from the module root, not a code change. Run it, then let the
+hook re-check.
+
+## Navigation
+
+Load the LSP tool first: `ToolSearch query="select:LSP"`
+
+The LSP tool provides navigation only — no diagnostics.
+
+| Operation | Use |
 |---|---|
-| `goToDefinition` | Find where a symbol is defined |
-| `findReferences` | All call/use sites of a symbol |
-| `goToImplementation` | Concrete types implementing an interface |
-| `documentSymbol` | All symbols in one file (faster than reading + parsing) |
+| `goToDefinition` | Jump to where a symbol is defined |
+| `findReferences` | All call/use sites |
+| `goToImplementation` | Concrete types behind an interface |
+| `documentSymbol` | All symbols in a file (faster than reading) |
 | `workspaceSymbol` | Find a symbol by name across the workspace |
-| `hover` | Type signature + docs at a position |
-| `prepareCallHierarchy` → `incomingCalls` | Who calls this function |
-| `prepareCallHierarchy` → `outgoingCalls` | What does this function call |
+| `hover` | Type signature and docs |
+| `incomingCalls` | Who calls this function |
+| `outgoingCalls` | What this function calls |
 
-Typical flow: `workspaceSymbol` (find the line:col) → other ops.
+Start with `workspaceSymbol` to find line:col, then drill in.
 
-## Mutation — use gopls CLI, not Edit
-
-The LSP plugin is read-only. For these, use `Bash`:
-
-### Rename a symbol across the workspace
+## Rename
 
 ```bash
 gopls rename -w <file>:<line>:<col> <NewName>
 ```
 
-Symbol-aware. Updates all references, qualified names, and embedded fields
-correctly. **Never use grep+sed/Edit to rename Go symbols** — it misses
-qualified references and matches strings/comments.
-
-To find `<line>:<col>`: use `LSP workspaceSymbol` or `documentSymbol`, or
-`grep -n` for the declaration line and count the column.
-
-Validate first if unsure:
-```bash
-gopls prepare_rename <file>:<line>:<col>
-```
-
-### Organize imports (add missing, remove unused, sort)
-
-```bash
-gopls imports -w <file>
-```
-
-Project-aware (uses gopls's view). Prefer over `goimports`.
-
-### Format a file (gofmt-equivalent)
-
-```bash
-gopls format -w <file>
-```
-
-Project-aware. Prefer over standalone `gofmt`.
-
-### Other useful gopls subcommands
-
-- `gopls signature <file>:<line>:<col>` — function signature at a position
-- `gopls codeaction <file>` — list quick-fixes available (e.g. missing
-  imports, extract function/variable). Pair with `gopls execute` to apply.
-
-## Anti-patterns
-
-- Running `go build` / `go vet` / `gopls check` to verify your own edits —
-  the PostToolUse hook does this. Wastes a tool call and tokens.
-- Using grep+Edit to rename a symbol — silently misses references and may
-  match comments/strings. Use `gopls rename`.
-- Using `goimports` or `gofmt` directly — they don't see project-local
-  imports the way `gopls imports`/`gopls format` do.
-- Using `Read` to enumerate a file's symbols — `LSP documentSymbol` is
-  faster and gives structured output.
-- Using `Grep` to find callers of a function — `LSP findReferences` is
-  symbol-aware and skips comments/strings.
+Symbol-aware — updates all references, qualified names, embedded fields.
+Never use grep+Edit to rename Go symbols.

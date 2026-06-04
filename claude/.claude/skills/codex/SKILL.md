@@ -1,6 +1,6 @@
 ---
 name: codex
-description: "Delegate to GPT-5 via the codex CLI for code review, deep exploration, or a second opinion. Uses the codex MCP server with named profiles (review, deep) and supports multi-turn conversations."
+description: "Delegate to GPT-5 via the codex CLI for code review, deep exploration, or a second opinion. Uses the codex MCP server with read-only review/deep presets and supports multi-turn conversations."
 ---
 
 # codex
@@ -29,21 +29,39 @@ Two MCP tools from the `codex` server:
 
 ## Calling convention
 
-Every `codex` call needs two params:
+The MCP `codex` tool takes no `profile` param — pass the settings explicitly. Every call sets:
 
-- **`profile`** — `"review"` or `"deep"` (see below). Profiles handle model, effort, sandbox, and approval policy. No need to pass those separately.
 - **`cwd`** — the user's current project directory.
+- **`model`** — `"gpt-5.5"`.
+- **`sandbox`** — `"read-only"`.
+- **`approval-policy`** — `"never"`.
+- **`config`** — `{ "model_reasoning_effort": "high" }` for review, `{ "model_reasoning_effort": "xhigh" }` for deep. (Effort has no dedicated param, so it rides on `config`.)
 
-That's it. Do not pass `sandbox`, `approval-policy`, or `model` — the profile covers them.
+`codex-reply` takes only `threadId` + `prompt` — model, effort, and sandbox are locked at thread start. If a conversation may get harder, start with the deep preset.
 
-To escalate to writable sandbox, pass `sandbox: "workspace-write"` explicitly and tell the user before calling.
+To escalate to a writable sandbox, pass `sandbox: "workspace-write"` explicitly and tell the user before calling.
 
-## Profile
+## Presets
 
-- **`review`** — code review, diff review, plan critique. gpt-5.5 at high effort, read-only sandbox.
-- **`deep`** — hard problems (architecture, migrations, stuck debugging). gpt-5.5 at max effort, read-only sandbox.
+Two read-only presets, distinguished only by reasoning effort:
 
-Profile is locked at thread start. `codex-reply` cannot change model or effort. If a conversation may get harder, start with `deep`.
+- **review** — code review, diff review, plan critique. `model_reasoning_effort: "high"`.
+- **deep** — hard problems (architecture, migrations, stuck debugging). `model_reasoning_effort: "xhigh"` (the max).
+
+Example `codex` call (review preset):
+
+```json
+{
+  "cwd": "/path/to/repo",
+  "model": "gpt-5.5",
+  "sandbox": "read-only",
+  "approval-policy": "never",
+  "config": { "model_reasoning_effort": "high" },
+  "prompt": "Review the diff on this branch for correctness bugs."
+}
+```
+
+For deep, swap `model_reasoning_effort` to `"xhigh"`.
 
 ## Thread reuse
 
@@ -92,14 +110,26 @@ The MCP `codex` tool only supports a single `cwd` and its `sandbox` field is a s
 
 ```bash
 codex exec \
-  -p review \
+  -m gpt-5.5 -s workspace-write -a never \
+  -c model_reasoning_effort=xhigh \
   --add-dir /path/to/other-repo \
-  -s workspace-write \
   -o /tmp/codex-result.txt \
   "refactor the shared interface in both repos"
 ```
 
-Each `--add-dir` makes that directory writable alongside the primary workspace. Use `-o` to capture the final message for follow-up.
+Each `--add-dir` makes that directory writable alongside the primary workspace. Use `-o` to capture the final message for follow-up. (The interactive `-p review` / `-p deep` profiles exist for hand-driven use, but the skill stays self-contained by passing flags explicitly.)
+
+## Diff review subcommand
+
+For a one-shot review of a diff with no back-and-forth, `codex review` is purpose-built and cheaper than a full session:
+
+```bash
+codex review --base main          # changes vs a base branch
+codex review --uncommitted        # staged + unstaged + untracked
+codex review --commit <sha>       # a single commit
+```
+
+Use the MCP `codex` tool when you want a conversation (push back, iterate); use `codex review` when you just need one structured pass over a diff.
 
 **Gathering the directory list:**
 Before delegating to codex, check what additional directories are loaded in the current session. Mention every one that's relevant to the task — err on the side of including too many rather than too few.
