@@ -1,0 +1,30 @@
+id = "herdr-find"
+name = "Find"
+version = "0.2.0"
+min_herdr_version = "0.8.2"
+description = "One picker over every workspace, agent, worktree and directory worth jumping to"
+platforms = ["macos", "linux"]
+
+# Never runs on `herdr plugin link`, only on `herdr plugin install`. The target
+# builds and atomically stages only this plugin.
+[[build]]
+command = ["make", "-C", "../..", "plugin-build-find"]
+
+# A popup rather than an overlay pane: the picker is modal and short-lived, it
+# re-indexes on every invocation, and it needs nothing from the calling pane —
+# every target is addressed by id or absolute path, so the missing
+# HERDR_PANE_ID a popup implies costs nothing here.
+[[panes]]
+id = "picker"
+title = "Find"
+placement = "popup"
+command = ["./bin/herdr-find"]
+# Cells, not a percentage. herdr clamps a request larger than the terminal, so
+# a fixed size is min(this, terminal): capped on a docked display, full width
+# on a laptop, with nothing to change between them. A percentage can only ever
+# track the window, and 90% of a 378-column terminal is an unreadable row.
+#
+# The agent group spends FIXED_CELLS on columns before `task` gets anything, so
+# this has to clear it by enough to leave a task title legible.
+width = 100
+height = 24

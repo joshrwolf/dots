@@ -1,0 +1,171 @@
+onboarding = false
+
+[theme]
+name = "one-light"
+auto_switch = false
+
+# GitHub Light palette. These are the light hexes, not the dark ones: on a white
+# panel the dark-theme values sit at roughly 2.2-2.9:1 contrast, which is why
+# state colours read as grey suggestions rather than signal. Each of these
+# clears 4.5:1 on white.
+[theme.custom]
+panel_bg = "#ffffff"
+accent = "#1a7f37"
+green = "#1a7f37"
+blue = "#0969da"
+red = "#cf222e"
+yellow = "#9a6700"
+
+[ui]
+window_title = "{workspace} / {tab}"
+
+# herdr keeps no notification history, so the agent panel is the only standing
+# record of what needs attention.
+agent_panel_sort = "priority"
+status_indicators = "symbols"
+
+# `$ghci` is a plugin-reported token, not a built-in: herdr draws whatever
+# `workspace.report_metadata` last wrote under that name, per workspace, and drops
+# it when its ttl expires. Declaring rows at all replaces the defaults, so the
+# built-ins here are the default set with the token appended.
+#
+# The token carries text only — herdr colours it from this file, not from the
+# value — so a plugin conveys state through its glyph and not through colour.
+[ui.sidebar.spaces]
+rows = [["state_icon", "workspace"], ["branch", "git_status", "$ghci"]]
+
+# In-app toasts only render while herdr is on screen, so sound is the only
+# out-of-band signal.
+[ui.toast]
+delivery = "herdr"
+delay_seconds = 1
+
+[ui.toast.herdr]
+position = "bottom-right"
+
+# There are exactly two sound classes: done (agent finished) and request (agent
+# needs attention). Each takes one file — no array, no glob. Paths are relative
+# to this file's directory and must be mp3; anything else falls back to the
+# built-in sound with only a log line.
+[ui.sound]
+enabled = true
+done_path = "sounds/work-complete.mp3"
+request_path = "sounds/something-need-doing.mp3"
+
+# Ghostty rewrites cmd+<key> to prefix+<key>, cmd+shift+<key> to
+# prefix+shift+<key>, and cmd+shift+h/l to prefix+alt+h/l, so every cmd
+# shortcut is bound here as a prefix chord.
+[keys]
+prefix = "ctrl+s"
+detach = "prefix+d"
+new_tab = ["prefix+t", "prefix+c"]
+split_vertical = ["prefix+|", "prefix+v"]
+workspace_picker = "prefix+w"
+previous_workspace = "prefix+o"
+# prefix+n is free because next_tab is remapped to prefix+l/j below.
+open_notification_target = "prefix+n"
+rename_pane = ""
+
+new_worktree = "prefix+shift+g"
+open_worktree = "prefix+shift+o"
+remove_worktree = "prefix+alt+d"
+
+# focus_pane_* is deliberately unset: the herdr-nav plugin owns ctrl+hjkl so it
+# can hand the chord to vim or fzf instead of always moving pane focus. If that
+# plugin ever fails to link, these chords are dead — which is why the Makefile
+# treats a link failure as fatal.
+focus_pane_left = ""
+focus_pane_down = ""
+focus_pane_up = ""
+focus_pane_right = ""
+
+previous_tab = ["prefix+h", "prefix+k", "prefix+p"]
+next_tab = ["prefix+l", "prefix+j"]
+move_tab_previous = "prefix+alt+h"
+move_tab_next = "prefix+alt+l"
+
+resize_pane_left = "prefix+shift+h"
+resize_pane_down = "prefix+shift+j"
+resize_pane_up = "prefix+shift+k"
+resize_pane_right = "prefix+shift+l"
+
+# cmd+p: one picker over open workspaces, live agents, worktrees, and zoxide dirs
+# behind a `/` sigil. Popup geometry lives in the plugin manifest.
+[[keys.command]]
+key = "prefix+shift+p"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-find --entrypoint picker"
+description = "find anything (workspaces, agents, worktrees, dirs)"
+
+# Changed files first, then the whole repo; opens the pick in whichever pane of
+# this tab is running nvim. Not prefix+e — that is herdr's edit_scrollback.
+[[keys.command]]
+key = "prefix+f"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-nvim --entrypoint picker"
+description = "open a file in nvim"
+
+[[keys.command]]
+key = "ctrl+h"
+type = "plugin_action"
+command = "herdr-nav.left"
+description = "focus left / nvim split left"
+
+[[keys.command]]
+key = "ctrl+j"
+type = "plugin_action"
+command = "herdr-nav.down"
+description = "focus down / nvim split down"
+
+[[keys.command]]
+key = "ctrl+k"
+type = "plugin_action"
+command = "herdr-nav.up"
+description = "focus up / nvim split up"
+
+[[keys.command]]
+key = "ctrl+l"
+type = "plugin_action"
+command = "herdr-nav.right"
+description = "focus right / nvim split right"
+
+# ctrl+l is shadowed by the binding above, so this sends a literal one for
+# readline's clear-screen.
+[[keys.command]]
+key = "prefix+ctrl+l"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" pane send-keys \"$HERDR_PANE_ID\" ctrl+l"
+description = "send literal ctrl+l (clear screen)"
+
+[[keys.command]]
+key = "prefix+shift+f"
+type = "plugin_action"
+command = "herdr-github.ci-fix"
+description = "hand failing CI to an agent"
+
+[[keys.command]]
+key = "prefix+shift+c"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-github --entrypoint ci-arm"
+description = "watch CI and autofix failures"
+
+# ci-refresh is deliberately one-shot: plugin startup hooks are not process
+# supervisors. Its metadata expires after three minutes instead of leaving a
+# stale sidebar status behind.
+[[keys.command]]
+key = "prefix+shift+i"
+type = "plugin_action"
+command = "herdr-github.ci-refresh"
+description = "refresh CI status in the sidebar"
+
+[[keys.command]]
+key = "prefix+i"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-github --entrypoint ci-brief"
+description = "CI brief for this branch"
+
+[[keys.command]]
+key = "prefix+alt+g"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-github --entrypoint dashboard"
+description = "PR dashboard (gh dash)"

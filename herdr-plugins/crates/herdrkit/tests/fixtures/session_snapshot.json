@@ -1,0 +1,136 @@
+{
+  "type": "session_snapshot",
+  "snapshot": {
+    "version": "0.8.2",
+    "protocol": 20,
+    "focused_workspace_id": "w2",
+    "focused_pane_id": "w2:p1",
+    "workspaces": [
+      {
+        "workspace_id": "w1",
+        "number": 1,
+        "label": "~",
+        "focused": false,
+        "pane_count": 1,
+        "tab_count": 1,
+        "active_tab_id": "w1:t1",
+        "agent_status": "unknown",
+        "worktree": null
+      },
+      {
+        "workspace_id": "w2",
+        "number": 2,
+        "label": "dots",
+        "focused": true,
+        "pane_count": 2,
+        "tab_count": 1,
+        "active_tab_id": "w2:t1",
+        "agent_status": "working",
+        "worktree": {
+          "repo_key": "gh:example/dots",
+          "repo_name": "dots",
+          "repo_root": "/home/dev/src/dots",
+          "checkout_path": "/home/dev/src/dots",
+          "is_linked_worktree": false
+        }
+      },
+      {
+        "workspace_id": "w3",
+        "number": 3,
+        "label": "feature-branch",
+        "focused": false,
+        "pane_count": 1,
+        "tab_count": 1,
+        "active_tab_id": "w3:t1",
+        "agent_status": "blocked",
+        "worktree": {
+          "repo_key": "gh:example/service",
+          "repo_name": "service",
+          "repo_root": "/home/dev/src/service",
+          "checkout_path": "/home/dev/wt/service/feature-branch",
+          "is_linked_worktree": true
+        }
+      }
+    ],
+    "panes": [
+      {
+        "pane_id": "w1:p1",
+        "terminal_id": "term_a1",
+        "workspace_id": "w1",
+        "tab_id": "w1:t1",
+        "focused": false,
+        "agent_status": "unknown",
+        "revision": 0,
+        "cwd": "/home/dev",
+        "title": null,
+        "terminal_title_stripped": null
+      },
+      {
+        "pane_id": "w2:p1",
+        "terminal_id": "term_a2",
+        "workspace_id": "w2",
+        "tab_id": "w2:t1",
+        "focused": true,
+        "agent_status": "working",
+        "revision": 7,
+        "cwd": "/home/dev/src/dots",
+        "title": null,
+        "terminal_title_stripped": "Port the picker to Rust"
+      },
+      {
+        "pane_id": "w2:p2",
+        "terminal_id": "term_a3",
+        "workspace_id": "w2",
+        "tab_id": "w2:t1",
+        "focused": false,
+        "agent_status": "unknown",
+        "revision": 1,
+        "cwd": "/home/dev/src/dots/herdr-plugins",
+        "title": null,
+        "terminal_title_stripped": null
+      },
+      {
+        "pane_id": "w3:p1",
+        "terminal_id": "term_a4",
+        "workspace_id": "w3",
+        "tab_id": "w3:t1",
+        "focused": false,
+        "agent_status": "blocked",
+        "revision": 4,
+        "cwd": "/home/dev/wt/service/feature-branch",
+        "title": null,
+        "terminal_title_stripped": "Waiting on approval to force-push"
+      }
+    ],
+    "agents": [
+      {
+        "terminal_id": "term_a2",
+        "agent_status": "working",
+        "workspace_id": "w2",
+        "tab_id": "w2:t1",
+        "pane_id": "w2:p1",
+        "focused": true,
+        "revision": 7,
+        "name": "plugin-dev",
+        "agent": "claude",
+        "cwd": "/home/dev/src/dots",
+        "terminal_title_stripped": "Port the picker to Rust"
+      },
+      {
+        "terminal_id": "term_a4",
+        "agent_status": "blocked",
+        "workspace_id": "w3",
+        "tab_id": "w3:t1",
+        "pane_id": "w3:p1",
+        "focused": false,
+        "revision": 4,
+        "name": null,
+        "agent": "claude",
+        "cwd": "/home/dev/wt/service/feature-branch",
+        "terminal_title_stripped": "Waiting on approval to force-push"
+      }
+    ],
+    "tabs": [],
+    "layouts": []
+  }
+}

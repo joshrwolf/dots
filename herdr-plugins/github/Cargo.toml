@@ -1,0 +1,27 @@
+[package]
+name = "herdr-github"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "herdr-github"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+herdrkit.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+herdrkit = { workspace = true, features = ["testing"] }
+
+[lints]
+workspace = true

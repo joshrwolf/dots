@@ -1,0 +1,40 @@
+id = "herdr-nvim"
+name = "nvim"
+version = "0.2.0"
+min_herdr_version = "0.8.2"
+description = "Open a file in this tab's nvim, from a picker or a clicked link"
+platforms = ["macos", "linux"]
+
+# Build and atomically stage only this plugin.
+[[build]]
+command = ["make", "-C", "../..", "plugin-build-nvim"]
+
+[[actions]]
+id = "open"
+title = "Open in nvim"
+contexts = ["pane"]
+command = ["./bin/herdr-nvim"]
+
+# Popup rather than overlay: the picker is modal and short-lived, and it
+# re-indexes per invocation. It needs no pane id — every target is an absolute
+# path and the tab comes from the context JSON.
+[[panes]]
+id = "picker"
+title = "Open file"
+placement = "popup"
+command = ["./bin/herdr-nvim"]
+# Cells rather than a percentage, for the reason spelled out in find's
+# manifest: herdr clamps, so this is min(this, terminal). Narrower than find
+# because a row is one repo-relative path and a diffstat.
+width = 80
+height = 24
+
+# Only fires on a real OSC 8 hyperlink whose target is a file: herdr
+# auto-detects https:// and nothing else, and link handlers reroute clicks on
+# links it already recognises rather than making new text clickable. A bare
+# path in agent output is therefore never a click target.
+[[link_handlers]]
+id = "file-url"
+title = "Open in nvim"
+pattern = '^file://'
+action = "open"

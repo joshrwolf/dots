@@ -1,0 +1,27 @@
+[package]
+name = "herdr-nvim"
+version = "0.2.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "herdr-nvim"
+path = "src/main.rs"
+
+[dependencies]
+herdrkit.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+herdrkit = { workspace = true, features = ["testing"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

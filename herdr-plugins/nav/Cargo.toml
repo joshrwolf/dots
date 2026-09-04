@@ -1,0 +1,26 @@
+[package]
+name = "herdr-nav"
+version = "0.3.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "herdr-nav"
+path = "src/main.rs"
+
+[dependencies]
+herdrkit.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+herdrkit = { workspace = true, features = ["testing"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

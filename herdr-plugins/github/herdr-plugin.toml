@@ -1,0 +1,59 @@
+id = "herdr-github"
+name = "GitHub"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "GitHub status and workflows for herdr workspaces"
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["make", "-C", "../..", "plugin-build-github"]
+
+[[actions]]
+id = "ci-refresh"
+title = "Refresh GitHub CI status"
+contexts = ["workspace"]
+command = ["./bin/herdr-github"]
+
+[[actions]]
+id = "ci-fix"
+title = "Fix failing GitHub CI now"
+contexts = ["workspace"]
+command = ["./bin/herdr-github"]
+
+[[actions]]
+id = "open-link"
+title = "Open GitHub link in browser"
+contexts = ["pane"]
+command = ["./bin/herdr-github"]
+
+[[panes]]
+id = "ci-arm"
+title = "Watch GitHub CI and autofix"
+placement = "split"
+command = ["./bin/herdr-github"]
+
+[[panes]]
+id = "ci-brief"
+title = "GitHub CI brief"
+placement = "overlay"
+command = ["./bin/herdr-github"]
+
+[[panes]]
+id = "dashboard"
+title = "GitHub dashboard"
+placement = "popup"
+command = ["gh", "dash"]
+width = "90%"
+height = "80%"
+
+[[link_handlers]]
+id = "github"
+title = "Open GitHub link"
+pattern = "^https://github\\.com/[^/]+/[^/]+/(pull|issues)/[0-9]+"
+action = "open-link"
+
+[[link_handlers]]
+id = "actions-run"
+title = "Open GitHub Actions run"
+pattern = "^https://github\\.com/[^/]+/[^/]+/actions/runs/[0-9]+"
+action = "open-link"

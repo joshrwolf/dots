@@ -1,0 +1,36 @@
+id = "herdr-nav"
+name = "nav"
+version = "0.3.0"
+min_herdr_version = "0.8.2"
+description = "ctrl+hjkl navigation shared between herdr panes, vim splits, and fzf"
+platforms = ["macos", "linux"]
+
+# Build and atomically stage only this plugin.
+[[build]]
+command = ["make", "-C", "../..", "plugin-build-nav"]
+
+# On the hottest keys in the config, so this is one socket call to read the
+# pane and one to act — not a shell, a CLI spawn and a jq per press.
+[[actions]]
+id = "left"
+title = "Navigate left"
+contexts = ["workspace"]
+command = ["./bin/herdr-nav"]
+
+[[actions]]
+id = "down"
+title = "Navigate down"
+contexts = ["workspace"]
+command = ["./bin/herdr-nav"]
+
+[[actions]]
+id = "up"
+title = "Navigate up"
+contexts = ["workspace"]
+command = ["./bin/herdr-nav"]
+
+[[actions]]
+id = "right"
+title = "Navigate right"
+contexts = ["workspace"]
+command = ["./bin/herdr-nav"]

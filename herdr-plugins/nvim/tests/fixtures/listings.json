@@ -1,0 +1,14 @@
+{
+  "changed": ["src/main.rs", "src/lib.rs", "deleted.rs"],
+  "untracked": ["notes.md"],
+  "tracked": ["src/main.rs", "src/lib.rs", "deleted.rs", "src/theme.rs", "README.md"],
+  "numstat": [
+    { "added": "13", "removed": "1", "path": "src/main.rs" },
+    { "added": "50", "removed": "3", "path": "src/lib.rs" }
+  ],
+  "modification_times": [
+    { "path": "src/main.rs", "at": 1900000300 },
+    { "path": "src/lib.rs", "at": 1900000200 },
+    { "path": "notes.md", "at": 1900000100 }
+  ]
+}

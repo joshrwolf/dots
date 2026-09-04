@@ -6,3 +6,14 @@
 **/*.old
 **/*hide.lua
 **/keys/
+
+# Game audio; this repo is public
+herdr/.config/herdr/sounds/*.mp3
+
+# Built plugin binaries. `make` builds them into each plugin directory so a
+# plugin can stand alone, but the artifact itself is never checked in.
+herdr-plugins/target/
+herdr-plugins/*/bin/
+
+# Scratch handoff notes, not part of the dotfiles.
+herdr-plugins/HANDOFF.md

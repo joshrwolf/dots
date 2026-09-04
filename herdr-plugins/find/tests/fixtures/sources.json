@@ -1,0 +1,155 @@
+{
+  "snapshot": {
+    "version": "0.8.2",
+    "protocol": 20,
+    "focused_workspace_id": "w2",
+    "focused_pane_id": "w2:p1",
+    "workspaces": [
+      {
+        "workspace_id": "w1",
+        "label": "~",
+        "focused": false,
+        "agent_status": "unknown",
+        "worktree": null
+      },
+      {
+        "workspace_id": "w2",
+        "label": "dots",
+        "focused": true,
+        "agent_status": "working",
+        "worktree": {
+          "repo_key": "/home/dev/src/dots",
+          "repo_name": "dots",
+          "repo_root": "/home/dev/src/dots",
+          "checkout_path": "/home/dev/src/dots",
+          "is_linked_worktree": false
+        }
+      },
+      {
+        "workspace_id": "w3",
+        "label": "service",
+        "focused": false,
+        "agent_status": "blocked",
+        "worktree": {
+          "repo_key": "/home/dev/src/service",
+          "repo_name": "service",
+          "repo_root": "/home/dev/src/service",
+          "checkout_path": "/home/dev/wt/service/feature-branch",
+          "is_linked_worktree": true
+        }
+      }
+    ],
+    "tabs": [
+      { "tab_id": "w1:t1", "workspace_id": "w1" },
+      { "tab_id": "w2:t1", "workspace_id": "w2" },
+      { "tab_id": "w3:t1", "workspace_id": "w3" }
+    ],
+    "panes": [
+      { "pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1", "cwd": "/home/dev" },
+      { "pane_id": "w2:p1", "workspace_id": "w2", "tab_id": "w2:t1", "cwd": "/home/dev/src/dots" },
+      { "pane_id": "w2:p2", "workspace_id": "w2", "tab_id": "w2:t1", "cwd": "/home/dev/src/dots/herdr-plugins" },
+      { "pane_id": "w3:p1", "workspace_id": "w3", "tab_id": "w3:t1", "cwd": "/home/dev/wt/service/feature-branch" }
+    ],
+    "agents": [
+      {
+        "pane_id": "w2:p1",
+        "workspace_id": "w2",
+        "tab_id": "w2:t1",
+        "agent_status": "working",
+        "name": "plugin-dev",
+        "agent": "claude",
+        "cwd": "/home/dev/src/dots",
+        "terminal_title_stripped": "Port the picker to Rust"
+      },
+      {
+        "pane_id": "w3:p1",
+        "workspace_id": "w3",
+        "tab_id": "w3:t1",
+        "agent_status": "blocked",
+        "name": null,
+        "agent": "claude",
+        "cwd": "/home/dev/wt/service/feature-branch",
+        "terminal_title_stripped": "Waiting on approval to force-push"
+      }
+    ]
+  },
+  "worktrees": [
+    {
+      "source": {
+        "repo_key": "/home/dev/src/dots",
+        "repo_name": "dots",
+        "repo_root": "/home/dev/src/dots",
+        "source_checkout_path": "/home/dev/src/dots"
+      },
+      "worktrees": [
+        {
+          "path": "/home/dev/src/dots",
+          "label": "main",
+          "branch": "main",
+          "is_bare": false,
+          "is_detached": false,
+          "is_prunable": false,
+          "is_linked_worktree": false,
+          "open_workspace_id": "w2"
+        },
+        {
+          "path": "/home/dev/wt/dots/release",
+          "label": "release",
+          "branch": "release",
+          "is_bare": false,
+          "is_detached": false,
+          "is_prunable": false,
+          "is_linked_worktree": true,
+          "open_workspace_id": null
+        },
+        {
+          "path": "/home/dev/wt/dots/stale",
+          "label": "stale",
+          "branch": "stale",
+          "is_bare": false,
+          "is_detached": false,
+          "is_prunable": true,
+          "is_linked_worktree": true,
+          "open_workspace_id": null
+        },
+        {
+          "path": "/home/dev/src/dots-bare",
+          "label": "bare",
+          "branch": null,
+          "is_bare": true,
+          "is_detached": false,
+          "is_prunable": false,
+          "is_linked_worktree": false,
+          "open_workspace_id": null
+        }
+      ]
+    },
+    {
+      "source": {
+        "repo_key": "/home/dev/src/service",
+        "repo_name": "service",
+        "repo_root": "/home/dev/src/service",
+        "source_checkout_path": "/home/dev/wt/service/feature-branch"
+      },
+      "worktrees": [
+        {
+          "path": "/home/dev/wt/service/feature-branch",
+          "label": "feature-branch",
+          "branch": "feature-branch",
+          "is_bare": false,
+          "is_detached": false,
+          "is_prunable": false,
+          "is_linked_worktree": true,
+          "open_workspace_id": "w3"
+        }
+      ]
+    }
+  ],
+  "dirs": [
+    "/home/dev/src/dots",
+    "/home/dev/notes",
+    "/home/dev/wt/dots/release",
+    "/opt/tools",
+    "/home/dev"
+  ]
+}
