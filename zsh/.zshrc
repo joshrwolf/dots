@@ -13,6 +13,11 @@ export VISUAL="$EDITOR"
 alias vi='nvim'
 alias vim='nvim'
 
+# Keep the Git shortcuts explicit; Zephyr does not provide a Git alias module.
+alias g='git'
+alias G='git'
+alias gst='git status'
+
 # App palettes follow the same selector as Ghostty and Neovim.
 export STARSHIP_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/theme/current/starship.toml"
 export FZF_DEFAULT_OPTS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/theme/current/fzf"

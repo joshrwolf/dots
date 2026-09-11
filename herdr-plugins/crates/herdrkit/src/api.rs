@@ -1445,7 +1445,7 @@ mod tests {
             Some(3_001)
         );
         assert_eq!(
-            agent_start_timeout_ms(Some(Duration::from_millis(300_000))).unwrap(),
+            agent_start_timeout_ms(Some(Duration::from_secs(300))).unwrap(),
             Some(300_000)
         );
         assert_eq!(agent_start_timeout_ms(None).unwrap(), None);

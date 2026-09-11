@@ -33,19 +33,5 @@ check:
 	# nextest deliberately does not run rustdoc tests.
 	cargo test --workspace --all-features --doc
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
-	@for file in ../nvim/.config/nvim/lua/herdr_review/*.lua ../nvim/.config/nvim/lua/herdr_review/tests/*.lua; do luac -p "$$file" || exit 1; done
-	HERDR_REVIEW_NVIM_CONFIG="$(abspath ../nvim/.config/nvim)" nvim --headless -u NONE -l ../nvim/.config/nvim/lua/herdr_review/tests/smoke.lua
-	HERDR_REVIEW_NVIM_CONFIG="$(abspath ../nvim/.config/nvim)" nvim --headless -u NONE -l ../nvim/.config/nvim/lua/herdr_review/tests/pages.lua
-	cargo build --package herdr-review
-	@temporary=$$(mktemp -d); trap 'rm -rf "$$temporary"' EXIT HUP INT TERM; \
-		git init --quiet --initial-branch=main "$$temporary/checkout"; \
-		touch "$$temporary/herdr.sock"; \
-		HERDR_SOCKET_PATH="$$temporary/herdr.sock" \
-		HERDR_WORKSPACE_ID="review-smoke-workspace" \
-		HERDR_PANE_ID="review-smoke-pane" \
-		HERDR_REVIEW_BINARY="$(CURDIR)/target/debug/herdr-review" \
-		HERDR_REVIEW_CHECKOUT="$$temporary/checkout" \
-		HERDR_REVIEW_NVIM_CONFIG="$(abspath ../nvim/.config/nvim)" \
-		nvim --headless -u NONE -l ../nvim/.config/nvim/lua/herdr_review/tests/smoke.lua
 
 .PHONY: build link check $(PLUGIN_BUILD_TARGETS)

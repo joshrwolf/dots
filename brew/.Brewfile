@@ -1,5 +1,6 @@
 brew "antidote"
 brew "bob"
+brew "cargo-nextest"
 brew "eza"
 brew "fzf"
 brew "gh"

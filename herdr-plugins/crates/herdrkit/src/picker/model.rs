@@ -581,7 +581,7 @@ fn budgets(columns: &[Column], width: usize) -> Vec<usize> {
         .fold(0usize, |total, column| total.saturating_add(column.fixed()));
     let fills = columns.iter().filter(|c| c.width == Width::Fill).count();
     let flexible = content.saturating_sub(fixed);
-    let share = if fills == 0 { 0 } else { flexible / fills };
+    let share = flexible.checked_div(fills).unwrap_or(0);
 
     let mut out = Vec::with_capacity(columns.len());
     let mut remaining = content;
