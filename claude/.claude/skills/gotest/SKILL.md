@@ -1,6 +1,6 @@
 ---
 name: gotest
-description: Analyze Go code and write or refactor tests. Identifies testable boundaries, writes table-driven subtests through public APIs, and refactors code for testability when needed.
+description: Write or modify Go tests the right way. MUST be loaded before writing, modifying, or refactoring ANY Go test — covers table-driven subtests through public APIs, fakes over mocks, go-cmp (never testify), testable-by-design refactoring, and when NOT to write a test. Triggers on any work touching `*_test.go`, `Test*`/`Benchmark*`/`Fuzz*` functions, or "write/add/fix/update tests".
 argument-hint: "[scope: file, package, function, or description of what to test]"
 ---
 
@@ -12,7 +12,11 @@ function, etc.) as the argument.
 ## Process
 
 1. **Read the code.** Use the argument to find the relevant files. Read both the
-   production code and any existing tests.
+   production code and any existing tests. When tests already exist, extend the
+   existing table and match its style and helpers — don't create a parallel
+   `TestX2` or a second table for the same function. Skip code that isn't worth
+   testing: trivial getters/setters, generated code, and thin pass-throughs with
+   no logic.
 
 2. **Identify testable boundaries.** Find the exported functions and methods that
    should be tested. For each, determine:
@@ -47,11 +51,13 @@ func TestProcessor_Process(t *testing.T) {
     tests := []struct {
         name    string
         order   Order
+        want    Receipt
         wantErr bool
     }{
         {
             name:  "valid order",
             order: Order{UserID: 1, Items: []Item{{Price: 10, Qty: 2}}},
+            want:  Receipt{UserID: 1, Total: 20},
         },
         {
             name:    "empty items",
@@ -68,9 +74,15 @@ func TestProcessor_Process(t *testing.T) {
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
             p := NewProcessor(&fakeRepo{}, slog.Default())
-            err := p.Process(t.Context(), tt.order)
+            got, err := p.Process(t.Context(), tt.order)
             if (err != nil) != tt.wantErr {
                 t.Fatalf("Process() error = %v, wantErr %v", err, tt.wantErr)
+            }
+            if tt.wantErr {
+                return
+            }
+            if diff := cmp.Diff(tt.want, got); diff != "" {
+                t.Errorf("Process() mismatch (-want +got):\n%s", diff)
             }
         })
     }
@@ -87,3 +99,11 @@ func TestProcessor_Process(t *testing.T) {
 - **Tests coupled to implementation** — if renaming an internal function breaks tests,
   those tests are testing implementation, not behavior.
 - **testify** — never. Use standard library assertions and go-cmp.
+- **Duplicating existing tests** — extend the existing table instead of adding a
+  parallel `Test*` for a function that's already covered.
+- **Testing trivial code** — getters/setters with no logic, generated code, and
+  pass-throughs. A test that can only fail if the compiler is broken is noise.
+- **Reflexive `Example*` functions** — examples are documentation, not coverage.
+  Write one only for an exported API clearly intended for external consumers
+  where the usage is non-obvious and the rendered `go doc` output earns its keep.
+  Don't add them to packages meant for internal use, and never to pad coverage.

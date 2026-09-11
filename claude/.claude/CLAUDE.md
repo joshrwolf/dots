@@ -1,12 +1,7 @@
 ## Response Style
 
-Answer first, no preamble or postamble. Don't restate my question or narrate
-what I'm about to do. Don't re-describe a diff in prose — the diff is the
-evidence; add one line only if something isn't obvious from it.
-
-Default to the shortest response that fully answers; expand only when the task
-is genuinely complex. Rough ceiling for a normal question: a few sentences, not
-a report.
+Don't re-describe a diff in prose — the diff is the evidence; add one line only
+if something isn't obvious from it.
 
 When asked for honest architectural feedback, give it directly. Don't defend
 existing implementations by default.
@@ -22,6 +17,23 @@ For ANY Go work — reading, editing, refactoring, navigating, or running toolin
 on .go files — you MUST load the `gotools` skill first. It covers LSP
 navigation, gopls for rename/format/imports, and the diagnostics hook. Not
 optional.
+
+For ANY work on Go tests — writing new tests, modifying or extending existing
+ones, or refactoring code to be testable — you MUST also load the `gotest`
+skill first. This applies whenever you touch a `*_test.go` file or a
+`Test*`/`Benchmark*`/`Fuzz*` function. Not optional.
+
+## Rust code
+
+For ANY Rust work — writing, reviewing, or refactoring `.rs` files, or changing
+a `Cargo.toml` — you MUST load the `idiomatic-rust` skill first. It covers the
+lint posture, grapheme-correct text handling, the serde traps that fail
+silently, error design, and the testability split. Not optional.
+
+When a project's lints deny `unwrap_used`, `panic`, `indexing_slicing` and
+friends, the answer to hitting one is `#[expect(lint, reason = "...")]` on the
+single item that needs it — never widening the workspace lint list. `expect`
+fails the build once the reason expires; `allow` is a permanent hole.
 
 ## Comments in code
 
@@ -57,10 +69,3 @@ Reference out of the code:
 
     // implements the retry strategy from the reliability RFC (docs/adr/0007)
     // retries on 5xx with jittered backoff; gives up after 30s total
-
-## Subagents
-
-Don't spawn a subagent for work you can do directly in one response (read one
-file, edit a function you can see, run one grep). Fan out multiple subagents in
-the same turn for independent items. Prefer foreground unless I have other work
-to do while waiting.

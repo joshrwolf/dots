@@ -7,6 +7,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+nix.workspace = true
+sha2.workspace = true
 nucleo.workspace = true
 ratatui.workspace = true
 serde.workspace = true
@@ -20,6 +22,11 @@ unicode-width.workspace = true
 # A scriptable fake herdr server, for a plugin's own tests. Off by default so
 # the binaries do not carry it; enable it from `[dev-dependencies]`.
 testing = []
+
+[[bin]]
+name = "herdrkit-service-fixture"
+path = "tests/fixtures/service.rs"
+required-features = ["testing"]
 
 [lints]
 workspace = true

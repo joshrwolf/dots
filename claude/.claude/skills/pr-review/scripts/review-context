@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Locate the shared review binary; leave context and storage semantics to it."""
+
+import os
+from pathlib import Path
+import sys
+
+
+def main():
+    if len(sys.argv) != 1:
+        sys.exit("usage: review-context < request.json (run from the review checkout)")
+    dots = Path(__file__).resolve().parents[5]
+    binary = dots / "herdr-plugins/review/bin/herdr-review"
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        sys.exit(f"review binary unavailable; run make -C {dots} plugin-build-review")
+    os.execv(str(binary), [str(binary), "--agent", os.getcwd()])
+
+
+if __name__ == "__main__":
+    main()

@@ -1,5 +1,13 @@
 return {
   {
+    "folke/which-key.nvim",
+    opts = {
+      spec = {
+        { "<leader>r", group = "Review", mode = { "n", "x" } },
+      },
+    },
+  },
+  {
     "LazyVim/LazyVim",
     opts = {
       colorscheme = "github_light",
@@ -242,7 +250,7 @@ return {
       { "<leader>n", "<cmd>NoiceAll<cr>", desc = "Noice" },
     },
     opts = {
-      notify = { enabled = false },
+      notify = { enabled = true },
       presets = {
         lsp_doc_border = true,
       },
@@ -432,18 +440,31 @@ return {
       },
       diff_viewer = "codediff",
       log_view = { kind = "tab" },
+      sections = {
+        unmerged_upstream = { folded = false, hidden = true },
+        unpulled_upstream = { folded = true, hidden = true },
+        unmerged_pushRemote = { folded = false, hidden = true },
+        unpulled_pushRemote = { folded = true, hidden = true },
+      },
     },
   },
   {
     "esmuellert/codediff.nvim",
-    dependencies = { "MunifTanjim/nui.nvim" },
+    dependencies = { "MunifTanjim/nui.nvim", "folke/snacks.nvim" },
     cmd = "CodeDiff",
+    event = vim.env.HERDR_REVIEW_BINDING_ID and "VimEnter" or nil,
     opts = {
       explorer = {
         view_mode = "tree",
+        position = "right",
       },
     },
+    config = function(_, opts)
+      require("herdr_review.codediff").configure(opts)
+      require("herdr_review").setup()
+    end,
     keys = {
+      { "<leader>fr", "<cmd>ReviewThreads<cr>", desc = "Find review threads" },
       { "<leader>dd", "<cmd>CodeDiff<cr>", desc = "Git status diff" },
       {
         "<leader>df",
@@ -452,7 +473,19 @@ return {
         end,
         desc = "File diff vs HEAD",
       },
-      { "<leader>dm", "<cmd>CodeDiff main...<cr>", desc = "Diff vs main (PR)" },
+      {
+        "<leader>dm",
+        function() require("herdr_review.workflow").open_review({ branch_fallback = true }) end,
+        desc = "Diff PR or upstream default branch",
+      },
+      { "<leader>dh", "<cmd>CodeDiff history origin/main..HEAD<cr>", desc = "Branch commit history" },
+      {
+        "<leader>dH",
+        function()
+          vim.cmd("CodeDiff history origin/main..HEAD " .. vim.fn.expand("%"))
+        end,
+        desc = "Branch file history",
+      },
     },
   },
   {
@@ -531,19 +564,11 @@ return {
     },
   },
 
-  -- ai
   {
-    "supermaven-inc/supermaven-nvim",
-    opts = {
-      keymaps = {
-        accept_suggestion = "<C-r>",
-      },
-      ignore_filetypes = { markdown = true, codecompanion = true },
-    },
-  },
-
-  {
+    -- Only for tmux over SSH. Inside herdr the ctrl+hjkl maps in
+    -- config/keymaps.lua own the chord instead.
     "christoomey/vim-tmux-navigator",
+    cond = vim.env.HERDR_ENV ~= "1",
     cmd = {
       "TmuxNavigateLeft",
       "TmuxNavigateDown",
@@ -618,6 +643,27 @@ return {
           grep = {
             hidden = true,
           },
+          gh_pr = {
+            actions = {
+              open_review = function(picker, item)
+                local pull_request = item
+                if not pull_request or not pull_request.url then
+                  return
+                end
+                picker:close()
+                vim.schedule(function()
+                  require("herdr_review").open_pull_request(pull_request.url)
+                end)
+              end,
+            },
+            win = {
+              input = {
+                keys = {
+                  ["<c-d>"] = { "open_review", mode = { "n", "i" }, desc = "Open review in Herdr" },
+                },
+              },
+            },
+          },
         },
         formatters = {
           file = {
@@ -661,9 +707,8 @@ return {
       -- github
     { "<leader>ghi", function() Snacks.picker.gh_issue() end, desc = "GitHub Issues (open)" },
     { "<leader>ghI", function() Snacks.picker.gh_issue({ state = "all" }) end, desc = "GitHub Issues (all)" },
-    { "<leader>ghp", function() Snacks.picker.gh_pr() end, desc = "GitHub Pull Requests (open)" },
-    { "<leader>ghP", function() Snacks.picker.gh_pr({ state = "all" }) end, desc = "GitHub Pull Requests (all)" },
-
+    { "<leader>ghp", function() Snacks.picker.gh_pr({ search = "-author:app/octo-sts -author:app/octo-sts-2", limit = 20 }) end, desc = "GitHub PRs (no bots)" },
+    { "<leader>ghP", function() Snacks.picker.gh_pr() end, desc = "GitHub Pull Requests (all)" },
       -- utilities
       { "<leader>fu", function() Snacks.picker.undo() end, desc = "Undo History" },
       { "<leader>fn", function() Snacks.picker.notifications() end, desc = "Notifications" },

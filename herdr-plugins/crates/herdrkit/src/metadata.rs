@@ -1,4 +1,4 @@
-//! Expiring metadata attached to herdr's workspace and pane rows.
+//! Metadata attached to Herdr workspace and pane rows.
 
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -8,19 +8,24 @@ use crate::{Client, Error, PaneId, Result, Tokens, WorkspaceId};
 
 const MAX_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// Reports one plugin's metadata with an expiry that cannot be omitted.
-///
-/// A reporter is intentionally tied to one source and TTL. This makes stale
-/// cleanup a construction-time invariant instead of a convention repeated by
-/// every reconciliation call.
+/// Reports one plugin's metadata with an explicit retention policy.
 #[derive(Debug, Clone, Copy)]
 pub struct MetadataReporter<'a> {
     client: &'a Client,
     source: &'a str,
-    ttl_ms: NonZeroU64,
+    ttl_ms: Option<NonZeroU64>,
 }
 
 impl<'a> MetadataReporter<'a> {
+    /// Retain values until explicitly replaced, cleared, or their workspace closes.
+    pub fn retained(client: &'a Client, source: &'a str) -> Self {
+        Self {
+            client,
+            source,
+            ttl_ms: None,
+        }
+    }
+
     pub fn new(client: &'a Client, source: &'a str, ttl: Duration) -> Result<Self> {
         let ttl_ms = u64::try_from(ttl.as_millis()).map_err(|_| Error::DurationOverflow {
             field: "metadata TTL",
@@ -33,7 +38,7 @@ impl<'a> MetadataReporter<'a> {
         Ok(Self {
             client,
             source,
-            ttl_ms,
+            ttl_ms: Some(ttl_ms),
         })
     }
 
@@ -64,7 +69,7 @@ impl<'a> MetadataReporter<'a> {
             workspace_id,
             source: self.source,
             tokens,
-            ttl_ms: self.ttl_ms.get(),
+            ttl_ms: self.ttl_ms.map(NonZeroU64::get),
             seq: sequence,
         })
     }
@@ -88,7 +93,7 @@ impl<'a> MetadataReporter<'a> {
             pane_id,
             source: self.source,
             tokens,
-            ttl_ms: self.ttl_ms.get(),
+            ttl_ms: self.ttl_ms.map(NonZeroU64::get),
             seq: sequence,
         })
     }
@@ -99,6 +104,21 @@ mod tests {
     use super::*;
     use crate::testing::{RecordedRequest, Server, Step};
     use serde_json::json;
+
+    #[test]
+    fn retained_metadata_omits_expiry() {
+        let server = Server::start(vec![Step::reply(r#"{"id":"{id}","result":{"type":"ok"}}"#)]);
+        MetadataReporter::retained(&server.client(), "test")
+            .report_workspace(
+                &WorkspaceId::new("w1"),
+                &Tokens::new().set("state", "ready").unwrap(),
+            )
+            .unwrap();
+        let requests = server.requests();
+        let request = requests.first().unwrap();
+        assert!(request.params.get("ttl_ms").is_none());
+        assert_eq!(request.params.pointer("/tokens/state").unwrap(), "ready");
+    }
 
     #[test]
     fn a_ttl_shorter_than_one_protocol_tick_is_refused() {

@@ -1,0 +1,31 @@
+[package]
+name = "herdr-review"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "herdr-review"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+github-client.workspace = true
+herdrkit.workspace = true
+review-core.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+herdrkit = { workspace = true, features = ["testing"] }
+
+[lints]
+workspace = true

@@ -10,6 +10,11 @@
 	excludesfile = /Users/wolf/.config/git/ignore
 	fsmonitor = true
 	untrackedcache = true
+	packedRefsTimeout = 3000
+	filesRefLockTimeout = 1000
+
+[gc]
+	auto = 0
 
 ; [interactive]
 ;   diffFilter = delta --color-only
@@ -41,7 +46,4 @@
 
 [gitsign]
 [alias]
-	wt = worktree
-[merge "beads"]
-	driver = bd merge %A %O %A %B
-	name = bd JSONL merge driver
+	gwt = worktree

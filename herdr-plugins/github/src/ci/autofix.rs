@@ -680,8 +680,8 @@ mod tests {
     use crate::github::{Check, CheckBucket};
 
     const CHECKOUT: &str = "/tmp/herdr-github-transaction-repo";
-    const SNAPSHOT: &str = r#"{"id":"{id}","result":{"type":"session_snapshot","snapshot":{"version":"0.8.2","protocol":20,"workspaces":[{"workspace_id":"w1","label":"service","focused":true,"agent_status":"idle","worktree":{"repo_key":"gh:example/service","repo_name":"service","repo_root":"/tmp/herdr-github-transaction-repo","checkout_path":"/tmp/herdr-github-transaction-repo","is_linked_worktree":false}}],"tabs":[],"panes":[],"agents":[],"focused_workspace_id":"w1","focused_tab_id":null,"focused_pane_id":null}}}"#;
-    const CHANGED_REPOSITORY: &str = r#"{"id":"{id}","result":{"type":"session_snapshot","snapshot":{"version":"0.8.2","protocol":20,"workspaces":[{"workspace_id":"w2","label":"replacement","focused":true,"agent_status":"idle","worktree":{"repo_key":"gh:example/replacement","repo_name":"replacement","repo_root":"/tmp/herdr-github-transaction-repo","checkout_path":"/tmp/herdr-github-transaction-repo","is_linked_worktree":false}}],"tabs":[],"panes":[],"agents":[],"focused_workspace_id":"w2","focused_tab_id":null,"focused_pane_id":null}}}"#;
+    const SNAPSHOT: &str = r#"{"id":"{id}","result":{"type":"session_snapshot","snapshot":{"version":"0.9.0","protocol":22,"workspaces":[{"workspace_id":"w1","label":"service","focused":true,"agent_status":"idle","worktree":{"repo_key":"gh:example/service","repo_name":"service","repo_root":"/tmp/herdr-github-transaction-repo","checkout_path":"/tmp/herdr-github-transaction-repo","is_linked_worktree":false}}],"tabs":[],"panes":[],"agents":[],"focused_workspace_id":"w1","focused_tab_id":null,"focused_pane_id":null}}}"#;
+    const CHANGED_REPOSITORY: &str = r#"{"id":"{id}","result":{"type":"session_snapshot","snapshot":{"version":"0.9.0","protocol":22,"workspaces":[{"workspace_id":"w2","label":"replacement","focused":true,"agent_status":"idle","worktree":{"repo_key":"gh:example/replacement","repo_name":"replacement","repo_root":"/tmp/herdr-github-transaction-repo","checkout_path":"/tmp/herdr-github-transaction-repo","is_linked_worktree":false}}],"tabs":[],"panes":[],"agents":[],"focused_workspace_id":"w2","focused_tab_id":null,"focused_pane_id":null}}}"#;
     const TAB_CREATED: &str = r#"{"id":"{id}","result":{"type":"tab_created","tab":{"tab_id":"w1:t2","workspace_id":"w1"},"root_pane":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"w1:t2"}}}"#;
     const AGENT_STARTED: &str = r#"{"id":"{id}","result":{"type":"agent_started","agent":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"w1:t2","agent_status":"working","name":"fixer"},"argv":["claude"]}}"#;
     const AGENT_PROMPTED: &str = r#"{"id":"{id}","result":{"type":"agent_prompted","agent":{"pane_id":"w1:p2","workspace_id":"w1","tab_id":"w1:t2","agent_status":"working","name":"fixer"}}}"#;
@@ -742,7 +742,7 @@ mod tests {
             number: 42,
             draft: false,
             pull_request_state: PullRequestState::Open,
-            review_decision: None,
+            review: crate::github::ReviewStatus::NotReviewed,
             verdict: CiVerdict::Failed,
             checks: vec![Check {
                 bucket: CheckBucket::Fail,

@@ -1,0 +1,17 @@
+id = "herdr-review"
+name = "Review"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Review repository code in Herdr and Neovim"
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["make", "-C", "../..", "plugin-build-review"]
+
+[[panes]]
+id = "open"
+title = "Review code"
+placement = "popup"
+command = ["./bin/herdr-review"]
+width = 100
+height = 24

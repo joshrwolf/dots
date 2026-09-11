@@ -8,7 +8,7 @@ use crate::api::{AgentStatus, WorkspaceWorktree};
 use crate::id::{PaneId, TabId, WorkspaceId};
 use crate::{Client, Error, Result};
 
-fn optional_string(name: &'static str) -> Result<Option<String>> {
+pub(crate) fn optional_string(name: &'static str) -> Result<Option<String>> {
     match std::env::var(name) {
         Ok(value) => Ok((!value.is_empty()).then_some(value)),
         Err(std::env::VarError::NotPresent) => Ok(None),
@@ -168,6 +168,63 @@ impl InvocationContext {
     }
 }
 
+/// Herdr identity inherited by a managed child process.
+///
+/// Unlike [`Invocation`], this does not require plugin entrypoint metadata.
+/// Editors and other long-lived programs launched inside a Herdr pane use it
+/// to bind follow-up work to the exact server, workspace, and pane that owns
+/// the process.
+#[derive(Debug, Clone)]
+pub struct ExecutionContext {
+    client: Client,
+    workspace_id: Option<WorkspaceId>,
+    tab_id: Option<TabId>,
+    pane_id: Option<PaneId>,
+}
+
+impl ExecutionContext {
+    pub fn load() -> Result<Self> {
+        Ok(Self {
+            client: Client::from_env()?,
+            workspace_id: optional_string("HERDR_WORKSPACE_ID")?.map(WorkspaceId::from),
+            tab_id: optional_string("HERDR_TAB_ID")?.map(TabId::from),
+            pane_id: optional_string("HERDR_PANE_ID")?.map(PaneId::from),
+        })
+    }
+
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub fn workspace_id(&self) -> Option<&WorkspaceId> {
+        self.workspace_id.as_ref()
+    }
+
+    pub fn tab_id(&self) -> Option<&TabId> {
+        self.tab_id.as_ref()
+    }
+
+    pub fn pane_id(&self) -> Option<&PaneId> {
+        self.pane_id.as_ref()
+    }
+
+    pub fn require_workspace_id(&self) -> Result<&WorkspaceId> {
+        self.workspace_id().ok_or(Error::MissingInvocationField {
+            field: "workspace id",
+        })
+    }
+
+    pub fn require_tab_id(&self) -> Result<&TabId> {
+        self.tab_id()
+            .ok_or(Error::MissingInvocationField { field: "tab id" })
+    }
+
+    pub fn require_pane_id(&self) -> Result<&PaneId> {
+        self.pane_id()
+            .ok_or(Error::MissingInvocationField { field: "pane id" })
+    }
+}
+
 /// The manifest entry that caused Herdr to launch a plugin process.
 ///
 /// Link handlers are deliberately not a variant. A link handler invokes an
@@ -248,6 +305,9 @@ fn classify(
         return Ok(InvocationKind::PaneEntrypoint { id });
     }
     if let Some(name) = event {
+        if name == "startup" && event_json.is_none() {
+            return Ok(InvocationKind::Startup);
+        }
         let raw = event_json.ok_or(Error::MissingEnv {
             name: "HERDR_PLUGIN_EVENT_JSON",
         })?;

@@ -19,7 +19,8 @@ pub fn open(client: &Client, destination: &Destination) -> Result<()> {
         Destination::Worktree {
             path, repository, ..
         } => client
-            .worktree_open(&repository.root, path, true)
+            .worktree_open(&repository.root, path, None, true)
+            .map(|_| ())
             .with_context(|| format!("opening the worktree at {}", path.display())),
         Destination::Directory { path, .. } => open_dir(client, path),
     }
@@ -36,7 +37,8 @@ fn open_dir(client: &Client, path: &Path) -> Result<()> {
     // subdirectory, which is where `worktree.open` would pick the wrong root.
     if dir.join(".git").exists() {
         return client
-            .worktree_open(&dir, &dir, true)
+            .worktree_open(&dir, &dir, None, true)
+            .map(|_| ())
             .with_context(|| format!("opening a workspace for {}", dir.display()));
     }
 
@@ -57,6 +59,7 @@ fn open_dir(client: &Client, path: &Path) -> Result<()> {
     let label = dir.file_name().and_then(|name| name.to_str());
     client
         .workspace_create(&dir, label, true)
+        .map(|_| ())
         .with_context(|| format!("creating a workspace for {}", dir.display()))
 }
 
@@ -134,7 +137,9 @@ mod tests {
     /// interchangeable: herdr resolves the worktree list from `cwd`.
     #[test]
     fn a_worktree_opens_with_its_repo_root_as_cwd_and_its_path_as_path() {
-        let server = Server::start(vec![Step::reply(OK)]);
+        let server = Server::start(vec![Step::reply(
+            r#"{"id":"{id}","result":{"type":"worktree_opened","workspace":{"workspace_id":"w3","label":"release","focused":true,"agent_status":"idle"},"tab":{"tab_id":"w3:t1","workspace_id":"w3"},"root_pane":{"pane_id":"w3:p1","workspace_id":"w3","tab_id":"w3:t1","cwd":"/wt/dots/release"},"worktree":{"path":"/wt/dots/release","label":"release","is_bare":false,"is_detached":false,"is_prunable":false,"is_linked_worktree":true,"branch":"release","open_workspace_id":"w3"},"already_open":false}}"#,
+        )]);
         let worktree = Destination::Worktree {
             path: "/wt/dots/release".into(),
             repository: repository("dots", "/src/dots"),
@@ -180,8 +185,8 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let canonical = fs::canonicalize(&dir).unwrap();
         let snapshot = json!({
-            "version": "0.8.2",
-            "protocol": 20,
+            "version": "0.9.0",
+            "protocol": 22,
             "workspaces": [],
             "tabs": [],
             "panes": [{

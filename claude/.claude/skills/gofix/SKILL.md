@@ -39,13 +39,26 @@ Check for:
   practical or reasonable for a piece of data to have a capability." Cheney's naming
   test: named after an action → method; named after what it returns → function.
 
-- **Anemic types.** Structs with fields but no methods, operated on by external
-  functions. If multiple functions take the same struct as their first argument,
-  those should be methods. Co-locate behavior with data.
+- **Anemic types.** Behavior that belongs to a type living outside it as free
+  functions taking that type as their first argument — so the type can't enforce its
+  own invariants. Tells: a struct with fields but ~no methods while a cluster of
+  functions all take `*T`/`T` first; a stateless `FooManager`/`FooService`/`FooHelper`
+  that only operates on `Foo`; invariants enforced by a `validateX(x)` callers must
+  remember to call. Make them methods; co-locate behavior with data. **Not anemic** —
+  leave alone: pure data carriers with no behavior to own (DTOs, wire/JSON/config
+  structs, plain records in transit).
 
 - **Missing `New*` constructor.** Types with dependencies or configuration should have
   a constructor accepting interfaces and returning a concrete struct — the
   `json.NewEncoder(w)` / `bufio.NewScanner(r)` pattern.
+
+- **Constructors that panic on bad input.** A `panic` inside a `New*` for invalid
+  arguments is almost always laziness avoiding a signature change — flag it. The fix
+  is a validating constructor returning `(*T, error)` and updating the call sites, not
+  a panic. Panicking is only correct for genuinely unrecoverable programmer errors with
+  no caller-supplied input (the `regexp.MustCompile` convention — a `Must*` wrapper over
+  an erroring constructor, used with compile-time constants). If construction validates
+  caller input, it must return an error.
 
 - **"Bag of functions" packages.** `util`, `helpers`, `common` — name packages after
   what they provide, not what they contain.
@@ -53,8 +66,15 @@ Check for:
 - **Premature or oversized interfaces.** Define where consumed, not where implemented.
   1-3 methods ideal. Write concrete types first; interfaces emerge from shared method sets.
 
-- **Unnecessary abstraction layers.** Wrappers or facades that add no value beyond
-  renaming. If calling the underlying thing directly is equally clear, remove the layer.
+- **Unnecessary abstraction layers and refactor leftovers.** Wrappers or facades that
+  add no value beyond renaming — if calling the underlying thing directly is equally
+  clear, remove the layer. This is where iterative refactors leave deadweight: flag
+  pass-through functions (`func A(x) { return B(x) }` — inline at the call sites and
+  delete) and type aliases or named types that add no behavior, type safety, or domain
+  meaning (`type Foo = Bar` — collapse to the underlying type). Fix the internals to be
+  idiomatic rather than preserving a shim. Keep a named type only when it earns its
+  place: it has methods, provides type safety, or bridges a real package-migration
+  boundary.
 
 ## Agent 2: Modern Go Patterns
 

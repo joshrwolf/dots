@@ -12,7 +12,7 @@ vim.opt.autoread = true -- auto reload file when changed outside of vim
 
 vim.g.lazyvim_python_lsp = "basedpyright"
 
--- Use OSC 52 for clipboard when over SSH (dev VMs) — passes through tmux to Mac clipboard
+-- Use OSC 52 for clipboard over SSH — passes through tmux to Mac clipboard
 if os.getenv("SSH_TTY") then
   vim.opt.clipboard = "unnamedplus"
   vim.g.clipboard = {

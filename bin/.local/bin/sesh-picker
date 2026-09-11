@@ -1,0 +1,14 @@
+#!/bin/sh
+# ctrl-y resolves the highlighted entry to its real path, copies it to the
+# clipboard, and closes without connecting — for pasting into Claude's /add-dir.
+copy='n=$(printf "%s" "$1" | sed "s/^[^ ]* //"); p=$(sesh list --json | jq -r --arg n "$n" ".[]|select(.Name==\$n)|.Path" | head -n1); [ -z "$p" ] && p="$n"; printf "%s" "$p" | pbcopy'
+
+name=$(sesh list --icons | fzf-tmux -p 80%,70% \
+  --no-sort --ansi --border-label ' sesh ' --prompt '⚡  ' \
+  --header '  ^a all ^t tmux ^g configs ^x zoxide ^d tmux kill ^f find ^y copy path' \
+  --bind 'tab:down,btab:up' \
+  --bind "ctrl-y:execute-silent(sh -c '$copy' _ {})+abort" \
+  --preview-window 'right:55%' \
+  --preview 'sesh preview {}' | sed 's/^[^ ]* //')
+[ -z "$name" ] && exit 0
+exec sesh connect --switch "$name"

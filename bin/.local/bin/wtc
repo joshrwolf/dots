@@ -1,0 +1,13 @@
+#!/bin/sh
+# wtc <branch> [claude args...]
+# Create a worktree for <branch> off the repo in $PWD, open it as a herdr
+# space grouped under this one, and start claude in it.
+set -eu
+branch=${1:?usage: wtc <branch> [claude args...]}
+shift
+out=$(herdr worktree create --cwd "$PWD" --branch "$branch" --focus)
+pane=$(printf '%s' "$out" | jq -er '.result.root_pane.pane_id') || {
+  printf '%s\n' "$out" >&2
+  exit 1
+}
+exec herdr agent start claude --kind claude --pane "$pane" -- "$@"

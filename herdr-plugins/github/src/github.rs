@@ -37,8 +37,44 @@ struct PullRequestWire {
     is_draft: bool,
     state: PullRequestState,
     #[serde(default)]
-    review_decision: Option<String>,
+    review_decision: Option<ReviewDecisionWire>,
+    #[serde(default)]
+    review_requests: Vec<serde_json::Value>,
     head_ref_oid: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum ReviewDecisionWire {
+    Approved,
+    ChangesRequested,
+    ReviewRequired,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewStatus {
+    Approved,
+    ChangesRequested,
+    Needed,
+    Requested,
+    NotReviewed,
+    Unknown,
+}
+
+impl ReviewStatus {
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Approved => "approved",
+            Self::ChangesRequested => "changes requested",
+            Self::Needed => "review needed",
+            Self::Requested => "review requested",
+            Self::NotReviewed => "not reviewed",
+            Self::Unknown => "review unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +82,7 @@ pub(crate) struct PullRequest {
     pub(crate) number: u64,
     pub(crate) draft: bool,
     pub(crate) state: PullRequestState,
-    pub(crate) review_decision: Option<String>,
+    pub(crate) review: ReviewStatus,
     pub(crate) head_oid: String,
 }
 
@@ -56,7 +92,14 @@ impl From<PullRequestWire> for PullRequest {
             number: value.number,
             draft: value.is_draft,
             state: value.state,
-            review_decision: value.review_decision,
+            review: match value.review_decision {
+                Some(ReviewDecisionWire::Approved) => ReviewStatus::Approved,
+                Some(ReviewDecisionWire::ChangesRequested) => ReviewStatus::ChangesRequested,
+                Some(ReviewDecisionWire::ReviewRequired) => ReviewStatus::Needed,
+                Some(ReviewDecisionWire::Unknown) => ReviewStatus::Unknown,
+                None if value.review_requests.is_empty() => ReviewStatus::NotReviewed,
+                None => ReviewStatus::Requested,
+            },
             head_oid: value.head_ref_oid,
         }
     }
@@ -85,7 +128,7 @@ pub struct CiState {
     pub number: u64,
     pub draft: bool,
     pub pull_request_state: PullRequestState,
-    pub review_decision: Option<String>,
+    pub review: ReviewStatus,
     pub verdict: CiVerdict,
     pub checks: Vec<Check>,
     pub(crate) required_check_names: HashSet<String>,
@@ -143,6 +186,92 @@ pub fn lookup(dir: &Path) -> Result<Lookup> {
     lookup_with(&SystemCommandRunner, dir)
 }
 
+/// Local checkout identity; no worktree scan or network request.
+pub(crate) fn checkout_identity(dir: &Path) -> Result<String> {
+    let mut head = git_with(
+        &SystemCommandRunner,
+        dir,
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+    )?;
+    if head.trim() == "HEAD" {
+        head = git_with(&SystemCommandRunner, dir, &["rev-parse", "HEAD"])?;
+    }
+    let remote = git_with(
+        &SystemCommandRunner,
+        dir,
+        &["config", "--get", "remote.origin.url"],
+    )?;
+    Ok(format!("{remote}\n{head}"))
+}
+
+/// Resolve a branch once, independently of periodically fetching its PR status.
+pub(crate) fn discover(dir: &Path) -> Result<Option<String>> {
+    #[derive(Deserialize)]
+    struct Located {
+        url: String,
+    }
+    let output = SystemCommandRunner.output(dir, "gh", &["pr", "view", "--json", "url"])?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr);
+        if error
+            .to_ascii_lowercase()
+            .contains("no pull requests found")
+        {
+            return Ok(None);
+        }
+        bail!("discovering pull request: {}", error.trim());
+    }
+    let located: Located = serde_json::from_slice(&output.stdout)?;
+    anyhow::ensure!(
+        located.url.starts_with("https://") && located.url.contains("/pull/"),
+        "invalid pull request locator"
+    );
+    Ok(Some(located.url))
+}
+
+/// Sidebar reads omit required-check classification and local revision details.
+/// Both requests name the PR; changing branches cannot redirect them.
+pub(crate) fn sidebar(dir: &Path, url: &str) -> Result<SidebarSnapshot> {
+    sidebar_with(&SystemCommandRunner, dir, url)
+}
+
+fn sidebar_with(runner: &impl CommandRunner, dir: &Path, url: &str) -> Result<SidebarSnapshot> {
+    let output = runner.output(
+        dir,
+        "gh",
+        &[
+            "pr",
+            "view",
+            url,
+            "--json",
+            "number,isDraft,state,reviewDecision,reviewRequests,headRefOid",
+        ],
+    )?;
+    anyhow::ensure!(
+        output.status.success(),
+        "reading PR status: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let pr = PullRequest::from(serde_json::from_slice::<PullRequestWire>(&output.stdout)?);
+    let checks = if pr.state == PullRequestState::Open {
+        let output = runner.output(dir, "gh", &["pr", "checks", url, "--json", "bucket"])?;
+        decode_checks(&output)?.into_checks()
+    } else {
+        Vec::new()
+    };
+    validate_buckets(&checks)?;
+    Ok(SidebarSnapshot {
+        pull_request: pr,
+        checks,
+    })
+}
+
+#[derive(Debug)]
+pub(crate) struct SidebarSnapshot {
+    pub pull_request: PullRequest,
+    pub checks: Vec<Check>,
+}
+
 fn lookup_with(runner: &impl CommandRunner, dir: &Path) -> Result<Lookup> {
     let Some(pr) = pull_request_with(runner, dir)? else {
         return Ok(Lookup::NoPullRequest);
@@ -159,7 +288,7 @@ fn lookup_with(runner: &impl CommandRunner, dir: &Path) -> Result<Lookup> {
         number: pr.number,
         draft: pr.draft,
         pull_request_state: pr.state,
-        review_decision: pr.review_decision,
+        review: pr.review,
         verdict,
         checks: all,
         required_check_names: required.into_iter().map(|check| check.name).collect(),
@@ -181,7 +310,7 @@ fn pull_request_with(runner: &impl CommandRunner, dir: &Path) -> Result<Option<P
             "pr",
             "view",
             "--json",
-            "number,isDraft,state,reviewDecision,headRefOid",
+            "number,isDraft,state,reviewDecision,reviewRequests,headRefOid",
         ],
     )?;
     if !output.status.success() {
@@ -486,6 +615,51 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_fetch_is_pinned_and_omits_autofix_details() {
+        let runner = FakeRunner::new(vec![
+            output(
+                0,
+                r#"{"number":7,"isDraft":false,"state":"OPEN","reviewDecision":"APPROVED","headRefOid":"abc"}"#,
+                "",
+            ),
+            output(8, r#"[{"bucket":"pending"},{"bucket":"fail"}]"#, ""),
+        ]);
+        let url = "https://github.com/example/project/pull/7";
+        let snapshot = sidebar_with(&runner, Path::new("/unused"), url).unwrap();
+        assert_eq!(snapshot.checks.len(), 2);
+        assert_eq!(snapshot.pull_request.review, ReviewStatus::Approved);
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(
+            calls
+                .iter()
+                .all(|(program, args)| program == "gh"
+                    && args.get(2).map(String::as_str) == Some(url))
+        );
+        assert!(!calls.iter().any(|(_, args)| {
+            args.iter()
+                .any(|arg| arg.contains("required") || arg.contains("workflow"))
+        }));
+    }
+
+    #[test]
+    fn terminal_sidebar_fetch_does_not_query_checks() {
+        let runner = FakeRunner::new(vec![output(
+            0,
+            r#"{"number":7,"isDraft":false,"state":"MERGED","headRefOid":"abc"}"#,
+            "",
+        )]);
+        let snapshot = sidebar_with(
+            &runner,
+            Path::new("/unused"),
+            "https://github.com/example/project/pull/7",
+        )
+        .unwrap();
+        assert_eq!(snapshot.pull_request.state, PullRequestState::Merged);
+        assert_eq!(runner.calls.lock().unwrap().len(), 1);
+    }
+
+    #[test]
     fn required_failures_win_over_pending_checks() {
         assert_eq!(
             verdict(&[check(CheckBucket::Pending), check(CheckBucket::Cancel)]).unwrap(),
@@ -541,6 +715,18 @@ mod tests {
         let calls = runner.calls.lock().unwrap();
         assert_eq!(calls.len(), 5);
         assert_eq!(
+            calls.first(),
+            Some(&(
+                "gh".to_owned(),
+                vec![
+                    "pr".to_owned(),
+                    "view".to_owned(),
+                    "--json".to_owned(),
+                    "number,isDraft,state,reviewDecision,reviewRequests,headRefOid".to_owned()
+                ]
+            ))
+        );
+        assert_eq!(
             calls.get(1),
             Some(&(
                 "gh".to_owned(),
@@ -576,6 +762,27 @@ mod tests {
             .is_err()
         );
         assert!(verdict(&[check(CheckBucket::Unknown)]).is_err());
+    }
+
+    #[test]
+    fn review_decisions_and_pending_requests_are_distinct() {
+        let review = |decision: &str, requests: &str| {
+            let wire: PullRequestWire = serde_json::from_str(&format!(
+                r#"{{"number":42,"isDraft":false,"state":"OPEN","reviewDecision":{decision},"reviewRequests":{requests},"headRefOid":"abc"}}"#
+            ))
+            .unwrap();
+            PullRequest::from(wire).review
+        };
+
+        assert_eq!(review(r#""APPROVED""#, "[]"), ReviewStatus::Approved);
+        assert_eq!(
+            review(r#""CHANGES_REQUESTED""#, "[]"),
+            ReviewStatus::ChangesRequested
+        );
+        assert_eq!(review(r#""REVIEW_REQUIRED""#, "[{}]"), ReviewStatus::Needed);
+        assert_eq!(review("null", "[{}]"), ReviewStatus::Requested);
+        assert_eq!(review("null", "[]"), ReviewStatus::NotReviewed);
+        assert_eq!(review(r#""FUTURE_STATE""#, "[]"), ReviewStatus::Unknown);
     }
 
     #[test]

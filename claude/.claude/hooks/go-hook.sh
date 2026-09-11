@@ -16,8 +16,6 @@ if [[ -n "$SYNTAX_ERR" ]]; then
   exit 2
 fi
 
-if command -v goimports >/dev/null; then
-  goimports -w "$FILE_PATH" 2>/dev/null
-fi
+gofmt -w "$FILE_PATH" 2>/dev/null
 
 exit 0

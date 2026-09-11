@@ -1,0 +1,27 @@
+#!/bin/sh
+# Open or focus a tmux window for a worktree
+# Usage: wt-tmux-open <branch> <path> [target-session] [command]
+BRANCH="$1"; WTP="$2"; TARGET="$3"; CMD="$4"
+
+# Check for existing window
+if [ -n "$TARGET" ]; then
+	EXISTING=$(tmux list-windows -t "$TARGET" -F '#{window_name} #{window_id}' | awk -v b="$BRANCH" '$1==b {print $2; exit}')
+else
+	EXISTING=$(tmux list-windows -F '#{window_name} #{window_id}' | awk -v b="$BRANCH" '$1==b {print $2; exit}')
+fi
+
+if [ -n "$EXISTING" ]; then
+	tmux select-window -t "$EXISTING"
+	exit 0
+fi
+
+# Create new window
+if [ -n "$TARGET" ] && [ -n "$CMD" ]; then
+	tmux new-window -t "$TARGET" -n "$BRANCH" -c "$WTP" "$CMD"
+elif [ -n "$TARGET" ]; then
+	tmux new-window -t "$TARGET" -n "$BRANCH" -c "$WTP"
+elif [ -n "$CMD" ]; then
+	tmux new-window -n "$BRANCH" -c "$WTP" "$CMD"
+else
+	tmux new-window -n "$BRANCH" -c "$WTP"
+fi

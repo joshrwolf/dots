@@ -1,5 +1,5 @@
 //! Shared foundation for herdr plugins: a typed API client, change streams,
-//! normalized invocation context, expiring metadata, runtime reporting, and
+//! normalized invocation context, retained or expiring metadata, services, and
 //! the picker.
 //!
 //! A plugin depending on this crate should contain only its own domain logic.
@@ -10,19 +10,17 @@
 //! |---|---|---|
 //! | one-shot action | per keypress | [`api`] via [`Client`] |
 //! | picker | per invocation | [`picker`] |
-//! | resident watcher | per session | [`events`] plus [`Tokens`] |
+//! | background service | per server | [`service`], [`events`], [`Tokens`] |
 //!
-//! The third is the one that needs saying. A watcher subscribes once, blocks
-//! on [`events::Events::changes`], re-reads state when something moves, and
-//! pushes [`Tokens`] into herdr's own rendering with a TTL. That replaces the
-//! shape it supersedes — a `[[ui.tab_bar_right]]` command re-run on a timer,
-//! writing one shared line whether or not anything changed.
+//! Hooks ensure services are ready; services own bounded background work.
+//! Provider scheduling belongs in plugins. Herdr renders published metadata.
 
 pub mod api;
 pub mod apps;
 pub mod events;
 pub mod picker;
 pub mod runtime;
+pub mod service;
 
 mod columns;
 mod env;
@@ -37,7 +35,7 @@ mod tokens;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-pub use env::{Invocation, InvocationContext, InvocationKind};
+pub use env::{ExecutionContext, Invocation, InvocationContext, InvocationKind};
 pub use error::{Error, Result};
 pub use id::{PaneId, TabId, WorkspaceId};
 pub use metadata::MetadataReporter;

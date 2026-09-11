@@ -1,0 +1,40 @@
+# Centralized worktrees: ~/.worktrees/{repo}/{branch}
+worktree-path = "~/.worktrees/{{ repo }}/{{ branch | sanitize }}"
+skip-shell-integration-prompt = true
+skip-commit-generation-prompt = true
+
+[switch.picker]
+pager = "delta --paging=never --width=$COLUMNS"
+
+# Fetch upstream if last fetch was more than 6 hours ago
+# Serialized with flock to avoid packed-refs.lock contention with concurrent agents
+[pre-switch]
+fetch = """
+GIT_COMMON_DIR="$(git rev-parse --git-common-dir)"
+FETCH_HEAD="${GIT_COMMON_DIR}/FETCH_HEAD"
+if [ "$(find "$FETCH_HEAD" -mmin +360 2>/dev/null)" ] || [ ! -f "$FETCH_HEAD" ]; then
+    flock --timeout 30 "${GIT_COMMON_DIR}/wt-ops.lock" \
+        git fetch upstream 2>/dev/null || \
+    flock --timeout 30 "${GIT_COMMON_DIR}/wt-ops.lock" \
+        git fetch origin 2>/dev/null || true
+fi
+"""
+
+# Symlink .claude/ from main worktree, copy gitignored build caches via reflink
+[post-create]
+claude = """
+if [ -d "{{ primary_worktree_path }}/.claude" ] && [ ! -e "{{ worktree_path }}/.claude" ]; then
+    ln -sf "{{ primary_worktree_path }}/.claude" "{{ worktree_path }}/.claude"
+fi
+"""
+copy = "wt step copy-ignored"
+
+# Prune worktrees merged into default branch (runs in background)
+[post-switch]
+prune = """
+GIT_COMMON_DIR="$(git rev-parse --git-common-dir)"
+flock --timeout 30 "${GIT_COMMON_DIR}/wt-ops.lock" \
+    wt step prune --min-age 1h 2>/dev/null || true
+"""
+
+[projects]

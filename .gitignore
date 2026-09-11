@@ -1,19 +1,26 @@
 .DS_Store
 .idea/
-.claude/
 .envrc
 
 **/*.old
 **/*hide.lua
 **/keys/
 
+# Private claude skills and commands (stowed but not published)
+claude/.claude/skills/apk-query/
+claude/.claude/commands/new-charts.md
+
 # Game audio; this repo is public
 herdr/.config/herdr/sounds/*.mp3
+
+# nvim writes here when started with -V*/path logging.
+nvim.log
 
 # Built plugin binaries. `make` builds them into each plugin directory so a
 # plugin can stand alone, but the artifact itself is never checked in.
 herdr-plugins/target/
 herdr-plugins/*/bin/
+
 
 # Scratch handoff notes, not part of the dotfiles.
 herdr-plugins/HANDOFF.md

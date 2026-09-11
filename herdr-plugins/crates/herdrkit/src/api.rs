@@ -9,6 +9,7 @@
 //! type, so the three cannot drift apart. The convenience methods on [`Client`]
 //! are one line each and exist for discoverability.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -22,7 +23,7 @@ use crate::tokens::Tokens;
 use crate::{Client, Result};
 
 /// The protocol these types were written against.
-pub const PROTOCOL: u32 = 20;
+pub const PROTOCOL: u32 = 22;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -216,6 +217,19 @@ impl Snapshot {
         })
     }
 
+    /// Distinct repository roots currently represented by Herdr workspaces.
+    pub fn repository_roots(&self) -> Vec<&Path> {
+        let mut roots = self
+            .workspaces
+            .iter()
+            .filter_map(|workspace| workspace.worktree.as_ref())
+            .map(|worktree| worktree.repository.root.as_path())
+            .collect::<Vec<_>>();
+        roots.sort_unstable();
+        roots.dedup();
+        roots
+    }
+
     pub fn panes_in_tab(&self, tab: &TabId) -> impl Iterator<Item = &Pane> {
         self.panes.iter().filter(move |pane| pane.tab_id == *tab)
     }
@@ -395,14 +409,45 @@ struct WorktreeList<'a> {
 request!(WorktreeList<'_>, "worktree.list", "worktree_list" => Worktrees);
 
 #[derive(Debug, Default, Serialize)]
+struct WorktreeCreate<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<&'a WorkspaceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<&'a str>,
+    pub focus: bool,
+}
+request!(WorktreeCreate<'_>, "worktree.create", "worktree_created" => WorktreeCreated);
+
+#[derive(Debug, Default, Serialize)]
 struct WorktreeOpen<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<&'a WorkspaceId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<&'a str>,
     pub focus: bool,
 }
-request!(WorktreeOpen<'_>, "worktree.open");
+request!(WorktreeOpen<'_>, "worktree.open", "worktree_opened" => WorktreeOpened);
+
+#[derive(Debug, Serialize)]
+struct WorktreeRemove<'a> {
+    pub workspace_id: &'a WorkspaceId,
+    pub force: bool,
+}
+request!(WorktreeRemove<'_>, "worktree.remove", "worktree_removed" => WorktreeRemoved);
 
 #[derive(Debug, Default, Serialize)]
 struct WorkspaceCreate<'a> {
@@ -412,13 +457,33 @@ struct WorkspaceCreate<'a> {
     pub label: Option<&'a str>,
     pub focus: bool,
 }
-request!(WorkspaceCreate<'_>, "workspace.create");
+request!(WorkspaceCreate<'_>, "workspace.create", "workspace_created" => WorkspaceCreated);
 
 #[derive(Debug, Serialize)]
 struct WorkspaceFocus<'a> {
     pub workspace_id: &'a WorkspaceId,
 }
 request!(WorkspaceFocus<'_>, "workspace.focus");
+
+#[derive(Debug, Serialize)]
+struct WorkspaceClose<'a> {
+    pub workspace_id: &'a WorkspaceId,
+}
+request!(WorkspaceClose<'_>, "workspace.close");
+
+#[derive(Debug, Serialize)]
+struct PluginPaneOpen<'a> {
+    pub plugin_id: &'a str,
+    pub entrypoint: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<&'a WorkspaceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<&'a BTreeMap<String, String>>,
+    pub focus: bool,
+}
+request!(PluginPaneOpen<'_>, "plugin.pane.open", "plugin_pane_opened" => PluginPaneOpened);
 
 #[derive(Debug, Default, Serialize)]
 struct TabCreate<'a> {
@@ -431,6 +496,12 @@ struct TabCreate<'a> {
     pub focus: bool,
 }
 request!(TabCreate<'_>, "tab.create", "tab_created" => TabCreated);
+
+#[derive(Debug, Serialize)]
+struct TabFocus<'a> {
+    pub tab_id: &'a TabId,
+}
+request!(TabFocus<'_>, "tab.focus");
 
 #[derive(Debug, Serialize)]
 struct TabClose<'a> {
@@ -594,8 +665,9 @@ pub(crate) struct WorkspaceReportMetadata<'a> {
     pub workspace_id: &'a WorkspaceId,
     pub source: &'a str,
     pub tokens: &'a Tokens,
-    /// Milliseconds before herdr drops these tokens on its own. Set it.
-    pub ttl_ms: u64,
+    /// Omit to retain until cleared; otherwise expire after these milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
     /// Monotonic per source. herdr ignores a push older than one it has, which
     /// is what stops a slow refresh from overwriting a fast one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -604,11 +676,41 @@ pub(crate) struct WorkspaceReportMetadata<'a> {
 request!(WorkspaceReportMetadata<'_>, "workspace.report_metadata");
 
 #[derive(Debug, Serialize)]
+struct PluginList<'a> {
+    plugin_id: &'a str,
+}
+request!(PluginList<'_>, "plugin.list", "plugin_list" => PluginListReply);
+
+#[derive(Debug, Deserialize)]
+struct PluginListReply {
+    plugins: Vec<PluginRegistration>,
+}
+
+/// Minimal live registration needed to tie services to their plugin owner.
+#[derive(Debug, Deserialize)]
+pub struct PluginRegistration {
+    pub plugin_id: String,
+    pub plugin_root: std::path::PathBuf,
+    pub enabled: bool,
+}
+
+impl Client {
+    pub fn plugin_registration(&self, plugin_id: &str) -> Result<Option<PluginRegistration>> {
+        let reply = self.call(&PluginList { plugin_id })?;
+        Ok(reply
+            .plugins
+            .into_iter()
+            .find(|plugin| plugin.plugin_id == plugin_id))
+    }
+}
+
+#[derive(Debug, Serialize)]
 pub(crate) struct PaneReportMetadata<'a> {
     pub pane_id: &'a PaneId,
     pub source: &'a str,
     pub tokens: &'a Tokens,
-    pub ttl_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seq: Option<u64>,
 }
@@ -687,6 +789,49 @@ struct NeighborReply {
 #[derive(Debug, Clone, Deserialize)]
 struct PaneReadReply {
     pub read: PaneReadResult,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceCreated {
+    pub workspace: Workspace,
+    pub tab: Tab,
+    pub root_pane: Pane,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorktreeCreated {
+    pub workspace: Workspace,
+    pub tab: Tab,
+    pub root_pane: Pane,
+    pub worktree: Worktree,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorktreeOpened {
+    pub workspace: Workspace,
+    pub tab: Tab,
+    pub root_pane: Pane,
+    pub worktree: Worktree,
+    pub already_open: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorktreeRemoved {
+    pub workspace_id: WorkspaceId,
+    pub path: PathBuf,
+    pub forced: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginPaneOpened {
+    pub plugin_pane: PluginPaneInfo,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginPaneInfo {
+    pub plugin_id: String,
+    pub entrypoint: String,
+    pub pane: Pane,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -858,16 +1003,70 @@ impl Client {
         })
     }
 
-    pub fn worktree_open(&self, repo_root: &Path, checkout: &Path, focus: bool) -> Result<()> {
-        self.invoke(&WorktreeOpen {
-            cwd: Some(path_parameter("worktree.open cwd", repo_root)?),
-            path: Some(path_parameter("worktree.open path", checkout)?),
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors Herdr's worktree.create operation without exposing wire request types"
+    )]
+    pub fn worktree_create(
+        &self,
+        workspace_id: Option<&WorkspaceId>,
+        cwd: Option<&Path>,
+        branch: Option<&str>,
+        base: Option<&str>,
+        path: Option<&Path>,
+        label: Option<&str>,
+        focus: bool,
+    ) -> Result<WorktreeCreated> {
+        self.call(&WorktreeCreate {
+            workspace_id,
+            cwd: cwd
+                .map(|path| path_parameter("worktree.create cwd", path))
+                .transpose()?,
+            branch,
+            base,
+            path: path
+                .map(|path| path_parameter("worktree.create path", path))
+                .transpose()?,
+            label,
             focus,
         })
     }
 
-    pub fn workspace_create(&self, cwd: &Path, label: Option<&str>, focus: bool) -> Result<()> {
-        self.invoke(&WorkspaceCreate {
+    pub fn worktree_open(
+        &self,
+        repo_root: &Path,
+        checkout: &Path,
+        label: Option<&str>,
+        focus: bool,
+    ) -> Result<WorktreeOpened> {
+        self.call(&WorktreeOpen {
+            workspace_id: None,
+            cwd: Some(path_parameter("worktree.open cwd", repo_root)?),
+            path: Some(path_parameter("worktree.open path", checkout)?),
+            branch: None,
+            label,
+            focus,
+        })
+    }
+
+    pub fn worktree_remove(
+        &self,
+        workspace_id: &WorkspaceId,
+        force: bool,
+    ) -> Result<WorktreeRemoved> {
+        self.call(&WorktreeRemove {
+            workspace_id,
+            force,
+        })
+    }
+
+    pub fn workspace_create(
+        &self,
+        cwd: &Path,
+        label: Option<&str>,
+        focus: bool,
+    ) -> Result<WorkspaceCreated> {
+        self.call(&WorkspaceCreate {
             cwd: Some(path_parameter("workspace.create cwd", cwd)?),
             label,
             focus,
@@ -876,6 +1075,31 @@ impl Client {
 
     pub fn workspace_focus(&self, workspace_id: &WorkspaceId) -> Result<()> {
         self.invoke(&WorkspaceFocus { workspace_id })
+    }
+
+    pub fn workspace_close(&self, workspace_id: &WorkspaceId) -> Result<()> {
+        self.invoke(&WorkspaceClose { workspace_id })
+    }
+
+    pub fn plugin_pane_open(
+        &self,
+        plugin_id: &str,
+        entrypoint: &str,
+        workspace_id: Option<&WorkspaceId>,
+        cwd: Option<&Path>,
+        env: Option<&BTreeMap<String, String>>,
+        focus: bool,
+    ) -> Result<PluginPaneOpened> {
+        self.call(&PluginPaneOpen {
+            plugin_id,
+            entrypoint,
+            workspace_id,
+            cwd: cwd
+                .map(|path| path_parameter("plugin.pane.open cwd", path))
+                .transpose()?,
+            env,
+            focus,
+        })
     }
 
     pub fn tab_create(
@@ -895,6 +1119,10 @@ impl Client {
 
     pub fn tab_close(&self, tab_id: &TabId) -> Result<()> {
         self.invoke(&TabClose { tab_id })
+    }
+
+    pub fn tab_focus(&self, tab_id: &TabId) -> Result<()> {
+        self.invoke(&TabFocus { tab_id })
     }
 
     pub fn agent_focus(&self, target: AgentRef<'_>) -> Result<()> {
@@ -1040,6 +1268,35 @@ mod tests {
     const SNAPSHOT: &str = include_str!("../tests/fixtures/session_snapshot.json");
 
     #[test]
+    fn worktree_creation_outlasts_the_immediate_request_deadline() {
+        let create = WorktreeCreate {
+            workspace_id: None,
+            cwd: Some("/repo"),
+            branch: None,
+            base: Some("abc123"),
+            path: None,
+            label: Some("Review"),
+            focus: true,
+        };
+        let client = Client::new("/unused");
+        assert_eq!(
+            client.request_timeout(&create),
+            Some(Duration::from_secs(600))
+        );
+        assert_eq!(
+            client.request_timeout(&WorktreeOpen::default()),
+            Some(Duration::from_secs(600))
+        );
+        assert_eq!(
+            client.request_timeout(&WorktreeRemove {
+                workspace_id: &WorkspaceId::new("w1"),
+                force: false
+            }),
+            Some(Duration::from_secs(600))
+        );
+    }
+
+    #[test]
     fn snapshot_fixture_deserialises() {
         let result: SnapshotReply = serde_json::from_str(SNAPSHOT).unwrap();
         let mut snap = result.snapshot;
@@ -1106,8 +1363,11 @@ mod tests {
     #[test]
     fn an_optional_param_is_omitted_rather_than_sent_as_null() {
         let json = serde_json::to_string(&WorktreeOpen {
+            workspace_id: None,
             cwd: Some("/repo"),
             path: None,
+            branch: None,
+            label: None,
             focus: true,
         })
         .unwrap();
@@ -1288,6 +1548,209 @@ mod tests {
         .unwrap();
         assert_eq!(started.agent.agent_status, AgentStatus::Working);
         assert_eq!(started.argv, ["claude"]);
+    }
+
+    #[test]
+    fn workspace_creation_returns_the_created_topology() {
+        use crate::testing::{RecordedRequest, Server, Step};
+
+        let server = Server::start(vec![Step::reply(
+            r#"{"id":"{id}","result":{"type":"workspace_created","workspace":{"workspace_id":"w2","label":"review","focused":true,"agent_status":"idle"},"tab":{"tab_id":"w2:t1","workspace_id":"w2"},"root_pane":{"pane_id":"w2:p1","workspace_id":"w2","tab_id":"w2:t1","cwd":"/repo"}}}"#,
+        )]);
+
+        let created = server
+            .client()
+            .workspace_create(Path::new("/repo"), Some("review"), true)
+            .unwrap();
+
+        assert_eq!(created.workspace.workspace_id, WorkspaceId::new("w2"));
+        assert_eq!(created.tab.tab_id, TabId::new("w2:t1"));
+        assert_eq!(created.root_pane.pane_id, PaneId::new("w2:p1"));
+        assert_eq!(
+            server.requests(),
+            [RecordedRequest {
+                method: "workspace.create".to_owned(),
+                params: serde_json::json!({
+                    "cwd": "/repo",
+                    "label": "review",
+                    "focus": true,
+                }),
+            }]
+        );
+    }
+
+    #[test]
+    fn runtime_focus_and_close_requests_keep_workspace_and_tab_ids_typed() {
+        use crate::testing::{RecordedRequest, Server, Step};
+
+        let server = Server::start(vec![
+            Step::reply(r#"{"id":"{id}","result":{}}"#),
+            Step::reply(r#"{"id":"{id}","result":{}}"#),
+            Step::reply(r#"{"id":"{id}","result":{}}"#),
+        ]);
+        let workspace = WorkspaceId::new("w2");
+        let tab = TabId::new("w2:t3");
+
+        server.client().workspace_focus(&workspace).unwrap();
+        server.client().tab_focus(&tab).unwrap();
+        server.client().workspace_close(&workspace).unwrap();
+
+        assert_eq!(
+            server.requests(),
+            [
+                RecordedRequest {
+                    method: "workspace.focus".to_owned(),
+                    params: serde_json::json!({ "workspace_id": "w2" }),
+                },
+                RecordedRequest {
+                    method: "tab.focus".to_owned(),
+                    params: serde_json::json!({ "tab_id": "w2:t3" }),
+                },
+                RecordedRequest {
+                    method: "workspace.close".to_owned(),
+                    params: serde_json::json!({ "workspace_id": "w2" }),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn plugin_pane_open_targets_a_workspace_and_passes_environment() {
+        use crate::testing::{RecordedRequest, Server, Step};
+
+        let server = Server::start(vec![Step::reply(
+            r#"{"id":"{id}","result":{"type":"plugin_pane_opened","plugin_pane":{"plugin_id":"herdr-review","entrypoint":"editor","pane":{"pane_id":"w3:p2","workspace_id":"w3","tab_id":"w3:t2","cwd":"/worktrees/pr-42"}}}}"#,
+        )]);
+        let workspace = WorkspaceId::new("w3");
+        let env = BTreeMap::from([
+            ("EXAMPLE_MODE".to_owned(), "inspect".to_owned()),
+            ("EXAMPLE_TARGET".to_owned(), "change-42".to_owned()),
+        ]);
+
+        let opened = server
+            .client()
+            .plugin_pane_open(
+                "herdr-review",
+                "editor",
+                Some(&workspace),
+                Some(Path::new("/worktrees/pr-42")),
+                Some(&env),
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(opened.plugin_pane.plugin_id, "herdr-review");
+        assert_eq!(opened.plugin_pane.entrypoint, "editor");
+        assert_eq!(opened.plugin_pane.pane.pane_id, PaneId::new("w3:p2"));
+        assert_eq!(
+            server.requests(),
+            [RecordedRequest {
+                method: "plugin.pane.open".to_owned(),
+                params: serde_json::json!({
+                    "plugin_id": "herdr-review",
+                    "entrypoint": "editor",
+                    "workspace_id": "w3",
+                    "cwd": "/worktrees/pr-42",
+                    "env": {
+                        "EXAMPLE_MODE": "inspect",
+                        "EXAMPLE_TARGET": "change-42",
+                    },
+                    "focus": true,
+                }),
+            }]
+        );
+    }
+
+    #[test]
+    fn worktree_mutations_return_their_protocol_results() {
+        use crate::testing::{RecordedRequest, Server, Step};
+
+        let worktree = r#"{"path":"/worktrees/pr-42","label":"PR #42","is_bare":false,"is_detached":false,"is_prunable":false,"is_linked_worktree":true,"branch":"review/pr-42","open_workspace_id":"w3"}"#;
+        let workspace =
+            r#"{"workspace_id":"w3","label":"PR #42","focused":false,"agent_status":"idle"}"#;
+        let tab = r#"{"tab_id":"w3:t1","workspace_id":"w3"}"#;
+        let pane =
+            r#"{"pane_id":"w3:p1","workspace_id":"w3","tab_id":"w3:t1","cwd":"/worktrees/pr-42"}"#;
+        let server = Server::start(vec![
+            Step::reply(format!(
+                r#"{{"id":"{{id}}","result":{{"type":"worktree_created","workspace":{workspace},"tab":{tab},"root_pane":{pane},"worktree":{worktree}}}}}"#
+            )),
+            Step::reply(format!(
+                r#"{{"id":"{{id}}","result":{{"type":"worktree_opened","workspace":{workspace},"tab":{tab},"root_pane":{pane},"worktree":{worktree},"already_open":true}}}}"#
+            )),
+            Step::reply(
+                r#"{"id":"{id}","result":{"type":"worktree_removed","workspace_id":"w3","path":"/worktrees/pr-42","forced":false}}"#,
+            ),
+        ]);
+        let client = server.client();
+        let source_workspace = WorkspaceId::new("w1");
+
+        let created = client
+            .worktree_create(
+                Some(&source_workspace),
+                None,
+                Some("review/pr-42"),
+                Some("abc123"),
+                Some(Path::new("/worktrees/pr-42")),
+                Some("PR #42"),
+                false,
+            )
+            .unwrap();
+        assert_eq!(created.workspace.workspace_id, WorkspaceId::new("w3"));
+        assert_eq!(
+            created.worktree.checkout_path,
+            Path::new("/worktrees/pr-42")
+        );
+
+        let opened = client
+            .worktree_open(
+                Path::new("/repo"),
+                Path::new("/worktrees/pr-42"),
+                Some("PR #42"),
+                true,
+            )
+            .unwrap();
+        assert!(opened.already_open);
+        assert_eq!(opened.root_pane.pane_id, PaneId::new("w3:p1"));
+
+        let workspace_id = WorkspaceId::new("w3");
+        let removed = client.worktree_remove(&workspace_id, false).unwrap();
+        assert_eq!(removed.workspace_id, workspace_id);
+        assert_eq!(removed.path, Path::new("/worktrees/pr-42"));
+        assert!(!removed.forced);
+
+        assert_eq!(
+            server.requests(),
+            [
+                RecordedRequest {
+                    method: "worktree.create".to_owned(),
+                    params: serde_json::json!({
+                        "workspace_id": "w1",
+                        "branch": "review/pr-42",
+                        "base": "abc123",
+                        "path": "/worktrees/pr-42",
+                        "label": "PR #42",
+                        "focus": false,
+                    }),
+                },
+                RecordedRequest {
+                    method: "worktree.open".to_owned(),
+                    params: serde_json::json!({
+                        "cwd": "/repo",
+                        "path": "/worktrees/pr-42",
+                        "label": "PR #42",
+                        "focus": true,
+                    }),
+                },
+                RecordedRequest {
+                    method: "worktree.remove".to_owned(),
+                    params: serde_json::json!({
+                        "workspace_id": "w3",
+                        "force": false,
+                    }),
+                },
+            ]
+        );
     }
 
     #[test]

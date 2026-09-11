@@ -1,7 +1,7 @@
 id = "herdr-github"
 name = "GitHub"
 version = "0.1.0"
-min_herdr_version = "0.8.2"
+min_herdr_version = "0.9.0"
 description = "GitHub status and workflows for herdr workspaces"
 platforms = ["macos", "linux"]
 
@@ -20,10 +20,31 @@ title = "Fix failing GitHub CI now"
 contexts = ["workspace"]
 command = ["./bin/herdr-github"]
 
+[[startup]]
+command = ["./bin/herdr-github"]
+
+[[actions]]
+id = "status-service"
+title = "GitHub status service health"
+contexts = ["global", "workspace"]
+command = ["./bin/herdr-github"]
+
+[[events]]
+on = "workspace.created"
+command = ["./bin/herdr-github"]
+
+[[events]]
+on = "workspace.closed"
+command = ["./bin/herdr-github"]
+
 [[actions]]
 id = "open-link"
 title = "Open GitHub link in browser"
 contexts = ["pane"]
+command = ["./bin/herdr-github"]
+
+[[events]]
+on = "workspace.focused"
 command = ["./bin/herdr-github"]
 
 [[panes]]
@@ -37,14 +58,6 @@ id = "ci-brief"
 title = "GitHub CI brief"
 placement = "overlay"
 command = ["./bin/herdr-github"]
-
-[[panes]]
-id = "dashboard"
-title = "GitHub dashboard"
-placement = "popup"
-command = ["gh", "dash"]
-width = "90%"
-height = "80%"
 
 [[link_handlers]]
 id = "github"

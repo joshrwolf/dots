@@ -23,6 +23,8 @@ mod tests {
         actions: Vec<Entrypoint>,
         #[serde(default)]
         panes: Vec<Entrypoint>,
+        #[serde(default)]
+        events: Vec<EventHook>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -33,6 +35,12 @@ mod tests {
     #[derive(Debug, Deserialize)]
     struct Entrypoint {
         id: String,
+        command: Vec<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct EventHook {
+        on: String,
         command: Vec<String>,
     }
 
@@ -91,7 +99,7 @@ mod tests {
 
     #[test]
     fn every_plugin_uses_its_own_make_build_primitive() -> Result<()> {
-        for plugin in ["find", "github", "nav", "nvim"] {
+        for plugin in ["find", "github", "nav", "nvim", "review"] {
             let manifest = manifest(plugin)?;
             ensure!(
                 manifest.id == format!("herdr-{plugin}"),
@@ -118,7 +126,7 @@ mod tests {
 
     #[test]
     fn herdr_identity_is_not_duplicated_in_plugin_argv() -> Result<()> {
-        for plugin in ["find", "github", "nav", "nvim"] {
+        for plugin in ["find", "github", "nav", "nvim", "review"] {
             let manifest = manifest(plugin)?;
             let binary = format!("./bin/herdr-{plugin}");
             for entry in manifest.actions.iter().chain(&manifest.panes) {
@@ -128,6 +136,16 @@ mod tests {
                         "{} entrypoint {} duplicates its Herdr identity in argv",
                         manifest.id,
                         entry.id
+                    );
+                }
+            }
+            for event in &manifest.events {
+                if event.command.first() == Some(&binary) {
+                    ensure!(
+                        event.command == [binary.as_str()],
+                        "{} event {} duplicates its Herdr identity in argv",
+                        manifest.id,
+                        event.on
                     );
                 }
             }
@@ -163,19 +181,40 @@ mod tests {
 
         let github = manifest("github")?;
         ensure!(
-            ids(&github.actions) == BTreeSet::from(["ci-fix", "ci-refresh", "open-link"]),
+            ids(&github.actions)
+                == BTreeSet::from(["ci-fix", "ci-refresh", "open-link", "status-service"]),
             "GitHub action dispatch drifted"
         );
         ensure!(
-            ids(&github.panes) == BTreeSet::from(["ci-arm", "ci-brief", "dashboard"]),
+            ids(&github.panes) == BTreeSet::from(["ci-arm", "ci-brief"]),
             "GitHub pane dispatch drifted"
+        );
+        ensure!(
+            github
+                .events
+                .iter()
+                .map(|event| event.on.as_str())
+                .collect::<BTreeSet<_>>()
+                == BTreeSet::from(["workspace.focused", "workspace.created", "workspace.closed"]),
+            "GitHub event dispatch drifted"
+        );
+
+        let review = manifest("review")?;
+        ensure!(ids(&review.actions).is_empty(), "review declares actions");
+        ensure!(
+            ids(&review.panes) == BTreeSet::from(["open"]),
+            "review pane dispatch drifted"
         );
         Ok(())
     }
 
     #[test]
-    fn one_shot_startup_hooks_do_not_host_daemons() -> Result<()> {
-        for plugin in ["find", "github", "nav", "nvim"] {
+    fn startup_hooks_only_bootstrap_declared_services() -> Result<()> {
+        ensure!(
+            manifest("github")?.startup.len() == 1,
+            "GitHub must ensure its status service at startup"
+        );
+        for plugin in ["find", "nav", "nvim", "review"] {
             ensure!(
                 manifest(plugin)?.startup.is_empty(),
                 "{plugin} declares an unsupported resident startup command"
@@ -186,7 +225,7 @@ mod tests {
 
     #[test]
     fn herdr_keybindings_reference_declared_plugin_entrypoints() -> Result<()> {
-        let manifests = ["find", "github", "nav", "nvim"]
+        let manifests = ["find", "github", "nav", "nvim", "review"]
             .into_iter()
             .map(manifest)
             .collect::<Result<Vec<_>>>()?;

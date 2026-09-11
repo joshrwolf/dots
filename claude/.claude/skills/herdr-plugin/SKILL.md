@@ -84,7 +84,7 @@ runtime command starts in the plugin directory.
 
 ## Herdr protocol invariants
 
-`herdrkit::api::PROTOCOL` records protocol 20. The client uses one Unix-socket
+`herdrkit::api::PROTOCOL` records protocol 22. The client uses one Unix-socket
 connection per ordinary request and a retained connection for event streams.
 Do not bypass these invariants:
 
@@ -96,7 +96,7 @@ Do not bypass these invariants:
 - no read deadline for an explicitly indefinite wait;
 - `agent.start` defaults to 30 seconds; an explicit timeout must be greater
   than 3 seconds and at most 5 minutes;
-- metadata TTL is at least 1 millisecond and at most 24 hours, and a source may
+- expiring metadata TTL is at least 1 millisecond and at most 24 hours; retained metadata omits TTL. A source may
   publish at most 16 validly named tokens.
 
 Use `AgentRef` for agent targets. When submitting a prompt and waiting for a
@@ -121,11 +121,12 @@ operation boundaries. Use `runtime::finish` with the appropriate
 `FailureSurface` so popup failures remain readable and background/action
 failures reach the plugin log.
 
-Do not add resident `[[startup]]` daemons unless Herdr provides a supervised
-lifecycle and the design actually uses it. The GitHub plugin deliberately uses
-the one-shot `ci-refresh` workspace action; it does not keep a per-session CI
-watcher alive. `[[events]]` remains suitable for one-shot reactions scheduled
-by Herdr.
+Use `herdrkit::service` for pane-less background features. Startup and event
+hooks ensure the service is ready and exit; the service owns its timer and
+provider work. Require server-scoped singleton ownership, bounded readiness and
+control messages, launch backoff, and exit on owner replacement or plugin
+disablement. Herdr does not supervise these workers: crash recovery occurs on
+the next hook. Manual GitHub refresh queues work in the periodic scheduler.
 
 ## Tests and activation
 

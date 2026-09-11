@@ -1,7 +1,7 @@
 id = "herdr-nvim"
 name = "nvim"
 version = "0.2.0"
-min_herdr_version = "0.8.2"
+min_herdr_version = "0.9.0"
 description = "Open a file in this tab's nvim, from a picker or a clicked link"
 platforms = ["macos", "linux"]
 

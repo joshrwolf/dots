@@ -24,14 +24,7 @@ pub struct Sources {
 impl Sources {
     pub fn collect(client: &Client) -> Result<Self> {
         let snapshot = client.snapshot().context("reading the session")?;
-        let mut roots: Vec<&Path> = snapshot
-            .workspaces
-            .iter()
-            .filter_map(|w| w.worktree.as_ref())
-            .map(|w| w.repository.root.as_path())
-            .collect();
-        roots.sort_unstable();
-        roots.dedup();
+        let roots = snapshot.repository_roots();
         // A repo that has gone away since herdr saw it should cost that repo's
         // worktrees, not the whole list — but it must say so, or a socket
         // failure reads as "this repo has no worktrees" forever.

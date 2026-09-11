@@ -44,6 +44,12 @@ backwards to figure out how to get there.
    target structure, migration steps, boundaries (what is and isn't in
    scope), and any constraints surfaced during stress-testing.
 
+   End the spec with a short **conventions contract**: the vocabulary table
+   (concept → canonical name) and one canonical pattern per concern (errors,
+   construction, config, logging, tests). This is what keeps parallel
+   implementers coherent — without it, each subagent invents its own names
+   and styles and the result reads like a committee wrote it.
+
 ### Design principles
 
 - **Architecture-first.** Do not let the current implementation constrain the
@@ -68,7 +74,9 @@ The spec is written. Alignment is reached. Now implement it.
 
 1. **Reference the spec.** Read the spec file at the start of execution.
    Every implementation decision traces back to the spec. If something isn't
-   in the spec, it isn't in scope.
+   in the spec, it isn't in scope. When delegating to subagents, every
+   subagent prompt includes the spec path and the conventions contract —
+   never let an implementer work without them.
 
 2. **Implement.** Make the changes. The final state is what matters —
    idiomatic, correct, and matching the spec.

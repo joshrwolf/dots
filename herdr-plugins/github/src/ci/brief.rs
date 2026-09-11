@@ -24,11 +24,7 @@ pub(crate) fn build_for_state(dir: &Path, state: &CiState) -> Result<String> {
     writeln!(out, "# CI failures on PR #{}\n", state.number)?;
     writeln!(out, "- branch: `{}`", state.local_branch)?;
     writeln!(out, "- head: `{head}`")?;
-    writeln!(
-        out,
-        "- review: {}\n",
-        state.review_decision.as_deref().unwrap_or("none")
-    )?;
+    writeln!(out, "- review: {}\n", state.review.label())?;
 
     let mut failing: Vec<_> = state
         .checks

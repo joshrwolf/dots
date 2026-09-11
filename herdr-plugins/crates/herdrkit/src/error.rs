@@ -11,6 +11,8 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("HERDR_WORKTREE_TIMEOUT_SECS must be an integer from 1 through 86400, got {value:?}")]
+    InvalidWorktreeTimeout { value: String },
     #[error("required environment variable {name} is unset or empty")]
     MissingEnv { name: &'static str },
 
@@ -42,6 +44,13 @@ pub enum Error {
 
     #[error("could not reach the herdr server at {path}")]
     Connect {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("could not identify the herdr server socket at {path}")]
+    InspectEndpoint {
         path: PathBuf,
         #[source]
         source: io::Error,

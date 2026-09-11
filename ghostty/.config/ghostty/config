@@ -3,18 +3,18 @@
 # https://github.com/mitchellh/ghostty/blob/main/src/config/Config.zig
 #
 
-title = "Ghostty 👻"
 
 
 window-decoration = false
 window-theme = "light"
 confirm-close-surface = false
-# macos-option-as-alt = true
+macos-option-as-alt = true
 
 cursor-style = block
 cursor-style-blink = false
 clipboard-read = "allow"
 clipboard-paste-protection = false
+desktop-notifications = true
 
 cursor-color = #1F2328
 
@@ -89,23 +89,31 @@ keybind = cmd+backspace=text:\x15
 keybind = cmd+p=text:\x13P
 keybind = cmd+n=text:\x13n
 keybind = cmd+t=text:\x13t
-keybind = cmd+c=text:\x13c
+keybind = cmd+h=text:\x13h
+keybind = cmd+j=text:\x13j
+keybind = cmd+k=text:\x13k
+keybind = cmd+l=text:\x13l
+# cmd+shift+h/l — move tab left/right (prefix + M-h/M-l)
+keybind = cmd+shift+h=text:\x13\x1bh
+keybind = cmd+shift+l=text:\x13\x1bl
+keybind = cmd+shift+j=text:\x13J
+keybind = cmd+shift+k=text:\x13K
 
-keybind = cmd+h=text:\x13H
-keybind = cmd+l=text:\x13L
+# ctrl+shift+hjkl — resize pane
+keybind = ctrl+shift+h=text:\x13H
+keybind = ctrl+shift+j=text:\x13J
+keybind = ctrl+shift+k=text:\x13K
+keybind = ctrl+shift+l=text:\x13L
 
+keybind = cmd+r=text:\x13r
+keybind = cmd+g=text:\x13g
 keybind = cmd+o=text:\x13o
-keybind = cmd+;=text:\x13;
 
 # cmd+shift — forward to inner (remote) tmux
 keybind = cmd+shift+p=text:\x13\x13P
 keybind = cmd+shift+n=text:\x13\x13n
 keybind = cmd+shift+t=text:\x13\x13t
-keybind = cmd+shift+c=text:\x13\x13c
-keybind = cmd+shift+h=text:\x13\x13H
-keybind = cmd+shift+l=text:\x13\x13L
 keybind = cmd+shift+o=text:\x13\x13o
-keybind = cmd+shift+;=text:\x13\x13;
 
 unfocused-split-opacity = 0.85
 

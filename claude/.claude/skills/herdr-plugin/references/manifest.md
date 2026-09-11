@@ -38,8 +38,7 @@ directory name. Manifest action and pane commands contain only
 The workspace `contracts` tests enforce these relationships.
 
 `command` is argv, not shell syntax. Do not place pipes, globs, expansion, or
-quoting in it. A third-party interactive program such as `gh dash` may be the
-pane command when the pane is intentionally not implemented by the plugin.
+quoting in it.
 
 ## Entrypoints and dispatch
 
@@ -64,12 +63,9 @@ Current workspace contracts:
 | plugin | actions | panes |
 |---|---|---|
 | find | none | `picker` |
-| github | `ci-refresh`, `ci-fix`, `open-link` | `ci-arm`, `ci-brief`, `dashboard` |
+| github | `ci-refresh`, `status-service`, `ci-fix`, `open-link` | `ci-arm`, `ci-brief` |
 | nav | `left`, `down`, `up`, `right` | none |
 | nvim | `open` | `picker` |
-
-The GitHub `dashboard` pane directly runs `gh dash`; it is intentionally absent
-from the Rust binary's dispatch.
 
 ## Injected environment
 
@@ -107,13 +103,11 @@ not itself have a pane ID; use normalized invocation context to reach the pane
 beneath it. Fixed numeric picker dimensions are terminal cells and are clamped
 by Herdr, which keeps rows readable on large terminals.
 
-Do not add a resident `[[startup]]` daemon. Herdr starts such hooks per session
-but does not currently provide the supervised lifecycle this repository
-requires for a durable resident process. Prefer:
-
-- a one-shot action, as GitHub uses `ci-refresh`;
-- a one-shot `[[events]]` hook when Herdr should schedule a reaction; or
-- an explicitly designed supervised lifecycle if Herdr later exposes one.
+Background features use `herdrkit::service`. A `[[startup]]` hook ensures a
+server-scoped worker is ready and exits. Event hooks provide idempotent recovery
+after a crash; actions send control requests instead of spawning competing work.
+The worker has no pane, owns its timer, and exits when its server or plugin
+registration is no longer valid. Crash recovery occurs on the next hook.
 
 ## Config bindings and linking
 

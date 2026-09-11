@@ -8,6 +8,7 @@
 //! pipeline a second request gets one answer and a hang.
 
 use std::io::{Read, Write};
+use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,8 +22,20 @@ use crate::{Error, Result, env};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+fn parse_worktree_timeout(value: &str) -> Result<Duration> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|seconds| (1..=86400).contains(seconds))
+        .map(Duration::from_secs)
+        .ok_or_else(|| Error::InvalidWorktreeTimeout {
+            value: value.to_owned(),
+        })
+}
+
 /// A hung server would otherwise leave a popup blank with no way to tell
-/// whether it is working. Every call here is local and sub-millisecond.
+/// whether it is working. Requests that legitimately perform longer work
+/// override this deadline.
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(3);
 
 /// A request body that names its own method.
@@ -71,11 +84,15 @@ pub(crate) trait Query: Request {
 #[derive(Debug, Clone)]
 pub struct Client {
     path: PathBuf,
+    worktree_timeout: Duration,
 }
 
 impl Client {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            worktree_timeout: Duration::from_secs(10 * 60),
+        }
     }
 
     /// The Herdr server endpoint this client is bound to.
@@ -86,9 +103,38 @@ impl Client {
         &self.path
     }
 
+    /// Identity of the concrete Unix socket instance, not merely its reusable
+    /// pathname. Persisted runtime bindings use this to reject workspace and
+    /// pane IDs recycled by a later Herdr server process.
+    pub fn server_id(&self) -> Result<String> {
+        let metadata = std::fs::metadata(&self.path).map_err(|source| Error::InspectEndpoint {
+            path: self.path.clone(),
+            source,
+        })?;
+        Ok(format!(
+            "{}@{}:{}",
+            self.path.display(),
+            metadata.dev(),
+            metadata.ino()
+        ))
+    }
+
     /// The server this plugin was invoked by.
     pub fn from_env() -> Result<Self> {
-        env::socket_path().map(Self::new)
+        let mut client = Self::new(env::socket_path()?);
+        if let Some(value) = env::optional_string("HERDR_WORKTREE_TIMEOUT_SECS")? {
+            client.worktree_timeout = parse_worktree_timeout(&value)?;
+        }
+        Ok(client)
+    }
+
+    pub(crate) fn request_timeout<R: Request>(&self, request: &R) -> Option<Duration> {
+        match R::METHOD {
+            "worktree.create" | "worktree.open" | "worktree.remove" | "worktree.list" => {
+                Some(self.worktree_timeout)
+            }
+            _ => request.timeout(),
+        }
     }
 
     /// A framed connection for a caller that needs one to outlive a request.
@@ -106,7 +152,7 @@ impl Client {
     /// The tag check is what turns a herdr release that reshapes a result into
     /// a named error rather than a struct of defaulted fields.
     pub(crate) fn call<Q: Query>(&self, request: &Q) -> Result<Q::Reply> {
-        let result = self.exchange(Q::METHOD, request, request.timeout())?;
+        let result = self.exchange(Q::METHOD, request, self.request_timeout(request))?;
         let actual = result
             .get("type")
             .and_then(Value::as_str)
@@ -411,6 +457,16 @@ struct ErrorBody {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn worktree_deadline_configuration_is_bounded() {
+        assert_eq!(
+            super::parse_worktree_timeout("1200").unwrap(),
+            std::time::Duration::from_secs(1200)
+        );
+        for value in ["0", "-1", "86401", "forever", "1.5", ""] {
+            assert!(super::parse_worktree_timeout(value).is_err(), "{value}");
+        }
+    }
     use super::*;
 
     fn decode(line: &str) -> Response {
@@ -467,7 +523,7 @@ mod tests {
         use crate::{Error, socket::Request};
 
         const PONG: &str =
-            r#"{"id":"{id}","result":{"type":"pong","version":"0.8.2","protocol":20}}"#;
+            r#"{"id":"{id}","result":{"type":"pong","version":"0.9.0","protocol":22}}"#;
 
         /// One round trip end to end: id generated, request framed, reply
         /// matched to it, tag checked, body decoded. Every unit test above this
@@ -475,9 +531,12 @@ mod tests {
         #[test]
         fn a_matching_reply_is_decoded() {
             let server = Server::start(vec![Step::reply(PONG)]);
+            let first = server.client().server_id().expect("server identity");
+            let second = server.client().server_id().expect("stable server identity");
+            assert_eq!(first, second);
             let pong = server.client().ping().expect("a pong");
-            assert_eq!(pong.version, "0.8.2");
-            assert_eq!(pong.protocol, 20);
+            assert_eq!(pong.version, "0.9.0");
+            assert_eq!(pong.protocol, crate::api::PROTOCOL);
         }
 
         #[test]
@@ -507,7 +566,7 @@ mod tests {
         #[test]
         fn a_response_for_a_different_request_is_refused() {
             let server = Server::start(vec![Step::line(
-                r#"{"id":"someone-else","result":{"type":"pong","version":"0.8.2","protocol":20}}"#,
+                r#"{"id":"someone-else","result":{"type":"pong","version":"0.9.0","protocol":22}}"#,
             )]);
             assert!(matches!(
                 server.client().ping(),
@@ -529,7 +588,7 @@ mod tests {
         #[test]
         fn an_answer_with_both_result_and_error_is_malformed() {
             let server = Server::start(vec![Step::reply(
-                r#"{"id":"{id}","result":{"type":"pong","version":"0.8.2","protocol":20},"error":{"code":"bad","message":"also an error"}}"#,
+                r#"{"id":"{id}","result":{"type":"pong","version":"0.9.0","protocol":22},"error":{"code":"bad","message":"also an error"}}"#,
             )]);
             assert!(matches!(
                 server.client().ping(),
@@ -561,6 +620,10 @@ mod tests {
         #[test]
         fn a_missing_socket_names_the_path_it_tried() {
             let client = super::Client::new("/nonexistent/herdr.sock");
+            assert!(matches!(
+                client.server_id(),
+                Err(Error::InspectEndpoint { .. })
+            ));
             assert!(
                 matches!(client.ping(), Err(Error::Connect { path, .. }) if path.ends_with("herdr.sock"))
             );

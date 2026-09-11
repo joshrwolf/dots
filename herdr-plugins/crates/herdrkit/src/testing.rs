@@ -290,7 +290,7 @@ pub fn pane_event(kind: &str, pane: &str) -> Step {
 mod tests {
     use super::*;
 
-    const PONG: &str = r#"{"id":"{id}","result":{"type":"pong","version":"0.8.2","protocol":20}}"#;
+    const PONG: &str = r#"{"id":"{id}","result":{"type":"pong","version":"0.9.0","protocol":22}}"#;
 
     #[test]
     fn sequential_replies_accept_one_connection_per_request() {

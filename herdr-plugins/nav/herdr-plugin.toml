@@ -1,7 +1,7 @@
 id = "herdr-nav"
 name = "nav"
 version = "0.3.0"
-min_herdr_version = "0.8.2"
+min_herdr_version = "0.9.0"
 description = "ctrl+hjkl navigation shared between herdr panes, vim splits, and fzf"
 platforms = ["macos", "linux"]
 

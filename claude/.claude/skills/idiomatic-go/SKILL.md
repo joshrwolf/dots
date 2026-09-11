@@ -13,6 +13,16 @@ for obsolete patterns.
 
 ## Design Philosophy
 
+### Converge on the codebase's design center
+
+Before writing new code, read neighboring code for the established vocabulary
+and patterns — then match them. Never introduce a synonym for a concept that
+already has a name (`task` vs `job`); never introduce a second pattern for a
+concern that already has one (error wrapping, construction, config, logging).
+If the established pattern is wrong, flag it or change it everywhere — don't
+fork it. The codebase should read as if one mind wrote it; consistency with it
+beats local preference. (To cure existing drift, use the `cohere` skill.)
+
 ### Do not extract single-use helper functions
 
 > *"There is definitely such a thing as too repetitive tiny functions, and the solution
@@ -91,6 +101,41 @@ func (p *Processor) Process(ctx context.Context, order Order) error {
 
 This is `json.NewEncoder(w)`, `bufio.NewScanner(r)`, `csv.NewReader(r)` —
 the same shape everywhere in the stdlib.
+
+#### Validating constructors: decide up front whether construction can fail
+
+A constructor returns `(*T, error)` when building a valid value can fail — an
+input needs validating, or a setup step (compile, dial, open) can error. That's
+the `regexp.Compile`, `os.Open`, `template.Parse` shape. When construction is
+pure wiring that cannot fail, return just `*T`; don't tack on a nil-only error
+(`bufio.NewScanner`, `json.NewEncoder`).
+
+Pick the signature from the type's **invariants**, not from today's simplest
+case. The expensive mistake is shipping `func New(...) *T`, then later adding a
+field or input that *can* fail — and, rather than changing the signature,
+validating it after construction or guarding in every method, leaving the type
+constructible in a broken state. The `error` return touches every call site, so
+it's tempting to avoid; that's exactly how the invariant rots. If a type has any
+field that must be valid for its methods to be correct, give it a validating
+constructor from the start. And when you *are* adding fallible logic to an
+existing no-error constructor, change its signature to return an error — don't
+work around it.
+
+```go
+// WRONG: can't fail today, so no error — but Timeout must be > 0 for Do to work,
+// and now every method has to defend against a zero Timeout
+func NewClient(timeout time.Duration) *Client {
+    return &Client{timeout: timeout}
+}
+
+// RIGHT: the constructor owns the invariant; a returned *Client always works
+func NewClient(timeout time.Duration) (*Client, error) {
+    if timeout <= 0 {
+        return nil, fmt.Errorf("timeout must be positive, got %s", timeout)
+    }
+    return &Client{timeout: timeout}, nil
+}
+```
 
 #### When functions should become a type
 

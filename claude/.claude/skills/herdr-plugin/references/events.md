@@ -5,15 +5,12 @@ state, publishing UI metadata, or considering a background process.
 
 ## Lifecycle first
 
-Do not host a resident daemon in `[[startup]]` without a Herdr-supervised
-lifecycle. Startup runs per session and cannot by itself provide singleton
-ownership, restart policy, or clean shutdown. The current workspace declares no
-startup hooks. GitHub CI state is refreshed by the one-shot `ci-refresh` action.
-
-Use a one-shot `[[events]]` hook when one event should schedule one bounded
-reaction. Use `Events` only inside a process whose long-lived lifecycle is
-explicitly supervised; the existence of the event-stream API is not permission
-to smuggle a daemon into a manifest.
+Use `herdrkit::service` for long-lived background work. Startup/event hooks
+ensure a singleton worker and return; the worker owns its timer and subscribes
+to topology changes. OS-held locks, private control sockets, readiness checks,
+launch backoff and owner/enablement checks are shared lifecycle policy.
+Hooks recover a crashed service on subsequent interaction, not immediately in
+an idle session. GitHub status runs one such worker per server.
 
 ## Subscription semantics
 
@@ -63,7 +60,8 @@ contains the event `kind`, pane ID, workspace ID, and resulting agent status.
 ## Metadata tokens
 
 Construct metadata through `MetadataReporter`, which binds a client, source,
-and mandatory TTL:
+and retention policy. Use `retained` for last-known results or `new` with a TTL
+for temporary signals:
 
 ```rust
 let reporter = MetadataReporter::new(client, "herdr-ci", Duration::from_secs(90))?;
@@ -85,9 +83,10 @@ Use `report_workspace` or `report_pane` for sequential refreshes. Use the
 monotonic sequence is needed to prevent an older result overwriting a newer
 one.
 
-Choose a TTL that expires soon after the next expected refresh. A stale success
-indicator is worse than an absent indicator, and expiry makes process failure
-visible without relying on cleanup code.
+Retain last-known status with its fetch timestamp; do not erase results merely
+because a refresh failed. TTLs are for temporary signals, not scheduling.
+Retained metadata lasts until cleared/replaced or the workspace closes; it
+does not survive a server restart and must be republished from cache.
 
 `Client::notify` returning `Ok` does not prove a notification appeared. Inspect
 `Notification.shown` and `Notification.reason` when the notification is the
