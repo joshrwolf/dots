@@ -44,12 +44,11 @@ plugins-link:
 		herdr plugin link "$(CURDIR)/$$p" >/dev/null || { echo "plugins-link: LINK FAILED for $$p" >&2; rc=1; }; \
 	done; exit $$rc
 
-# Claude Code reads MCP servers from ~/.claude.json, never from settings.json,
-# so the codex skill needs this on a fresh machine even though the skill itself
-# is stowed. `claude mcp add` exits 1 when the server already exists.
+# Configure MCP only when this machine has the local Claude package.
 mcp:
-	@command -v claude >/dev/null 2>&1 || { echo "mcp: claude not installed, skipping"; exit 0; }
-	@claude mcp get codex >/dev/null 2>&1 || claude mcp add -s user codex -- codex mcp-server
+	@test -d claude || { echo "mcp: no local Claude package, skipping"; exit 0; }; \
+	command -v claude >/dev/null 2>&1 || { echo "mcp: claude not installed, skipping"; exit 0; }; \
+	claude mcp get codex >/dev/null 2>&1 || claude mcp add -s user codex -- codex mcp-server
 
 check:
 	$(MAKE) -n $(PLUGIN_BUILD_TARGETS) >/dev/null

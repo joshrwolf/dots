@@ -1,4 +1,0 @@
-#:schema https://github.com/joshmedeski/sesh/raw/main/sesh.schema.json
-
-[default_session]
-startup_command = "[ \"$(basename \"$PWD\")\" = main ] && tmux rename-session \"$(basename \"$(dirname \"$PWD\")\")\" 2>/dev/null; tmux rename-window \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null || basename \"$PWD\")\" 2>/dev/null; clear"

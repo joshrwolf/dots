@@ -2,13 +2,23 @@
 .idea/
 .envrc
 
+# Machine-local configuration; omitted from fresh clones.
+/zsh/
+/sesh/
+/starship/
+/git/
+/ghostty/
+/fzf/
+/codex/
+/claude/
+/bin/
+/tmux/
+/worktrunk/
+/tools/
+
 **/*.old
 **/*hide.lua
 **/keys/
-
-# Private claude skills and commands (stowed but not published)
-claude/.claude/skills/apk-query/
-claude/.claude/commands/new-charts.md
 
 # Game audio; this repo is public
 herdr/.config/herdr/sounds/*.mp3
