@@ -1,0 +1,39 @@
+# Named colors inherit Ghostty's GitHub Light ANSI palette.
+# Avoid eza's extended-palette defaults, which can be faint on a white background.
+filekinds:
+  normal: {foreground: Black}
+  directory: {foreground: Blue}
+  symlink: {foreground: Purple}
+  executable: {foreground: Green}
+file_type:
+  image: {foreground: Purple}
+  video: {foreground: Purple}
+  music: {foreground: Cyan}
+  lossless: {foreground: Cyan}
+  crypto: {foreground: Green}
+  document: {foreground: Black}
+  compressed: {foreground: Red}
+  temp: {foreground: DarkGray}
+  compiled: {foreground: Yellow}
+  build: {foreground: Yellow}
+  source: {foreground: Black}
+size:
+  number_byte: {foreground: Green}
+  number_kilo: {foreground: Green}
+  number_mega: {foreground: Yellow}
+  number_giga: {foreground: Red}
+  number_huge: {foreground: Red}
+  unit_byte: {foreground: DarkGray}
+  unit_kilo: {foreground: DarkGray}
+  unit_mega: {foreground: DarkGray}
+  unit_giga: {foreground: DarkGray}
+  unit_huge: {foreground: DarkGray}
+git:
+  new: {foreground: Green}
+  modified: {foreground: Yellow}
+  deleted: {foreground: Red}
+  renamed: {foreground: Purple}
+  ignored: {foreground: DarkGray}
+  conflicted: {foreground: Red}
+date: {foreground: DarkGray}
+punctuation: {foreground: DarkGray}

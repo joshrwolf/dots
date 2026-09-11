@@ -1,0 +1,1 @@
+../../../theme/.config/theme/current/nvim.lua

@@ -112,7 +112,7 @@ mod tests {
             let expected = vec![
                 "make".to_owned(),
                 "-C".to_owned(),
-                "../..".to_owned(),
+                "..".to_owned(),
                 format!("plugin-build-{plugin}"),
             ];
             ensure!(

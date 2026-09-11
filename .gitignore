@@ -3,13 +3,10 @@
 .envrc
 
 # Machine-local configuration; omitted from fresh clones.
-/zsh/
 /sesh/
 /starship/
 /git/
-/ghostty/
 /fzf/
-/codex/
 /claude/
 /bin/
 /tmux/

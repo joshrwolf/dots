@@ -6,7 +6,7 @@ description = "Review repository code in Herdr and Neovim"
 platforms = ["macos", "linux"]
 
 [[build]]
-command = ["make", "-C", "../..", "plugin-build-review"]
+command = ["make", "-C", "..", "plugin-build-review"]
 
 [[panes]]
 id = "open"

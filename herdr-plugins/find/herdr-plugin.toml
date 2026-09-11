@@ -8,7 +8,7 @@ platforms = ["macos", "linux"]
 # Never runs on `herdr plugin link`, only on `herdr plugin install`. The target
 # builds and atomically stages only this plugin.
 [[build]]
-command = ["make", "-C", "../..", "plugin-build-find"]
+command = ["make", "-C", "..", "plugin-build-find"]
 
 # A popup rather than an overlay pane: the picker is modal and short-lived, it
 # re-indexes on every invocation, and it needs nothing from the calling pane —

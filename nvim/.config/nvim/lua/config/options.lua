@@ -1,29 +1,18 @@
--- Options are automatically loaded before lazy.nvim startup
--- Default options that are always set: https://github.com/LazyVim/LazyVim/blob/main/lua/lazyvim/config/options.lua
--- Add any additional options here
+vim.opt.number = true
+vim.opt.undofile = true
+vim.opt.ignorecase = true
+vim.opt.smartcase = true
+vim.opt.splitbelow = true
+vim.opt.splitright = true
+vim.opt.signcolumn = "yes"
 
-vim.g.lazyvim_picker = "snacks"
-vim.g.snacks_animate = false
+vim.opt.confirm = true -- Offer to save modified buffers before closing them.
+vim.opt.cursorline = true
+vim.opt.scrolloff = 4 -- Keep context above and below the cursor.
+vim.opt.splitkeep = "screen" -- Avoid scrolling existing windows when splitting.
 
-vim.opt.jumpoptions = "view" -- restore location when jumping through buffers
-vim.opt.swapfile = false
-vim.opt.writebackup = false
-vim.opt.autoread = true -- auto reload file when changed outside of vim
+-- Show completion documentation without inserting a candidate before acceptance.
+vim.opt.completeopt = { "menu", "menuone", "noselect", "popup" }
 
-vim.g.lazyvim_python_lsp = "basedpyright"
-
--- Use OSC 52 for clipboard over SSH — passes through tmux to Mac clipboard
-if os.getenv("SSH_TTY") then
-  vim.opt.clipboard = "unnamedplus"
-  vim.g.clipboard = {
-    name = "OSC 52",
-    copy = {
-      ["+"] = require("vim.ui.clipboard.osc52").copy("+"),
-      ["*"] = require("vim.ui.clipboard.osc52").copy("*"),
-    },
-    paste = {
-      ["+"] = function() return { vim.fn.split(vim.fn.getreg(""), "\n"), vim.fn.getregtype("") } end,
-      ["*"] = function() return { vim.fn.split(vim.fn.getreg(""), "\n"), vim.fn.getregtype("") } end,
-    },
-  }
-end
+-- autoread is already enabled by default. This Neovim build also watches files
+-- for external edits; modified buffers remain protected from automatic reload.

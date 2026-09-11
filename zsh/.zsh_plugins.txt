@@ -1,0 +1,12 @@
+mattmc3/zephyr path:plugins/homebrew
+mattmc3/zephyr path:plugins/color
+mattmc3/zephyr path:plugins/compstyle
+
+zsh-users/zsh-completions kind:fpath path:src
+mattmc3/zephyr path:plugins/completion
+mattmc3/zephyr path:plugins/editor post:fzf-shell-init
+mattmc3/zephyr path:plugins/prompt
+mattmc3/zephyr path:plugins/macos
+
+zsh-users/zsh-autosuggestions
+zsh-users/zsh-syntax-highlighting

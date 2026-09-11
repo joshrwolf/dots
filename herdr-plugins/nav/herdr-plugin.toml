@@ -7,7 +7,7 @@ platforms = ["macos", "linux"]
 
 # Build and atomically stage only this plugin.
 [[build]]
-command = ["make", "-C", "../..", "plugin-build-nav"]
+command = ["make", "-C", "..", "plugin-build-nav"]
 
 # On the hottest keys in the config, so this is one socket call to read the
 # pane and one to act — not a shell, a CLI spawn and a jq per press.

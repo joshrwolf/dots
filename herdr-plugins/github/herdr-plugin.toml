@@ -6,7 +6,7 @@ description = "GitHub status and workflows for herdr workspaces"
 platforms = ["macos", "linux"]
 
 [[build]]
-command = ["make", "-C", "../..", "plugin-build-github"]
+command = ["make", "-C", "..", "plugin-build-github"]
 
 [[actions]]
 id = "ci-refresh"
