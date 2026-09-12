@@ -3,6 +3,11 @@ typeset -U path PATH
 path=(
   "$HOME/.local/share/bob/nvim-bin"
   "$HOME/.local/bin"
+  # Homebrew keeps unversioned python/pip here; opt/python follows its default release.
+  "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/python/libexec/bin"
+  "${HOMEBREW_PREFIX:-/opt/homebrew}/bin"
+  # Include optional components installed through gcloud's component manager.
+  "${HOMEBREW_PREFIX:-/opt/homebrew}/share/google-cloud-sdk/bin"
   "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/rustup/bin"
   $path
 )
@@ -41,10 +46,15 @@ fzf-shell-init() {
 source "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/antidote/share/antidote/antidote.zsh"
 antidote load "${ZDOTDIR:-$HOME}/.zsh_plugins.txt"
 
+# Google's completion script must run after compinit; the cask's symlink alone isn't autoloadable.
+if [[ -r "${HOMEBREW_PREFIX:-/opt/homebrew}/share/google-cloud-sdk/completion.zsh.inc" ]]; then
+  source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/google-cloud-sdk/completion.zsh.inc"
+fi
+
 # Zephyr has no eza module. Replace its BSD ls alias after loading color.
 if (( $+commands[eza] )); then
-  alias ls='eza --icons=auto --group-directories-first'
-  alias ll='ls --long --git'
+  alias ls='eza --icons=auto --group-directories-first --no-git'
+  alias ll='ls --long'
   alias l='ll'
   alias la='ll --all'
   alias lt='ls --tree --level=2'

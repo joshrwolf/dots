@@ -1,4 +1,4 @@
-STOW_PACKAGES := aerospace brew codex ghostty theme zsh
+STOW_PACKAGES := aerospace brew codex ghostty skills theme zsh
 HERDR_STOW_PACKAGES := herdr nvim
 HERDR_PLUGINS := herdr-plugins
 
@@ -12,6 +12,9 @@ unstow:
 
 nvim:
 	stow --verbose --target="$(HOME)" --restow nvim
+
+skills:
+	stow --verbose --target="$(HOME)" --restow skills
 
 # Preserve the required setup order: binaries, config, then registration.
 herdr: herdr-build
@@ -31,4 +34,4 @@ herdr-check:
 plugin-build-%:
 	$(MAKE) -C $(HERDR_PLUGINS) $@
 
-.PHONY: all stow unstow nvim herdr herdr-build herdr-link herdr-check
+.PHONY: all stow unstow nvim skills herdr herdr-build herdr-link herdr-check

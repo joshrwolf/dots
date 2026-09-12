@@ -195,9 +195,9 @@ pub fn groups() -> Vec<Group<DestinationKind>> {
             kind.section(),
             vec![
                 Column::new(GLYPH),
-                Column::new(REPO),
-                Column::new(BRANCH),
-                Column::fill(),
+                Column::new(REPO).heading("repository"),
+                Column::new(BRANCH).heading("branch"),
+                Column::fill().heading("directory"),
                 Column::new(MARK),
             ],
         )
@@ -209,17 +209,17 @@ pub fn groups() -> Vec<Group<DestinationKind>> {
             DestinationKind::Agent.section(),
             vec![
                 Column::new(GLYPH),
-                Column::new(AGENT_NAME),
-                Column::new(AGENT_REPO),
-                Column::new(AGENT_BRANCH),
-                Column::fill(),
+                Column::new(AGENT_NAME).heading("agent"),
+                Column::new(AGENT_REPO).heading("repository"),
+                Column::new(AGENT_BRANCH).heading("branch"),
+                Column::fill().heading("task"),
             ],
         ),
         repo_columns(DestinationKind::Worktree),
         Group::new(
             DestinationKind::Directory,
             DestinationKind::Directory.section(),
-            vec![Column::new(GLYPH), Column::fill()],
+            vec![Column::new(GLYPH), Column::fill().heading("directory")],
         )
         .scoped('/'),
     ]

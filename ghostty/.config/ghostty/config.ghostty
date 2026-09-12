@@ -5,6 +5,7 @@ window-decoration = none
 
 # Translate macOS shortcuts into Herdr's Ctrl+S prefix chords.
 keybind = cmd+p=text:\x13P
+keybind = cmd+o=text:\x13O
 keybind = cmd+t=text:\x13t
 keybind = cmd+h=text:\x13h
 keybind = cmd+j=text:\x13j

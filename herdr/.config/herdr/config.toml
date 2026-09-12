@@ -12,7 +12,10 @@ selection_bg = "#b6e3ff"
 panel_bg = "#ffffff"
 text = "#1f2328"
 overlay0 = "#57606a"
-accent = "#0969da"
+# Selected tabs use accent as background and panel_bg as text; retain contrast.
+accent = "#526d91"
+surface0 = "#f6f8fa"
+overlay1 = "#57606a"
 blue = "#0969da"
 green = "#1a7f37"
 red = "#cf222e"
@@ -21,6 +24,9 @@ mauve = "#8250df"
 
 [ui]
 status_indicators = "dots"
+tab_bar_position = "bottom"
+pane_outer_borders = false
+pane_gaps = false
 
 [ui.toast]
 delivery = "herdr"
@@ -32,6 +38,8 @@ request_path = "sounds/something-need-doing.mp3"
 
 [keys]
 prefix = "ctrl+s"
+# Global back-and-forth, including panes in other spaces; Ghostty sends Cmd+O here.
+last_pane = "prefix+shift+o"
 
 # Tabs use h/j/k/l so Cmd+H/J/K/L can map cleanly through Ghostty.
 new_tab = ["prefix+t", "prefix+c"]
@@ -53,12 +61,20 @@ resize_pane_left = "prefix+shift+h"
 resize_pane_down = "prefix+shift+j"
 resize_pane_up = "prefix+shift+k"
 resize_pane_right = "prefix+shift+l"
+# Reserve prefix+r for Review; resize panes with the direct bindings above.
+resize_mode = []
 
 [[keys.command]]
 key = "prefix+shift+p"
 type = "shell"
 command = "\"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-find --entrypoint picker"
 description = "find anything (workspaces, agents, worktrees, dirs)"
+
+[[keys.command]]
+key = "prefix+r"
+type = "shell"
+command = "\"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-review --entrypoint open"
+description = "open code review"
 
 [[keys.command]]
 key = "ctrl+h"

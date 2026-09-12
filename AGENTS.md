@@ -21,7 +21,7 @@ GNU stow-managed dotfiles. Package contents mirror `$HOME`, so a file such as
 ## Stow
 
 The root Makefile lists packages explicitly. Plain `make` restows only the base
-`aerospace`, `brew`, `codex`, `ghostty`, `theme`, and `zsh` packages. `make
+`aerospace`, `brew`, `codex`, `ghostty`, `skills`, `theme`, and `zsh` packages. `make
 herdr` owns the optional Herdr setup and restows `herdr` and `nvim` after
 building the plugins.
 

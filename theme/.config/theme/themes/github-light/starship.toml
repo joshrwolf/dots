@@ -1,5 +1,10 @@
-# Keep Starship's default modules and layout; only replace its named colors.
+# Explicit modules keep language/tool versions out of the prompt.
+format = "$directory$git_branch$line_break$character"
 palette = "github_light"
+
+# Show the branch, but leave working-tree scans to an explicit `gst`.
+[git_status]
+disabled = true
 
 [palettes.github_light]
 black = "#24292f"

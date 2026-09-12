@@ -7,7 +7,7 @@ use std::fmt;
 
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo::{Config, Matcher, Utf32String};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation as _;
 
@@ -19,7 +19,7 @@ use super::{Cell, Column, Command, Entry, Error, Group, Width};
 /// Width of the pointer gutter, in cells. Every row reserves it so that a
 /// column lands on the same screen position whether or not it is selected.
 const GUTTER: usize = 2;
-const POINTER: &str = "◆ ";
+const POINTER: &str = "▎ ";
 /// Rule cells before a section's name, so the label is not flush to the edge.
 const LEAD: usize = 3;
 
@@ -39,6 +39,7 @@ pub(super) enum Row {
         group: usize,
         count: usize,
     },
+    Headings(usize),
     Item(usize),
 }
 
@@ -85,6 +86,7 @@ pub struct Model<T> {
     offset: usize,
     matched: usize,
     candidates: usize,
+    group_filter: Option<usize>,
 }
 
 #[expect(
@@ -185,6 +187,7 @@ impl<T: Entry> Model<T> {
             offset: 0,
             matched: 0,
             candidates: 0,
+            group_filter: None,
         };
         model.refresh();
         Ok(model)
@@ -219,7 +222,7 @@ impl<T> Model<T> {
         let row = *self.selectable.get(self.cursor)?;
         match self.rows.get(row)? {
             Row::Item(index) => Some(*index),
-            Row::Section { .. } => None,
+            Row::Section { .. } | Row::Headings(_) => None,
         }
     }
 
@@ -250,10 +253,58 @@ impl<T> Model<T> {
                 self.cursor = self.cursor.saturating_add(by).min(last);
             }
             Command::Previous(by) => self.cursor = self.cursor.saturating_sub(by),
+            Command::NextScope => self.cycle_scope(false),
+            Command::PreviousScope => self.cycle_scope(true),
             Command::Accept => return Some(Outcome::Accept),
             Command::Abort => return Some(Outcome::Abort),
         }
         None
+    }
+
+    /// Query sigils take precedence over the selected group filter.
+    pub fn scope_label(&self) -> &str {
+        let (scope, _) = split_scope(&self.query, &self.layouts);
+        if let Some(sigil) = scope {
+            return self
+                .layouts
+                .iter()
+                .find(|layout| layout.scope == Some(sigil))
+                .map_or("all", |layout| layout.label);
+        }
+        self.group_filter
+            .and_then(|index| self.layouts.get(index))
+            .map_or("all", |layout| layout.label)
+    }
+
+    pub(super) fn has_directory_scope(&self) -> bool {
+        self.layouts.iter().any(|layout| layout.scope == Some('/'))
+    }
+
+    fn cycle_scope(&mut self, backwards: bool) {
+        let (sigil, needle) = split_scope(&self.query, &self.layouts);
+        let current = sigil
+            .and_then(|sigil| {
+                self.layouts
+                    .iter()
+                    .position(|layout| layout.scope == Some(sigil))
+            })
+            .or(self.group_filter);
+        let needle = needle.to_owned();
+        if sigil.is_some() {
+            self.query = needle;
+            self.caret = self.caret.saturating_sub(1);
+        }
+        // Slot zero is the combined view; each following slot is one group.
+        let slots = self.layouts.len() + 1;
+        let slot = current.map_or(0, |index| index + 1);
+        let next = if backwards {
+            (slot + slots - 1) % slots
+        } else {
+            (slot + 1) % slots
+        };
+        self.group_filter = next.checked_sub(1);
+        self.offset = 0;
+        self.refresh();
     }
 
     fn caret_byte(&self) -> usize {
@@ -352,9 +403,11 @@ impl<T> Model<T> {
         }
         // A group's first item says nothing about which group it is in, so pull
         // the divider that names it on screen when there is room for it.
-        if self.offset > 0
-            && matches!(self.rows.get(self.offset), Some(Row::Item(_)))
-            && matches!(self.rows.get(self.offset - 1), Some(Row::Section { .. }))
+        while self.offset > 0
+            && matches!(
+                self.rows.get(self.offset - 1),
+                Some(Row::Section { .. } | Row::Headings(_))
+            )
             && row < self.offset.saturating_add(height).saturating_sub(1)
         {
             self.offset -= 1;
@@ -383,6 +436,7 @@ impl<T> Model<T> {
     fn render_row(&mut self, row: Row, selected: bool, width: usize) -> Line<'static> {
         match row {
             Row::Section { group, count } => self.section_line(group, count, width),
+            Row::Headings(group) => self.heading_line(group, width),
             Row::Item(item) => self.item_line(item, selected, width),
         }
     }
@@ -394,13 +448,7 @@ impl<T> Model<T> {
             .unwrap_or_default()
     }
 
-    /// A rule spanning the row, with the group's name and hit count set into
-    /// it, starting at column zero rather than past the gutter.
-    ///
-    /// A rule rather than a row of column labels: groups here run one to three
-    /// entries, so label rows outnumbered the entries they described, and a
-    /// muted row of words costs a line while still reading as data. A rule
-    /// reads as a boundary at a glance and the count is worth the space.
+    /// A muted divider with the group name and its matching count.
     fn section_line(&self, group: usize, count: usize, width: usize) -> Line<'static> {
         let rule = Style::default().fg(self.theme.muted);
         let label = self.layouts.get(group).map_or("", |layout| layout.label);
@@ -408,16 +456,34 @@ impl<T> Model<T> {
         let lead = LEAD.min(width);
         let mut spans = vec![Span::styled("─".repeat(lead), rule)];
         let mut drawn = lead;
-        for (text, style) in [
-            (format!(" {label} "), Style::default().fg(self.theme.accent)),
-            (format!("({count}) "), rule),
-        ] {
+        for (text, style) in [(format!(" {label} "), rule), (format!("({count}) "), rule)] {
             let shown = columns::truncate(&text, width.saturating_sub(drawn)).into_owned();
             drawn += columns::width(&shown);
             spans.push(Span::styled(shown, style));
         }
         spans.push(Span::styled("─".repeat(width.saturating_sub(drawn)), rule));
         Line::from(spans).style(Style::default().bg(self.theme.background))
+    }
+
+    fn heading_line(&self, group: usize, width: usize) -> Line<'static> {
+        let mut text = " ".repeat(GUTTER.min(width));
+        for (column, budget) in self
+            .columns_of(group)
+            .iter()
+            .zip(budgets(self.columns_of(group), width))
+        {
+            let shown = columns::truncate(&column.heading, budget.saturating_sub(1));
+            text.push_str(&shown);
+            text.push_str(&" ".repeat(budget.saturating_sub(columns::width(&shown))));
+        }
+        text.push_str(&" ".repeat(width.saturating_sub(columns::width(&text))));
+        Line::styled(
+            text,
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(self.theme.muted)
+                .bg(self.theme.background),
+        )
     }
 
     fn item_line(&mut self, item: usize, selected: bool, width: usize) -> Line<'static> {
@@ -486,7 +552,14 @@ impl<T> Model<T> {
 
         let mut hits: Vec<(u32, usize)> = Vec::new();
         for (index, layout) in self.layouts.iter().enumerate() {
-            if layout.scope != scope {
+            let visible = if scope.is_some() {
+                layout.scope == scope
+            } else if let Some(group) = self.group_filter {
+                index == group
+            } else {
+                layout.scope.is_none()
+            };
+            if !visible {
                 continue;
             }
             let bucket = self
@@ -517,6 +590,13 @@ impl<T> Model<T> {
                 group: index,
                 count: hits.len(),
             });
+            if layout
+                .columns
+                .iter()
+                .any(|column| !column.heading.is_empty())
+            {
+                self.rows.push(Row::Headings(index));
+            }
             self.matched += hits.len();
             for &(_, item) in &hits {
                 self.selectable.push(self.rows.len());
@@ -751,7 +831,7 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 Row::Item(index) => model.items.get(*index).map(|t| t.name),
-                Row::Section { .. } => None,
+                Row::Section { .. } | Row::Headings(_) => None,
             })
             .collect()
     }
@@ -800,6 +880,7 @@ mod tests {
                     under = 0;
                 }
                 Row::Item(_) => under += 1,
+                Row::Headings(_) => {}
             }
         }
         assert_eq!(expected, [2], "apple and apricot");

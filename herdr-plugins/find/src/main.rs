@@ -33,7 +33,7 @@ fn run() -> Result<()> {
 
     let chosen = Picker::new(destinations)
         .groups(groups())
-        .prompt("\u{26a1}  ")
+        .prompt("› ")
         .match_paths()
         .run()?;
 

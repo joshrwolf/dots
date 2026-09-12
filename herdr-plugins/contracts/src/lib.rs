@@ -35,6 +35,8 @@ mod tests {
     #[derive(Debug, Deserialize)]
     struct Entrypoint {
         id: String,
+        width: Option<u16>,
+        height: Option<u16>,
         command: Vec<String>,
     }
 
@@ -160,6 +162,12 @@ mod tests {
         ensure!(
             ids(&find.panes) == BTreeSet::from(["picker"]),
             "find pane dispatch drifted"
+        );
+
+        let picker = find.panes.first().context("missing Find picker")?;
+        ensure!(
+            picker.width == Some(120) && picker.height == Some(24),
+            "Find popup must remain 120 by 24 cells"
         );
 
         let nav = manifest("nav")?;

@@ -26,5 +26,5 @@ command = ["./bin/herdr-find"]
 #
 # The agent group spends FIXED_CELLS on columns before `task` gets anything, so
 # this has to clear it by enough to leave a task title legible.
-width = 100
+width = 120
 height = 24

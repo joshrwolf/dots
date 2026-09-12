@@ -1,0 +1,2 @@
+- Only send messages or replies to other people (on GitHub or elsewhere) when I explicitly ask.
+- Always append a `Generated with <model>` footer to those messages, using your actual model name.

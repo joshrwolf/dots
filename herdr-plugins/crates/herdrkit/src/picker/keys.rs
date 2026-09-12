@@ -18,6 +18,8 @@ pub enum Command {
     CaretRight,
     Next(usize),
     Previous(usize),
+    NextScope,
+    PreviousScope,
     Accept,
     Abort,
 }
@@ -60,6 +62,8 @@ pub fn command(key: KeyEvent, page: usize) -> Option<Command> {
         KeyCode::Up => Command::Previous(1),
         KeyCode::PageDown => Command::Next(page),
         KeyCode::PageUp => Command::Previous(page),
+        KeyCode::Tab => Command::NextScope,
+        KeyCode::BackTab => Command::PreviousScope,
         KeyCode::Enter => Command::Accept,
         KeyCode::Esc => Command::Abort,
         _ => return None,
@@ -143,7 +147,8 @@ mod tests {
     #[test]
     fn an_unmapped_key_is_declined_rather_than_swallowed() {
         assert_eq!(plain(KeyCode::F(5)), None);
-        assert_eq!(plain(KeyCode::Tab), None);
+        assert_eq!(plain(KeyCode::Tab), Some(Command::NextScope));
+        assert_eq!(plain(KeyCode::BackTab), Some(Command::PreviousScope));
         assert_eq!(ctrl('z'), None);
     }
 }

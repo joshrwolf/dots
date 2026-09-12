@@ -404,6 +404,59 @@ mod tests {
         );
     }
 
+    #[test]
+    fn scopes_cycle_without_losing_the_query_and_directory_sigil_wins() {
+        use herdrkit::picker::{Command, Picker};
+        let mut model = Picker::new(built())
+            .groups(crate::groups())
+            .build()
+            .unwrap();
+        for (label, count) in [
+            ("workspaces", 3),
+            ("agents", 2),
+            ("worktrees", 1),
+            ("directories", 2),
+            ("all", 6),
+        ] {
+            model.apply(Command::NextScope);
+            assert_eq!(model.scope_label(), label);
+            assert_eq!(model.matched(), count);
+        }
+        model.apply(Command::PreviousScope);
+        assert_eq!(model.scope_label(), "directories");
+        model.apply(Command::NextScope);
+        for ch in "/notes".chars() {
+            model.apply(Command::Insert(ch));
+        }
+        assert_eq!(model.matched(), 1);
+        model.apply(Command::PreviousScope);
+        assert_eq!(model.scope_label(), "worktrees");
+        assert_eq!(model.query(), "notes");
+        assert_eq!(model.matched(), 0);
+        model.apply(Command::NextScope);
+        assert_eq!(model.matched(), 1);
+    }
+
+    #[test]
+    fn headings_and_selection_remain_aligned_at_narrow_widths() {
+        use herdrkit::picker::{Command, Picker};
+        let mut model = Picker::new(built())
+            .groups(crate::groups())
+            .build()
+            .unwrap();
+        for width in 0..=120 {
+            model.scroll_into_view(24);
+            for line in model.lines(width, 24) {
+                assert_eq!(line.width(), width);
+            }
+        }
+        model.apply(Command::NextScope);
+        model.apply(Command::NextScope);
+        let rows = model.lines(116, 24);
+        assert!(rows.iter().any(|line| line.to_string().contains("task")));
+        assert!(rows.iter().any(|line| line.to_string().starts_with("▎ ")));
+    }
+
     fn matches(query: &str) -> usize {
         let mut model = herdrkit::picker::Picker::new(built())
             .groups(crate::groups())

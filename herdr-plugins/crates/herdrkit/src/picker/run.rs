@@ -7,7 +7,7 @@ use std::io;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Margin};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
@@ -96,8 +96,47 @@ impl Drop for BracketedPaste {
 fn draw<T>(frame: &mut Frame<'_>, model: &mut Model<T>, prompt: &str) -> usize {
     let theme = model.theme();
     let area = frame.area();
-    let [head, body] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-    let width = usize::from(area.width);
+    frame.render_widget(
+        Paragraph::default().style(Style::default().bg(theme.background)),
+        area,
+    );
+    let roomy = area.height >= 9 && area.width >= 12;
+    let content = if roomy {
+        area.inner(Margin::new(1, 1))
+    } else {
+        area
+    };
+    let chrome = u16::from(roomy);
+    let [scope, head, gap, body, rule, footer] = Layout::vertical([
+        Constraint::Length(chrome),
+        Constraint::Length(1),
+        Constraint::Length(chrome),
+        Constraint::Min(0),
+        Constraint::Length(chrome),
+        Constraint::Length(2 * chrome),
+    ])
+    .areas(content);
+    let width = usize::from(content.width);
+    if roomy {
+        let muted = Style::default().fg(theme.muted).bg(theme.background);
+        frame.render_widget(
+            Paragraph::new(format!("Scope · {}", model.scope_label())).style(muted),
+            scope,
+        );
+        for area in [gap, rule] {
+            frame.render_widget(Paragraph::new("─".repeat(width)).style(muted), area);
+        }
+        let directories = if model.has_directory_scope() {
+            " · / directories"
+        } else {
+            ""
+        };
+        let help = vec![
+            Line::raw("enter open · esc close · ↑/↓ or ctrl+j/k move"),
+            Line::raw(format!("tab/shift+tab scope · ctrl+u clear{directories}")),
+        ];
+        frame.render_widget(Paragraph::new(help).style(muted), footer);
+    }
     let height = usize::from(body.height);
 
     model.scroll_into_view(height);
@@ -116,7 +155,9 @@ fn draw<T>(frame: &mut Frame<'_>, model: &mut Model<T>, prompt: &str) -> usize {
     let x = head
         .x
         .saturating_add(u16::try_from(caret).unwrap_or(u16::MAX));
-    frame.set_cursor_position((x.min(head.right().saturating_sub(1)), head.y));
+    if head.width > 0 && head.height > 0 {
+        frame.set_cursor_position((x.min(head.right().saturating_sub(1)), head.y));
+    }
 
     height
 }
@@ -159,7 +200,7 @@ fn prompt_line<T>(
 #[cfg(test)]
 mod tests {
     use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
+    use ratatui::backend::{Backend as _, TestBackend};
     use ratatui::style::Color;
 
     use super::*;
@@ -200,6 +241,26 @@ mod tests {
                 .sum();
             assert_eq!(drawn, width, "prompt at width {width}");
             assert!(input_width <= width);
+        }
+    }
+
+    #[test]
+    fn chrome_and_cursor_fit_resized_terminals() {
+        for width in [0, 1, 11, 12, 40, 120] {
+            for height in [0, 1, 8, 9, 24] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                let mut model = model();
+                model.insert_text("cafe\u{301} 一 👩‍💻");
+                terminal
+                    .draw(|frame| {
+                        draw(frame, &mut model, "› ");
+                    })
+                    .unwrap();
+                if width > 0 && height > 0 {
+                    let (x, y) = terminal.backend_mut().get_cursor_position().unwrap().into();
+                    assert!(x < width && y < height);
+                }
+            }
         }
     }
 

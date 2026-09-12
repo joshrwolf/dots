@@ -117,23 +117,32 @@ pub enum Width {
     Fill,
 }
 
-/// A column carries no label of its own: a group is titled once, by its own
-/// divider, and the content of a row of names and paths says what it is.
+/// A column with an optional heading, aligned using the same width as its cells.
 #[derive(Debug, Clone)]
 #[must_use]
 pub struct Column {
     width: Width,
+    heading: String,
 }
 
 impl Column {
     pub fn new(cells: usize) -> Self {
         Self {
             width: Width::Cells(cells),
+            heading: String::new(),
         }
     }
 
     pub fn fill() -> Self {
-        Self { width: Width::Fill }
+        Self {
+            width: Width::Fill,
+            heading: String::new(),
+        }
+    }
+
+    pub fn heading(mut self, text: impl Into<String>) -> Self {
+        self.heading = single_line(text.into());
+        self
     }
 
     /// Cells this column always needs, ignoring whatever a fill would take.
