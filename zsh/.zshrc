@@ -3,6 +3,10 @@ typeset -U path PATH
 path=(
   "$HOME/.local/share/bob/nvim-bin"
   "$HOME/.local/bin"
+  # Use GNU command names for portable Linux-oriented build scripts.
+  "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/coreutils/libexec/gnubin"
+  "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/gnu-tar/libexec/gnubin"
+  "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/make/libexec/gnubin"
   # Homebrew keeps unversioned python/pip here; opt/python follows its default release.
   "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/python/libexec/bin"
   "${HOMEBREW_PREFIX:-/opt/homebrew}/bin"
