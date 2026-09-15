@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 herdrkit.workspace = true
+herdr-review.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 

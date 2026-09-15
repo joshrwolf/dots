@@ -82,9 +82,9 @@ impl Entry for Candidate {
                 };
                 vec![
                     Cell::tag(if active { "◆" } else { "" }, theme.green),
-                    Cell::new(activity.repository.display_name(), theme.accent),
+                    Cell::new(activity.repository.display_name(), theme.muted),
                     Cell::new(activity.context.title.clone(), theme.strong),
-                    Cell::new(reference_label(&activity.context), theme.blue),
+                    Cell::new(reference_label(&activity.context), theme.muted),
                     Cell::new(runtime, if active { theme.green } else { theme.muted }),
                     Cell::tag(thread_label(activity.open_threads), theme.muted),
                 ]
@@ -233,7 +233,7 @@ impl Entry for RepositoryCandidate {
         };
         vec![
             Cell::new(self.0.display_name(), theme.strong),
-            Cell::new(
+            Cell::path(
                 self.0.repository.checkout_root().display().to_string(),
                 theme.muted,
             ),
@@ -260,7 +260,7 @@ pub(crate) fn choose_repository(
         .group(Group::new(
             (),
             "matching clones",
-            vec![Column::new(22), Column::fill(), Column::new(24)],
+            vec![Column::content(22), Column::fill(), Column::content(24)],
         ))
         .prompt("clone  ")
         .match_paths()
@@ -294,9 +294,9 @@ fn live_workspace_labels(
 fn new_cells(theme: &Theme, repository: &str, title: &str, detail: &str) -> Vec<Cell> {
     vec![
         Cell::tag("+", theme.accent),
-        Cell::new(repository, theme.accent),
+        Cell::new(repository, theme.muted),
         Cell::new(title, theme.strong),
-        Cell::new(detail, theme.blue),
+        Cell::new(detail, theme.muted),
         Cell::tag("GitHub", theme.muted),
         Cell::tag("", theme.muted),
     ]
@@ -308,12 +308,12 @@ fn groups() -> Vec<Group<CandidateGroup>> {
             key,
             label,
             vec![
-                Column::new(2),
-                Column::new(18),
+                Column::new(3),
+                Column::content(18),
                 Column::fill(),
-                Column::new(24),
-                Column::new(22),
-                Column::new(10),
+                Column::content(24),
+                Column::content(22),
+                Column::content(10),
             ],
         )
     };

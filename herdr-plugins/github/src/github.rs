@@ -1,14 +1,10 @@
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::{Command, Output};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use serde::Deserialize;
-
-const COMMAND_DEADLINE: Duration = Duration::from_secs(30);
-const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -186,31 +182,72 @@ pub fn lookup(dir: &Path) -> Result<Lookup> {
     lookup_with(&SystemCommandRunner, dir)
 }
 
-/// Local checkout identity; no worktree scan or network request.
-pub(crate) fn checkout_identity(dir: &Path) -> Result<String> {
-    let mut head = git_with(
-        &SystemCommandRunner,
-        dir,
-        &["rev-parse", "--abbrev-ref", "HEAD"],
-    )?;
-    if head.trim() == "HEAD" {
-        head = git_with(&SystemCommandRunner, dir, &["rev-parse", "HEAD"])?;
-    }
-    let remote = git_with(
-        &SystemCommandRunner,
-        dir,
-        &["config", "--get", "remote.origin.url"],
-    )?;
-    Ok(format!("{remote}\n{head}"))
+/// Local inputs to gh's repository selection plus any explicitly bound review.
+/// Remote names are unrestricted; gh's set-default marker is included without
+/// making a network request during sidebar inventory or publication.
+pub(crate) fn checkout_identity(
+    dir: &Path,
+    server: &str,
+    workspace: &herdrkit::WorkspaceId,
+) -> Result<String> {
+    let local = local_identity_with(&SystemCommandRunner, dir)?;
+    Ok(serde_json::to_string(&(
+        local,
+        review_url(dir, server, workspace)?,
+    ))?)
 }
 
-/// Resolve a branch once, independently of periodically fetching its PR status.
-pub(crate) fn discover(dir: &Path) -> Result<Option<String>> {
+fn local_identity_with(runner: &impl CommandRunner, dir: &Path) -> Result<String> {
+    let mut head = git_with(runner, dir, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    if head == "HEAD" {
+        head = git_with(runner, dir, &["rev-parse", "HEAD"])?;
+    }
+    let config = git_optional_with(
+        runner,
+        dir,
+        &["config", "--get-regexp", "^(remote\\.|branch\\.)"],
+    )?;
+    Ok(serde_json::to_string(&(head, config))?)
+}
+
+fn review_url(
+    dir: &Path,
+    server: &str,
+    workspace: &herdrkit::WorkspaceId,
+) -> Result<Option<String>> {
+    let repository = review_core::Repository::discover(dir)?;
+    let url = repository.managed_runtime_reference(server, workspace, "github.pull_request")?;
+    if let Some(url) = &url {
+        anyhow::ensure!(
+            matches!(
+                github_client::Target::parse(url)?,
+                github_client::Target::Url(_)
+            ),
+            "review reference is not a PR URL"
+        );
+    }
+    Ok(url)
+}
+
+/// Prefer the saved URL for a managed review. Ordinary checkouts use gh's
+/// current-branch lookup and configured default repository, including forks.
+pub(crate) fn discover(
+    dir: &Path,
+    server: &str,
+    workspace: &herdrkit::WorkspaceId,
+) -> Result<Option<String>> {
+    if let Some(url) = review_url(dir, server, workspace)? {
+        return Ok(Some(url));
+    }
+    discover_with(&SystemCommandRunner, dir)
+}
+
+fn discover_with(runner: &impl CommandRunner, dir: &Path) -> Result<Option<String>> {
     #[derive(Deserialize)]
     struct Located {
         url: String,
     }
-    let output = SystemCommandRunner.output(dir, "gh", &["pr", "view", "--json", "url"])?;
+    let output = runner.output(dir, "gh", &["pr", "view", "--json", "url"])?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr);
         if error
@@ -223,7 +260,10 @@ pub(crate) fn discover(dir: &Path) -> Result<Option<String>> {
     }
     let located: Located = serde_json::from_slice(&output.stdout)?;
     anyhow::ensure!(
-        located.url.starts_with("https://") && located.url.contains("/pull/"),
+        matches!(
+            github_client::Target::parse(&located.url)?,
+            github_client::Target::Url(_)
+        ),
         "invalid pull request locator"
     );
     Ok(Some(located.url))
@@ -458,74 +498,13 @@ struct SystemCommandRunner;
 
 impl CommandRunner for SystemCommandRunner {
     fn output(&self, dir: &Path, program: &str, args: &[&str]) -> Result<Output> {
-        command_with_deadline(dir, program, args, COMMAND_DEADLINE)
-    }
-}
-
-fn command_with_deadline(
-    dir: &Path,
-    program: &str,
-    args: &[&str],
-    deadline: Duration,
-) -> Result<Output> {
-    let mut child = Command::new(program)
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GH_HTTP_TIMEOUT", "10")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("starting {program} in {}", dir.display()))?;
-    let stdout = child.stdout.take().context("capturing command stdout")?;
-    let stderr = child.stderr.take().context("capturing command stderr")?;
-    let stdout = thread::spawn(move || read_all(stdout));
-    let stderr = thread::spawn(move || read_all(stderr));
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < deadline => thread::sleep(COMMAND_POLL_INTERVAL),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout.join();
-                let _ = stderr.join();
-                bail!(
-                    "{program} {} exceeded its {deadline:?} deadline",
-                    args.join(" ")
-                );
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout.join();
-                let _ = stderr.join();
-                return Err(error).context("checking command status");
-            }
+        let client = github_client::Client;
+        match program {
+            "git" => client.git(dir, args).map_err(Into::into),
+            "gh" => client.gh(dir, args).map_err(Into::into),
+            _ => bail!("unsupported GitHub adapter command: {program}"),
         }
-    };
-    Ok(Output {
-        status,
-        stdout: join_reader(stdout, "stdout")?,
-        stderr: join_reader(stderr, "stderr")?,
-    })
-}
-
-fn read_all(mut reader: impl std::io::Read) -> std::io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut reader, &mut bytes)?;
-    Ok(bytes)
-}
-
-fn join_reader(
-    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
-    stream: &str,
-) -> Result<Vec<u8>> {
-    reader
-        .join()
-        .map_err(|_| anyhow::anyhow!("command {stream} reader panicked"))?
-        .with_context(|| format!("reading command {stream}"))
+    }
 }
 
 fn git_with(runner: &impl CommandRunner, dir: &Path, args: &[&str]) -> Result<String> {
@@ -603,6 +582,66 @@ mod tests {
             stdout: stdout.as_bytes().to_vec(),
             stderr: stderr.as_bytes().to_vec(),
         }
+    }
+
+    #[test]
+    fn identity_tracks_all_remotes_and_gh_default_without_requiring_origin() {
+        let configs = [
+            None,
+            Some("remote.upstream.url git@github.com:example/project.git"),
+            Some(
+                "remote.upstream.url git@github.com:example/project.git\nremote.upstream.gh-resolved base",
+            ),
+            Some(
+                "remote.upstream.url git@github.com:example/another.git\nremote.upstream.gh-resolved base",
+            ),
+        ];
+        let identities: std::collections::BTreeSet<_> = configs
+            .into_iter()
+            .map(|config| {
+                let runner = FakeRunner::new(vec![
+                    output(0, "feature", ""),
+                    output(i32::from(config.is_none()), config.unwrap_or_default(), ""),
+                ]);
+                let identity = local_identity_with(&runner, Path::new("/unused")).unwrap();
+                assert_eq!(
+                    runner.calls.lock().unwrap().last().unwrap().1,
+                    ["config", "--get-regexp", "^(remote\\.|branch\\.)"]
+                );
+                identity
+            })
+            .collect();
+        assert_eq!(identities.len(), 4);
+    }
+
+    #[test]
+    fn ordinary_discovery_delegates_repository_selection_to_gh() {
+        let runner = FakeRunner::new(vec![output(
+            0,
+            r#"{"url":"https://github.com/example/project/pull/7"}"#,
+            "",
+        )]);
+        assert_eq!(
+            discover_with(&runner, Path::new("/unused"))
+                .unwrap()
+                .as_deref(),
+            Some("https://github.com/example/project/pull/7")
+        );
+        assert_eq!(
+            *runner.calls.lock().unwrap(),
+            vec![(
+                "gh".into(),
+                vec!["pr".into(), "view".into(), "--json".into(), "url".into()]
+            )]
+        );
+        let runner = FakeRunner::new(vec![output(
+            1,
+            "",
+            "no pull requests found for branch main",
+        )]);
+        assert_eq!(discover_with(&runner, Path::new("/unused")).unwrap(), None);
+        let runner = FakeRunner::new(vec![output(1, "", "HTTP 401")]);
+        assert!(discover_with(&runner, Path::new("/unused")).is_err());
     }
 
     fn check(bucket: CheckBucket) -> Check {
@@ -783,17 +822,5 @@ mod tests {
         assert_eq!(review("null", "[{}]"), ReviewStatus::Requested);
         assert_eq!(review("null", "[]"), ReviewStatus::NotReviewed);
         assert_eq!(review(r#""FUTURE_STATE""#, "[]"), ReviewStatus::Unknown);
-    }
-
-    #[test]
-    fn a_command_deadline_kills_and_reaps_the_child() {
-        let error = command_with_deadline(
-            Path::new("/tmp"),
-            "sh",
-            &["-c", "sleep 2"],
-            Duration::from_millis(20),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("exceeded"));
     }
 }

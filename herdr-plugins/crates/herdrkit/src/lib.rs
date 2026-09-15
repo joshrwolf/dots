@@ -17,10 +17,12 @@
 
 pub mod api;
 pub mod apps;
+pub mod connection;
 pub mod events;
 pub mod picker;
 pub mod runtime;
 pub mod service;
+pub mod worktree;
 
 mod columns;
 mod env;

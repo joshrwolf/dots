@@ -5,22 +5,17 @@ use herdrkit::api::{AgentStatus, Repository};
 use herdrkit::picker::{Cell, Column, Entry, Group};
 use herdrkit::{PaneId, Theme, WorkspaceId};
 
-/// Column widths, in cells. Workspaces and worktrees share a set because they
-/// are the same thing in two states, and a query mixes the groups back together.
-const GLYPH: usize = 2;
+/// Column widths, in cells.
+const GLYPH: usize = 3;
+const WORKSPACE: usize = 24;
 const REPO: usize = 14;
-const BRANCH: usize = 24;
-const MARK: usize = 2;
-const AGENT_NAME: usize = 16;
+const BRANCH: usize = 36;
+const MARK: usize = 3;
+const AGENT_NAME: usize = 12;
 const AGENT_REPO: usize = 13;
-const AGENT_BRANCH: usize = 20;
-
-/// Cells the agent group spends before its filled column gets anything.
-///
-/// The popup width in `herdr-plugin.toml` has to clear this by enough to leave
-/// a task readable, which is asserted rather than assumed — at 40% of a
-/// 180-column terminal the task column came out at zero cells.
-pub const FIXED_CELLS: usize = GLYPH + AGENT_NAME + AGENT_REPO + AGENT_BRANCH;
+const AGENT_BRANCH: usize = 36;
+// Nine cells for the longest status plus the shared two-cell column gap.
+const AGENT_STATUS: usize = 11;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DestinationKind {
@@ -28,6 +23,13 @@ pub enum DestinationKind {
     Agent,
     Worktree,
     Directory,
+}
+
+/// Attention is a presentation group, not a different kind of destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DestinationGroup {
+    Attention,
+    Kind(DestinationKind),
 }
 
 impl DestinationKind {
@@ -58,6 +60,8 @@ impl DestinationKind {
 pub enum Destination {
     Workspace {
         id: WorkspaceId,
+        label: String,
+        nested: bool,
         repository: Option<Repository>,
         branch: String,
         display_path: String,
@@ -67,6 +71,7 @@ pub enum Destination {
     Agent {
         pane: PaneId,
         name: String,
+        workspace_label: String,
         status: AgentStatus,
         repository: Option<Repository>,
         branch: String,
@@ -85,6 +90,16 @@ pub enum Destination {
 }
 
 impl Destination {
+    fn needs_attention(&self) -> bool {
+        matches!(
+            self,
+            Self::Agent {
+                status: AgentStatus::Blocked | AgentStatus::Done,
+                ..
+            }
+        )
+    }
+
     pub fn kind(&self) -> DestinationKind {
         match self {
             Destination::Workspace { .. } => DestinationKind::Workspace,
@@ -96,15 +111,21 @@ impl Destination {
 }
 
 impl Entry for Destination {
-    type Group = DestinationKind;
+    type Group = DestinationGroup;
 
-    fn group(&self) -> DestinationKind {
-        self.kind()
+    fn group(&self) -> DestinationGroup {
+        if self.needs_attention() {
+            DestinationGroup::Attention
+        } else {
+            DestinationGroup::Kind(self.kind())
+        }
     }
 
     fn cells(&self, theme: &Theme) -> Vec<Cell> {
         match self {
             Destination::Workspace {
+                label,
+                nested,
                 repository,
                 branch,
                 display_path,
@@ -113,14 +134,14 @@ impl Entry for Destination {
                 ..
             } => vec![
                 glyph(*status, theme),
-                Cell::new(repository_name(repository.as_ref()), theme.strong),
-                Cell::new(branch.clone(), theme.blue),
-                Cell::new(display_path.clone(), theme.muted),
+                Cell::new(label.clone(), theme.strong).prefix(if *nested { "└─ " } else { "" }),
+                Cell::new(repository_name(repository.as_ref()), theme.muted),
+                Cell::new(branch.clone(), theme.muted),
+                Cell::path(display_path.clone(), theme.muted),
                 Cell::tag(if *focused { "←" } else { "" }, theme.accent),
             ],
-            // No status column: the glyph in the gutter already carries the
-            // status in its shape and its colour, and spelling it out again
-            // cost ten cells of the task title beside it.
+            // Words distinguish a request from a completion without relying
+            // on the user's ability to distinguish the status colors.
             Destination::Agent {
                 name,
                 status,
@@ -129,10 +150,10 @@ impl Entry for Destination {
                 task,
                 ..
             } => vec![
-                glyph(*status, theme),
+                agent_status(*status, theme),
                 Cell::new(name.clone(), theme.strong),
                 Cell::new(repository_name(repository.as_ref()), theme.muted),
-                Cell::new(branch.clone(), theme.blue),
+                Cell::new(branch.clone(), theme.muted),
                 Cell::new(task.clone(), theme.strong),
             ],
             Destination::Worktree {
@@ -143,8 +164,8 @@ impl Entry for Destination {
             } => vec![
                 Cell::tag("", theme.muted),
                 Cell::new(repository.name.clone(), theme.strong),
-                Cell::new(branch.clone(), theme.blue),
-                Cell::new(display_path.clone(), theme.muted),
+                Cell::new(branch.clone(), theme.muted),
+                Cell::path(display_path.clone(), theme.muted),
                 Cell::tag("", theme.accent),
             ],
             // A directory has no repo or branch until something opens it, and
@@ -153,25 +174,32 @@ impl Entry for Destination {
             // only honest field, so it is the only one.
             Destination::Directory { display_path, .. } => vec![
                 Cell::tag("", theme.muted),
-                Cell::new(display_path.clone(), theme.strong),
+                Cell::path(display_path.clone(), theme.strong),
             ],
         }
     }
 
     /// Terms worth typing that are not worth a column.
     ///
-    /// The kind and an agent's status are drawn as a section divider and a
-    /// glyph, neither of which is searchable, so both are repeated here — `agent
-    /// working` narrows to live agents without either word occupying a cell.
-    /// Ids are here because they are how you get back to a workspace you
-    /// remember by number rather than by name.
+    /// Keep `agent` searchable even when its row is in the attention group.
+    /// IDs and workspace labels also find agents without taking title space.
     fn hidden_terms(&self) -> Option<Cow<'_, str>> {
         let kind = self.kind().label();
         Some(match self {
             Destination::Workspace { id, .. } => format!("{kind} {id}").into(),
-            Destination::Agent { pane, status, .. } => {
-                format!("{kind} {} {pane}", status.as_str()).into()
-            }
+            Destination::Agent {
+                pane,
+                workspace_label,
+                ..
+            } => format!(
+                "{kind} {pane} {workspace_label} {}",
+                if self.needs_attention() {
+                    "attention waiting"
+                } else {
+                    ""
+                },
+            )
+            .into(),
             Destination::Worktree { .. } | Destination::Directory { .. } => Cow::Borrowed(kind),
         })
     }
@@ -186,38 +214,61 @@ fn glyph(status: AgentStatus, theme: &Theme) -> Cell {
     Cell::tag(glyph.to_string(), colour)
 }
 
-/// Groups in the order they appear, which is what the picker preserves. Live
-/// state first, then what could be live, then everywhere else.
-pub fn groups() -> Vec<Group<DestinationKind>> {
+fn agent_status(status: AgentStatus, theme: &Theme) -> Cell {
+    let (glyph, colour) = theme.status(status);
+    Cell::new(format!("{glyph} {}", status.as_str()), colour)
+}
+
+/// Group order makes the first attention item the default Enter target. An
+/// agent appears once, and a session with nothing waiting starts at workspaces.
+pub fn groups() -> Vec<Group<DestinationGroup>> {
+    let agent_group = |group, label| {
+        Group::new(
+            group,
+            label,
+            vec![
+                Column::new(AGENT_STATUS).heading("status"),
+                Column::content(AGENT_NAME).heading("agent"),
+                Column::content(AGENT_REPO).heading("repository"),
+                Column::content(AGENT_BRANCH).heading("branch"),
+                Column::fill().heading("task"),
+            ],
+        )
+    };
     let repo_columns = |kind: DestinationKind| {
         Group::new(
-            kind,
+            DestinationGroup::Kind(kind),
             kind.section(),
             vec![
                 Column::new(GLYPH),
-                Column::new(REPO).heading("repository"),
-                Column::new(BRANCH).heading("branch"),
+                Column::content(REPO).heading("repository"),
+                Column::content(BRANCH).heading("branch"),
                 Column::fill().heading("directory"),
                 Column::new(MARK),
             ],
         )
     };
     vec![
-        repo_columns(DestinationKind::Workspace),
+        agent_group(DestinationGroup::Attention, "needs attention"),
         Group::new(
-            DestinationKind::Agent,
-            DestinationKind::Agent.section(),
+            DestinationGroup::Kind(DestinationKind::Workspace),
+            DestinationKind::Workspace.section(),
             vec![
                 Column::new(GLYPH),
-                Column::new(AGENT_NAME).heading("agent"),
-                Column::new(AGENT_REPO).heading("repository"),
-                Column::new(AGENT_BRANCH).heading("branch"),
-                Column::fill().heading("task"),
+                Column::content(WORKSPACE).heading("workspace"),
+                Column::content(REPO).heading("repository"),
+                Column::content(BRANCH).heading("branch"),
+                Column::fill().heading("directory"),
+                Column::new(MARK),
             ],
+        ),
+        agent_group(
+            DestinationGroup::Kind(DestinationKind::Agent),
+            DestinationKind::Agent.section(),
         ),
         repo_columns(DestinationKind::Worktree),
         Group::new(
-            DestinationKind::Directory,
+            DestinationGroup::Kind(DestinationKind::Directory),
             DestinationKind::Directory.section(),
             vec![Column::new(GLYPH), Column::fill().heading("directory")],
         )

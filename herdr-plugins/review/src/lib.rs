@@ -25,7 +25,7 @@ use serde::Serialize;
 
 pub use bridge::serve_agent;
 pub use bridge::serve_stdio;
-pub use open::open_review;
+pub use open::{open_pull_request, open_review};
 
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 const DELIVERY_SCAN_INTERVAL: Duration = Duration::from_secs(1);

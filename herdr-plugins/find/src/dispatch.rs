@@ -2,7 +2,6 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result};
 use herdrkit::Client;
-use herdrkit::api::AgentRef;
 
 use crate::Destination;
 
@@ -12,7 +11,8 @@ pub fn open(client: &Client, destination: &Destination) -> Result<()> {
             .workspace_focus(id)
             .with_context(|| format!("focusing {id}")),
         Destination::Agent { pane, name, .. } => client
-            .agent_focus(AgentRef::Pane(pane))
+            .pane_focus(pane)
+            .map(|_| ())
             .with_context(|| format!("focusing the agent {name} in {pane}")),
         // Focus-or-create against herdr's own record of which workspace owns
         // the checkout, so no path bookkeeping is needed here.
@@ -94,6 +94,8 @@ mod tests {
         let server = Server::start(vec![Step::reply(OK)]);
         let workspace = Destination::Workspace {
             id: WorkspaceId::new("w2"),
+            label: "dots".into(),
+            nested: false,
             repository: Some(repository("dots", "/src/dots")),
             branch: "main".into(),
             display_path: "~/dots".into(),
@@ -114,9 +116,12 @@ mod tests {
     /// one of them has exited, and the pane is what the user pointed at.
     #[test]
     fn an_agent_is_focused_by_its_pane() {
-        let server = Server::start(vec![Step::reply(OK)]);
+        let server = Server::start(vec![Step::reply(
+            r#"{"id":"{id}","result":{"type":"pane_info","pane":{"pane_id":"w2:p1","workspace_id":"w2","tab_id":"w2:t1"}}}"#,
+        )]);
         let agent = Destination::Agent {
             pane: PaneId::new("w2:p1"),
+            workspace_label: "dots".into(),
             name: "plugin-dev".into(),
             status: AgentStatus::Working,
             repository: Some(repository("dots", "/src/dots")),
@@ -127,8 +132,8 @@ mod tests {
         assert_eq!(
             sent(&server),
             [RecordedRequest {
-                method: "agent.focus".into(),
-                params: json!({"target": "w2:p1"}),
+                method: "pane.focus".into(),
+                params: json!({"pane_id": "w2:p1"}),
             }]
         );
     }
@@ -163,6 +168,8 @@ mod tests {
         )]);
         let workspace = Destination::Workspace {
             id: WorkspaceId::new("w9"),
+            label: "missing".into(),
+            nested: false,
             repository: None,
             branch: "-".into(),
             display_path: String::new(),

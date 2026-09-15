@@ -9,7 +9,9 @@
 mod destination;
 mod dispatch;
 mod index;
+mod run;
+pub use run::run;
 
-pub use destination::{Destination, DestinationKind, FIXED_CELLS, groups};
+pub use destination::{Destination, DestinationGroup, DestinationKind, groups};
 pub use dispatch::open;
 pub use index::Sources;

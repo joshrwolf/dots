@@ -31,3 +31,7 @@ herdr-plugins/*/bin/
 
 # Scratch handoff notes, not part of the dotfiles.
 herdr-plugins/HANDOFF.md
+
+# Standalone Herdr handoff binary staged before optional Stow installation.
+herdr/.local/bin/herdr-issue
+herdr/.local/bin/herdr-issue.tmp.*

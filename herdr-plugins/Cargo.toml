@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "contracts",
     "crates/github-client",
+    "issue",
     "crates/herdrkit",
     "crates/review-core",
     "find",
@@ -20,7 +21,9 @@ publish = false
 
 [workspace.dependencies]
 github-client = { path = "crates/github-client" }
+tokio = { version = "1", features = ["rt", "sync", "time", "net", "io-util", "macros", "fs", "process"] }
 herdrkit = { path = "crates/herdrkit" }
+herdr-review = { path = "review" }
 review-core = { path = "crates/review-core" }
 anyhow = "1"
 nucleo = "0.5"

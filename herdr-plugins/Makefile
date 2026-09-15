@@ -2,7 +2,7 @@ PLUGIN_MANIFESTS := $(wildcard */herdr-plugin.toml)
 PLUGIN_NAMES := $(notdir $(patsubst %/,%,$(dir $(PLUGIN_MANIFESTS))))
 PLUGIN_BUILD_TARGETS := $(addprefix plugin-build-,$(PLUGIN_NAMES))
 
-build: $(PLUGIN_BUILD_TARGETS)
+build: $(PLUGIN_BUILD_TARGETS) tool-build-issue
 
 $(PLUGIN_BUILD_TARGETS): plugin-build-%:
 	@test -f "$*/herdr-plugin.toml" || { echo "plugin-build-$*: missing manifest" >&2; exit 1; }
@@ -26,7 +26,7 @@ link:
 	done; exit $$rc
 
 check:
-	$(MAKE) -n $(PLUGIN_BUILD_TARGETS) >/dev/null
+	$(MAKE) -n $(PLUGIN_BUILD_TARGETS) tool-build-issue >/dev/null
 	cargo fmt --all --check
 	cargo clippy --workspace --all-features --all-targets -- -D warnings
 	cargo nextest run --workspace --all-features --all-targets
@@ -35,3 +35,18 @@ check:
 	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 
 .PHONY: build link check $(PLUGIN_BUILD_TARGETS)
+
+# Standalone handoff command, installed by the optional Herdr Stow package.
+tool-build-issue:
+	cargo build --release --package herdr-issue
+	@built="target/release/herdr-issue"; \
+		destination="../herdr/.local/bin/herdr-issue"; \
+		mkdir -p "$$(dirname "$$destination")"; \
+		temporary="$$destination.tmp.$$$$"; \
+		trap 'rm -f "$$temporary"' EXIT HUP INT TERM; \
+		cp "$$built" "$$temporary"; \
+		chmod +x "$$temporary"; \
+		mv -f "$$temporary" "$$destination"; \
+		trap - EXIT HUP INT TERM
+
+.PHONY: tool-build-issue

@@ -30,8 +30,11 @@ herdr-link:
 herdr-check:
 	$(MAKE) -C $(HERDR_PLUGINS) check
 
+herdr-issue-build:
+	$(MAKE) -C $(HERDR_PLUGINS) tool-build-issue
+
 # Plugin manifests and callers can still build one plugin from the root.
 plugin-build-%:
 	$(MAKE) -C $(HERDR_PLUGINS) $@
 
-.PHONY: all stow unstow nvim skills herdr herdr-build herdr-link herdr-check
+.PHONY: all stow unstow nvim skills herdr herdr-build herdr-link herdr-check herdr-issue-build

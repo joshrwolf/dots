@@ -22,7 +22,7 @@ use crate::{Error, Result, env};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-fn parse_worktree_timeout(value: &str) -> Result<Duration> {
+pub(crate) fn parse_worktree_timeout(value: &str) -> Result<Duration> {
     value
         .parse::<u64>()
         .ok()
@@ -121,9 +121,14 @@ impl Client {
 
     /// The server this plugin was invoked by.
     pub fn from_env() -> Result<Self> {
-        let mut client = Self::new(env::socket_path()?);
-        if let Some(value) = env::optional_string("HERDR_WORKTREE_TIMEOUT_SECS")? {
-            client.worktree_timeout = parse_worktree_timeout(&value)?;
+        let timeout = env::optional_string("HERDR_WORKTREE_TIMEOUT_SECS")?;
+        Self::configured(env::socket_path()?, timeout.as_deref())
+    }
+
+    pub(crate) fn configured(path: PathBuf, timeout: Option<&str>) -> Result<Self> {
+        let mut client = Self::new(path);
+        if let Some(value) = timeout {
+            client.worktree_timeout = parse_worktree_timeout(value)?;
         }
         Ok(client)
     }

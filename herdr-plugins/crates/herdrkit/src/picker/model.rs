@@ -3,7 +3,9 @@
 //! Query in, rows out, lines out. No I/O, so alignment, grouping, scoping and
 //! cursor behaviour are assertions rather than screenshots.
 
+use std::collections::HashSet;
 use std::fmt;
+use std::num::NonZeroUsize;
 
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo::{Config, Matcher, Utf32String};
@@ -14,11 +16,13 @@ use unicode_segmentation::UnicodeSegmentation as _;
 use crate::Theme;
 use crate::columns;
 
-use super::{Cell, Column, Command, Entry, Error, Group, Width};
+use super::{Cell, Column, Command, Entry, Error, Group, Matching, Width};
+use super::{DynamicEntry, SourceStatus};
 
 /// Width of the pointer gutter, in cells. Every row reserves it so that a
 /// column lands on the same screen position whether or not it is selected.
 const GUTTER: usize = 2;
+const COLUMN_GAP: usize = 2;
 const POINTER: &str = "▎ ";
 /// Rule cells before a section's name, so the label is not flush to the edge.
 const LEAD: usize = 3;
@@ -41,6 +45,7 @@ pub(super) enum Row {
     },
     Headings(usize),
     Item(usize),
+    Status(usize),
 }
 
 /// An entry's drawn and searchable form, computed once.
@@ -52,6 +57,7 @@ pub(super) enum Row {
 #[derive(Debug)]
 struct Prepared {
     group: usize,
+    id: Option<String>,
     cells: Vec<Cell>,
     haystack: Utf32String,
     bases: Vec<Option<usize>>,
@@ -63,9 +69,13 @@ struct Layout {
     label: &'static str,
     columns: Vec<Column>,
     scope: Option<char>,
+    exclusive: bool,
+    matching: Matching,
+    status: SourceStatus,
 }
 
-pub struct Model<T> {
+pub struct Model<T: Entry> {
+    group_keys: Vec<T::Group>,
     items: Vec<T>,
     prepared: Vec<Prepared>,
     layouts: Vec<Layout>,
@@ -93,7 +103,7 @@ pub struct Model<T> {
     clippy::missing_fields_in_debug,
     reason = "the prepared rows and the matcher are bulk scratch state, and printing them buries the four fields that describe what the list is doing"
 )]
-impl<T> fmt::Debug for Model<T> {
+impl<T: Entry> fmt::Debug for Model<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Model")
             .field("items", &self.items.len())
@@ -108,24 +118,11 @@ impl<T> fmt::Debug for Model<T> {
 impl<T: Entry> Model<T> {
     pub(super) fn build(
         items: Vec<T>,
-        groups: Vec<Group<T::Group>>,
+        mut groups: Vec<Group<T::Group>>,
         theme: Theme,
         match_paths: bool,
     ) -> Result<Self, Error> {
-        if groups.is_empty() {
-            return Err(Error::NoGroups);
-        }
-        for (index, group) in groups.iter().enumerate() {
-            if groups
-                .iter()
-                .take(index)
-                .any(|earlier| earlier.key == group.key)
-            {
-                return Err(Error::DuplicateGroup {
-                    group: format!("{:?}", group.key),
-                });
-            }
-        }
+        validate_groups(&groups)?;
 
         let mut prepared = Vec::with_capacity(items.len());
         let mut buckets = vec![Vec::new(); groups.len()];
@@ -146,12 +143,23 @@ impl<T: Entry> Model<T> {
                     drawn: cells.len(),
                 });
             }
+            if let Some(layout) = groups.get_mut(group) {
+                for (column, cell) in layout.columns.iter_mut().zip(&cells) {
+                    column.measured = column.measured.max(
+                        columns::width(&cell.text)
+                            .saturating_add(columns::width(&cell.prefix))
+                            .max(columns::width(&column.heading))
+                            .saturating_add(COLUMN_GAP),
+                    );
+                }
+            }
             let (haystack, bases) = weave(&cells, item.hidden_terms().as_deref());
             if let Some(bucket) = buckets.get_mut(group) {
                 bucket.push(index);
             }
             prepared.push(Prepared {
                 group,
+                id: None,
                 cells,
                 haystack: Utf32String::from(haystack),
                 bases,
@@ -162,16 +170,21 @@ impl<T: Entry> Model<T> {
         if match_paths {
             config.set_match_paths();
         }
+        let group_keys = groups.iter().map(|group| group.key).collect();
         let layouts = groups
             .into_iter()
             .map(|group| Layout {
                 label: group.label,
                 columns: group.columns,
                 scope: group.scope,
+                exclusive: group.exclusive,
+                matching: group.matching,
+                status: SourceStatus::Ready,
             })
             .collect();
 
         let mut model = Self {
+            group_keys,
             items,
             prepared,
             layouts,
@@ -194,7 +207,148 @@ impl<T: Entry> Model<T> {
     }
 }
 
-impl<T> Model<T> {
+impl<T: Entry> Model<T> {
+    fn group_index(&self, group: T::Group) -> Result<usize, Error> {
+        self.group_keys
+            .iter()
+            .position(|key| *key == group)
+            .ok_or_else(|| Error::UndeclaredGroup {
+                group: format!("{group:?}"),
+            })
+    }
+
+    /// Whether a group requires explicit sigil activation and can host a source.
+    pub fn supports_source(&self, group: T::Group) -> bool {
+        self.group_index(group)
+            .ok()
+            .and_then(|index| self.layouts.get(index))
+            .is_some_and(|layout| layout.exclusive)
+    }
+
+    /// The provider query, only while this group's actual sigil is present.
+    pub fn scoped_query(&self, group: T::Group) -> Option<&str> {
+        let index = self.group_index(group).ok()?;
+        let layout = self.layouts.get(index)?;
+        let (scope, query) = split_scope(&self.query, &self.layouts);
+        (layout.exclusive && scope.is_some() && layout.scope == scope).then_some(query.trim_start())
+    }
+
+    /// Update inert source feedback without changing the selected entry.
+    pub fn set_status(&mut self, group: T::Group, status: SourceStatus) -> Result<(), Error> {
+        let index = self.group_index(group)?;
+        if let Some(layout) = self.layouts.get_mut(index) {
+            layout.status = status;
+        }
+        self.refresh();
+        Ok(())
+    }
+
+    /// Validate and replace one complete result set atomically. Identities are
+    /// unique within the group; unchanged identities retain their selection.
+    pub fn replace_group(
+        &mut self,
+        group: T::Group,
+        entries: Vec<DynamicEntry<T>>,
+        limit: NonZeroUsize,
+    ) -> Result<(), Error> {
+        let index = self.group_index(group)?;
+        if entries.len() > limit.get() {
+            return Err(Error::EntryLimit {
+                count: entries.len(),
+                limit: limit.get(),
+            });
+        }
+        let declared = self.columns_of(index).len();
+        let mut identities = HashSet::with_capacity(entries.len());
+        let mut replacement = Vec::with_capacity(entries.len());
+        for entry in entries {
+            if entry.id.trim().is_empty() || !identities.insert(entry.id.clone()) {
+                return Err(Error::InvalidIdentity { id: entry.id });
+            }
+            if entry.value.group() != group {
+                return Err(Error::ReplacementGroup {
+                    expected: format!("{group:?}"),
+                    actual: format!("{:?}", entry.value.group()),
+                });
+            }
+            let cells = entry.value.cells(&self.theme);
+            if cells.len() != declared {
+                return Err(Error::Arity {
+                    group: format!("{group:?}"),
+                    declared,
+                    drawn: cells.len(),
+                });
+            }
+            let (haystack, bases) = weave(&cells, entry.value.hidden_terms().as_deref());
+            replacement.push((
+                entry.value,
+                Prepared {
+                    group: index,
+                    id: Some(entry.id),
+                    cells,
+                    haystack: Utf32String::from(haystack),
+                    bases,
+                },
+            ));
+        }
+        let selected = self.selected();
+        let selected_id = selected
+            .and_then(|item| self.prepared.get(item))
+            .filter(|prepared| prepared.group == index)
+            .and_then(|prepared| prepared.id.clone());
+        let mut preserved = None;
+        let old = std::mem::take(&mut self.items)
+            .into_iter()
+            .zip(std::mem::take(&mut self.prepared));
+        for (old_index, (item, prepared)) in old.enumerate() {
+            if prepared.group != index {
+                if selected == Some(old_index) {
+                    preserved = Some(self.items.len());
+                }
+                self.items.push(item);
+                self.prepared.push(prepared);
+            }
+        }
+        for (item, prepared) in replacement {
+            if selected_id.is_some() && selected_id == prepared.id {
+                preserved = Some(self.items.len());
+            }
+            self.items.push(item);
+            self.prepared.push(prepared);
+        }
+        for bucket in &mut self.buckets {
+            bucket.clear();
+        }
+        for layout in &mut self.layouts {
+            for column in &mut layout.columns {
+                column.measured = columns::width(&column.heading).saturating_add(1);
+            }
+        }
+        for (item, prepared) in self.prepared.iter().enumerate() {
+            if let Some(bucket) = self.buckets.get_mut(prepared.group) {
+                bucket.push(item);
+            }
+            if let Some(layout) = self.layouts.get_mut(prepared.group) {
+                for (column, cell) in layout.columns.iter_mut().zip(&prepared.cells) {
+                    column.measured = column.measured.max(
+                        columns::width(&cell.text)
+                            .saturating_add(columns::width(&cell.prefix))
+                            .saturating_add(1),
+                    );
+                }
+            }
+        }
+        self.refresh();
+        self.cursor = preserved
+            .and_then(|item| {
+                self.selectable
+                    .iter()
+                    .position(|&row| self.rows.get(row) == Some(&Row::Item(item)))
+            })
+            .unwrap_or(0);
+        Ok(())
+    }
+
     pub fn theme(&self) -> Theme {
         self.theme
     }
@@ -222,7 +376,7 @@ impl<T> Model<T> {
         let row = *self.selectable.get(self.cursor)?;
         match self.rows.get(row)? {
             Row::Item(index) => Some(*index),
-            Row::Section { .. } | Row::Headings(_) => None,
+            Row::Section { .. } | Row::Headings(_) | Row::Status(_) => None,
         }
     }
 
@@ -255,7 +409,7 @@ impl<T> Model<T> {
             Command::Previous(by) => self.cursor = self.cursor.saturating_sub(by),
             Command::NextScope => self.cycle_scope(false),
             Command::PreviousScope => self.cycle_scope(true),
-            Command::Accept => return Some(Outcome::Accept),
+            Command::Accept => return self.selected().map(|_| Outcome::Accept),
             Command::Abort => return Some(Outcome::Abort),
         }
         None
@@ -276,8 +430,15 @@ impl<T> Model<T> {
             .map_or("all", |layout| layout.label)
     }
 
-    pub(super) fn has_directory_scope(&self) -> bool {
-        self.layouts.iter().any(|layout| layout.scope == Some('/'))
+    pub(super) fn scope_help(&self) -> String {
+        self.layouts
+            .iter()
+            .filter_map(|layout| {
+                layout
+                    .scope
+                    .map(|sigil| format!(" · {sigil} {}", layout.label))
+            })
+            .collect()
     }
 
     fn cycle_scope(&mut self, backwards: bool) {
@@ -294,15 +455,25 @@ impl<T> Model<T> {
             self.query = needle;
             self.caret = self.caret.saturating_sub(1);
         }
-        // Slot zero is the combined view; each following slot is one group.
-        let slots = self.layouts.len() + 1;
-        let slot = current.map_or(0, |index| index + 1);
+        // Slot zero is the combined view; exclusive sources are never cycled.
+        let eligible: Vec<_> = self
+            .layouts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, layout)| (!layout.exclusive).then_some(index))
+            .collect();
+        let slots = eligible.len() + 1;
+        let slot = current
+            .and_then(|index| eligible.iter().position(|&other| other == index))
+            .map_or(0, |index| index + 1);
         let next = if backwards {
             (slot + slots - 1) % slots
         } else {
             (slot + 1) % slots
         };
-        self.group_filter = next.checked_sub(1);
+        self.group_filter = next
+            .checked_sub(1)
+            .and_then(|index| eligible.get(index).copied());
         self.offset = 0;
         self.refresh();
     }
@@ -438,7 +609,29 @@ impl<T> Model<T> {
             Row::Section { group, count } => self.section_line(group, count, width),
             Row::Headings(group) => self.heading_line(group, width),
             Row::Item(item) => self.item_line(item, selected, width),
+            Row::Status(group) => self.status_line(group, width),
         }
+    }
+
+    fn status_line(&self, group: usize, width: usize) -> Line<'static> {
+        let status = self.layouts.get(group).map(|layout| &layout.status);
+        let text = match status {
+            Some(SourceStatus::Loading) => "Loading…",
+            Some(
+                SourceStatus::Notice(text) | SourceStatus::Empty(text) | SourceStatus::Error(text),
+            ) => text,
+            Some(SourceStatus::Ready) | None => "",
+        };
+        let text = super::single_line(text.to_owned());
+        let shown = columns::truncate(&text, width.saturating_sub(GUTTER));
+        let text = format!("{}{}", " ".repeat(GUTTER.min(width)), shown);
+        let padding = width.saturating_sub(columns::width(&text));
+        Line::styled(
+            format!("{text}{}", " ".repeat(padding)),
+            Style::default()
+                .fg(self.theme.muted)
+                .bg(self.theme.background),
+        )
     }
 
     fn columns_of(&self, group: usize) -> &[Column] {
@@ -450,7 +643,9 @@ impl<T> Model<T> {
 
     /// A muted divider with the group name and its matching count.
     fn section_line(&self, group: usize, count: usize, width: usize) -> Line<'static> {
-        let rule = Style::default().fg(self.theme.muted);
+        let rule = Style::default()
+            .fg(self.theme.muted)
+            .add_modifier(Modifier::DIM);
         let label = self.layouts.get(group).map_or("", |layout| layout.label);
 
         let lead = LEAD.min(width);
@@ -472,7 +667,7 @@ impl<T> Model<T> {
             .iter()
             .zip(budgets(self.columns_of(group), width))
         {
-            let shown = columns::truncate(&column.heading, budget.saturating_sub(1));
+            let shown = columns::truncate(&column.heading, budget.saturating_sub(COLUMN_GAP));
             text.push_str(&shown);
             text.push_str(&" ".repeat(budget.saturating_sub(columns::width(&shown))));
         }
@@ -480,7 +675,6 @@ impl<T> Model<T> {
         Line::styled(
             text,
             Style::default()
-                .add_modifier(Modifier::BOLD)
                 .fg(self.theme.muted)
                 .bg(self.theme.background),
         )
@@ -491,8 +685,14 @@ impl<T> Model<T> {
             return Line::default();
         };
         let mut indices: Vec<u32> = Vec::new();
-        self.pattern
-            .indices(prepared.haystack.slice(..), &mut self.matcher, &mut indices);
+        if self
+            .layouts
+            .get(prepared.group)
+            .is_some_and(|layout| layout.matching == Matching::Fuzzy)
+        {
+            self.pattern
+                .indices(prepared.haystack.slice(..), &mut self.matcher, &mut indices);
+        }
         indices.sort_unstable();
         indices.dedup();
 
@@ -515,18 +715,15 @@ impl<T> Model<T> {
             .zip(&prepared.bases)
             .zip(budgets(self.columns_of(prepared.group), width))
         {
-            let shown = columns::truncate(&cell.text, budget.saturating_sub(1));
-            paint(
+            let used = paint_cell(
                 &mut spans,
-                &shown,
+                cell,
+                budget.saturating_sub(COLUMN_GAP),
                 *base,
                 &indices,
-                cell.fg,
-                self.theme.matched,
+                &self.theme,
             );
-            spans.push(Span::raw(
-                " ".repeat(budget.saturating_sub(columns::width(&shown))),
-            ));
+            spans.push(Span::raw(" ".repeat(budget.saturating_sub(used))));
             drawn += budget;
         }
         spans.push(Span::raw(" ".repeat(width.saturating_sub(drawn))));
@@ -573,14 +770,17 @@ impl<T> Model<T> {
                 let Some(prepared) = self.prepared.get(item) else {
                     continue;
                 };
-                if let Some(score) = self
-                    .pattern
-                    .score(prepared.haystack.slice(..), &mut self.matcher)
-                {
+                let rank = match layout.matching {
+                    Matching::Fuzzy => self
+                        .pattern
+                        .score(prepared.haystack.slice(..), &mut self.matcher),
+                    Matching::ProviderRanked => Some(0),
+                };
+                if let Some(score) = rank {
                     hits.push((score, item));
                 }
             }
-            if hits.is_empty() {
+            if hits.is_empty() && layout.status == SourceStatus::Ready {
                 continue;
             }
             // Score descending, then index ascending: equal scores keep the
@@ -596,6 +796,9 @@ impl<T> Model<T> {
                 .any(|column| !column.heading.is_empty())
             {
                 self.rows.push(Row::Headings(index));
+            }
+            if layout.status != SourceStatus::Ready {
+                self.rows.push(Row::Status(index));
             }
             self.matched += hits.len();
             for &(_, item) in &hits {
@@ -615,6 +818,33 @@ impl<T> Model<T> {
             .unwrap_or(0);
         self.offset = 0;
     }
+}
+
+fn validate_groups<G: Copy + Eq + fmt::Debug>(groups: &[Group<G>]) -> Result<(), Error> {
+    if groups.is_empty() {
+        return Err(Error::NoGroups);
+    }
+    for (index, group) in groups.iter().enumerate() {
+        if let Some(sigil) = group.scope
+            && (sigil.is_control()
+                || sigil.is_whitespace()
+                || groups.iter().take(index).any(|earlier| {
+                    earlier.scope == Some(sigil) && (earlier.exclusive || group.exclusive)
+                }))
+        {
+            return Err(Error::InvalidScope { sigil });
+        }
+        if groups
+            .iter()
+            .take(index)
+            .any(|earlier| earlier.key == group.key)
+        {
+            return Err(Error::DuplicateGroup {
+                group: format!("{:?}", group.key),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Builds the haystack and records where each searchable cell starts in it.
@@ -649,6 +879,52 @@ fn weave(cells: &[Cell], hidden: Option<&str>) -> (String, Vec<Option<usize>>) {
     (haystack, bases)
 }
 
+fn paint_cell(
+    spans: &mut Vec<Span<'static>>,
+    cell: &Cell,
+    budget: usize,
+    base: Option<usize>,
+    indices: &[u32],
+    theme: &Theme,
+) -> usize {
+    let prefix = columns::truncate(&cell.prefix, budget);
+    let prefix_width = columns::width(&prefix);
+    if !prefix.is_empty() {
+        spans.push(Span::styled(
+            prefix.into_owned(),
+            Style::default().fg(theme.muted),
+        ));
+    }
+    let available = budget.saturating_sub(prefix_width);
+    if available == 0 {
+        return prefix_width;
+    }
+    let ellipsis = Span::styled("…", Style::default().fg(cell.fg));
+    let body_width = if columns::width(&cell.text) <= available {
+        paint(spans, &cell.text, base, indices, cell.fg, theme.matched);
+        columns::width(&cell.text)
+    } else if cell.tail {
+        let (suffix, offset) = columns::suffix(&cell.text, available - 1);
+        spans.push(ellipsis);
+        paint(
+            spans,
+            suffix,
+            base.map(|base| base + offset),
+            indices,
+            cell.fg,
+            theme.matched,
+        );
+        1 + columns::width(suffix)
+    } else {
+        let shown = columns::truncate(&cell.text, available);
+        let kept = shown.strip_suffix('…').unwrap_or(&shown);
+        paint(spans, kept, base, indices, cell.fg, theme.matched);
+        spans.push(ellipsis);
+        columns::width(&shown)
+    };
+    prefix_width + body_width
+}
+
 /// Cells each column of a row gets, given the row's total width.
 ///
 /// Every row of a group comes through here with the same columns, so alignment
@@ -656,19 +932,37 @@ fn weave(cells: &[Cell], hidden: Option<&str>) -> (String, Vec<Option<usize>>) {
 /// could drift.
 fn budgets(columns: &[Column], width: usize) -> Vec<usize> {
     let content = width.saturating_sub(GUTTER);
-    let fixed = columns
-        .iter()
-        .fold(0usize, |total, column| total.saturating_add(column.fixed()));
+    let mut sizes: Vec<usize> = columns.iter().map(Column::fixed).collect();
     let fills = columns.iter().filter(|c| c.width == Width::Fill).count();
+    let target = content.saturating_sub(fills.saturating_mul(20));
+    let mut fixed = sizes
+        .iter()
+        .fold(0usize, |total, size| total.saturating_add(*size));
+    // Content columns yield space to the primary fill column on small terminals.
+    // Fixed glyph/marker columns retain their contract.
+    while fixed > target {
+        let largest = columns
+            .iter()
+            .zip(&sizes)
+            .enumerate()
+            .filter(|(_, (column, size))| matches!(column.width, Width::Content(_)) && **size > 1)
+            .max_by_key(|(_, (_, size))| **size)
+            .map(|(index, _)| index);
+        let Some(size) = largest.and_then(|index| sizes.get_mut(index)) else {
+            break;
+        };
+        *size -= 1;
+        fixed -= 1;
+    }
     let flexible = content.saturating_sub(fixed);
     let share = flexible.checked_div(fills).unwrap_or(0);
 
     let mut out = Vec::with_capacity(columns.len());
     let mut remaining = content;
     let mut fills_left = fills;
-    for column in columns {
+    for (column, size) in columns.iter().zip(sizes) {
         let want = match column.width {
-            Width::Cells(cells) => cells,
+            Width::Cells(_) | Width::Content(_) => size,
             Width::Fill => {
                 fills_left -= 1;
                 // The last fill absorbs the division remainder, so the row
@@ -738,6 +1032,72 @@ fn paint(
 mod tests {
     use super::*;
     use crate::picker::Picker;
+
+    #[test]
+    fn clipped_paths_preserve_suffixes_and_original_match_positions() {
+        let theme = Theme::default();
+        let text = "/long/prefix/cafe\u{301}/👨‍👩‍👧/file.rs";
+        let offset = columns::graphemes(text.split_once("file").unwrap().0);
+        let indices: Vec<_> = (offset..offset + 4)
+            .map(|i| u32::try_from(i + 7).unwrap())
+            .collect();
+        let cell = Cell::path(text, theme.strong).prefix("└─ ");
+        assert_eq!(weave(std::slice::from_ref(&cell), None).0, text);
+        for budget in 0..=80 {
+            let mut spans = Vec::new();
+            let used = paint_cell(&mut spans, &cell, budget, Some(7), &indices, &theme);
+            assert!(used <= budget);
+            assert_eq!(
+                used,
+                spans
+                    .iter()
+                    .map(|span| columns::width(&span.content))
+                    .sum::<usize>()
+            );
+            if budget >= 15 {
+                let highlighted: String = spans
+                    .iter()
+                    .filter(|span| span.style.fg == Some(theme.matched))
+                    .map(|span| span.content.as_ref())
+                    .collect();
+                assert_eq!(highlighted, "file");
+                let drawn: String = spans.iter().map(|span| span.content.as_ref()).collect();
+                assert!(drawn.ends_with("file.rs"));
+                assert!(drawn.starts_with("└─ "));
+                assert!(!drawn.contains("…\u{301}"));
+            }
+        }
+    }
+
+    #[test]
+    fn content_widths_are_measured_once_and_yield_space_to_primary_text() {
+        let mut model = Picker::new(vec![
+            Thing::fruit("cafe\u{301} 👨‍👩‍👧", "a useful task"),
+            Thing::fruit("pear", "another task"),
+        ])
+        .groups(vec![Group::new(
+            Kind::Fruit,
+            "fruit",
+            vec![
+                Column::new(6),
+                Column::content(30).heading("name"),
+                Column::fill(),
+            ],
+        )])
+        .build()
+        .unwrap();
+        assert_eq!(budgets(model.columns_of(0), 40), [6, 9, 23]);
+        for ch in "pear".chars() {
+            model.apply(Command::Insert(ch));
+        }
+        assert_eq!(budgets(model.columns_of(0), 40), [6, 9, 23]);
+        assert_eq!(budgets(model.columns_of(0), 32), [6, 4, 20]);
+        for width in 0..=120 {
+            for line in model.lines(width, 10) {
+                assert_eq!(line.width(), width);
+            }
+        }
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Kind {
@@ -831,7 +1191,7 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 Row::Item(index) => model.items.get(*index).map(|t| t.name),
-                Row::Section { .. } | Row::Headings(_) => None,
+                Row::Section { .. } | Row::Headings(_) | Row::Status(_) => None,
             })
             .collect()
     }
@@ -880,7 +1240,7 @@ mod tests {
                     under = 0;
                 }
                 Row::Item(_) => under += 1,
-                Row::Headings(_) => {}
+                Row::Headings(_) | Row::Status(_) => {}
             }
         }
         assert_eq!(expected, [2], "apple and apricot");
@@ -1226,6 +1586,212 @@ mod tests {
         assert_eq!(budgets(&columns, 12), [10, 0]);
     }
 
+    fn remote_model() -> Model<Thing> {
+        typed(
+            vec![Thing::path("/tmp/local")],
+            vec![
+                Group::new(Kind::Path, "paths", vec![Column::new(8), Column::fill()]),
+                fruit_group()
+                    .exclusive('#')
+                    .matching(Matching::ProviderRanked),
+            ],
+            "",
+        )
+    }
+
+    fn dynamic(id: &str, name: &'static str) -> DynamicEntry<Thing> {
+        DynamicEntry::new(id, Thing::fruit(name, ""))
+    }
+
+    #[test]
+    fn exclusive_sources_require_the_sigil_and_are_not_in_tab_rotation() {
+        let mut model = remote_model();
+        for _ in 0..8 {
+            model.apply(Command::NextScope);
+            assert_ne!(model.scope_label(), "fruits");
+            assert_eq!(model.scoped_query(Kind::Fruit), None);
+        }
+        model.insert_text("# cafe\u{301}");
+        assert_eq!(model.scoped_query(Kind::Fruit), Some("cafe\u{301}"));
+        model.apply(Command::ClearQuery);
+        assert_eq!(model.scoped_query(Kind::Fruit), None);
+    }
+
+    #[test]
+    fn provider_order_bypasses_local_matching_and_highlights() {
+        let mut model = remote_model();
+        model
+            .replace_group(
+                Kind::Fruit,
+                vec![dynamic("b", "banana"), dynamic("a", "apple")],
+                NonZeroUsize::new(3).unwrap(),
+            )
+            .unwrap();
+        model.insert_text("# invisible description");
+        assert_eq!(model.matched(), 2);
+        assert_eq!(model.take_selected().unwrap().name, "banana");
+        let mut model = remote_model();
+        model
+            .replace_group(
+                Kind::Fruit,
+                vec![dynamic("a", "cafe\u{301} 👨‍👩‍👧")],
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .unwrap();
+        model.insert_text("# cafe");
+        for line in model.lines(40, 5) {
+            assert!(
+                !line
+                    .spans
+                    .iter()
+                    .any(|span| span.style.fg == Some(model.theme.matched))
+            );
+        }
+    }
+
+    #[test]
+    fn replacements_preserve_identity_and_reject_invalid_batches_atomically() {
+        let mut model = remote_model();
+        let limit = NonZeroUsize::new(3).unwrap();
+        model
+            .replace_group(
+                Kind::Fruit,
+                vec![dynamic("a", "apple"), dynamic("b", "banana")],
+                limit,
+            )
+            .unwrap();
+        model.insert_text("#");
+        model.apply(Command::Next(1));
+        model
+            .replace_group(
+                Kind::Fruit,
+                vec![dynamic("b", "pear"), dynamic("a", "apple")],
+                limit,
+            )
+            .unwrap();
+        assert_eq!(
+            model.items.get(model.selected().unwrap()).unwrap().name,
+            "pear"
+        );
+        assert!(matches!(
+            model.replace_group(
+                Kind::Fruit,
+                vec![dynamic("x", "x"), dynamic("x", "y")],
+                limit
+            ),
+            Err(Error::InvalidIdentity { .. })
+        ));
+        assert!(matches!(
+            model.replace_group(Kind::Fruit, vec![dynamic(" ", "x")], limit),
+            Err(Error::InvalidIdentity { .. })
+        ));
+        assert!(matches!(
+            model.replace_group(
+                Kind::Fruit,
+                vec![DynamicEntry::new("p", Thing::path("/tmp"))],
+                limit
+            ),
+            Err(Error::ReplacementGroup { .. })
+        ));
+        assert!(matches!(
+            model.replace_group(
+                Kind::Fruit,
+                vec![dynamic("x", "x"), dynamic("y", "y")],
+                NonZeroUsize::new(1).unwrap()
+            ),
+            Err(Error::EntryLimit { .. })
+        ));
+        assert_eq!(model.matched(), 2);
+        assert_eq!(model.take_selected().unwrap().name, "pear");
+    }
+
+    #[test]
+    fn source_status_is_inert_sanitized_and_grapheme_clipped() {
+        let mut model = remote_model();
+        model.insert_text("#");
+        for status in [
+            SourceStatus::Loading,
+            SourceStatus::Notice("cafe\u{301} 👨‍👩‍👧".into()),
+            SourceStatus::Empty("cafe\u{301} 👨‍👩‍👧".into()),
+            SourceStatus::Error("bad\n\u{1b}[31m".into()),
+        ] {
+            model.set_status(Kind::Fruit, status).unwrap();
+            assert_eq!(model.selected(), None);
+            assert_eq!(model.matched(), 0);
+            for width in 0..40 {
+                for line in model.lines(width, 4) {
+                    assert_eq!(line.width(), width);
+                    assert!(!line.to_string().chars().any(char::is_control));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exclusive_scopes_cannot_share_sigils_or_use_terminal_controls() {
+        for sigil in ['#', ' ', '\n'] {
+            let groups = vec![
+                fruit_group().exclusive(sigil),
+                Group::new(Kind::Path, "paths", vec![Column::new(8), Column::fill()]).scoped(sigil),
+            ];
+            assert!(matches!(
+                Picker::new(Vec::<Thing>::new()).groups(groups).build(),
+                Err(Error::InvalidScope { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn replacement_remeasures_content_widths_and_preserves_status_selection() {
+        let mut model = Picker::new(Vec::<Thing>::new())
+            .group(
+                Group::new(
+                    Kind::Fruit,
+                    "fruits",
+                    vec![Column::new(6), Column::content(30), Column::fill()],
+                )
+                .exclusive('#'),
+            )
+            .build()
+            .unwrap();
+        let limit = NonZeroUsize::new(2).unwrap();
+        model.insert_text("#");
+        model
+            .replace_group(
+                Kind::Fruit,
+                vec![dynamic("a", "long name"), dynamic("b", "pear")],
+                limit,
+            )
+            .unwrap();
+        model.apply(Command::Next(1));
+        model
+            .set_status(Kind::Fruit, SourceStatus::Loading)
+            .unwrap();
+        assert_eq!(
+            model.items.get(model.selected().unwrap()).unwrap().name,
+            "pear"
+        );
+        assert_eq!(budgets(model.columns_of(0), 40), [6, 10, 22]);
+        model
+            .replace_group(Kind::Fruit, vec![dynamic("b", "pear")], limit)
+            .unwrap();
+        assert_eq!(budgets(model.columns_of(0), 40), [6, 5, 27]);
+        assert_eq!(model.take_selected().unwrap().name, "pear");
+    }
+
+    #[test]
+    fn updating_hidden_group_preserves_static_selection() {
+        let mut model = remote_model();
+        model
+            .replace_group(
+                Kind::Fruit,
+                vec![dynamic("a", "apple")],
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(model.take_selected().unwrap().name, "/tmp/local");
+    }
+
     #[test]
     fn a_picker_with_no_groups_is_rejected() {
         let picker: Picker<Thing> = Picker::new(vec![Thing::fruit("apple", "red")]);
@@ -1270,5 +1836,48 @@ mod tests {
             ),
             "{result:?}"
         );
+    }
+
+    #[test]
+    fn accepting_inert_source_feedback_does_not_close_the_picker() {
+        let mut model = Picker::<Thing>::new(Vec::new())
+            .group(fruit_group().exclusive('#'))
+            .query("#")
+            .build()
+            .unwrap();
+        for status in [
+            SourceStatus::Loading,
+            SourceStatus::Empty("No results".to_owned()),
+            SourceStatus::Error("Unavailable".to_owned()),
+        ] {
+            model.set_status(Kind::Fruit, status).unwrap();
+            assert_eq!(model.apply(Command::Accept), None);
+        }
+        assert_eq!(model.apply(Command::Abort), Some(Outcome::Abort));
+    }
+
+    #[test]
+    fn notices_keep_results_selectable_but_never_become_choices() {
+        let mut model = model("");
+        model.apply(Command::Next(1));
+        let selected = model.selected();
+        model
+            .set_status(
+                Kind::Fruit,
+                SourceStatus::Notice("Showing café 👨‍👩‍👧; refine the query".into()),
+            )
+            .unwrap();
+        assert_eq!(model.selected(), selected);
+        assert_eq!(model.matched(), 3);
+        assert_eq!(model.selectable.len(), 3);
+        assert!(model.rows.iter().any(|row| matches!(row, Row::Status(_))));
+        for width in 0..80 {
+            for line in model.lines(width, 20) {
+                assert_eq!(line.width(), width);
+            }
+        }
+        model.apply(Command::Next(usize::MAX));
+        assert_eq!(model.apply(Command::Accept), Some(Outcome::Accept));
+        assert_eq!(model.take_selected().unwrap().name, "banana");
     }
 }

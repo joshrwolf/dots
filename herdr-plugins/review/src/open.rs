@@ -16,6 +16,20 @@ use crate::source;
 /// Repository state is opened only after discovery finds an existing registry
 /// or the reviewer explicitly starts work in that repository.
 pub fn open_review(invocation: &Invocation) -> Result<()> {
+    open(invocation, None)
+}
+
+/// Opens a pull request directly in the caller's terminal after asking for its
+/// URL or number. The caller owns the launcher catalog; review content and live
+/// bindings remain in the repository's shared review store.
+pub fn open_pull_request(invocation: &Invocation) -> Result<()> {
+    let Some(target) = source::target_for_action(source::SourceAction::ExplicitPullRequest)? else {
+        return Ok(());
+    };
+    open(invocation, Some(target))
+}
+
+fn open(invocation: &Invocation, target: Option<GitHubTarget>) -> Result<()> {
     let snapshot = invocation
         .client()
         .snapshot()
@@ -32,12 +46,17 @@ pub fn open_review(invocation: &Invocation) -> Result<()> {
         &catalog,
     )?;
 
-    if let Some(target) = std::env::var_os("HERDR_REVIEW_PR") {
+    let target = if target.is_some() {
+        target
+    } else if let Some(target) = std::env::var_os("HERDR_REVIEW_PR") {
         let target = target
             .to_str()
             .context("HERDR_REVIEW_PR is not valid UTF-8")?;
-        let target =
-            source::parse_target(target)?.context("HERDR_REVIEW_PR must name a pull request")?;
+        Some(source::parse_target(target)?.context("HERDR_REVIEW_PR must name a pull request")?)
+    } else {
+        None
+    };
+    if let Some(target) = target {
         return open_target(
             invocation,
             &catalog,

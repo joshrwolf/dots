@@ -85,6 +85,25 @@ pub struct Comparison {
 pub struct Client;
 
 impl Client {
+    /// Run a Git query with bounded output and process-group teardown.
+    pub fn git(&self, checkout: &Path, args: &[&str]) -> Result<std::process::Output> {
+        SystemRunner.output(
+            checkout,
+            "git",
+            &args.iter().map(OsString::from).collect::<Vec<_>>(),
+        )
+    }
+
+    /// Run a GitHub CLI query using its configured default repository.
+    /// Ambient `GH_REPO` overrides are removed, as for the typed operations.
+    pub fn gh(&self, checkout: &Path, args: &[&str]) -> Result<std::process::Output> {
+        SystemRunner.output(
+            checkout,
+            "gh",
+            &args.iter().map(OsString::from).collect::<Vec<_>>(),
+        )
+    }
+
     /// Resolves the checkout repository and one pull request without listing or
     /// searching other pull requests, rejecting targets from another repository.
     pub fn resolve(self, checkout: &Path, target: &Target) -> Result<PullRequest> {
@@ -362,12 +381,7 @@ impl Runner for SystemRunner {
     }
 }
 
-#[derive(Debug)]
-struct CommandOutput {
-    status: ExitStatus,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-}
+type CommandOutput = std::process::Output;
 
 fn resolve_with(runner: &impl Runner, checkout: &Path, target: &Target) -> Result<PullRequest> {
     let expected = validate_target(target)?;

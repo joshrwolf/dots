@@ -7,6 +7,83 @@ const PAGE_BYTES: usize = 256 * 1024;
 const FRAGMENT_BYTES: usize = 96 * 1024;
 const PAGE_ITEMS: usize = 128;
 
+impl Repository {
+    /// Read an unambiguous external reference for a managed review workspace.
+    /// This does not initialize review storage or register a checkout. The saved
+    /// association survives new commits, but never crosses checkout or server identities.
+    pub fn managed_runtime_reference(
+        &self,
+        server: &str,
+        workspace: &WorkspaceId,
+        kind: &str,
+    ) -> Result<Option<String>> {
+        let token = match fs::read_to_string(self.checkout_token_path()) {
+            Ok(value) => validate_checkout_token(self.checkout_token_path(), value)?,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(Error::CheckoutTokenIo {
+                    path: self.checkout_token_path().to_owned(),
+                    source,
+                });
+            }
+        };
+        if !self
+            .database_path()
+            .try_exists()
+            .map_err(|source| Error::InspectDatabase {
+                path: self.database_path().to_owned(),
+                source,
+            })?
+        {
+            return Ok(None);
+        }
+        let read = || -> rusqlite::Result<Vec<String>> {
+            let connection = Connection::open_with_flags(
+                self.database_path(),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )?;
+            connection.busy_timeout(Duration::from_secs(2))?;
+            connection
+                .prepare(
+                    "SELECT DISTINCT r.locator FROM external_references r
+                 JOIN runtime_bindings b ON b.context_id=r.context_id
+                 JOIN checkouts c ON c.id=b.checkout_id
+                 WHERE c.checkout_token=?1 AND c.checkout_root=?2 AND c.worktree_git_dir=?3
+                   AND b.herdr_server_id=?4 AND b.workspace_id=?5
+                   AND b.checkout_kind='managed_worktree' AND r.kind=?6
+                 LIMIT 2",
+                )?
+                .query_map(
+                    params![
+                        token,
+                        self.checkout_root().to_string_lossy(),
+                        self.worktree_git_dir().to_string_lossy(),
+                        server,
+                        workspace.as_str(),
+                        kind
+                    ],
+                    |row| row.get(0),
+                )?
+                .collect()
+        };
+        let mut references = read().map_err(|source| {
+            database_error(
+                "read managed runtime reference",
+                self.database_path(),
+                source,
+            )
+        })?;
+        if references.len() > 1 {
+            return Err(invalid_stored(
+                self.database_path(),
+                "managed runtime reference",
+                "ambiguous external references",
+            ));
+        }
+        Ok(references.pop())
+    }
+}
+
 impl Store {
     /// Cheap change token for a bound editor; source projection is unnecessary when unchanged.
     pub fn binding_revision(&self, binding: &RuntimeBindingId) -> Result<(u64, ObservationId)> {

@@ -30,6 +30,13 @@ use std::process::ExitStatus;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("could not inspect review database {path}")]
+    InspectDatabase {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
     #[error("could not run Git while inspecting {checkout}")]
     RunGit {
         checkout: PathBuf,

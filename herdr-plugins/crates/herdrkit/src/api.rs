@@ -154,6 +154,9 @@ pub struct Agent {
     pub workspace_id: WorkspaceId,
     pub tab_id: TabId,
     pub agent_status: AgentStatus,
+    /// Monotonic server sequence of the latest agent state change.
+    #[serde(default)]
+    pub state_change_seq: u64,
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default, rename = "agent")]
@@ -601,6 +604,17 @@ pub(crate) struct AgentPromptWait<'a> {
 #[derive(Debug, Default, Serialize)]
 struct PaneList {}
 request!(PaneList, "pane.list", "pane_list" => Panes);
+
+#[derive(Debug, Serialize)]
+struct PaneFocus<'a> {
+    pane_id: &'a PaneId,
+}
+request!(PaneFocus<'_>, "pane.focus", "pane_info" => FocusedPane);
+
+#[derive(Debug, Deserialize)]
+struct FocusedPane {
+    pane: Pane,
+}
 
 #[derive(Debug, Serialize)]
 struct PaneProcessInfo<'a> {
@@ -1127,6 +1141,11 @@ impl Client {
 
     pub fn agent_focus(&self, target: AgentRef<'_>) -> Result<()> {
         self.invoke(&AgentFocus { target })
+    }
+
+    /// Focus a pane and navigate the attached client to its workspace and tab.
+    pub fn pane_focus(&self, pane_id: &PaneId) -> Result<Pane> {
+        self.call(&PaneFocus { pane_id }).map(|reply| reply.pane)
     }
 
     pub fn agent_start(

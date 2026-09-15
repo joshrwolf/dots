@@ -2688,6 +2688,87 @@ mod tests {
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
+    #[test]
+    fn managed_reference_reads_are_scoped_and_do_not_initialize_storage() {
+        let fixture = Fixture::new();
+        let repository = fixture.repository();
+        let workspace = WorkspaceId::new("w1");
+        let kind = "github.pull_request";
+        let url = "https://github.com/example/project/pull/7";
+        let read = |server: &str, workspace: &WorkspaceId, kind: &str| {
+            repository
+                .managed_runtime_reference(server, workspace, kind)
+                .unwrap()
+        };
+        assert_eq!(read("server", &workspace, kind), None);
+        assert!(!repository.database_path().exists());
+        assert!(!repository.checkout_token_path().exists());
+        let mut store = Store::open(&repository).unwrap();
+        fs::write(fixture.root.join("a"), "two\n").unwrap();
+        let (context, observation) = store
+            .create_context_with_observation(
+                "Review",
+                &[ExternalReference::new(kind, url).unwrap()],
+                &fixture.spec(),
+            )
+            .unwrap();
+        store
+            .bind_runtime(
+                &context.id,
+                &observation.id,
+                "server",
+                &workspace,
+                None,
+                CheckoutKind::Existing,
+            )
+            .unwrap();
+        assert_eq!(read("server", &workspace, kind), None);
+        store
+            .bind_runtime(
+                &context.id,
+                &observation.id,
+                "server",
+                &workspace,
+                None,
+                CheckoutKind::ManagedWorktree,
+            )
+            .unwrap();
+        assert_eq!(read("server", &workspace, kind).as_deref(), Some(url));
+        assert_eq!(read("replacement", &workspace, kind), None);
+        assert_eq!(read("server", &WorkspaceId::new("w2"), kind), None);
+        assert_eq!(read("server", &workspace, "another.provider"), None);
+        let linked = fixture.root.join("linked");
+        run(
+            &fixture.root,
+            &["worktree", "add", "-b", "review", linked.to_str().unwrap()],
+        );
+        let other_repository = Repository::discover(&linked).unwrap();
+        let _other_store = Store::open(&other_repository).unwrap();
+        assert_eq!(
+            other_repository
+                .managed_runtime_reference("server", &workspace, kind)
+                .unwrap(),
+            None
+        );
+        fs::write(
+            repository.checkout_token_path(),
+            "00000000000000000000000000000000",
+        )
+        .unwrap();
+        assert_eq!(read("server", &workspace, kind), None);
+        fs::write(repository.checkout_token_path(), store.checkout_token()).unwrap();
+        store
+            .add_external_reference(
+                &context.id,
+                &ExternalReference::new(kind, "https://github.com/example/project/pull/8").unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            repository.managed_runtime_reference("server", &workspace, kind),
+            Err(Error::InvalidStoredValue { .. })
+        ));
+    }
+
     fn ref_exists(cwd: &Path, reference: &str) -> bool {
         Command::new("git")
             .arg("-C")

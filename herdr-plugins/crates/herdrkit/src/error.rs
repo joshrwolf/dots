@@ -11,6 +11,38 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
+    #[error("choose an explicit Herdr session outside Herdr (--session <name>)")]
+    MissingConnectionTarget,
+
+    #[error("invalid Herdr connection target: {reason}")]
+    InvalidConnectionTarget { reason: &'static str },
+
+    #[error("Herdr session {name:?} was not found; inspect `herdr session list`")]
+    SessionNotFound { name: String },
+
+    #[error(
+        "Herdr session {name:?} is stopped; start it explicitly with `herdr session attach <name>`"
+    )]
+    SessionStopped { name: String },
+
+    #[error("Herdr returned ambiguous session identity {name:?}")]
+    AmbiguousSession { name: String },
+
+    #[error("could not run `herdr session list --json`")]
+    SessionDiscoveryIo(#[source] io::Error),
+
+    #[error("`herdr session list --json` failed with exit code {code:?}")]
+    SessionDiscoveryExit { code: Option<i32> },
+
+    #[error("`herdr session list --json` exceeded its three-second deadline")]
+    SessionDiscoveryTimeout,
+
+    #[error("`herdr session list --json` exceeded its output limit")]
+    SessionDiscoveryTooLarge,
+
+    #[error("could not decode `herdr session list --json`")]
+    SessionDiscoveryDecode(#[source] serde_json::Error),
+
     #[error("HERDR_WORKTREE_TIMEOUT_SECS must be an integer from 1 through 86400, got {value:?}")]
     InvalidWorktreeTimeout { value: String },
     #[error("required environment variable {name} is unset or empty")]

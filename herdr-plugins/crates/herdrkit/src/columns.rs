@@ -24,6 +24,22 @@ pub(crate) fn graphemes(text: &str) -> usize {
     text.graphemes(true).count()
 }
 
+/// A suffix fitting `max` cells and its original grapheme offset, for highlights.
+pub(crate) fn suffix(text: &str, max: usize) -> (&str, usize) {
+    let mut start = text.len();
+    let mut used = 0;
+    for (index, grapheme) in text.grapheme_indices(true).rev() {
+        let cells = width(grapheme);
+        if used + cells > max {
+            break;
+        }
+        used += cells;
+        start = index;
+    }
+    let (removed, kept) = text.split_at(start);
+    (kept, graphemes(removed))
+}
+
 /// `text` clipped to `max` cells, ending in `…` when anything was dropped.
 ///
 /// A grapheme that straddles the limit is dropped whole, so the result is never

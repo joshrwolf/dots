@@ -166,8 +166,8 @@ mod tests {
 
         let picker = find.panes.first().context("missing Find picker")?;
         ensure!(
-            picker.width == Some(120) && picker.height == Some(24),
-            "Find popup must remain 120 by 24 cells"
+            picker.width == Some(160) && picker.height == Some(36),
+            "Find popup must remain 160 by 36 cells"
         );
 
         let nav = manifest("nav")?;

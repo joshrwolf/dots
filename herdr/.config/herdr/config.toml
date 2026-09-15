@@ -23,10 +23,35 @@ yellow = "#9a6700"
 mauve = "#8250df"
 
 [ui]
-status_indicators = "dots"
+status_indicators = "symbols"
+agent_panel_sort = "priority"
 tab_bar_position = "bottom"
 pane_outer_borders = false
 pane_gaps = false
+
+# The GitHub plugin publishes these workspace tokens. Missing values and
+# empty rows disappear, so workspaces without a PR keep the compact layout.
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "workspace"],
+  ["branch", "git_status"],
+  [
+    { token = "$gh_pr", fg = "#0969da", dim = false },
+    { token = "$gh_state", fg = "#1a7f37", dim = false, rules = [
+      { equals = "○ Draft", fg = "#57606a" },
+      { equals = "◆ Merged", fg = "#8250df" },
+      { equals = "× Closed", fg = "#cf222e" },
+    ] },
+  ],
+  [
+    { token = "$gh_failed", fg = "#cf222e", bold = true, dim = false },
+    { token = "$gh_pending", fg = "#9a6700", dim = false },
+    { token = "$gh_checks", fg = "#57606a", dim = false, rules = [
+      { equals = "✓ CI", fg = "#1a7f37" },
+    ] },
+    { token = "$gh_health", fg = "#9a6700", dim = false },
+  ],
+]
 
 [ui.toast]
 delivery = "herdr"
@@ -61,7 +86,7 @@ resize_pane_left = "prefix+shift+h"
 resize_pane_down = "prefix+shift+j"
 resize_pane_up = "prefix+shift+k"
 resize_pane_right = "prefix+shift+l"
-# Reserve prefix+r for Review; resize panes with the direct bindings above.
+# Resize panes with the direct bindings above.
 resize_mode = []
 
 [[keys.command]]
@@ -69,12 +94,6 @@ key = "prefix+shift+p"
 type = "shell"
 command = "\"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-find --entrypoint picker"
 description = "find anything (workspaces, agents, worktrees, dirs)"
-
-[[keys.command]]
-key = "prefix+r"
-type = "shell"
-command = "\"$HERDR_BIN_PATH\" plugin pane open --plugin herdr-review --entrypoint open"
-description = "open code review"
 
 [[keys.command]]
 key = "ctrl+h"

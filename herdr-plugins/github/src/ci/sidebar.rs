@@ -27,6 +27,8 @@ const SOURCE: &str = "herdr-github";
 const NETWORK_SPACING: u64 = 10;
 const INVENTORY_INTERVAL: u64 = 15;
 const NEGATIVE_INTERVAL: u64 = 300;
+const METADATA_TTL: Duration = Duration::from_secs(120);
+const METADATA_RENEWAL: u64 = 30;
 const SCHEMA: &str = "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS snapshots(url TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bindings(server TEXT NOT NULL, workspace TEXT NOT NULL, checkout TEXT NOT NULL, identity TEXT NOT NULL, url TEXT, PRIMARY KEY(server,workspace));";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -117,7 +119,7 @@ struct Workspace {
     url: Option<String>,
     discover_at: u64,
     discovering: bool,
-    published: Option<String>,
+    published: Option<(String, u64)>,
     error: Option<String>,
 }
 
@@ -287,7 +289,7 @@ impl Scheduler {
                 Ok(value) => value,
                 Err(error) => {
                     self.workspaces.remove(&id);
-                    MetadataReporter::retained(&self.client, SOURCE)
+                    MetadataReporter::new(&self.client, SOURCE, METADATA_TTL)?
                         .report_workspace(&id, &clear()?)?;
                     self.last_error = Some(error);
                     continue;
@@ -346,7 +348,9 @@ impl Scheduler {
                         .filter(|w| w.identity == identity)
                     {
                         match result {
-                            Ok(()) => workspace.published = Some(signature),
+                            Ok(()) => {
+                                workspace.published = Some((signature, now + METADATA_RENEWAL));
+                            }
                             Err(error) => {
                                 self.last_error = Some(error);
                                 self.dirty.store(true, Ordering::Relaxed);
@@ -443,6 +447,7 @@ impl Scheduler {
             self.inventory_running = true;
             self.inventory_at = now + INVENTORY_INTERVAL;
             let client = self.client.clone();
+            let server_id = self.server_id.clone();
             let sender = self.sender.clone();
             self.workers.push(thread::spawn(move || {
                 let result = client
@@ -458,8 +463,12 @@ impl Scheduler {
                                         (
                                             workspace.workspace_id.clone(),
                                             directory.to_path_buf(),
-                                            github::checkout_identity(directory)
-                                                .map_err(|e| format!("{e:#}")),
+                                            github::checkout_identity(
+                                                directory,
+                                                &server_id,
+                                                &workspace.workspace_id,
+                                            )
+                                            .map_err(|e| format!("{e:#}")),
                                         )
                                     })
                             })
@@ -547,11 +556,13 @@ impl Scheduler {
                     current.checkout.clone(),
                 );
                 let sender = self.sender.clone();
+                let server_id = self.server_id.clone();
                 self.workers.push(thread::spawn(move || {
-                    let result = github::discover(&checkout)
+                    let result = github::discover(&checkout, &server_id, &workspace)
                         .and_then(|url| {
                             anyhow::ensure!(
-                                github::checkout_identity(&checkout)? == identity,
+                                github::checkout_identity(&checkout, &server_id, &workspace)?
+                                    == identity,
                                 "checkout changed during PR discovery"
                             );
                             Ok(url)
@@ -607,7 +618,11 @@ impl Scheduler {
                 tokens = tokens.set("gh_health", "! Lookup")?;
             }
             let encoded = serde_json::to_string(&tokens)?;
-            if workspace.published.as_ref() == Some(&encoded) {
+            if workspace
+                .published
+                .as_ref()
+                .is_some_and(|(signature, renew_at)| signature == &encoded && now < *renew_at)
+            {
                 continue;
             }
             batch.push((
@@ -626,13 +641,14 @@ impl Scheduler {
         let server_id = self.server_id.clone();
         let sender = self.sender.clone();
         self.workers.push(thread::spawn(move || {
-            let reporter = MetadataReporter::retained(&client, SOURCE);
+
             let results = batch.into_iter().map(|(id, checkout, identity, signature, tokens)| {
                     let result = (|| -> Result<()> {
+                        let reporter = MetadataReporter::new(&client, SOURCE, METADATA_TTL)?;
                         anyhow::ensure!(client.server_id()? == server_id, "Herdr server was replaced before publication");
                         let snapshot = client.snapshot()?;
                         anyhow::ensure!(snapshot.effective_workspace_dir(&id) == Some(checkout.as_path()), "workspace checkout changed before publication");
-                    match github::checkout_identity(&checkout) {
+                    match github::checkout_identity(&checkout, &server_id, &id) {
                         Ok(actual) if actual == identity => reporter.report_workspace(&id, &tokens)?,
                         other => {
                             reporter.report_workspace(&id, &clear()?)?;
@@ -757,6 +773,162 @@ mod tests {
             published: None,
             error: None,
         }
+    }
+
+    struct Checkout(PathBuf);
+
+    impl Drop for Checkout {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    impl Checkout {
+        fn new() -> Self {
+            let checkout =
+                Self(std::env::temp_dir().join(format!("ci-review-{}", std::process::id())));
+            let _ = std::fs::remove_dir_all(&checkout.0);
+            std::fs::create_dir_all(&checkout.0).unwrap();
+            let git = |args: &[&str]| {
+                let output = github_client::Client.git(&checkout.0, args).unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            };
+            git(&["init", "--initial-branch=review-pr-7-local"]);
+            git(&[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "base",
+            ]);
+            checkout
+        }
+
+        fn bind_review(&self, server: &str, id: &WorkspaceId, url: &str) {
+            use review_core::{CheckoutKind, ExternalReference, Repository, Store};
+            let repository = Repository::discover(&self.0).unwrap();
+            let mut store = Store::open(&repository).unwrap();
+            std::fs::write(self.0.join("change"), "review change\n").unwrap();
+            let (context, observation) = store
+                .create_context_with_observation(
+                    "Review",
+                    &[ExternalReference::new("github.pull_request", url).unwrap()],
+                    &repository.working_tree_comparison().unwrap(),
+                )
+                .unwrap();
+            store
+                .bind_runtime(
+                    &context.id,
+                    &observation.id,
+                    server,
+                    id,
+                    None,
+                    CheckoutKind::ManagedWorktree,
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn managed_review_discovery_and_publication_renew_without_fetching_again() {
+        use herdrkit::testing::{Server, Step};
+        const OK: &str = r#"{"id":"{id}","result":{"type":"ok"}}"#;
+        let checkout = Checkout::new();
+        let snapshot = json!({"id":"{id}","result":{"type":"session_snapshot","snapshot":{
+            "version":"test", "protocol":22,
+            "workspaces":[{"workspace_id":"w1","label":"Review","focused":true,"agent_status":"idle"}],
+            "tabs":[],"agents":[],"panes":[{"pane_id":"p1","workspace_id":"w1","tab_id":"t1","cwd":checkout.0}]
+        }}}).to_string();
+        let server = Server::start(vec![
+            Step::reply(snapshot.clone()),
+            Step::reply(OK),
+            Step::reply(snapshot),
+            Step::reply(OK),
+        ]);
+        let mut scheduler = scheduler();
+        scheduler.client = server.client();
+        scheduler.server_id = scheduler.client.server_id().unwrap();
+        let id = WorkspaceId::new("w1");
+        let before = github::checkout_identity(&checkout.0, &scheduler.server_id, &id).unwrap();
+        let url = "https://github.com/example/project/pull/7";
+        checkout.bind_review(&scheduler.server_id, &id, url);
+        let identity = github::checkout_identity(&checkout.0, &scheduler.server_id, &id).unwrap();
+        assert_ne!(before, identity);
+        scheduler
+            .reconcile_inventory(
+                Ok(vec![(id.clone(), checkout.0.clone(), Ok(identity))]),
+                100,
+            )
+            .unwrap();
+        scheduler.schedule_network(100);
+        let completion = scheduler
+            .receiver
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        scheduler.complete(completion, 100).unwrap();
+        assert_eq!(
+            scheduler.workspaces.get(&id).unwrap().url.as_deref(),
+            Some(url)
+        );
+        scheduler
+            .complete(
+                Completion::Fetched {
+                    url: url.into(),
+                    result: Ok(Cached {
+                        values: BTreeMap::from([("gh_pr".into(), Some("#7".into()))]),
+                        fetched: 100,
+                        interval: 180,
+                    }),
+                },
+                100,
+            )
+            .unwrap();
+        scheduler.publish(100).unwrap();
+        let completion = scheduler
+            .receiver
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        scheduler.complete(completion, 100).unwrap();
+        assert!(scheduler.last_error.is_none(), "{:?}", scheduler.last_error);
+        scheduler.publish(129).unwrap();
+        assert!(!scheduler.publishing);
+        scheduler.publish(130).unwrap();
+        assert!(scheduler.publishing);
+        let completion = scheduler
+            .receiver
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap();
+        scheduler.complete(completion, 130).unwrap();
+        let reports: Vec<_> = server
+            .requests()
+            .into_iter()
+            .filter(|r| r.method == "workspace.report_metadata")
+            .collect();
+        assert_eq!(reports.len(), 2);
+        for report in reports {
+            assert_eq!(report.params.get("ttl_ms"), Some(&json!(120_000)));
+            assert_eq!(report.params.pointer("/tokens/gh_pr"), Some(&json!("#7")));
+        }
+        assert_eq!(
+            scheduler
+                .pulls
+                .get(url)
+                .unwrap()
+                .cached
+                .as_ref()
+                .unwrap()
+                .fetched,
+            100
+        );
     }
 
     #[test]

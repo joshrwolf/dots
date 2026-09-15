@@ -1,2 +1,3 @@
 - Only send messages or replies to other people (on GitHub or elsewhere) when I explicitly ask.
-- Always append a `Generated with <model>` footer to those messages, using your actual model name.
+- Always append a `Generated with assistance from <model>` footer to those messages, using your actual model name.
+- Load the `ship-it` skill when I say "ship it" and before creating or updating any PR on my behalf, even when I did not name the skill. "Ship it" authorizes the necessary commits, push, and PR creation or update without another confirmation; it does not authorize merging or monitoring CI.

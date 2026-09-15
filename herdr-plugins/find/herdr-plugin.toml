@@ -24,7 +24,6 @@ command = ["./bin/herdr-find"]
 # on a laptop, with nothing to change between them. A percentage can only ever
 # track the window, and 90% of a 378-column terminal is an unreadable row.
 #
-# The agent group spends FIXED_CELLS on columns before `task` gets anything, so
-# this has to clear it by enough to leave a task title legible.
-width = 120
-height = 24
+# Content columns shrink on smaller terminals to keep the task title readable.
+width = 160
+height = 36

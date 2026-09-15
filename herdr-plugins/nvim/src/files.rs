@@ -16,7 +16,7 @@ use serde::Deserialize;
 /// the other-files group.
 const MARKED: usize = 20;
 
-const MARK: usize = 2;
+const MARK: usize = 3;
 const DIFFSTAT: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,12 +49,12 @@ impl Entry for File {
         match self.tier {
             Tier::RecentChanges => vec![
                 Cell::tag("●", theme.green),
-                Cell::new(relative, theme.strong),
+                Cell::path(relative, theme.strong),
                 Cell::tag(self.diffstat.clone().unwrap_or_default(), theme.muted),
             ],
             Tier::OtherFiles => vec![
                 Cell::tag("", theme.muted),
-                Cell::new(relative, theme.strong),
+                Cell::path(relative, theme.strong),
             ],
         }
     }
@@ -65,7 +65,7 @@ pub fn groups() -> Vec<Group<Tier>> {
         Group::new(
             Tier::RecentChanges,
             "recent changes",
-            vec![Column::new(MARK), Column::fill(), Column::new(DIFFSTAT)],
+            vec![Column::new(MARK), Column::fill(), Column::content(DIFFSTAT)],
         ),
         Group::new(
             Tier::OtherFiles,

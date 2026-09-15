@@ -20,7 +20,7 @@ fn string(name: &'static str) -> Result<String> {
     optional_string(name)?.ok_or(Error::MissingEnv { name })
 }
 
-fn optional_path(name: &'static str) -> Option<PathBuf> {
+pub(crate) fn optional_path(name: &'static str) -> Option<PathBuf> {
     std::env::var_os(name)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

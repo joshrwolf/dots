@@ -16,6 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+github-client.workspace = true
+review-core.workspace = true
 herdrkit.workspace = true
 serde.workspace = true
 serde_json.workspace = true

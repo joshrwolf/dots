@@ -4,6 +4,7 @@
 //! so what remains here is init, layout and the read loop.
 
 use std::io;
+use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, DisableBracketedPaste, EnableBracketedPaste, Event};
@@ -15,9 +16,20 @@ use ratatui::widgets::Paragraph;
 use crate::{Theme, columns};
 
 use super::model::{Model, Outcome};
-use super::{Entry, Error, command};
+use super::source::Sources;
+use super::{Entry, Error, Selection, Shortcut, command};
 
-pub(super) fn run<T: Entry>(mut model: Model<T>, prompt: &str) -> Result<Option<T>, Error> {
+enum Exit {
+    List(Outcome),
+    Shortcut(usize),
+}
+
+pub(super) fn run<T: Entry + Send + 'static, A>(
+    mut model: Model<T>,
+    prompt: &str,
+    mut sources: Sources<T>,
+    mut shortcuts: Vec<Shortcut<A>>,
+) -> Result<Selection<T, A>, Error> {
     let mut terminal = ratatui::try_init()?;
     let paste = match BracketedPaste::enable() {
         Ok(paste) => paste,
@@ -26,36 +38,55 @@ pub(super) fn run<T: Entry>(mut model: Model<T>, prompt: &str) -> Result<Option<
             return Err(error.into());
         }
     };
-    let outcome = drive(&mut terminal, &mut model, prompt);
+    let outcome = drive(&mut terminal, &mut model, prompt, &mut sources, &shortcuts);
     // Restoring is unconditional: a loop that failed mid-draw has still left
     // the terminal in raw mode and on the alternate screen, and a popup stuck
     // there has no way out.
     let paste_restored = paste.disable();
     let restored = ratatui::try_restore();
+    let stopped = sources.finish();
     let outcome = outcome?;
+    stopped?;
     paste_restored?;
     restored?;
 
     Ok(match outcome {
-        Outcome::Accept => model.take_selected(),
-        Outcome::Abort => None,
+        Exit::List(Outcome::Accept) => model
+            .take_selected()
+            .map_or(Selection::Cancelled, Selection::Entry),
+        Exit::List(Outcome::Abort) => Selection::Cancelled,
+        Exit::Shortcut(index) => Selection::Shortcut(shortcuts.remove(index).value),
     })
 }
 
-fn drive<T>(
+fn drive<T: Entry + Send + 'static, A>(
     terminal: &mut ratatui::DefaultTerminal,
     model: &mut Model<T>,
     prompt: &str,
-) -> std::io::Result<Outcome> {
+    sources: &mut Sources<T>,
+    shortcuts: &[Shortcut<A>],
+) -> Result<Exit, Error> {
+    let mut dirty = true;
+    let mut page = 1;
     loop {
-        let mut page = 1;
-        terminal.draw(|frame| page = draw(frame, model, prompt))?;
+        dirty |= sources.update(model)?;
+        if dirty {
+            terminal.draw(|frame| page = draw(frame, model, prompt, shortcuts))?;
+            dirty = false;
+        }
+        if !event::poll(Duration::from_millis(25))? {
+            continue;
+        }
+        dirty = true;
         match event::read()? {
             Event::Key(key) => {
+                if let Some(index) = shortcuts.iter().position(|shortcut| shortcut.matches(key)) {
+                    return Ok(Exit::Shortcut(index));
+                }
                 if let Some(command) = command(key, page)
                     && let Some(outcome) = model.apply(command)
                 {
-                    return Ok(outcome);
+                    return Ok(Exit::List(outcome));
                 }
             }
             Event::Paste(text) => model.insert_text(&text),
@@ -93,7 +124,12 @@ impl Drop for BracketedPaste {
 }
 
 /// Returns the page size, so a page key moves by exactly what is on screen.
-fn draw<T>(frame: &mut Frame<'_>, model: &mut Model<T>, prompt: &str) -> usize {
+fn draw<T: Entry, A>(
+    frame: &mut Frame<'_>,
+    model: &mut Model<T>,
+    prompt: &str,
+    shortcuts: &[Shortcut<A>],
+) -> usize {
     let theme = model.theme();
     let area = frame.area();
     frame.render_widget(
@@ -124,16 +160,23 @@ fn draw<T>(frame: &mut Frame<'_>, model: &mut Model<T>, prompt: &str) -> usize {
             scope,
         );
         for area in [gap, rule] {
-            frame.render_widget(Paragraph::new("─".repeat(width)).style(muted), area);
+            frame.render_widget(
+                Paragraph::new("─".repeat(width))
+                    .style(muted.add_modifier(ratatui::style::Modifier::DIM)),
+                area,
+            );
         }
-        let directories = if model.has_directory_scope() {
-            " · / directories"
-        } else {
-            ""
-        };
+        let scopes = model.scope_help();
+        let mut actions = String::new();
+        for shortcut in shortcuts {
+            actions.push_str(" · ");
+            actions.push_str(&shortcut.hint());
+        }
         let help = vec![
-            Line::raw("enter open · esc close · ↑/↓ or ctrl+j/k move"),
-            Line::raw(format!("tab/shift+tab scope · ctrl+u clear{directories}")),
+            Line::raw(format!(
+                "enter open · esc close · ↑/↓ or ctrl+j/k move{actions}"
+            )),
+            Line::raw(format!("tab/shift+tab scope · ctrl+u clear{scopes}")),
         ];
         frame.render_widget(Paragraph::new(help).style(muted), footer);
     }
@@ -162,7 +205,7 @@ fn draw<T>(frame: &mut Frame<'_>, model: &mut Model<T>, prompt: &str) -> usize {
     height
 }
 
-fn prompt_line<T>(
+fn prompt_line<T: Entry>(
     model: &Model<T>,
     prompt: &str,
     theme: Theme,
@@ -253,7 +296,12 @@ mod tests {
                 model.insert_text("cafe\u{301} 一 👩‍💻");
                 terminal
                     .draw(|frame| {
-                        draw(frame, &mut model, "› ");
+                        draw(
+                            frame,
+                            &mut model,
+                            "› ",
+                            &[Shortcut::control('r', "review URL", ())],
+                        );
                     })
                     .unwrap();
                 if width > 0 && height > 0 {
@@ -265,13 +313,39 @@ mod tests {
     }
 
     #[test]
+    fn shortcut_hint_is_visible_even_when_nothing_matches() {
+        let mut terminal = Terminal::new(TestBackend::new(120, 24)).unwrap();
+        let mut model = model();
+        model.insert_text("no-matching-destination");
+        assert_eq!(model.matched(), 0);
+        terminal
+            .draw(|frame| {
+                draw(
+                    frame,
+                    &mut model,
+                    "› ",
+                    &[Shortcut::control('r', "review URL", ())],
+                );
+            })
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+        assert!(rendered.contains("ctrl+r review URL"));
+    }
+
+    #[test]
     fn page_size_is_the_complete_visible_body() {
         let backend = TestBackend::new(40, 7);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut model = model();
         let mut page = usize::MAX;
         terminal
-            .draw(|frame| page = draw(frame, &mut model, "> "))
+            .draw(|frame| page = draw::<_, ()>(frame, &mut model, "> ", &[]))
             .unwrap();
         assert_eq!(page, 6, "one header row leaves six body rows");
     }
