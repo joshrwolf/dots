@@ -23,11 +23,6 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Build mode** — implementing a new gRPC server or client from scratch.
-- **Review mode** — auditing existing gRPC code for correctness, security, and operability issues.
-
 **Dependencies:**
 
 - protoc: `brew install protobuf`

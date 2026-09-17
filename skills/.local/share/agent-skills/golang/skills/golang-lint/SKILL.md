@@ -24,23 +24,15 @@ paths:
   - ".golangci.yml"
 ---
 
-**Modes:**
-
-- **Setup mode** — configuring `.golangci.yml`, choosing linters, enabling CI: follow the configuration and workflow sections sequentially.
-- **Coding mode** — writing new Go code: run the project lint checks after edits; inspect findings before applying fixes.
-- **Interpret/fix mode** — reading lint output, suppressing warnings, fixing issues on existing code: start from "Interpreting Output" and "Suppressing Lint Warnings"; group legacy cleanup by concern within the requested scope.
-
 **Dependencies:**
 
 - golangci-lint: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
 
 # Go Linting
 
-## Overview
-
-`golangci-lint` is the standard Go linting tool. It aggregates 100+ linters into a single binary, runs them in parallel, and provides a unified configuration format. Run it frequently during development and always in CI.
-
-Every Go project MUST have a `.golangci.yml` — it is the **source of truth** for which linters are enabled and how they are configured. See the [recommended configuration](./assets/.golangci.yml) for a production-ready setup with 48 linters enabled.
+Use the repository's existing golangci-lint configuration and lint targets.
+The [example configuration](./assets/.golangci.yml) is a starting point when
+setting up linting, not a required linter set for every project.
 
 ## Quick Reference
 
@@ -66,7 +58,7 @@ golangci-lint run --verbose ./...
 
 ## Configuration
 
-The [recommended .golangci.yml](./assets/.golangci.yml) provides a production-ready setup with 33 linters. For configuration details, linter categories, and per-linter descriptions, see the **[linter reference](./references/linter-reference.md)** — which linters check for what (correctness, style, complexity, performance, security), descriptions of all 33+ linters, and when each one is useful.
+The [example .golangci.yml](./assets/.golangci.yml) illustrates configuration options. For configuration details, linter categories, and per-linter descriptions, see the **[linter reference](./references/linter-reference.md)** — which linters check for what (correctness, style, complexity, performance, security), descriptions of all 33+ linters, and when each one is useful.
 
 ## Suppressing Lint Warnings
 
@@ -90,28 +82,6 @@ Rules:
 4. **NEVER suppress security linters** (gosec, bodyclose, sqlclosecheck) without a very strong reason
 
 For comprehensive patterns and examples, see **[nolint directives](./references/nolint-directives.md)** — when to suppress, how to write justifications, patterns for per-line vs per-function suppression, and anti-patterns.
-
-## Development Workflow
-
-1. **Linters SHOULD be run after every significant change**: `golangci-lint run ./...`
-2. **Auto-fix what you can**: `golangci-lint run --fix ./...`
-3. **Format before committing**: `golangci-lint fmt ./...`
-4. **Incremental adoption on legacy code**: set `issues.new-from-rev` in `.golangci.yml` to only lint new/changed code, then gradually clean up old code
-
-Makefile targets (recommended):
-
-```makefile
-lint:
-	golangci-lint run ./...
-
-lint-fix:
-	golangci-lint run --fix ./...
-
-fmt:
-	golangci-lint fmt ./...
-```
-
-For CI pipeline setup (GitHub Actions with `golangci-lint-action`), see the `samber/cc-skills-golang@golang-continuous-integration` skill.
 
 ## Interpreting Output
 

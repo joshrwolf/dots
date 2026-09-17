@@ -167,4 +167,3 @@ retract (
 - → See `samber/cc-skills-golang@golang-project-layout` skill for directory/package layout conventions.
 - → See `samber/cc-skills-golang@golang-design-patterns` skill for when an interface is the right design choice versus premature abstraction, and for constructor/DI patterns.
 - → See [catalog.md](catalog.md) in this skill for the Fowler catalog entries (Extract Interface, Change Function Declaration, Move Function) these structural moves build on.
-- → See [workflow.md](workflow.md) in this skill for staging a cross-package move or package split as an ordered sequence of small PRs.

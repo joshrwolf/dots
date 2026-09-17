@@ -19,12 +19,6 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Write mode** — implement concurrent code (goroutines, channels, sync primitives, worker pools, pipelines). Follow the sequential instructions below.
-- **Review mode** — reviewing a PR's concurrent code changes. Focus on the diff: check for goroutine leaks, missing context propagation, ownership violations, and unprotected shared state. Sequential.
-- **Audit mode** — auditing existing concurrent code across a codebase. Use the checks in "Concurrency Audits" within the requested scope.
-
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-concurrency` skill takes precedence.
 
 # Go Concurrency Best Practices
@@ -124,7 +118,7 @@ For a requested concurrency audit, check:
 - → See `samber/cc-skills-golang@golang-performance` skill for false sharing, cache-line padding, `sync.Pool` hot-path patterns
 - → See `samber/cc-skills-golang@golang-context` skill for cancellation propagation and timeout patterns
 - → See `samber/cc-skills-golang@golang-safety` skill for concurrent map access and race condition prevention
-- → See `samber/cc-skills-golang@golang-troubleshooting` skill for debugging goroutine leaks and deadlocks
+- Read [Panic tracebacks](references/tracebacks.md) for GOTRACEBACK settings and live goroutine stack dumps.
 - → See `samber/cc-skills-golang@golang-design-patterns` skill for graceful shutdown patterns
 - → See `samber/cc-skills-golang@golang-continuous-integration` skill for automated AI-driven code review in CI using these guidelines
 

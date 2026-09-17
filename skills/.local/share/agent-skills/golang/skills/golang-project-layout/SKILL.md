@@ -96,24 +96,6 @@ Co-locate `_test.go` files with the code they test. Use `testdata/` for fixtures
 
 Use `go.work` when developing multiple related modules in a monorepo. See [workspaces](references/workspaces.md) for setup, structure, and commands.
 
-## Initialization Checklist
-
-When starting a new Go project:
-
-- [ ] Use the requested architecture or choose a simple structure appropriate to scope
-- [ ] Follow existing wiring conventions; use constructors where needed
-- [ ] Decide project type (CLI, library, service, monorepo)
-- [ ] Right-size the structure to the project scope
-- [ ] Choose module name (matches repo URL, lowercase, hyphens)
-- [ ] Run `go version` to detect the current go version
-- [ ] Run `go mod init github.com/user/project-name`
-- [ ] Choose a root entrypoint or `cmd/{name}` to fit the project
-- [ ] Use `internal/` when implementation needs separate private packages
-- [ ] Place public packages according to existing conventions; `pkg/` is optional
-- [ ] For monorepos: Initialize `go work` and add modules
-- [ ] Run `gofmt -s -w .` to ensure formatting
-- [ ] Add `.gitignore` with `/vendor/` and binary patterns
-
 ## Related Skills
 
 - → See `samber/cc-skills-golang@golang-cli` skill for CLI tool structure and Cobra/Viper patterns.
@@ -122,4 +104,4 @@ When starting a new Go project:
 - → See `samber/cc-skills-golang@golang-continuous-integration` skill for CI/CD pipeline setup.
 - → See `samber/cc-skills-golang@golang-design-patterns` skill for architectural patterns.
 - → See `samber/cc-skills-golang@golang-refactoring` skill for safely moving or splitting existing code into the layout above by updating affected callers and verifying the resulting dependency graph.
-- → Use `golang-how-to` Configure mode only when project skill configuration is requested.
+- → Use the project configuration guidance in `golang-how-to` only when requested.

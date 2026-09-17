@@ -21,7 +21,7 @@ Configure via environment variables — no recompile needed.
 | `GODEBUG=schedtrace=1000,scheddetail=1 ./app` | Per-goroutine state detail on top of schedtrace |
 | Heap/alloc profiles (`go tool pprof -alloc_objects`) | Allocation sites and object churn; use instead of removed/stale allocation trace flags |
 
-→ See `samber/cc-skills-golang@golang-troubleshooting` skill for detailed GODEBUG usage and interpretation.
+See [investigation sessions](investigation-session.md) for GC diagnostics and [execution traces](trace.md) for scheduling analysis.
 
 ### Programmatic APIs
 

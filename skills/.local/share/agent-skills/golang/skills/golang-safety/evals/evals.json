@@ -926,5 +926,89 @@
         "text": "Formula is mathematically correct: `float64(after-before) / float64(before) * 100` or equivalent"
       }
     ]
+  },
+  {
+    "id": 37,
+    "name": "break-in-select-inside-for-loop",
+    "description": "Tests the break-in-select gotcha: bare break only exits select, not the enclosing for loop",
+    "prompt": "My Go program's message consumer loop never terminates. When I send 'quit' on the channel, the loop keeps running. What's wrong?\n\n```go\nfor {\n    select {\n    case msg := <-ch:\n        if msg == \"quit\" {\n            log.Println(\"shutting down\")\n            break\n        }\n        handleMessage(msg)\n    case <-ctx.Done():\n        break\n    }\n}\n```",
+    "trap": "Model suggests the channel isn't receiving 'quit' or there's a timing issue, rather than identifying the break-in-select gotcha",
+    "assertions": [
+      {"id": "37.1", "text": "Identifies that break inside a select only exits the select statement, not the for loop"},
+      {"id": "37.2", "text": "Recommends using a labeled break (e.g., break loop) with a label on the for statement"},
+      {"id": "37.3", "text": "Shows the correct pattern with a label like 'loop:' on the for statement and 'break loop' inside select"},
+      {"id": "37.4", "text": "Also fixes the ctx.Done() case which has the same break issue"},
+      {"id": "37.5", "text": "Alternatively mentions return as a solution if the function should exit entirely"}
+    ]
+  },
+  {
+    "id": 38,
+    "name": "missing-return-after-http-error",
+    "description": "Tests the missing return after http.Error() bug from common-go-bugs",
+    "prompt": "My Go API endpoint has a security vulnerability — unauthorized users can sometimes access protected resources. The handler checks authorization and sends a 403 Forbidden response, but the protected action still executes. Here's the code:\n\n```go\nfunc handleDelete(w http.ResponseWriter, r *http.Request) {\n    if !isAuthorized(r) {\n        http.Error(w, \"Forbidden\", http.StatusForbidden)\n    }\n    if err := deleteResource(r.Context(), r.URL.Query().Get(\"id\")); err != nil {\n        http.Error(w, err.Error(), 500)\n    }\n    w.WriteHeader(http.StatusNoContent)\n}\n```",
+    "trap": "Model suggests the isAuthorized function is buggy rather than noticing the missing return after http.Error()",
+    "assertions": [
+      {"id": "38.1", "text": "Identifies the missing return statement after http.Error(w, 'Forbidden', http.StatusForbidden)"},
+      {"id": "38.2", "text": "Explains that http.Error() does NOT stop handler execution — it only writes to the ResponseWriter"},
+      {"id": "38.3", "text": "Adds return statements after each http.Error() call"},
+      {"id": "38.4", "text": "Does NOT primarily blame the isAuthorized function"},
+      {"id": "38.5", "text": "Mentions this is a common Go bug pattern and a security concern"}
+    ]
+  },
+  {
+    "id": 39,
+    "name": "json-numbers-float64-interface",
+    "description": "Tests JSON unmarshaling gotcha: numbers into interface{} become float64, not int",
+    "prompt": "My Go code panics when processing JSON API responses. The JSON looks like `{\"user_id\": 1234567890123456789}`. I unmarshal into `map[string]interface{}` and then type-assert the user_id to int64:\n\n```go\nvar result map[string]interface{}\njson.Unmarshal(data, &result)\nuserID := result[\"user_id\"].(int64)\n```\nWhy does this panic?",
+    "trap": "Model suggests the JSON is malformed or the field name doesn't match, rather than explaining the float64 type gotcha",
+    "assertions": [
+      {"id": "39.1", "text": "Explains that JSON numbers unmarshaled into interface{} become float64, not int or int64"},
+      {"id": "39.2", "text": "Notes that integers outside the exactly representable float64 range can silently lose precision"},
+      {"id": "39.3", "text": "Recommends using a typed struct with int64 field as the preferred solution"},
+      {"id": "39.4", "text": "Alternatively mentions json.NewDecoder with UseNumber() and json.Number for when interface{} is required"},
+      {"id": "39.5", "text": "Explains the type assertion panics because the actual type is float64, not int64"}
+    ]
+  },
+  {
+    "id": 40,
+    "name": "strings-trim-vs-trimprefix",
+    "description": "Tests the strings.Trim character-set gotcha from common-go-bugs",
+    "prompt": "My Go function strips the 'application/' prefix from MIME types but gives wrong results for some types. `strings.Trim(\"application/json\", \"application/\")` returns 'js' instead of 'json'. Is this a Go bug?",
+    "trap": "Model suggests it's a Go bug or suggests a regex-based workaround instead of explaining Trim treats the second argument as a character set",
+    "assertions": [
+      {"id": "40.1", "text": "Explains that strings.Trim treats its second argument as a SET of characters to strip, not as a substring"},
+      {"id": "40.2", "text": "Shows why 'json' becomes 'js' — the trailing characters o and n are in the set {a,p,l,i,c,t,o,n,/}"},
+      {"id": "40.3", "text": "Recommends strings.TrimPrefix for removing a substring prefix"},
+      {"id": "40.4", "text": "Mentions strings.TrimSuffix for removing suffixes"},
+      {"id": "40.5", "text": "Confirms this is NOT a Go bug — it's working as documented"}
+    ]
+  },
+  {
+    "id": 41,
+    "name": "os-exit-skips-defers",
+    "description": "Tests os.Exit / log.Fatal skipping deferred functions from common-go-bugs",
+    "prompt": "My Go CLI tool creates temp files and defers their cleanup, but sometimes temp files are left behind. The code structure is:\n\n```go\nfunc main() {\n    tmpFile, _ := os.CreateTemp(\"\", \"data-*\")\n    defer os.Remove(tmpFile.Name())\n    defer tmpFile.Close()\n\n    if err := processData(tmpFile); err != nil {\n        log.Fatalf(\"processing failed: %v\", err)\n    }\n    // ... use results\n}\n```",
+    "trap": "Model suggests the error path doesn't clean up properly but misses that log.Fatal calls os.Exit which skips ALL deferred functions",
+    "assertions": [
+      {"id": "41.1", "text": "Identifies that log.Fatal (or log.Fatalf) calls os.Exit(1) internally"},
+      {"id": "41.2", "text": "Explains that os.Exit skips all deferred functions — cleanup never runs"},
+      {"id": "41.3", "text": "Recommends restructuring to avoid log.Fatal — use a run() function pattern or return errors"},
+      {"id": "41.4", "text": "Shows the pattern: move logic into a run() error function, call os.Exit in main only after run returns"},
+      {"id": "41.5", "text": "Does NOT suggest explicitly calling os.Remove before log.Fatal as the primary fix"}
+    ]
+  },
+  {
+    "id": 42,
+    "name": "time-equal-not-double-equals",
+    "description": "Tests the time.Time == vs .Equal() gotcha from common-go-bugs",
+    "prompt": "My Go test comparing time values fails intermittently. I store a time.Time in the database and read it back, then compare with ==. The test passes when I use a fixed time but fails when I use time.Now():\n\n```go\nt1 := time.Now()\nsaveToDatabase(t1)\nt2 := loadFromDatabase()\nif t1 != t2 { t.Errorf(\"times differ: %v, %v\", t1, t2) } // fails!\n```\nThe times represent the same instant. Why does == fail?",
+    "trap": "Model suggests the database truncates nanoseconds or timezone differences, not the monotonic clock component",
+    "assertions": [
+      {"id": "42.1", "text": "Identifies that time.Now() includes a monotonic clock reading that database serialization strips"},
+      {"id": "42.2", "text": "Explains that == compares all fields including the monotonic component, so it can fail for equal instants"},
+      {"id": "42.3", "text": "Explains Equal compares instants and uses wall time when either value lacks a monotonic reading."},
+      {"id": "42.4", "text": "If suggesting t.Round(0), notes it strips the monotonic reading but does not normalize the location; Equal remains appropriate for instant comparison"},
+      {"id": "42.5", "text": "Does NOT primarily blame database precision or timezone differences"}
+    ]
   }
 ]

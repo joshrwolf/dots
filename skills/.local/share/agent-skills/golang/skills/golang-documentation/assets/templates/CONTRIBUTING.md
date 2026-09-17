@@ -43,7 +43,6 @@ golangci-lint run --fix ./...
 - Follow [Effective Go](https://go.dev/doc/effective_go)
 - Add doc comments to all exported symbols
 - Write table-driven tests
-- Keep test coverage above {X}%
 
 ## Reporting Issues
 

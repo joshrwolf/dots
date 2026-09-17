@@ -19,11 +19,8 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Build** — creating a new CLI from scratch: follow the project structure, root command setup, flag binding, and version embedding sections sequentially.
-- **Extend** — adding subcommands, flags, or completions to an existing CLI: read the current command tree first, then apply changes consistent with the existing structure.
-- **Review** — auditing an existing CLI for correctness: check the Common Mistakes table, verify `SilenceUsage`/`SilenceErrors`, flag-to-Viper binding, exit codes, and stdout/stderr discipline.
+When extending a CLI, inspect the current command tree and keep additions consistent
+with its existing structure.
 
 # Go CLI Best Practices
 

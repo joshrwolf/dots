@@ -28,7 +28,6 @@
   - [`samber/cc-skills-golang@golang-observability` ⚙️](#sambercc-skills-golanggolang-observability-%EF%B8%8F)
   - [`samber/cc-skills-golang@golang-performance` 🧠](#sambercc-skills-golanggolang-performance-)
   - [`samber/cc-skills-golang@golang-testing` ⭐️ 🧠 ⚙️](#sambercc-skills-golanggolang-testing-%EF%B8%8F--%EF%B8%8F)
-  - [`samber/cc-skills-golang@golang-troubleshooting` ⭐️ 🧠](#sambercc-skills-golanggolang-troubleshooting-%EF%B8%8F-)
 - [Project Setup](#project-setup)
   - [`samber/cc-skills-golang@golang-cli`](#sambercc-skills-golanggolang-cli)
   - [`samber/cc-skills-golang@golang-continuous-integration`](#sambercc-skills-golanggolang-continuous-integration)
@@ -36,7 +35,6 @@
   - [`golang-go-doc`](#golang-go-doc)
   - [`samber/cc-skills-golang@golang-popular-libraries`](#sambercc-skills-golanggolang-popular-libraries)
   - [`samber/cc-skills-golang@golang-project-layout`](#sambercc-skills-golanggolang-project-layout)
-  - [`samber/cc-skills-golang@golang-stay-updated`](#sambercc-skills-golanggolang-stay-updated)
 - [APIs](#apis)
   - [`samber/cc-skills-golang@golang-graphql`](#sambercc-skills-golanggolang-graphql)
   - [`samber/cc-skills-golang@golang-grpc`](#sambercc-skills-golanggolang-grpc)
@@ -69,7 +67,7 @@ Use when: the user asks about formatting rules, style review, or project coding 
 
 ### `samber/cc-skills-golang@golang-documentation` ⭐️ ⚙️
 
-Golang documentation standards — package docs, godoc conventions, example functions, README structure, CHANGELOG, llms.txt, API reference generation.
+Golang documentation standards — package docs, godoc conventions, example functions, README structure, CHANGELOG, API reference generation.
 
 Use when: writing or reviewing Go doc comments, README files, or API reference. Not for code comments that explain logic (→ `golang-code-style`).
 
@@ -109,7 +107,7 @@ Use when: writing or reviewing code that could silently produce wrong results or
 
 ### `samber/cc-skills-golang@golang-security` ⭐️ 🧠
 
-Golang security best practices — injection prevention (SQL, command, XSS), cryptography, filesystem/network safety, secrets management, cookie security, tool configuration. Audit and review modes.
+Golang security best practices — injection prevention (SQL, command, XSS), cryptography, filesystem/network safety, secrets management, cookie security, tool configuration. For security audits and reviews.
 
 Use when: auditing a codebase for vulnerabilities, writing security-sensitive code, or reviewing auth/crypto/secrets handling. Not for runtime correctness bugs (→ `golang-safety`).
 
@@ -187,7 +185,7 @@ Use when: upgrading a codebase to a newer Go version or replacing pre-generics p
 
 Golang benchmarking, profiling, and performance measurement — pprof, trace, CPU/memory/block profiles, flame graphs, benchstat, CI regression detection, continuous profiling.
 
-Use when: measuring performance, capturing profiles, comparing benchmark runs, or setting up CI regression detection. For applying optimization patterns → `golang-performance`. For debugging a crash → `golang-troubleshooting`.
+Use when: measuring performance, capturing profiles, comparing benchmark runs, or setting up CI regression detection. For applying optimization patterns → `golang-performance`. For correctness pitfalls → `golang-safety`; for goroutine failures → `golang-concurrency`.
 
 ---
 
@@ -203,7 +201,7 @@ Use when: instrumenting a service for production monitoring. Not for temporary d
 
 Golang performance optimization — allocation reduction, CPU efficiency, memory layout, GC tuning, pooling, caching, hot-path optimization.
 
-Use when: applying optimization patterns after profiling. Not for measurement methodology (→ `golang-benchmark`) or debugging workflow (→ `golang-troubleshooting`).
+Use when: applying optimization patterns after profiling. Not for measurement methodology (→ `golang-benchmark`).
 
 ---
 
@@ -212,14 +210,6 @@ Use when: applying optimization patterns after profiling. Not for measurement me
 Production-ready Golang tests — table-driven tests, fuzzing, fixtures, goroutine leak detection (cancellation and completion), snapshot testing, code coverage, integration tests, parallel tests.
 
 Use when: writing or reviewing tests. For structural comparison options → `golang-go-cmp`. For measurement methodology → `golang-benchmark`.
-
----
-
-### `samber/cc-skills-golang@golang-troubleshooting` ⭐️ 🧠
-
-Systematic Golang debugging — common pitfalls, test-driven debugging, pprof capture, race detection, GODEBUG tracing, production debugging.
-
-Use when: debugging a panic, unexpected output, or hard-to-reproduce bug. Not for interpreting profiles (→ `golang-benchmark`) or applying optimization patterns (→ `golang-performance`).
 
 ---
 
@@ -262,14 +252,6 @@ Use when: choosing a library for a new concern (HTTP, logging, testing, etc.). F
 Golang project structure and workspace setup — cmd/internal/pkg conventions, monorepo layout, CLI project structure, and when to keep things flat.
 
 Use when: starting a new project or restructuring an existing one. For architectural patterns within the project → `golang-design-patterns`.
-
----
-
-### `samber/cc-skills-golang@golang-stay-updated`
-
-Resources to stay current with Golang — official channels, community hubs, key people to follow, learning resources.
-
-Use when: looking for ways to track Go releases, proposals, and community news.
 
 ---
 

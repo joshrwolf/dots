@@ -276,5 +276,5 @@ if s, ok := reflect.TypeAssert[string](v); ok {
 - → See `samber/cc-skills-golang@golang-data-structures` skill for slice/map internals, capacity growth, and container/ packages
 - → See `samber/cc-skills-golang@golang-error-handling` skill for nil error interface trap
 - → See `samber/cc-skills-golang@golang-security` skill for security-relevant safety issues (memory safety, integer overflow)
-- → See `samber/cc-skills-golang@golang-troubleshooting` skill for debugging panics and race conditions
+- Read [Control flow and representation pitfalls](references/control-flow-and-representation.md) for HTTP error returns, JSON decoding, string trimming, nested breaks, process exits, time comparison, and fallthrough examples.
 - → See `samber/cc-skills-golang@golang-continuous-integration` skill for automated AI-driven code review in CI using these guidelines

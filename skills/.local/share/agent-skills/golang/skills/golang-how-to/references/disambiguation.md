@@ -22,13 +22,12 @@ Thirteen clusters where skills overlap. Each cluster includes a boundary table, 
 
 ## 1. Performance cluster
 
-Four skills form a "deep analysis" cluster. `golang-observability` is the always-on counterpart; the other three are activated on demand.
+Three skills form a "deep analysis" cluster. `golang-observability` is the always-on counterpart; the other two are activated on demand.
 
 | Skill | Unique territory | Does NOT own |
 | --- | --- | --- |
 | `samber/cc-skills-golang@golang-performance` | Optimization patterns — "if allocation bottleneck → use sync.Pool", "if hot-path → avoid reflection" | Measurement, profile capture, root cause analysis |
 | `samber/cc-skills-golang@golang-benchmark` | pprof/trace capture, flame graph interpretation, benchstat comparison, CI regression detection | Deciding which optimization to apply |
-| `samber/cc-skills-golang@golang-troubleshooting` | Debugging workflow: reproduce, bisect, race detector, GODEBUG, test-driven debugging | Profile interpretation, optimization patterns |
 | `samber/cc-skills-golang@golang-observability` | Always-on production signals: structured logs, Prometheus counters, OTel traces, alerting | Temporary investigation, benchmark runs |
 
 **Routing examples:**
@@ -36,7 +35,7 @@ Four skills form a "deep analysis" cluster. `golang-observability` is the always
 - "My HTTP handler is slow in production" → start with `golang-observability` (check metrics/traces), then `golang-benchmark` (capture profiles), then `golang-performance` (apply fixes).
 - "My benchmark regressed by 20%" → `golang-benchmark` (benchstat comparison, detect root cause via pprof).
 - "I need to reduce allocations in the hot path" → `golang-performance` (pooling, struct layout, escape analysis).
-- "The process crashes after 10 minutes under load" → `golang-troubleshooting` (race detector, memory leak, stack traces).
+- "The process crashes after 10 minutes under load" → `golang-concurrency` (races and goroutine lifetimes), `golang-safety` (correctness pitfalls), or `golang-benchmark` (runtime profiles), depending on the failure.
 
 ---
 
@@ -86,7 +85,7 @@ The three core skills cover three distinct programming models. They rarely compe
 
 - "How should I wrap errors so callers can match them?" → `golang-error-handling`.
 - "I want structured errors with HTTP codes and stack traces" → `golang-samber-oops`.
-- "My service panics on nil pointer dereference" → `golang-safety` (defensive coding) AND `golang-troubleshooting` (debugging the existing crash).
+- "My service panics on nil pointer dereference" → `golang-safety` (nil handling and correctness pitfalls).
 
 ---
 
@@ -99,7 +98,7 @@ These four skills each own a distinct slice of "code quality". Source descriptio
 | `samber/cc-skills-golang@golang-code-style` | Line formatting, blank lines between declarations, short variable names in small scopes, comment placement |
 | `samber/cc-skills-golang@golang-naming` | All identifier naming rules: `MixedCaps`, no `GetX`, no `IFoo` prefixes, package names, error variable names |
 | `samber/cc-skills-golang@golang-lint` | golangci-lint YAML config, which linters to enable, `//nolint` usage, CI integration |
-| `samber/cc-skills-golang@golang-documentation` | Exported symbol comments, package-level docs, README sections, `example_test.go`, `llms.txt` |
+| `samber/cc-skills-golang@golang-documentation` | Exported symbol comments, package-level docs, README sections, `example_test.go` |
 
 **Routing examples:**
 

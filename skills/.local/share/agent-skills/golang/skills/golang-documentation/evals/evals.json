@@ -3,57 +3,49 @@
   "evals": [
     {
       "id": 1,
-      "name": "readme-section-order",
+      "name": "readme-requested-content",
       "prompt": "Write a README.md for a Go library called `github.com/acme/taskflow` that provides a DAG-based task execution engine. It supports parallel execution, dependency resolution, cycle detection, and retry policies. Include installation instructions, a usage example, license info, and any other sections you think are appropriate for a Go open-source library.",
-      "trap": "Model will produce a reasonable README but likely not follow the exact section order: Title > Badges > Summary > Demo > Getting Started > Features > Contributing > License",
+      "trap": "Adds boilerplate and invented API or license details instead of documenting the supplied library.",
       "assertions": [
         {
           "id": "1.1",
-          "text": "Badges section appears immediately after the title heading, before any prose"
+          "text": "Includes the requested installation instructions, usage example, and supported features."
         },
         {
           "id": "1.2",
-          "text": "A short summary (1-2 sentences) appears after badges, before any code block or Getting Started section"
+          "text": "Distinguishes illustrative API names from verified package APIs when signatures are not supplied."
         },
         {
           "id": "1.3",
-          "text": "A demo/example code snippet appears before the Getting Started/Installation section"
+          "text": "Does not invent a license or imply unverified badges and links exist."
         },
         {
           "id": "1.4",
-          "text": "Getting Started section with `go get` appears after the demo and before Features"
-        },
-        {
-          "id": "1.5",
-          "text": "Features section is the longest section, appearing after Getting Started"
+          "text": "Organizes the README for readers without requiring a fixed section order or a longest section."
         }
       ]
     },
     {
       "id": 2,
-      "name": "scrambled-readme-reorder",
+      "name": "readme-content-preservation",
       "prompt": "I wrote a README for my Go library `github.com/acme/ratelimit` but my team says the sections are in the wrong order. Can you reorganize it following Go open-source best practices? Keep the content, just fix the order:\n\n```markdown\n# ratelimit\n\n## Getting Started\n```bash\ngo get github.com/acme/ratelimit\n```\n\n## Features\n- Token bucket algorithm\n- Redis backend support\n- Per-key rate limiting\n- Middleware for net/http\n\nA high-performance, distributed rate limiter for Go applications.\n\n## License\nMIT License - see LICENSE file.\n\n[![Build Status](https://img.shields.io/github/actions/workflow/status/acme/ratelimit/test.yml)](https://github.com/acme/ratelimit/actions)\n\n## Contributing\nSee CONTRIBUTING.md\n\n```go\nlimiter := ratelimit.New(ratelimit.WithRate(100, time.Second))\nif limiter.Allow(\"user-123\") {\n    // process request\n}\n```\n```\n",
-      "trap": "The README has sections in wrong order: Getting Started > Features > Summary (unlabeled) > License > Badges (unlabeled) > Contributing > Demo (unlabeled). Without skill the model might rearrange reasonably but miss the exact prescribed order or miss that Summary/Badges/Demo need their own placement",
+      "trap": "Reorganization drops content or changes the supplied API example.",
       "assertions": [
         {
           "id": "2.1",
-          "text": "Badges appear immediately after the title, before the summary text"
+          "text": "Preserves the supplied features, installation command, example, license, and links."
         },
         {
           "id": "2.2",
-          "text": "The summary sentence ('A high-performance...') appears after badges, before the demo code"
+          "text": "Places the project purpose where readers can find it easily."
         },
         {
           "id": "2.3",
-          "text": "The demo code snippet (limiter := ...) appears before the Getting Started section"
+          "text": "Produces valid Markdown with code blocks closed correctly."
         },
         {
           "id": "2.4",
-          "text": "Getting Started appears after demo and before Features"
-        },
-        {
-          "id": "2.5",
-          "text": "Contributing and License appear at the end, after Features"
+          "text": "Does not invent a universal Go README section order."
         }
       ]
     },
@@ -69,13 +61,16 @@
         },
         {
           "id": "3.2",
-          "text": "Includes a Parameters section listing dst, src, and overwrite with descriptions"
+          "text": "Explains dst, src, and overwrite semantics without requiring a Parameters section."
         },
         {
           "id": "3.3",
           "text": "Explains the overwrite behavior (when true vs false)"
         },
-        { "id": "3.4", "text": "Documents nil dst handling (creates new map)" },
+        {
+          "id": "3.4",
+          "text": "Documents nil dst handling (creates new map)"
+        },
         {
           "id": "3.5",
           "text": "Includes an inline code Example section showing usage"
@@ -84,29 +79,21 @@
     },
     {
       "id": 4,
-      "name": "small-package-no-doc-go",
+      "name": "package-comment-placement",
       "prompt": "I have a Go package with 2 files: `handler.go` and `middleware.go`. My teammate suggests I should create a `doc.go` file for the package-level documentation comment. Is that the right approach? Where should I put the package comment?",
-      "trap": "Model without skill might agree to create doc.go (it's a common pattern). Skill teaches: doc.go is for packages with 3+ files; for small packages, put the comment at the top of the main .go file",
+      "trap": "Treats a file-count threshold as a Go documentation rule.",
       "assertions": [
         {
           "id": "4.1",
-          "text": "Advises AGAINST creating doc.go for a 2-file package"
+          "text": "Explains that a package comment can live before the package clause in a regular source file or in doc.go."
         },
         {
           "id": "4.2",
-          "text": "Recommends placing the package comment at the top of the main .go file (handler.go)"
+          "text": "Chooses placement based on the existing layout and size of the overview, not a fixed number of files."
         },
         {
           "id": "4.3",
-          "text": "Mentions the 3+ files threshold for when doc.go becomes appropriate"
-        },
-        {
-          "id": "4.4",
-          "text": "Shows the `// Package ... ` format starting with the Package keyword"
-        },
-        {
-          "id": "4.5",
-          "text": "Explains that doc.go is for larger packages where no single file is the obvious home"
+          "text": "Shows the // Package ... convention."
         }
       ]
     },
@@ -130,7 +117,7 @@
         },
         {
           "id": "5.4",
-          "text": "Examples use fmt.Println to print results (not fmt.Printf)"
+          "text": "Prints deterministic results that match the Output comments."
         },
         {
           "id": "5.5",
@@ -140,29 +127,25 @@
     },
     {
       "id": 6,
-      "name": "contributing-10min-rule",
+      "name": "contributor-setup-documentation",
       "prompt": "Write a CONTRIBUTING.md for a Go project that requires: PostgreSQL 15, Redis 7, Elasticsearch 8, Go 1.22+, and protoc for gRPC code generation. The test suite takes about 3 minutes to run. Building requires running `protoc` first, then `go generate`, then `go build`.",
-      "trap": "Complex setup with 5 dependencies. Model might just list prerequisites. Skill teaches the 10-minute rule and suggests Makefile, docker-compose, devcontainer",
+      "trap": "Invents setup tooling or claims commands work without repository evidence.",
       "assertions": [
         {
           "id": "6.1",
-          "text": "Includes a Makefile or mentions make targets (make build, make test, make lint)"
+          "text": "Documents the supplied Go, database, search, and code-generation prerequisites."
         },
         {
           "id": "6.2",
-          "text": "Includes docker-compose.yml for running PostgreSQL, Redis, and Elasticsearch locally"
+          "text": "Distinguishes existing setup commands from proposed automation."
         },
         {
           "id": "6.3",
-          "text": "Provides a Quick Start section showing clone-to-running-tests in a few commands"
+          "text": "Explains which test commands require external services without inventing a tag or target."
         },
         {
           "id": "6.4",
-          "text": "Mentions or provides devcontainer configuration for consistent environments"
-        },
-        {
-          "id": "6.5",
-          "text": "Separates unit tests (fast, no deps) from integration tests (needs services)"
+          "text": "Does not require Docker Compose, a devcontainer, or a fixed setup duration."
         }
       ]
     },
@@ -197,29 +180,21 @@
 
     {
       "id": 9,
-      "name": "brief-doc-comment-trap",
+      "name": "brief-doc-comment",
       "prompt": "Write a brief, one-line doc comment for this exported Go function. Keep it short — I don't want verbose documentation cluttering the code:\n\n```go\npackage retry\n\nfunc Do(ctx context.Context, maxAttempts int, delay time.Duration, backoff float64, fn func() error) error {\n    var lastErr error\n    for i := 0; i < maxAttempts; i++ {\n        if err := fn(); err != nil {\n            lastErr = err\n            select {\n            case <-ctx.Done():\n                return ctx.Err()\n            case <-time.After(delay):\n                delay = time.Duration(float64(delay) * backoff)\n            }\n            continue\n        }\n        return nil\n    }\n    return lastErr\n}\n```",
-      "trap": "User explicitly asks for 'brief, one-line'. Without skill, model complies and writes a minimal one-liner. With skill, the model should STILL write a comprehensive comment because the skill says every exported function MUST have a doc comment with Parameters, Returns, and Example sections",
+      "trap": "Overrides the explicit one-line request with a mandatory comment template.",
       "assertions": [
         {
           "id": "9.1",
-          "text": "Comment starts with 'Do' followed by a verb phrase (godoc convention)"
+          "text": "Returns a one-line doc comment starting with Do."
         },
         {
           "id": "9.2",
-          "text": "Includes a Parameters section or describes each parameter (ctx, maxAttempts, delay, backoff, fn)"
+          "text": "Concisely describes retry behavior without inventing guarantees."
         },
         {
           "id": "9.3",
-          "text": "Documents the exponential backoff behavior (delay multiplied by backoff factor)"
-        },
-        {
-          "id": "9.4",
-          "text": "Documents context cancellation behavior (returns ctx.Err())"
-        },
-        {
-          "id": "9.5",
-          "text": "Includes an inline Example section showing a realistic usage pattern"
+          "text": "Does not append Parameters, Returns, or Example sections."
         }
       ]
     },
@@ -295,7 +270,7 @@
         },
         {
           "id": "12.3",
-          "text": "Distinguishes between when file descriptions ARE needed (algorithms, state machines, 200+ lines of complex logic) vs not needed (CRUD, data models)"
+          "text": "Bases additional documentation on non-obvious design or invariants, not file length."
         },
         {
           "id": "12.4",
@@ -309,29 +284,25 @@
     },
     {
       "id": 13,
-      "name": "file-level-description",
+      "name": "scheduler-design-documentation",
       "prompt": "I have a Go file `scheduler.go` that implements a priority-queue-based task scheduler using container/heap. It supports recurring tasks, one-shot tasks, task cancellation, and graceful shutdown with a drain timeout. A single dispatcher goroutine polls the heap. The file is 350 lines. Should I add any special documentation to this file, and if so, what?",
-      "trap": "Model might just say 'add function comments'. Skill teaches file-level description with ASCII art architecture diagram for complex files",
+      "trap": "Uses file length to mandate a diagram or boilerplate.",
       "assertions": [
         {
           "id": "13.1",
-          "text": "Recommends a file-level description comment (not just function comments)"
+          "text": "Identifies shared scheduler design or lifecycle details that would help readers."
         },
         {
           "id": "13.2",
-          "text": "Suggests including an ASCII art diagram showing the scheduler architecture/flow"
+          "text": "Describes the supplied heap and dispatcher design accurately."
         },
         {
           "id": "13.3",
-          "text": "Places the file description below imports (not above package declaration)"
+          "text": "Does not invent ordering, cancellation, or shutdown guarantees absent from the supplied information."
         },
         {
           "id": "13.4",
-          "text": "Description explains the algorithm/design (priority queue, dispatcher goroutine)"
-        },
-        {
-          "id": "13.5",
-          "text": "Notes the 200+ line threshold or 'complex algorithm' as reason for adding the description"
+          "text": "Treats diagrams and file-level placement as options, not requirements based on line count."
         }
       ]
     },
@@ -352,7 +323,7 @@
         },
         {
           "id": "15.3",
-          "text": "Recommends CLI --help text and multiple installation methods for the cmd/datactl binary (application part)"
+          "text": "Recommends CLI help and documentation of the installation methods actually supported."
         },
         {
           "id": "15.4",
@@ -368,55 +339,51 @@
       "id": 16,
       "name": "existing-contributing-improve",
       "prompt": "Our Go project requires PostgreSQL and Redis. This is our current CONTRIBUTING.md. Improve it:\n\n```markdown\n# Contributing\n\n## Prerequisites\n- Go 1.22+\n- PostgreSQL 15\n- Redis 7\n\n## Setup\n1. Install Go from https://go.dev\n2. Install PostgreSQL from https://www.postgresql.org/download/\n3. Install Redis from https://redis.io/download/\n4. Create a database: `createdb myapp_test`\n5. Run `go build ./...`\n6. Run `go test ./...`\n\n## Pull Requests\nPlease open a PR against the main branch.\n```",
-      "trap": "The existing CONTRIBUTING requires manual installation of PostgreSQL and Redis — time-consuming and error-prone. Without skill, model might polish the text or add small improvements. With skill, model should apply the 10-minute rule: replace manual installs with docker-compose, add Makefile, suggest devcontainer",
+      "trap": "A documentation edit silently adds new development infrastructure.",
       "assertions": [
         {
           "id": "16.1",
-          "text": "Adds docker-compose.yml to replace manual PostgreSQL and Redis installation"
+          "text": "Preserves the actual prerequisites and usable build/test commands."
         },
         {
           "id": "16.2",
-          "text": "Adds a Makefile with targets (make build, make test, make lint, or similar)"
+          "text": "Does not present nonexistent Make targets or Compose files as already available."
         },
         {
           "id": "16.3",
-          "text": "Reduces the setup steps to 3 or fewer commands (e.g., clone, docker-compose up, make test)"
+          "text": "Identifies missing connection configuration or other setup details without fabricating values."
         },
         {
           "id": "16.4",
-          "text": "Mentions or suggests devcontainer for consistent environments"
-        },
-        {
-          "id": "16.5",
-          "text": "Separates unit tests (fast, no deps) from integration tests (needs PostgreSQL/Redis)"
+          "text": "Keeps automation proposals optional and separate from documented current setup."
         }
       ]
     },
     {
       "id": 17,
-      "name": "play-link-doc-comment",
+      "name": "filter-contract-documentation",
       "prompt": "I maintain a public Go library. Write a comprehensive doc comment for this function. I need it to show up well on pkg.go.dev — include everything users need to understand it at a glance:\n\n```go\npackage sliceutil\n\nfunc Filter[T any](s []T, predicate func(T) bool) []T {\n    var result []T\n    for _, v := range s {\n        if predicate(v) {\n            result = append(result, v)\n        }\n    }\n    return result\n}\n```",
-      "trap": "Model may write a thorough doc comment but omit the Play: line entirely — it's a niche convention the skill specifically teaches. The Play: line with its exact format (// Play: https://...) is a skill-specific pattern not commonly known.",
+      "trap": "Fills a comment template with invented playground links or omitted slice semantics.",
       "assertions": [
         {
           "id": "17.1",
-          "text": "Includes a `// Play:` line with a URL pointing to a Go Playground demo"
+          "text": "Comment starts with Filter and explains predicate-based selection."
         },
         {
           "id": "17.2",
-          "text": "The Play: line uses the exact format `// Play: https://go.dev/play/p/...` (not inline, not as a different label)"
+          "text": "Documents preservation of matching-element order."
         },
         {
           "id": "17.3",
-          "text": "Comment starts with 'Filter' followed by a verb phrase"
+          "text": "Documents that no matches produce a nil slice."
         },
         {
           "id": "17.4",
-          "text": "Includes an inline code Example section (tab-indented)"
+          "text": "Distinguishes a new result slice from deep-copying its elements."
         },
         {
           "id": "17.5",
-          "text": "Documents that a new slice is returned (original is not modified)"
+          "text": "Does not invent a Go Playground URL or upload code as part of writing a comment."
         }
       ]
     },
@@ -424,27 +391,19 @@
       "id": 18,
       "name": "architecture-decision-records",
       "prompt": "Our Go project has made several important architectural decisions: using PostgreSQL over MongoDB, choosing event-driven architecture with NATS, and using JWT for authentication. How should we document these decisions so future team members understand the rationale?",
-      "trap": "Model might suggest a wiki page or a section in README. Skill teaches docs/architecture/ directory with numbered ADR files",
+      "trap": "Enforces one storage location or filename convention rather than preserving decision context.",
       "assertions": [
         {
           "id": "18.1",
-          "text": "Recommends a docs/architecture/ directory (not wiki or README section)"
+          "text": "Captures the motivation, chosen approach, alternatives, and consequences."
         },
         {
           "id": "18.2",
-          "text": "Uses numbered file format (0001-xxx.md, 0002-xxx.md)"
+          "text": "Keeps unknown rationale explicit rather than inventing why the team chose a technology."
         },
         {
           "id": "18.3",
-          "text": "Each ADR has Context section explaining the need"
-        },
-        {
-          "id": "18.4",
-          "text": "Each ADR has Design/Decision section explaining what was chosen"
-        },
-        {
-          "id": "18.5",
-          "text": "Each ADR has Consequences section (positive and negative trade-offs)"
+          "text": "Fits records into existing documentation conventions; numbered ADR files are an option."
         }
       ]
     },
@@ -493,7 +452,7 @@
         },
         {
           "id": "21.3",
-          "text": "Mentions a version or timeline for removal (e.g., 'will be removed in v3.0.0')"
+          "text": "Includes a removal timeline only if the project has supplied one."
         }
       ]
     }

@@ -227,7 +227,7 @@ Divergent Change and Shotgun Surgery point to opposite fixes even though both ar
 ## Cross-References
 
 - → See [structural.md](structural.md) for the cross-package move guidance used by Move Function/Field/Type, and for breaking import cycles ahead of a package split or merge.
-- → See [safety-net.md](safety-net.md) for the coverage-adaptive strategy that determines when Sprout/Wrap Method should replace an in-place edit.
+- → See [safety-net.md](safety-net.md) for the characterization tests and seams for isolating affected behavior.
 - → See [go-tooling.md](go-tooling.md) for the full gopls code-action reference, `gofmt -r`, `eg`, invocation details.
 - → See `samber/cc-skills-golang@golang-naming` skill for what to rename identifiers _to_.
 - → See `samber/cc-skills-golang@golang-project-layout` skill for target package/directory layout.

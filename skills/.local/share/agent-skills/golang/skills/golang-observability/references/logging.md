@@ -33,12 +33,12 @@ slog.Error("user creation failed",
 ## Handler Setup
 
 ```go
-// Production MUST use JSON — because plain-text multiline logs (eg. stack traces) would be split into separate records by log collectors
+// For a collector expecting JSON records
 logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
     Level: slog.LevelInfo,
 }))
 
-// Development — human-readable text
+// For a destination accepting structured text
 logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
     Level: slog.LevelDebug,
 }))

@@ -20,10 +20,7 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Build mode** — generating new schemas, resolvers, or server setup: follow the skill's sequential instructions; inspect existing resolver patterns and naming conventions before generating new code.
-- **Review mode** — auditing a GraphQL codebase or PR: scan for N+1 resolver patterns, missing complexity caps, global DataLoaders, and introspection enabled in production, alongside the business logic.
+Inspect existing resolver patterns and naming conventions before adding GraphQL code.
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-graphql` skill takes precedence.
 

@@ -19,10 +19,8 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Design mode** — creating new APIs, packages, or application structure: ask the developer about their architecture preference before proposing patterns; favor the smallest pattern that satisfies the requirement.
-- **Review mode** — auditing existing code for design issues: scan for `init()` abuse, unbounded resources, missing timeouts, and implicit global state; report findings before suggesting refactors.
+Follow the project's architecture preferences and favor the smallest pattern that
+satisfies the requirement.
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-design-patterns` skill takes precedence.
 

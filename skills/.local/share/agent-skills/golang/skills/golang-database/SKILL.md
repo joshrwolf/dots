@@ -19,10 +19,7 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Write mode** — generating new repository functions, query helpers, or transaction wrappers: follow the skill's sequential instructions; inspect existing query patterns and naming conventions before generating new code.
-- **Review/debug mode** — auditing or debugging existing database code: scan for missing `rows.Close()`, un-parameterized queries, missing context propagation, and absent error checks alongside the business logic.
+Inspect existing query patterns and naming conventions before adding database code.
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-database` skill takes precedence.
 

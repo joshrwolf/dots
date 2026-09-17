@@ -19,10 +19,9 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Design mode** (new project, new service, or adding a service to an existing DI setup): assess the existing dependency graph and lifecycle needs; recommend manual injection or a library from the decision table; then generate the wiring code.
-- **Refactor mode** (existing coupled code): identify global variables and `init()` service setup, map concrete type dependencies that should become interfaces, locate service-locator anti-patterns (container passed as argument) — then consolidate findings and propose a migration plan.
+Assess the existing dependency graph and lifecycle needs before changing the wiring.
+For coupled code, map hidden dependencies and service-locator usage before planning
+the migration.
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-dependency-injection` skill takes precedence.
 

@@ -19,12 +19,6 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Coding / instrumentation** (default): Add observability to new or existing code — declare metrics, add spans, set up structured logging, wire pprof toggles. Follow the sequential instrumentation guide.
-- **Review mode** — reviewing a PR's instrumentation changes. Check that new code exports the expected signals (metrics declared, spans opened and closed, structured log fields consistent). Sequential.
-- **Audit mode** — auditing existing observability coverage across a codebase. Check coverage for the signals used by the project (metrics, logging, tracing, profiling, RUM).
-
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-observability` skill takes precedence.
 
 # Go Observability Best Practices
@@ -35,7 +29,7 @@ When using observability libraries (Prometheus client, OpenTelemetry SDK, vendor
 
 ## Best Practices Summary
 
-1. **Use structured logging** with `log/slog` — production services MUST emit structured logs (JSON), not freeform strings
+1. **Use structured logging** with `log/slog` — choose a handler encoding supported by the log collection pipeline; JSON is common, while `TextHandler` also retains structured attributes
 2. **Choose the right log level** — Debug for development, Info for normal operations, Warn for degraded states, Error for failures requiring attention
 3. **Log with context** — use `slog.InfoContext(ctx, ...)` to correlate logs with traces
 4. **Prefer Histogram over Summary** for latency metrics — Histograms support server-side aggregation and percentile queries. Every HTTP endpoint MUST have latency and error rate metrics.
@@ -52,7 +46,7 @@ When using observability libraries (Prometheus client, OpenTelemetry SDK, vendor
 ## Cross-References
 
 - → See `samber/cc-skills-golang@golang-error-handling` skill for the single handling rule.
-- → See `samber/cc-skills-golang@golang-troubleshooting` skill for using observability signals to diagnose production issues.
+- → See `samber/cc-skills-golang@golang-benchmark` skill for using observability signals to diagnose production issues.
 - → See `samber/cc-skills-golang@golang-security` skill for protecting pprof endpoints and avoiding PII in logs.
 - → See `samber/cc-skills-golang@golang-context` skill for propagating trace context across service boundaries.
 - → See `samber/cc-skills@promql-cli` skill for querying and exploring PromQL expressions against Prometheus from the CLI.

@@ -6,11 +6,26 @@
     "prompt": "Our Go HTTP API is slow. Average response time is 800ms. Here's the handler:\n\n```go\npackage api\n\nimport (\n    \"encoding/json\"\n    \"net/http\"\n    \"strings\"\n)\n\ntype Response struct {\n    Items []Item `json:\"items\"`\n}\n\ntype Item struct {\n    ID   int    `json:\"id\"`\n    Name string `json:\"name\"`\n    Tags string `json:\"tags\"`\n}\n\nfunc HandleList(w http.ResponseWriter, r *http.Request) {\n    items := fetchFromDB(r.Context())\n    for i := range items {\n        items[i].Tags = strings.ToUpper(items[i].Tags)\n    }\n    json.NewEncoder(w).Encode(Response{Items: items})\n}\n```\n\nOptimize this code to reduce the 800ms response time.",
     "trap": "The 800ms latency is almost certainly from fetchFromDB (external bottleneck), not from strings.ToUpper or JSON encoding. Without the skill, the model will micro-optimize the Go code (use strings.Builder, preallocate, etc.) instead of pointing out that profiling is needed first and the bottleneck is likely external.",
     "assertions": [
-      {"id": "1.1", "text": "Recommends profiling (pprof, fgprof, or tracing) before making code changes"},
-      {"id": "1.2", "text": "Identifies fetchFromDB as the likely bottleneck (external I/O, not Go code)"},
-      {"id": "1.3", "text": "Mentions that intuition about bottlenecks is often wrong (~80% of the time)"},
-      {"id": "1.4", "text": "Does NOT primarily focus on micro-optimizing strings.ToUpper or JSON encoding"},
-      {"id": "1.5", "text": "Suggests investigating the database query (query tuning, caching, connection pool)"}
+      {
+        "id": "1.1",
+        "text": "Recommends profiling (pprof, fgprof, or tracing) before making code changes"
+      },
+      {
+        "id": "1.2",
+        "text": "Identifies fetchFromDB as the likely bottleneck (external I/O, not Go code)"
+      },
+      {
+        "id": "1.3",
+        "text": "Treats the suspected bottleneck as a hypothesis to verify with measurements."
+      },
+      {
+        "id": "1.4",
+        "text": "Does NOT primarily focus on micro-optimizing strings.ToUpper or JSON encoding"
+      },
+      {
+        "id": "1.5",
+        "text": "Suggests investigating the database query (query tuning, caching, connection pool)"
+      }
     ]
   },
   {
@@ -29,16 +44,31 @@
   },
   {
     "id": 3,
-    "name": "iterative-benchmark-methodology",
-    "description": "Tests whether the model follows the iterative benchmark methodology (one change at a time, benchstat comparison)",
+    "name": "representative-optimization-measurement",
+    "description": "Tests representative workloads, comparable measurements, and preserved behavior during optimization",
     "prompt": "I profiled my Go service and found that the ProcessRecords function is the bottleneck. It allocates heavily and has slow JSON parsing. I want to optimize it. Here's the function:\n\n```go\nfunc ProcessRecords(data []byte) ([]Record, error) {\n    var records []Record\n    if err := json.Unmarshal(data, &records); err != nil {\n        return nil, err\n    }\n    var results []Record\n    for _, r := range records {\n        if r.IsValid() {\n            r.Name = strings.ToUpper(r.Name)\n            results = append(results, r)\n        }\n    }\n    return results, nil\n}\n```\n\nHow should I approach optimizing this?",
-    "trap": "Without the skill, the model will apply all optimizations at once. The skill teaches an iterative approach: write benchmark first, measure baseline with -count=6, apply ONE change at a time, compare with benchstat, then repeat.",
+    "trap": "Attributes a speedup to an edit without a representative baseline or a comparable workload.",
     "assertions": [
-      {"id": "3.1", "text": "Recommends writing an atomic benchmark for ProcessRecords first"},
-      {"id": "3.2", "text": "Recommends measuring a baseline with -benchmem and -count=6 (or similar count for statistical significance)"},
-      {"id": "3.3", "text": "Recommends applying ONE optimization at a time, not all at once"},
-      {"id": "3.4", "text": "Recommends using benchstat to compare before/after with statistical significance"},
-      {"id": "3.5", "text": "Suggests keeping report files as an audit trail (e.g., /tmp/report-1.txt, /tmp/report-2.txt)"}
+      {
+        "id": "3.1",
+        "text": "Uses a representative ProcessRecords workload, including record count and validity distribution."
+      },
+      {
+        "id": "3.2",
+        "text": "Measures time and allocations under comparable conditions."
+      },
+      {
+        "id": "3.3",
+        "text": "Uses repeated measurements and benchstat or equivalent analysis to account for noise."
+      },
+      {
+        "id": "3.4",
+        "text": "Preserves output and error behavior while comparing optimizations."
+      },
+      {
+        "id": "3.5",
+        "text": "Does not require an atomic one-function benchmark, fixed report filenames, or commits."
+      }
     ]
   },
   {
@@ -320,14 +350,26 @@
   {
     "id": 25,
     "name": "reflect-deepequal-performance",
-    "description": "Tests knowledge of reflect.DeepEqual being 50-200x slower than typed comparisons",
+    "description": "Tests reflection costs and semantic tradeoffs of typed comparisons",
     "prompt": "Review this Go function for performance. It compares two configuration objects for equality in a hot path (called on every request):\n\n```go\nfunc ConfigChanged(old, new Config) bool {\n    return !reflect.DeepEqual(old, new)\n}\n\ntype Config struct {\n    Hosts    []string\n    Settings map[string]string\n    Timeout  int\n    Debug    bool\n}\n```",
-    "trap": "reflect.DeepEqual is 50-200x slower than typed comparison. The skill specifically calls this out as a common mistake and recommends slices.Equal, maps.Equal for the structured fields. Without it, the model may say it's fine or suggest a less specific alternative.",
+    "trap": "reflect.DeepEqual can add reflection overhead compared with typed comparisons. The skill specifically calls this out as a common mistake and recommends slices.Equal, maps.Equal for the structured fields. Without it, the model may say it's fine or suggest a less specific alternative.",
     "assertions": [
-      {"id": "25.1", "text": "Identifies reflect.DeepEqual as 50-200x slower than typed comparison"},
-      {"id": "25.2", "text": "Suggests using slices.Equal for the Hosts field"},
-      {"id": "25.3", "text": "Suggests using maps.Equal for the Settings field"},
-      {"id": "25.4", "text": "Provides a hand-written typed comparison function"}
+      {
+        "id": "25.1",
+        "text": "Explains the reflection overhead and benchmarks the actual comparison rather than promising a fixed speedup."
+      },
+      {
+        "id": "25.2",
+        "text": "Suggests using slices.Equal for the Hosts field"
+      },
+      {
+        "id": "25.3",
+        "text": "Suggests using maps.Equal for the Settings field"
+      },
+      {
+        "id": "25.4",
+        "text": "Provides a hand-written typed comparison function"
+      }
     ]
   },
   {
@@ -411,13 +453,28 @@
     "name": "gogc-gomemlimit-container",
     "description": "Tests knowledge of GOMEMLIMIT for containerized applications",
     "prompt": "Our Go service runs in a Kubernetes pod with 512MB memory limit. It periodically gets OOM killed even though heap usage appears to be only 200MB when checked via runtime.MemStats.Alloc.\n\nHow should we configure the Go runtime for this container?",
-    "trap": "The service needs GOMEMLIMIT set to ~80-90% of container memory (400-450MiB). Without it, the GC doesn't know about the container limit and may let the heap grow too large. The skill specifically calls this out as a common mistake ('No GC tuning in containers'). Without it, the model may suggest GOGC tuning alone.",
+    "trap": "The service needs a Go memory budget that leaves appropriate room for other container memory usage. Without it, the GC doesn't know about the container limit and may let the heap grow too large. The skill specifically calls this out as a common mistake ('No GC tuning in containers'). Without it, the model may suggest GOGC tuning alone.",
     "assertions": [
-      {"id": "32.1", "text": "Recommends setting GOMEMLIMIT to 80-90% of the container memory limit (400-450MiB)"},
-      {"id": "32.2", "text": "Explains that the GC needs GOMEMLIMIT to know about the container's memory ceiling"},
-      {"id": "32.3", "text": "Shows the GOMEMLIMIT=450MiB environment variable or debug.SetMemoryLimit equivalent"},
-      {"id": "32.4", "text": "Explains the gap between Alloc and container limit (goroutine stacks, OS buffers, non-heap memory)"},
-      {"id": "32.5", "text": "Does NOT recommend the ballast pattern (obsolete since Go 1.19)"}
+      {
+        "id": "32.1",
+        "text": "Sets a Go memory budget below the container limit with headroom appropriate to non-Go memory usage."
+      },
+      {
+        "id": "32.2",
+        "text": "Explains that the GC needs GOMEMLIMIT to know about the container's memory ceiling"
+      },
+      {
+        "id": "32.3",
+        "text": "Shows the GOMEMLIMIT=450MiB environment variable or debug.SetMemoryLimit equivalent"
+      },
+      {
+        "id": "32.4",
+        "text": "Explains the gap between Alloc and container limit (goroutine stacks, OS buffers, non-heap memory)"
+      },
+      {
+        "id": "32.5",
+        "text": "Does NOT recommend the ballast pattern (obsolete since Go 1.19)"
+      }
     ]
   },
   {
@@ -713,12 +770,24 @@
     "name": "unsafe-without-benchmark-proof",
     "description": "Tests that the model warns against premature unsafe usage",
     "prompt": "A colleague proposed using unsafe.Pointer to avoid string-to-byte-slice copy in our Go HTTP handler:\n\n```go\nfunc unsafeStringToBytes(s string) []byte {\n    return unsafe.Slice(unsafe.StringData(s), len(s))\n}\n\nfunc HandleRequest(w http.ResponseWriter, r *http.Request) {\n    body := unsafeStringToBytes(requestBody)\n    w.Write(body)\n}\n```\n\nIs this a good optimization? The handler processes about 100 requests per second.",
-    "trap": "The skill states unsafe is 'Only justified when profiling shows >10% improvement in a verified hot path.' At 100 req/s, this is not a hot path and the copy cost is negligible. Without the skill, the model may accept the optimization or only warn about safety without the benchmark threshold.",
+    "trap": "Unsafe needs a measured benefit that justifies its lifetime and maintenance constraints. At 100 req/s, this is not a hot path and the copy cost is negligible. Without the skill, the model may accept the optimization or only warn about safety without considering the workload and measured benefit.",
     "assertions": [
-      {"id": "55.1", "text": "Recommends against using unsafe here"},
-      {"id": "55.2", "text": "Notes that 100 req/s is not a hot path where this optimization is justified"},
-      {"id": "55.3", "text": "States that unsafe requires benchmark proof showing >10% improvement"},
-      {"id": "55.4", "text": "Mentions safety risks of unsafe (mutating string backing store, GC interaction)"}
+      {
+        "id": "55.1",
+        "text": "Recommends against using unsafe here"
+      },
+      {
+        "id": "55.2",
+        "text": "Notes that 100 req/s is not a hot path where this optimization is justified"
+      },
+      {
+        "id": "55.3",
+        "text": "Requires measured benefit sufficient to justify unsafe lifetime constraints and maintenance cost, without an arbitrary percentage threshold."
+      },
+      {
+        "id": "55.4",
+        "text": "Mentions safety risks of unsafe (mutating string backing store, GC interaction)"
+      }
     ]
   },
   {

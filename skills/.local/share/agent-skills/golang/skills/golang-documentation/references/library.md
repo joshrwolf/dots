@@ -12,34 +12,15 @@
 - [Documentation Website](#documentation-website)
   - [Recommended Frameworks](#recommended-frameworks)
   - [Recommended Sections](#recommended-sections)
-  - [llms.txt](#llmstxt)
-  - [Register for Discoverability](#register-for-discoverability)
 
 ## Public vs Private Libraries
 
-Not all documentation applies equally. Adapt to your audience:
-
-| Documentation | Public Library | Private Library |
-| --- | --- | --- |
-| Doc comments on exported symbols | Required | Required |
-| Package comments | Required | Required |
-| README.md | Required | Required |
-| Code examples in comments | Generous | Generous |
-| `ExampleXxx()` test functions | Recommended | Recommended |
-| Go Playground demos | Recommended | N/A (code not public) |
-| pkg.go.dev / godoc | Primary docs surface | Use `go doc` locally or internal tooling |
-| Documentation website | Large projects | Only if many teams consume the library |
-| llms.txt | Recommended | Optional |
-| CHANGELOG.md | Recommended | Recommended |
-| CONTRIBUTING.md | Recommended | Recommended (internal wiki may suffice) |
-
-**Private libraries** should still have excellent doc comments and examples — teams rotate, people forget, and AI agents need context to help effectively. The main difference is you skip public-facing artifacts (playground, pkg.go.dev, registries).
-
----
+Use local `go doc` or the project's internal documentation for private packages.
+Public playgrounds and package registries are only appropriate for public code.
 
 ## Go Playground Demos
 
-Create runnable demos on the Go Playground and link them in doc comments. This lets users try your library without installing anything. Only applicable to public libraries.
+For a requested public demo, Go Playground links can accompany doc comments. This lets users try your library without installing anything. Only applicable to public libraries.
 
 Add a `Play:` line in the doc comment:
 
@@ -55,21 +36,11 @@ Add a `Play:` line in the doc comment:
 func Map[T any, U any](s []T, fn func(T) U) []U {
 ```
 
-When a Go Playground integration is available, use it to create and share playground URLs. Otherwise, create them manually at <https://go.dev/play/>.
-
-Guidelines for playground demos:
-
-- Keep demos self-contained — include all imports and a `main()` function
-- Show the most common use case first
-- Show real-world examples
-- Print results so the output is visible when someone clicks "Run"
-- Add comments explaining what each section does
-
 ---
 
 ## Example Test Functions
 
-Libraries MUST have Example test functions for exported APIs. Example functions are executable documentation. They appear in godoc and are verified by `go test`:
+Example functions provide executable documentation for representative API usage. They appear in godoc and are verified by `go test`:
 
 ```go
 // In map_example_test.go
@@ -192,17 +163,3 @@ Follow the [Diataxis framework](https://diataxis.fr/) for organizing documentati
 | How-to Guides | Task-oriented recipes | "How to configure connection pooling" |
 | Reference | Complete API documentation | Auto-generated from godoc |
 | Deep dive / internals | Conceptual understanding | "How the scheduler algorithm works" |
-
-### llms.txt
-
-Add a `llms.txt` file at the repository root to help AI agents understand your project. Copy the template from [templates/llms.txt](./templates/llms.txt).
-
-This is an emerging convention for making projects AI-friendly. Place it alongside your README.
-
-### Register for Discoverability
-
-Make your library findable by AI agents and documentation aggregators:
-
-- **DeepWiki** — <https://deepwiki.com> — auto-generates wiki-style docs from GitHub repos
-- **OpenDeep** — <https://opendeep.wiki> — open documentation platform for AI consumption
-- **zRead** — <https://zread.ai> — developer documentation reader

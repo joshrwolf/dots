@@ -13,11 +13,7 @@ metadata:
 allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(git:*) Agent AskUserQuestion LSP Bash(gopls:*) mcp__gopls__*
 ---
 
-**Modes:**
-
-- **Route** — choose the skill whose scope matches the task; consult another only for a distinct need.
-- **Disambiguate** — use [disambiguation.md](references/disambiguation.md) when two skills overlap.
-- **Configure** — when requested, update project guidance using [project-config.md](references/project-config.md).
+Use [disambiguation.md](references/disambiguation.md) when skill scopes overlap.
 
 ## Skill loading
 
@@ -43,8 +39,8 @@ Routing alone requires no tool installation or persistent configuration changes.
 | Layer config from flags/env/file | `golang-spf13-viper` | `golang-spf13-cobra` |
 | Write tests | `golang-testing` | `golang-go-cmp` (for structural comparisons) |
 | Apply optimization patterns | `golang-performance` | `golang-benchmark` (measure first) |
-| Measure with pprof / benchstat | `golang-benchmark` | `golang-performance` (fix), `golang-troubleshooting` (root cause) |
-| Debug a panic or unexpected behavior | `golang-troubleshooting` | `golang-safety`, `golang-benchmark` (if perf-related) |
+| Measure with pprof / benchstat | `golang-benchmark` | `golang-performance` (fix) |
+| Debug a panic or unexpected behavior | `golang-safety` | `golang-concurrency` (goroutines), `golang-benchmark` (runtime profiles) |
 | Monitor in production | `golang-observability` | `golang-performance` (if SLO breach) |
 | Audit security vulnerabilities | `golang-security` | `golang-safety`, `golang-lint` |
 | Review formatting and style | `golang-code-style` | `golang-naming`, `golang-lint` |
@@ -90,8 +86,8 @@ Full catalog with "use when" hooks: [by-category.md](references/by-category.md)
 | --- | --- |
 | Code Quality | `golang-code-style` `golang-documentation` `golang-error-handling` `golang-lint` `golang-naming` `golang-safety` `golang-security` `golang-structs-interfaces` |
 | Architecture & Design | `golang-concurrency` `golang-context` `golang-data-structures` `golang-database` `golang-dependency-injection` `golang-design-patterns` `golang-modernize` `golang-refactoring` |
-| QA & Performance | `golang-benchmark` `golang-observability` `golang-performance` `golang-testing` `golang-troubleshooting` |
-| Project Setup | `golang-cli` `golang-continuous-integration` `golang-dependency-management` `golang-gopls` `golang-go-doc` `golang-popular-libraries` `golang-project-layout` `golang-stay-updated` |
+| QA & Performance | `golang-benchmark` `golang-observability` `golang-performance` `golang-testing` |
+| Project Setup | `golang-cli` `golang-continuous-integration` `golang-dependency-management` `golang-gopls` `golang-go-doc` `golang-popular-libraries` `golang-project-layout` |
 | APIs | `golang-graphql` `golang-grpc` |
 | Dependency Injection | `golang-dependency-injection` `golang-samber-do` |
 | Frameworks | `golang-spf13-cobra` `golang-spf13-viper` |
@@ -104,7 +100,7 @@ Full boundary tables with routing examples: [disambiguation.md](references/disam
 
 Key clusters and their owners:
 
-- **Performance**: `golang-performance` (optimization patterns) · `golang-benchmark` (measurement) · `golang-troubleshooting` (root cause) · `golang-observability` (always-on production)
+- **Performance**: `golang-performance` (optimization patterns) · `golang-benchmark` (measurement) · `golang-observability` (always-on production)
 - **DI**: `golang-dependency-injection` (constructor wiring) · `golang-samber-do` (existing container usage)
 - **samber/**: `golang-samber-ro` (streams) · `golang-samber-mo` (monadic types)
 - **Errors**: `golang-error-handling` (idioms) · `golang-samber-oops` (structured errors) · `golang-safety` (prevent panics)
@@ -117,7 +113,7 @@ Key clusters and their owners:
 - **Gap — features vs rules**: `golang-modernize` (language adoption) vs `golang-lint` (static analysis config)
 - **Gap — process vs target rules**: `golang-refactoring` (the safe, staged, at-scale _process_ of changing existing code — planning, ordering, gopls-driven mechanics, sequenced changes) vs `golang-naming`/`golang-code-style`/`golang-project-layout`/`golang-design-patterns`/`golang-modernize` (what the resulting code should look like) — load `golang-refactoring` alongside whichever of these owns the target shape
 
-## Configure mode
+## Project configuration
 
 Only change project skill configuration when the user requests it. Follow
 [project-config.md](references/project-config.md) for scoped guidance that preserves

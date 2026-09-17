@@ -19,13 +19,6 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Write mode** — generating new tests for existing or new code. Work sequentially through the code under test; write focused cases for observable behavior, edge cases, and error paths.
-- **Review mode** — reviewing a PR's test changes. Focus on the diff: check coverage of new behaviour, assertion quality, table-driven structure, and absence of flakiness patterns. Sequential.
-- **Audit mode** — auditing an existing test suite for gaps, flakiness, or bad patterns (order-dependent tests, missing `t.Parallel()`, implementation-detail coupling). Check relevant concerns: (1) unit test quality and coverage gaps, (2) integration test isolation and build tags, (3) goroutine leaks and race conditions.
-- **Debug mode** — a test is failing or flaky. Work sequentially: reproduce reliably, isolate the failing assertion, trace the root cause in production code or test setup.
-
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-testing` skill takes precedence.
 
 # Go Testing Best Practices
@@ -35,14 +28,14 @@ This skill guides the creation of production-ready tests for Go applications. Fo
 ## Best Practices Summary
 
 1. Table-driven tests MUST use named subtests -- every test case needs a `name` field passed to `t.Run`
-2. Integration tests MUST use build tags (`//go:build integration`) to separate from unit tests
+2. Separate tests requiring external services according to the project's test commands; build tags provide opt-in compilation, while `testing.Short()` provides runtime selection
 3. Tests MUST NOT depend on execution order -- each test MUST be independently runnable
 4. Independent tests SHOULD use `t.Parallel()` when possible
 5. Tests MUST assert observable behavior and public API contracts, not implementation details -- a test coupled to internals turns every refactor into a test rewrite while proving nothing about the contract
 6. Tests that start goroutines should cancel their work and verify completion before returning
 7. Use explicit standard-library checks; use go-cmp for structured failure diffs
 8. Implement focused fakes at consumed interface boundaries
-9. Keep unit tests fast (< 1ms), use build tags for integration tests
+9. Keep ordinary test runs independent of unavailable external services
 10. Run tests with race detection in CI
 11. Include examples as executable documentation
 12. Test files MUST be named after the source file under test, not after the function or method being tested
@@ -326,7 +319,7 @@ Generate a profile with `go test -coverprofile=coverage.out ./...`, then read th
 
 ## Integration Tests
 
-Use build tags to separate integration tests from unit tests:
+For projects using opt-in integration build tags:
 
 ```go
 //go:build integration
@@ -344,7 +337,7 @@ func TestDatabaseIntegration(t *testing.T) {
 }
 ```
 
-Run integration tests separately:
+Run the tagged tests with:
 
 ```bash
 go test -tags=integration ./...
@@ -389,3 +382,6 @@ go test -bench=. -benchmem ./...       # benchmarks
 go test -fuzz=FuzzName ./...           # fuzzing
 go test -tags=integration ./...        # integration tests
 ```
+
+For flaky failures, read [Flaky tests and test isolation](references/flaky-tests.md)
+for cache, ordering, repetition, shared fixture, and port-conflict diagnostics.

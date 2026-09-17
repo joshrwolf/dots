@@ -31,7 +31,7 @@ paths:
 
 Performance improvement does not exist without measures — if you can measure it, you can improve it.
 
-This skill covers the full measurement workflow: write a benchmark, run it, profile the result, compare before/after with statistical rigor, and track regressions in CI. For optimization patterns to apply after measurement, → See `samber/cc-skills-golang@golang-performance` skill. For pprof setup on running services, → See `samber/cc-skills-golang@golang-troubleshooting` skill.
+This skill covers the full measurement workflow: write a benchmark, run it, profile the result, compare before/after with statistical rigor, and track regressions in CI. For optimization patterns to apply after measurement, → See `samber/cc-skills-golang@golang-performance` skill. For pprof setup on running services, see [pprof server setup](references/pprof-server.md).
 
 ## Writing Benchmarks
 
@@ -123,37 +123,11 @@ When several competing optimization hypotheses exist for the same bottleneck, ke
 
 Compare every variant's `benchstat` output against the **same** baseline report, keep the best verified result, and clean up temporary artifacts created for the experiment.
 
-## Documenting Results in Commits
+## Reporting measurements
 
-Paste benchstat output in the commit body when the change has a measurable performance impact. This documents _why_ an optimization was made, prevents future readers from reverting it, and lets reviewers verify the claim without re-running benchmarks.
-
-Commit format:
-
-```
-perf(parser): reduce Parse allocations 50% with sync.Pool
-
-Replace per-call []byte allocation with a pooled buffer.
-
-goos: linux / goarch: amd64 / cpu: AMD Ryzen 9 5950X
-          │    old     │              new               │
-          │  sec/op    │  sec/op     vs base            │
-Parse-32    4.592µ ± 2%  3.041µ ± 1%  -33.78% (p=0.000 n=10)
-
-          │   old    │             new              │
-          │   B/op   │   B/op     vs base           │
-Parse-32   1.024Ki ± 0%  0.512Ki ± 0%  -50.00% (p=0.000 n=10)
-
-          │ old  │            new             │
-          │ allocs/op │ allocs/op  vs base    │
-Parse-32   12.00 ± 0%   6.000 ± 0%  -50.00% (p=0.000 n=10)
-```
-
-**Rules:**
-
-- Only include benchmarks directly affected by the change — strip unrelated rows
-- Never paste results with `~` (no statistical significance) — the improvement cannot be claimed
-- Include the hardware context line (`goos/goarch/cpu`) so results are reproducible
-- Use `perf(scope):` commit type for performance-only changes
+Include the relevant benchmark comparison, workload, and hardware/toolchain context
+when reporting performance claims. A `~` result is inconclusive at the selected
+significance level; report that uncertainty rather than claiming an improvement.
 
 ## Profiling from Benchmarks
 
@@ -196,7 +170,7 @@ For full pprof CLI reference (all commands, non-interactive mode, profile interp
 ## Cross-References
 
 - → See `samber/cc-skills-golang@golang-performance` skill for optimization patterns to apply after measuring ("if X bottleneck, apply Y")
-- → See `samber/cc-skills-golang@golang-troubleshooting` skill for pprof setup on running services (enable, secure, capture), GODEBUG flags, root cause methodology
+- See [pprof server setup](references/pprof-server.md) for enabling and protecting diagnostics on running services.
 - → See `samber/cc-skills-golang@golang-observability` skill for everyday always-on monitoring, continuous profiling (Pyroscope), distributed tracing (OpenTelemetry)
 - → See `samber/cc-skills-golang@golang-testing` skill for general testing practices
 - → See `samber/cc-skills@promql-cli` skill for querying Prometheus runtime metrics in production to validate benchmark findings

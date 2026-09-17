@@ -20,11 +20,8 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Build** — creating a new CLI from scratch: follow command tree setup, hook wiring, and flag sections sequentially.
-- **Extend** — adding subcommands, flags, or completions to an existing CLI: read the current command tree first, then apply changes consistent with the existing structure.
-- **Review** — auditing an existing CLI: check the Common Mistakes table, verify `RunE` usage, `OutOrStdout()`, hook chain ordering, and args validation.
+When extending a CLI, inspect the current command tree and keep additions consistent
+with its existing structure.
 
 # Using spf13/cobra for CLI command trees in Go
 

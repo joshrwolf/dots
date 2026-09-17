@@ -88,7 +88,7 @@ logging:
 
 ## Architecture & design decisions
 
-For complex applications, document architectural decisions in `docs/architecture/`:
+For projects using architecture decision records, one possible layout is:
 
 ```
 docs/
@@ -99,7 +99,7 @@ docs/
     README.md
 ```
 
-Each design document follows a standard format:
+A record can capture context, the decision, and its consequences:
 
 ```markdown
 # Use PostgreSQL as Primary Store

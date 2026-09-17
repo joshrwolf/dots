@@ -212,7 +212,6 @@ These skills are designed as **atomic, cross-referencing units**. A skill may re
 | ⭐️ | ✅ `golang-refactoring` | ⚡ 🧠 🤖 ⚙️ | — | 245 | 3,835 | 20,392 |
 | ⭐️ | ✅ `golang-safety` | ⚡ | -58% | 78 | 2,614 | 5,384 |
 | ⭐️ | ✅ `golang-testing` | ⚡ 🧠 🤖 ⚙️ | -32% | 115 | 4,270 | 8,822 |
-| ⭐️ | ✅ `golang-troubleshooting` | ⚡ 🧠 🤖 | -32% | 173 | 2,993 | 18,035 |
 | ⭐️ | ✅ `golang-security` | ⚡ 🧠 🤖 | -32% | 85 | 3,187 | 21,623 |
 |  | ✅ `golang-benchmark` | ⚡ 🧠 | -50% | 102 | 3,153 | 33,396 |
 |  | ✅ `golang-cli` | ⚡ | -43% | 125 | 2,338 | 6,153 |
@@ -229,7 +228,6 @@ These skills are designed as **atomic, cross-referencing units**. A skill may re
 |  | ✅ `golang-go-doc` | ⚡ | — | 170 | 3,442 | 5,386 |
 |  | ✅ `golang-popular-libraries` | ⚡ | -30% | 156 | 1,181 | 5,093 |
 |  | ✅ `golang-project-layout` | ⚡ | -38% | 105 | 1,761 | 6,257 |
-|  | ✅ `golang-stay-updated` | ⚡ | -56% | 44 | 1,802 | 1,802 |
 
 **Tools:**
 
@@ -344,10 +342,6 @@ Go performance optimization. Allocation reduction, CPU efficiency, memory layout
 
 Production-ready Go tests. Table-driven tests, fuzzing, fixtures, goroutine leak detection (explicit shutdown checks), snapshot testing, code coverage, integration tests, parallel tests. Overridable.
 
-#### `golang-troubleshooting`
-
-Systematic Go debugging methodology. Common pitfalls, test-driven debugging, pprof capture, race detection, GODEBUG tracing, production debugging.
-
 ### Project Setup
 
 #### `golang-cli`
@@ -373,10 +367,6 @@ Curated recommendations for production-ready Go libraries and frameworks. When t
 #### `golang-project-layout`
 
 Go project structure and workspace setup. cmd/internal/pkg conventions, monorepo layout, CLI project structure, and when to keep things flat.
-
-#### `golang-stay-updated`
-
-Resources to stay current with Go. Official channels, community hubs, key people to follow, and learning resources.
 
 ### APIs
 

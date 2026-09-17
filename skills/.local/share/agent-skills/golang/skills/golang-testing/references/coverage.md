@@ -41,7 +41,7 @@ go test -cover ./internal/store
 ## Pitfalls
 
 - **Per-package by default.** Without `-coverpkg`, a test in `api` exercising `store` reports nothing for `store`, making well-tested packages look untested.
-- **Integration tests are invisible** unless the build tag is passed: `go test -tags=integration -coverprofile=...`.
+- **Build-tagged integration tests are excluded** unless the tag is passed: `go test -tags=integration -coverprofile=...`.
 - **Generated code inflates the number.** Exclude it before setting any threshold, otherwise the metric measures the generator.
 - **A covered line is not an asserted line.** A test that calls a function and ignores its result reports 100% coverage and verifies nothing.
 

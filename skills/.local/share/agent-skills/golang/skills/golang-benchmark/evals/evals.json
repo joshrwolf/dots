@@ -2130,5 +2130,19 @@
         "text": "Recommends removing (ExitWorktree) the losing variants' worktrees once the winner is chosen"
       }
     ]
+  },
+  {
+    "id": 82,
+    "name": "pprof-production-security",
+    "description": "Tests the pprof security requirement: never expose unauthenticated in production",
+    "prompt": "I need to add CPU and memory profiling to my Go production web service. I'll just add `import _ \"net/http/pprof\"` and expose it on the main HTTP port. What's the simplest way to set this up?",
+    "trap": "Model provides the simple blank-import pattern without security warnings, exposing pprof publicly",
+    "assertions": [
+      {"id": "82.1", "text": "Warns that pprof endpoints MUST be protected — never exposed publicly without authentication"},
+      {"id": "82.2", "text": "Uses access controls appropriate to the deployment; does not require a particular authentication scheme or environment-variable name."},
+      {"id": "82.3", "text": "Suggests running pprof on a separate port (not the main HTTP port) or localhost only"},
+      {"id": "82.4", "text": "Keeps profiling opt-in or restricted to an intentionally configured diagnostic listener."},
+      {"id": "82.5", "text": "Explains the risk: pprof exposes runtime details such as stacks and allocation profiles, and expensive captures can consume service resources"}
+    ]
   }
 ]

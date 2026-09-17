@@ -19,12 +19,6 @@ paths:
   - "**/*.go"
 ---
 
-**Modes:**
-
-- **Coding mode** — writing new error handling code. Follow the best practices sequentially. Check touched code for swallowed errors and duplicate logging.
-- **Review mode** — reviewing a PR's error handling changes. Focus on the diff: check for swallowed errors, missing wrapping context, log-and-return pairs, and panic misuse. Sequential.
-- **Audit mode** — auditing existing error handling across a codebase. Check relevant categories (creation, wrapping, single-handling rule, panic/recover, structured logging).
-
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-error-handling` skill takes precedence.
 
 # Go Error Handling Best Practices

@@ -73,7 +73,7 @@ Every doc comment MUST start with the function/method name followed by a verb ph
 
 ### Full Comment Template
 
-Use this structure for exported functions and complex internal functions. Omit sections that don't apply (e.g., no Parameters section for zero-arg functions). Focus on the "why" — don't restate what the code already makes obvious:
+This example shows contract details a longer comment may need. Use ordinary prose and include only the parts relevant to the API; Parameters, Returns, and Example sections are not required:
 
 ```go
 // FuncName summarizes what this function does in one sentence.
@@ -209,7 +209,7 @@ func Transform[T any, U any](slice []T, fn func(T) U) []U {
 
 ### Playground Links
 
-Add a `Play:` line linking to a runnable Go Playground example of a public library. Use a Go Playground integration to create and share playground URLs when one is available:
+When linking an existing public Go Playground example, a `Play:` line is one possible presentation:
 
 ```go
 // Map applies a function to each element of a slice.
@@ -243,7 +243,7 @@ Every package should have a doc comment. Place it in one of these locations:
 package httputil
 ```
 
-Use `doc.go` when the package has 3+ files or the package comment is longer than ~10 lines:
+A dedicated `doc.go` can keep a substantial package overview separate from implementation:
 
 ```go
 // Package auth implements authentication and authorization for the API server.
@@ -268,7 +268,7 @@ package auth
 
 ### File-Level Description
 
-For files that implement a specific algorithm, feature, or contain complex logic, add a descriptive comment block below the imports. This is a macro description — explain **why** this file or package exists, what problem it solves, and what design choices were made. Use ASCII art to describe complex flows or architectures. Don't describe what each line does:
+A file-level comment can explain an algorithm or invariant shared by multiple declarations. This is a macro description — explain **why** this file or package exists, what problem it solves, and what design choices were made. A diagram may help explain complex flows or architectures. Don't describe what each line does:
 
 ```go
 package scheduler
@@ -324,7 +324,7 @@ type Scheduler struct {
 | --- | --- |
 | File implements an algorithm (sorting, scheduling, tree traversal) | Yes |
 | File contains a complex state machine or protocol | Yes |
-| File has 200+ lines of related logic | Yes |
+| Several declarations share a non-obvious invariant | Explain the invariant near its owner |
 | File is a simple CRUD handler or data model | No |
 | File name already explains everything (`json_parser.go`) | Only if non-obvious |
 

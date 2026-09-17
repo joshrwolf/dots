@@ -44,15 +44,27 @@
   },
   {
     "id": 4,
-    "name": "production-json-logging",
-    "description": "Tests whether the model recommends JSON handler for production and explains why plain text is problematic",
+    "name": "production-log-format",
+    "description": "Tests choosing structured log encoding for the actual collection pipeline",
     "prompt": "I'm setting up slog for my Go production service. I like the TextHandler output because it's readable. Here's my setup:\n\nslog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))\n\nShould I use this in production?",
-    "trap": "Without the skill, the model may say TextHandler is fine since it produces structured key=value output",
+    "trap": "Chooses a log encoding based solely on production versus development.",
     "assertions": [
-      {"id": "4.1", "text": "Recommends JSONHandler for production, not TextHandler"},
-      {"id": "4.2", "text": "Explains that plain-text multiline logs (e.g., stack traces) get split into separate records by log collectors"},
-      {"id": "4.3", "text": "Suggests TextHandler is appropriate for development only"},
-      {"id": "4.4", "text": "Shows the correct JSONHandler setup with slog.LevelInfo for production"}
+      {
+        "id": "4.1",
+        "text": "Uses log collector and deployment requirements to choose the encoding."
+      },
+      {
+        "id": "4.2",
+        "text": "Recognizes that slog.TextHandler preserves structured key-value attributes."
+      },
+      {
+        "id": "4.3",
+        "text": "Explains when JSONHandler helps downstream parsing without requiring JSON for every service."
+      },
+      {
+        "id": "4.4",
+        "text": "Considers how the selected handler and collector preserve record boundaries, including multiline values."
+      }
     ]
   },
   {

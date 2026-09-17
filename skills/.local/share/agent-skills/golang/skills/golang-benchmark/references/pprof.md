@@ -1,6 +1,6 @@
 # pprof Reference
 
-`go tool pprof` is the primary tool for understanding where CPU time, memory, and contention go in Go programs. This file covers how to **use** the CLI and **interpret** the output. For enabling pprof endpoints on running services (net/http/pprof import, authentication, security), → See `samber/cc-skills-golang@golang-troubleshooting` skill.
+`go tool pprof` is the primary tool for understanding where CPU time, memory, and contention go in Go programs. This file covers how to **use** the CLI and **interpret** the output. For enabling pprof endpoints on running services (net/http/pprof import, authentication, security), see [pprof server setup](pprof-server.md).
 
 ## Table of Contents
 
@@ -122,7 +122,7 @@ go test -bench=BenchmarkParse -cpuprofile=cpu.prof -memprofile=mem.prof ./pkg/pa
 
 ### From running service
 
-Requires `import _ "net/http/pprof"` (see `samber/cc-skills-golang@golang-troubleshooting` skill for secure setup):
+Requires `import _ "net/http/pprof"` (see [pprof server setup](pprof-server.md) for secure setup):
 
 ```bash
 # CPU profile — captures 30 seconds of CPU samples

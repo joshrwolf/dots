@@ -891,7 +891,7 @@ synctest.Test(t, func(t *testing.T) {
 
 ### `runtime/pprof` `goroutineleak` profile is generally available _(Go 1.27+)_
 
-The goroutine leak profile (previously experimental behind `GOEXPERIMENT=goroutineleakprofile` in Go 1.26) is now a standard `runtime/pprof` profile, also served at `/debug/pprof/goroutineleak` — no build flag required. It reports goroutines blocked on a concurrency primitive that can never be unblocked; leaks reachable from global variables or still-runnable goroutines are not detected. → See `samber/cc-skills-golang@golang-concurrency` and `samber/cc-skills-golang@golang-troubleshooting` skills for using it in a leak investigation.
+The goroutine leak profile (previously experimental behind `GOEXPERIMENT=goroutineleakprofile` in Go 1.26) is now a standard `runtime/pprof` profile, also served at `/debug/pprof/goroutineleak` — no build flag required. It reports goroutines blocked on a concurrency primitive that can never be unblocked; leaks reachable from global variables or still-runnable goroutines are not detected. → See `samber/cc-skills-golang@golang-concurrency` skill for using it in a leak investigation.
 
 ### `go fix` gains new modernizers _(Go 1.27+)_
 

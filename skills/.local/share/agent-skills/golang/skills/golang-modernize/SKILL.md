@@ -22,10 +22,11 @@ paths:
 
 <!-- markdownlint-disable ol-prefix -->
 
-**Modes:**
-
-- **Inline mode** (developer is actively coding): suggest only modernizations relevant to the current file or feature. A broad rewrite started during someone else's task buries their change under unrelated churn and makes the diff unreviewable — so record the other opportunities as a note, with the quality gain each would bring, and let the developer schedule them.
-- **Full-scan mode** — for a requested broad audit, inspect deprecated APIs, language features, standard library changes, testing patterns, and tooling within the supported Go version. Report and prioritize findings; implement a migration when requested.
+During feature work, suggest only modernizations relevant to that feature; record
+unrelated opportunities separately rather than expanding the diff. For a requested
+broad audit, inspect deprecated APIs, language features, standard library changes,
+testing patterns, and tooling within the supported Go version. Report and prioritize
+findings; implement a migration when requested.
 
 # Go Code Modernization Guide
 
@@ -35,32 +36,16 @@ This skill helps you continuously modernize Go codebases by replacing outdated p
 
 Keep modernization within the requested scope. Do not turn an unrelated implementation task into a modernization campaign.
 
-## Workflow
+## Toolchain constraints
 
-When invoked:
+Target the Go version supported by the project, including per-module `go`
+directives in a workspace. A newer installed toolchain does not authorize newer
+language features or APIs in an older module. Keep toolchain upgrades within the
+requested scope.
 
-1. **Check the project's `go.mod` or `go.work`** to determine the current Go version (`go` directive)
-2. **Use the supported Go version** as the modernization target; propose toolchain upgrades only within the requested scope
-3. **Read `.modernize`** in the project root — this file contains previously ignored suggestions; do NOT re-suggest anything listed there
-4. **Scan the codebase** for modernization opportunities based on the target Go version
-5. **Run `golangci-lint`** with the `modernize` linter if available, and `go test ./...` — Go 1.27+ runs the `stdversion` vet check by default, flagging APIs newer than the module's `go` directive; bump the directive or revert the suggestion, don't ignore the hit
-6. **Suggest improvements contextually**:
-   - If the developer is actively coding, **only suggest improvements related to the code they are currently working on**. Do not refactor unrelated files. Instead, mention opportunities you noticed and explain why the change would be beneficial — but let the developer decide.
-   - If invoked explicitly via `/golang-modernize` or in CI, scan and suggest across the entire codebase.
-7. **Group findings by affected package and prerequisite**. Keep changes coherent and follow the agreed workflow; a broad scan does not require multiple agents or worktrees.
-8. **Before applying a dependency update**, review its changelog and compatibility with the supported toolchain. Scope module changes and run affected tests. Clarify only unresolved compatibility requirements.
-9. **Respect ignored suggestions** for the session. Update `.modernize` only when persistent tracking is requested or established by project instructions.
-
-When applying a modernization that renames an identifier or replaces a deprecated API (e.g. `reflect.PtrTo` → `PointerTo`, `math/rand` → `math/rand/v2`), → See `samber/cc-skills-golang@golang-gopls` skill — semantic rename updates resolved references and checks visible interface conversions; inspect dynamic assertions and external consumers separately, and post-edit diagnostics catch compile errors across the rewritten files that a blind Edit or grep/sed sweep would leave broken.
-
-### `.modernize` file format
-
-```
-# Ignored modernization suggestions
-# Format: <date> <category> <description>
-2026-01-15 slog-migration Team decided to keep zap for now
-2026-02-01 math-rand-v2 Legacy module requires math/rand compatibility
-```
+For semantic renames, see `golang-gopls`; inspect dynamic assertions, reflection,
+and external consumers separately. API replacements may change behavior even when
+the result compiles.
 
 ## Go Version Changelogs
 
@@ -78,8 +63,6 @@ Reference the relevant changelog when suggesting a modernization:
 
 For versions newer than Go 1.27, consult the official Go release notes.
 
-When the project's `go.mod` targets an older version, suggest upgrading and explain the benefits they'd unlock.
-
 ## Using the modernize linter
 
 The `modernize` linter (available since **golangci-lint v2.6.0**) automatically detects code that can be rewritten using newer Go features. It originates from `golang.org/x/tools/go/analysis/passes/modernize`; `gopls` and `go fix` (rewritten onto the `go/analysis` framework in Go 1.26, with fixer coverage still growing in Go 1.27 — see [Tooling modernization](./references/tooling.md) for the exact fixer list) cover overlapping modernization checks, but exact coverage differs by tool version. See the `samber/cc-skills-golang@golang-lint` skill for configuration.
@@ -90,7 +73,7 @@ For detailed before/after examples for each Go version (1.21–1.27) and general
 
 ## Tooling modernization
 
-For CI tooling, govulncheck, PGO, golangci-lint v2, and AI-powered modernization pipelines, see [Tooling modernization](./references/tooling.md).
+For govulncheck, PGO, golangci-lint v2, and tool configuration, see [Tooling modernization](./references/tooling.md).
 
 ## Deprecated Packages Migration
 
@@ -116,51 +99,8 @@ For CI tooling, govulncheck, PGO, golangci-lint v2, and AI-powered modernization
 
 Several Go 1.27 changes need **verification, not a rewrite**, before a `go.mod` bump ships. Most notably: a `godebug` line in `go.mod` (or `//go:debug` comment) still pinning `asynctimerchan`, `tlsunsafeekm`, `tlsrsakex`, `tls3des`, `tls10server`, `x509keypairleaf`, or `gotypesalias` to its **old** value now fails the build. Full checklist in [Go version modernizations](./references/versions.md#go-127-version-bump-risk-checklist-verify-dont-rewrite).
 
-## Migration Priority Guide
-
-When modernizing a codebase, prioritize changes by impact:
-
-### High priority (safety and correctness)
-
-1. Remove loop variable shadow copies _(Go 1.22+)_ — prevents subtle bugs
-2. Replace `math/rand` with `math/rand/v2` _(Go 1.22+)_ — remove `rand.Seed` calls
-3. Use `os.Root` for user-supplied file paths _(Go 1.24+)_ — prevents path traversal
-4. Run `govulncheck` _(Go 1.22+)_ — catch known vulnerabilities
-5. Use `errors.Is`/`errors.As` instead of direct comparison _(Go 1.13+)_
-6. Migrate deprecated crypto packages _(Go 1.24+)_ — security critical
-7. Before bumping to `go 1.27`, resolve removed `GODEBUG` keys and `crypto/tls.Config.Rand` callers _(Go 1.27+)_ — see the risk checklist above; a stale `GODEBUG` value now fails the build
-
-### Medium priority (readability and maintainability)
-
-8. Replace `interface{}` with `any` _(Go 1.18+)_
-9. Use `min`/`max` builtins _(Go 1.21+)_
-10. Use `range` over int _(Go 1.22+)_
-11. Use `slices` and `maps` packages _(Go 1.21+)_
-12. Use `cmp.Or` for default values _(Go 1.22+)_
-13. Use `sync.OnceValue`/`sync.OnceFunc` _(Go 1.21+)_
-14. Use `sync.WaitGroup.Go` _(Go 1.25+)_
-15. Use `t.Context()` in tests _(Go 1.24+)_
-16. Use `b.Loop()` in benchmarks _(Go 1.24+)_
-17. Use generic methods for helpers scoped to one type, and `strings.CutLast`/`bytes.CutLast` instead of `LastIndex` slicing _(Go 1.27+)_
-18. Keep JSON API migration separate from a Go upgrade: `encoding/json` retains v1 behavior; choose v2 only deliberately and test payload compatibility _(Go 1.27+)_
-
-### Lower priority (gradual improvement)
-
-19. Migrate to `slog` from third-party loggers _(Go 1.21+)_
-20. Adopt iterators where they simplify code _(Go 1.23+)_
-21. Replace `sort.Slice` with `slices.SortFunc` _(Go 1.21+)_
-22. Use `strings.SplitSeq` and iterator variants _(Go 1.24+)_
-23. Move tool deps to `go.mod` tool directives _(Go 1.24+)_
-24. Enable PGO for production builds _(Go 1.21+)_
-25. Upgrade to golangci-lint v2 with modernize linter _(golangci-lint v2.6.0+)_
-26. Add `govulncheck` to CI pipeline
-27. Set up monthly modernization CI pipeline
-28. Replace `google/uuid`/`gofrs/uuid` with the stdlib `uuid` package, after checking for RFC-variant features the stdlib doesn't cover _(Go 1.27+)_
-29. Run `go fix ./...` after a toolchain upgrade to apply the safe automated transformations _(Go 1.27+)_
-30. Set up AI-driven code review in CI — loads these skills to guide review per area; see `samber/cc-skills-golang@golang-continuous-integration`
-
 ## Related Skills
 
 See `samber/cc-skills-golang@golang-concurrency`, `samber/cc-skills-golang@golang-testing`, `samber/cc-skills-golang@golang-observability`, `samber/cc-skills-golang@golang-error-handling`, `samber/cc-skills-golang@golang-lint`, `samber/cc-skills-golang@golang-continuous-integration` skills.
 
-- → See `samber/cc-skills-golang@golang-refactoring` skill for staging a large modernization sweep as small human-reviewed PRs instead of one big worktree sweep.
+- → See `samber/cc-skills-golang@golang-refactoring` skill for Go-specific risks when moving declarations or changing package boundaries.
