@@ -15,7 +15,7 @@ The right amount of caution before a refactor is not a fixed policy — it is ga
 - **LOW/ZERO coverage (<40%, or the specific touched lines are uncovered even if the package average looks fine) — Feathers mode** — write characterization (a.k.a. golden or pinning) tests _first_, capturing what the code actually does today, warts and all, before changing a single line.
   - This is deliberately not a correctness test — you are not asserting the code is right, only recording what it currently does so a refactor can be checked against it.
   - Find a seam (below) and introduce the minimum needed to make the code testable.
-  - Restrict yourself to the safest, tool-verified refactorings only — gopls Rename and Inline, both behavior-preserving by construction — and avoid Extract or any cross-package move until a real net exists to check them against.
+  - Restrict yourself to the safest, tool-verified refactorings only — gopls Rename and Inline, both with substantial static checks but still requiring behavior verification — and avoid Extract or any cross-package move until a real net exists to check them against.
   - Prefer Sprout/Wrap (see [catalog.md](catalog.md)) to add new behavior in a new, tested function rather than editing untested code in place.
   - Running `deadcode -test` first is worth the two minutes — some of what looks like "untested code that needs a net" turns out to be exported API nothing actually calls, in which case the honest fix is deletion, not testing.
 

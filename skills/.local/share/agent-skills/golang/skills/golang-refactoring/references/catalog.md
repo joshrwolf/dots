@@ -34,7 +34,7 @@ gopls codeaction -exec -kind=refactor.extract.method   file.go:#start,#end
 
 Editor-integrated as "Extract function"/"Extract method" in the code actions menu.
 
-- **Risk:** Medium. gopls's own documentation describes Extract as "considerably less rigorous" than Rename or Inline, and it is known to drop comments attached to the extracted statements (golang/go#20744). Always diff the result and re-read the extracted body — don't trust it as behavior-preserving by construction the way Rename and Inline are.
+- **Risk:** Medium. gopls's own documentation describes Extract as "considerably less rigorous" than Rename or Inline, and it is known to drop comments attached to the extracted statements (golang/go#20744). Always diff the result and re-read the extracted body — verify its behavior and resulting diff; Rename and Inline also have limits.
 
 ## Inline Function / Inline Call
 
@@ -47,7 +47,7 @@ Editor-integrated as "Extract function"/"Extract method" in the code actions men
 gopls codeaction -exec -kind=refactor.inline.call file.go:#offset
 ```
 
-- **Risk:** Low. Alongside Rename, this is one of the two gopls operations that is provably behavior-preserving by construction — it refuses rather than produce a semantically wrong inline.
+- **Risk:** Low. Inline performs substantial semantic checks, but review the transformed code and test affected behavior; tool success is not proof.
 
 ## Extract Variable / Inline Variable, Extract Constant
 

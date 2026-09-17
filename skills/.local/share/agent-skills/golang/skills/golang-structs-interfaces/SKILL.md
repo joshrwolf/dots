@@ -270,7 +270,7 @@ Receiver type MUST be consistent across all methods of a type — if one method 
 
 ## Preventing Struct Copies with `noCopy`
 
-A struct holding a mutex, a channel, or internal pointers breaks when copied: the copy duplicates the lock state, so two goroutines guard two different mutexes and the invariant disappears silently. Embed a `noCopy` sentinel so `go vet` reports every value copy, and pass such structs by pointer.
+Do not copy a used mutex or a struct containing it; use pointer receivers and parameters. Copying channels or pointers shares referenced state and is not inherently invalid. A mutex already enables copylocks diagnostics. Consider a named `noCopy` marker only for another documented non-copyable contract; it aids static analysis, not compiler or runtime enforcement.
 
 **Diagnose:** 1- `go vet ./...` — `copylocks` reports value copies of lock-bearing structs
 
@@ -282,7 +282,7 @@ A struct holding a mutex, a channel, or internal pointers breaks when copied: th
 - → See `samber/cc-skills-golang@golang-design-patterns` skill for functional options, constructors, and builder patterns
 - → See `samber/cc-skills-golang@golang-dependency-injection` skill for DI patterns using interfaces
 - → See `samber/cc-skills-golang@golang-code-style` skill for value vs pointer function parameters (distinct from receivers)
-- → See `samber/cc-skills-golang@golang-gopls` skill for safe rename and the `implementInterface` code action — renaming a method or receiver that participates in interface satisfaction updates every call site and refuses a rename that would silently break the interface, which grep/sed cannot detect
+- → See `samber/cc-skills-golang@golang-gopls` skill for safe rename and the `implementInterface` code action — semantic rename checks resolved references and visible interface conversions, but runtime assertions and reflection still need review
 
 ## Common Mistakes
 

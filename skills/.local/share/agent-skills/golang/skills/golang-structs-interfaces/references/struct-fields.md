@@ -19,7 +19,7 @@ type Order struct {
 | Directive               | Meaning                                     |
 | ----------------------- | ------------------------------------------- |
 | `json:"name"`           | Field name in JSON output                   |
-| `json:"name,omitempty"` | Omit field if zero value                    |
+| `json:"name,omitempty"` | Omit empty values (v1 rules)                    |
 | `json:"name,omitzero"`  | Omit field if zero (Go 1.24+, type-aware)   |
 | `json:"-"`              | Always exclude from JSON                    |
 | `json:"-,"`             | Field literally named `-`                   |
@@ -32,40 +32,41 @@ type Order struct {
 Notes that bite in production:
 
 - **Unexported fields are never serialized**, tag or not. A tag on an unexported field is dead weight and `go vet` flags the malformed ones only.
-- **`omitempty` is length/zero based, not semantic.** It drops `0`, `""`, and `false`, so an explicit "zero" value becomes indistinguishable from "absent". Use a pointer, `mo.Option[T]`, or `omitzero` (Go 1.24+) when the difference matters.
+- **In `encoding/json` v1, `omitempty` uses its documented empty-value rules.** It drops `0`, `""`, and `false`, so an explicit "zero" value becomes indistinguishable from "absent". For an always-present boolean, use no omission tag. To distinguish absent from explicit false, use `*bool` with `omitempty`: nil is omitted, a pointer to false is emitted. `omitzero` also omits plain false; it does not track presence. It can omit zero `time.Time` using `IsZero`. Preserve the chosen JSON API and wire contract when changing tags.
 - **Tag syntax is unchecked at compile time.** A missing backtick or a `json: "id"` with a stray space produces a silently ignored tag. `go vet`'s `structtag` analyzer catches malformed tags — run it in CI.
 
 **Diagnose:** 1- `go vet ./...` — the `structtag` analyzer reports malformed or duplicated tags 2- round-trip test: marshal, unmarshal, compare — catches field-name drift the compiler cannot see
 
-## Preventing Struct Copies with `noCopy`
+## Copy safety and static analysis
 
-Some structs must never be copied after first use (e.g., those containing a mutex, a channel, or internal pointers) — copying duplicates the lock state, so two goroutines end up guarding two different mutexes and the invariant silently disappears. Embed a `noCopy` sentinel to make `go vet` catch accidental copies:
+Do not copy a used `sync.Mutex` or a struct containing it. Lock state belongs to
+that value. Channels and pointers instead copy references to shared state; that
+sharing may be intended. Assess ownership and synchronization rather than treating
+all reference-bearing structs as non-copyable.
+
+A mutex field already lets `go vet`'s `copylocks` analyzer detect many accidental
+copies. Use pointer receivers and parameters for lock-bearing values. A `noCopy`
+marker is useful for a documented non-copyable type without a detectable lock:
 
 ```go
-// noCopy may be added to structs which must not be copied after first use.
-// See https://pkg.go.dev/sync#noCopy
 type noCopy struct{}
 
 func (*noCopy) Lock()   {}
 func (*noCopy) Unlock() {}
 
-type ConnPool struct {
-    noCopy noCopy
-    mu     sync.Mutex
-    conns  []*Conn
+type Handle struct {
+    noCopy noCopy // named field; do not promote Lock/Unlock into the public API
+    state  *state // this type's ownership contract forbids copying
 }
 ```
 
-`go vet` reports an error if a `ConnPool` value is copied (passed by value, assigned, returned by value, ranged over). The detection is purely name-based: `vet`'s `copylocks` analyzer flags any type whose fields implement `Lock`/`Unlock`. This is the same technique the standard library uses for `sync.WaitGroup`, `sync.Mutex`, `strings.Builder`, and others.
+The marker works through method-set analysis, not a magic type name. It is a
+static-analysis convention, not a language restriction or runtime enforcement.
+The compiler still permits copies, and vet is not an exhaustive proof. Avoid
+adding a redundant marker to every struct that already contains a mutex.
 
-Pass these structs by pointer:
+Run `go vet` for copy diagnostics and exercise concurrent behavior with `go test
+-race`; a passing run does not prove every possible execution safe.
 
-```go
-// Good
-func process(pool *ConnPool) { ... }
-
-// Bad — go vet will flag this
-func process(pool ConnPool) { ... }
-```
-
-**Diagnose:** 1- `go vet ./...` — `copylocks` reports every value copy of a lock-bearing struct 2- `go test -race ./...` — surfaces the data races a silent copy introduces
+Sources: [sync.Mutex](https://pkg.go.dev/sync#Mutex),
+[copylocks analyzer](https://pkg.go.dev/golang.org/x/tools/go/analysis/passes/copylock).

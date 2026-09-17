@@ -62,7 +62,7 @@
   - [Use `net/url` `URL.Clone()` and `Values.Clone()` _(Go 1.27+)_](#use-neturl-urlclone-and-valuesclone-go-127)
   - [Use `math/big.Int.Divide` for rounding-mode division _(Go 1.27+)_](#use-mathbigintdivide-for-rounding-mode-division-go-127)
   - [Use stdlib `uuid` instead of a UUID dependency _(Go 1.27+)_](#use-stdlib-uuid-instead-of-a-uuid-dependency-go-127)
-  - [Migrate to `encoding/json/v2` — default since Go 1.27 _(Go 1.27+)_](#migrate-to-encodingjsonv2--default-since-go-127-go-127)
+  - [Choose JSON APIs deliberately _(Go 1.27+)_](#choose-json-apis-deliberately-go-127)
   - [Use `testing/synctest.Sleep()` inside a synctest bubble _(Go 1.27+)_](#use-testingsynctestsleep-inside-a-synctest-bubble-go-127)
   - [Use `net/http/httptest.NewTestServer()` for in-memory server tests _(Go 1.27+)_](#use-nethttphttptestnewtestserver-for-in-memory-server-tests-go-127)
   - [`runtime/pprof` `goroutineleak` profile is generally available _(Go 1.27+)_](#runtimepprof-goroutineleak-profile-is-generally-available-go-127)
@@ -431,7 +431,7 @@ f, err := root.Open(userInput) // cannot escape root directory
 
 ### Use `omitzero` JSON tag _(Go 1.24+)_
 
-`omitzero` is more correct than `omitempty` for `time.Time`, `bool`, and custom types:
+Use `omitzero` when the contract requires omission of zero values, including zero `time.Time`. Both `omitempty` and `omitzero` omit a plain false boolean in v1; neither preserves explicit false. Keep bool fields unconditionally, or use `*bool` with `omitempty` to distinguish absent from explicit false. Do not change tags without checking the wire contract:
 
 ```go
 // Before: omitempty doesn't work well for time.Time
@@ -843,30 +843,28 @@ id := uuid.New().String()
 
 The stdlib generators (`uuid.New()`, `uuid.NewV4()`, `uuid.NewV7()`) return values without errors, and v7 UUIDs are time-ordered — prefer `uuid.NewV7()` for database primary keys where index locality matters. Check `go mod why -m github.com/google/uuid` (or `gofrs/uuid`) before dropping the dependency — some codebases depend on v3/v5 namespace UUIDs, SQL `Scanner`/`driver.Valuer` integration, or other RFC-specific variants the stdlib package does not (yet) cover.
 
-### Migrate to `encoding/json/v2` — default since Go 1.27 _(Go 1.27+)_
+### Choose JSON APIs deliberately _(Go 1.27+)_
 
-`encoding/json/v2` and `encoding/json/jsontext` are now stable (experimental since Go 1.25 via `GOEXPERIMENT=jsonv2`) and `encoding/json/v2` is the default JSON implementation; `encoding/json` becomes a thin wrapper over it, and unmarshal is significantly faster. For new code, prefer the v2 API directly:
+Go 1.27 makes `encoding/json/v2` and `encoding/json/jsontext` available without
+an experiment. It also uses the v2 implementation behind `encoding/json`, while
+preserving the v1 API's marshaling and unmarshaling behavior. Upgrading Go does
+not require changing imports or opting into v2 semantics.
 
-```go
-// Before
-data, err := json.Marshal(v)
-err = json.Unmarshal(data, &v)
+Keep the existing JSON API during ordinary modernization. For a requested API
+migration, compare omission rules, nil collections, duplicate names, invalid UTF-8,
+field matching, and custom marshalers against the actual payload contract. Test
+representative payloads before changing imports or tags. V2 rejects duplicate names
+and invalid UTF-8 by default; do not attribute those changes to a toolchain-only
+upgrade of code that still uses `encoding/json`.
 
-// After (Go 1.27+)
-import "encoding/json/v2"
-data, err := json.Marshal(v)                 // same names, v2 semantics
-err = json.UnmarshalRead(r, &v)              // stream from an io.Reader without a wrapper buffer
-```
+For an existing v1 package, reader decoding can use `json.NewDecoder(r).Decode(v)`.
+Define whether trailing data is allowed; decoding one value does not check that the
+reader contains only that value. In a package deliberately using v2, consult
+`json.UnmarshalRead` and its options. Neither use case requires migrating unrelated
+functions.
 
-Use `encoding/json/jsontext` (`Encoder`, `Decoder`, `Token`, `Value`) for syntactic, streaming-level JSON work instead of hand-rolled `json.RawMessage` juggling.
-
-**Migrate deliberately, not blindly — the default got stricter:**
-
-- Duplicate object member names are now rejected; v1 silently kept the last one.
-- Invalid UTF-8 in JSON strings is now rejected; v1 replaced it silently.
-- The `format` and `unknown` struct tags, `DiscardUnknownMembers`, and `SkipFunc` are gone.
-- The `inline` tag is renamed `embed`.
-- Roll back with `GOEXPERIMENT=nojsonv2` only as a temporary compatibility bridge, not a permanent stance — it is documented as the escape hatch, not the intended steady state.
+Sources: [Go 1.27 release notes](https://go.dev/doc/go1.27),
+[JSON compatibility documentation](https://pkg.go.dev/encoding/json).
 
 ### Use `testing/synctest.Sleep()` inside a synctest bubble _(Go 1.27+)_
 
@@ -918,7 +916,7 @@ For modules with `go 1.27` or later in `go.mod`, `go mod tidy` consolidates dupl
 These changes need review before or during a bump to `go 1.27` — none of them require a code rewrite, but skipping the check risks a build failure or a silent behavior change:
 
 - **Removed `GODEBUG` settings** — `asynctimerchan`, `tlsunsafeekm`, `tlsrsakex`, `tls3des`, `tls10server`, `x509keypairleaf`, `gotypesalias`. A `godebug` line in `go.mod` or a `//go:debug` comment still pinning one of these to its old value now **fails the build**; pinning it to its current default value is accepted. Search with `grep -rn 'go:debug\|godebug' go.mod **/*.go`.
-- **json/v2 default strictness** — see above; re-run integration tests against real-world payloads, not just unit tests, before the bump ships.
+- **JSON API compatibility** — retain v1 behavior on a toolchain-only upgrade. If also migrating to v2, test the changed API semantics separately against representative payloads.
 - **Size-specialized allocator** — up to 30% faster allocations under 80 bytes, roughly 1% faster overall, at the cost of ~60 KB binary size. Enabled by default; disable with `GOEXPERIMENT=nosizespecializedmalloc` if binary size is constrained, but treat that flag as scheduled for removal in Go 1.28, not a long-term setting.
 - **Darwin floor raised to macOS 13 (Ventura)** — older macOS targets can no longer run binaries built with this toolchain.
 - **`linux/ppc64` now builds ELFv2 binaries** and requires Linux kernel 3.13+ (RHEL 7's 3.10 kernel with backports) — relevant only to ppc64 deployments.

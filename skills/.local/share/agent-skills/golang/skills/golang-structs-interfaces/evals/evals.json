@@ -112,15 +112,15 @@
   {
     "id": 9,
     "name": "nocopy-sentinel-struct",
-    "description": "Tests whether the model uses the noCopy sentinel to prevent struct copying",
+    "description": "Explains lock copy diagnostics and their limits.",
     "prompt": "I have a Go struct ConnPool that contains a sync.Mutex and a slice of connections. A junior developer accidentally passed it by value to a function, which caused a data race. How can I prevent this struct from being copied?",
-    "trap": "Without the skill, the model may just say 'always use pointers' or rely on code review. The skill shows the noCopy sentinel pattern that makes go vet catch accidental copies.",
+    "trap": "Adds a redundant marker or claims the compiler prevents copying.",
     "assertions": [
-      {"id": "9.1", "text": "Recommends embedding a noCopy sentinel struct"},
-      {"id": "9.2", "text": "noCopy implements Lock() and Unlock() methods (empty bodies)"},
-      {"id": "9.3", "text": "Explains that go vet will flag copies of structs containing noCopy"},
-      {"id": "9.4", "text": "Mentions this is the same technique used by sync.WaitGroup, sync.Mutex, or strings.Builder in the stdlib"},
-      {"id": "9.5", "text": "Shows that the struct should be passed by pointer after adding noCopy"}
+      {"id": "9.1", "text": "Explains a mutex must not be copied after first use"},
+      {"id": "9.2", "text": "Notes the existing mutex already enables copylocks diagnostics"},
+      {"id": "9.3", "text": "Runs or recommends go vet for copy diagnostics"},
+      {"id": "9.4", "text": "Distinguishes static analysis from compiler and runtime enforcement"},
+      {"id": "9.5", "text": "Uses pointer receivers and parameters without mandating a redundant noCopy marker"}
     ]
   },
   {

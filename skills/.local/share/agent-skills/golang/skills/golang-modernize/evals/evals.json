@@ -48,14 +48,14 @@
       "id": 4,
       "name": "omitzero-vs-omitempty",
       "prompt": "Review these JSON struct tags for correctness in our Go 1.24 API. Users report that zero-value time fields and false booleans are unexpectedly included or omitted in JSON responses.\n\n```go\npackage api\n\nimport \"time\"\n\ntype Event struct {\n    ID        string    `json:\"id\"`\n    Name      string    `json:\"name\"`\n    StartAt   time.Time `json:\"start_at,omitempty\"`\n    EndAt     time.Time `json:\"end_at,omitempty\"`\n    Cancelled bool      `json:\"cancelled,omitempty\"`\n    Archived  bool      `json:\"archived,omitempty\"`\n    Notes     string    `json:\"notes,omitempty\"`\n    Priority  int       `json:\"priority,omitempty\"`\n}\n\ntype UserSettings struct {\n    UserID           string    `json:\"user_id\"`\n    DarkMode         bool      `json:\"dark_mode,omitempty\"`\n    EmailNotifs      bool      `json:\"email_notifs,omitempty\"`\n    LastLogin        time.Time `json:\"last_login,omitempty\"`\n    AccountCreated   time.Time `json:\"account_created,omitempty\"`\n    Bio              string    `json:\"bio,omitempty\"`\n}\n```\n\nExplain the issue and provide the corrected code.",
-      "trap": "omitempty doesn't work correctly for time.Time (zero time is a non-empty struct) and treats false as empty for bool. Go 1.24 introduced omitzero which handles both correctly. Without the skill, the model may not know about omitzero.",
+      "trap": "Claims omitzero preserves false or changes wire tags without resolving the intended contract.",
       "assertions": [
-        { "id": "4.1", "text": "Identifies that omitempty doesn't omit zero time.Time (it's a non-empty struct)" },
-        { "id": "4.2", "text": "Suggests omitzero for time.Time fields (StartAt, EndAt, LastLogin, AccountCreated)" },
-        { "id": "4.3", "text": "Identifies that omitempty treats false as empty for bool fields" },
-        { "id": "4.4", "text": "Addresses bool issue correctly (removes tag or uses omitzero)" },
-        { "id": "4.5", "text": "Correctly notes omitzero requires Go 1.24+" },
-        { "id": "4.6", "text": "Does NOT suggest omitzero for string or int fields where omitempty works correctly" }
+        { "id": "4.1", "text": "Explains that v1 omitempty does not omit zero time.Time" },
+        { "id": "4.2", "text": "Uses omitzero for time.Time only when zero times should be omitted" },
+        { "id": "4.3", "text": "Explains that both v1 omitempty and omitzero omit plain false booleans" },
+        { "id": "4.4", "text": "Uses no omission tag for always-present bool, or *bool with omitempty for absent versus explicit false" },
+        { "id": "4.5", "text": "Checks Go version support for omitzero (Go 1.24+)" },
+        { "id": "4.6", "text": "Preserves existing tags unless the intended wire behavior calls for a change" }
       ]
     },
     {
@@ -185,14 +185,14 @@
       "id": 14,
       "name": "json-v2-duplicate-key-strictness",
       "prompt": "We upgraded this service to Go 1.27 last week. Since then, ingestion of webhook payloads from one partner started failing intermittently with decode errors. Review the code and explain what changed.\n\n```go\npackage webhook\n\nimport (\n    \"encoding/json\"\n    \"net/http\"\n)\n\ntype Event struct {\n    ID     string `json:\"id\"`\n    Type   string `json:\"type\"`\n    Amount int    `json:\"amount\"`\n}\n\nfunc HandlePartnerWebhook(w http.ResponseWriter, r *http.Request) {\n    var ev Event\n    if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {\n        http.Error(w, \"invalid payload\", http.StatusBadRequest)\n        return\n    }\n    process(ev)\n}\n\nfunc process(ev Event) {}\n```\n\nThe partner's webhook payloads are known to occasionally repeat a JSON key (e.g. `{\"id\":\"1\",\"id\":\"1-dup\",\"type\":\"charge\",\"amount\":500}`), which used to decode fine, keeping the last value. Diagnose the regression and fix it.",
-      "trap": "encoding/json now runs on top of encoding/json/v2 by default since Go 1.27, and v2 rejects duplicate object member names instead of silently keeping the last one like v1 did. Without the skill, the model may not connect the Go 1.27 bump to this specific new decode-time failure and may guess at unrelated causes (malformed JSON, network issues).",
+      "trap": "Accepts the false premise that a toolchain-only upgrade changes encoding/json duplicate-key behavior.",
       "assertions": [
-        { "id": "14.1", "text": "Identifies that Go 1.27 made encoding/json/v2 the default JSON implementation underneath encoding/json" },
-        { "id": "14.2", "text": "Explains that duplicate JSON object keys are now rejected by default, whereas v1 silently kept the last value" },
-        { "id": "14.3", "text": "Connects the partner payload's duplicate id key directly to the reported decode failures" },
-        { "id": "14.4", "text": "Proposes a concrete fix: either normalize/dedupe the payload before decoding, or explicitly opts back into v1 behavior only as a temporary bridge" },
-        { "id": "14.5", "text": "Names GOEXPERIMENT=nojsonv2 as an escape hatch, not as the recommended long-term fix" },
-        { "id": "14.6", "text": "Does NOT claim encoding/json's decode behavior is unaffected by upgrading to Go 1.27" }
+        { "id": "14.1", "text": "Distinguishes the v2 implementation from v1 API semantics" },
+        { "id": "14.2", "text": "Explains that encoding/json preserves its duplicate-key handling" },
+        { "id": "14.3", "text": "Does not diagnose the shown duplicate id as the proven cause" },
+        { "id": "14.4", "text": "Requests the actual decode error and reproduces the supplied payload" },
+        { "id": "14.5", "text": "Investigates import, option, payload, or surrounding-code changes rather than proposing an unsupported rollback" },
+        { "id": "14.6", "text": "Avoids rewriting the decoder without evidence" }
       ]
     },
     {
@@ -251,13 +251,13 @@
       "id": 19,
       "name": "json-v2-streaming-migration",
       "prompt": "Add a `LoadFromReader(r io.Reader, v any) error` helper to this Go 1.27 config package, so callers can decode JSON directly from a stream (an HTTP response body, an open file) without buffering the whole payload into a byte slice first.\n\n```go\npackage config\n\nimport (\n    \"encoding/json\"\n    \"io\"\n)\n\nfunc LoadFromBytes(data []byte, v any) error {\n    return json.Unmarshal(data, v)\n}\n\n// TODO: add LoadFromReader\n```\n\nImplement `LoadFromReader`.",
-      "trap": "encoding/json/v2 is the default JSON implementation since Go 1.27 and exposes UnmarshalRead(r, v) for exactly this streaming case. Without the skill, the natural default is json.NewDecoder(r).Decode(v) from the v1-era API, which still works but isn't the migration path the skill should point toward for new Go 1.27 code.",
+      "trap": "Migrates the package to JSON v2 despite a request only for reader support.",
       "assertions": [
-        { "id": "19.1", "text": "Uses encoding/json/v2's UnmarshalRead(r, v) (or explicitly imports encoding/json/v2 and calls it) rather than only the v1-era json.NewDecoder(r).Decode(v) pattern" },
-        { "id": "19.2", "text": "Notes that encoding/json/v2 is the new default JSON implementation as of Go 1.27" },
-        { "id": "19.3", "text": "Does NOT introduce a manual io.ReadAll followed by json.Unmarshal, which would defeat the point of streaming from the reader" },
-        { "id": "19.4", "text": "Keeps LoadFromBytes working as-is rather than rewriting unrelated code" },
-        { "id": "19.5", "text": "The new function's signature matches the requested LoadFromReader(r io.Reader, v any) error" }
+        { "id": "19.1", "text": "Uses the existing encoding/json API for reader decoding" },
+        { "id": "19.2", "text": "Does not change imports to v2 as a side effect of reader support" },
+        { "id": "19.3", "text": "Does not buffer the entire reader with io.ReadAll" },
+        { "id": "19.4", "text": "Keeps LoadFromBytes unchanged" },
+        { "id": "19.5", "text": "Matches the requested signature and considers whether trailing data must be rejected" }
       ]
     },
     {

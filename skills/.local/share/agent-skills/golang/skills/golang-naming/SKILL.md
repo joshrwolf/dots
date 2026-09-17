@@ -154,7 +154,7 @@ For complete rules, examples, and rationale, see:
 | Unnecessary import aliases | Aliases add cognitive load. Only alias on collision — `mrand "math/rand"` |
 | Inconsistent concept names | Using `user`/`account`/`person` for the same concept forces readers to track synonyms — pick one name |
 
-Applying these fixes means renaming existing identifiers — → See `samber/cc-skills-golang@golang-gopls` skill to do it safely: its rename updates every call site across the workspace and refuses a rename that would break interface satisfaction, which a grep/sed or manual Edit-based rename silently misses.
+Applying these fixes means renaming existing identifiers — → See `samber/cc-skills-golang@golang-gopls` skill to do it safely: semantic rename checks resolved references and visible interface conversions. Review dynamic assertions, reflection, serialized names, and external consumers, then verify the affected behavior.
 
 ## Enforce with Linters
 

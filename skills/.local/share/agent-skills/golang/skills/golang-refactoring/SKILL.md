@@ -45,8 +45,8 @@ See [workflow.md](references/workflow.md).
 # Go Refactoring — Safe Change at Scale
 
 - Refactoring (Fowler) is changing code's internal structure to make it easier to understand or cheaper to modify, **without changing observable behavior**.
-- Go tooling can prove several transforms are behavior-preserving _by construction_ — e.g. gopls refuses a Rename rather than risk a broken build.
-- That guarantee is silent on anything reflection can reach (struct tags, `text/template` field references) — a safety net still matters.
+- Semantic tools reduce manual-edit mistakes and check many static conflicts; they do not prove runtime behavior preservation.
+- Review runtime interface assertions, reflection, serialized names, generated code, and external consumers where affected; verify behavior with focused tests.
 
 ## The Core Loop
 
@@ -70,8 +70,8 @@ See [workflow.md](references/workflow.md).
   move with builds and tests; measure the optimization separately. Choose commit
   and PR boundaries for the task rather than imposing a fixed count or line limit.
 - **Prefer gopls Rename/Inline over LLM hand-edits.**
-  - Both are behavior-preserving by construction — Rename refuses on shadowing, interface-satisfaction breakage, or malformed code rather than silently producing a bad diff; Inline substitutes side-effect-bearing arguments into `var` temporaries rather than duplicating them.
-  - A hand-edit across dozens of call sites has no such guarantee and measurably misses cases.
+  - Rename checks static name conflicts and visible interface conversions; Inline accounts for evaluation order and side effects. Inspect the resulting diff and verify affected behavior, including dynamic uses the tool cannot resolve.
+  - Use semantic edits when available to reduce missed references; still check workspace boundaries and affected consumers.
 - **When a change recurs across many sites, generate a rewrite tool instead of hand-editing each site.**
   - Escalate `gofmt -r` → `eg` → a `go/analysis` fixer, in order of increasing power (see [go-tooling.md](references/go-tooling.md)).
   - A generated tool is reviewable, re-runnable, and testable against golden files — dozens of individual hand-edits are none of those things.
@@ -120,7 +120,7 @@ Refactoring is an investment that only pays off if a future change is coming to 
 | **Medium** | Extract Function/Method (Extract is best-effort — verify comments/behavior survived), Inline Call across packages, single-parameter add/remove, introducing generics | Add or confirm targeted tests over the blast radius first |
 | **High** | Change signature across many callers, moving types/functions across packages, splitting/merging packages, breaking import cycles, exported-API or major-version changes | Tests over affected callers and resolved compatibility requirements |
 
-**Diagnose:** 1- gopls refusing a Rename or Inline is a real semantic hazard, not a tool bug — investigate the shadowing/interface conflict before forcing the change by hand 2- `go vet ./...` / `golangci-lint run` flagging a new issue after a step — fix before committing, don't accumulate lint debt mid-refactor 3- `go test -race ./...` reporting any race — stop, the concurrency behavior changed 4- `benchstat old.txt new.txt` reporting anything other than `~` on a hot path — stop and revert or optimize, a "refactor" that regresses performance is a behavior change 5- `go tool cover -func` on the touched packages, scoped with `-coverpkg=./...` — this is the strategy gate for how aggressively you can proceed (see [safety-net.md](references/safety-net.md))
+**Diagnose:** 1- investigate a rejected Rename or Inline: it may indicate a real conflict, unsupported operation, incomplete type information, or a tool defect; do not force a textual edit without understanding the reason 2- `go vet ./...` / `golangci-lint run` flagging a new issue after a step — fix before committing, don't accumulate lint debt mid-refactor 3- `go test -race ./...` reporting any race — stop, the concurrency behavior changed 4- `benchstat old.txt new.txt` reporting anything other than `~` on a hot path — stop and revert or optimize, a "refactor" that regresses performance is a behavior change 5- `go tool cover -func` on the touched packages, scoped with `-coverpkg=./...` — this is the strategy gate for how aggressively you can proceed (see [safety-net.md](references/safety-net.md))
 
 ## Workflow
 

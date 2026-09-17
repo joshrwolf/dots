@@ -51,7 +51,7 @@ When invoked:
 8. **Before applying a dependency update**, review its changelog and compatibility with the supported toolchain. Scope module changes and run affected tests. Clarify only unresolved compatibility requirements.
 9. **Respect ignored suggestions** for the session. Update `.modernize` only when persistent tracking is requested or established by project instructions.
 
-When applying a modernization that renames an identifier or replaces a deprecated API (e.g. `reflect.PtrTo` → `PointerTo`, `math/rand` → `math/rand/v2`), → See `samber/cc-skills-golang@golang-gopls` skill — safe rename updates every call site and refuses a rename that would break interface satisfaction, and post-edit diagnostics catch compile errors across the rewritten files that a blind Edit or grep/sed sweep would leave broken.
+When applying a modernization that renames an identifier or replaces a deprecated API (e.g. `reflect.PtrTo` → `PointerTo`, `math/rand` → `math/rand/v2`), → See `samber/cc-skills-golang@golang-gopls` skill — semantic rename updates resolved references and checks visible interface conversions; inspect dynamic assertions and external consumers separately, and post-edit diagnostics catch compile errors across the rewritten files that a blind Edit or grep/sed sweep would leave broken.
 
 ### `.modernize` file format
 
@@ -142,7 +142,7 @@ When modernizing a codebase, prioritize changes by impact:
 15. Use `t.Context()` in tests _(Go 1.24+)_
 16. Use `b.Loop()` in benchmarks _(Go 1.24+)_
 17. Use generic methods for helpers scoped to one type, and `strings.CutLast`/`bytes.CutLast` instead of `LastIndex` slicing _(Go 1.27+)_
-18. Migrate to the `encoding/json/v2` API — the new default since Go 1.27; review its duplicate-key and invalid-UTF-8 strictness against real payloads first _(Go 1.27+)_
+18. Keep JSON API migration separate from a Go upgrade: `encoding/json` retains v1 behavior; choose v2 only deliberately and test payload compatibility _(Go 1.27+)_
 
 ### Lower priority (gradual improvement)
 

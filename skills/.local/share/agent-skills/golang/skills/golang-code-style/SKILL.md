@@ -204,7 +204,7 @@ Pass small types (`string`, `int`, `bool`, `time.Time`) by value. Use pointers w
 - **One primary type per file** when it has significant methods
 - **Blank imports** (`_ "pkg"`) register side effects (init functions). Restricting them to `main` and test packages makes side effects visible at the application root, not hidden in library code
 - **Dot imports** pollute the namespace and make it impossible to tell where a name comes from — never use in library code
-- **Unexport aggressively** — you can always export later; unexporting is a breaking change. → See `samber/cc-skills-golang@golang-gopls` skill to unexport safely — its rename updates every call site atomically and refuses the change when lowercasing a method would break interface satisfaction, a breakage grep/sed silently ships.
+- **Unexport aggressively** — you can always export later; unexporting is a breaking change. → See `samber/cc-skills-golang@golang-gopls` skill to unexport safely — semantic rename checks resolved references and visible interface conversions; review dynamic assertions, reflection, and external consumers before changing visibility.
 
 ## String Handling
 
