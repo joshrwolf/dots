@@ -1,6 +1,6 @@
 # Code Coverage
 
-Coverage measures which lines ran, not whether their behavior was asserted. Treat it as a gap finder — read the uncovered lines — not as a quality target to chase.
+Coverage approximates executed statements using instrumented source blocks; it is not branch coverage. It reports execution, not whether their behavior was asserted. Treat it as a gap finder — read the uncovered lines — not as a quality target to chase.
 
 ## Commands
 
@@ -35,14 +35,14 @@ go test -cover ./internal/store
 | Mode | Records | Use when |
 | --- | --- | --- |
 | `set` | Statement executed (default) | Normal runs |
-| `count` | Execution count per statement | Finding never-taken branches in hot paths |
-| `atomic` | Count, race-safe | Any run combined with `-race` or `t.Parallel()` |
+| `count` | Execution count per statement | Inspecting execution frequencies |
+| `atomic` | Count, race-safe | Counting with concurrent execution; required with `-race` |
 
 ## Pitfalls
 
 - **Per-package by default.** Without `-coverpkg`, a test in `api` exercising `store` reports nothing for `store`, making well-tested packages look untested.
 - **Build-tagged integration tests are excluded** unless the tag is passed: `go test -tags=integration -coverprofile=...`.
-- **Generated code inflates the number.** Exclude it before setting any threshold, otherwise the metric measures the generator.
+- **Generated code skews the denominator.** It can raise or lower coverage; decide explicitly whether it belongs in the reported scope.
 - **A covered line is not an asserted line.** A test that calls a function and ignores its result reports 100% coverage and verifies nothing.
 
 → See `samber/cc-skills-golang@golang-continuous-integration` skill for wiring coverage reporting into CI.

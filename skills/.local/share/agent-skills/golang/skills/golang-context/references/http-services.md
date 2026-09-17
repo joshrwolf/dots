@@ -79,20 +79,22 @@ func (c *HTTPClient) Do(ctx context.Context, method, url string, body io.Reader)
 
 ## Context in Calls to Other Services
 
-Context MUST be propagated to all HTTP clients and databases using context-aware APIs: `http.NewRequestWithContext`, `QueryContext`, `ExecContext`, and `QueryRowContext`. This ensures that client disconnections cancel all downstream operations.
+Context MUST be propagated to all HTTP clients and databases using context-aware APIs: `http.NewRequestWithContext`, `QueryContext`, `ExecContext`, and `QueryRowContext`. This propagates cancellation; actual interruption still depends on the called API and database driver.
+
+The caller owns and must close a successful response body. `body` below stands for the serialized payment request.
 
 ```go
 // ✗ Bad — downstream calls ignore the request context
-func (c *PaymentClient) Charge(ctx context.Context, amount int) error {
+func (c *PaymentClient) Charge(ctx context.Context, amount int) (*http.Response, error) {
     req, _ := http.NewRequest("POST", c.url+"/charge", body)
     return c.client.Do(req) // not context-aware
 }
 
 // ✓ Good — all downstream operations respect the context
-func (c *PaymentClient) Charge(ctx context.Context, amount int) error {
+func (c *PaymentClient) Charge(ctx context.Context, amount int) (*http.Response, error) {
     req, err := http.NewRequestWithContext(ctx, "POST", c.url+"/charge", body)
     if err != nil {
-        return fmt.Errorf("creating request: %w", err)
+        return nil, fmt.Errorf("creating request: %w", err)
     }
     return c.client.Do(req)
 }

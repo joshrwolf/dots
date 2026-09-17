@@ -17,7 +17,6 @@ go get github.com/samber/ro/plugins/<category>/<name>
 - [Text Processing](#text-processing)
 - [System Integration](#system-integration)
 - [Validation](#validation)
-- [Testing](#testing)
 - [Utilities](#utilities)
 - [Plugin Design Convention](#plugin-design-convention)
 
@@ -59,14 +58,13 @@ parsed := ro.Pipe1(rawBytes, rojson.Unmarshal[MyStruct]())
 import rocron "github.com/samber/ro/plugins/cron"
 
 // Emit every day at midnight
-daily := rocron.Schedule("0 0 * * *")
+daily := rocron.NewScheduler(gocron.CronJob("0 0 * * *", false)) // github.com/go-co-op/gocron/v2
 ```
 
 ## Network and I/O
 
 | Plugin   | Import             | Purpose                                  |
 | -------- | ------------------ | ---------------------------------------- |
-| HTTP     | `plugins/http`     | HTTP request operators (GET, POST, etc.) |
 | I/O      | `plugins/io`       | File and stream reading/writing          |
 | FSNotify | `plugins/fsnotify` | File system change events                |
 
@@ -74,13 +72,15 @@ daily := rocron.Schedule("0 0 * * *")
 import rofsnotify "github.com/samber/ro/plugins/fsnotify"
 
 // Watch directory for changes
-events := rofsnotify.Watch("/var/log/app/")
+events := rofsnotify.NewFSListener("/var/log/app/")
 ro.Pipe1(events, ro.Filter(func(e fsnotify.Event) bool {
     return e.Op == fsnotify.Write
 })).Subscribe(ro.OnNext(func(e fsnotify.Event) {
     log.Println("Modified:", e.Name)
 }))
 ```
+
+The upstream README lists `plugins/http`, but that module was not available at the audited v0.4.1 release. Wrap net/http in your own observable instead of relying on an unverified import.
 
 ## Observability and Logging
 
@@ -100,7 +100,7 @@ import roslog "github.com/samber/ro/plugins/observability/slog"
 // Log all stream events via slog
 ro.Pipe1(
     dataStream,
-    roslog.Tap[Data](logger, slog.LevelInfo),
+    roslog.LogWithNotification[Data](*logger, slog.LevelInfo),
 )
 ```
 
@@ -129,7 +129,7 @@ ro.Pipe1(
 import rosignal "github.com/samber/ro/plugins/signal"
 
 // Observable that emits on SIGTERM/SIGINT
-shutdown := rosignal.Notify(syscall.SIGTERM, syscall.SIGINT)
+shutdown := rosignal.NewSignalCatcher(syscall.SIGTERM, syscall.SIGINT)
 
 // Use as TakeUntil signal for graceful shutdown
 ro.Pipe1(workStream, ro.TakeUntil[Work, os.Signal](shutdown))
@@ -141,11 +141,6 @@ ro.Pipe1(workStream, ro.TakeUntil[Work, os.Signal](shutdown))
 | --- | --- | --- |
 | Ozzo Validation | `plugins/ozzo/ozzo-validation` | Stream-level input validation |
 
-## Testing
-
-| Plugin  | Import            | Purpose                                |
-| ------- | ----------------- | -------------------------------------- |
-
 ## Utilities
 
 | Plugin      | Import                | Purpose                                |
@@ -156,11 +151,11 @@ ro.Pipe1(workStream, ro.TakeUntil[Work, os.Signal](shutdown))
 
 ## Plugin Design Convention
 
-All plugins follow the same pattern:
+Plugins expose sources or operators; inspect each package signature:
 
 1. Import the plugin package
 2. Use plugin-provided operators in `Pipe` chains
-3. Plugin operators return `func(Observable[T]) Observable[R]` — standard operator signature
-4. No global state — each operator instance is independent
+3. Operators return `func(Observable[T]) Observable[R]`; sources such as NewFSListener return an Observable directly
+4. Check lifecycle and sharing semantics for the individual plugin
 
 Plugins are documented individually in their package directories. API details for each plugin are available at `pkg.go.dev/github.com/samber/ro/plugins/...`.

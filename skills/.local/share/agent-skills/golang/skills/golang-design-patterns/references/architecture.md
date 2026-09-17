@@ -49,7 +49,7 @@ Infrastructure concerns (database queries, HTTP clients, message queues) live in
 
 ## Fail Fast — Validate at Boundaries
 
-Input MUST be validated at system boundaries (HTTP handlers, CLI argument parsing, message consumers). Once data enters your domain layer, trust it:
+Input MUST be validated at system boundaries (HTTP handlers, CLI argument parsing, message consumers). Avoid repeating identical checks after a validated boundary, but enforce business invariants in domain operations reachable from multiple entry points:
 
 ```go
 // Handler layer — validate here
@@ -86,7 +86,7 @@ type Order struct {
     Status string // "pending"? "PENDING"? "active"? anything?
 }
 
-// Good — typed enum constrains the values
+// Named type improves clarity; arbitrary integer values still require validation
 type OrderStatus int
 
 const (
@@ -107,7 +107,7 @@ func SendEmail(to string, body string) error { ... }
 
 // Good — validated type enforces the constraint
 type Email struct {
-    address string // unexported: can only be created via constructor
+    address string // unexported: callers cannot set it directly; Email{} is still possible
 }
 
 func NewEmail(raw string) (Email, error) {
@@ -117,6 +117,8 @@ func NewEmail(raw string) (Email, error) {
     return Email{address: raw}, nil
 }
 ```
+
+Go does not prevent zero values of an exported struct. Email{} still bypasses NewEmail; operations must reject an invalid zero value or deliberately define its meaning. Named integer enums likewise do not form a closed set.
 
 ## Detailed Architecture Guides
 

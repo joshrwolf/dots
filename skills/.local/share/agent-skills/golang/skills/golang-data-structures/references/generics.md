@@ -2,13 +2,13 @@
 
 ## Type Constraints
 
-Use the tightest constraint that satisfies your needs:
+Require only the operations the implementation needs; unnecessarily narrow constraints reject useful callers:
 
 | Constraint | What It Allows | Use For |
 | --- | --- | --- |
 | `any` | All types | Containers that only store/retrieve |
 | `comparable` | Types supporting `==` and `!=` | Map keys, set membership, dedup |
-| `cmp.Ordered` | Numeric types + `string` | Sorting, min/max, binary search |
+| `cmp.Ordered` | Integer and floating-point types + `string` (not complex) | Sorting, min/max, binary search |
 | Custom interface | Domain-specific operations | Specialized containers |
 
 ### Custom Constraints
@@ -46,6 +46,8 @@ func (s Set[T]) Remove(v T)          { delete(s, v) }
 func (s Set[T]) Contains(v T) bool   { _, ok := s[v]; return ok }
 func (s Set[T]) Len() int            { return len(s) }
 
+// Construct with NewSet before Add; a nil Set is readable but not writable.
+// With interface type arguments, non-comparable dynamic values still panic as map keys.
 func (s Set[T]) Union(other Set[T]) Set[T] {
     result := NewSet[T]()
     for v := range s {
@@ -82,7 +84,7 @@ type OrderedStringer interface {
 
 - **Single concrete type** — generics add complexity for no benefit
 - **`any` constraint with type switches** — you're just reimplementing `interface{}` with extra syntax
-- **Two or fewer instantiations** — the abstraction overhead isn't justified
+- **No useful type relationship** — a type parameter that does not relate inputs, outputs, or stored elements may add no value
 - **Complex type relationships** — Go's type system doesn't support higher-kinded types; if the constraints become convoluted, use interfaces instead
 
 Generics shine for data structures (containers, sets, trees), algorithms (sort, search, transform), and utility functions (min, max, clamp) where the logic is identical across types.

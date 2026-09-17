@@ -29,8 +29,6 @@ Go favors short, readable names. Capitalization controls visibility — uppercas
 >
 > "Design the architecture, name the components, document the details." — Go Proverbs
 
-To ignore a rule, just add a comment to the code.
-
 ## Quick Reference
 
 | Element | Convention | Example |
@@ -42,27 +40,27 @@ To ignore a rule, just add a comment to the code.
 | Interface | method name + `-er` | `Reader`, `Closer`, `Stringer` |
 | Struct | MixedCaps noun | `Request`, `FileHeader` |
 | Constant | MixedCaps (not ALL_CAPS) | `MaxRetries`, `defaultTimeout` |
-| Receiver | 1-2 letter abbreviation | `func (s *Server)`, `func (b *Buffer)` |
+| Receiver | Short, recognizable, consistent | `func (s *Server)`, `func (b *Buffer)` |
 | Error variable | `Err` prefix | `ErrNotFound`, `ErrTimeout` |
 | Error type | `Error` suffix | `PathError`, `SyntaxError` |
 | Constructor | `New` (single type) or `NewTypeName` (multi-type) | `ring.New`, `http.NewRequest` |
 | Boolean field | Clear predicate, following local conventions | `ready`, `hasCredentials` |
 | Test function | `Test` + function name | `TestParseToken` |
 | Acronym | all caps or all lower | `URL`, `HTTPServer`, `xmlParser` |
-| Variant: context | `WithContext` suffix | `FetchWithContext`, `QueryContext` |
-| Variant: in-place | `In` suffix | `SortIn()`, `ReverseIn()` |
+| Variant: context | `Context` or `WithContext` suffix | `FetchWithContext`, `QueryContext` |
+| Variant: in-place | Clear API naming and documentation | `Sort`, `Reverse`, or project-specific `SortInPlace` |
 | Variant: error | `Must` prefix | `MustParse()`, `MustLoadConfig()` |
 | Option func | `With` + field name | `WithPort()`, `WithLogger()` |
 | Enum (iota) | type name prefix, zero-value = unknown | `StatusUnknown` at 0, `StatusReady` |
 | Named return | descriptive, for docs only | `(n int, err error)` |
-| Error string | lowercase (incl. acronyms), no punctuation | `"image: unknown format"`, `"invalid id"` |
+| Error string | lowercase ordinary words; preserve acronyms; no trailing punctuation | `"image: unknown format"`, `"invalid id"` |
 | Import alias | short, only on collision | `mrand "math/rand"`, `pb "app/proto"` |
 | Format func | `f` suffix | `Errorf`, `Wrapf`, `Logf` |
 | Test table fields | `got`/`expected` prefixes | `input string`, `expected int` |
 
 ## MixedCaps
 
-All Go identifiers MUST use `MixedCaps` (or `mixedCaps`). NEVER use underscores in identifiers — the only exceptions are test function subcases (`TestFoo_InvalidInput`), generated code, and OS/cgo interop. This is load-bearing, not cosmetic — Go's export mechanism relies on capitalization, and tooling assumes MixedCaps throughout.
+All Go identifiers MUST use `MixedCaps` (or `mixedCaps`). NEVER use underscores in identifiers — the only exceptions are test function subcases (`TestFoo_InvalidInput`), generated code, and OS/cgo interop. This is a style convention; underscores are legal identifiers and export depends on the first Unicode letter, not the use of MixedCaps.
 
 ```go
 // ✓ Good
@@ -70,7 +68,7 @@ MaxPacketSize
 userCount
 parseHTTPResponse
 
-// ✗ Bad — these conventions conflict with Go's export mechanism and tooling expectations
+// Non-idiomatic style; these names are still legal Go identifiers
 MAX_PACKET_SIZE   // C/Python style
 max_packet_size   // snake_case
 kMaxBufferSize    // Hungarian notation
@@ -78,7 +76,7 @@ kMaxBufferSize    // Hungarian notation
 
 ## Avoid Stuttering
 
-Go call sites always include the package name, so repeating it in the identifier wastes the reader's time — `http.HTTPClient` forces parsing "HTTP" twice. A name MUST NOT repeat information already present in the package name, type name, or surrounding context.
+External package-qualified call sites include the package name, so repeating it in the identifier wastes the reader's time — `http.HTTPClient` forces parsing "HTTP" twice. A name MUST NOT repeat information already present in the package name, type name, or surrounding context.
 
 ```go
 // Good — clean at the call site
@@ -105,11 +103,11 @@ These conventions are correct but non-obvious — they are the most common sourc
 
 **Booleans:** Choose names that read clearly in context and match surrounding conventions: `closed`, `hasCredentials`, and `canRetry` are all useful shapes. Prefixes are optional. Do not add getters solely to satisfy a naming pattern.
 
-**Error strings are fully lowercase — including acronyms.** Write `"invalid message id"` not `"invalid message ID"`, because error strings are often concatenated with other context (`fmt.Errorf("parsing token: %w", err)`) and mixed case looks wrong mid-sentence. Sentinel errors should include the package name as prefix: `errors.New("apiclient: not found")`.
+**Error strings normally start lowercase and omit trailing punctuation.** Preserve proper nouns and acronyms: `"invalid message ID"` and `"HTTP request failed"` are valid. A package prefix can identify a sentinel error's origin when useful: `errors.New("apiclient: not found")`; it is not mandatory.
 
 **Enum zero values:** Choose the zero value deliberately. Use an unspecified sentinel when omission must be distinguishable from a valid selection, and validate it where required. A safe, useful default may occupy zero. Preserve existing numeric values and serialization contracts; do not insert a sentinel into an established enum as a naming cleanup.
 
-**Subtest names:** Table-driven test case names in `t.Run()` should be fully lowercase descriptive phrases: `"valid id"`, `"empty input"` — not `"valid ID"` or `"Valid Input"`.
+**Subtest names:** Use descriptive phrases in named table-driven tests; acronyms such as ID may retain their spelling. Go does not require lowercase names.
 
 ## Detailed Categories
 
@@ -130,15 +128,15 @@ For complete rules, examples, and rationale, see:
 | Mistake | Fix |
 | --- | --- |
 | `ALL_CAPS` constants | Go reserves casing for visibility, not emphasis — use `MixedCaps` (`MaxRetries`) |
-| `GetName()` getter | Go omits `Get` because `user.Name()` reads naturally at call sites. But `Is`/`Has`/`Can` prefixes are kept for boolean predicates: `IsHealthy() bool` not `Healthy() bool` |
+| `GetName()` getter | Go omits `Get` because `user.Name()` reads naturally at call sites. Boolean predicates may use Is/Has/Can or a clear bare name such as Healthy |
 | `Url`, `Http`, `Json` acronyms | Mixed-case acronyms create ambiguity (`HttpsUrl` — is it `Https+Url`?). Use all caps or all lower |
-| `this` or `self` receiver | Go methods are called frequently — use 1-2 letter abbreviation (`s` for `Server`) to reduce visual noise |
+| `this` or `self` receiver | Use a recognizable name consistent with the type and surrounding code (`s` or `srv` for `Server`) |
 | `util`, `helper` packages | These names say nothing about content — use specific names that describe the abstraction |
-| `http.HTTPClient` stuttering | Package name is always present at call site — `http.Client` avoids reading "HTTP" twice |
+| `http.HTTPClient` stuttering | External package-qualified call sites already supply the package name — `http.Client` avoids reading "HTTP" twice |
 | `user.NewUser()` constructor | Single primary type uses `New()` — `user.New()` avoids repeating the type name |
-| `connected bool` field | Bare adjective is ambiguous — use `isConnected` so the field reads as a true/false question |
-| `"invalid message ID"` error | Error strings must be fully lowercase including acronyms — `"invalid message id"` |
-| `StatusReady` at iota 0 | Zero value should be a sentinel — `StatusUnknown` at 0 catches uninitialized values |
+| Unclear boolean name | Use a clear predicate such as connected, hasCredentials, or canRetry, matching local conventions |
+| `"Invalid message ID."` error | Start ordinary words lowercase and omit trailing punctuation: `"invalid message ID"` |
+| Accidental enum zero semantics | Choose a useful default or an explicit unknown state; preserve existing numeric contracts |
 | `"not found"` error string | Sentinel errors should include the package name — `"mypackage: not found"` identifies the origin |
 | `userSlice` type-in-name | Types encode implementation detail — `users` describes what it holds, not how |
 | Inconsistent receiver names | Switching names across methods of the same type confuses readers — use one name consistently |
@@ -146,10 +144,10 @@ For complete rules, examples, and rationale, see:
 | Long names for short scopes | Name length should match scope — `i` is fine for a 3-line loop, `userIndex` is noise |
 | Naming constants by value | Values change, roles don't — `DefaultPort` survives a port change, `Port8080` doesn't |
 | `FetchCtx()` context variant | `WithContext` is the standard Go suffix — `FetchWithContext()` is instantly recognizable |
-| `sort()` in-place but no `In` | Readers assume functions return new values. `SortIn()` signals mutation |
+| Unclear mutation contract | Document mutation; Go has no universal In suffix and slices.Sort mutates in place |
 | `parse()` panicking on error | `MustParse()` warns callers that failure panics — surprises belong in the name |
 | Mixing `With*`, `Set*`, `Use*` | Consistency across the codebase — `With*` is the Go convention for functional options |
-| Plural package names | Go convention is singular (`net/url` not `net/urls`) — keeps import paths consistent |
+| Unclear package names | Choose concise purpose-specific names; plural names such as strings, bytes, and errors are idiomatic too |
 | `Wrapf` without `f` suffix | The `f` suffix signals format-string semantics — `Wrapf`, `Errorf` tell callers to pass format args |
 | Unnecessary import aliases | Aliases add cognitive load. Only alias on collision — `mrand "math/rand"` |
 | Inconsistent concept names | Using `user`/`account`/`person` for the same concept forces readers to track synonyms — pick one name |

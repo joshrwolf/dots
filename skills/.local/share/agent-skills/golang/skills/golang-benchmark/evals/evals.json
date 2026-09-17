@@ -30,11 +30,11 @@
     "name": "dead-code-elimination-awareness",
     "description": "Tests whether the model understands that b.Loop() prevents compiler dead code elimination",
     "prompt": "I have this benchmark that seems unrealistically fast — the results show 0.3 ns/op for a function that parses a 10KB JSON document. What's wrong?\n\n```go\nfunc BenchmarkParseJSON(b *testing.B) {\n    data := loadFixture(\"large.json\")\n    for i := 0; i < b.N; i++ {\n        ParseJSON(data)\n    }\n}\n```\nThe project uses Go 1.24.",
-    "trap": "Without the skill, the model may suggest adding b.ResetTimer() or increasing benchtime, missing the core issue of dead code elimination",
+    "trap": "Concludes dead-code elimination from a function name and unused result alone.",
     "assertions": [
       {
         "id": "2.1",
-        "text": "Identifies dead code elimination as the cause — the compiler optimizes away the ParseJSON call because its result is unused"
+        "text": "Treats dead-code elimination as a hypothesis and checks ParseJSON implementation, actual work, and compiler diagnostics rather than assuming any unused-result parse disappears."
       },
       {
         "id": "2.2",
@@ -53,13 +53,13 @@
   {
     "id": 3,
     "name": "count-flag-statistical-significance",
-    "description": "Tests whether the model recommends -count=10 for statistical significance rather than single runs",
+    "description": "Collects matched repeated samples for comparison.",
     "prompt": "I want to compare the performance of two JSON serialization approaches. How should I run the benchmarks to get reliable comparison data?",
-    "trap": "Without the skill, the model may suggest a single `go test -bench=.` run per version without -count, making benchstat comparison impossible",
+    "trap": "Treats one timing as sufficient evidence of a performance change.",
     "assertions": [
       {
         "id": "3.1",
-        "text": "Recommends -count=10 (or higher) for statistical significance"
+        "text": "Recommends repeated samples, such as -count=10, without guaranteeing statistical significance."
       },
       {
         "id": "3.2",
@@ -96,7 +96,7 @@
       },
       {
         "id": "4.3",
-        "text": "Notes that the wide confidence intervals (±8%, ±7%) overlap, making the result untrustworthy"
+        "text": "Explains uncertainty without claiming overlapping confidence intervals alone decide the difference test."
       },
       {
         "id": "4.4",
@@ -125,7 +125,7 @@
       },
       {
         "id": "5.3",
-        "text": "Recommends increasing -count ONCE and accepting the result"
+        "text": "Chooses a sample budget prospectively or transparently redesigns an inconclusive experiment without cherry-picking."
       },
       {
         "id": "5.4",
@@ -154,7 +154,7 @@
       },
       {
         "id": "6.3",
-        "text": "Recommends pre-compiling both versions with `go test -c` to avoid measuring compilation time"
+        "text": "Pre-compiles both versions to preserve exact binaries and reduce between-run work, not because compilation is included in ns/op."
       },
       {
         "id": "6.4",
@@ -162,7 +162,7 @@
       },
       {
         "id": "6.5",
-        "text": "Explains that without pre-compilation, each go test -bench invocation includes compilation overhead that varies"
+        "text": "Explains that benchmark timers exclude compilation/startup; compilation can still affect machine state between runs."
       }
     ]
   },
@@ -187,11 +187,11 @@
       },
       {
         "id": "7.4",
-        "text": "Distinguishes alloc_space (total bytes allocated) as useful for reducing peak memory, not GC frequency"
+        "text": "Explains that alloc_space measures cumulative allocation volume and can diagnose GC pressure; it does not measure peak memory."
       },
       {
         "id": "7.5",
-        "text": "Mentions that runtime.mallocgc dominating CPU profile indicates allocation rate is the bottleneck, not computation"
+        "text": "Separates allocation CPU from all GC CPU and uses the profile to identify the actual callers."
       }
     ]
   },
@@ -258,15 +258,15 @@
     "name": "inlining-budget-and-blockers",
     "description": "Tests knowledge of Go's inlining cost budget and common blockers",
     "prompt": "I have a small helper function in a hot path that I want the Go compiler to inline. How do I check if it's being inlined, and what might prevent it?",
-    "trap": "Without the skill, the model may not know the specific budget number (80) or all the blockers like defer, recover, go statements",
+    "trap": "Treats a remembered inline budget as a portable compiler rule.",
     "assertions": [
       {
         "id": "10.1",
-        "text": "Recommends `go build -gcflags=\"-m\"` and grepping for 'can inline' or 'cannot inline'"
+        "text": "Uses -gcflags=\"-m -m\" for verbose inlining decisions."
       },
       {
         "id": "10.2",
-        "text": "Mentions the inline cost budget of 80 (as of Go 1.22+)"
+        "text": "Explains that budgets are compiler/version/call-site dependent cost models, not a universal count of AST nodes."
       },
       { "id": "10.3", "text": "Lists defer as an inlining blocker" },
       { "id": "10.4", "text": "Lists recover() as an inlining blocker" },
@@ -293,11 +293,11 @@
       },
       {
         "id": "11.3",
-        "text": "Explains that pprof only shows on-CPU time; trace shows off-CPU waiting states"
+        "text": "Distinguishes CPU profiles from pprof block/mutex/goroutine profiles; trace shows scheduling and waiting timelines."
       },
       {
         "id": "11.4",
-        "text": "Suggests looking at goroutine states: yellow/orange (runnable but waiting for P) or red/pink (blocked on I/O, channel, mutex)"
+        "text": "Uses event/state labels rather than relying on stable viewer colors."
       },
       {
         "id": "11.5",
@@ -451,11 +451,11 @@
       },
       {
         "id": "17.2",
-        "text": "Recommends committing all work before running cob"
+        "text": "Uses a disposable isolated checkout; committing alone does not protect all working-state changes."
       },
       {
         "id": "17.3",
-        "text": "Suggests running cob only in CI pipelines, not locally"
+        "text": "Allows an isolated local or CI checkout and avoids running cob in the active working tree."
       },
       {
         "id": "17.4",
@@ -476,7 +476,7 @@
     "assertions": [
       {
         "id": "18.1",
-        "text": "Explains that shared CI runners have 5-10% variance due to noisy neighbors"
+        "text": "Explains shared-runner interference without inventing a universal variance percentage."
       },
       {
         "id": "18.2",
@@ -488,7 +488,7 @@
       },
       {
         "id": "18.4",
-        "text": "Suggests conservative thresholds (20%+) on shared runners rather than tight thresholds"
+        "text": "Chooses tolerances from measured variance and meaningful regression size."
       },
       {
         "id": "18.5",
@@ -496,7 +496,7 @@
       },
       {
         "id": "18.6",
-        "text": "Mentions dedicated/self-hosted runners as the definitive solution for critical benchmarks"
+        "text": "Suggests dedicated runners while acknowledging OS, thermal, and hardware variability remains."
       }
     ]
   },
@@ -509,7 +509,7 @@
     "assertions": [
       {
         "id": "19.1",
-        "text": "Recommends disabling CPU frequency scaling by setting the 'performance' governor"
+        "text": "Evaluates CPU governor settings on dedicated hardware without promising a fixed frequency."
       },
       {
         "id": "19.2",
@@ -525,7 +525,7 @@
       },
       {
         "id": "19.5",
-        "text": "Warns that these settings should ONLY be applied to dedicated runners, never developer machines"
+        "text": "Limits invasive tuning to explicitly controlled hardware and records differences from production."
       }
     ]
   },
@@ -538,15 +538,15 @@
     "assertions": [
       {
         "id": "20.1",
-        "text": "Explains that without pinning, the OS migrates the process across cores"
+        "text": "Explains affinity limits migration to the selected CPU set; migration within that set remains possible."
       },
       {
         "id": "20.2",
-        "text": "Explains that L1/L2 caches are per-core, so migration causes cache thrashing"
+        "text": "Explains cache/SMT topology varies and migration can affect locality."
       },
       {
         "id": "20.3",
-        "text": "Recommends leaving cores 0-1 for OS and other processes, using cores 2+ for benchmarks"
+        "text": "Selects CPUs based on actual topology and isolates background work; CPU IDs 0-1/2-3 are only examples."
       },
       {
         "id": "20.4",
@@ -680,11 +680,11 @@
       },
       {
         "id": "25.3",
-        "text": "Identifies this as a symptom of too many allocations, not a GC configuration problem"
+        "text": "Identifies GC assist as allocation pressure relative to collector progress, not proof that GC configuration is irrelevant."
       },
       {
         "id": "25.4",
-        "text": "Recommends reducing allocation rate (the root cause) rather than tuning GOGC"
+        "text": "Considers allocation reduction and appropriate heap/CPU/GC budgets rather than prescribing a single cause."
       },
       {
         "id": "25.5",
@@ -756,15 +756,15 @@
       },
       {
         "id": "28.3",
-        "text": "Identifies '24->27->13 MB' as heap size before GC, heap size at GC trigger, and live heap after GC"
+        "text": "Reads 24->27->13 MB as heap at GC start, heap at GC end, and live heap."
       },
       {
         "id": "28.4",
-        "text": "Identifies '24 MB goal' as the target heap size for the next GC cycle based on the GC pacing algorithm"
+        "text": "Identifies 24 MB goal as the runtime heap goal reported for the cycle."
       },
       {
         "id": "28.5",
-        "text": "Assesses health: 2% CPU in GC is acceptable (generally <5% is fine); 13MB live vs 24MB goal means 46% overhead headroom"
+        "text": "Assesses GC cost against latency and memory objectives rather than imposing a universal 5% health cutoff."
       }
     ]
   },
@@ -889,11 +889,11 @@
     "name": "flight-recorder-sync-once-pattern",
     "description": "Tests the sync.Once pattern for flight recorder snapshots",
     "prompt": "I'm setting up a flight recorder in my Go service. I want to snapshot it when a slow request is detected, but multiple goroutines might detect slow requests simultaneously. How do I prevent multiple overlapping snapshots?",
-    "trap": "Without the skill, the model may use a mutex or channel instead of the idiomatic sync.Once pattern",
+    "trap": "Overlaps WriteTo calls or assumes sync.Once retries failed attempts.",
     "assertions": [
       {
         "id": "33.1",
-        "text": "Uses sync.Once to ensure only one snapshot is taken"
+        "text": "Uses sync.Once for one-shot capture or a mutex/state machine for repeatable serialized captures."
       },
       {
         "id": "33.2",
@@ -905,9 +905,9 @@
       },
       {
         "id": "33.4",
-        "text": "Shows calling the snapshot in a separate goroutine (go captureSnapshot)"
+        "text": "May perform capture in a tracked goroutine to avoid delaying a request."
       },
-      { "id": "33.5", "text": "Shows fr.Stop() after WriteTo completes" }
+      { "id": "33.5", "text": "Stops recording after a successful one-shot snapshot when appropriate; handles write/close errors." }
     ]
   },
   {
@@ -915,48 +915,48 @@
     "name": "flight-recorder-sizing",
     "description": "Tests understanding of flight recorder buffer sizing",
     "prompt": "I'm configuring a flight recorder for my Go service. My typical investigation window when a timeout occurs is about 5 seconds. How should I size the MinAge and MaxBytes parameters?",
-    "trap": "Without the skill, the model may guess arbitrary values without the 2x rule or data rate context",
+    "trap": "Promises bounded actual memory or exact retention from MaxBytes.",
     "assertions": [
       {
         "id": "34.1",
-        "text": "Sets MinAge to ~2x the problem window (10 seconds for a 5-second investigation window)"
+        "text": "Chooses MinAge to cover the diagnostic window, with headroom based on observed behavior."
       },
       {
         "id": "34.2",
-        "text": "Mentions that busy services generate ~1-10 MB/s of trace data"
+        "text": "Measures trace generation rate for this workload instead of asserting a universal range."
       },
       {
         "id": "34.3",
-        "text": "Recommends starting MaxBytes at 1-5 MiB and adjusting"
+        "text": "Sizes MaxBytes from the desired retention and resource budget."
       },
       {
         "id": "34.4",
-        "text": "Explains that MaxBytes takes precedence over MinAge — when buffer fills, older data is discarded"
+        "text": "Explains MaxBytes overrides MinAge but is a hint, not a hard memory or output cap."
       }
     ]
   },
   {
     "id": 35,
     "name": "trace-timeline-color-coding",
-    "description": "Tests ability to interpret execution trace timeline colors",
+    "description": "Interprets trace states and scheduling delay using labels.",
     "prompt": "I opened an execution trace in the web UI. I see lots of yellow/orange gaps before green segments on my goroutine lanes, and some red bands spanning all processor lanes. What does this indicate?",
-    "trap": "Without the skill, the model may not know the specific color coding of the trace viewer",
+    "trap": "Treats viewer colors as stable semantic guarantees.",
     "assertions": [
       {
         "id": "35.1",
-        "text": "Identifies yellow/orange as runnable state — goroutines ready to run but waiting for a processor"
+        "text": "Reads the viewer state labels to establish runnable intervals rather than assigning universal colors."
       },
       {
         "id": "35.2",
-        "text": "Identifies red bands across all P lanes as GC stop-the-world pauses"
+        "text": "Uses GC event labels/details to identify stop-the-world pauses."
       },
       {
         "id": "35.3",
-        "text": "Diagnoses the yellow gaps as CPU saturation — too many runnable goroutines competing for processors"
+        "text": "Checks CPU contention, quotas, and host scheduling as possible scheduling-latency causes."
       },
       {
         "id": "35.4",
-        "text": "Identifies green as actively executing/running state"
+        "text": "Uses state labels to identify running intervals."
       },
       {
         "id": "35.5",
@@ -985,7 +985,7 @@
       },
       {
         "id": "36.4",
-        "text": "Explains that labels are inherited by the goroutine's profile samples — no need for separate processes"
+        "text": "Notes labels apply to CPU and goroutine profiles, not heap profiles, and do not automatically attribute all GC worker CPU to the allocating request."
       },
       {
         "id": "36.5",
@@ -1006,17 +1006,17 @@
       },
       {
         "id": "37.2",
-        "text": "Explains that ignore removes matching functions entirely, attributing their costs to callers"
+        "text": "Explains ignore drops whole samples whose stacks contain a match."
       },
       {
         "id": "37.3",
-        "text": "Explains that show is like focus but only affects display, not cost accounting"
+        "text": "Explains show retains matching display nodes without selecting sample stacks."
       },
       {
         "id": "37.4",
-        "text": "Explains that hide is like ignore but only hides from display, not cost accounting"
+        "text": "Explains hide removes display nodes while retaining samples."
       },
-      { "id": "37.5", "text": "Mentions `reset` to clear all filters" }
+      { "id": "37.5", "text": "Clears each assigned filter with an empty value; does not invent a reset command." }
     ]
   },
   {
@@ -1082,7 +1082,7 @@
     "assertions": [
       {
         "id": "40.1",
-        "text": "Uses granularity=lines to group by exact source line in top output"
+        "text": "Uses granularity=lines as the interactive setting to group by source line."
       },
       {
         "id": "40.2",
@@ -1090,7 +1090,7 @@
       },
       {
         "id": "40.3",
-        "text": "Shows the command: either `granularity=lines` in interactive mode or `-granularity=lines` as flag"
+        "text": "Shows interactive granularity=lines or the CLI -lines flag; -granularity=lines is not a CLI flag."
       }
     ]
   },
@@ -1128,11 +1128,11 @@
     "name": "noinlines-inlined-function-attribution",
     "description": "Tests that noinlines aggregates inlined function costs to the outer non-inlined caller",
     "prompt": "My pprof call graph is cluttered. A single hot function has been inlined into 6 different callers, so its cost is split across 6 separate nodes in the graph. I want to see the aggregated cost in one place. What pprof option should I use?",
-    "trap": "Without the skill, the model suggests using show/hide filters or focus (which change display but not cost aggregation) or ignoring inlined nodes — missing the noinlines option which correctly attributes inlined function costs to their first out-of-line caller",
+    "trap": "Promises noinlines combines the inlined function into its own node; it instead attributes work to out-of-line callers.",
     "assertions": [
       {
         "id": "42.1",
-        "text": "Recommends the noinlines option (or -noinlines flag)"
+        "text": "Distinguishes aggregating the same inlined function across callers from attributing its work to callers with noinlines."
       },
       {
         "id": "42.2",
@@ -1144,7 +1144,7 @@
       },
       {
         "id": "42.4",
-        "text": "Distinguishes noinlines from hide/ignore: hide/ignore only affect display without changing cost attribution"
+        "text": "Explains ignore removes samples whereas hide removes display nodes; neither is an aggregation substitute."
       }
     ]
   },
@@ -1194,32 +1194,32 @@
       },
       {
         "id": "44.4",
-        "text": "Mentions that by default only traditional go_memstats_* and go_gc_* are exposed"
+        "text": "Notes default collectors expose compatibility memory, GC/runtime state and selected runtime metrics; verifies the installed version and configuration."
       }
     ]
   },
   {
     "id": 45,
     "name": "go-memstats-stw-overhead",
-    "description": "Tests awareness of ReadMemStats causing stop-the-world pauses",
+    "description": "Diagnoses scrape overhead without obsolete backend assumptions.",
     "prompt": "I'm using prometheus/client_golang to expose Go runtime metrics. My high-throughput service occasionally shows brief latency spikes correlated with Prometheus scrape intervals. Could the metrics collection itself be causing this?",
-    "trap": "Without the skill, the model may not connect metrics collection to STW pauses",
+    "trap": "Assumes go_memstats metrics necessarily invoke ReadMemStats in modern client_golang.",
     "assertions": [
       {
         "id": "45.1",
-        "text": "Identifies that go_memstats_* metrics internally call runtime.ReadMemStats() which triggers a short stop-the-world pause"
+        "text": "Checks the client version and actual collection code; modern Go collectors already use runtime/metrics for compatibility memory values."
       },
       {
         "id": "45.2",
-        "text": "Recommends the Go 1.17+ runtime/metrics-based collector as lower overhead alternative"
+        "text": "Does not present enabling MetricsAll as a switch away from ReadMemStats."
       },
       {
         "id": "45.3",
-        "text": "Shows the code to register the modern collector: collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(collectors.MetricsAll)) or specific runtime metric rules"
+        "text": "Uses collector options for the metrics needed and verifies overhead with profiling."
       },
       {
         "id": "45.4",
-        "text": "Recommends using a custom prometheus.NewRegistry() rather than the default one"
+        "text": "Uses a custom registry for explicit collector ownership when useful, not as a required latency fix."
       }
     ]
   },
@@ -1236,11 +1236,11 @@
       },
       {
         "id": "46.2",
-        "text": "States that >2 GC cycles/s sustained indicates excessive allocation rate"
+        "text": "Interprets GC frequency relative to workload, heap, and GC CPU without a universal 2/s cutoff."
       },
       {
         "id": "46.3",
-        "text": "Uses go_gc_duration_seconds{quantile=\"1\"} for worst-case GC pause"
+        "text": "Explains quantile=1 is a maximum among recent pause samples rather than an all-time maximum."
       },
       {
         "id": "46.4",
@@ -1248,7 +1248,7 @@
       },
       {
         "id": "46.5",
-        "text": "Recommends correlating with P99 latency to confirm GC pauses cause tail latency"
+        "text": "Correlates pauses with latency without declaring correlation proof of causation."
       }
     ]
   },
@@ -1262,7 +1262,7 @@
       { "id": "47.1", "text": "Uses go_goroutines gauge for current count" },
       {
         "id": "47.2",
-        "text": "Uses delta(go_goroutines[1h]) for net goroutine change — positive without load increase indicates leak"
+        "text": "Uses delta(go_goroutines[1h]) as a growth signal and confirms ownership and stacks."
       },
       {
         "id": "47.3",
@@ -1270,36 +1270,36 @@
       },
       {
         "id": "47.4",
-        "text": "Suggests an alerting rule with threshold (e.g., go_goroutines > 10000)"
+        "text": "Chooses alert thresholds from expected workload and lifecycle rather than a universal goroutine count."
       }
     ]
   },
   {
     "id": 48,
     "name": "investigation-session-setup",
-    "description": "Tests the structured approach to production performance investigation sessions",
+    "description": "Tests conditional instrumentation choices for a targeted production investigation",
     "prompt": "I need to do a deep-dive performance investigation on one instance of my Go service in production. What should I set up before I start collecting profiles?",
-    "trap": "Without the skill, the model may jump straight to pprof without the investigation session preparation",
+    "trap": "Treats kubectl set env deployment as an instant per-pod toggle.",
     "assertions": [
       {
         "id": "48.1",
-        "text": "Recommends reducing Prometheus scrape interval to <=10s on the target instance"
+        "text": "Uses an appropriate temporary scrape interval if the extra resolution answers the question."
       },
       {
         "id": "48.2",
-        "text": "Recommends enabling pprof via environment variable without recompile"
+        "text": "Uses existing diagnostic controls and notes environment changes often require restarting the process."
       },
       {
         "id": "48.3",
-        "text": "Recommends enabling continuous profiling on only the target instance, not fleet-wide"
+        "text": "Starts with the affected instance while respecting deployment scope; does not mutate an entire Deployment while claiming per-instance isolation."
       },
       {
         "id": "48.4",
-        "text": "Emphasizes reverting all changes after investigation"
+        "text": "Restores temporary instrumentation settings when no longer needed; does not remove intentionally retained monitoring or fixes"
       },
       {
         "id": "48.5",
-        "text": "Mentions the key design principle: all debug features should be toggleable via environment variables"
+        "text": "Allows runtime admin controls or deployment configuration; no mandatory environment-variable scheme."
       }
     ]
   },
@@ -1312,15 +1312,15 @@
     "assertions": [
       {
         "id": "49.1",
-        "text": "Warns that traces generate data at MB/s — a 5-minute trace would be enormous (potentially GBs)"
+        "text": "Estimates trace volume from measured workload rate and retention needs."
       },
       {
         "id": "49.2",
-        "text": "Recommends keeping traces to 5-10 seconds maximum"
+        "text": "Starts with bounded captures or flight recording, without a universal 10-second maximum."
       },
       {
         "id": "49.3",
-        "text": "Warns that large traces are slow to parse and may need 1GB+ RAM to open"
+        "text": "Explains memory and parse cost depend on trace size."
       },
       {
         "id": "49.4",
@@ -1328,7 +1328,7 @@
       },
       {
         "id": "49.5",
-        "text": "Notes that the browser UI struggles with traces >100MB"
+        "text": "Discusses browser/analysis limits as workload-dependent rather than a fixed 100MB cutoff."
       }
     ]
   },
@@ -1366,7 +1366,7 @@
       },
       {
         "id": "51.2",
-        "text": "Explains the noisy neighbor pattern: high node_cpu with low process_cpu = external contention"
+        "text": "Uses rates of non-idle host CPU and process CPU; a high cumulative counter alone does not identify contention."
       },
       {
         "id": "51.3",
@@ -1416,7 +1416,7 @@
       },
       {
         "id": "53.2",
-        "text": "Shows the GitHub Action configuration with bobheadxi/gobenchdata@v1"
+        "text": "Shows a supported action or CLI action workflow and accurately identifies which Go toolchain runs benchmarks."
       },
       {
         "id": "53.3",
@@ -1424,7 +1424,7 @@
       },
       {
         "id": "53.4",
-        "text": "Shows the regression checks config (.gobenchdata-checks.yml) with thresholds"
+        "text": "Uses gobenchdata JSON histories and checks.config with diff and thresholds.max/min, not invented metric-threshold schema."
       },
       { "id": "53.5", "text": "Mentions PRUNE_COUNT to limit stored history" }
     ]
@@ -1450,7 +1450,7 @@
       },
       {
         "id": "54.4",
-        "text": "Notes that high variance (± >5%) indicates noisy benchmarks needing more runs or better isolation"
+        "text": "Uses interval width to assess sampling uncertainty without equating narrow intervals with absence of systematic bias."
       }
     ]
   },
@@ -1461,16 +1461,16 @@
     "prompt": "How many benchmark iterations (-count) should I use? I've seen recommendations ranging from 1 to 30.",
     "trap": "Without the skill, the model may give a single number without context-dependent guidance",
     "assertions": [
-      { "id": "55.1", "text": "Recommends 6 minimum for quick local checks" },
+      { "id": "55.1", "text": "Explains that a small repeated sample such as 6 is a rough starting point, not a universal sample requirement." },
       {
         "id": "55.2",
-        "text": "Recommends 10 for standard pre-merge comparisons"
+        "text": "Uses 10 as a reasonable initial budget rather than a significance guarantee."
       },
       {
         "id": "55.3",
-        "text": "Recommends 20-30 for detecting small changes (<5%)"
+        "text": "Chooses additional samples based on signal and observed variance."
       },
-      { "id": "55.4", "text": "Recommends 20+ for noisy CI environments" },
+      { "id": "55.4", "text": "Addresses systematic noise directly instead of assuming higher count fixes it." },
       {
         "id": "55.5",
         "text": "Explicitly warns against -count=1 as providing no variance information"
@@ -1480,9 +1480,9 @@
   {
     "id": 56,
     "name": "closure-capturing-pointer-escape",
-    "description": "Tests understanding of a subtle escape: a closure capturing a loop variable forces the variable to escape to the heap even when no interface boxing occurs",
+    "description": "Explains closure lifetime and capture representation without universal heap-allocation claims.",
     "prompt": "I have a benchmark and escape analysis shows these local integer variables escaping to the heap:\n\n```go\nfor i := 0; i < 10; i++ {\n    val := computeValue(i)\n    go func() {\n        results[i] = val\n    }()\n}\n```\n\nWhy do `i` and `val` escape to the heap? There are no interface conversions here.",
-    "trap": "Without the skill, the model explains interface boxing (which isn't happening here) or vaguely mentions 'closures cause escapes' without explaining the specific mechanism: the goroutine may outlive the enclosing function, so any variable the closure captures must be heap-allocated to remain accessible",
+    "trap": "Claims every captured variable has its own heap allocation or argument passing guarantees zero allocation.",
     "assertions": [
       {
         "id": "56.1",
@@ -1490,11 +1490,11 @@
       },
       {
         "id": "56.2",
-        "text": "Explains that any variable captured by a closure that escapes (e.g., via goroutine launch or return) must be heap-allocated to remain accessible after the outer function returns"
+        "text": "Explains an escaping closure may store captured scalar values by value; separate heap cells are not mandatory."
       },
       {
         "id": "56.3",
-        "text": "Identifies the specific escape cause: `go func()` body references `val` and `i`, so both variables escape via closure capture"
+        "text": "Checks actual compiler capture/escape decisions and module loop-variable semantics."
       },
       {
         "id": "56.4",
@@ -1502,7 +1502,7 @@
       },
       {
         "id": "56.5",
-        "text": "Suggests passing variables as arguments to the goroutine function to break the closure capture and avoid escape"
+        "text": "Does not promise passing goroutine arguments removes allocation; arguments still need storage surviving the launching frame."
       }
     ]
   },
@@ -1519,7 +1519,7 @@
       },
       {
         "id": "57.2",
-        "text": "Diagnoses the cause: too many goroutines competing for GOMAXPROCS processors (CPU saturation)"
+        "text": "Considers CPU saturation, limits, scheduler interference and workload imbalance; runnable delay alone does not determine the cause."
       },
       {
         "id": "57.3",
@@ -1579,7 +1579,7 @@
       },
       {
         "id": "59.4",
-        "text": "Differentiates from ignore which removes functions and re-attributes their costs"
+        "text": "Distinguishes show_from frame trimming from ignore, which drops complete matching samples."
       }
     ]
   },
@@ -1602,7 +1602,7 @@
         "id": "60.3",
         "text": "Mentions collectors.MetricsAll or specific GoRuntimeMetricsRule values"
       },
-      { "id": "60.4", "text": "Notes this requires Go 1.17+" },
+      { "id": "60.4", "text": "Checks supported Go/client_golang versions and actual metrics; opt-in does not make unavailable runtime metrics exist." },
       {
         "id": "60.5",
         "text": "Lists scheduler metrics like go_sched_latencies_seconds and CPU class metrics like go_cpu_classes_*"
@@ -1719,7 +1719,7 @@
     "assertions": [
       {
         "id": "65.1",
-        "text": "Identifies high overhead from goroutine creation and scheduling for very short-lived goroutines"
+        "text": "Measures whether creation/scheduling overhead is significant rather than inferring it solely from goroutine count."
       },
       {
         "id": "65.2",
@@ -1731,7 +1731,7 @@
       },
       {
         "id": "65.4",
-        "text": "Notes that goroutines created but never finishing indicates a leak"
+        "text": "Distinguishes intentional long-lived workers from goroutines that outlive their owner."
       }
     ]
   },
@@ -1744,11 +1744,11 @@
     "assertions": [
       {
         "id": "66.1",
-        "text": "Identifies that globalCache is mutable shared state — its fill level changes across b.N iterations and across separate runs"
+        "text": "Identifies possible shared-state contamination but does not assume process-global state persists across separate benchmark processes."
       },
       {
         "id": "66.2",
-        "text": "Explains that early iterations insert into empty slots (fast), while later iterations trigger evictions (slow) — the benchmark measures a mix of two different operations"
+        "text": "Checks steady-state fill/eviction, random input generation and workload scope; initial fill alone may not explain a calibrated long run."
       },
       {
         "id": "66.3",
@@ -1798,11 +1798,11 @@
       },
       {
         "id": "68.2",
-        "text": "Mentions ?debug=2 for full stack traces with creation site and labels"
+        "text": "Explains debug=2 is a runtime-style stack dump with creation sites; debug=1 includes profile labels."
       },
       {
         "id": "68.3",
-        "text": "Shows the URL: http://localhost:6060/debug/pprof/goroutine?debug=1 or ?debug=2"
+        "text": "Quotes HTTP URLs containing question marks for shells such as zsh."
       },
       {
         "id": "68.4",
@@ -1813,42 +1813,42 @@
   {
     "id": 69,
     "name": "ci-threshold-calibration",
-    "description": "Tests knowledge of appropriate regression thresholds for different CI environments",
+    "description": "Chooses regression gates from evidence and tolerances.",
     "prompt": "I'm setting up benchmark regression detection in CI. What threshold should I set for failing PRs on performance regression?",
-    "trap": "Without the skill, the model may suggest a tight threshold (5%) without considering the CI environment",
+    "trap": "Invents universal runner variance or guaranteed error rates from percentage thresholds.",
     "assertions": [
       {
         "id": "69.1",
-        "text": "Recommends 20%+ threshold on shared/GitHub-hosted runners"
+        "text": "Derives regression tolerances from acceptable impact and empirical runner/workload noise."
       },
       {
         "id": "69.2",
-        "text": "Recommends 10% on dedicated self-hosted runners"
+        "text": "Validates the proposed gate against unchanged-code comparisons on the actual runner."
       },
       {
         "id": "69.3",
-        "text": "Explains that tight thresholds on noisy environments produce false positives that erode trust"
+        "text": "Distinguishes effect-size thresholds from statistical significance."
       },
       {
         "id": "69.4",
-        "text": "Mentions that GitHub-hosted runners show ~2-3% coefficient of variation in best case"
+        "text": "Avoids unsupported universal coefficient-of-variation claims."
       },
       {
         "id": "69.5",
-        "text": "States that <1% false positive rate requires 7%+ performance gate"
+        "text": "Does not promise a false-positive rate from a fixed percentage gate alone."
       }
     ]
   },
   {
     "id": 70,
     "name": "cpu-profile-requires-binary-for-symbolization",
-    "description": "Tests knowledge that a CPU profile file captured from a benchmark contains no symbols — the original test binary is required for symbolization",
+    "description": "Diagnoses incomplete profile symbolization.",
     "prompt": "I ran `go test -bench=BenchmarkParse -cpuprofile=cpu.prof ./pkg/parser` on our CI server, then downloaded cpu.prof to my laptop to analyze. When I run `go tool pprof cpu.prof` I see only hex addresses instead of function names. What's missing?",
-    "trap": "Without the skill, the model may suggest rebuilding pprof or using -symbolize=remote — missing that the pprof file is unsymbolized and requires the original compiled test binary (parser.test) to resolve addresses to function names",
+    "trap": "Claims all Go CPU profiles contain only addresses and require an external binary for function names.",
     "assertions": [
       {
         "id": "70.1",
-        "text": "Explains that cpu.prof contains memory addresses, not function names — it requires the compiled test binary for symbolization"
+        "text": "Explains Go profiles normally include function/line metadata; investigates missing symbols, native frames or profile provenance."
       },
       {
         "id": "70.2",
@@ -1860,7 +1860,7 @@
       },
       {
         "id": "70.4",
-        "text": "Recommends downloading both the .prof file AND the corresponding test binary from CI for remote analysis"
+        "text": "Retains the exact matching binary and source revision for missing symbolization and disassembly."
       }
     ]
   },
@@ -1873,15 +1873,15 @@
     "assertions": [
       {
         "id": "71.1",
-        "text": "Uses -ignore /gomaxprocs to suppress the warning"
+        "text": "Only ignores /gomaxprocs if pooling those workloads is intentional."
       },
       {
         "id": "71.2",
-        "text": "Explains that -ignore omits keys from grouping"
+        "text": "Explains -ignore suppresses a varying-dimension warning; it does not make different GOMAXPROCS runs equivalent."
       },
       {
         "id": "71.3",
-        "text": "Alternatively suggests -row .name to simplify row grouping"
+        "text": "Keeps /gomaxprocs in row/table grouping when it distinguishes workloads."
       },
       {
         "id": "71.4",
@@ -1910,7 +1910,7 @@
       },
       {
         "id": "72.4",
-        "text": "Notes this is especially useful for diagnosing parameter escapes caused by passing values to functions in external packages that the compiler cannot analyze inline"
+        "text": "Notes cross-package escape summaries exist even without inlining; all=-m reveals dependency diagnostics rather than enabling cross-package analysis."
       }
     ]
   },
@@ -1935,11 +1935,11 @@
       },
       {
         "id": "73.4",
-        "text": "Explains that runtime/metrics has lower overhead and is safe for concurrent reads"
+        "text": "Explains concurrent runtime/metrics.Read calls need separate backing samples/histograms."
       },
       {
         "id": "73.5",
-        "text": "Notes that ReadMemStats is more expensive due to internal locking"
+        "text": "Notes ReadMemStats may stop the world and recommends profiling collection cost for the workload."
       }
     ]
   },
@@ -2004,7 +2004,7 @@
       },
       {
         "id": "76.3",
-        "text": "Explains that the default -table value is .config which groups by goos/goarch/pkg/cpu"
+        "text": "Explains default .config already separates different pkg headers; diagnoses missing metadata or overridden projections if packages mix."
       }
     ]
   },
@@ -2056,11 +2056,11 @@
     "name": "pyroscope-overhead-warning",
     "description": "Tests awareness of continuous profiling overhead at scale",
     "prompt": "Our SRE team wants to enable Pyroscope continuous profiling on all 200 production instances. Any concerns?",
-    "trap": "Without the skill, the model may approve fleet-wide enablement without the cost warning",
+    "trap": "Mandates per-instance-only profiling or promises a fixed overhead percentage.",
     "assertions": [
       {
         "id": "79.1",
-        "text": "Warns about ~2-5% CPU overhead per instance for continuous profiling"
+        "text": "Measures overhead by workload, profile type, and sampling rate rather than asserting a universal 2-5%."
       },
       {
         "id": "79.2",
@@ -2068,33 +2068,33 @@
       },
       {
         "id": "79.3",
-        "text": "Recommends enabling on a subset of instances or on-demand via environment variable"
+        "text": "Chooses fleet-wide, sampled or targeted deployment according to observability value and measured cost."
       },
       {
         "id": "79.4",
-        "text": "Emphasizes the investigation session approach: enable on target instances only, not fleet-wide"
+        "text": "Distinguishes temporary investigation captures from an intentional continuous-profiling service."
       }
     ]
   },
   {
     "id": 80,
     "name": "non-go-memory-leak-detection",
-    "description": "Tests the PromQL pattern for detecting non-Go memory leaks (cgo, mmap)",
+    "description": "Investigates memory growth across runtime and OS accounting.",
     "prompt": "My Go service's RSS keeps growing but go_memstats_alloc_bytes appears stable. The leak doesn't seem to be in Go heap memory. How do I diagnose this?",
-    "trap": "Without the skill, the model may only investigate Go heap, missing cgo/mmap leaks",
+    "trap": "Equates RSS minus Go Sys with non-Go leak bytes.",
     "assertions": [
       {
         "id": "80.1",
-        "text": "Uses the PromQL pattern: process_resident_memory_bytes - go_memstats_sys_bytes"
+        "text": "Compares RSS, runtime-managed memory, released pages, OS mappings and native allocation evidence."
       },
       {
         "id": "80.2",
-        "text": "Explains that the gap represents non-Go memory (cgo, mmap, etc.)"
+        "text": "Explains RSS minus Go Sys mixes accounting domains and is not the size of non-Go allocations."
       },
-      { "id": "80.3", "text": "A growing gap indicates a non-Go memory leak" },
+      { "id": "80.3", "text": "Treats divergence as evidence to investigate, not proof of a native leak." },
       {
         "id": "80.4",
-        "text": "Suggests investigating cgo calls or memory-mapped files as potential sources"
+        "text": "Investigates cgo/mmap alongside Go stacks, cached heap pages and OS accounting."
       }
     ]
   },

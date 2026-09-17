@@ -61,7 +61,7 @@ Viper resolves a key by walking sources in this order (first set value wins):
 6. default             — viper.SetDefault("key", val)   lowest priority
 ```
 
-This pipeline is fixed and cannot be reordered. Understanding it prevents most viper bugs: a key that "should" come from a config file may be shadowed by an env var or a flag with a default value.
+This pipeline is fixed and cannot be reordered. Understanding it prevents most viper bugs: a key that "should" come from a config file may be shadowed by an env var or an explicitly changed flag. An unchanged flag default does not override env/file/default values.
 
 ## Sources and config files
 
@@ -69,20 +69,20 @@ This pipeline is fixed and cannot be reordered. Understanding it prevents most v
 viper.SetConfigName("config")
 viper.AddConfigPath("$HOME/.myapp")
 if err := viper.ReadInConfig(); err != nil {
-    var notFound *viper.ConfigFileNotFoundError
+    var notFound viper.ConfigFileNotFoundError
     if !errors.As(err, &notFound) {
         return fmt.Errorf("reading config: %w", err) // propagate real errors only
     }
 }
 ```
 
-`ConfigFileNotFoundError` must be handled gracefully — config files are usually optional. An unhandled error from a missing file crashes programs that are perfectly valid when run with only flags or env vars.
+Ignore `ConfigFileNotFoundError` only for an optional searched config. An explicit `SetConfigFile` path that is missing returns a filesystem error; usually report it to catch a mistyped path.
 
 For supported formats (JSON, TOML, YAML, HCL, INI, properties), `MergeInConfig`, and remote KV, see [sources-and-formats.md](references/sources-and-formats.md).
 
 ## Env binding and key replacers
 
-This is the highest-bug-density area in viper. All three settings must be wired together — missing any one breaks nested key resolution:
+This is the highest-bug-density area in viper. Choose the prefix and replacer to match the application naming scheme. AutomaticEnv enables lookup on Get; BindEnv can bind individual keys instead:
 
 ```go
 // ✓ Good — all three wired together at startup
@@ -97,7 +97,7 @@ For `BindEnv`, `AllowEmptyEnv`, and env-vs-default interaction, see [binding-and
 
 ## Flag binding (the cobra seam)
 
-Bind cobra flags to viper in `init()` or `PersistentPreRunE` — never in `RunE` (config loading in `PersistentPreRunE` already ran before `RunE`, so bindings set in `RunE` are missed):
+Bind flags before reading their values or decoding config. Binding after flag parsing is valid: Viper retains a reference to the flag and reads its current Changed state and value:
 
 ```go
 func init() {
@@ -121,7 +121,9 @@ type Config struct {
     } `mapstructure:"database"`
 }
 var cfg Config
-viper.Unmarshal(&cfg)
+if err := viper.Unmarshal(&cfg); err != nil {
+    return fmt.Errorf("decoding config: %w", err)
+}
 ```
 
 **Always use `mapstructure` tags** — implicit mapping is fragile for nested structs and underscore-named fields. Prefer `UnmarshalKey("database", &dbCfg)` over `Sub("database").Unmarshal` — it avoids the nil-check `Sub` requires when the key is missing.
@@ -135,11 +137,11 @@ For `time.Duration` / `net.IP` / slice decoders and custom `DecodeHook` registra
 ## Hot reload
 
 ```go
+viper.OnConfigChange(func(e fsnotify.Event) { /* validate and publish a snapshot */ })
 viper.WatchConfig()
-viper.OnConfigChange(func(e fsnotify.Event) { /* re-apply changed values */ })
 ```
 
-`WatchConfig` uses fsnotify and watches inodes, so editors that write atomically via rename (vim, neovim) replace the inode and the callback may not fire. Test hot-reload with `echo >> config.yaml`, not editor saves. For race-safe reload patterns, see [watch-and-reload.md](references/watch-and-reload.md).
+`WatchConfig` watches the containing directory to handle atomic saves and symlink replacements. Register the callback before starting the watcher and test the actual deployment save pattern. For race-safe reload patterns, see [watch-and-reload.md](references/watch-and-reload.md).
 
 ## Test isolation
 
@@ -157,11 +159,11 @@ For `t.Setenv` interactions and `Reset()` limitations, see [testing-and-isolatio
 
 ## Best Practices
 
-1. **Set prefix + key replacer + AutomaticEnv together** — missing any one causes nested env keys to silently not resolve (`database.host` → `DATABASE.HOST` instead of `DATABASE_HOST`).
-2. **Handle `ConfigFileNotFoundError` gracefully** — a missing config file should not crash a service that runs with only flags and env vars.
+1. **Match environment naming explicitly** — prefix and replacer are optional, and AutomaticEnv alone does not enumerate env-only keys for Unmarshal; use BindEnv or defaults to register those keys.
+2. **Distinguish optional and required files** — ignore missing-file errors only when the configuration contract allows omission.
 3. **Always use `mapstructure` tags on config structs** — implicit mapping silently misses nested and underscore-named fields.
 4. **Use `viper.New()` in tests, never the global** — the global accumulates state across test runs; per-test instances are isolated.
-5. **Bind flags before `Execute()`** — binding in `RunE` is too late; cobra parses flags before `RunE` runs.
+5. **Bind before resolution** — parsing can happen first, but bind before Get or Unmarshal.
 
 ## Common Mistakes
 

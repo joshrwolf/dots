@@ -20,9 +20,9 @@ linters:
     - errorlint # correct use of errors.Is/As and %w wrapping (Go 1.13+)
     - nilerr # returning nil error when err is non-nil
     - forcetypeassert # type assertions without comma-ok check
-    - copyloopvar # loop variable copy issues (Go 1.22+)
+    - copyloopvar # redundant loop-variable copies under Go 1.22+ semantics
     - durationcheck # detect time.Duration * time.Duration bugs
-    - reassign # package-level variable reassignment
+    - reassign # reassignment of configured package variables
     # style
     - gocritic # opinionated style: unnecessary conversions, range copies, redundant code
     - revive # naming conventions, exported types, stuttered package names
@@ -69,7 +69,7 @@ linters:
     - nolintlint # enforces proper //nolint directive usage
 
   disable:
-    - lll # line length — handled by gofmt/gofumpt
+    - lll # line length — no universal limit; gofmt/gofumpt do not wrap long lines
     - prealloc # high false-positive rate; enable only after performance profiling
     - wrapcheck # forces wrapping all external errors — too noisy as a default
     - err113 # forces package-level sentinel errors — too opinionated, breaks common patterns

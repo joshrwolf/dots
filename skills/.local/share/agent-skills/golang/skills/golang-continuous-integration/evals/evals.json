@@ -10,7 +10,7 @@
       {"id": "1.2", "text": "Workflow includes -shuffle=on flag in the go test command"},
       {"id": "1.3", "text": "Workflow includes -coverprofile flag in the go test command"},
       {"id": "1.4", "text": "Strategy uses fail-fast: false"},
-      {"id": "1.5", "text": "Go version matrix includes at least 'stable' and one explicit version like '1.25' or '1.26'"}
+      {"id": "1.5", "text": "Includes the minimum supported Go 1.25 release and a current toolchain; tidy is checked on a deliberate canonical version."}
     ]
   },
   {
@@ -21,9 +21,9 @@
     "trap": "Model may suggest running go mod tidy without the git diff --exit-code step to actually fail the build on changes",
     "assertions": [
       {"id": "2.1", "text": "Suggests running 'go mod tidy' as a CI step"},
-      {"id": "2.2", "text": "Includes 'git diff --exit-code' after go mod tidy to detect uncommitted changes"},
-      {"id": "2.3", "text": "The git diff checks go.mod and/or go.sum specifically, or uses a general git diff --exit-code"},
-      {"id": "2.4", "text": "Also includes 'go mod verify' or 'go mod download' step"}
+      {"id": "2.2", "text": "Uses go mod tidy -diff when supported, or verifies tracked changes and newly created module files."},
+      {"id": "2.3", "text": "Checks both go.mod and go.sum without overlooking a previously absent go.sum."},
+      {"id": "2.4", "text": "Explains that tidy consistency and downloaded-cache verification are distinct checks."}
     ]
   },
   {
@@ -35,7 +35,7 @@
     "assertions": [
       {"id": "3.1", "text": "Uses -count=1 flag to disable test result caching"},
       {"id": "3.2", "text": "Includes -race flag for integration tests"},
-      {"id": "3.3", "text": "Uses build tags (e.g., -tags=integration) to separate integration tests"},
+      {"id": "3.3", "text": "Uses integration build tags only if the project already uses them, or explains the required test-file changes."},
       {"id": "3.4", "text": "Uses GitHub Actions 'services' block for PostgreSQL and/or Redis"},
       {"id": "3.5", "text": "Includes health check options for service containers"}
     ]
@@ -43,16 +43,16 @@
   {
     "id": 4,
     "name": "security-scanning-pipeline",
-    "description": "Tests whether the model recommends the full security stack: govulncheck, gosec, CodeQL, and Bearer",
+    "description": "Selects appropriate security checks and distinguishes reporting from enforcement.",
     "prompt": "I want to add security scanning to my Go project's CI pipeline. What tools should I use and how do I set them up in GitHub Actions?",
-    "trap": "Model may only suggest one or two tools (e.g., just gosec) and miss govulncheck (call-path-aware), CodeQL (Security tab integration), or Bearer (sensitive data flow)",
+    "trap": "Installs every scanner or treats SARIF upload as a mandatory blocking check.",
     "assertions": [
-      {"id": "4.1", "text": "Recommends govulncheck and explains it only reports vulnerabilities in actually-called code paths"},
+      {"id": "4.1", "text": "Recommends govulncheck for static vulnerable-call analysis without claiming it proves runtime safety."},
       {"id": "4.2", "text": "Recommends gosec for Go security scanning"},
       {"id": "4.3", "text": "Recommends CodeQL and mentions the security-extended or security-and-quality query suite"},
-      {"id": "4.4", "text": "Recommends Bearer for sensitive data flow issues"},
+      {"id": "4.4", "text": "Selects additional scanners for the project's needs rather than requiring every listed product."},
       {"id": "4.5", "text": "Workflow includes security-events: write permission for SARIF upload"},
-      {"id": "4.6", "text": "Suggests creating a CodeQL config file to use an extended query suite rather than just the default"}
+      {"id": "4.6", "text": "Distinguishes SARIF reporting from failing a job or enforcing code-scanning merge protection."}
     ]
   },
   {
@@ -78,10 +78,10 @@
     "trap": "Model may create the workflow without the github.actor guard, without mentioning elevated permissions risk, or without recommending branch protection as the real safety net",
     "assertions": [
       {"id": "6.1", "text": "Workflow has 'if: github.actor == dependabot[bot]' guard to restrict execution"},
-      {"id": "6.2", "text": "Workflow checks metadata to exclude major updates from auto-merge"},
+      {"id": "6.2", "text": "Explicitly allows minor and patch update metadata; unknown or missing types do not pass."},
       {"id": "6.3", "text": "Warns about contents: write and pull-requests: write being elevated/high-risk permissions"},
       {"id": "6.4", "text": "Mentions branch protection rules as the real safety net (not just the actor guard)"},
-      {"id": "6.5", "text": "Notes that github.actor checks are not fully spoof-proof"}
+      {"id": "6.5", "text": "Accounts for Dependabot pull_request token restrictions; a privileged target workflow must never check out or execute PR code."}
     ]
   },
   {
@@ -121,7 +121,7 @@
     "assertions": [
       {"id": "9.1", "text": "Sets push to false on pull requests to prevent untrusted code from publishing images"},
       {"id": "9.2", "text": "Uses per-job permissions scoping (not just top-level)"},
-      {"id": "9.3", "text": "Includes QEMU and Buildx setup for multi-platform builds"},
+      {"id": "9.3", "text": "Uses Buildx and an appropriate multi-platform strategy; QEMU is optional with native builders or cross-compilation."},
       {"id": "9.4", "text": "Includes provenance and/or SBOM attestation configuration"},
       {"id": "9.5", "text": "Includes packages: write permission for GHCR push"},
       {"id": "9.6", "text": "Login step is conditional on non-PR events"}
@@ -159,12 +159,12 @@
   {
     "id": 12,
     "name": "action-version-pinning",
-    "description": "Tests whether actions are pinned to major versions not branches",
+    "description": "Distinguishes immutable SHA pinning from mutable branches and release tags.",
     "prompt": "Review this GitHub Actions step and tell me if there are any issues:\n\n```yaml\nsteps:\n  - uses: actions/checkout@master\n  - uses: actions/setup-go@main\n    with:\n      go-version: stable\n```",
     "trap": "Model may not notice the branch references (@master, @main) instead of pinned major versions",
     "assertions": [
-      {"id": "12.1", "text": "Identifies that using @master and @main is wrong and insecure"},
-      {"id": "12.2", "text": "Recommends pinning to major versions like @v4, @v6"},
+      {"id": "12.1", "text": "Identifies branch refs as mutable and unsuitable for immutable pinning."},
+      {"id": "12.2", "text": "Recommends verified full commit SHAs for immutable pinning; major tags are mutable too."},
       {"id": "12.3", "text": "Explains the risk: branch references can change unexpectedly or be compromised"}
     ]
   },
@@ -176,10 +176,10 @@
     "trap": "Model may only configure project-level thresholds and miss patch-level coverage targets",
     "assertions": [
       {"id": "13.1", "text": "Configures codecov.yml (not just CLI flags) for coverage thresholds"},
-      {"id": "13.2", "text": "Sets project target to 80%"},
-      {"id": "13.3", "text": "Sets a threshold value (e.g., 2%) to allow small drops"},
-      {"id": "13.4", "text": "Configures patch coverage target for new code in PRs"},
-      {"id": "13.5", "text": "Coverage upload is conditional on a single matrix entry (e.g., only on stable)"}
+      {"id": "13.2", "text": "Enforces the absolute 80% floor with target 80% and threshold 0%."},
+      {"id": "13.3", "text": "Uses a separate target auto check with threshold 2% for the permitted drop from base."},
+      {"id": "13.4", "text": "Does not confuse patch coverage with a whole-project coverage drop; patch policy is separate."},
+      {"id": "13.5", "text": "Explains that required status checks enforce the configured coverage policy."}
     ]
   },
   {
@@ -190,7 +190,7 @@
     "trap": "Model may suggest generic tools (CodeRabbit, PR-Agent, Reviewdog) or manual checklists instead of Claude Code Action / Copilot with Go skills loaded",
     "assertions": [
       {"id": "14.1", "text": "Recommends using anthropics/claude-code-action or GitHub Copilot for AI review"},
-      {"id": "14.2", "text": "Mentions installing Go skills via 'npx skills add' so the agent loads skill-based review guidelines"},
+      {"id": "14.2", "text": "Uses approved pinned skill sources rather than blindly installing upstream latest and bypassing local customizations."},
       {"id": "14.3", "text": "Workflow includes pull-requests: write permission for inline PR comments"},
       {"id": "14.4", "text": "References review areas mapped to specific Go skills (golang-security, golang-concurrency, etc.)"},
       {"id": "14.5", "text": "References the claude-code-review.yml or copilot-review-instructions.md asset"}
@@ -201,12 +201,12 @@
     "name": "ai-review-vs-linting",
     "description": "Tests whether the model explains that AI review complements linting by catching issues linters cannot detect",
     "prompt": "I already have golangci-lint, govulncheck, and CodeQL in my CI. Why would I also need AI code review?",
-    "trap": "Model may say linting is sufficient or treat AI review as a luxury, failing to explain the complementary value",
+    "trap": "Treats AI review as required or guaranteed to find bugs rather than an optional fallible complement.",
     "assertions": [
       {"id": "15.1", "text": "Explains that AI review catches architectural drift and logic bugs that static analysis misses"},
       {"id": "15.2", "text": "Mentions at least one concrete example: missing error context, goroutine leaks, broken contracts, or design issues"},
       {"id": "15.3", "text": "Positions AI review as a complement to linting, not a replacement"},
-      {"id": "15.4", "text": "Notes that AI agents loaded with Go skills apply the same expertise as a senior Go reviewer"}
+      {"id": "15.4", "text": "Does not promise senior-engineer equivalence or make AI review mandatory."}
     ]
   },
   {
@@ -231,7 +231,7 @@
     "assertions": [
       {"id": "17.1", "text": "Explains Claude Code review runs as a GitHub Actions workflow using anthropics/claude-code-action"},
       {"id": "17.2", "text": "Explains Copilot review uses .github/copilot-instructions.md to configure the review prompt"},
-      {"id": "17.3", "text": "Notes that both require installing Go skills so the AI loads skill-based guidelines"},
+      {"id": "17.3", "text": "Distinguishes checked-in instruction files from actual skill-loading support; symlinks do not guarantee Copilot review loads skills."},
       {"id": "17.4", "text": "Correctly describes that both can coexist — they run independently and complement each other"}
     ]
   },

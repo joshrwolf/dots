@@ -89,10 +89,10 @@ import "github.com/samber/mo/result"
 
 parsed := result.Pipe2(
     mo.TupleToResult(os.ReadFile("config.yaml")),                         // Result[[]byte]
-    result.Map(func(data []byte) Config {                                 // -> Result[Config]
+    result.FlatMap(func(data []byte) mo.Result[Config] {                 // -> Result[Config]
         var cfg Config
-        yaml.Unmarshal(data, &cfg)
-        return cfg
+        err := yaml.Unmarshal(data, &cfg)
+        return mo.TupleToResult(cfg, err)
     }),
     result.FlatMap(func(cfg Config) mo.Result[ValidConfig] {              // -> Result[ValidConfig]
         return validateConfig(cfg)
@@ -122,8 +122,8 @@ import "github.com/samber/mo/either"
 
 result := either.Pipe2(
     mo.Right[error, int](42),
-    either.MapRight(func(v int) string { return strconv.Itoa(v) }),
-    either.MapRight(func(s string) []byte { return []byte(s) }),
+    either.MapRight[error](func(v int) string { return strconv.Itoa(v) }),
+    either.MapRight[error](func(s string) []byte { return []byte(s) }),
 )
 ```
 

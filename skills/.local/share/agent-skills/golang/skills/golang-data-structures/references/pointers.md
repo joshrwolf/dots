@@ -6,7 +6,7 @@
   - [Stack vs Heap (Escape Analysis)](#stack-vs-heap-escape-analysis)
   - [`new(T)` vs `&T{}`](#newt-vs-t)
 - [`unsafe.Pointer`](#unsafepointer)
-  - [The 6 Valid Patterns (from the Go spec)](#the-6-valid-patterns-from-the-go-spec)
+  - [Supported Conversion Patterns](#supported-conversion-patterns)
   - [Critical Rule: NEVER Store `uintptr` Across Statements](#critical-rule-never-store-uintptr-across-statements)
   - [Modern Alternatives (prefer these)](#modern-alternatives-prefer-these)
 - [`weak.Pointer[T]` (Go 1.24+)](#weakpointert-go-124)
@@ -44,11 +44,11 @@ p := &Point{X: 1}     // *Point with initialized fields — preferred
 
 ## `unsafe.Pointer`
 
-`unsafe.Pointer` bypasses Go's type system for FFI and low-level memory manipulation. Only the 6 patterns from the Go spec are safe; any other pattern is undefined behavior.
+`unsafe.Pointer` bypasses Go's type system for FFI and low-level memory manipulation. Follow the supported conversion patterns in the [unsafe package documentation](https://pkg.go.dev/unsafe#Pointer), including alignment, size, and allocation-boundary restrictions.
 
-### The 6 Valid Patterns (from the Go spec)
+### Supported Conversion Patterns
 
-These are the ONLY safe ways to use `unsafe.Pointer`. Any other pattern is undefined behavior.
+The examples below cover common supported patterns, not every rule. A same-expression conversion alone does not make arbitrary pointer arithmetic valid: the result must stay within the original allocated object and satisfy the target type's size, alignment, and layout requirements.
 
 **Pattern 1: Convert `*T` to `*U` via `unsafe.Pointer`**
 
@@ -74,7 +74,7 @@ p := unsafe.Pointer(reflect.ValueOf(&x).Pointer())
 **Pattern 4: `syscall.Syscall` arguments**
 
 ```go
-syscall.Syscall(SYS_READ, fd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+syscall.Syscall(syscall.SYS_READ, fd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
 ```
 
 ### Critical Rule: NEVER Store `uintptr` Across Statements
@@ -96,14 +96,14 @@ p := unsafe.Pointer(uintptr(unsafe.Pointer(&x)) + offset)
 | `unsafe.Add(ptr, len)` | Go 1.17 | Pointer arithmetic without `uintptr` conversion |
 | `unsafe.Slice(ptr, len)` | Go 1.17 | Create slice from pointer + length |
 | `unsafe.String(ptr, len)` | Go 1.20 | Create string from pointer + length |
-| `unsafe.SliceData(s)` | Go 1.17 | Get pointer to slice's backing array |
+| `unsafe.SliceData(s)` | Go 1.20 | Get pointer to slice's backing array |
 | `unsafe.StringData(s)` | Go 1.20 | Get pointer to string's backing array |
 
 These are safer than manual `uintptr` arithmetic because they keep values as pointers (visible to GC) throughout.
 
 ## `weak.Pointer[T]` (Go 1.24+)
 
-A weak pointer holds a reference to an object without preventing garbage collection. When the GC reclaims the object, `Value()` returns `nil`.
+A weak pointer does not keep its target reachable. `Value()` may return nil once the target becomes unreachable; it is not guaranteed ever to become nil (for example, tiny allocations may be batched). The zero weak pointer returns nil. Use `runtime.KeepAlive` when a strong reference must remain live through an operation.
 
 ```go
 strong := new(MyType)
@@ -112,20 +112,22 @@ w := weak.Make(strong)
 if p := w.Value(); p != nil {
     // object still alive
 } else {
-    // object was garbage collected
+    // target is no longer available through this weak pointer
 }
 ```
 
 ### Use Cases
 
 - **Deduplication caches** — intern equivalent values without preventing GC
-- **Automatic cache eviction** — cached objects evict when no strong references remain
+- **Reclaimable cache values** — weak references do not retain their targets; cache keys and stale entries still need cleanup
 
 ### `runtime.AddCleanup` vs `runtime.SetFinalizer`
 
 Prefer `runtime.AddCleanup` (Go 1.24+) over `runtime.SetFinalizer`:
 
 - Multiple cleanups can be registered per object
-- Cleanup function receives a value, not a pointer to the collected object
+- Cleanup function receives a separate argument that must not keep the target alive
 - No risk of resurrecting the object
 - Works correctly with weak pointers
+
+Cleanups are not deterministic resource management and may never run before process exit. Do not retain the target through the callback or argument; that prevents collection. Use explicit Close methods for prompt release and KeepAlive where resource use must keep the wrapper alive.

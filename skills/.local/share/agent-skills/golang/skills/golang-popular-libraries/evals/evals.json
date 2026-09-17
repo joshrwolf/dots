@@ -34,7 +34,7 @@
     "prompt": "I need a simple HTTP router for my Go REST API. It just needs path parameters and middleware support. I want to stay close to net/http. What should I use?",
     "trap": "Without the skill, the model recommends Gin or Echo (full frameworks) when chi's lightweight, net/http-compatible router is a better fit",
     "assertions": [
-      {"id": "3.1", "text": "Recommends chi (github.com/go-chi/chi) as a strong match for the stated requirements"},
+      {"id": "3.1", "text": "Considers Go 1.22+ http.ServeMux first; chi is a suitable net/http-compatible alternative when its features are needed"},
       {"id": "3.2", "text": "Explains that chi is lightweight and composes well with net/http"},
       {"id": "3.3", "text": "Notes that chi has minimal dependencies"},
       {"id": "3.4", "text": "May mention Gin/Echo as alternatives but positions chi as the better fit for staying close to net/http"},
@@ -129,12 +129,12 @@
     "name": "testcontainers-for-integration",
     "description": "testcontainers-go is preferred over shared docker-compose for integration tests because each test gets an isolated, fresh container",
     "prompt": "We already have a docker-compose.yml for local development with PostgreSQL and Redis. A teammate says: 'For integration tests, just document that developers should run docker-compose up before running go test -tags=integration. That way we reuse the same infrastructure we already have and don't add a new dependency.' Is this a good approach? What would you recommend instead?",
-    "trap": "The teammate's approach seems pragmatic — reuse existing infrastructure, avoid adding testcontainers-go as a dependency. The skill teaches testcontainers-go is better for test isolation: each test run gets a fresh container (no state leakage between test runs), tests are fully self-contained (no 'remember to run docker-compose up'), and CI doesn't need to maintain a shared running stack.",
+    "trap": "The teammate's approach seems pragmatic — reuse existing infrastructure, avoid adding testcontainers-go as a dependency. The skill teaches testcontainers-go is better for test isolation: each test run gets a fresh container (no state leakage between test runs), tests start their own dependencies when a supported container runtime is available, and CI doesn't need to maintain a shared running stack.",
     "assertions": [
       {"id": "10.1", "text": "Pushes back on the teammate's docker-compose approach — identifies its key problems: shared state between test runs, manual setup requirement, CI complexity"},
       {"id": "10.2", "text": "Recommends testcontainers-go as the preferred alternative for programmatic, isolated integration tests"},
       {"id": "10.3", "text": "Explains the key advantage: each test suite gets a fresh container spun up and torn down automatically — no state leakage, no manual prerequisites"},
-      {"id": "10.4", "text": "Notes that testcontainers-go tests are fully self-contained: go test -tags=integration works without any external setup"},
+      {"id": "10.4", "text": "States that testcontainers-go requires a supported container runtime; programmatic startup removes manual stack startup, not that prerequisite"},
       {"id": "10.5", "text": "Acknowledges the dependency cost but frames it as justified by the isolation and reproducibility benefits"}
     ]
   },

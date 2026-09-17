@@ -23,7 +23,7 @@ package model         // too vague
 
 NEVER use generic package names like `util`, `helper`, `common`, `base`, `model`. They fail to communicate purpose and cause import collisions. If you reach for `util`, the function probably belongs in a more specific package.
 
-Package names SHOULD be **singular**, not plural — `net/url` not `net/urls`, `go/token` not `go/tokens`.
+Choose a natural name for the abstraction; both singular (net/url) and plural (strings, bytes, errors) are idiomatic.
 
 ### Directory vs Package Name
 
@@ -41,7 +41,7 @@ rate-limit/        → package ratelimit
 go-chi/            → package chi
 
 // Good — special directories
-cmd/api/           → package main       (cmd/ subdirectories are always main)
+cmd/api/           → package main       (executable entrypoints use main; cmd is a convention)
 internal/auth/     → package auth       (internal/ restricts visibility)
 
 // Bad
@@ -52,8 +52,8 @@ myPackage/         → package mypackage     (directory has caps, package doesn'
 
 Special directories have Go toolchain meaning and don't follow normal naming:
 
-- `cmd/` — entry points, each subdirectory is `package main`
-- `internal/` — restricts import visibility to parent module
+- `cmd/` — conventional entrypoint location, with no special compiler restriction on its subpackages
+- `internal/` — importers must be inside the tree rooted at the parent of internal, which can be narrower than a module
 - `testdata/` — ignored by the Go tool
 - `vendor/` — vendored dependencies
 
@@ -76,7 +76,7 @@ Special suffixes:
 
 ## Import Aliasing
 
-Import aliases SHOULD only be used on name collision. When an alias is necessary, use a descriptive short name.
+Use import aliases for collisions or meaningful disambiguation (for example, generated API versions). The default name comes from the imported package declaration, not necessarily its final path segment.
 
 ```go
 // Good — no alias needed

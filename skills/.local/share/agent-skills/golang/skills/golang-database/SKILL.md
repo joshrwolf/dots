@@ -25,27 +25,27 @@ Inspect existing query patterns and naming conventions before adding database co
 
 # Go Database Best Practices
 
-Go's `database/sql` provides a solid foundation for database access. Use `sqlx` or `pgx` on top of it for ergonomics — never an ORM.
+Go's `database/sql` provides a solid foundation for database access. `sqlx` extends it; `pgx` offers a native PostgreSQL API and an optional `database/sql` adapter. Prefer explicit SQL, while respecting a project's existing library and an explicitly requested ORM.
 
 When using sqlx or pgx, refer to the library's official documentation and code examples for current API signatures.
 
 ## Best Practices Summary
 
-1. **Use sqlx or pgx, not ORMs** — ORMs hide SQL, generate unpredictable queries, and make debugging harder
+1. **Prefer explicit SQL and established repository libraries** — inspect generated ORM queries when an ORM is used; honor explicitly requested ORM work
 2. Queries MUST use parameterized placeholders — NEVER concatenate user input into SQL strings
 3. Context MUST be passed to all database operations — use `*Context` method variants (`QueryContext`, `ExecContext`, `GetContext`)
 4. `sql.ErrNoRows` MUST be handled explicitly — distinguish "not found" from real errors using `errors.Is`
 5. Rows MUST be closed after iteration — `defer rows.Close()` immediately after `QueryContext` calls
-6. NEVER use `db.Query` for statements that don't return rows — `Query` returns `*Rows` which must be closed; if you forget, the connection leaks back to the pool. Use `db.Exec` instead
+6. NEVER use `db.Query` for statements that don't return rows — `Query` returns `*Rows` which must be closed; if you forget, the connection remains checked out of the pool. Use `db.Exec` instead
 7. **Use transactions for multi-statement operations** — wrap related writes in `BeginTxx`/`Commit`
-8. **Use `SELECT ... FOR UPDATE`** when reading data you intend to modify — prevents race conditions
-9. **Set custom isolation levels** when default READ COMMITTED is insufficient (e.g., serializable for financial operations)
+8. Protect read-modify-write invariants with atomic SQL updates, conditional updates, row locks, or suitable transaction isolation; choose based on the invariant
+9. Check the database's configured default isolation (PostgreSQL defaults to READ COMMITTED); stronger isolation may require retrying whole transactions
 10. **Handle NULLable columns** with pointer fields (`*string`, `*int`) or `sql.NullXxx` types
 11. Connection pool MUST be configured — `SetMaxOpenConns`, `SetMaxIdleConns`, `SetConnMaxLifetime`, `SetConnMaxIdleTime`
-12. **Use external tools for migrations** — golang-migrate or Flyway, never hand-rolled or AI-generated migration SQL
+12. **Use the repository's migration tooling** and version reviewed migration SQL; assess locks, backfills, compatibility and rollback/data-loss risks
 13. **Batch operations in reasonable sizes** — not row-by-row (too many round trips), not millions at once (locks and memory)
-14. **Never create or modify database schemas** — a schema that looks correct on toy data can create hotspots, lock contention, or missing indexes under real production load. Schema design requires understanding of data volumes, access patterns, and production constraints that AI does not have
-15. **Avoid hidden SQL features** — do not rely on triggers, views, materialized views, stored procedures, or row-level security in application code
+14. **Design requested schema changes from actual constraints and access patterns** — inspect data volumes, indexes, locking and rollout requirements; do not apply destructive production DDL without authorization
+15. **Make database-side behavior explicit** — document/test triggers, views, procedures and row-level security when they support the design
 
 ## Library Choice
 
@@ -53,15 +53,15 @@ When using sqlx or pgx, refer to the library's official documentation and code e
 | --- | --- | --- | --- |
 | `database/sql` | Portability, minimal deps | Manual `Scan` | No |
 | `sqlx` | Multi-database projects | `StructScan` | No |
-| `pgx` | PostgreSQL (30-50% faster) | `pgx.RowToStructByName` | Yes (COPY, LISTEN, arrays) |
-| GORM/ent | **Avoid** | Magic | Abstracted away |
+| `pgx` | PostgreSQL native APIs | `pgx.RowToStructByName` | Yes (COPY, LISTEN, arrays) |
+| GORM/ent | Existing or requested ORM workflows | Library mapping | Inspect generated SQL and supported features |
 
-**Why NOT ORMs:**
+**ORM tradeoffs to inspect:**
 
-- Unpredictable query generation — N+1 problems you cannot see in code
+- Generated queries can obscure N+1 behavior; inspect query logs and plans
 - Magic hooks and callbacks (BeforeCreate, AfterUpdate) make debugging harder
 - Schema migrations coupled to application code
-- Learning the ORM API is harder than learning SQL, and the abstraction leaks
+- ORM APIs add concepts and do not remove the need to understand SQL
 
 ## Parameterized Queries
 
@@ -109,7 +109,7 @@ Use `db:"column_name"` tags for sqlx, `pgx.CollectRows` with `pgx.RowToStructByN
 ## Error Handling
 
 ```go
-func GetUser(id string) (*User, error) {
+func GetUser(ctx context.Context, id string) (*User, error) {
     var user User
 
     err := db.GetContext(ctx, &user, "SELECT id, name FROM users WHERE id = $1", id)
@@ -127,7 +127,7 @@ func GetUser(id string) (*User, error) {
 or:
 
 ```go
-func GetUser(id string) (u *User, exists bool, err error) {
+func GetUser(ctx context.Context, id string) (u *User, exists bool, err error) {
     var user User
 
     err := db.GetContext(ctx, &user, "SELECT id, name FROM users WHERE id = $1", id)
@@ -208,15 +208,15 @@ Recommended tools:
 - [Flyway](https://flywaydb.org/) — JVM-based, widely used in enterprise environments
 - [Atlas](https://atlasgo.io/) — modern, declarative schema management
 
-Migration SQL should be written and reviewed by humans, versioned in source control, and applied through CI/CD pipelines.
+Write requested migration SQL, version it in source control and validate against representative data. Follow the project's review/deployment process; permission to author a migration is not permission to apply destructive production changes.
 
 ## Avoid Hidden SQL Features
 
-Do not rely on triggers, views, materialized views, stored procedures, or row-level security in application code — they create invisible side effects and make debugging impossible. Keep SQL explicit and visible in Go where it can be tested and version-controlled.
+Prefer explicit, testable behavior. Database features can enforce invariants across writers or centralize policy; keep their definitions versioned and account for operational effects. With row-level security, review privileged/bypass roles and avoid leaking tenant/session state across pooled connections; transaction-local settings can help scope that state.
 
 ## Schema Creation
 
-**This skill does NOT cover schema creation.** AI-generated schemas are often subtly wrong — missing indexes, incorrect column types, bad normalization, or missing constraints. Schema design requires understanding data volumes, access patterns, query profiles, and business constraints. Use dedicated database tooling and human review.
+For requested schema work, establish types, keys, nullability and constraints from domain invariants and query patterns. Assess representative data volumes, index/write tradeoffs and migration locking before proposing a rollout. State assumptions instead of refusing the task merely because it involves schema design.
 
 ## Deep Dives
 

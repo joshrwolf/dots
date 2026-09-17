@@ -47,7 +47,7 @@ For an introduction to functional programming concepts and why monads are valuab
 | `Option[T]` | Value that may be absent | Rust's `Option`, Java's `Optional` |
 | `Result[T]` | Operation that may fail | Rust's `Result<T, E>`, replaces `(T, error)` |
 | `Either[L, R]` | Value of one of two types | Scala's `Either`, TypeScript discriminated union |
-| `EitherX[L, R]` | Value of one of X types | Scala's `Either`, TypeScript discriminated union |
+| `Either3[T1, T2, T3]` (and Either4/5) | Value of one of X types | Scala's `Either`, TypeScript discriminated union |
 | `Future[T]` | Async value not yet available | JavaScript `Promise` |
 | `IO[T]` | Lazy synchronous side effect | Haskell's `IO` |
 | `Task[T]` | Lazy async computation | fp-ts `Task` |
@@ -55,7 +55,7 @@ For an introduction to functional programming concepts and why monads are valuab
 
 ## Option[T] — Nullable Values Without nil
 
-Represents a value that is either present (`Some`) or absent (`None`). Eliminates nil pointer risks at the type level.
+Represents a value that is either present (`Some`) or absent (`None`). Makes absence explicit, but does not enforce handling at compile time: `MustGet` can panic and `Some((*User)(nil))` is still present.
 
 ```go
 import "github.com/samber/mo"
@@ -131,8 +131,8 @@ func fetchUser(id string) mo.Either[CachedUser, FreshUser] {
 // Pattern match
 result := fetchUser("user-123")
 result.Match(
-    func(cached CachedUser) mo.Either[CachedUser, FreshUser] { /* use cached */ },
-    func(fresh FreshUser) mo.Either[CachedUser, FreshUser] { /* use fresh */ },
+    func(cached CachedUser) mo.Either[CachedUser, FreshUser] { return mo.Left[CachedUser, FreshUser](cached) },
+    func(fresh FreshUser) mo.Either[CachedUser, FreshUser] { return mo.Right[CachedUser, FreshUser](fresh) },
 )
 ```
 
@@ -215,7 +215,7 @@ For detailed pipeline API reference, see [Pipelines Reference](./references/pipe
 ```go
 type UserResponse struct {
     Name     string            `json:"name"`
-    Nickname mo.Option[string] `json:"nickname"`  // omits null gracefully
+    Nickname mo.Option[string] `json:"nickname"`  // None encodes as null; use omitzero to omit on Go 1.24+
     Bio      mo.Option[string] `json:"bio"`
 }
 ```
@@ -237,7 +237,8 @@ err := row.Scan(&u.ID, &u.Email, &u.Phone)
 ```go
 // Convert map lookup to Option
 func MapGet[K comparable, V any](m map[K]V, key K) mo.Option[V] {
-    return mo.TupleToOption(m[key])  // m[key] returns (V, bool)
+    value, ok := m[key]
+    return mo.TupleToOption(value, ok) // comma-ok is available in assignment, not call arguments
 }
 ```
 
@@ -259,7 +260,7 @@ str := mo.Fold[error, int, string](
 1. **Prefer `OrElse` over `MustGet`** — `MustGet` panics on absent/error values; use it only inside `mo.Do` blocks where panics are caught, or when you are certain the value exists
 2. **Use `TupleToResult` at API boundaries** — convert Go's `(T, error)` to `Result[T]` at the boundary, then chain with `Map`/`FlatMap` inside your domain logic
 3. **Use `Result[T]` for errors, `Either[L, R]` for alternatives** — Result is specialized for success/failure; Either is for two valid types
-4. **Option for nullable fields, not zero values** — `Option[string]` distinguishes "absent" from "empty string"; use plain `string` when empty string is a valid value
+4. **Option for nullable fields, not zero values** — `Option[string]` distinguishes "absent" from "empty string"; use plain `string` when its zero value already expresses the intended absence semantics
 5. **Chain, don't nest** — `result.Map(...).FlatMap(...).OrElse(default)` reads left-to-right; avoid nested if/else patterns when monadic chaining is cleaner
 6. **Use sub-package pipes for multi-step type transformations** — when 3+ steps each change the type, `option.Pipe3(...)` is more readable than nested function calls
 

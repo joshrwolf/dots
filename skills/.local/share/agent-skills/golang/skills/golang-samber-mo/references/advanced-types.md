@@ -31,7 +31,7 @@ These types are less commonly used than Option/Result/Either but provide powerfu
 ```
 Synchronous                    Asynchronous
 -----------                    ------------
-IO[T]     (no error)    →     Task[T]     (no error)    → Future[T]
+IO[T]     (value)       →     Task[T]     (Future)      → Future[T]
 IOEither[T] (with error) →     TaskEither[T] (with error) → Future[T]
 ```
 
@@ -86,12 +86,14 @@ either := future.Either()          // blocks, returns Either[error, T]
 ### Cancellation
 
 ```go
-future.Cancel()  // terminates the future chain
+future.Cancel()  // disconnects the future chain; does not stop the running callback
 ```
+
+Cancellation does not stop an underlying goroutine or guarantee that Collect on disconnected successors completes. Give the underlying operation its own context/cancellation mechanism.
 
 ## IO[T] — Synchronous Side Effects
 
-Wraps a function that performs side effects. The computation is lazy — it only runs when `Run()` is called. IO never fails.
+Wraps a function that performs side effects. The computation is lazy — it only runs when `Run()` is called. IO has no error result in its signature; its callback can still panic.
 
 ### Variants by Parameter Count
 
@@ -143,7 +145,7 @@ either := io1.Run("config.yaml")  // Either[error, string]
 
 ## Task[T] — Asynchronous Computations
 
-Lazy async computation — `Run()` calls the wrapped function, which returns a `*Future[T]`. Never fails.
+Lazy async computation — `Run()` calls the wrapped function, which returns a `*Future[T]`. That Future can still reject with an error; TaskEither adds convenience methods for handling it.
 
 ```go
 task := mo.NewTask(func() *mo.Future[int] {
@@ -262,10 +264,13 @@ type ParseState struct {
     Position int
 }
 
-parseChar := mo.NewState(func(s ParseState) (byte, ParseState) {
+parseByte := mo.NewState(func(s ParseState) (mo.Option[byte], ParseState) {
+    if s.Position < 0 || s.Position >= len(s.Input) {
+        return mo.None[byte](), s
+    }
     ch := s.Input[s.Position]
-    return ch, ParseState{Input: s.Input, Position: s.Position + 1}
-})
+    return mo.Some(ch), ParseState{Input: s.Input, Position: s.Position + 1}
+}) // byte-oriented; decode runes when parsing Unicode characters
 ```
 
 ## When to Use Advanced Types

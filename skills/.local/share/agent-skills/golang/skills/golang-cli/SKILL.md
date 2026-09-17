@@ -24,7 +24,7 @@ with its existing structure.
 
 # Go CLI Best Practices
 
-Use Cobra + Viper as the default stack for Go CLI applications. Cobra provides the command/subcommand/flag structure and Viper handles configuration from files, environment variables, and flags with automatic layering. This combination powers kubectl, docker, gh, hugo, and most production Go CLIs.
+Use Cobra + Viper as the default stack for Go CLI applications. Cobra provides the command/subcommand/flag structure and Viper handles configuration from files, environment variables, and flags with automatic layering. Choose Viper when layered configuration is needed; Cobra does not require it.
 
 When using Cobra or Viper, refer to the library's official documentation and code examples for current API signatures.
 
@@ -45,13 +45,13 @@ For trivial single-purpose tools with no subcommands and few flags, stdlib `flag
 
 ## Project Structure
 
-Organize CLI commands in `cmd/myapp/` with one file per command. Keep `main.go` minimal — it only calls `Execute()`.
+Organize CLI commands in `cmd/myapp/` with one file per command. Keep `main.go` minimal — it executes the command, reports a returned error, and sets the process status.
 
 ```
 myapp/
 ├── cmd/
 │   └── myapp/
-│       ├── main.go              # package main, only calls Execute()
+│       ├── main.go              # package main, executes, reports error, sets exit status
 │       ├── root.go              # Root command + Viper init
 │       ├── serve.go             # "serve" subcommand
 │       ├── migrate.go           # "migrate" subcommand
@@ -59,6 +59,8 @@ myapp/
 ├── go.mod
 └── go.sum
 ```
+
+The linked files form a buildable example package when its imports are available. `flags.go`, `args.go`, and `signal.go` also contain alternative patterns; do not register two commands with the same name.
 
 `main.go` should be minimal — see [assets/examples/main.go](assets/examples/main.go).
 
@@ -70,12 +72,12 @@ Key points:
 
 - `SilenceUsage: true` MUST be set — prevents printing the full usage text on every error
 - `SilenceErrors: true` MUST be set — lets you control error output format yourself
-- `PersistentPreRunE` runs before every subcommand, so config is always initialized
+- A root `PersistentPreRunE` is inherited by runnable subcommands unless a closer persistent hook overrides it (default Cobra behavior). Help/version/completion may intentionally skip config; validate effective values after loading
 - Logs go to stderr, output goes to stdout
 
 ## Subcommands
 
-Add subcommands by creating separate files in `cmd/myapp/` and registering them in `init()`. See [assets/examples/serve.go](assets/examples/serve.go) for a complete subcommand example including command groups.
+Use constructors for fresh command trees and Viper instances; this avoids retained flag/config state in tests. See [assets/examples/serve.go](assets/examples/serve.go) for a complete subcommand example with a note on command groups.
 
 ## Flags
 
@@ -90,11 +92,11 @@ See [assets/examples/flags.go](assets/examples/flags.go) for all flag patterns:
 
 Use `MarkFlagRequired`, `MarkFlagsMutuallyExclusive`, and `MarkFlagsOneRequired` for flag constraints.
 
-### Flag Validation with RegisterFlagCompletionFunc
+### Flag Completion with RegisterFlagCompletionFunc
 
-Provide completion suggestions for flag values.
+Provide completion suggestions for flag values. Completions do not validate input. A required flag checks whether it was supplied, not whether its value is non-empty; Viper config/env values do not satisfy Cobra's required-flag marker.
 
-### Always Bind Flags to Viper
+### Bind layered configuration flags to Viper
 
 This ensures `viper.GetInt("port")` returns the flag value, env var `MYAPP_PORT`, or config file value — whichever has highest precedence.
 
@@ -115,12 +117,14 @@ Cobra provides built-in validators for positional arguments. See [assets/example
 
 Viper resolves configuration values in this order (highest to lowest precedence):
 
-1. **CLI flags** (explicit user input)
-2. **Environment variables** (deployment config)
-3. **Config file** (persistent settings)
-4. **Defaults** (set in code)
+1. Explicit `Set` overrides
+2. Changed CLI flags
+3. Environment variables
+4. Config file
+5. Remote key/value store
+6. Defaults (including unchanged bound flag defaults)
 
-See [assets/examples/config.go](assets/examples/config.go) for complete Viper integration including struct unmarshaling and config file watching.
+See [assets/examples/config.go](assets/examples/config.go) for complete Viper integration including env-only struct keys and safe reload ownership.
 
 ### Example Config File (.myapp.yaml)
 
@@ -145,7 +149,7 @@ Version SHOULD be embedded at compile time using `ldflags`. See [assets/examples
 
 ## Exit Codes
 
-Exit codes MUST follow Unix conventions:
+Define exit codes as part of the CLI contract. These are common conventions, not universal Go or Cobra requirements:
 
 | Code  | Meaning           | When to Use                               |
 | ----- | ----------------- | ----------------------------------------- |
@@ -153,8 +157,8 @@ Exit codes MUST follow Unix conventions:
 | 1     | General error     | Runtime failure                           |
 | 2     | Usage error       | Invalid flags or arguments                |
 | 64-78 | BSD sysexits      | Specific error categories                 |
-| 126   | Cannot execute    | Permission denied                         |
-| 127   | Command not found | Missing dependency                        |
+| 126   | Shell could not execute command | Usually assigned by the shell |
+| 127   | Shell could not find command | Usually assigned by the shell |
 | 128+N | Signal N          | Terminated by signal (e.g., 130 = SIGINT) |
 
 See [assets/examples/exit_codes.go](assets/examples/exit_codes.go) for a pattern mapping errors to exit codes.
@@ -164,9 +168,9 @@ See [assets/examples/exit_codes.go](assets/examples/exit_codes.go) for a pattern
 See [assets/examples/output.go](assets/examples/output.go) for all I/O patterns:
 
 - **stdout vs stderr**: NEVER write diagnostic output to stdout — stdout is for program output (pipeable), stderr for logs/errors/diagnostics
-- **Detecting pipe vs terminal**: check `os.ModeCharDevice` on stdout
+- **Detecting pipe vs terminal**: check the actual output writer's terminal descriptor using `golang.org/x/term.IsTerminal`; character devices include non-terminals such as `/dev/null`
 - **Machine-readable output**: support `--output` flag for table/json/plain formats
-- **Colors**: use `fatih/color` which auto-disables when output is not a terminal
+- **Colors**: respect terminal detection and `NO_COLOR`; when using a library, send output through the command's configured writer
 
 ## Signal Handling
 
@@ -192,8 +196,8 @@ Use `cmd.OutOrStdout()` and `cmd.ErrOrStderr()` in commands (instead of `os.Stdo
 | Missing `viper.SetEnvPrefix` | `PORT` collides with other tools. Use a prefix (`MYAPP_PORT`) to namespace env vars |
 | Logging to stdout | Unix pipes chain stdout — logs corrupt the data stream for the next program. Logs go to stderr |
 | Printing usage on every error | Full help text on every error is noise. Set `SilenceUsage: true`, save full usage for `--help` |
-| Config file required | Users without a config file get a crash. Ignore `viper.ConfigFileNotFoundError` — config should be optional |
-| Not using `PersistentPreRunE` | Config initialization must happen before any subcommand. Use root's `PersistentPreRunE` |
+| Treating every missing config as optional | Ignore a missing default search result only if optional; report failure for an explicitly requested path |
+| Child persistent hook bypasses config | Call shared initialization explicitly or deliberately enable hook traversal |
 | Hardcoded version string | Version gets out of sync with tags. Inject via `ldflags` at build time from git tags |
 | Not supporting `--output` format | Scripts can't parse human-readable output. Add JSON/table/plain for machine consumption |
 

@@ -19,7 +19,7 @@ Automate minor/patch dependency updates to reduce maintenance burden and stay cu
 
 - **Minor and patch updates**: Auto-merge only after CI passes (tests + lint + govulncheck) and the package is low-risk for the project
 - **Major updates**: Create PR for manual review (may contain breaking changes)
-- **Security updates**: Auto-merge regardless of version bump type
+- **Security updates**: Prioritize promptly, but retain compatibility review and required checks. A security fix does not make a major-version upgrade safe to merge automatically.
 
 For workflow configuration files (dependabot.yml, renovate.json, auto-merge workflows), see the `samber/cc-skills-golang@golang-continuous-integration` skill.
 

@@ -4,11 +4,11 @@ golangci-lint v2 uses a `.golangci.yml` with `version: "2"` at the project root.
 
 Key sections of `.golangci.yml`:
 
-- **`run`** — concurrency, timeout, test inclusion, directory exclusions
+- **`run`** — concurrency, timeout, test inclusion
 - **`linters.enable`** / **`linters.disable`** — which linters are active
 - **`linters.settings`** — per-linter thresholds and options
 - **`formatters`** — code formatters (gofmt, gofumpt)
-- **`issues`** — output limits, exclusion rules
+- **`issues`** — output limits and changed-code filtering; exclusions live under `linters.exclusions`
 
 To add a linter: add it to `linters.enable` and optionally configure it in `linters.settings`.
 
@@ -47,16 +47,16 @@ All linters are enabled in the [recommended .golangci.yml](../assets/.golangci.y
 
 ### Correctness & Safety
 
-- **govet** — Go's built-in checker: copylocks, printf format mismatches, struct tag validation, context stored in structs, unreachable code, nil dereferences
+- **govet** — Go's built-in checker: copylocks, printf format mismatches, struct tag validation, unreachable code, lost cancellation functions
 - **staticcheck** — Extensive static analysis: deprecated APIs, common mistakes, unnecessary code, simplifications, misuse of standard library
 - **unused** — Detects unused variables, functions, types, and struct fields
 - **errcheck** — Ensures all error returns are checked, including type assertions (configured with `check-type-assertions: true`)
 - **nilerr** — Detects returning nil error when `err` is non-nil (common source of silent failures)
 - **forcetypeassert** — Flags type assertions without the comma-ok check (`v := x.(T)` instead of `v, ok := x.(T)`)
-- **copyloopvar** — Detects loop variable copy issues (Go 1.22+)
+- **copyloopvar** — Flags redundant copies of loop variables under Go 1.22+ per-iteration semantics
 - **errorlint** — Enforces correct use of `errors.Is`/`errors.As` and `%w` wrapping (Go 1.13+ error wrapping)
 - **durationcheck** — Detects `time.Duration * time.Duration` multiplication bugs (e.g., `2 * time.Second * time.Minute` produces nanoseconds squared, not seconds)
-- **reassign** — Detects reassignment of package-level variables outside `init()`, which hides state mutations
+- **reassign** — Detects reassignment of configured package variables (such as standard-library sentinels)
 
 ### Style & Readability
 
@@ -65,7 +65,7 @@ All linters are enabled in the [recommended .golangci.yml](../assets/.golangci.y
 - **wsl_v5** — Whitespace and blank line rules for visual grouping and readability
 - **whitespace** — Detects trailing whitespace and unnecessary blank lines in function bodies
 - **godot** — Ensures exported-symbol comments end with a period
-- **misspell** — Catches common English misspellings in identifiers and comments
+- **misspell** — Catches common English misspellings in configured source text (comments by default)
 - **predeclared** — Flags shadowing of Go built-in identifiers (e.g., naming a variable `len`, `cap`, `error`)
 - **errname** — Enforces error naming conventions: error types suffixed with `Error` (e.g., `DecodeError`), error variables prefixed with `Err` (e.g., `ErrNotFound`)
 - **dupword** — Detects duplicate words in comments and strings (e.g., "the the", "is is") — often copy-paste artifacts
@@ -73,7 +73,7 @@ All linters are enabled in the [recommended .golangci.yml](../assets/.golangci.y
 
 ### Complexity
 
-- **gocyclo** — Cyclomatic complexity threshold (configured: 13). Functions exceeding this should be split
+- **gocyclo** — Cyclomatic complexity threshold (configured: 13). Review functions exceeding this; splitting is useful only when it clarifies the logic
 - **nestif** — Detects deeply nested if/else chains that harm readability
 - **funlen** — Function length limits (configured: 120 lines, 80 statements)
 - **dupl** — Code duplication detection (configured: 100 token threshold)

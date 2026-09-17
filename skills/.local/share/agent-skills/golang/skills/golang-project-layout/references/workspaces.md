@@ -65,18 +65,18 @@ my-monorepo/
 1. **Initialize the workspace:**
 
 ```bash
-go work init
+go work init ./pkg/auth ./pkg/user ./cmd/api ./tools/cli
 ```
 
-This creates `go.work`:
+For modules requiring Go 1.21, this creates a file shaped like (the go directive follows the toolchain/module requirements):
 
 ```go
 go 1.21
 
 use (
-    ./services/auth
-    ./services/user
-    ./shared/libs
+    ./pkg/auth
+    ./pkg/user
+    ./cmd/api
     ./tools/cli
 )
 ```
@@ -84,30 +84,30 @@ use (
 2. **Add modules to workspace:**
 
 ```bash
-go work use ./services/auth
-go work use ./services/user
-go work use ./shared/libs
+go work use ./pkg/auth
+go work use ./pkg/user
+go work use ./cmd/api
 ```
 
 3. **Use modules without replace directives:**
 
-In `services/user/go.mod`:
+In `pkg/user/go.mod`:
 
 ```go
-module github.com/user/my-monorepo/services/user
+module github.com/user/my-monorepo/pkg/user
 
 go 1.21
 
-require github.com/user/my-monorepo/shared/libs v0.0.0
+require github.com/user/my-monorepo/pkg/auth v0.0.0
 ```
 
-The workspace automatically resolves `shared/libs` to the local directory.
+The workspace resolves pkg/auth to the local module. A placeholder v0.0.0 is only usable with the local workspace; publish and require a real version for builds outside it. Test release builds with GOWORK=off to catch dependencies masked by workspace resolution.
 
 ## Workspace Commands
 
 ```bash
 go work init              # Initialize new workspace
 go work use ./path/to/mod # Add module to workspace
-go work use -rm ./path    # Remove module from workspace
+go work edit -dropuse=./path # Remove module from workspace
 go work sync              # Sync workspace with module changes
 ```

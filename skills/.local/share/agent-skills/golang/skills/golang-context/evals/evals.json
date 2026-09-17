@@ -66,7 +66,7 @@
       {"id": "5.2", "text": "Does NOT pass r.Context() directly to the background audit goroutine (it gets cancelled when the handler returns)"},
       {"id": "5.3", "text": "Does NOT use context.Background() for the audit goroutine (that would lose trace_id and other values)"},
       {"id": "5.4", "text": "The audit goroutine preserves request-scoped values (trace_id) from the original context"},
-      {"id": "5.5", "text": "Launches the audit as a separate goroutine (go keyword) so the handler can return immediately"}
+      {"id": "5.5", "text": "Bounds and tracks asynchronous work; explains that guaranteed delivery across process failure needs durable storage, not just a goroutine."}
     ]
   },
   {
@@ -102,7 +102,7 @@
     "name": "db-context-variants",
     "description": "db.BeginTx (not db.Begin) is required for cancellable transactions; context must flow to every db call including transaction start",
     "prompt": "Review this Go repository method and identify all context-related issues:\n\n```go\nfunc (r *UserRepository) TransferCredits(ctx context.Context, fromID, toID string, amount int) error {\n    tx, err := r.db.Begin()\n    if err != nil {\n        return fmt.Errorf(\"begin tx: %w\", err)\n    }\n    defer tx.Rollback()\n\n    _, err = tx.ExecContext(ctx, \"UPDATE users SET credits = credits - $1 WHERE id = $2\", amount, fromID)\n    if err != nil {\n        return fmt.Errorf(\"debit: %w\", err)\n    }\n\n    _, err = tx.ExecContext(ctx, \"UPDATE users SET credits = credits + $1 WHERE id = $2\", amount, toID)\n    if err != nil {\n        return fmt.Errorf(\"credit: %w\", err)\n    }\n\n    return tx.Commit()\n}\n```\n\nWhat is wrong with how context is used? Fix it.",
-    "trap": "The model sees ExecContext being used and may think context usage is correct. The bug: db.Begin() starts the transaction without a context — if ctx is already cancelled when Begin() is called, the transaction still starts. Also, tx.Commit() should be tx.CommitContext(ctx) if available, but the main issue is db.BeginTx(ctx, nil) instead of db.Begin().",
+    "trap": "Using ExecContext alone misses transaction-lifetime cancellation. database/sql uses BeginTx(ctx, options) and Commit(); there is no sql.Tx.CommitContext method.",
     "assertions": [
       {"id": "8.1", "text": "Identifies db.Begin() as the bug — it starts a transaction ignoring the context; if ctx is cancelled before Begin() returns, the transaction still starts"},
       {"id": "8.2", "text": "Replaces db.Begin() with db.BeginTx(ctx, nil) — BeginTx respects context cancellation and won't start a transaction if ctx is already done"},
@@ -119,7 +119,7 @@
     "trap": "Model might stuff the database connection, logger, or order details into context values instead of passing them as explicit parameters or struct fields",
     "assertions": [
       {"id": "9.1", "text": "Database connection is passed as a struct field or explicit parameter, NOT via context value"},
-      {"id": "9.2", "text": "Logger is passed as a struct field or explicit parameter, NOT via context value"},
+      {"id": "9.2", "text": "Keeps an infrastructure logger explicit; allows a deliberately request-enriched logger in context when that is the project convention."},
       {"id": "9.3", "text": "Order details are passed as an explicit function parameter, NOT via context value"},
       {"id": "9.4", "text": "User ID and/or trace ID are stored in context values (these are request-scoped metadata)"},
       {"id": "9.5", "text": "Distinguishes between infrastructure dependencies (explicit) and request-scoped metadata (context values)"}
@@ -136,7 +136,7 @@
       {"id": "10.2", "text": "Does NOT block the main flow waiting for context cancellation (no <-ctx.Done() in the main goroutine for cleanup purposes)"},
       {"id": "10.3", "text": "The cleanup function removes the temporary file"},
       {"id": "10.4", "text": "Captures the stop function returned by AfterFunc for potential cancellation of the callback"},
-      {"id": "10.5", "text": "Also includes a defer-based cleanup as a safety net (AfterFunc + defer for belt-and-suspenders)"}
+      {"id": "10.5", "text": "Coordinates cancellation cleanup with normal completion; stop does not wait for a callback, and duplicate cleanup must not race."}
     ]
   }
 ]

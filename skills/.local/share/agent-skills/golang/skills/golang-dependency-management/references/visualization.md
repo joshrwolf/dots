@@ -11,7 +11,7 @@ Output: each line contains two space-separated fields (module and its requiremen
 ```
 example.com/main github.com/google/uuid@v1.6.0
 example.com/main golang.org/x/text@v0.3.7
-github.com/google/uuid@v1.6.0 golang.org/x/sys@v0.0.0-20210615035016
+example.com/helper@v1.2.0 example.com/platform@v1.0.0
 ```
 
 ## go mod why
@@ -24,7 +24,7 @@ Shows the shortest import path from your code to the module — useful for under
 
 ## Generate a Graph Image with modgraphviz
 
-Pin `modgraphviz` as a module tool, then pipe `go mod graph` into it.
+If the project wants this optional tool, pin `modgraphviz` and install Graphviz (`dot`), then pipe `go mod graph` into it.
 
 ```bash
 go get -tool golang.org/x/exp/cmd/modgraphviz@latest
@@ -43,6 +43,6 @@ Pin `digraph` as a module tool for graph queries.
 
 ```bash
 go get -tool golang.org/x/tools/cmd/digraph@latest
-# General graph queries on go mod graph output
-go mod graph | go tool digraph reverse example.com/some/module
+# Find transitive predecessors; use the exact versioned node from go mod graph
+go mod graph | go tool digraph reverse example.com/some/module@v1.2.3
 ```

@@ -60,9 +60,9 @@ O(n) — stores all items in a backing slice. The heap is an array-based structu
 - A\* pathfinding (explore nodes with lowest f-cost)
 - Load balancing (process requests from server with lowest load)
 
-## container/ring — Circular Buffer
+## container/ring — Circular Linked List
 
-A fixed-size circular linked list. Useful for rolling windows and round-robin scheduling.
+A circular linked list. `ring.New(n)` creates n elements; Link and Unlink can change its size. It can model a fixed-size rolling window when the links remain unchanged.
 
 ```go
 // Rolling average of last 5 values
@@ -73,12 +73,17 @@ for _, v := range values {
 }
 
 sum := 0.0
+count := 0
 r.Do(func(v any) {
     if v != nil {
         sum += v.(float64)
+        count++
     }
 })
-avg := sum / float64(r.Len())
+var avg float64
+if count > 0 {
+    avg = sum / float64(count) // partially filled windows count only present values
+}
 ```
 
 ## bufio — Buffered I/O
@@ -87,7 +92,7 @@ avg := sum / float64(r.Len())
 
 **bufio.Reader & Writer:** Call `Flush()` explicitly on writers and check its error. Buffered data is not written until flush or the buffer is full; ignoring a flush error can silently lose data.
 
-**bufio.Scanner:** Convenient line-by-line reading with `scanner.Scan()` and `scanner.Text()`. Default max token size is 64 KB; call `scanner.Buffer()` to increase for larger lines.
+**bufio.Scanner:** Convenient line-by-line reading with `scanner.Scan()` and `scanner.Text()`. The default maximum buffer is 64 KiB; the maximum token may be smaller because delimiters also need space. Set `scanner.Buffer()` above the largest expected line (including delimiter overhead), and check `scanner.Err()`.
 
 ## strings.Builder vs bytes.Buffer
 

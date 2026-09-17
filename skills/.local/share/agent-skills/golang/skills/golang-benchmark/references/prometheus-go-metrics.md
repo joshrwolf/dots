@@ -1,6 +1,6 @@
 # Prometheus Go Runtime Metrics Reference
 
-Complete listing of Go runtime metrics **actually exposed as Prometheus metrics** by `prometheus/client_golang` library.
+Reference to common metrics exposed by prometheus/client_golang. Names and defaults depend on both Go and client_golang versions, collector options, and platform; verify the actual registry output. This is not an exhaustive version-independent catalog.
 
 ---
 
@@ -10,7 +10,7 @@ Complete listing of Go runtime metrics **actually exposed as Prometheus metrics*
 - [Quick Reference](#quick-reference)
   - [Metrics with Labels](#metrics-with-labels)
   - [All Other Metrics](#all-other-metrics)
-- [Default Go Metrics (Always Exposed)](#default-go-metrics-always-exposed)
+- [Default Go Metrics (Collector and Version Dependent)](#default-go-metrics-collector-and-version-dependent)
   - [Memory Allocation](#memory-allocation)
   - [Heap State](#heap-state)
   - [Stack and Metadata](#stack-and-metadata)
@@ -44,7 +44,7 @@ Complete listing of Go runtime metrics **actually exposed as Prometheus metrics*
 
 **`runtime/metrics` are NOT Prometheus metrics.** They're Go runtime data structures.
 
-The Prometheus Go client library (`prometheus/client_golang`) **selectively converts some** `runtime/metrics` into Prometheus format. By default, it exposes only the traditional `go_memstats_*` and `go_gc_*` metrics to keep cardinality low.
+The Prometheus Go client library (`prometheus/client_golang`) **selectively converts some** `runtime/metrics` into Prometheus format. Current defaults include compatibility go_memstats metrics, GC/runtime state, version information, and selected runtime metrics such as GOGC, GOMEMLIMIT, and GOMAXPROCS. Registries and collector options can alter this set.
 
 **This document lists only Prometheus metrics** (the ones you actually scrape from `/metrics` endpoint).
 
@@ -61,13 +61,13 @@ The Prometheus Go client library (`prometheus/client_golang`) **selectively conv
 
 ### All Other Metrics
 
-All other metrics have **no labels**.
+Classic histogram metrics expose _bucket series with an le label plus _count and _sum. Other labels may come from collector configuration or scrape target labels such as job and instance; do not assume unlabeled series.
 
 ---
 
-## Default Go Metrics (Always Exposed)
+## Default Go Metrics (Collector and Version Dependent)
 
-These are exposed by default by `prometheus/client_golang`.
+These are commonly exposed by the Go collector. A custom registry must register it; options can disable compatibility memory metrics, and older versions differ.
 
 ### Memory Allocation
 
@@ -179,7 +179,7 @@ prometheus.NewRegistry().MustRegister(
 
 | Metric                 | Type         | Description        |
 | ---------------------- | ------------ | ------------------ |
-| `go_gc_pauses_seconds` | distribution | GC pause durations |
+| `go_gc_pauses_seconds` | histogram | GC pause durations |
 
 ### CPU Classes
 
@@ -222,25 +222,25 @@ prometheus.NewRegistry().MustRegister(
 | `go_sched_goroutines_goroutines` | gauge | Current total goroutines |
 | `go_sched_goroutines_created_goroutines_total` | counter | Total goroutines ever created |
 | `go_sched_goroutines_waiting_goroutines` | gauge | Goroutines waiting (not runnable) |
-| `go_sched_latencies_seconds` | distribution | Goroutine scheduling latency |
-| `go_sched_pauses_stopping_gc_seconds` | distribution | STW pause time (GC stop) |
-| `go_sched_pauses_stopping_other_seconds` | distribution | STW pause time (other stop) |
-| `go_sched_pauses_total_gc_seconds` | distribution | Total GC pause duration |
-| `go_sched_pauses_total_other_seconds` | distribution | Total other pause duration |
-| `go_sched_threads_total_threads` | counter | Total OS threads ever created |
+| `go_sched_latencies_seconds` | histogram | Goroutine scheduling latency |
+| `go_sched_pauses_stopping_gc_seconds` | histogram | STW pause time (GC stop) |
+| `go_sched_pauses_stopping_other_seconds` | histogram | STW pause time (other stop) |
+| `go_sched_pauses_total_gc_seconds` | histogram | Total GC pause duration |
+| `go_sched_pauses_total_other_seconds` | histogram | Total other pause duration |
+| `go_sched_threads_total_threads` | gauge | Current live OS threads |
 | `go_sync_mutex_wait_total_seconds_total` | counter | Total time goroutines waited on mutex |
 
 ### CGO Metrics
 
 | Metric                       | Type    | Description              |
 | ---------------------------- | ------- | ------------------------ |
-| `go_cgo_go_to_c_calls_total` | counter | Total calls from Go to C |
+| `go_cgo_go_to_c_calls_calls_total` | counter | Total calls from Go to C |
 
 ---
 
 ## Process Metrics
 
-Exposed by Prometheus `process` collector (not Go-specific):
+Exposed by the process collector where the OS and collector implementation support them (not Go-specific):
 
 ### CPU and Memory
 
@@ -266,11 +266,9 @@ Exposed by Prometheus `process` collector (not Go-specific):
 
 ### Page Faults
 
-| Metric                            | Type    | Description       |
-| --------------------------------- | ------- | ----------------- |
-| `process_page_faults_total`       | counter | Total page faults |
-| `process_page_faults_minor_total` | counter | Minor page faults |
-| `process_page_faults_major_total` | counter | Major page faults |
+The stock client_golang process collector does not expose process_page_faults_total,
+process_page_faults_minor_total, or process_page_faults_major_total. Use an OS/process
+exporter that documents its own page-fault metrics; verify names in its scrape output.
 
 ---
 
@@ -285,14 +283,14 @@ go_memstats_alloc_bytes
 # Live heap bytes (optional metric)
 go_gc_heap_live_bytes
 
-# Heap growth rate
+# Allocation throughput, including bytes later freed (not live-heap growth)
 rate(go_memstats_alloc_bytes_total[5m])
 ```
 
 ### GC Pressure
 
 ```promql
-# Worst-case GC pause (quantile 1 = max)
+# Maximum of recent runtime pause samples, not all-time maximum
 go_gc_duration_seconds{quantile="1"}
 
 # Average GC pause
@@ -318,7 +316,7 @@ delta(go_goroutines[1h])
 # Total CPU time consumed
 rate(process_cpu_seconds_total[5m])
 
-# CPU utilization ratio (0-1)
+# Ratio to Go execution capacity; process CPU may include other threads and exceed 1
 rate(process_cpu_seconds_total[5m]) / <GOMAXPROCS>
 ```
 

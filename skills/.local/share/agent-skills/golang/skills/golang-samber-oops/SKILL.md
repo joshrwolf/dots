@@ -22,7 +22,7 @@ paths:
 
 # samber/oops Structured Error Handling
 
-**samber/oops** is a drop-in replacement for Go's standard error handling that adds structured context, stack traces, error codes, public messages, and panic recovery. Variable data goes in `.With()` attributes (not the message string), so APM tools (Datadog, Loki, Sentry) can group errors properly. Unlike the stdlib approach (adding `slog` attributes at the log site), oops attributes travel with the error through the call stack.
+**samber/oops** is a library extending Go's standard error interface that adds structured context, stack traces, error codes, public messages, and panic recovery. Variable data goes in `.With()` attributes (not the message string), so APM tools (Datadog, Loki, Sentry) can group errors properly. Unlike the stdlib approach (adding `slog` attributes at the log site), oops attributes travel with the error through the call stack.
 
 ## Why use samber/oops
 
@@ -149,7 +149,8 @@ func (s *UserService) CreateOrder(ctx context.Context, req CreateOrderRequest) e
             Public("Not enough items in stock.").
             With("requested", req.Quantity).
             With("available", product.Stock).
-            Errorf("insufficient stock for product %s", req.ProductID)
+            With("product_id", req.ProductID).
+            Errorf("insufficient stock")
     }
 
     return nil
@@ -192,7 +193,7 @@ func Repository() error {
 
 ### DO: Keep error messages low-cardinality
 
-Error messages MUST be low-cardinality for APM aggregation. Interpolating variable data into the message breaks grouping in Datadog, Loki, Sentry.
+Error messages MUST be low-cardinality for APM aggregation. Interpolating variable data can fragment message-based grouping; the exact grouping behavior depends on the backend and its configuration.
 
 ```go
 // ✗ Bad — high-cardinality, breaks APM grouping
@@ -204,10 +205,10 @@ oops.With("user_id", userID).With("tenant_id", tenantID).Errorf("failed to proce
 
 ## Panic recovery
 
-`oops.Recover()` MUST be used in goroutine boundaries. Convert panics to structured errors:
+When the project deliberately contains panics at an isolated task boundary, `oops.Recover` runs a callback and returns an error. Call it inside the worker goroutine, handle its returned error, and recover only when continuing is safe. It cannot recover panics in child goroutines or repair shared state. See the [Recover API](https://pkg.go.dev/github.com/samber/oops#Recover).
 
 ```go
-func ProcessData(data string) (err error) {
+func ProcessData(data string) error {
     return oops.
         In("data-processor").
         Code("panic_recovered").
@@ -224,7 +225,8 @@ func ProcessData(data string) (err error) {
 `samber/oops` errors implement the standard `error` interface. Access additional info:
 
 ```go
-if oopsErr, ok := err.(oops.OopsError); ok {
+var oopsErr oops.OopsError
+if errors.As(err, &oopsErr) {
     fmt.Println("Code:", oopsErr.Code())
     fmt.Println("Domain:", oopsErr.Domain())
     fmt.Println("Tags:", oopsErr.Tags())

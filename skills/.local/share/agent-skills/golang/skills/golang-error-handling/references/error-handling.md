@@ -11,7 +11,7 @@
 
 ## The Single Handling Rule
 
-An error MUST be handled exactly once: either log it or return it, never both. Doing both causes duplicate log entries and makes debugging harder.
+Choose which layer owns the failure report. Logging the same failure at every propagation layer creates duplicates; retry diagnostics or an explicitly required local event may still be logged while returning the error.
 
 ```go
 // ✗ Bad — logs AND returns (duplicate noise)
@@ -51,7 +51,7 @@ func handleOrder(w http.ResponseWriter, r *http.Request) {
 
 ### When to panic
 
-Panic MUST only be used for truly unrecoverable states — programmer errors, impossible conditions, or corrupt invariants. NEVER use panic for expected failures like network timeouts or missing files.
+Use errors for expected failures such as timeouts or missing files. Panic can express a violated invariant or an explicit Must-style API contract. Whether recovery is safe depends on the state left behind, not merely whether a panic is technically recoverable.
 
 ```go
 // ✓ Acceptable — programmer error in initialization
@@ -67,7 +67,7 @@ func MustCompileRegex(pattern string) *regexp.Regexp {
 func GetUser(id string) *User {
     user, err := db.Find(id)
     if err != nil {
-        panic(err) // callers cannot recover gracefully
+        panic(err) // forces callers to recover instead of handling an expected error
     }
     return user
 }
@@ -75,24 +75,32 @@ func GetUser(id string) *User {
 
 ### Recovering from panics
 
-Use `recover` in deferred functions at goroutine boundaries (HTTP handlers, worker goroutines) to prevent one panic from crashing the entire process.
+Recover only at a boundary that can safely abandon the failed operation and report
+its failure. Recovery cannot repair corrupted shared state. It must run directly
+in a deferred function in the panicking goroutine; a parent cannot recover a child
+goroutine's panic.
+
+For an isolated task whose contract explicitly converts panics to errors:
 
 ```go
-func safeHandler(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        defer func() {
-            if r := recover(); r != nil {
-                slog.Error("panic recovered",
-                    "panic", r,
-                    "stack", string(debug.Stack()),
-                )
-                http.Error(w, "internal error", http.StatusInternalServerError)
-            }
-        }()
-        next.ServeHTTP(w, r)
-    })
+func runIsolatedTask(work func() error) (err error) {
+    defer func() {
+        if p := recover(); p != nil {
+            err = fmt.Errorf("task panicked: %v\n%s", p, debug.Stack())
+        }
+    }()
+    return work()
 }
 ```
+
+The named result is needed here because the deferred function assigns it. Return
+or report that error; do not convert a failed task into apparent success.
+
+`net/http.Server` already recovers handler panics and aborts the response. It does
+not protect goroutines started by the handler. Custom recovery must preserve
+`http.ErrAbortHandler`; after a response is committed it cannot reliably replace
+the status or body with a 500 response. See [Handler](https://pkg.go.dev/net/http#Handler)
+and the [panic/recover rules](https://go.dev/ref/spec#Handling_panics).
 
 For structured panic recovery with `samber/oops`, see the `samber/cc-skills-golang@golang-samber-oops` skill.
 
@@ -104,7 +112,7 @@ For structured panic recovery with `samber/oops`, see the `samber/cc-skills-gola
 - **Public/private separation** — safe message to show end users
 - ...
 
-`samber/oops` is a **drop-in replacement** that fills these gaps. Every `oops` error implements the standard `error` interface, works with `errors.Is`/`errors.As`, and adds structured attributes:
+For projects using `samber/oops`, the following example attaches this context to an error. Adopting the library is a separate dependency choice. Every `oops` error implements the standard `error` interface, works with `errors.Is`/`errors.As`, and adds structured attributes:
 
 ```go
 // ✗ Before — standard errors, no context

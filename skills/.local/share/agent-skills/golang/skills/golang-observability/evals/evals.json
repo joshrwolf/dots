@@ -85,13 +85,13 @@
     "name": "multi-window-burn-rate-slo-alerting",
     "description": "Tests knowledge of multi-window burn-rate SLO alerting instead of simple threshold",
     "prompt": "My Go API has a 99.9% availability SLO. I have this alert:\n\n- alert: HighErrorRate\n  expr: rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m]) > 0.001\n  for: 5m\n\nI get too many false positives from brief spikes but also miss slow degradation that stays just under 0.1%. How do I improve my alerting strategy?",
-    "trap": "Without the skill, the model suggests adjusting the threshold or the for: duration, missing the multi-window burn-rate approach that the skill specifically teaches",
+    "trap": "Fixes label matching and SLO window semantics without promising elimination of false positives.",
     "assertions": [
       {"id": "6.1", "text": "Recommends multi-window burn-rate alerting to address both false positives and slow burn scenarios"},
       {"id": "6.2", "text": "Explains error budget and burn rate concepts"},
       {"id": "6.3", "text": "Shows a fast burn window (e.g., 5m + 1h, ~14x burn rate) for critical/page alerts"},
       {"id": "6.4", "text": "Shows a slow burn window (e.g., 2h + 24h, 1-2x burn rate) for warning/ticket alerts"},
-      {"id": "6.5", "text": "Explains that ANDing short and long windows eliminates false positives from transient spikes"}
+      {"id": "6.5", "text": "Explains that combining windows reduces transient noise but does not eliminate all false positives; fixes status-label matching in the ratio."}
     ]
   },
   {
@@ -140,12 +140,12 @@
     "name": "otelslog-bridge-setup",
     "description": "Tests log-trace correlation setup using otelslog bridge",
     "prompt": "I have a Go service with both slog logging and OpenTelemetry tracing. I want to correlate them so that when I see a log line in Grafana Loki, I can jump to the trace in Tempo. How do I connect them?",
-    "trap": "Without the skill, the model may suggest manually extracting trace_id from span context and adding it as a slog attribute, missing the otelslog bridge",
+    "trap": "An otelslog handler exports OTel records; it needs an SDK log provider and does not append fields to an existing JSONHandler.",
     "assertions": [
-      {"id": "10.1", "text": "Recommends using the otelslog bridge from go.opentelemetry.io/contrib/bridges/otelslog"},
-      {"id": "10.2", "text": "Shows creating a handler with otelslog.NewHandler()"},
-      {"id": "10.3", "text": "Shows setting it as default with slog.SetDefault()"},
-      {"id": "10.4", "text": "Explains that trace_id and span_id are automatically injected into log records"},
+      {"id": "10.1", "text": "Uses an OTel log bridge with a configured LoggerProvider/exporter or a JSON handler that adds span attributes from context."},
+      {"id": "10.2", "text": "Shows valid configuration for the selected log pipeline; does not imply otelslog modifies an existing JSONHandler."},
+      {"id": "10.3", "text": "Preserves intended log destinations when setting a default handler; replacing it must not silently drop stdout output."},
+      {"id": "10.4", "text": "Explains otelslog exports OTel records with trace/span IDs and requires a log provider, not merely a tracing provider."},
       {"id": "10.5", "text": "Emphasizes using slog.*Context(ctx, ...) variants to enable the automatic injection"}
     ]
   },
@@ -179,12 +179,12 @@
     "name": "trace-context-lost-in-background-goroutine",
     "description": "Tests that a new goroutine spawned inside a span loses trace context unless ctx is explicitly propagated",
     "prompt": "My Go service sends a notification after processing an order. I want it to be non-blocking so I spawn a goroutine:\n\nfunc (s *OrderService) Process(ctx context.Context, order Order) error {\n    ctx, span := tracer.Start(ctx, \"process-order\")\n    defer span.End()\n\n    // business logic...\n\n    go func() {\n        s.notifier.Send(context.Background(), order.UserID, \"Order confirmed\")\n    }()\n\n    return nil\n}\n\nI have OpenTelemetry configured. Why doesn't the notification span appear as a child of process-order in my traces?",
-    "trap": "Without the skill, the model may suggest the span setup is fine or focus on goroutine lifecycle, missing that context.Background() discards the parent trace context",
+    "trap": "Preserves trace relationships without inheriting a canceled request lifetime for detached work.",
     "assertions": [
       {"id": "13.1", "text": "Identifies that context.Background() discards the trace context — the notification has no parent span"},
       {"id": "13.2", "text": "Explains that the trace context (trace_id, span_id) travels only inside the ctx variable"},
-      {"id": "13.3", "text": "Shows the fix: capture ctx before the goroutine and pass it in (not context.Background())"},
-      {"id": "13.4", "text": "Notes that the notification goroutine may outlive the parent span, but trace propagation still requires passing the original ctx"}
+      {"id": "13.3", "text": "Preserves span context while choosing an explicit owned lifetime, bounded cancellation and completion for background work."},
+      {"id": "13.4", "text": "Explains request context cancellation after the handler; detached work requires a deliberate lifecycle, not simply capturing ctx."}
     ]
   },
   {
@@ -192,10 +192,10 @@
     "name": "db-query-context-propagation",
     "description": "Tests that database calls must use *Context variants for trace propagation",
     "prompt": "My Go service has OpenTelemetry tracing, but I notice my database queries don't appear as spans in traces. Here's my code:\n\nresult, err := db.Query(\"SELECT * FROM users WHERE id = $1\", userID)\n\nWhat am I missing?",
-    "trap": "Without the skill, the model may suggest adding manual spans around the query, missing the fundamental issue of not passing context",
+    "trap": "QueryContext carries context but does not create database spans by itself.",
     "assertions": [
       {"id": "14.1", "text": "Identifies that db.Query should be db.QueryContext(ctx, ...) to propagate trace context"},
-      {"id": "14.2", "text": "Explains that without context, the trace is broken — child spans cannot be created"},
+      {"id": "14.2", "text": "Explains QueryContext carries context but does not instrument database/sql by itself; use an instrumented driver or explicit spans."},
       {"id": "14.3", "text": "Shows the corrected code using db.QueryContext(ctx, ...)"},
       {"id": "14.4", "text": "States that context is the vehicle that carries trace_id and span_id across boundaries"}
     ]
@@ -210,7 +210,7 @@
       {"id": "15.1", "text": "Recommends TraceIDRatioBased sampling with a specific ratio (e.g., 0.1 for 10%)"},
       {"id": "15.2", "text": "Mentions ParentBased sampler to respect parent's sampling decision and keep traces complete across services"},
       {"id": "15.3", "text": "Discusses head-based vs tail-based sampling tradeoffs"},
-      {"id": "15.4", "text": "Recommends avoiding large payloads as span attributes — log them instead and correlate via trace_id"},
+      {"id": "15.4", "text": "Avoids large/sensitive payloads in telemetry; moving them to logs still needs bounds and privacy controls."},
       {"id": "15.5", "text": "Explains the cost factors: span volume, span attributes, storage and indexing"}
     ]
   },
@@ -260,11 +260,11 @@
     "name": "go-runtime-alerts",
     "description": "Tests knowledge of Go runtime-specific alerts using default Prometheus client metrics",
     "prompt": "My Go service occasionally becomes unresponsive. I suspect goroutine leaks or GC pressure. What Go runtime-specific Prometheus alerts should I set up?",
-    "trap": "Without the skill, the model may suggest only basic goroutine count alerts, missing the full set of runtime alerts",
+    "trap": "Alloc/Sys is not system utilization or proof of a leak.",
     "assertions": [
       {"id": "19.1", "text": "Suggests alerting on go_goroutines exceeding a threshold (e.g., > 1000) for goroutine leaks"},
       {"id": "19.2", "text": "Suggests alerting on go_gc_duration_seconds for GC pressure"},
-      {"id": "19.3", "text": "Suggests alerting on go_memstats_alloc_bytes / go_memstats_sys_bytes for memory leaks"},
+      {"id": "19.3", "text": "Compares process memory to a configured budget or container limit; Alloc/Sys does not measure system-memory utilization or prove a leak."},
       {"id": "19.4", "text": "Suggests alerting on go_threads for high OS thread count"},
       {"id": "19.5", "text": "Uses for: duration on all non-binary alerts to avoid false positives"}
     ]
@@ -295,7 +295,7 @@
       {"id": "21.2", "text": "Explains the concept of error budget and burn rate"},
       {"id": "21.3", "text": "Includes fast burn window (e.g., 5m + 1h, 14.4x burn rate) as critical/page"},
       {"id": "21.4", "text": "Includes slow burn window (e.g., 2h + 24h, 1x burn rate) as warning/ticket"},
-      {"id": "21.5", "text": "Shows PromQL using AND of short and long windows to eliminate false positives from transient blips"}
+      {"id": "21.5", "text": "Shows matching aggregated series in short/long-window ratios and explains noise reduction rather than a guarantee against false positives."}
     ]
   },
   {
@@ -383,10 +383,10 @@
     "name": "continuous-profiling-env-toggle",
     "description": "Tests the recommendation to toggle continuous profiling via environment variables",
     "prompt": "I want to set up Pyroscope continuous profiling for my Go production service. Should I always have it enabled on all instances?",
-    "trap": "Without the skill, the model may recommend always-on profiling on all instances",
+    "trap": "Environment variables read at startup do not provide runtime reload.",
     "assertions": [
-      {"id": "28.1", "text": "Recommends toggling via environment variable (e.g., PROFILING_ENABLED)"},
-      {"id": "28.2", "text": "Mentions ~2-5% CPU overhead for continuous profiling"},
+      {"id": "28.1", "text": "Explains startup environment configuration needs restart; a runtime toggle requires separate control code."},
+      {"id": "28.2", "text": "Treats overhead as workload/profile-type dependent and measures it."},
       {"id": "28.3", "text": "Suggests starting with CPU + heap profiles only, adding mutex/block when needed"},
       {"id": "28.4", "text": "For large deployments, recommends enabling on a fraction of replicas (e.g., 1 in 10)"},
       {"id": "28.5", "text": "Shows code that checks the environment variable before starting Pyroscope"}
@@ -397,13 +397,13 @@
     "name": "rum-identity-key-email-trap",
     "description": "Tests that RUM distinct_id must be user_id, not email",
     "prompt": "I'm integrating PostHog server-side tracking in my Go service. For the DistinctId, I'm using the user's email since it's a natural identifier users know. Here's my code:\n\nposthogClient.Enqueue(posthog.Capture{\n    DistinctId: user.Email,\n    Event: \"order_completed\",\n})\n\nIs this correct?",
-    "trap": "Without the skill, the model may accept email as a valid identifier since it's unique",
+    "trap": "Stable internal identifiers can still be personal data.",
     "assertions": [
       {"id": "29.1", "text": "Rejects email as the DistinctId — must use user_id instead"},
       {"id": "29.2", "text": "Explains that email is mutable — users change it, splitting events into two users"},
       {"id": "29.3", "text": "Explains that email is PII, complicating GDPR/CCPA compliance"},
       {"id": "29.4", "text": "Notes that email leaks into third-party analytics systems as the identity key"},
-      {"id": "29.5", "text": "Shows corrected code using user.ID (immutable internal identifier)"}
+      {"id": "29.5", "text": "Uses an immutable approved identifier while recognizing user IDs remain personal data."}
     ]
   },
   {
@@ -411,11 +411,11 @@
     "name": "gdpr-consent-before-tracking",
     "description": "Tests that GDPR consent must be checked before sending analytics events",
     "prompt": "I'm adding PostHog server-side event tracking to my Go e-commerce service for European users. Here's my order completion handler — it tracks the event after business logic:\n\nfunc (s *OrderService) Complete(ctx context.Context, order Order) error {\n    // ... business logic ...\n    posthogClient.Enqueue(posthog.Capture{\n        DistinctId: order.UserID,\n        Event: \"order_completed\",\n    })\n    return nil\n}\n\nAnything I'm missing for EU compliance?",
-    "trap": "Without the skill, the model may suggest a privacy policy or cookie consent without the server-side consent check pattern",
+    "trap": "Implements applicable policy without conflating all jurisdictions and processing purposes.",
     "assertions": [
-      {"id": "30.1", "text": "Identifies that consent must be checked before sending the tracking event"},
+      {"id": "30.1", "text": "Identifies the applicable collection/consent policy before events are sent; does not treat GDPR and CCPA as identical blanket opt-in rules."},
       {"id": "30.2", "text": "Shows extracting consent from context and conditionally tracking"},
-      {"id": "30.3", "text": "Mentions GDPR fines (up to 4% of global revenue) or CCPA penalties"},
+      {"id": "30.3", "text": "Avoids unsupported universal legal claims or stale fine amounts."},
       {"id": "30.4", "text": "References data minimization — only collect what you need"},
       {"id": "30.5", "text": "Mentions data subject rights endpoints (data export and deletion)"}
     ]
@@ -425,13 +425,13 @@
     "name": "data-subject-rights-endpoints",
     "description": "Tests that GDPR requires data deletion and export endpoints that propagate to all systems",
     "prompt": "A user of my Go SaaS service (with PostHog analytics and Segment CDP) requests deletion of all their data under GDPR. My current implementation just deletes from the database. Is that sufficient?",
-    "trap": "Without the skill, the model may say database deletion is sufficient or only mention one additional system",
+    "trap": "Deletion requires authorization, durable cross-system progress and honest completion state.",
     "assertions": [
-      {"id": "31.1", "text": "States that deletion must propagate to ALL systems holding user data, not just the database"},
+      {"id": "31.1", "text": "Tracks authorized deletion across relevant systems with retention exceptions, durable retries and honest completion status."},
       {"id": "31.2", "text": "Lists the analytics platform (PostHog) as needing deletion"},
       {"id": "31.3", "text": "Lists the CDP (Segment) as needing deletion"},
       {"id": "31.4", "text": "References GDPR Article 17 Right to Erasure"},
-      {"id": "31.5", "text": "Also mentions the Right of Access (data export endpoint) as a requirement"}
+      {"id": "31.5", "text": "Mentions authenticated/authorized access and export workflows without claiming an HTTP endpoint is legally mandatory."}
     ]
   },
   {
@@ -461,7 +461,7 @@
       {"id": "33.3", "text": "Checks for proper structured logging with slog and context variants"},
       {"id": "33.4", "text": "Checks for OpenTelemetry spans on service methods, DB queries, and external calls"},
       {"id": "33.5", "text": "Checks for dashboards and alerts being wired up"},
-      {"id": "33.6", "text": "Checks that errors are either logged OR returned, never both"}
+      {"id": "33.6", "text": "Avoids duplicate error reports as errors propagate; intentional reporting boundaries may log and return."}
     ]
   },
   {
@@ -473,7 +473,7 @@
     "assertions": [
       {"id": "34.1", "text": "Recommends specific Grafana dashboard IDs (21221, 6671, or 10826)"},
       {"id": "34.2", "text": "Mentions dashboard 21221 for host + runtime combined view (or similar description)"},
-      {"id": "34.3", "text": "Explains that these dashboards use default Go collector metrics from the Prometheus client library"},
+      {"id": "34.3", "text": "Checks each dashboard's required metric names and exporters; host panels may need node_exporter beyond the Go collector."},
       {"id": "34.4", "text": "Shows how to import: Dashboards > New > Import, enter the dashboard ID"}
     ]
   },
@@ -487,7 +487,7 @@
       {"id": "35.1", "text": "Identifies that err is passed as a positional argument without a key name, which is incorrect for slog"},
       {"id": "35.2", "text": "Explains that slog expects alternating key-value pairs — passing err without a key makes slog treat it as a mismatched argument or key"},
       {"id": "35.3", "text": "Shows the corrected form using a named key: slog.ErrorContext(ctx, \"payment failed\", \"error\", err, \"order_id\", orderID)"},
-      {"id": "35.4", "text": "Notes that the correct form preserves the error's structured information (message, type) in the log record"}
+      {"id": "35.4", "text": "Explains the handler determines error serialization; a key preserves the field, not arbitrary error type/metadata automatically."}
     ]
   },
   {
@@ -536,10 +536,10 @@
     "name": "self-hosted-rum-gdpr",
     "description": "Tests the recommendation of self-hosted analytics for GDPR compliance simplification",
     "prompt": "We're building a Go SaaS product targeting EU customers. We need product analytics (funnels, user behavior) but our legal team is concerned about sending user data to US-based analytics vendors. What should we do?",
-    "trap": "Without the skill, the model may suggest DPAs and SCCs with SaaS vendors, missing the self-hosted option",
+    "trap": "Self-hosting does not itself eliminate personal-data transfer or privacy obligations.",
     "assertions": [
       {"id": "39.1", "text": "Recommends self-hosted analytics (PostHog or Matomo) for EU data residency"},
-      {"id": "39.2", "text": "Explains that self-hosting eliminates cross-border data transfer concerns"},
+      {"id": "39.2", "text": "Explains self-hosting permits residency control but does not by itself eliminate transfer or privacy obligations."},
       {"id": "39.3", "text": "Compares self-hosted vs SaaS tradeoffs (data residency, cost, maintenance, features)"},
       {"id": "39.4", "text": "Mentions that PostHog can be self-hosted to keep data in your own infrastructure"}
     ]
@@ -549,11 +549,11 @@
     "name": "oops-structured-errors-tracing",
     "description": "Tests awareness of samber/oops for structured errors in tracing context",
     "prompt": "My Go service records errors on OpenTelemetry spans using span.RecordError(err). But the error messages are generic like 'connection refused' with no stack trace or request context. How can I get richer error information in my traces?",
-    "trap": "Without the skill, the model may suggest manually adding attributes to spans or using fmt.Errorf with more context",
+    "trap": "RecordError does not automatically extract arbitrary error metadata or original stacks.",
     "assertions": [
-      {"id": "40.1", "text": "Recommends samber/oops for structured errors with stack traces"},
+      {"id": "40.1", "text": "Explains custom typed errors, explicit attributes, and optional oops stack capture; a new error library is not required."},
       {"id": "40.2", "text": "Shows using oops to wrap errors with domain (.In()), error code (.Code()), and structured attributes (.With())"},
-      {"id": "40.3", "text": "Explains that oops errors carry stack trace, structured context, and work with span.RecordError()"},
+      {"id": "40.3", "text": "Explains RecordError does not automatically extract oops stacks/metadata; explicit mapping/exporter integration is required."},
       {"id": "40.4", "text": "Mentions compatibility with errors.Is/errors.As and slog"}
     ]
   }

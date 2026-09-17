@@ -44,18 +44,18 @@ Go channels + goroutines become unwieldy for complex async pipelines: manual cha
 | Scenario | Tool | Why |
 | --- | --- | --- |
 | Transform a slice (map, filter, reduce) | loops and stdlib collections | Finite, synchronous, eager — no stream overhead needed |
-| Simple goroutine fan-out with error handling | `errgroup` | Standard lib, lightweight, sufficient for bounded concurrency |
+| Simple goroutine fan-out with error handling | `errgroup` | From golang.org/x/sync (separate module), lightweight, sufficient for bounded concurrency |
 | Infinite event stream (WebSocket, tickers, file watcher) | `samber/ro` | Declarative pipeline with backpressure, retry, timeout, combine |
 | Real-time data enrichment from multiple async sources | `samber/ro` | CombineLatest/Zip compose dependent streams without manual select |
 | Pub/sub with multiple consumers sharing one source | `samber/ro` | Hot observables (Share/Subjects) handle multicast natively |
 
-**Key differences: lo vs ro**
+**Collection transforms vs reactive streams**
 
 | Aspect | loops and stdlib collections | `samber/ro` |
 | --- | --- | --- |
-| Data | Finite slices | Infinite streams |
-| Execution | Synchronous, blocking | Asynchronous, non-blocking |
-| Evaluation | Eager (allocates intermediate slices) | Lazy (processes items as they arrive) |
+| Data | Finite slices | Finite or infinite streams |
+| Execution | Synchronous, blocking | Synchronous by default; sources/operators may schedule asynchronously |
+| Evaluation | Eager (intermediate slices are optional) | Lazy (processes items as they arrive) |
 | Timing | Immediate | Time-aware (delay, throttle, interval, timeout) |
 | Error model | Return `(T, error)` per call | Error channel propagates through pipeline |
 | Use case | Collection transforms | Event-driven, real-time, async pipelines |
@@ -78,8 +78,8 @@ Four building blocks:
 ```go
 observable := ro.Pipe2(
     ro.RangeWithInterval(0, 5, 1*time.Second),
-    ro.Filter(func(x int) bool { return x%2 == 0 }),
-    ro.Map(func(x int) string { return fmt.Sprintf("even-%d", x) }),
+    ro.Filter(func(x int64) bool { return x%2 == 0 }),
+    ro.Map(func(x int64) string { return fmt.Sprintf("even-%d", x) }),
 )
 
 observable.Subscribe(ro.NewObserver(
@@ -104,7 +104,7 @@ values, err := ro.Collect(observable)
 | `Share()` | Cold → hot with reference counting. Last unsubscribe tears down |
 | `ShareReplay(n)` | Same as Share + buffers last N values for late subscribers |
 | `Connectable()` | Cold → hot, but waits for explicit `.Connect()` call |
-| Subjects | Natively hot — call `.Send()`, `.Error()`, `.Complete()` directly |
+| Subjects | Natively hot — call `.Next()`, `.Error()`, `.Complete()` directly |
 
 | Subject | Constructor | Replay behavior |
 | --- | --- | --- |
@@ -149,7 +149,7 @@ For the complete operator catalog (150+ operators with signatures), see [Operato
 1. **Always handle all three events** — use `NewObserver(onNext, onError, onComplete)`, not just `OnNext`. Unhandled errors cause silent data loss
 2. **Use `Collect()` for synchronous consumption** — when the stream is finite and you need `[]T`, `Collect` blocks until complete and returns the slice + error
 3. **Prefer typed Pipe functions** — `Pipe2`, `Pipe3`...`Pipe25` catch type mismatches at compile time. Reserve untyped `Pipe` for dynamic operator chains
-4. **Bound infinite streams** — use `Take(n)`, `TakeUntil(signal)`, `Timeout(d)`, or context cancellation. Unbounded streams leak goroutines
+4. **Own long-lived subscriptions** — cancel or unsubscribe when their owner stops. `Take(n)` and `TakeUntil(signal)` can bound a stream; `Timeout(d)` detects inactivity, not total lifetime. A deliberately long-lived subscription is not itself a leak
 5. **Use `Tap`/`Do` for observability** — log, trace, or meter emissions without altering the stream. Chain `TapOnError` for error monitoring
 6. **Use loops for finite slice transforms.** Reach for `ro` when data arrives over time, from multiple sources, or needs retry/timeout/backpressure
 
@@ -160,7 +160,7 @@ For the complete operator catalog (150+ operators with signatures), see [Operato
 | Category | Plugins | Import path prefix |
 | --- | --- | --- |
 | Encoding | JSON, CSV, Base64, Gob | `plugins/encoding/...` |
-| Network | HTTP, I/O, FSNotify | `plugins/http`, `plugins/io`, `plugins/fsnotify` |
+| Network | HTTP, I/O, FSNotify | `plugins/io`, `plugins/fsnotify` (HTTP module availability must be checked for the selected release) |
 | Scheduling | Cron, ICS | `plugins/cron`, `plugins/ics` |
 | Observability | Zap, Slog, Zerolog, Logrus, Sentry, Oops | `plugins/observability/...`, `plugins/samber/oops` |
 | Rate limiting | Native, Ulule | `plugins/ratelimit/...` |

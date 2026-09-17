@@ -65,7 +65,7 @@ Use the standard Go benchmark function signature in `*_test.go`:
 
 ### Step 1: Measure baseline
 
-Run benchmarks with `-count=10` or more. Each run produces one data point — you need at least 10 to compute a meaningful confidence interval:
+Run benchmarks with `-count=10` or more. Each run produces one data point — 10 is a useful starting point, not a guarantee of precision or significance:
 
 ```bash
 go test -run='^$' -bench=BenchmarkParse -benchmem -count=10 ./pkg/parser | tee old.txt
@@ -116,7 +116,7 @@ Parse-32    12.00 ± 0%   6.000 ± 0%  -50.00% (p=0.000 n=10)
 | Element | Meaning | What to look for |
 | --- | --- | --- |
 | **median** (e.g., `4.592µ`) | Central value across runs — more robust than mean because outliers don't skew it | The reference number for this benchmark |
-| **± N%** (e.g., `± 2%`) | Half-width of the 95% confidence interval as a percentage of the median | Low (≤2%) = stable measurement. High (>5%) = noisy — investigate noise sources before trusting results |
+| **± N%** (e.g., `± 2%`) | Maximum distance from the median to a bound of the default 95% confidence interval, as a percentage of the median | Narrow intervals suggest low sampling uncertainty, not freedom from systematic bias; investigate wide intervals and changing conditions |
 | **vs base** (e.g., `-33.78%`) | Percentage change from the first input (base) to subsequent inputs | Negative = faster/smaller. Positive = slower/larger |
 | **p=N** (e.g., `p=0.000`) | p-value from Mann-Whitney U-test (non-parametric) | <0.05 = statistically significant. ≥0.05 = difference could be noise |
 | **n=N** (e.g., `n=10`) | Number of samples used in the comparison | Should usually match your `-count`; if it does not, check that each input file contains the same benchmark rows and units |
@@ -136,7 +136,7 @@ benchstat automatically normalizes units for display:
 Parse-32    4.592µ ± 8%   4.481µ ± 7%  ~ (p=0.089 n=10)
 ```
 
-This means benchstat cannot distinguish the difference from random noise. The wide confidence intervals (±8%, ±7%) overlap. Do not claim improvement. Options:
+The selected test did not detect a difference at its significance threshold. This is not proof of equality; overlap of separate confidence intervals is not the test for a difference. Do not claim improvement. Options:
 
 - Increase `-count` to 20+ (narrower CI may reveal a real difference)
 - Reduce noise sources (close applications, plug in power, use dedicated machine)
@@ -368,32 +368,32 @@ Standard behavior — uses non-parametric statistics (median + Mann-Whitney U-te
 Sequential runs (all old, then all new) are vulnerable to **systematic bias** — thermal throttling builds up over time, background processes come and go, CPU frequency scaling adapts. Interleaving reduces this:
 
 ```bash
-# Pre-compile both versions to avoid measuring compilation time
+# Pre-compile both versions to preserve the exact binaries and reduce between-run work
 go test -c -o old.test ./pkg/parser
 # ... make your change ...
 go test -c -o new.test ./pkg/parser
 
 # Interleave runs — alternating reduces systematic bias
 for i in $(seq 1 10); do
-    ./old.test -test.bench=BenchmarkParse -test.benchmem >> old.txt
-    ./new.test -test.bench=BenchmarkParse -test.benchmem >> new.txt
+    ./old.test -test.run='^$' -test.bench=BenchmarkParse -test.benchmem >> old.txt
+    ./new.test -test.run='^$' -test.bench=BenchmarkParse -test.benchmem >> new.txt
 done
 
 benchstat old.txt new.txt
 ```
 
-Pre-compiling with `go test -c` is critical — without it, each `go test -bench` invocation includes compilation time, which varies and contaminates results.
+The reported ns/op already excludes compilation and process startup. Pre-compilation makes interleaving reproducible and avoids compilation affecting machine state between measurements; it is not needed to remove compile time from ns/op. Clear old output files before starting a new experiment.
 
 ## How Many Runs?
 
 | Scenario | Minimum `-count` | Why |
 | --- | --- | --- |
 | Quick local check | 6 | Enough for a rough confidence interval; fast feedback loop |
-| Pre-merge comparison | 10 | Standard for detecting moderate (>5%) changes with confidence |
-| Detecting small changes (<5%) | 20-30 | More samples narrow the CI; needed when signal is small relative to noise |
-| Noisy CI environment | 20+ | Shared CI runners have higher variance; more runs compensate |
+| Pre-merge comparison | 10 | Starting budget; precision depends on effect size, variance, and experimental conditions |
+| Detecting small changes (<5%) | 20-30 | More samples may narrow random uncertainty; required count depends on variance and effect size |
+| Noisy CI environment | 20+ as a starting point | More samples can reduce random uncertainty; isolate systematic noise rather than relying on repetition |
 
-**Never "retry until significant"** — rerunning benchmarks until `~` goes away introduces selection bias (p-hacking). If 10 runs show `~`, the change is probably not meaningful. Increase run count **once** and accept the result.
+**Never "retry until significant"** — rerunning benchmarks until `~` goes away introduces selection bias (p-hacking). A `~` result can mean no effect or inadequate precision. Choose a sample budget before the experiment; if redesigning after an inconclusive result, report that decision and avoid selecting only favorable runs.
 
 At α=0.05, expect ~5% of benchmarks to randomly report significance with no real change (false positives). This is normal — don't chase them.
 
@@ -421,9 +421,9 @@ Shows median and confidence interval for each benchmark. Use to:
 | Rerunning until `~` disappears | Selection bias (p-hacking) — you're cherry-picking runs that showed improvement | Run once with high `-count`, accept the result |
 | Comparing across machines | Different CPUs, memory, OS = incomparable baselines | Same machine, same conditions, both runs |
 | Not interleaving | Systematic bias from thermal throttling, background load drift | Pre-compile both versions with `go test -c`, alternate runs |
-| Measuring compilation time | `go test -bench` compiles first; startup overhead varies | Pre-compile with `go test -c`, run the binary directly |
-| Ignoring wide CI (± >5%) | Results look significant but variance is too high to be trustworthy | Fix the noise first, then compare; or increase `-count` |
-| Comparing different `-count` values | Unequal sample sizes bias the comparison | Use the same `-count` for all inputs |
+| Assuming ns/op includes compilation | Go benchmark timers exclude compilation and process startup | Pre-compile for reproducible binaries/interleaving, not to subtract compilation from ns/op |
+| Ignoring wide intervals | Precision may be inadequate for the decision; no fixed interval width invalidates a result | Improve controls and report uncertainty relative to the effect size |
+| Unexplained unequal sample counts | Unequal counts are supported; missing/failed runs or different sampling conditions can still bias results | Inspect sample provenance; equal planned counts simplify comparisons |
 
 ## benchstat in CI
 

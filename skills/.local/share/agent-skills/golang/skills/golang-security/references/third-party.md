@@ -61,13 +61,21 @@ sentry.CaptureException(err) // DON'T: Captures full request context
 ```go
 sentry.Init(sentry.ClientOptions{
     Dsn: "https://xxx@sentry.io/123",
-    RequestHeaders: []string{"Accept", "User-Agent"},
+    SendDefaultPII: false,
     BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
         // Remove sensitive headers
         if event.Request != nil {
-            delete(event.Request.Headers, "Authorization")
-            delete(event.Request.Headers, "Cookie")
+            // Allowlist selected headers; map keys may have arbitrary casing.
+            for key := range event.Request.Headers {
+                if !strings.EqualFold(key, "Accept") && !strings.EqualFold(key, "User-Agent") {
+                    delete(event.Request.Headers, key)
+                }
+            }
+            event.Request.Cookies = ""
+            event.Request.Data = ""
         }
+        event.User = sentry.User{}
+        // Also review URLs, exception messages, breadcrumbs, extras and contexts.
         return event
     },
 })
@@ -91,22 +99,25 @@ analytics.Track("user_signed_up", analytics.Properties{
 
 ```go
 analytics.Track("user_signed_up", analytics.Properties{
-    "user_id":        user.ID,          // OK: Internal identifier
+    "user_id":        user.ID,          // Pseudonymous personal data; send only if approved
     "plan":           user.Plan,        // OK: Business data
-    "country":        user.CountryCode, // OK: Non-identifying
+    "country":        user.CountryCode, // May contribute to identification in combination
 })
 
-// Hash PII for correlation
-func hashEmail(email string) string {
-    h := sha256.New()
+// If approved correlation is needed, use a secret-keyed pseudonym.
+// This is still personal data, not anonymization. Do not truncate to 32 bits.
+func pseudonymizeEmail(key []byte, email string) string {
+    h := hmac.New(sha256.New, key)
     h.Write([]byte(email))
-    return hex.EncodeToString(h.Sum(nil))[:8]
+    return hex.EncodeToString(h.Sum(nil))
 }
 ```
 
 ---
 
 ## Data Filtering Layer
+
+This example only filters flat maps. It does not sanitize nested objects, arbitrary strings or SDK metadata. Prefer an allowlisted event schema; a blacklist like this is not a general PII guarantee.
 
 ```go
 type DataFilter struct {

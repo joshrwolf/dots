@@ -4,13 +4,13 @@
     "name": "orm-vs-sqlx-pgx-recommendation",
     "description": "Tests whether the model recommends sqlx/pgx over ORMs and explains why ORMs are harmful",
     "prompt": "I'm starting a new Go web application with PostgreSQL. I need to set up database access. What library should I use? I've heard GORM is popular and has good docs. Can you set up the database layer for me?",
-    "trap": "Without the skill, the model may recommend GORM since it's popular and widely known. The skill explicitly says to avoid ORMs and use sqlx or pgx.",
+    "trap": "Avoids unsupported speed guarantees and categorical refusal to use a requested or established ORM.",
     "assertions": [
-      {"id": "1.1", "text": "Recommends sqlx or pgx instead of GORM"},
+      {"id": "1.1", "text": "Prefers explicit SQL/sqlx/pgx for a new project while respecting a requested or established ORM."},
       {"id": "1.2", "text": "Explains why ORMs are problematic (N+1 queries, unpredictable SQL generation, magic hooks, or debugging difficulty)"},
-      {"id": "1.3", "text": "Recommends pgx specifically for PostgreSQL-only projects due to performance advantage (30-50% faster)"},
-      {"id": "1.4", "text": "Does NOT set up GORM or ent as the primary database library"},
-      {"id": "1.5", "text": "Mentions that learning the ORM API is harder than learning SQL or that ORMs hide SQL"}
+      {"id": "1.3", "text": "Explains pgx native PostgreSQL capabilities without claiming a universal percentage speed advantage."},
+      {"id": "1.4", "text": "Does not reject requested ORM work solely because the skill prefers SQL."},
+      {"id": "1.5", "text": "Explains concrete maintainability and query-inspection tradeoffs without claiming an ORM is always harder than SQL."}
     ]
   },
   {
@@ -88,12 +88,12 @@
     "name": "transaction-with-defer-rollback",
     "description": "Tests the correct transaction pattern: BeginTxx, defer Rollback, Commit",
     "prompt": "Write a Go function TransferFunds(ctx, db, fromAccountID, toAccountID string, amount int) that transfers money between two accounts atomically. Use sqlx.",
-    "trap": "Without the skill, the model may forget defer tx.Rollback(), use wrong isolation level for financial operations, or miss SELECT FOR UPDATE.",
+    "trap": "Protects transaction invariants and handles retries without deriving isolation level solely from the word financial.",
     "assertions": [
       {"id": "7.1", "text": "Uses BeginTxx (or BeginTx) to start a transaction"},
       {"id": "7.2", "text": "Calls defer tx.Rollback() immediately after BeginTxx"},
-      {"id": "7.3", "text": "Uses SELECT ... FOR UPDATE when reading balances to prevent race conditions"},
-      {"id": "7.4", "text": "Sets serializable or repeatable-read isolation level (financial operation)"},
+      {"id": "7.3", "text": "Protects balance invariants with row locking in a consistent order, atomic updates or equivalent transactional concurrency control."},
+      {"id": "7.4", "text": "Chooses isolation based on the invariant and retries serialization/deadlock failures when applicable; financial operations alone do not mandate a particular level."},
       {"id": "7.5", "text": "Calls tx.Commit() at the end of the successful path"}
     ]
   },
@@ -127,14 +127,14 @@
   },
   {
     "id": 10,
-    "name": "schema-creation-refusal",
+    "name": "requested-schema-review",
     "description": "Tests that the model refuses to generate database schemas",
     "prompt": "Create a PostgreSQL schema for an e-commerce application with users, products, orders, and order_items tables. Include proper indexes, foreign keys, and constraints.",
-    "trap": "Without the skill, the model will happily generate the full schema. The skill explicitly states AI must NOT generate database schemas.",
+    "trap": "Does not refuse authorized schema design; states assumptions and migration risks.",
     "assertions": [
-      {"id": "10.1", "text": "Does NOT generate a complete CREATE TABLE schema"},
-      {"id": "10.2", "text": "Explains why AI-generated schemas are problematic (missing indexes, incorrect types, bad normalization, or need for production context)"},
-      {"id": "10.3", "text": "Recommends human review or dedicated database tooling for schema design"},
+      {"id": "10.1", "text": "Authors the requested schema with stated assumptions and appropriate keys, constraints and nullability."},
+      {"id": "10.2", "text": "Assesses index, type, normalization and migration risks using the actual domain/workload."},
+      {"id": "10.3", "text": "Uses repository migration/review conventions and distinguishes drafting SQL from applying destructive production DDL."},
       {"id": "10.4", "text": "Mentions that schema design requires understanding data volumes, access patterns, or production constraints"}
     ]
   },
@@ -143,9 +143,9 @@
     "name": "batch-processing-sweet-spot",
     "description": "Tests that batch operations use reasonable batch sizes, not row-by-row or one giant batch",
     "prompt": "Write a Go function that inserts 50,000 user records into PostgreSQL. Use sqlx. Optimize for speed.",
-    "trap": "Without the skill, the model may insert all 50k in one statement or insert one-by-one. The skill recommends 100-1000 rows per batch.",
+    "trap": "Chooses bounded batches based on row size, database limits and transaction semantics.",
     "assertions": [
-      {"id": "11.1", "text": "Uses batching with a batch size between 100 and 1000 rows"},
+      {"id": "11.1", "text": "Uses measured/justified bounded batches, considering row sizes and database parameter limits."},
       {"id": "11.2", "text": "Does NOT insert all 50,000 rows in a single statement"},
       {"id": "11.3", "text": "Does NOT insert one row at a time in a loop"},
       {"id": "11.4", "text": "Uses NamedExecContext or a multi-row INSERT pattern"},
@@ -157,12 +157,12 @@
     "name": "cursor-pagination-over-offset",
     "description": "Tests that cursor-based pagination is recommended over OFFSET for large datasets",
     "prompt": "Write a Go function that paginates through a large events table (millions of rows) ordered by created_at. The function should support page navigation.",
-    "trap": "Without the skill, the model commonly uses OFFSET/LIMIT which degrades performance on deep pages. The skill requires cursor-based pagination.",
+    "trap": "A timestamp-only cursor skips tied rows; preserve a unique complete ordering key.",
     "assertions": [
-      {"id": "12.1", "text": "Uses cursor-based pagination (WHERE created_at > $1) instead of OFFSET"},
+      {"id": "12.1", "text": "Uses keyset pagination with a unique ordering, e.g. (created_at, id) > ($1, $2), so tied timestamps are not skipped."},
       {"id": "12.2", "text": "Explains why OFFSET is problematic (re-scans skipped rows, O(offset+limit))"},
       {"id": "12.3", "text": "Uses LIMIT with ORDER BY for the page size"},
-      {"id": "12.4", "text": "Returns a cursor value (e.g. the last created_at) for the next page"},
+      {"id": "12.4", "text": "Returns every component of the ordering key in the cursor for the next page."},
       {"id": "12.5", "text": "Uses parameterized queries for the cursor value"}
     ]
   },
@@ -185,13 +185,13 @@
     "name": "avoid-hidden-sql-features",
     "description": "Tests that the model avoids triggers, views, stored procedures in application code",
     "prompt": "I want to automatically update an 'updated_at' column every time a row is modified in my users table. Should I create a PostgreSQL trigger for this? Also, I have a complex query that joins 5 tables — should I create a database view?",
-    "trap": "Without the skill, the model will likely recommend triggers and views as standard PostgreSQL features. The skill says to avoid hidden SQL features.",
+    "trap": "Evaluates database-side behavior instead of treating all views/triggers/RLS as inherently wrong.",
     "assertions": [
-      {"id": "14.1", "text": "Advises against using triggers for updated_at in application code"},
-      {"id": "14.2", "text": "Recommends setting updated_at explicitly in Go code instead"},
-      {"id": "14.3", "text": "Advises against using views for the complex query"},
-      {"id": "14.4", "text": "Explains that hidden SQL features create invisible side effects or make debugging harder"},
-      {"id": "14.5", "text": "Recommends keeping SQL explicit and visible in Go code"}
+      {"id": "14.1", "text": "Evaluates updated_at triggers against explicit application writes and the presence of multiple writers."},
+      {"id": "14.2", "text": "Chooses/document tests a consistent timestamp ownership policy without categorically banning triggers."},
+      {"id": "14.3", "text": "Evaluates views as a query abstraction and materialized views as stored results with refresh/staleness tradeoffs."},
+      {"id": "14.4", "text": "Makes database-side behavior versioned, visible and tested; does not claim debugging becomes impossible."},
+      {"id": "14.5", "text": "Preserves authorization and session-state boundaries when using database features such as row-level security."}
     ]
   },
   {
@@ -203,7 +203,7 @@
     "assertions": [
       {"id": "15.1", "text": "Recommends pgx.CopyFrom using the COPY protocol"},
       {"id": "15.2", "text": "Shows pgx.CopyFromRows or pgx.CopyFromSlice usage"},
-      {"id": "15.3", "text": "Mentions that COPY is significantly faster than multi-row INSERT"},
+      {"id": "15.3", "text": "Explains COPY throughput benefits without guaranteeing it wins for every workload."},
       {"id": "15.4", "text": "Uses pgx.Identifier for the table name"},
       {"id": "15.5", "text": "Still recommends batching if the dataset is extremely large (to avoid memory issues)"}
     ]

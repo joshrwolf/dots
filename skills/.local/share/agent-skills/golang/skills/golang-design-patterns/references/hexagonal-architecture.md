@@ -168,7 +168,8 @@ func (h *OrderHandler) HandlePlaceOrder(w http.ResponseWriter, r *http.Request) 
 
     id, err := h.svc.PlaceOrder(r.Context(), req.Items)
     if err != nil {
-        http.Error(w, err.Error(), mapToHTTPStatus(err))
+        status, message := publicHTTPError(err) // translate; do not expose backend details
+        http.Error(w, message, status)
         return
     }
 
@@ -202,6 +203,8 @@ func (r *OrderRepo) FindByID(ctx context.Context, id string) (*domain.Order, err
 ## Multiple Entry Points
 
 The hexagonal approach shines when the same `OrderService` is called from different primary adapters — HTTP for external clients, gRPC for internal services, a message consumer for async events. Each adapter is wired in its own `cmd/` entry point.
+
+The payment-plus-save snippets show dependency direction, not an atomic transaction across remote services. Production charging requires idempotency and a durable recovery/compensation strategy if persistence fails after a charge. Omitted repository and service methods must implement the declared interfaces.
 
 ## Wiring
 

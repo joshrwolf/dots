@@ -2,23 +2,23 @@
   {
     "id": 1,
     "name": "buffer-for-io",
-    "description": "RenderAndStream must use strings.Builder with Grow pre-allocation, not += or strings.Join",
+    "description": "Selects efficient string assembly and I/O without false allocation claims.",
     "task": "Write a function `RenderAndStream(w io.Writer, parts []string) error` in package `render`. It assembles all parts into a single output (joining with newlines), then streams the result to the provided io.Writer.\n\nA teammate suggests: 'Just use strings.Join(parts, \"\\n\") — it's one line and idiomatic.' Another says: 'Use bytes.Buffer, it's the standard Go buffer type.' Implement the most efficient approach and explain if either suggestion is correct.",
     "assertions": [
-      { "id": "1.1", "text": "Uses strings.Builder (not bytes.Buffer) for string assembly — bytes.Buffer stores []byte and converting to string at the end requires a copy; strings.Builder writes directly to a string", "trap": "Model follows teammate's bytes.Buffer suggestion" },
-      { "id": "1.2", "text": "Calls b.Grow(totalSize) before writing parts — pre-allocating avoids repeated reallocation as the builder grows", "trap": "Model omits Grow even though size is known" },
-      { "id": "1.3", "text": "Does not use strings.Join — it allocates a new string; the goal is to write directly to io.Writer without a redundant intermediate string copy", "trap": "Model accepts the strings.Join suggestion" }
+      { "id": "1.1", "text": "Accepts strings.Join plus io.WriteString, bytes.Buffer.WriteTo, or another appropriate implementation; no guaranteed fastest choice without measurement.", "trap": "Model follows teammate's bytes.Buffer suggestion" },
+      { "id": "1.2", "text": "Avoids quadratic assembly and handles writer errors/short writes according to the io.Writer contract.", "trap": "Model omits Grow even though size is known" },
+      { "id": "1.3", "text": "Recognizes strings.Join already uses an efficiently sized Builder internally; it does not introduce an extra string copy compared with the equivalent Builder.", "trap": "Model accepts the strings.Join suggestion" }
     ]
   },
   {
     "id": 2,
     "name": "sorted-set",
-    "description": "SortedSet[T] must use cmp.Ordered, not a custom Ordered interface or comparable",
+    "description": "Separates equality constraints from ordering and search cost.",
     "task": "Write a `SortedSet[T]` in package `collections` that maintains elements in sorted order. Support Insert(T), Contains(T) bool, Min() (T, bool), Max() (T, bool), and Len() int. Elements must be orderable. Use binary search for efficiency.\n\nA teammate says: 'Define your own `Ordered` interface with a `Less(T) bool` method — it's more flexible and lets users supply custom comparison logic.' Another says: 'Just use `comparable` as the constraint — it works for any type that can be compared.' Which approach is correct?",
     "assertions": [
-      { "id": "2.1", "text": "Uses `cmp.Ordered` constraint (from the cmp package), not `comparable` (too loose — no < operator) and not a custom Ordered interface with Less() method", "trap": "Model accepts teammate's custom interface or comparable suggestion" },
+      { "id": "2.1", "text": "Uses cmp.Ordered for built-in ordered types or an explicit comparator/valid ordered-method contract for custom types.", "trap": "Model accepts teammate's custom interface or comparable suggestion" },
       { "id": "2.2", "text": "Rejects the comparable suggestion — comparable only ensures == and != but not < or >, which are required for sorting", "trap": "Model uses comparable thinking it's sufficient for ordered operations" },
-      { "id": "2.3", "text": "Binary search for Insert/Contains using slices.BinarySearch or sort.SearchInts or equivalent O(log n) approach", "trap": "Model linear-scans" }
+      { "id": "2.3", "text": "Uses logarithmic binary search, while recognizing insertion into a slice is O(n).", "trap": "Model linear-scans" }
     ]
   },
   {
@@ -29,7 +29,7 @@
     "assertions": [
       { "id": "3.1", "text": "Uses `weak.Pointer` or `weak.Make`", "trap": "Without skill, model uses runtime.SetFinalizer instead of weak.Pointer" },
       { "id": "3.2", "text": "Uses `runtime.AddCleanup` (not SetFinalizer)", "trap": "Without skill, model defaults to the more error-prone SetFinalizer pattern" },
-      { "id": "3.3", "text": "Dead map entries automatically removed", "trap": "none — both approaches can achieve this" }
+      { "id": "3.3", "text": "Removes stale entries safely without deleting a replacement entry; explains GC/cleanup execution is not guaranteed or prompt.", "trap": "none — both approaches can achieve this" }
     ]
   },
   {
@@ -40,18 +40,18 @@
     "assertions": [
       { "id": "4.1", "text": "Uses `unsafe.Add` for pointer arithmetic", "trap": "Without skill, model uses old-style uintptr(base) + offset casting" },
       { "id": "4.2", "text": "No intermediate `uintptr` variable", "trap": "Model might split pointer arithmetic across statements" },
-      { "id": "4.3", "text": "Bounds check before unsafe access", "trap": "none — baseline safety" }
+      { "id": "4.3", "text": "Checks bounds, alignment, and byte order; distinguishes native-layout unsafe access from portable binary decoding.", "trap": "none — baseline safety" }
     ]
   },
   {
     "id": 5,
     "name": "full-slice-expr",
-    "description": "SplitIntoChunks with full-slice expression to prevent append aliasing",
+    "description": "Distinguishes append safety from independent backing storage.",
     "task": "Write a function `SplitIntoChunks(data []byte, chunkSize int) [][]byte` in package `chunker`. Split data into chunks of chunkSize bytes (last chunk may be smaller). IMPORTANT: callers will independently append to each returned chunk, so chunks must not share backing arrays — appending to one chunk must never corrupt another.",
     "assertions": [
-      { "id": "5.1", "text": "Chunks are append-safe (no aliasing)", "trap": "none — both approaches achieve this" },
-      { "id": "5.2", "text": "Uses full-slice expression `[:n:n]`", "trap": "Without skill, model uses make+copy per chunk instead of zero-alloc full-slice" },
-      { "id": "5.3", "text": "Minimal extra allocations (reuses backing array)", "trap": "Without skill, model allocates N fresh arrays instead of reusing original" }
+      { "id": "5.1", "text": "Explains full slice expressions prevent append overwrites but still share the original array.", "trap": "none — both approaches achieve this" },
+      { "id": "5.2", "text": "Copies chunks when the explicit no-shared-backing-array requirement is literal; does not claim [:n:n] creates independence.", "trap": "Without skill, model uses make+copy per chunk instead of zero-alloc full-slice" },
+      { "id": "5.3", "text": "Checks chunkSize > 0 and distinguishes append isolation from independent storage.", "trap": "Without skill, model allocates N fresh arrays instead of reusing original" }
     ]
   },
   {
@@ -79,13 +79,13 @@
   {
     "id": 8,
     "name": "map-memory-diag",
-    "description": "Maps never shrink — the only fix is rebuilding; GC hints and nil-assignment are insufficient",
+    "description": "Explains live map storage, surviving entries, and RSS limits.",
     "task": "A Go service processes events. During traffic spikes, `var eventIndex map[string]*Event` grows to 10M entries. After the spike, events expire and are deleted, leaving ~1000 entries. But RSS memory stays at 2GB. The team added `delete(eventIndex, key)` for every expired event — why doesn't memory decrease?\n\nTwo teammates propose fixes:\n- Alice: 'Call `runtime.GC()` after bulk deletes — it will force the GC to reclaim unused map memory.'\n- Bob: 'Set `eventIndex = nil` and then reassign `eventIndex = make(map[string]*Event)` — that releases the old map to the GC.'\n\nAre either of these correct? Write a `Diagnose()` comment and a `Compact()` method on `EventStore` that correctly fixes the issue. Package `events`.",
     "assertions": [
-      { "id": "8.1", "text": "Correctly diagnoses root cause: Go maps never shrink their bucket array — delete() removes entries but the allocated bucket memory is retained, preventing GC of the backing structure" },
-      { "id": "8.2", "text": "Evaluates Bob's nil-reassign approach: correctly identifies this as valid — setting eventIndex = nil releases the old map to GC, and rebuilding with make creates a fresh small map" },
-      { "id": "8.3", "text": "Evaluates Alice's runtime.GC() approach: correctly identifies this as insufficient alone — GC cannot reclaim a live map's bucket array; the map itself must be rebuilt" },
-      { "id": "8.4", "text": "Compact() creates a fresh map with make and copies surviving entries — rebuilding is the only way to reclaim bucket memory from a Go map" }
+      { "id": "8.1", "text": "Explains delete does not promise storage compaction or prompt RSS reduction; current maps use Swiss Tables, not the old hmap bucket model." },
+      { "id": "8.2", "text": "Replacing the map can release storage, but dropping it without copying loses the surviving entries." },
+      { "id": "8.3", "text": "GC cannot reclaim still-referenced map storage; RSS may remain high due to allocator/scavenger behavior." },
+      { "id": "8.4", "text": "Copies survivors into a new synchronized map and releases references to the old map; avoids guaranteeing immediate RSS reduction." }
     ]
   },
   {
@@ -94,8 +94,8 @@
     "description": "LoadBalancer cycling backends using container/ring",
     "task": "Write a `LoadBalancer` in package `lb` that distributes requests across backends using round-robin. NewLoadBalancer(backends []string) *LoadBalancer creates the balancer. Next() string returns the next backend in rotation, cycling forever. The balancer must work correctly even after billions of calls (no integer overflow on counter).",
     "assertions": [
-      { "id": "9.1", "text": "Uses `container/ring` for round-robin", "trap": "Without skill, model uses atomic counter with modulo (also valid but not stdlib)" },
-      { "id": "9.2", "text": "No integer overflow risk", "trap": "none — both ring (no counter) and uint64 modulo (safe wrap) avoid overflow" },
+      { "id": "9.1", "text": "Uses a ring or bounded index with correct wraparound; both are standard-library approaches.", "trap": "Without skill, model uses atomic counter with modulo (also valid but not stdlib)" },
+      { "id": "9.2", "text": "Handles counter wrap and empty input explicitly without division by zero or nil-ring dereference.", "trap": "none — both ring (no counter) and uint64 modulo (safe wrap) avoid overflow" },
       { "id": "9.3", "text": "Correct rotation on each call", "trap": "none — baseline correctness" }
     ]
   },
@@ -105,9 +105,9 @@
     "description": "DocumentStore with 20-field struct — pointer map needed",
     "task": "Write a `DocumentStore` in package `docs`. Document has 20 fields: ID, Title, Author, Body, Summary, Category, Tags []string, CreatedAt, UpdatedAt, PublishedAt time.Time, ViewCount, LikeCount, CommentCount int, Draft bool, Locale, Slug, MetaTitle, MetaDescription, CanonicalURL, RevisionID string. The store is read-heavy (100:1 read:write). Implement Add(doc Document), Get(id string) (*Document, bool), Update(id string, doc Document).",
     "assertions": [
-      { "id": "10.1", "text": "Uses pointer map `map[string]*Document`", "trap": "Without skill, model uses value map — copies 500+ byte struct on every read" },
-      { "id": "10.2", "text": "Get returns stored pointer (no copy)", "trap": "Without skill, model copies from value map and takes & of copy" },
-      { "id": "10.3", "text": "Uses `sync.RWMutex` for concurrent reads", "trap": "none — baseline concurrency" }
+      { "id": "10.1", "text": "Chooses pointer/value storage according to ownership and measured copying costs, not field count alone.", "trap": "Without skill, model uses value map — copies 500+ byte struct on every read" },
+      { "id": "10.2", "text": "Does not return an unprotected mutable pointer while claiming complete concurrent safety.", "trap": "Without skill, model copies from value map and takes & of copy" },
+      { "id": "10.3", "text": "Synchronizes shared map access and any referenced mutable document fields; explains snapshot versus shared-object semantics.", "trap": "none — baseline concurrency" }
     ]
   },
   {
@@ -117,19 +117,19 @@
     "task": "Write a `CoordTracker` in package `geo`. It tracks millions of active GPS positions. Coord has Lat, Lon float64 (16 bytes total). Implement Update(id string, lat, lon float64), Position(id string) (Coord, bool), Remove(id string). Optimize the internal map for maximum read throughput given the tiny struct size.",
     "assertions": [
       { "id": "11.1", "text": "Uses value map `map[string]Coord` (not pointer)", "trap": "Model might over-optimize with pointer map for 'millions' of entries" },
-      { "id": "11.2", "text": "Explains < 128-byte threshold for value vs pointer choice", "trap": "Without skill, model doesn't articulate the size-based tradeoff" },
+      { "id": "11.2", "text": "Explains locality, indirection, copying, and GC tradeoffs without a universal 128-byte threshold.", "trap": "Without skill, model doesn't articulate the size-based tradeoff" },
       { "id": "11.3", "text": "Proportional complexity for struct size", "trap": "Without skill, model may over-engineer with sharding for a simple case" }
     ]
   },
   {
     "id": 12,
     "name": "clip-after-delete",
-    "description": "PurgeInactive with slices.DeleteFunc + Clip to release dead references",
+    "description": "Distinguishes clearing stale references from releasing backing storage.",
     "task": "Write a function `PurgeInactive(users []User) []User` in package `cleanup`. User has ID string, Active bool, and Profile []byte (can be several MB). Remove all inactive users. The returned slice must not hold references to any inactive User's Profile data in its excess capacity. Users are typically 90% inactive after a bulk import.",
     "assertions": [
       { "id": "12.1", "text": "No dead references in result slice", "trap": "none — both approaches achieve this" },
-      { "id": "12.2", "text": "Uses `slices.DeleteFunc` + `slices.Clip`", "trap": "Without skill, model uses manual loop + make instead of modern slices package" },
-      { "id": "12.3", "text": "Excess capacity released", "trap": "none — both approaches release excess" }
+      { "id": "12.2", "text": "Uses a fresh filtered slice or clears obsolete slots; slices.DeleteFunc clears the tail since Go 1.22.", "trap": "Without skill, model uses manual loop + make instead of modern slices package" },
+      { "id": "12.3", "text": "Explains slices.Clip only limits capacity; it does not release the backing array. Copy when retained array storage itself matters.", "trap": "none — both approaches release excess" }
     ]
   },
   {
@@ -141,7 +141,7 @@
       { "id": "13.1", "text": "Implements heap.Interface (Len, Less, Swap, Push, Pop) on a custom type", "trap": "Without skill, model might use a sorted slice with re-sort on every insert" },
       { "id": "13.2", "text": "Uses heap.Fix for UpdatePriority (O(log n)) instead of removing and re-adding", "trap": "Without skill, model removes + re-pushes (O(n + log n)) or re-sorts (O(n log n))" },
       { "id": "13.3", "text": "Maintains an index map (id -> position in heap) for O(1) lookup before Fix", "trap": "Without skill, model linear-scans the heap to find the task by ID" },
-      { "id": "13.4", "text": "Calls heap.Init before first use", "trap": "Model might forget initialization" },
+      { "id": "13.4", "text": "Initializes a prepopulated heap with heap.Init; an empty heap already satisfies the invariant.", "trap": "Model might forget initialization" },
       { "id": "13.5", "text": "Next() uses heap.Pop (not direct slice access and removal)", "trap": "Model might read [0] and manually remove" }
     ]
   },
@@ -177,9 +177,9 @@
     "description": "Tests knowledge of bufio.Scanner's 64KB default token limit",
     "task": "Write a function `ParseLogFile(r io.Reader) ([]LogEntry, error)` in package `logs`. Each log line is a JSON object. Some log entries contain large base64-encoded payloads and can be up to 2MB per line. Parse all lines and return the entries.",
     "assertions": [
-      { "id": "16.1", "text": "Uses bufio.Scanner for line-by-line reading", "trap": "Without skill, model might use bufio.NewReader + ReadString or ReadBytes" },
-      { "id": "16.2", "text": "Calls scanner.Buffer() to increase the max token size beyond the 64KB default", "trap": "Without skill, model uses default Scanner which silently truncates or errors on lines > 64KB" },
-      { "id": "16.3", "text": "Sets buffer size to at least 2MB to accommodate the large lines", "trap": "Model might use Scanner without adjusting buffer, failing on large lines" },
+      { "id": "16.1", "text": "Uses Scanner with sufficient capacity or a Reader-based line parser.", "trap": "Without skill, model might use bufio.NewReader + ReadString or ReadBytes" },
+      { "id": "16.2", "text": "If using Scanner, raises the token buffer limit and does not silently ignore ErrTooLong.", "trap": "Without skill, model uses default Scanner which silently truncates or errors on lines > 64KB" },
+      { "id": "16.3", "text": "Allows delimiter overhead above the largest accepted 2 MB line.", "trap": "Model might use Scanner without adjusting buffer, failing on large lines" },
       { "id": "16.4", "text": "Checks scanner.Err() after the scan loop", "trap": "Model might ignore scanner errors" },
       { "id": "16.5", "text": "Unmarshals each line as JSON into LogEntry struct", "trap": "None — baseline correctness" }
     ]

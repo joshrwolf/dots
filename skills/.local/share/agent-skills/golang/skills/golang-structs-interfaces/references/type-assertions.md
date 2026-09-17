@@ -2,16 +2,16 @@
 
 ## Safe Type Assertion
 
-Type assertions MUST use the comma-ok form. The single-value form panics when the dynamic type does not match, turning a recoverable branch into a crash:
+Use comma-ok when a mismatch should be handled. The single-value form panics on mismatch and is suitable only for an established invariant whose violation should panic:
 
 ```go
-// Good — safe
+// Recoverable mismatch
 s, ok := val.(string)
 if !ok {
     // handle
 }
 
-// Bad — panics if val is not a string
+// Requires an established string invariant; panics if it is violated
 s := val.(string)
 ```
 
@@ -34,7 +34,7 @@ default:
 
 Cases are evaluated in order, so put concrete types before interface types — a concrete type listed after an interface it satisfies is unreachable.
 
-A `nil` interface value matches `case nil`, not `default`. Add that case explicitly when nil is a valid input, otherwise it silently falls through to the `default` branch and gets reported as an unexpected type.
+A nil interface matches `case nil` when present, otherwise `default`. A typed nil pointer in an interface matches its pointer type (or a satisfied interface), not `case nil`.
 
 ## Optional Behavior with Type Assertions
 

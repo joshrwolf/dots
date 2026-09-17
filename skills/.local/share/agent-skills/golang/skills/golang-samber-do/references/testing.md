@@ -2,7 +2,7 @@
 
 ## Container Cloning
 
-Clone containers for isolated tests:
+Clone registrations for tests. Lazy providers are recreated, but eager values are shallow-copied: pointers and their resources may remain shared. Override the same registered type before invoking dependents, and avoid shutting down resources shared with the original container.
 
 ```go
 func TestUserService(t *testing.T) {
@@ -11,7 +11,7 @@ func TestUserService(t *testing.T) {
 
     // Override with mocks
     mockDB := &MockDatabase{}
-    do.OverrideValue(testInjector, mockDB)
+    do.OverrideValue[Database](testInjector, mockDB)
 
     // Test with mocked dependencies
     service := do.MustInvoke[UserService](testInjector)
@@ -23,7 +23,9 @@ func TestUserService(t *testing.T) {
 
 ```go
 func SetupTestContainer(t *testing.T) do.Injector {
+    t.Helper()
     injector := do.New()
+    t.Cleanup(func() { injector.Shutdown() })
 
     do.Provide(injector, func(i do.Injector) (Database, error) {
         return &MockDatabase{}, nil

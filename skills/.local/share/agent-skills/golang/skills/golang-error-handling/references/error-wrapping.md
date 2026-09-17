@@ -14,7 +14,7 @@
 
 ## Error Wrapping with `%w`
 
-Wrapping preserves the original error in a chain that callers can inspect with `errors.Is` and `errors.As`. Errors SHOULD be wrapped at each layer to build a readable chain.
+Wrapping preserves the original error in a chain that callers can inspect with `errors.Is` and `errors.As`. Add context when it distinguishes the operation; forwarding an already informative error unchanged is valid.
 
 ```go
 // ✓ Good — wraps with context, preserves the chain
@@ -29,23 +29,41 @@ func (s *UserService) GetUser(id string) (*User, error) {
 
 ### `%w` vs `%v`: controlling exposure
 
-Use `%w` within your module to preserve the error chain. Use `%v` at public API / system boundaries to prevent callers from depending on internal error types.
+Use `%w` when the cause is part of the caller-visible contract, including public APIs. Translate implementation-specific failures to domain errors when callers should not depend on them. `%v` prevents unwrapping but retains the complete error text; it is not redaction.
 
 ```go
-// Internal layer — wrap to preserve chain
+// The database cause is exposed to callers of this internal method
 func (r *repo) fetch(id string) error {
     return fmt.Errorf("querying database: %w", err)
 }
 
-// Public API boundary — break chain to hide internals
+// This API intentionally exposes text but not the backend error type
 func (s *PublicService) GetItem(id string) error {
     err := s.repo.fetch(id)
     if err != nil {
-        return fmt.Errorf("item unavailable: %v", err) // %v — callers cannot unwrap
+        return fmt.Errorf("item unavailable: %v", err) // text still contains backend details
     }
     return nil
 }
 ```
+
+When clients need a stable domain condition, return or wrap that sentinel instead:
+
+```go
+var ErrNotFound = errors.New("item not found")
+
+func lookupError(id string, err error) error {
+    if errors.Is(err, sql.ErrNoRows) {
+        return fmt.Errorf("item %q: %w", id, ErrNotFound)
+    }
+    return err
+}
+```
+
+Here callers can match `ErrNotFound` without depending on `sql.ErrNoRows`.
+The fallback still exposes other errors intentionally; decide that policy for the
+actual API. HTTP responses need a separate choice of client-safe text.
+See [Go's error API guidance](https://go.dev/blog/go1.13-errors#whether-to-wrap).
 
 ## Inspecting Errors: `errors.Is` and `errors.As`
 

@@ -24,7 +24,7 @@ Use compiler diagnostics when pprof shows a hot function and you need to underst
 
 ## Escape Analysis
 
-Escape analysis determines whether a variable can live on the stack (cheap — freed when the function returns) or must be allocated on the heap (expensive — requires GC). "Moved to heap" means the compiler decided the variable might outlive the function.
+Escape analysis determines whether a variable can live on the stack (cheap — freed when the function returns) or must be allocated on the heap (expensive — requires GC). "Moved to heap" can reflect lifetime, size limits, or conservative analysis. Inlining can change the result at a caller.
 
 ### Commands
 
@@ -39,8 +39,8 @@ go build -gcflags="-m -m" ./...
 # Filter to a specific package
 go build -gcflags="-m" ./pkg/parser 2>&1 | grep "escapes"
 
-# Filter to a specific file
-go build -gcflags="-m" ./pkg/parser/parse.go 2>&1
+# Filter diagnostics to a file while compiling the complete package
+go build -gcflags="-m" ./pkg/parser 2>&1 | grep "parse.go"
 
 # Apply to all dependencies too (usually too noisy, but useful for debugging)
 go build -gcflags="all=-m" ./...
@@ -69,12 +69,12 @@ The `-m -m` (verbose) output shows the **escape chain** — why the compiler dec
 | Cause | Example | Why it escapes |
 | --- | --- | --- |
 | **Returning a pointer to a local** | `return &result` | The local must outlive the function call — caller holds a reference |
-| **Interface boxing** | `var x any = myStruct` | Concrete type stored in `interface{}` allocates a copy on the heap |
+| **Interface boxing** | `var x any = myStruct` | May allocate if the boxed value escapes; conversion alone does not imply heap allocation |
 | **Closure capturing a local** | `go func() { use(localVar) }()` | The goroutine may run after the enclosing function returns |
-| **Slice append beyond capacity** | `s = append(s, item)` when len == cap | Triggers a new backing array allocation on the heap |
-| **Passing pointer to unanalyzable function** | `json.Marshal(&data)` | Compiler can't prove the pointer won't be retained across package boundary |
+| **Slice append beyond capacity** | `s = append(s, item)` when len == cap | Needs new backing storage; heap placement depends on escape analysis and compiler optimizations |
+| **Passing pointer to unanalyzable function** | `json.Marshal(&data)` | The callee may retain or indirectly expose data; package boundaries alone do not block analysis because exported escape summaries are available |
 | **Storing in a struct field that escapes** | `obj.Field = &local` | If `obj` is heap-allocated, anything it points to must also be on the heap |
-| **fmt.Sprintf and friends** | `fmt.Sprintf("%d", n)` | Arguments are boxed into `any` (interface boxing) + result string is heap-allocated |
+| **fmt.Sprintf and friends** | `fmt.Sprintf("%d", n)` | Formatting often allocates a result and may allocate boxed arguments; inspect the actual call-site diagnostics |
 | **Sending pointer on channel** | `ch <- &data` | Channel receiver may be a different goroutine with a different lifetime |
 
 **Not all escapes are problems.** Only investigate escapes in functions that pprof identifies as allocation-heavy. A function called once at startup can escape freely.
@@ -90,7 +90,7 @@ Inlining replaces a function call with the function body at the call site. This 
 go build -gcflags="-m" ./... 2>&1 | grep "can inline"
 
 # Show which functions CANNOT be inlined (with the reason)
-go build -gcflags="-m" ./... 2>&1 | grep "cannot inline"
+go build -gcflags="-m -m" ./... 2>&1 | grep "cannot inline"
 
 # Show inlining decisions for a specific package
 go build -gcflags="-m" ./pkg/handler 2>&1 | grep "inline"
@@ -116,17 +116,17 @@ go build -gcflags="-m" ./pkg/handler 2>&1 | grep -E "(inline|escape|moved to hea
 ./pkg/handler/handler.go:42:19: inlining call to validateInput
 ```
 
-The inline cost budget is approximately 80–82 AST nodes (as of Go 1.22+; has increased in later releases). Functions with higher cost (more AST nodes, complex control flow) are not inlined. Check the actual threshold with `-gcflags="-m -m"`.
+Inlining uses a compiler cost model, not a literal AST-node count. Budgets and call-site heuristics vary by Go version and PGO decisions. Check `-gcflags="-m -m"` for the actual cost and decision.
 
 ### Common inlining blockers
 
 | Blocker | Why it prevents inlining | Mitigation |
 | --- | --- | --- |
-| **Function too complex** | Body cost exceeds budget (80) | Split into smaller functions; extract the cold path |
+| **Function too complex** | Body cost exceeds the applicable compiler budget | Split into smaller functions; extract the cold path |
 | **`defer` statement** | Adds cleanup code that complicates inlining | Remove `defer` from tiny hot functions; call cleanup directly |
 | **`recover()` call** | Forces stack frame preservation | Move `recover()` to a wrapper function |
 | **`go` statement** | Goroutine launch has implicit complexity | Extract goroutine body into a separate function |
-| **Type switch / interface method call** | Dynamic dispatch can't be resolved at compile time | Use concrete types in hot paths |
+| **Type switch / interface method call** | Dynamic dispatch may limit optimization; type switches and interface calls do not categorically block inlining, and devirtualization can help | Use concrete types in hot paths |
 | **`select` statement** | Complex runtime interaction | Simplify channel patterns in hot functions |
 | **Large function body** | Many statements add up in cost | Break into smaller functions — the hot inner function may inline |
 
@@ -151,7 +151,7 @@ GOSSAFUNC=myapp/pkg/parser.Parse go build ./...
 
 # Combine with a specific output directory
 GOSSAFUNC=Parse GOSSADIR=/tmp/ssa go build ./pkg/parser
-# Creates /tmp/ssa/ssa.html
+# Writes function-specific SSA HTML files under /tmp/ssa; inspect the compiler-reported path
 ```
 
 ### Reading ssa.html
@@ -202,7 +202,7 @@ go tool objdump -S -s Parse myapp
 go tool objdump -s 'myapp/pkg/parser.Parse' myapp
 
 # Disassemble a specific text range (by address)
-go tool objdump -start 0x4a3b00 -end 0x4a3c00 myapp
+go tool objdump myapp 0x4a3b00 0x4a3c00
 
 # List all symbols in a binary
 go tool nm myapp | grep Parse
@@ -239,10 +239,10 @@ GOARCH=arm64 go build -gcflags="-S" ./pkg/parser 2>&1 | head -200
 
 ```bash
 # Before your change
-go build -gcflags="-S" ./pkg/parser 2>&1 > asm-before.txt
+go build -gcflags="-S" ./pkg/parser > asm-before.txt 2>&1
 
 # After your change
-go build -gcflags="-S" ./pkg/parser 2>&1 > asm-after.txt
+go build -gcflags="-S" ./pkg/parser > asm-after.txt 2>&1
 
 # Diff the assembly
 diff asm-before.txt asm-after.txt

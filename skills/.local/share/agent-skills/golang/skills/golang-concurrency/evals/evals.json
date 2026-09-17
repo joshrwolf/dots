@@ -9,7 +9,7 @@
       { "id": "1.1", "text": "Does NOT use time.After inside the loop body" },
       {
         "id": "1.2",
-        "text": "Creates time.NewTimer (or time.NewTicker) outside the loop"
+        "text": "Creates a reusable timer outside the loop; a periodic ticker alone does not express inactivity timeout."
       },
       {
         "id": "1.3",
@@ -21,7 +21,7 @@
       },
       {
         "id": "1.5",
-        "text": "For Go 1.23+, does not use the old stale-drain pattern; for Go <1.23 compatibility, drains before Reset when Stop reports a possible pending value"
+        "text": "Accounts for the module timer semantics; with pre-1.23 timer behavior, avoids blocking while draining an already consumed timer."
       }
     ]
   },
@@ -137,25 +137,25 @@
   {
     "id": 6,
     "name": "send-copies-not-pointers",
-    "description": "Tests whether the model sends copies (not pointers) through channels to avoid shared memory",
+    "description": "Tests ownership of reference-bearing messages.",
     "prompt": "I have a producer goroutine that creates Task structs and sends them to a channel for worker goroutines to process. The Task struct has fields like ID, Payload, and Status. Write the producer and consumer code.",
-    "trap": "Without the skill, the model sends *Task pointers through the channel, creating invisible shared memory that defeats the purpose of channels",
+    "trap": "Assumes value-channel sends deep-copy slices or that pointer ownership cannot transfer safely.",
     "assertions": [
       {
         "id": "6.1",
-        "text": "Sends Task values (not *Task pointers) through the channel, OR explicitly documents why pointers are safe in this case"
+        "text": "Uses exclusive ownership transfer, immutable data, or synchronization for sent values."
       },
       {
         "id": "6.2",
-        "text": "The channel type is chan Task (value type) rather than chan *Task"
+        "text": "Allows chan Task or chan *Task when ownership is correct."
       },
       {
         "id": "6.3",
-        "text": "Does not mutate the Task struct after sending it on the channel (or sends a copy)"
+        "text": "Explains that copying a Task containing slices/maps/pointers does not deep-copy its payload."
       },
       {
         "id": "6.4",
-        "text": "If pointers are used, explicitly acknowledges the shared-memory risk and explains the mitigation"
+        "text": "Avoids concurrent mutation of the same referenced data after send."
       }
     ]
   },
@@ -222,7 +222,7 @@
     "name": "sync-map-vs-rwmutex-decision",
     "description": "Tests whether the model correctly chooses between sync.Map and RWMutex+map based on access patterns",
     "prompt": "I need a concurrent cache in Go. Keys are strings, values are structs. The cache will have frequent writes from many goroutines updating the same keys, and reads happen about as often as writes. Which synchronization approach should I use?",
-    "trap": "Without the skill, the model recommends sync.Map because it sounds like 'concurrent map', but sync.Map is slower for write-heavy overlapping-key patterns",
+    "trap": "Treats concurrent map performance or runtime race detection as unconditional.",
     "assertions": [
       {
         "id": "9.1",
@@ -234,7 +234,7 @@
       },
       {
         "id": "9.3",
-        "text": "Explains that for frequent writes with overlapping keys, RWMutex+map is faster"
+        "text": "Does not promise RWMutex+map always wins; discusses invariants and benchmarks for the workload."
       },
       {
         "id": "9.4",
@@ -242,20 +242,20 @@
       },
       {
         "id": "9.5",
-        "text": "Mentions that concurrent map read/write without synchronization causes a hard crash (not just a data race)"
+        "text": "Unsynchronized map access involving writes is a data race and may produce an unrecoverable runtime error; detection is not guaranteed."
       }
     ]
   },
   {
     "id": 10,
     "name": "sync-pool-reset-before-put",
-    "description": "Tests whether the model resets objects before returning them to sync.Pool",
+    "description": "Checks clean reuse and ownership of pooled buffers.",
     "prompt": "Write a Go function that uses sync.Pool to reuse bytes.Buffer objects for encoding JSON responses in an HTTP handler. Show the pool setup and the handler.",
-    "trap": "Without the skill, the model returns the buffer to the pool without calling Reset(), leading to dirty objects and data corruption",
+    "trap": "Reuses stale contents or retains buffer aliases after returning the object to the pool.",
     "assertions": [
       {
         "id": "10.1",
-        "text": "Calls buf.Reset() BEFORE bufPool.Put(buf), not after Get()"
+        "text": "Resets the buffer before reuse, on either Get or Put, and avoids aliases after Put."
       },
       {
         "id": "10.2",
@@ -275,25 +275,25 @@
   {
     "id": 11,
     "name": "goroutine-panic-recovery",
-    "description": "Tests whether the model adds panic recovery at goroutine boundaries in production code",
+    "description": "Checks panic containment and background task lifetime",
     "prompt": "Write a Go HTTP server that spawns a background goroutine per request to do async processing (e.g., sending a notification email). The main handler returns 202 Accepted immediately.",
-    "trap": "Without the skill, the model spawns go func() without recover(), so a panic in the background goroutine crashes the entire server process",
+    "trap": "Blindly adds recovery without considering shared state, or assumes HTTP server recovery covers child goroutines.",
     "assertions": [
       {
         "id": "11.1",
-        "text": "Adds defer func() { recover() }() or equivalent panic recovery inside the goroutine"
+        "text": "Chooses an explicit panic policy based on failure isolation; recovery, when appropriate, runs inside the worker goroutine."
       },
       {
         "id": "11.2",
-        "text": "Logs or handles the recovered panic (not just silently swallowed)"
+        "text": "If recovering, reports the failed operation instead of silently treating it as successful."
       },
       {
         "id": "11.3",
-        "text": "The goroutine has a shutdown mechanism (context, done channel, or similar)"
+        "text": "Bounds background work lifetime and waits for shutdown; does not rely on the request context after ServeHTTP returns."
       },
       {
         "id": "11.4",
-        "text": "Mentions that a panic in a goroutine crashes the entire process"
+        "text": "Explains that unrecovered child-goroutine panics terminate the process and net/http recovery does not cover those goroutines."
       }
     ]
   },

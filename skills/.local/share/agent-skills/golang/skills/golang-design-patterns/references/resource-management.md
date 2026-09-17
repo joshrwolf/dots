@@ -28,7 +28,7 @@ if err != nil {
 f.Close() // might never run if a new return is added above
 ```
 
-This applies to all closeable resources: files, SQL rows, HTTP response bodies, gzip readers, bufio scanners wrapping readers, etc.
+This applies to all closeable resources: files, SQL rows, HTTP response bodies, gzip readers, underlying readers owned by code using bufio.Scanner (Scanner itself has no Close method), etc.
 
 ```go
 resp, err := http.Get(url)
@@ -68,9 +68,11 @@ func NewResource() *Resource {
 - The cleanup function receives a copy of the value, not the object itself — no resurrection risk
 - Cleanups run even if the object is part of a cycle
 
+Cleanups are a fallback, not prompt release: they may never run before exit. The callback and argument must not retain the wrapper. Methods using the raw handle may need runtime.KeepAlive(r) after the last operation. An explicit Close must coordinate with the cleanup to avoid double release.
+
 ## Resource Pools
 
-Resource pools SHOULD use channels with a fixed capacity for bounded allocation. Use channel-based pools or `sync.Pool` to manage limited resources between consumers. Always set a maximum size:
+For database/sql use its existing DB connection pool and configure its limits. For other resource types, a bounded channel can represent ownership; sync.Pool is not a resource pool and cannot enforce limits or close evicted items. This example is a fixed-size pool: callers return each borrowed connection exactly once and stop borrowing before shutdown.
 
 ```go
 type ConnPool struct {
@@ -78,6 +80,7 @@ type ConnPool struct {
 }
 
 func NewConnPool(maxSize int, factory func() (*Conn, error)) (*ConnPool, error) {
+    if maxSize <= 0 { return nil, errors.New("pool size must be positive") }
     pool := &ConnPool{
         conns: make(chan *Conn, maxSize),
     }
@@ -85,6 +88,8 @@ func NewConnPool(maxSize int, factory func() (*Conn, error)) (*ConnPool, error) 
     for range maxSize {
         conn, err := factory()
         if err != nil {
+            close(pool.conns)
+            for opened := range pool.conns { opened.Close() }
             return nil, fmt.Errorf("creating connection: %w", err)
         }
         pool.conns <- conn
@@ -123,17 +128,21 @@ func main() {
 
     srv := &http.Server{Addr: ":8080", Handler: router}
 
-    // Start server in background
-    go func() {
-        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-            slog.Error("server error", "error", err)
-        }
-    }()
+    // Report startup failures instead of waiting forever for a signal.
+    serveErr := make(chan error, 1)
+    go func() { serveErr <- srv.ListenAndServe() }()
 
     slog.Info("server started", "addr", ":8080")
 
     // Wait for interrupt signal
-    <-ctx.Done()
+    select {
+    case <-ctx.Done():
+    case err := <-serveErr:
+        if !errors.Is(err, http.ErrServerClosed) {
+            slog.Error("server error", "error", err)
+        }
+    }
+    stop() // restore normal signal handling for a second interrupt
     slog.Info("shutting down...")
 
     // Give outstanding requests time to complete
@@ -142,6 +151,7 @@ func main() {
 
     if err := srv.Shutdown(shutdownCtx); err != nil {
         slog.Error("shutdown error", "error", err)
+        srv.Close() // policy: force-close after the grace period
     }
 
     // Close other resources: database connections, message queues, etc.
@@ -149,6 +159,12 @@ func main() {
     slog.Info("shutdown complete")
 }
 ```
+
+This schematic main logs server failure and completes cleanup. In an executable,
+put the lifecycle in a run() error function and return startup/shutdown failures;
+main should set a nonzero exit status only after run has completed cleanup.
+
+HTTP Shutdown does not wait for hijacked connections such as WebSockets. Track and close them and background workers separately before closing their dependencies.
 
 This pattern applies to any long-running service — gRPC servers, message consumers, background workers. The key elements are:
 

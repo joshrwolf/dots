@@ -1,7 +1,9 @@
 name: Dependabot Auto-Merge
 
 on:
-  pull_request:
+  # No checkout or execution of PR code in this privileged workflow.
+  pull_request_target:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
@@ -11,7 +13,7 @@ jobs:
   auto-merge:
     name: Auto-Merge
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
+    if: github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]'
 
     steps:
       - name: Fetch Dependabot metadata
@@ -21,7 +23,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Auto-merge minor and patch updates
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        if: steps.metadata.outputs.update-type == 'version-update:semver-minor' || steps.metadata.outputs.update-type == 'version-update:semver-patch'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}

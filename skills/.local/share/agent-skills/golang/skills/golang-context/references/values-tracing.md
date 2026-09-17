@@ -75,4 +75,4 @@ func (c *HTTPClient) Do(ctx context.Context, method, url string, body io.Reader)
 }
 ```
 
-With OpenTelemetry, this propagation is handled automatically through the `otel` SDK and `propagation.TraceContext`, but the mechanism is the same: context carries the trace state, and it must be propagated through every layer.
+These X-Trace-ID examples provide custom correlation, not a complete tracing implementation. With OpenTelemetry, configured HTTP instrumentation or explicit propagator Extract/Inject calls carry W3C traceparent/tracestate; merely installing the SDK does not instrument every HTTP call. Create child spans rather than reusing an incoming span ID for a new operation.

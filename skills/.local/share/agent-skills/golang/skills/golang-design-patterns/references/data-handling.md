@@ -12,9 +12,9 @@ func AllUsers(db *sql.DB) ([]User, error) {
 }
 
 // Good — iterator yields one at a time
-func AllUsers(db *sql.DB) iter.Seq2[User, error] {
+func AllUsers(ctx context.Context, db *sql.DB) iter.Seq2[User, error] {
     return func(yield func(User, error) bool) {
-        rows, err := db.Query("SELECT * FROM users")
+        rows, err := db.QueryContext(ctx, "SELECT id, name, email FROM users")
         if err != nil {
             yield(User{}, err)
             return
@@ -31,6 +31,7 @@ func AllUsers(db *sql.DB) iter.Seq2[User, error] {
                 return
             }
         }
+        if err := rows.Err(); err != nil { yield(User{}, err) }
     }
 }
 ```
@@ -43,21 +44,27 @@ When transferring large data between services (e.g., 1M rows from DB, 1M rows in
 // Stream JSON array to HTTP response — constant memory
 func (h *Handler) ExportUsers(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
-    w.Write([]byte("["))
+    if _, err := io.WriteString(w, "["); err != nil { return }
+    enc := json.NewEncoder(w)
 
     first := true
     for user, err := range h.repo.AllUsers(r.Context()) {
         if err != nil {
             slog.Error("streaming user", "error", err)
-            return
+            panic(http.ErrAbortHandler) // response is committed; abort incomplete JSON
         }
         if !first {
-            w.Write([]byte(","))
+            if _, err := io.WriteString(w, ","); err != nil { return }
         }
-        json.NewEncoder(w).Encode(user)
+        if err := enc.Encode(user); err != nil {
+            slog.Error("encoding streamed user", "error", err)
+            panic(http.ErrAbortHandler)
+        }
         first = false
     }
 
-    w.Write([]byte("]"))
+    if _, err := io.WriteString(w, "]"); err != nil {
+        slog.Error("completing stream", "error", err)
+    }
 }
 ```

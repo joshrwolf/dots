@@ -2,13 +2,13 @@
   {
     "id": 1,
     "name": "constructor-injection-not-globals",
-    "description": "Tests that dependencies are injected via constructors, not global variables or init()",
+    "description": "Tests explicit service dependencies and ownership rather than hidden mutable package state",
     "prompt": "I have a UserService that needs a database connection and a logger. What's the best way to set this up in Go? I was thinking of using a package-level var for the database.",
-    "trap": "Without the skill, the model may accept the global variable approach or use init() for setup. The skill explicitly forbids globals and init() for service setup.",
+    "trap": "Hidden database lookup obscures ownership and makes test isolation difficult. A constructor fits this long-lived service; other APIs may use function parameters or configuration values.",
     "assertions": [
       {"id": "1.1", "text": "Uses constructor injection (NewUserService taking dependencies as parameters)"},
       {"id": "1.2", "text": "Explicitly advises against package-level variables for service dependencies"},
-      {"id": "1.3", "text": "Explains why globals are problematic (untestable, hidden dependencies, or coupling)"},
+      {"id": "1.3", "text": "Explains the ownership, hidden-dependency, or test-isolation costs of the proposed package-level database"},
       {"id": "1.4", "text": "Does NOT use init() for service initialization"},
       {"id": "1.5", "text": "Selects the constructor return type for the intended public contract"}
     ]
@@ -30,13 +30,13 @@
   {
     "id": 3,
     "name": "container-not-passed-as-dependency",
-    "description": "Tests that the DI container is never passed as a dependency (service locator anti-pattern)",
+    "description": "Tests resolved dependencies for business services rather than hidden container lookup",
     "prompt": "I'm using samber/do for DI in my Go project. My UserService needs a Database and a Mailer. Should I pass the do.Injector to UserService so it can look up what it needs?",
-    "trap": "Without the skill, the model may accept passing the injector/container as a dependency. The skill explicitly forbids this as the service locator anti-pattern.",
+    "trap": "Passing an injector to this business service hides its Database and Mailer dependencies. Resolution belongs in wiring/provider code; explicit scope factories may also need container access.",
     "assertions": [
       {"id": "3.1", "text": "Advises against passing the injector/container as a dependency"},
       {"id": "3.2", "text": "Identifies this as the service locator anti-pattern"},
-      {"id": "3.3", "text": "Shows that the Injector should only exist at the composition root (main or app startup)"},
+      {"id": "3.3", "text": "Keeps injector use in wiring, providers, or explicit scope factories rather than ordinary UserService methods"},
       {"id": "3.4", "text": "Shows UserService receiving Database and Mailer directly as constructor parameters"},
       {"id": "3.5", "text": "Shows the provider function using do.MustInvoke inside the provider, not inside UserService methods"}
     ]
@@ -44,15 +44,15 @@
   {
     "id": 4,
     "name": "manual-di-for-small-projects",
-    "description": "Tests that small projects use manual DI, not a library",
+    "description": "Tests whether straightforward service wiring justifies a DI library",
     "prompt": "I'm building a small Go REST API with about 5 services: config, database, user repository, user service, and HTTP handler. What DI approach should I use?",
-    "trap": "Without the skill, the model may recommend a DI library like Wire or Fx for any project. The skill says small projects (< 10 services) should use manual constructor injection.",
+    "trap": "A library adds registration and runtime failure modes. Evaluate the actual wiring and lifecycle needs without inventing a service-count threshold.",
     "assertions": [
-      {"id": "4.1", "text": "Recommends manual constructor injection for a project with only 5 services"},
+      {"id": "4.1", "text": "Recommends explicit manual wiring for the straightforward graph described"},
       {"id": "4.2", "text": "Does NOT recommend a DI library as the primary approach"},
       {"id": "4.3", "text": "Shows wiring in main() with explicit constructor calls in dependency order"},
-      {"id": "4.4", "text": "Initializes infrastructure first, then repositories, then services, then transport"},
-      {"id": "4.5", "text": "Mentions that a DI library becomes worthwhile at 10-20+ services"}
+      {"id": "4.4", "text": "Orders initialization according to actual dependencies rather than requiring named architectural layers"},
+      {"id": "4.5", "text": "Chooses a library only for concrete lifecycle/wiring needs, not an arbitrary service-count threshold."}
     ]
   },
 
@@ -91,7 +91,7 @@
     "name": "one-container-per-app-not-per-request",
     "description": "Tests that a DI container is created once per application, not per request",
     "prompt": "I'm building a Go HTTP API with samber/do. In each HTTP handler, I'm creating a new do.New() injector, providing all services, then invoking the one I need. This way each request gets fresh services. Is this correct?",
-    "trap": "Without the skill, the model may accept the per-request container pattern as reasonable isolation. The skill explicitly forbids creating a new container per request.",
+    "trap": "Recreating the whole application graph per request can discard pooling and lifecycle ownership. Share application resources and scope request state deliberately; request-scoped containers are not inherently invalid.",
     "assertions": [
       {"id": "10.1", "text": "Identifies creating a new container per request as a mistake"},
       {"id": "10.2", "text": "Recommends one container per application created at startup"},
@@ -103,15 +103,15 @@
   {
     "id": 11,
     "name": "lazy-vs-eager-initialization",
-    "description": "Tests knowledge of lazy initialization preference and singleton vs transient distinction",
+    "description": "Chooses initialization and lifetime from behavior.",
     "prompt": "When using a DI container in Go, should all my services be created at application startup? I have a database pool, a cache client, and some request processing services.",
-    "trap": "Without the skill, the model may recommend eager initialization for everything. The skill prefers lazy initialization and distinguishes singletons for stateful services from transients for stateless ones.",
+    "trap": "Assumes lazy always wins or stateless services must be transient.",
     "assertions": [
-      {"id": "11.1", "text": "Recommends lazy initialization (services created on first use, not all at startup)"},
-      {"id": "11.2", "text": "Recommends singletons for stateful services like database connections and cache clients"},
-      {"id": "11.3", "text": "Recommends transients (or factories) for stateless request processing services"},
-      {"id": "11.4", "text": "Explains why lazy loading is beneficial (unused services are never created, faster startup)"},
-      {"id": "11.5", "text": "Notes which DI libraries support lazy loading (samber/do, fx) vs which don't (wire is all eager)"}
+      {"id": "11.1", "text": "Weighs early startup validation against deferring optional expensive work."},
+      {"id": "11.2", "text": "Shares concurrency-safe database pools and cache clients with an explicit shutdown owner."},
+      {"id": "11.3", "text": "Allows shared stateless services; transient is not inherently required by statelessness."},
+      {"id": "11.4", "text": "Explains lazy initialization moves failures and latency to first use."},
+      {"id": "11.5", "text": "Uses the actual installed container API rather than treating all DI libraries as equivalent."}
     ]
   }
 ]

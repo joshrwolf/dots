@@ -52,7 +52,7 @@ type Handler interface {
 
 ### Canonical Method Names
 
-Honor established Go method names and their signatures. If your type implements `Read`, it MUST match `io.Reader`'s signature. NEVER invent variations like `ReadData` or `ToString` — use `String`.
+Honor established names and signatures when implementing standard interfaces: byte-stream Read should match io.Reader, and a textual representation commonly uses String() string. A domain-specific Read or ReadData with different semantics is legal; the name alone does not imply interface implementation.
 
 | Method name | Expected interface |
 | ----------- | ------------------ |
@@ -61,7 +61,7 @@ Honor established Go method names and their signatures. If your type implements 
 | `Close`     | `io.Closer`        |
 | `String`    | `fmt.Stringer`     |
 | `Error`     | `error`            |
-| `Len`       | `sort.Interface`   |
+| `Len`       | `sort.Interface` (also needs Less and Swap) |
 | `ServeHTTP` | `http.Handler`     |
 
 ## Structs
@@ -126,7 +126,7 @@ Choose the zero value deliberately. Use an unspecified sentinel when omission mu
 
 ### Sentinel Errors
 
-Sentinel error variables use the `Err` prefix. Error strings SHOULD include the package name as prefix to identify the origin when errors are wrapped:
+Sentinel error variables use the `Err` prefix. A package prefix can identify the origin; it is not required when the context is already clear:
 
 ```go
 // Good — package prefix identifies origin
@@ -134,7 +134,7 @@ var ErrNotFound = errors.New("mypackage: not found")
 var ErrPermissionDenied = errors.New("mypackage: permission denied")
 var ErrTimeout = errors.New("mypackage: operation timed out")
 
-// Bad — bare strings lose origin when wrapped
+// Also valid — wrapping or the API contract may already identify the origin
 var ErrNotFound = errors.New("not found")
 ```
 
@@ -157,17 +157,16 @@ type SyntaxError struct {
 
 ### Error Strings
 
-Error strings MUST be **fully lowercase — including acronyms** — and MUST NOT **end with punctuation**, because they are often printed following other context (`fmt.Errorf("parsing config: %w", err)`). Acronyms that would normally be capitalized in identifiers (`ID`, `URL`, `HTTP`) become lowercase in error strings.
+Error strings normally start lowercase and omit trailing punctuation so they compose with other context. Preserve proper nouns and acronyms (`ID`, `URL`, `HTTP`), including at the beginning of an error. See [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments#error-strings).
 
 ```go
-// Good — lowercase including acronyms, no punctuation
+// Good — ordinary words start lowercase; acronyms retain their spelling
 errors.New("image: unknown format")
-errors.New("mypackage: invalid message id")     // "id" not "ID"
-errors.New("mypackage: invalid url")             // "url" not "URL"
+errors.New("mypackage: invalid message ID")
+errors.New("mypackage: invalid URL")
 fmt.Errorf("decoding config: %w", err)
 
-// Bad — capitalized, acronyms, punctuation
+// Bad — unnecessary capitalization and trailing punctuation
 errors.New("Image: Unknown format.")
-errors.New("mypackage: invalid message ID")      // ID should be lowercase in error strings
 fmt.Errorf("Failed to decode config: %w.", err)
 ```

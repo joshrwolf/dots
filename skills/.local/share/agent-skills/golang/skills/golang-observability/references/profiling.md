@@ -16,7 +16,7 @@ The `goroutineleak` profile (`/debug/pprof/goroutineleak`, generally available s
 
 ## Continuous Profiling with Pyroscope
 
-On-demand profiling requires you to be there when the problem happens. Continuous profiling runs always-on in the background with low overhead (~2-5% CPU), so you can look at profiles after the fact. Toggle it with an environment variable.
+On-demand profiling requires you to be there when the problem happens. Continuous profiling runs always-on in the background with low overhead (~2-5% CPU), so you can look at profiles after the fact. Configure it with an environment variable at startup; changing the deployment variable requires a restart unless a runtime toggle is implemented.
 
 ```go
 import "github.com/grafana/pyroscope-go"
@@ -26,9 +26,12 @@ func setupContinuousProfiling() {
         return
     }
 
+    // Required for mutex/block profile samples; measure the overhead.
+    runtime.SetMutexProfileFraction(5)
+    runtime.SetBlockProfileRate(1000000) // one sample per ~1ms blocked
     _, err := pyroscope.Start(pyroscope.Config{
         ApplicationName: "my-service",
-        ServerAddress:   os.Getenv("PYROSCOPE_URL"), // e.g., http://user:pass@pyroscope:4040
+        ServerAddress:   os.Getenv("PYROSCOPE_URL"), // e.g., https://pyroscope.example.com; keep credentials out of logs
         ProfileTypes: []pyroscope.ProfileType{
             pyroscope.ProfileCPU,
             pyroscope.ProfileAllocObjects,
@@ -45,7 +48,7 @@ func setupContinuousProfiling() {
     if err != nil {
         slog.Error("failed to start pyroscope", "error", err)
     } else {
-        slog.Info("continuous profiling enabled", "server", os.Getenv("PYROSCOPE_URL"))
+        slog.Info("continuous profiling enabled")
     }
 }
 ```
@@ -62,7 +65,7 @@ Continuous profiling adds overhead to every running instance — CPU for collect
 
 **Mitigation:**
 
-- Toggle via environment variable (`PROFILING_ENABLED`) — enable only when needed or on a subset of instances
+- Configure at startup via environment variable (`PROFILING_ENABLED`) — enable only when needed or on a subset of instances
 - Start with CPU + heap profiles only; add mutex/block/goroutine profiles when investigating specific issues
 - In large deployments, enable continuous profiling on a fraction of replicas (e.g., 1 in 10) rather than all of them
 

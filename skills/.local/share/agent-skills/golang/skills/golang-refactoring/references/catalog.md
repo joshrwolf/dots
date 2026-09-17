@@ -28,8 +28,8 @@ Each entry below follows the same structure: **Motivation** (why the refactoring
 - **Tool:**
 
 ```
-gopls codeaction -exec -kind=refactor.extract.function file.go:#start,#end
-gopls codeaction -exec -kind=refactor.extract.method   file.go:#start,#end
+gopls codeaction -exec -w -kind=refactor.extract.function file.go:#start,#end
+gopls codeaction -exec -w -kind=refactor.extract.method   file.go:#start,#end
 ```
 
 Editor-integrated as "Extract function"/"Extract method" in the code actions menu.
@@ -40,11 +40,11 @@ Editor-integrated as "Extract function"/"Extract method" in the code actions men
 
 - **Motivation:** A wrapper that no longer adds a distinct name, or a level of indirection that has stopped paying for itself, is pure navigation overhead for the reader — inlining removes the detour.
 - **Smell trigger:** A trivial one-line forwarding function, or a Middle Man that has accreted no behavior of its own since it was introduced.
-- **Go mechanics:** The call site is replaced with the callee's body, with real substitution rather than naive text-splicing: arguments that have side effects are hoisted into `var` temporaries instead of being duplicated wherever the parameter is used, implicit conversions at the call boundary are made explicit, and a callee body containing `defer` is wrapped in an immediately-invoked function literal so the deferred call still fires at the right point. Inline cannot cross a dynamic dispatch (interface method call, function value) or inline a generic function.
+- **Go mechanics:** The call site is replaced with the callee's body, with real substitution rather than naive text-splicing: arguments that have side effects are hoisted into `var` temporaries instead of being duplicated wherever the parameter is used, implicit conversions at the call boundary are made explicit, and a callee body containing `defer` is wrapped in an immediately-invoked function literal so the deferred call still fires at the right point. Inline needs a statically resolved call; support for generics and other constructs depends on the installed gopls version. List the applicable actions instead of assuming support.
 - **Tool:**
 
 ```
-gopls codeaction -exec -kind=refactor.inline.call file.go:#offset
+gopls codeaction -exec -w -kind=refactor.inline.call file.go:#offset
 ```
 
 - **Risk:** Low. Inline performs substantial semantic checks, but review the transformed code and test affected behavior; tool success is not proof.
@@ -57,10 +57,10 @@ gopls codeaction -exec -kind=refactor.inline.call file.go:#offset
 - **Tool:**
 
 ```
-gopls codeaction -exec -kind=refactor.extract.variable     file.go:#start,#end
-gopls codeaction -exec -kind=refactor.extract.variable-all file.go:#start,#end
-gopls codeaction -exec -kind=refactor.extract.constant     file.go:#start,#end
-gopls codeaction -exec -kind=refactor.inline.variable      file.go:#offset
+gopls codeaction -exec -w -kind=refactor.extract.variable     file.go:#start,#end
+gopls codeaction -exec -w -kind=refactor.extract.variable-all file.go:#start,#end
+gopls codeaction -exec -w -kind=refactor.extract.constant     file.go:#start,#end
+gopls codeaction -exec -w -kind=refactor.inline.variable      file.go:#offset
 ```
 
 - **Risk:** Low.
@@ -70,13 +70,13 @@ gopls codeaction -exec -kind=refactor.inline.variable      file.go:#offset
 - **Motivation:** A misleading identifier costs every future reader the same confusion, repeatedly — fixing the name once removes that tax for good. A naming fix is often the trigger for an entire refactor, because a name that's wrong for the current shape of the code cascades into every call site that reads it.
 - **Smell trigger:** Any identifier — variable, function, type, field, package — whose name no longer describes what it holds or does.
 - **Go mechanics:**
-  - gopls Rename is workspace-wide: it updates every reference across every file and package that imports the renamed symbol, and it type-checks the result.
+  - gopls Rename computes edits over packages visible in its configured workspace and checks static conflicts. It cannot update unknown external consumers or prove dynamic behavior preservation.
   - It refuses rather than proceed when the rename would introduce a shadowing conflict, when renaming a method would break an interface satisfaction relationship elsewhere in the workspace, or when the surrounding code doesn't currently type-check.
   - Two special cases are easy to get backwards: renaming the `p` in `package p` moves the entire package directory and rewrites every import path that referred to it; renaming a method's _receiver declaration_ (the `s` in `func (s *Store) Get(...)`) propagates to every method of that type, while renaming a single _use_ of a receiver variable inside one method body touches only that method.
 - **Tool:**
 
 ```
-gopls rename file.go:#offset newName
+gopls rename -w file.go:#offset newName
 ```
 
 Editor-integrated as "Rename Symbol" (F2 in most gopls-backed editors).
@@ -96,9 +96,9 @@ Editor-integrated as "Rename Symbol" (F2 in most gopls-backed editors).
 - **Tool:**
 
 ```
-gopls codeaction -exec -kind=refactor.rewrite.removeUnusedParam file.go:#offset
-gopls codeaction -exec -kind=refactor.rewrite.moveParamLeft      file.go:#offset
-gopls codeaction -exec -kind=refactor.rewrite.moveParamRight     file.go:#offset
+gopls codeaction -exec -w -kind=refactor.rewrite.removeUnusedParam file.go:#offset
+gopls codeaction -exec -w -kind=refactor.rewrite.moveParamLeft      file.go:#offset
+gopls codeaction -exec -w -kind=refactor.rewrite.moveParamRight     file.go:#offset
 eg -t template.go -w ./...   # staged migration for adding/generalizing a parameter
 ```
 
@@ -117,7 +117,7 @@ eg -t template.go -w ./...   # staged migration for adding/generalizing a parame
 - **Tool:**
 
 ```
-gopls codeaction -exec -kind=refactor.extract.toNewFile file.go:#start,#end   # same-package file split
+gopls codeaction -exec -w -kind=refactor.extract.toNewFile file.go:#start,#end   # same-package file split
 ```
 
 Cross-package moves require updating declarations, imports, and callers as above — there is no equivalent one-shot command.
@@ -131,12 +131,12 @@ Cross-package moves require updating declarations, imports, and callers as above
 - **Motivation:** A package that has grown to serve many unrelated responsibilities is hard to review, test, and reason about as a unit — splitting it along its natural seams restores each piece's ability to be understood on its own. The reverse move, merging, is occasionally right when two packages have become so mutually dependent that the boundary between them adds ceremony without adding isolation.
 - **Smell trigger:** A "god package" (the package-level analogue of a Large Class), or Divergent Change — the same package keeps changing for several unrelated reasons because it hosts several unrelated concerns.
 - **Go mechanics:**
-  - gopls exposes an experimental code action that partitions a package's top-level declarations into groups with no cyclic dependency between them, proposing a split into acyclic components. Treat its proposal as a starting point to review, not a final answer — package boundaries also encode API and ownership decisions the tool can't see.
+  - gopls exposes an experimental browser visualization of the dependency graph between components of a package. It suggests possible boundaries; it does not move declarations or rewrite files. Treat its proposal as a starting point to review, not a final answer — package boundaries also encode API and ownership decisions the tool can't see.
   - Merging has no dedicated tool: move the declarations into the target package and resolve whatever import cycle results with a consumer-side interface (see [structural.md](structural.md)) before falling back to a bigger restructuring.
 - **Tool:**
 
 ```
-gopls codeaction -exec -kind=source.splitPackage file.go   # experimental; splitting only
+gopls codeaction -exec -kind=source.splitPackage file.go   # opens an experimental browser visualization; no files moved
 ```
 
 - **Risk:** High.
@@ -151,7 +151,7 @@ gopls codeaction -exec -kind=source.splitPackage file.go   # experimental; split
 - **Tool:**
 
 ```
-gopls codeaction -exec -kind=refactor.rewrite.invertIf file.go:#offset
+gopls codeaction -exec -w -kind=refactor.rewrite.invertIf file.go:#offset
 ```
 
 - **Risk:** Low.
@@ -182,8 +182,8 @@ gopls codeaction -exec -kind=refactor.rewrite.invertIf file.go:#offset
 
 - **Motivation:** A caller that reaches through one object to call methods on another is coupled to both the shape of the first object _and_ the shape of everything downstream of it; hiding the delegate collapses that chain to a single call. The opposite failure — a method that does nothing but forward to another object — adds a hop with no behavior to show for it, and removing it lets callers reach the real implementation directly.
 - **Smell trigger:** Message Chains (`a.B().C().D()` reaching through several objects to get to the one that matters) call for Hide Delegate; a Middle Man (a method whose entire body is `return x.SameMethod(...)`) calls for Remove Middle Man.
-- **Go mechanics:** Struct embedding is Go's usual mechanism for Hide Delegate — embedding the delegate promotes its methods onto the containing type, so callers invoke them directly on the outer struct instead of chaining through an accessor. Remove Middle Man is the inverse: delete the pass-through method (after an Inline Call at each of its call sites, or a Rename-and-redirect) and let callers reach the real implementation directly, whether through an exported field or the embedded type.
-- **Tool:** Manual for the embedding decision; `gopls codeaction -exec -kind=refactor.inline.call` mechanizes the "delete the middle man" step once callers are ready to call through directly.
+- **Go mechanics:** An explicit forwarding method over an unexported field can hide the delegate and expose only the intended operation. Embedding promotes the embedded API and may accidentally expose unrelated methods or satisfy interfaces; it is not equivalent to hiding the delegate. Remove Middle Man is the inverse: delete the pass-through method (after an Inline Call at each of its call sites, or a Rename-and-redirect) and let callers reach the real implementation directly, whether through an exported field or the embedded type.
+- **Tool:** Manual for the embedding decision; `gopls codeaction -exec -w -kind=refactor.inline.call` mechanizes the "delete the middle man" step once callers are ready to call through directly.
 - **Risk:** Low-Medium.
 
 ## Sprout Method / Wrap Method
@@ -202,7 +202,7 @@ gopls codeaction -exec -kind=refactor.rewrite.invertIf file.go:#offset
 
 - **Motivation:** A local variable computed once and reused several times hides the fact that it's a derived value — reading the variable's name doesn't tell you it's a computation, only that it's a value, which obscures where the real logic lives.
 - **Smell trigger:** A local variable assigned once from an expression and then read multiple times later in the function, where the variable's name doesn't make clear it's derived rather than an input.
-- **Go mechanics:** Replace the variable with a call to a small unexported function or method that recomputes the same expression, then remove the variable and each of its reads becomes a call instead. This is a manual step — Go's function-call cost is cheap enough that the transform is rarely a performance concern, so the only judgment call is readability, not cost.
+- **Go mechanics:** Replace the variable with a call to a small unexported function or method that recomputes the same expression, then remove the variable and each of its reads becomes a call instead. Preserve evaluation count, ordering, and observed state: recomputation is unsafe for side effects, clock reads, mutable data, or expensive queries unless the changed behavior is intentional. Function-call overhead is only one part of the cost.
 - **Tool:** Manual. If the resulting function is only ever called once, gopls's inline action can fold it back at any point without losing the readability gain that motivated extracting it.
 - **Risk:** Low.
 

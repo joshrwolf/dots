@@ -15,7 +15,7 @@
 
 ## When to Use
 
-Apply DDD when the business domain is complex enough that the code structure should mirror the business model — typically services with 5K+ lines, multiple bounded contexts, or rich business rules. Do NOT use for simple CRUD apps or CLI tools.
+Apply DDD when rich business rules and bounded contexts make domain modeling useful. Code size is not a threshold, and a CLI can still contain a complex domain. Simple CRUD applications often need fewer layers.
 
 ## Building Blocks
 
@@ -77,11 +77,11 @@ order-service/
 ### Value Object — Money
 
 ```go
-// internal/domain/shared/money.go
+// internal/shared/money.go
 package shared
 
 type Money struct {
-    amount   int64  // cents — avoids float precision issues
+    amount   int64  // currency minor units; scale is a domain/currency decision
     currency string
 }
 
@@ -96,6 +96,10 @@ func (m Money) Add(other Money) (Money, error) {
     if m.currency != other.currency {
         return Money{}, fmt.Errorf("cannot add %s to %s", other.currency, m.currency)
     }
+    if (other.amount > 0 && m.amount > math.MaxInt64-other.amount) ||
+        (other.amount < 0 && m.amount < math.MinInt64-other.amount) {
+        return Money{}, errors.New("money addition overflow")
+    }
     return Money{amount: m.amount + other.amount, currency: m.currency}, nil
 }
 ```
@@ -103,8 +107,8 @@ func (m Money) Add(other Money) (Money, error) {
 ### Aggregate Root — Order
 
 ```go
-// internal/domain/order/order.go
-package order
+// internal/order/domain/order.go
+package domain
 
 type Order struct {
     id     string
@@ -113,8 +117,10 @@ type Order struct {
     total  shared.Money
 }
 
-func NewOrder(id string) *Order {
-    return &Order{id: id, status: StatusDraft}
+func NewOrder(id, currency string) (*Order, error) {
+    total, err := shared.NewMoney(0, currency)
+    if err != nil { return nil, err }
+    return &Order{id: id, status: StatusDraft, total: total}, nil
 }
 
 // All mutations go through the aggregate root
@@ -122,11 +128,15 @@ func (o *Order) AddItem(item Item) error {
     if o.status != StatusDraft {
         return ErrOrderNotEditable
     }
+    total, err := o.total.Add(item.Total())
+    if err != nil { return err } // do not mutate the aggregate on failure
     o.items = append(o.items, item)
-    return o.recalculateTotal()
+    o.total = total
+    return nil
 }
 
 func (o *Order) Place() (OrderPlaced, error) {
+    if o.status != StatusDraft { return OrderPlaced{}, ErrOrderNotEditable }
     if len(o.items) == 0 {
         return OrderPlaced{}, ErrEmptyOrder
     }
@@ -185,6 +195,8 @@ func (h *PlaceOrderHandler) Handle(ctx context.Context, cmd PlaceOrderCommand) e
     return h.events.Publish(ctx, evt)
 }
 ```
+
+Save followed by Publish has a failure window. If event delivery is required, persist an outbox entry with the order and publish it with retries; consumers should tolerate duplicates. Private fields restrict outside mutation but do not prevent zero values or mutation within the package.
 
 ## Bounded Contexts
 

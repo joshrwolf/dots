@@ -23,7 +23,10 @@ Assertions should be rare in Go. Use them only for truly impossible states that 
 ```go
 oops.StackTraceMaxDepth = 20          // adjust stack trace depth
 oops.SourceFragmentsHidden = false    // enable source code fragments
-loc, _ := time.LoadLocation("America/New_York")
+loc, err := time.LoadLocation("America/New_York")
+if err != nil {
+    return err
+}
 oops.Local = loc                      // set timezone for error timestamps
 ```
 
@@ -32,11 +35,16 @@ oops.Local = loc                      // set timezone for error timestamps
 `samber/oops` works with any logger. The error struct provides methods for extracting structured data:
 
 ```go
-oopsErr := err.(oops.OopsError)
+var oopsErr oops.OopsError
+if !errors.As(err, &oopsErr) {
+    return // this example only extracts structured oops fields
+}
+userID, userData := oopsErr.User()
 fmt.Println("operation failed",
     "code", oopsErr.Code(),
     "domain", oopsErr.Domain(),
-    "user_id", oopsErr.User(),
+    "user_id", userID,
+    "user", userData,
     "error", oopsErr,
 )
 

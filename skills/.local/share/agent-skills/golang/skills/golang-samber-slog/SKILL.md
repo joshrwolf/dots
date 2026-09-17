@@ -54,7 +54,7 @@ paths:
 
 # samber/slog-\*\*\*\* — Structured Logging Pipeline for Go
 
-20+ composable `slog.Handler` packages for Go 1.21+. Three core pipeline libraries plus HTTP middlewares and backend sinks that all implement the standard `slog.Handler` interface.
+20+ composable `slog.Handler` packages. slog was introduced in Go 1.21; individual module versions can require a newer Go toolchain. Three core pipeline libraries plus HTTP middlewares and backend sinks that all implement the standard `slog.Handler` interface.
 
 **Official resources:**
 
@@ -69,7 +69,7 @@ This skill is not exhaustive — refer to library documentation and code example
 
 ## The Pipeline Model
 
-Every samber/slog pipeline follows a canonical ordering. Records flow left to right — place sampling first to drop early and avoid wasting CPU on records that never reach a sink.
+Choose pipeline ordering according to delivery and redaction requirements. Sampling early on a sampled branch avoids work for dropped records; routing may precede sampling to exempt critical logs.
 
 ```
 record → [Sampling] → [Pipe: trace/PII] → [Router] → [Sinks]
@@ -93,9 +93,9 @@ Six composition patterns, each for a different routing need:
 | --- | --- | --- |
 | `Fanout(handlers...)` | Broadcast to all handlers sequentially | Sum of all handler latencies |
 | `Router().Add(h, predicate).Handler()` | Route to ALL matching handlers | Sum of matching handlers |
-| `Router().Add(...).FirstMatch().Handler()` | Route to FIRST match only | Single handler latency |
+| `Router().Add(...).FirstMatch().Handler()` | Route to FIRST match only | Selected handler latency, plus sequential retries on failures |
 | `Failover()(handlers...)` | Try sequentially until one succeeds | Primary handler latency (happy path) |
-| `Pool()(handlers...)` | Load-balance: sends each record to ONE handler | Single handler latency |
+| `Pool()(handlers...)` | Load-balance: sends each record to ONE handler | Selected handler latency, plus sequential retries on failures |
 | `Pipe(middlewares...).Handler(sink)` | Middleware chain before sink | Middleware overhead + sink |
 
 ```go
@@ -118,10 +118,10 @@ For full code examples of every pattern, see [Pipeline Patterns](references/pipe
 | --- | --- | --- |
 | Uniform | Drop fixed % of all records | Dev/staging noise reduction |
 | Threshold | Log first N per interval, then sample at rate R | Production — preserves initial visibility |
-| Absolute | Cap at N records per interval globally | Hard cost control |
+| Absolute | Adaptive probability targeting N per interval per matcher bucket | Approximate volume reduction; not a hard cap |
 | Custom | User function returns sample rate per record | Level-aware or time-aware rules |
 
-Sampling MUST be the outermost handler in the pipeline — placing it after formatting wastes CPU on records that get dropped.
+Place sampling early on branches that permit dropping records. A router may sit outside it to preserve warnings/errors; formatting may precede routing when every route requires redaction.
 
 ```go
 // Threshold: log first 10 per 5s, then 10% — errors always pass through via Router
@@ -189,7 +189,7 @@ All follow the `Option{}.NewXxxHandler()` constructor pattern.
 | Storage      | `slog-parquet`                                             |
 | Bridges      | `slog-zap`, `slog-zerolog`, `slog-logrus`                  |
 
-**Batch handlers require graceful shutdown** — `slog-datadog`, `slog-loki`, `slog-kafka`, and `slog-parquet` buffer records internally. Flush on shutdown (e.g., `handler.Stop(ctx)` for Datadog, `lokiClient.Stop()` for Loki, `writer.Close()` for Kafka) or buffered logs are lost.
+**Buffered handlers require graceful shutdown** — `slog-datadog`, `slog-loki`, `slog-kafka`, and `slog-parquet` buffer records internally. Flush on shutdown (e.g., `handler.Stop(ctx)` for Datadog, `lokiClient.Stop()` for Loki, `writer.Close()` for Kafka) or buffered logs are lost.
 
 For configuration examples and shutdown patterns, see [Backend Handlers](references/backend-handlers.md).
 
@@ -197,16 +197,16 @@ For configuration examples and shutdown patterns, see [Backend Handlers](referen
 
 | Mistake | Why it fails | Fix |
 | --- | --- | --- |
-| Sampling after formatting | Wastes CPU formatting records that get dropped | Place sampling as outermost handler |
-| Fanout to many synchronous handlers | Blocks caller — latency is sum of all handlers | Use `Pool()` for concurrent dispatch |
+| Sampling after formatting | Wastes CPU formatting records that get dropped | Place sampling early within branches whose records may be dropped |
+| Fanout to many synchronous handlers | Blocks caller — latency is sum of all handlers | Use buffering or asynchronous handlers with explicit shutdown/error handling; Pool changes delivery to one destination |
 | Missing shutdown flush on batch handlers | Buffered logs lost on shutdown | `defer handler.Stop(ctx)` (Datadog), `defer lokiClient.Stop()` (Loki), `defer writer.Close()` (Kafka) |
 | Router without default/catch-all handler | Unmatched records silently dropped | Add a handler with no predicate as catch-all |
-| `AttrFromContext` without HTTP middleware | Context has no request attributes to extract | Install `slog-gin`/`echo`/`fiber`/`chi` middleware first |
+| `AttrFromContext` with missing/mismatched values | Extraction only sees the context passed to the log call | Populate the agreed keys and log with InfoContext/ErrorContext; HTTP middleware is optional |
 | Using `Pipe` with no middleware | No-op wrapper adding per-record overhead | Remove `Pipe()` if no middleware needed |
 
 ## Performance Warnings
 
-- **Fanout latency** = sum of all handler latencies (sequential). With 5 handlers at 10ms each, every log call costs 50ms. Use `Pool()` to reduce to max(latencies)
+- **Fanout latency** = sum of all handler latencies (sequential). With 5 handlers at 10ms each, every log call costs 50ms. Pool selects one enabled handler and tries others sequentially on errors; it is not concurrent fanout, so it cannot preserve delivery to every sink
 - **Pipe middleware** adds per-record function call overhead — keep chains short (2-4 middlewares)
 - **slog-formatter** processes attributes sequentially — many formatters compound. For hot-path attribute formatting, prefer implementing `slog.LogValuer` on your types instead
 - **Benchmark** your pipeline with `go test -bench` before production deployment
@@ -215,7 +215,7 @@ For configuration examples and shutdown patterns, see [Backend Handlers](referen
 
 ## Best Practices
 
-1. **Sample first, format second, route last** — this canonical ordering minimizes wasted work and ensures all sinks see clean data
+1. **Choose ordering by delivery policy** — sample early on eligible branches; route first to exempt critical records and redact before every sink that needs it
 2. **Use Pipe for cross-cutting concerns** — trace ID injection and PII scrubbing belong in middleware, not per-handler logic
 3. **Test pipelines with `slogmulti.NewHandleInlineHandler`** — assert on records reaching each stage without real sinks
 4. **Use `AttrFromContext`** to propagate request-scoped attributes from HTTP middleware to all handlers

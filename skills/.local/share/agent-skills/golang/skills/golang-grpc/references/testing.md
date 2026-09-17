@@ -142,6 +142,8 @@ func TestGetUser_Errors(t *testing.T) {
 ### Server Streaming
 
 ```go
+// For a streaming schema: rpc ListUsers(ListUsersRequest) returns (stream User).
+// This differs from the unary pagination example in protoc-reference.md.
 func TestListUsers_Stream(t *testing.T) {
     client := setupTest(t)
     stream, err := client.ListUsers(context.Background(), &pb.ListUsersRequest{})

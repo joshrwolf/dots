@@ -59,6 +59,7 @@ type ClientRateLimiter struct {
 func (crl *ClientRateLimiter) GetLimiter(clientIP string) *rate.Limiter {
     crl.mu.Lock()
     defer crl.mu.Unlock()
+    if crl.clients == nil { crl.clients = make(map[string]*rate.Limiter) }
     if limiter, exists := crl.clients[clientIP]; exists {
         return limiter
     }
@@ -68,14 +69,18 @@ func (crl *ClientRateLimiter) GetLimiter(clientIP string) *rate.Limiter {
 }
 ```
 
+For production, bound the per-client map and expire idle entries; otherwise arbitrary client keys consume unbounded memory. Derive identity from a trusted connection or authenticated principal, not untrusted forwarding headers.
+
 **Layer 2 — mTLS for Service-to-Service:**
+
+The following config is for a client. A server additionally needs `ClientAuth: tls.RequireAndVerifyClientCert` and trusted `ClientCAs`, plus authorization of the verified identity.
 
 ```go
 func mTLSConfig(caCertFile, clientCertFile, clientKeyFile string) (*tls.Config, error) {
     caCertPool := x509.NewCertPool()
     caCert, err := os.ReadFile(caCertFile)
     if err != nil { return nil, err }
-    caCertPool.AppendCertsFromPEM(caCert)
+    if !caCertPool.AppendCertsFromPEM(caCert) { return nil, errors.New("no CA certificates") }
 
     cert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
     if err != nil { return nil, err }
@@ -163,7 +168,11 @@ JWT validation must pin the signing algorithm to prevent algorithm confusion att
 import "github.com/golang-jwt/jwt/v5"
 
 func validateJWT(authHeader string) (*jwt.RegisteredClaims, error) {
-    tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+    fields := strings.Fields(authHeader)
+    if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+        return nil, errors.New("invalid bearer authorization")
+    }
+    tokenString := fields[1]
     token, err := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{},
         func(token *jwt.Token) (interface{}, error) {
             // Pin signing algorithm — prevents algorithm confusion
@@ -172,13 +181,14 @@ func validateJWT(authHeader string) (*jwt.RegisteredClaims, error) {
             }
             return publicKey, nil
         },
+        jwt.WithValidMethods([]string{"RS256"}),
         jwt.WithIssuer("your-issuer"),
         jwt.WithAudience("your-audience"),
         jwt.WithExpirationRequired(),
     )
     if err != nil { return nil, err }
     claims, ok := token.Claims.(*jwt.RegisteredClaims)
-    if !ok { return nil, errors.New("invalid claims") }
+    if !ok || !token.Valid { return nil, errors.New("invalid claims") }
     return claims, nil
 }
 ```
@@ -198,12 +208,16 @@ type PasswordConfig struct {
     SaltLen uint32
 }
 
-// OWASP recommended parameters
+// Example parameters: benchmark for the deployment and bound verification inputs.
 var DefaultConfig = PasswordConfig{
     Time: 3, Memory: 64 * 1024, Threads: 4, KeyLen: 32, SaltLen: 16,
 }
 
 func HashPassword(password string, cfg PasswordConfig) (string, error) {
+    // Configuration must be trusted and bounded; zero time/threads panic in IDKey.
+    if cfg.Time == 0 || cfg.Threads == 0 || cfg.SaltLen < 16 || cfg.KeyLen < 16 {
+        return "", errors.New("invalid password hash configuration")
+    }
     salt := make([]byte, cfg.SaltLen)
     if _, err := rand.Read(salt); err != nil { return "", err }
     hash := argon2.IDKey([]byte(password), salt, cfg.Time, cfg.Memory, cfg.Threads, cfg.KeyLen)
@@ -269,7 +283,11 @@ func badHandler(w http.ResponseWriter, r *http.Request) {
 
 // Correct: server-side identity verification
 func goodHandler(w http.ResponseWriter, r *http.Request) {
-    claims := r.Context().Value(userClaimsKey).(*jwt.RegisteredClaims)
+    claims, ok := r.Context().Value(userClaimsKey).(*jwt.RegisteredClaims)
+    if !ok || claims == nil {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
     if !hasRole(claims.Subject, "admin") {
         http.Error(w, "Forbidden", http.StatusForbidden)
         return

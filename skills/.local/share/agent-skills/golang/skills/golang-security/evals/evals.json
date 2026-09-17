@@ -63,7 +63,7 @@
       "prompt": "Write a high-performance Go message encryption service. It has an AES-256 key loaded at startup. Messages are encrypted before being sent to a queue. The service runs as multiple instances in Kubernetes with 10,000+ messages per second per pod. Implement Encrypt(plaintext []byte) ([]byte, error).",
       "trap": "Model might use a global atomic counter as nonce (common Go optimization). This breaks when (1) multiple pods share the same key but use independent counters — nonce space collision, (2) pod restarts reset the counter — reuse of previously used nonces, (3) counter overflows for 96-bit nonce space at high throughput. The correct approach is crypto/rand per encryption.",
       "assertions": [
-        {"id": "5.1", "text": "Generates a fresh random nonce using crypto/rand for every Encrypt call"},
+        {"id": "5.1", "text": "Uses a unique nonce per key, such as securely random nonces or NewGCMWithRandomNonce, and respects the random-nonce per-key message limit."},
         {"id": "5.2", "text": "Does NOT use a global atomic counter, sync/atomic increment, or any monotonic counter as the nonce"},
         {"id": "5.3", "text": "Addresses or acknowledges the multi-instance problem (counter-based nonces are not safe across independent pods)"},
         {"id": "5.4", "text": "Prepends the nonce to the ciphertext so decryption can extract it"},
@@ -75,12 +75,12 @@
       "name": "exec-context-user-timeout",
       "description": "Tests that user-controlled timeout values cannot be used to bypass command execution cancellation",
       "prompt": "Write a Go HTTP handler that runs a user-supplied shell script fragment with a configurable timeout. The timeout (in seconds) comes from the 'timeout' query parameter. Use exec.CommandContext to enforce it.",
-      "trap": "Model might parse the timeout from query string and pass it directly to time.Duration or context.WithTimeout. An attacker can set timeout=0 (immediate cancellation before process starts, making the feature useless) or timeout=99999 (effectively unlimited, enabling DoS). The model must clamp the timeout to a safe range AND still use separate argument passing to avoid injection.",
+      "trap": "A timeout is not a security sandbox, and separate argv does not make intentional arbitrary script execution safe.",
       "assertions": [
         {"id": "6.1", "text": "Clamps the user-supplied timeout to a maximum safe value (e.g., no more than 30 or 60 seconds)"},
         {"id": "6.2", "text": "Enforces a minimum timeout that is greater than zero to prevent immediate cancellation abuse"},
         {"id": "6.3", "text": "Uses exec.CommandContext with the bounded context for the command"},
-        {"id": "6.4", "text": "Does NOT pass the user's script fragment to 'sh -c' or 'bash -c' with string concatenation"},
+        {"id": "6.4", "text": "Recognizes executing a requested script is intentional code execution: separate args do not sandbox it. Requires an authenticated, authorized isolated execution design and bounds output/resources/process lifetime."},
         {"id": "6.5", "text": "Returns an appropriate error if the timeout parameter is missing, negative, or non-numeric"}
       ]
     },
@@ -89,11 +89,11 @@
       "name": "cookie-domain-subdomain-takeover",
       "description": "Tests whether the model avoids setting Cookie.Domain too broadly, which would share the cookie with all subdomains",
       "prompt": "Write a Go HTTP handler that sets an authentication session cookie for users of example.com. The application is deployed at app.example.com. Set the cookie so it works across the whole example.com domain.",
-      "trap": "Model might set Domain: 'example.com' to fulfill the 'whole domain' requirement. This shares the cookie with ALL subdomains including attacker-controlled ones (if any subdomain is compromised or user-controlled like files.example.com). The secure default is Domain: '' (empty) or Domain: 'app.example.com', not the apex domain.",
+      "trap": "Honors requested cookie scope after explaining trust in every shared subdomain; host-only and explicit Domain differ.",
       "assertions": [
-        {"id": "7.1", "text": "Does NOT set Domain: 'example.com' or any apex domain that would share cookies with all subdomains"},
+        {"id": "7.1", "text": "Honors the requested cross-subdomain scope when all participating subdomains are trusted; explains the larger trust boundary and offers host-only cookies when cross-subdomain sharing is unnecessary."},
         {"id": "7.2", "text": "Warns or explains that setting Domain to the apex domain (example.com) shares the cookie with all subdomains, including potentially attacker-controlled ones"},
-        {"id": "7.3", "text": "Sets Domain to '' (empty/omitted) to bind the cookie to the exact host, OR uses a specific subdomain like 'app.example.com'"},
+        {"id": "7.3", "text": "Distinguishes Domain=example.com cross-subdomain behavior from omitted Domain host-only behavior; explicitly setting app.example.com also includes its subdomains."},
         {"id": "7.4", "text": "Sets HttpOnly: true and Secure: true on the cookie"},
         {"id": "7.5", "text": "Generates the session ID using crypto/rand (not math/rand or uuid without crypto source)"}
       ]
@@ -104,7 +104,7 @@
       "prompt": "Write a Go function that validates JWT tokens from incoming HTTP requests using the github.com/golang-jwt/jwt/v5 library. The tokens are signed with RSA (RS256). Return the claims if valid.",
       "expected_output": "Pins the signing algorithm to RSA to prevent algorithm confusion attacks. Validates expiry, issuer, audience.",
       "assertions": [
-        {"id": "8.1", "text": "Pins the signing algorithm by checking token.Method is *jwt.SigningMethodRSA (prevents algorithm confusion where attacker switches to HS256)"},
+        {"id": "8.1", "text": "Pins the exact intended algorithm with jwt.WithValidMethods, e.g. RS256; checking SigningMethodRSA alone allows multiple RSA algorithms."},
         {"id": "8.2", "text": "Validates token expiration (WithExpirationRequired or checks exp claim)"},
         {"id": "8.3", "text": "Validates issuer and/or audience claims"},
         {"id": "8.4", "text": "Returns the public key (not secret key) in the key function for RSA verification"},
@@ -116,11 +116,11 @@
       "name": "wrapped-error-type-oracle",
       "description": "Tests that wrapping errors with %w does not expose internal types to callers who can use errors.As to probe internals",
       "prompt": "Write a Go HTTP handler for GET /users/:id that queries PostgreSQL using pgx. Return the user as JSON. The handler must distinguish between 'user not found' (404) and 'database error' (500). Use idiomatic Go error wrapping.",
-      "trap": "Model might use fmt.Errorf('db error: %w', pgErr) and return the wrapped error up the stack. Callers (or tests) can use errors.As(err, &pgx.PgError{}) to extract the pgx.PgError struct, which includes SQLState, ConstraintName, TableName, and SchemaName — leaking internal DB schema. The fix is to use sentinel errors or opaque error types at the boundary.",
+      "trap": "Wrapping internal database errors is not an HTTP disclosure; sanitize when serializing the response.",
       "assertions": [
         {"id": "9.1", "text": "Does NOT propagate pgx/database errors directly to the HTTP response body"},
-        {"id": "9.2", "text": "Defines or uses sentinel errors (e.g., ErrNotFound, ErrDatabase) or opaque error types at the service/handler boundary instead of forwarding raw pgx errors"},
-        {"id": "9.3", "text": "Logs the full original error (including pgx details) server-side for debugging"},
+        {"id": "9.2", "text": "Sanitizes at the HTTP boundary while preserving useful internal error wrapping; errors.As within trusted Go callers is not itself an HTTP leak."},
+        {"id": "9.3", "text": "Logs diagnostic context approved for the sink without blindly retaining secrets in database errors."},
         {"id": "9.4", "text": "Returns HTTP 404 with a generic message for user-not-found, and HTTP 500 with a generic message for DB errors"},
         {"id": "9.5", "text": "Uses parameterized SQL query (not string concatenation) for the user ID lookup"}
       ]
@@ -134,7 +134,7 @@
         {"id": "10.1", "text": "Does NOT log the Password field"},
         {"id": "10.2", "text": "Does NOT log the Token field"},
         {"id": "10.3", "text": "Does NOT use fmt.Printf/log.Printf with %+v or %v on the entire User struct"},
-        {"id": "10.4", "text": "Logs user ID and/or username for identification"},
+        {"id": "10.4", "text": "Selects approved identifiers and recognizes IDs/usernames may still be personal data."},
         {"id": "10.5", "text": "Uses structured logging (slog, zerolog, zap, or similar) with explicit field selection"}
       ]
     },
@@ -161,7 +161,7 @@
         {"id": "12.2", "text": "Sets ReadTimeout to a reasonable value (e.g., 5-30 seconds)"},
         {"id": "12.3", "text": "Sets WriteTimeout to a reasonable value"},
         {"id": "12.4", "text": "Sets IdleTimeout or MaxHeaderBytes"},
-        {"id": "12.5", "text": "Does NOT bind to 0.0.0.0 without comment/justification, OR binds to 127.0.0.1, OR makes the bind address configurable"}
+        {"id": "12.5", "text": "Selects a bind address appropriate to deployment; listening on all interfaces is not inherently a vulnerability."}
       ]
     },
     {
@@ -171,8 +171,8 @@
       "expected_output": "Validates URL scheme, blocks internal IPs, blocks cloud metadata endpoints. Does NOT blindly http.Get user URL.",
       "assertions": [
         {"id": "13.1", "text": "Validates URL scheme is http or https only (blocks file://, gopher://, etc.)"},
-        {"id": "13.2", "text": "Blocks requests to internal/private IP ranges (127.0.0.1, 10.x.x.x, 172.16-31.x.x, 192.168.x.x)"},
-        {"id": "13.3", "text": "Blocks cloud metadata endpoints (169.254.169.254 or metadata.google.internal)"},
+        {"id": "13.2", "text": "Validates resolved IPv4/IPv6 destinations in the dial path, preventing private/loopback/link-local/unspecified destinations and DNS rebinding."},
+        {"id": "13.3", "text": "Blocks metadata destinations and disables redirects or revalidates every redirect destination under the same dial policy."},
         {"id": "13.4", "text": "Does NOT just call http.Get on the raw user-provided URL without any validation"},
         {"id": "13.5", "text": "Sets a timeout on the HTTP client to prevent hanging on slow/malicious targets"}
       ]
@@ -223,10 +223,10 @@
       "prompt": "Write a Go HTTP handler that accepts XML payloads from external clients, parses them into a Product struct with Name, Price, and Description fields.",
       "expected_output": "Blocks DOCTYPE/ENTITY declarations. Sets strict mode. Limits body size. Decodes into typed struct.",
       "assertions": [
-        {"id": "17.1", "text": "Checks for and blocks DOCTYPE or ENTITY declarations in the XML input (XXE prevention)"},
+        {"id": "17.1", "text": "Explains encoding/xml does not resolve external entities or process DTDs, rather than inventing an XXE defect in its default behavior."},
         {"id": "17.2", "text": "Decodes into a concrete typed struct (Product), NOT interface{} or map"},
         {"id": "17.3", "text": "Limits request body size (http.MaxBytesReader or similar)"},
-        {"id": "17.4", "text": "Sets Strict mode on xml.Decoder or manually validates XML content before parsing"},
+        {"id": "17.4", "text": "Handles malformed XML; recognizes Strict is already true and is not an external-entity toggle."},
         {"id": "17.5", "text": "Returns appropriate error response for malformed XML without exposing parser internals"}
       ]
     },
@@ -236,7 +236,7 @@
       "prompt": "Write a Go function that creates a pixel buffer for image processing. It takes width and height as int parameters (from user input via HTTP query) and allocates a byte slice of size width * height * 4 for RGBA data.",
       "expected_output": "Checks for integer overflow before multiplication. Validates inputs are positive and within bounds. Has max size limit.",
       "assertions": [
-        {"id": "18.1", "text": "Checks for integer overflow before or during the multiplication (e.g., width > maxInt/height, or math.MulOverflow equivalent)"},
+        {"id": "18.1", "text": "Checks multiplication overflow before allocation, including the bytes-per-pixel factor; does not invent math.MulOverflow."},
         {"id": "18.2", "text": "Validates width and height are positive numbers"},
         {"id": "18.3", "text": "Has a maximum buffer size limit (e.g., 100MB or similar reasonable cap)"},
         {"id": "18.4", "text": "Returns error on overflow or excessive size (does NOT panic or silently wrap)"},
@@ -322,7 +322,7 @@
         {"id": "24.2", "text": "Uses a map to store per-client rate.Limiter instances"},
         {"id": "24.3", "text": "Protects the client map with a sync.Mutex or similar synchronization"},
         {"id": "24.4", "text": "Returns HTTP 429 Too Many Requests when rate limit is exceeded"},
-        {"id": "24.5", "text": "Extracts client identity from IP address, API key, or similar identifier"}
+        {"id": "24.5", "text": "Derives client identity from a trusted source and bounds/expires per-client limiter entries."}
       ]
     },
     {
@@ -334,7 +334,7 @@
       "assertions": [
         {"id": "25.1", "text": "Loads and configures the client certificate and key (tls.LoadX509KeyPair)"},
         {"id": "25.2", "text": "Configures a custom CA certificate pool (x509.NewCertPool) for verifying the server certificate"},
-        {"id": "25.3", "text": "Sets both Certificates and RootCAs in tls.Config (mutual authentication)"},
+        {"id": "25.3", "text": "Configures client Certificates/RootCAs and explains server RequireAndVerifyClientCert/ClientCAs are needed to enforce mutual authentication."},
         {"id": "25.4", "text": "Sets MinVersion to tls.VersionTLS12 or higher"},
         {"id": "25.5", "text": "Does NOT use InsecureSkipVerify: true"}
       ]
@@ -375,8 +375,8 @@
       "trap": "Model might use a plain map without synchronization, creating data races that could cause authorization bypass (reading partially-written User struct where IsAdmin is true)",
       "assertions": [
         {"id": "28.1", "text": "Uses sync.RWMutex, sync.Map, or channels to protect the session map"},
-        {"id": "28.2", "text": "Read operations (GetSession) use at least a read lock (RLock)"},
-        {"id": "28.3", "text": "Write operations (Create/Delete) use a full write lock (Lock)"},
+        {"id": "28.2", "text": "Synchronizes reads with the chosen mechanism; RWMutex reads use RLock, while sync.Map/channel ownership are valid alternatives."},
+        {"id": "28.3", "text": "Synchronizes writes with the chosen mechanism; mutex-protected maps require exclusive Lock."},
         {"id": "28.4", "text": "Comments mention thread safety or concurrent access"},
         {"id": "28.5", "text": "Does NOT return a pointer to the internal map value (which could be mutated without lock)"}
       ]
@@ -430,7 +430,7 @@
       "prompt": "Write a Go message encryption service. It has a fixed AES-256 key loaded at startup. Messages are encrypted before being stored in a database. Implement Encrypt(plaintext []byte) ([]byte, error) and Decrypt(ciphertext []byte) ([]byte, error). The service processes thousands of messages per second.",
       "trap": "Model might use a counter-based nonce or a static nonce for simplicity, or increment a global counter without handling overflow/reset. Nonce reuse with GCM completely breaks confidentiality",
       "assertions": [
-        {"id": "32.1", "text": "Generates a fresh random nonce using crypto/rand for every Encrypt call"},
+        {"id": "32.1", "text": "Uses a unique nonce per key, such as securely random nonces or NewGCMWithRandomNonce, and respects the random-nonce per-key message limit."},
         {"id": "32.2", "text": "Does NOT use a static, hardcoded, or reused nonce"},
         {"id": "32.3", "text": "Does NOT use a simple counter that could overflow or reset to a previously-used value"},
         {"id": "32.4", "text": "Prepends the nonce to the ciphertext so Decrypt can extract it"},
@@ -484,13 +484,13 @@
       "name": "analytics-pii-tracking",
       "description": "Tests PII awareness when sending data to analytics services",
       "prompt": "Write a Go function that tracks a user signup event to an analytics service (e.g., Segment, Mixpanel, or custom). The User struct has: ID, Email, Phone, Address, Plan, Country, and SignupSource fields. Send relevant data for product analytics.",
-      "trap": "Model might send all fields including PII (email, phone, address) to the analytics service",
+      "trap": "Does not mistake identifiers or hashed emails for anonymous data.",
       "assertions": [
-        {"id": "36.1", "text": "Sends user ID (internal identifier) to the analytics service"},
+        {"id": "36.1", "text": "Uses an approved pseudonymous identifier when correlation is needed, recognizing it remains personal data."},
         {"id": "36.2", "text": "Does NOT send raw email to the analytics service (may hash it if needed for correlation)"},
         {"id": "36.3", "text": "Does NOT send phone number or address to the analytics service"},
-        {"id": "36.4", "text": "Sends non-PII business data (plan, country, signup source)"},
-        {"id": "36.5", "text": "If email correlation is needed, uses a one-way hash (SHA-256) instead of sending the raw email"}
+        {"id": "36.4", "text": "Minimizes approved business fields; combinations can still identify a user."},
+        {"id": "36.5", "text": "Does not claim plain SHA-256 anonymizes an email; uses a secret-keyed pseudonym if approved correlation is necessary."}
       ]
     },
     {
@@ -501,7 +501,7 @@
       "trap": "Model might log the raw username directly. An attacker can inject newlines to forge log entries (e.g., username containing \\nAdmin login successful from 10.0.0.1)",
       "assertions": [
         {"id": "37.1", "text": "Sanitizes the username before logging (removes or escapes control characters like \\n, \\r)"},
-        {"id": "37.2", "text": "Uses structured logging (slog, zerolog, zap) which inherently prevents log injection by encoding values"},
+        {"id": "37.2", "text": "Uses a handler/encoding that escapes record delimiters, such as slog.JSONHandler; structured logging APIs alone do not guarantee safe custom handlers."},
         {"id": "37.3", "text": "Does NOT use fmt.Printf or log.Printf with %s directly on unsanitized user input"},
         {"id": "37.4", "text": "Logs relevant security context (IP address, timestamp)"},
         {"id": "37.5", "text": "Does NOT log the password or authentication token"}
@@ -531,7 +531,7 @@
         {"id": "39.1", "text": "Uses safe conversion string(b) instead of unsafe.Pointer manipulation"},
         {"id": "39.2", "text": "Explains or comments that the compiler optimizes string(b) in many contexts (map lookups, comparisons) to avoid copying"},
         {"id": "39.3", "text": "Does NOT use unsafe.Pointer, unsafe.String, or reflect.StringHeader for the conversion"},
-        {"id": "39.4", "text": "If unsafe is mentioned, warns about the risks (GC can collect the byte slice, modifying bytes corrupts the string)"},
+        {"id": "39.4", "text": "If unsafe is discussed, explains immutability and lifetime requirements accurately; a valid live Go pointer is tracked by GC, unlike an improperly retained uintptr."},
         {"id": "39.5", "text": "Suggests profiling before optimizing (the safe path may already be fast enough)"}
       ]
     },
@@ -552,11 +552,11 @@
     {
       "id": 41,
       "name": "stride-threat-model",
-      "description": "Tests ability to apply STRIDE methodology to a system",
+      "description": "Tests concrete threat analysis across webhook, storage, and queue boundaries",
       "prompt": "I'm building a Go microservice that receives webhook events from Stripe, validates them, stores them in PostgreSQL, and triggers downstream processing via a message queue (NATS). Perform a security threat analysis of this system. What threats should I worry about and what mitigations should I implement?",
-      "trap": "Model might give generic security advice without structured threat analysis. Skill teaches STRIDE methodology applied per DFD element",
+      "trap": "Generic checklists or framework labels do not identify actual attack paths. Evaluate concrete boundaries and mitigations; STRIDE terminology and numerical scoring are optional.",
       "assertions": [
-        {"id": "41.1", "text": "Uses or references STRIDE categories (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege)"},
+        {"id": "41.1", "text": "Identifies trust boundaries and plausible attack paths across webhook verification, database access, and downstream message processing; no required taxonomy or scoring format"},
         {"id": "41.2", "text": "Addresses webhook signature verification (Tampering — Stripe signs webhooks with HMAC)"},
         {"id": "41.3", "text": "Addresses DoS concerns (rate limiting, body size limits on the webhook endpoint)"},
         {"id": "41.4", "text": "Addresses Information Disclosure (error messages not leaking DB details, TLS for all connections)"},
@@ -568,13 +568,13 @@
       "name": "severity-adjustment-upstream",
       "description": "Tests the skill's guidance on adjusting severity based on upstream validation instead of dismissing findings",
       "prompt": "Review this Go code for security issues. The handler parses an integer user ID from the URL path using strconv.Atoi, then passes it to a SQL query:\n\n```go\nfunc GetUser(w http.ResponseWriter, r *http.Request) {\n    idStr := r.PathValue(\"id\")\n    id, err := strconv.Atoi(idStr)\n    if err != nil {\n        http.Error(w, \"invalid id\", 400)\n        return\n    }\n    query := fmt.Sprintf(\"SELECT * FROM users WHERE id = %d\", id)\n    row := db.QueryRow(query)\n    // ...\n}\n```\n\nIs this a SQL injection vulnerability?",
-      "trap": "Model might either dismiss it entirely (Atoi returns int, so no injection) or flag it as critical without considering that Atoi constrains the input to integers. Skill teaches severity adjustment — report with lowered severity and document the upstream defense",
+      "trap": "Does not report demonstrated-safe integer formatting as exploitable SQL injection merely because parameterization is preferable.",
       "assertions": [
-        {"id": "42.1", "text": "Still flags the SQL string formatting as a finding (defense in depth — should use parameterized queries)"},
+        {"id": "42.1", "text": "Does not report integer-only formatting as exploitable SQL injection when conversion errors are handled."},
         {"id": "42.2", "text": "Acknowledges that strconv.Atoi provides upstream validation (input is constrained to integers)"},
-        {"id": "42.3", "text": "Adjusts severity downward from Critical (notes the reduced risk due to integer parsing)"},
-        {"id": "42.4", "text": "Recommends using parameterized queries ($1 placeholder) as the proper fix"},
-        {"id": "42.5", "text": "Explains why defense in depth still matters even with upstream validation (what if the validation is removed later?)"}
+        {"id": "42.3", "text": "Distinguishes a maintainability/defense-in-depth recommendation from a demonstrated vulnerability."},
+        {"id": "42.4", "text": "May recommend parameterized queries for consistency without claiming the shown validated integer permits injection."},
+        {"id": "42.5", "text": "Explains the actual trust boundary and how future changes would need review, without inventing present exploitability."}
       ]
     },
     {
@@ -582,13 +582,13 @@
       "name": "cookie-prefix-host",
       "description": "Tests knowledge of cookie prefixes (__Host- and __Secure-) for hardened cookies",
       "prompt": "Write a Go function that creates a CSRF protection cookie for a web application. The cookie should be as secure as possible and bound strictly to the origin (not shared with subdomains). The application runs exclusively over HTTPS.",
-      "trap": "Model might create a normal cookie with Secure+HttpOnly flags but miss the __Host- prefix which enforces origin binding at the browser level",
+      "trap": "Distinguishes cookie host scoping from origin/port isolation and authentication cookies from JavaScript-readable CSRF token cookies.",
       "assertions": [
         {"id": "43.1", "text": "Uses the __Host- prefix for the cookie name (e.g., __Host-CSRF)"},
         {"id": "43.2", "text": "Sets Secure: true (required for __Host- prefix)"},
         {"id": "43.3", "text": "Sets Path to \"/\" (required for __Host- prefix)"},
-        {"id": "43.4", "text": "Does NOT set a Domain attribute (required for __Host- prefix — must be empty to bind to exact origin)"},
-        {"id": "43.5", "text": "Sets HttpOnly: true"}
+        {"id": "43.4", "text": "Omits Domain for exact host scoping; cookies are not isolated by TCP port."},
+        {"id": "43.5", "text": "Sets HttpOnly for authentication cookies; permits a JavaScript-readable CSRF token cookie when required by a signed double-submit design."}
       ]
     }
   ]

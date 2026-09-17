@@ -18,7 +18,7 @@
       { "id": "1.4", "text": "Does NOT suggest using os.Exit inside RunE" },
       {
         "id": "1.5",
-        "text": "Mentions that returning error from RunE causes cobra to exit non-zero"
+        "text": "Explains RunE returns an error through Execute; main must choose a nonzero exit status"
       }
     ]
   },
@@ -76,7 +76,7 @@
       },
       {
         "id": "4.2",
-        "text": "Shows explicitly calling the parent's PersistentPreRunE from inside the child's hook"
+        "text": "Chains the parent explicitly or enables EnableTraverseRunHooks; avoids doing both"
       },
       { "id": "4.3", "text": "Does NOT claim both hooks run automatically" },
       {
@@ -113,13 +113,13 @@
   {
     "id": 6,
     "name": "command-group-registration-order",
-    "description": "Tests that AddGroup must be called before AddCommand that references it",
+    "description": "Tests that referenced groups are registered before command execution",
     "prompt": "I want to group my cobra subcommands in the help output under labels like 'Core Commands:' and 'Management Commands:'. How do I set this up?",
-    "trap": "Without the skill, the model calls AddCommand first and AddGroup after, which doesn't work — groups must be registered before the commands that reference them.",
+    "trap": "Without the skill, the model omits the referenced group; AddCommand before AddGroup is valid as long as both happen before execution.",
     "assertions": [
       {
         "id": "6.1",
-        "text": "Calls AddGroup before AddCommand for commands that use that group"
+        "text": "Registers all GroupIDs before executing the tree; either AddGroup/AddCommand order is valid"
       },
       {
         "id": "6.2",
@@ -128,7 +128,7 @@
       { "id": "6.3", "text": "Shows cobra.Group{ID: ..., Title: ...} struct" },
       {
         "id": "6.4",
-        "text": "Does NOT call AddCommand before AddGroup for the same group"
+        "text": "Does not claim AddCommand must follow AddGroup"
       }
     ]
   },
@@ -315,7 +315,7 @@
     "name": "mutually-exclusive-flags",
     "description": "Tests MarkFlagsMutuallyExclusive instead of manual RunE checks",
     "prompt": "My Go cobra command has --json and --yaml flags for output format. Users should only be able to pass one of them. How do I prevent both from being passed at the same time?",
-    "trap": "Without the skill, the model writes an if statement checking both flags inside RunE. The correct approach is MarkFlagsMutuallyExclusive which cobra enforces at parse time before RunE.",
+    "trap": "Without the skill, the model writes an if statement checking both flags inside RunE. The correct approach is MarkFlagsMutuallyExclusive which cobra enforces after pre-run hooks, before RunE.",
     "assertions": [
       {
         "id": "14.1",
@@ -327,7 +327,7 @@
       },
       {
         "id": "14.3",
-        "text": "Explains cobra enforces this at flag parse time and returns a standard error"
+        "text": "Explains cobra enforces this before RunE (after pre-run hooks) and returns a standard error"
       }
     ]
   },
@@ -336,7 +336,7 @@
     "name": "required-together-flags",
     "description": "Tests MarkFlagsRequiredTogether instead of manual RunE checks",
     "prompt": "My Go cobra command has --tls-cert and --tls-key flags. If a user provides one, they must provide the other. How do I enforce this constraint?",
-    "trap": "Without the skill, the model writes manual validation in RunE checking if one is set without the other. MarkFlagsRequiredTogether enforces this at cobra's parse stage.",
+    "trap": "Without the skill, the model writes manual validation in RunE checking if one is set without the other. MarkFlagsRequiredTogether enforces this after pre-run hooks, before RunE.",
     "assertions": [
       {
         "id": "15.1",
@@ -357,7 +357,7 @@
     "name": "one-required-flag-group",
     "description": "Tests MarkFlagsOneRequired instead of manual RunE checks",
     "prompt": "My Go cobra command accepts input from either --file or --stdin. At least one must be provided. How do I enforce that the user passes at least one of them?",
-    "trap": "Without the skill, the model checks flag presence inside RunE. MarkFlagsOneRequired enforces at parse time with a standard cobra error.",
+    "trap": "Without the skill, the model checks flag presence inside RunE. MarkFlagsOneRequired enforces before RunE with a standard cobra error.",
     "assertions": [
       {
         "id": "16.1",

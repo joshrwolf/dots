@@ -18,7 +18,7 @@
 
 ## sync.Mutex
 
-Protects shared state with exclusive access. MUST hold the lock for the shortest time possible — NEVER hold a mutex across I/O, network calls, or channel operations.
+Protects shared state with exclusive access. Keep lock scope small, but preserve the invariant it protects. I/O or channel operations under a lock can create contention or deadlocks; some APIs deliberately serialize I/O and require that lock.
 
 ```go
 type SafeCache struct {
@@ -74,7 +74,7 @@ func (c *Config) Set(key, value string) {
 }
 ```
 
-**Pitfall**: Do not upgrade RLock to Lock — this deadlocks. Release RLock first, then acquire Lock.
+**Pitfall**: Do not upgrade RLock to Lock — this deadlocks. Release RLock first, then acquire Lock and recheck the condition: protected state may change between locks.
 
 ## sync/atomic
 
@@ -110,7 +110,7 @@ Go 1.19+ provides typed atomics (`atomic.Int64`, `atomic.Bool`, `atomic.Pointer[
 
 ## sync.Map
 
-SHOULD only be used for write-once/read-many patterns. Optimized for two common patterns: (1) keys are written once and read many times, (2) multiple goroutines read/write disjoint key sets. For other patterns, a plain `map` + `sync.RWMutex` is faster.
+Optimized for two patterns: (1) keys are written once and read many times, (2) goroutines operate on disjoint key sets. Prefer a typed map with a mutex when that makes invariants clearer; benchmark performance rather than promising one implementation always wins.
 
 ```go
 var cache sync.Map
@@ -132,11 +132,11 @@ func GetOrSet(key string, compute func() any) any {
 }
 ```
 
-**When NOT to use `sync.Map`**: when you need to iterate, get the length, or when writes are frequent and keys overlap heavily. Use `sync.RWMutex` + `map` instead.
+`Range` supports iteration but is not a consistent snapshot; there is no direct Len. Use a mutex-protected map for atomic snapshots or multi-key invariants. `GetOrSet` above may run compute concurrently more than once; LoadOrStore deduplicates publication, not computation.
 
 ## sync.Pool
 
-Reuse temporary objects to reduce GC pressure. MUST NOT store pointers to stack-allocated objects. Objects in the pool may be reclaimed at any GC cycle — do not store persistent state.
+Reuse temporary objects to reduce GC pressure. Pointers to local variables are valid; escape analysis gives them an appropriate lifetime. Objects may disappear from the pool at any time — do not store persistent state.
 
 ```go
 var bufPool = sync.Pool{
@@ -160,8 +160,8 @@ func process(data []byte) string {
 
 **Rules**:
 
-- Always `Reset()` before `Put()` — returning dirty objects causes bugs
-- Do not assume an object from `Get()` is zeroed — the `New` func only runs if the pool is empty
+- Reset mutable contents before reuse, consistently on Get or Put; do not retain aliases after Put
+- Do not assume an object from `Get()` is zeroed — Get may use New even when other goroutines have put items into the pool
 - Best for short-lived, frequently allocated objects (buffers, encoders, temporary structs)
 
 ## sync.Once
@@ -170,30 +170,20 @@ MUST be used for one-time initialization. Execute exactly once, regardless of ho
 
 ```go
 type DBClient struct {
-    initOnce  sync.Once
-    closeOnce sync.Once
-    conn      *sql.DB
+    initOnce sync.Once
+    conn     *sql.DB
+    initErr  error
 }
 
-func (c *DBClient) getConn() *sql.DB {
+func (c *DBClient) getConn() (*sql.DB, error) {
     c.initOnce.Do(func() {
-        var err error
-        c.conn, err = sql.Open("postgres", dsn)
-        if err != nil {
-            panic(fmt.Sprintf("db init: %v", err))
-        }
+        c.conn, c.initErr = sql.Open("postgres", dsn)
     })
-    return c.conn
-}
-
-func (c *DBClient) Close() error {
-    var err error
-    c.closeOnce.Do(func() {
-        err = c.conn.Close()
-    })
-    return err
+    return c.conn, c.initErr
 }
 ```
+
+This caches both success and failure; `Once.Do` does not retry. If its function panics, it is still considered done. The owner must stop users before closing the database; sql.Open creates a pool and may require PingContext to verify connectivity.
 
 Go 1.21+ also provides `sync.OnceFunc`, `sync.OnceValue`, and `sync.OnceValues` for simpler use cases:
 
@@ -292,11 +282,13 @@ func GetUser(ctx context.Context, id string) (*User, error) {
 }
 ```
 
+`Do` waits without an independent cancellation channel. In this example the first caller's context governs the shared query and its cancellation affects all waiters. For independent caller cancellation, use DoChan with a select and choose a separately owned bounded work context.
+
 **Use cases**: cache stampede prevention, deduplicating expensive lookups (DB, API), rate-limited external service calls.
 
 ## golang.org/x/sync/errgroup
 
-Goroutine group with error propagation. Returns the first error from any goroutine. With `WithContext`, cancels remaining goroutines on first error.
+Goroutine group with error propagation. Returns the first error from any goroutine. With `WithContext`, signals cancellation on the first error or when Wait returns. It cannot forcibly stop goroutines; each operation must observe the context.
 
 ```go
 func fetchAll(ctx context.Context, urls []string) ([]Response, error) {

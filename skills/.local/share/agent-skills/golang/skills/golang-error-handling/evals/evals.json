@@ -14,17 +14,17 @@
         },
         {
           "id": "1.3",
-          "text": "Structured error context (oops.With, not in error string)"
+          "text": "Carries useful context with standard error values, custom types, or existing project conventions; does not require oops."
         },
         { "id": "1.4", "text": "Structured slog key-value log entries" },
-        { "id": "1.5", "text": "Error strings lowercase" }
+        { "id": "1.5", "text": "Ordinary words start lowercase; preserve proper nouns and acronyms" }
       ]
     },
     {
       "id": 2,
       "name": "order-processor",
       "prompt": "Write a Go function ProcessOrders(ctx context.Context, orders []Order) error that validates and processes each order. Order has ID, UserID, Amount, Currency fields. When validation fails (amount <= 0, empty currency, empty user ID), the error message should clearly indicate which order failed and why, so operators can debug issues in production. Return all errors, not just the first.",
-      "trap": "\"indicate which order failed\" tempts interpolating order IDs into error strings",
+      "trap": "Drops the requested order identity to keep all returned errors static.",
       "assertions": [
         {
           "id": "2.1",
@@ -32,10 +32,10 @@
         },
         {
           "id": "2.2",
-          "text": "Variable data as structured attributes (oops/slog)"
+          "text": "Returned errors identify the failing orders; useful IDs can be included in error text or typed fields."
         },
         { "id": "2.3", "text": "Uses errors.Join to collect all order errors" },
-        { "id": "2.4", "text": "Error strings lowercase" },
+        { "id": "2.4", "text": "Ordinary words start lowercase; preserve proper nouns and acronyms" },
         {
           "id": "2.5",
           "text": "Validates ALL fields per order (no short-circuit)"
@@ -46,21 +46,21 @@
       "id": 3,
       "name": "batch-csv-importer",
       "prompt": "Write a Go function ImportCSV(r io.Reader) (int, error) that reads a CSV with columns: name, email, phone. It validates each row (name not empty, email contains '@', phone is digits only). It should return the count of successfully imported rows and a detailed failure report showing every invalid row with its row number and which column failed, so operators can fix the CSV and retry. Process ALL rows even if early ones fail.",
-      "trap": "\"detailed failure report with row numbers\" tempts interpolating row/col into error strings",
+      "trap": "Omits row and column information or adds an unnecessary error library.",
       "assertions": [
         {
           "id": "3.1",
-          "text": "Error messages static (no row numbers in error string)"
+          "text": "Returned failures identify the invalid row and column, as requested."
         },
         {
           "id": "3.2",
-          "text": "Row/column data as structured attributes (oops/slog)"
+          "text": "Preserves row/column data in returned error text or typed fields without adding a dependency."
         },
         {
           "id": "3.3",
           "text": "Collects all row errors (doesn't stop on first)"
         },
-        { "id": "3.4", "text": "Error strings lowercase" },
+        { "id": "3.4", "text": "Ordinary words start lowercase; preserve proper nouns and acronyms" },
         { "id": "3.5", "text": "Uses errors.Join for combining errors" }
       ]
     },
@@ -80,7 +80,7 @@
           "text": "TimeoutError.Error() lowercase, no punctuation"
         },
         { "id": "4.4", "text": "errors.Is for sentinel matching" },
-        { "id": "4.5", "text": "errors.As for type extraction" }
+        { "id": "4.5", "text": "errors.As or supported errors.AsType for type extraction" }
       ]
     },
     {
@@ -91,8 +91,8 @@
       "assertions": [
         { "id": "5.1", "text": "Errors wrapped with service context" },
         { "id": "5.2", "text": "Low-cardinality error messages" },
-        { "id": "5.3", "text": "Uses structured attributes (oops/slog)" },
-        { "id": "5.4", "text": "Error strings lowercase" },
+        { "id": "5.3", "text": "Keeps useful operation context in returned errors without requiring a logging or error library." },
+        { "id": "5.4", "text": "Ordinary words start lowercase; preserve proper nouns and acronyms" },
         { "id": "5.5", "text": "Each service identifiable by context prefix" }
       ]
     },
@@ -106,7 +106,7 @@
           "id": "6.1",
           "text": "Uses errors.Join for combining validation errors"
         },
-        { "id": "6.2", "text": "Error strings lowercase" },
+        { "id": "6.2", "text": "Ordinary words start lowercase; preserve proper nouns and acronyms" },
         { "id": "6.3", "text": "Validates ALL fields" },
         { "id": "6.4", "text": "Conditional TLS validation" },
         { "id": "6.5", "text": "No panic for validation" }
@@ -116,15 +116,15 @@
       "id": 7,
       "name": "modernize-logging",
       "prompt": "Modernize the logging in this Go code. Keep all the logging but make it production-ready:\n\n```go\npackage worker\n\nimport (\n    \"fmt\"\n    \"log\"\n    \"time\"\n)\n\nfunc ProcessJob(jobID string, payload []byte) error {\n    log.Printf(\"INFO: Starting job %s with %d bytes payload\", jobID, len(payload))\n    start := time.Now()\n    result, err := executeJob(jobID, payload)\n    if err != nil {\n        log.Printf(\"ERROR: Job %s failed after %v: %v\", jobID, time.Since(start), err)\n        return fmt.Errorf(\"processing job %s: %w\", jobID, err)\n    }\n    if result.Warnings > 0 {\n        log.Printf(\"WARNING: Job %s completed with %d warnings\", jobID, result.Warnings)\n    }\n    log.Printf(\"INFO: Job %s completed in %v, processed %d items\", jobID, time.Since(start), result.ItemCount)\n    return nil\n}\n```\n\nA teammate reviewing your modernization says: 'Good, but you removed the error log — when executeJob fails, nothing gets logged. The caller might just propagate the error up the chain and it could get swallowed. We MUST log the error here so it's visible in production.'",
-      "trap": "The teammate's argument sounds reasonable — callers might swallow errors. The skill teaches that each error must be handled once: either log it OR return it, never both. If every function logs-and-returns, the same error gets logged multiple times at every layer, making logs noisy and hard to correlate. The model should push back on the teammate and keep only the return.",
+      "trap": "Applies an absolute log-or-return rule despite the request to keep existing logging.",
       "assertions": [
         {
           "id": "7.1",
-          "text": "Does not log AND return the same error — the modernized code must choose: either log (and not return) or return (and not log). Both is the anti-pattern."
+          "text": "Keeps the requested diagnostic logging and returned error; avoids redundant reports by identifying the reporting owner."
         },
         {
           "id": "7.2",
-          "text": "Pushes back on the teammate's suggestion or explains why logging AND returning creates duplicate log entries at every layer"
+          "text": "Explains duplicate reporting risks without treating log-and-return as universally invalid."
         },
         {
           "id": "7.3",
@@ -148,7 +148,7 @@
       "assertions": [
         { "id": "8.1", "text": "Uses errors.Join" },
         { "id": "8.2", "text": "Each error wrapped with resource context" },
-        { "id": "8.3", "text": "Error strings lowercase" },
+        { "id": "8.3", "text": "Ordinary words start lowercase; preserve proper nouns and acronyms" },
         { "id": "8.4", "text": "Attempts ALL resources even if earlier fail" },
         { "id": "8.5", "text": "Correct shutdown order" }
       ]
@@ -161,23 +161,23 @@
       "assertions": [
         {
           "id": "9.1",
-          "text": "Low-cardinality error messages (no ID interpolation)"
+          "text": "Sentinel messages are stable; contextual error text may identify the requested resource."
         },
         { "id": "9.2", "text": "Errors wrapped with method context" },
         { "id": "9.3", "text": "Uses errors.Is for sql.ErrNoRows" },
         { "id": "9.4", "text": "Sentinel as package-level var" },
-        { "id": "9.5", "text": "Error strings lowercase" }
+        { "id": "9.5", "text": "Ordinary words start lowercase; preserve proper nouns and acronyms" }
       ]
     },
     {
       "id": 10,
       "name": "retry-handler",
       "prompt": "Write a Go function WithRetry(ctx context.Context, name string, maxAttempts int, fn func() error) error that retries fn up to maxAttempts times with exponential backoff (starting at 100ms, doubling each time). Log each retry attempt with the attempt number, delay, and error. On final failure, return the last error wrapped with context. Include the operation name and attempt info in logs so operators can diagnose intermittent failures.",
-      "trap": "\"log each retry attempt\" tempts logging inside the retry loop AND returning the final error (log+return)",
+      "trap": "Removes requested retry diagnostics because the operation also returns its final error.",
       "assertions": [
         {
           "id": "10.1",
-          "text": "Does not log AND return final error (single handling rule)"
+          "text": "Logs retry attempts as requested and returns the final contextual error; distinguishes retry diagnostics from terminal reporting."
         },
         { "id": "10.2", "text": "Structured slog attributes" },
         { "id": "10.3", "text": "Uses slog (not log.Printf)" },
@@ -189,21 +189,21 @@
       "id": 11,
       "name": "event-processor",
       "prompt": "Write a Go function ProcessEvents(ctx context.Context, events []Event) error that processes a batch of events. Event has ID, Type (string: \"user.created\", \"order.placed\", \"payment.failed\", etc.), Payload json.RawMessage, and Timestamp time.Time. Each event type dispatches to a different handler. When processing fails, the error should include the event type, ID, and timestamp so operators can identify which event failed. Collect all errors and return them.",
-      "trap": "\"include event type, ID, and timestamp\" tempts interpolating event details into error strings",
+      "trap": "Drops requested event context by applying log-cardinality constraints to returned error values.",
       "assertions": [
         {
           "id": "11.1",
-          "text": "Error messages static (event type/ID not in error string)"
+          "text": "Returned errors include the requested event context."
         },
         {
           "id": "11.2",
-          "text": "Event details as structured attributes (oops/slog)"
+          "text": "Preserves event type, ID, and timestamp in error text or typed fields without requiring oops."
         },
         {
           "id": "11.3",
           "text": "Uses errors.Join to collect all event errors"
         },
-        { "id": "11.4", "text": "Error strings lowercase" },
+        { "id": "11.4", "text": "Ordinary words start lowercase; preserve proper nouns and acronyms" },
         {
           "id": "11.5",
           "text": "No logging inside processor (returns to caller)"
@@ -214,7 +214,7 @@
       "id": 12,
       "name": "api-gateway",
       "prompt": "Write a Go API gateway package that proxies requests to a backend UserService. The gateway has a public GetUser(ctx, id) (*User, error) function. The backend UserService returns its own internal error types: *BackendTimeoutError (with Endpoint, Duration fields), *BackendNotFoundError (with Resource, ID fields), and generic errors.\n\nThe gateway must translate backend errors to clean public domain errors. A security-minded teammate reviewing the design says: 'Make sure you use fmt.Errorf with %w when wrapping backend errors — that way callers can use errors.As to inspect details if they need to debug. We should preserve the full error chain for observability.'\n\nIs the teammate's suggestion correct? Implement the gateway correctly.",
-      "trap": "The teammate's argument sounds compelling — preserving the error chain for observability is a real concern. But %w at an API boundary leaks internal implementation details: callers can use errors.As to inspect *BackendTimeoutError or *BackendNotFoundError, creating a hidden coupling to backend internals. The correct approach: use errors.As internally to extract details, translate to domain errors, and use %v (not %w) so the chain is broken at the boundary.",
+      "trap": "Wraps private backend errors or treats percent-v formatting as redaction; domain error matching should survive translation.",
       "assertions": [
         {
           "id": "12.1",
@@ -222,7 +222,7 @@
         },
         {
           "id": "12.2",
-          "text": "Uses %v (not %w) when constructing the translated domain errors — this breaks the error chain at the boundary"
+          "text": "Returns or wraps stable domain errors without wrapping backend causes; does not require percent-v formatting or expose sensitive backend text."
         },
         {
           "id": "12.3",
@@ -235,6 +235,44 @@
         {
           "id": "12.5",
           "text": "Translates to clean public domain sentinels (ErrNotFound, ErrTimeout, ErrServiceUnavailable) with lowercase error strings"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "name": "public-reader-error-contract",
+      "prompt": "Our public Parse(r io.Reader) API promises callers can match errors from their own reader with errors.Is. A review suggests replacing %w with %v because public APIs must hide underlying errors. Should we do that?",
+      "assertions": [
+        {
+          "id": "13.1",
+          "text": "Preserves wrapping for the documented reader-error contract."
+        },
+        {
+          "id": "13.2",
+          "text": "Explains that wrapping decisions follow the contract, not whether the API is public."
+        },
+        {
+          "id": "13.3",
+          "text": "Notes that percent-v formatting does not redact error text."
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "name": "reader-data-with-eof",
+      "prompt": "A custom io.Reader returns n=4 and io.EOF in the same call. Our copy loop checks err before writing buf[:n], and drops the last four bytes. Fix the handling.",
+      "assertions": [
+        {
+          "id": "14.1",
+          "text": "Processes the n bytes before handling the returned error."
+        },
+        {
+          "id": "14.2",
+          "text": "Treats EOF as completion after consuming the data."
+        },
+        {
+          "id": "14.3",
+          "text": "Handles destination write failures without discarding them."
         }
       ]
     }

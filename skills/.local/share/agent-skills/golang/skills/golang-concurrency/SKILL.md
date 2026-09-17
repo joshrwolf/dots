@@ -27,13 +27,13 @@ Go's concurrency model is built on goroutines and channels. Goroutines are cheap
 
 ## Core Principles
 
-1. **Every goroutine must have a clear exit** — without a shutdown mechanism (context, done channel, WaitGroup), they leak and accumulate until the process crashes
+1. **Every goroutine must have a clear exit** — use cancellation or bounded work plus a way to await completion; WaitGroup waits but does not signal shutdown
 2. **Share memory by communicating** — channels transfer ownership explicitly; mutexes protect shared state but make ownership implicit
-3. **Send copies, not pointers** on channels — sending pointers creates invisible shared memory, defeating the purpose of channels
+3. **Define ownership of sent values** — pointers can transfer ownership safely; copied structs containing slices, maps, or pointers still share referenced data
 4. **Only the sender closes a channel** — closing from the receiver side panics if the sender writes after close
 5. **Specify channel direction** (`chan<-`, `<-chan`) — the compiler prevents misuse at build time
 6. **Default to unbuffered channels** — larger buffers mask backpressure; use them only with measured justification
-7. **Always include `ctx.Done()` in select** — without it, goroutines leak after caller cancellation
+7. **Make blocking operations cancellable when their owner can stop waiting** — use `ctx.Done()` or another explicit completion contract
 8. **Avoid repeated `time.After` in hot loops** — each call allocates a timer and creates unnecessary churn; use `time.NewTimer` + `Reset` for long-running loops
 9. **Verify goroutine shutdown in tests** using cancellation and explicit completion signals
 
@@ -47,14 +47,14 @@ For detailed channel/select code examples, see [Channels and Select Patterns](re
 | Coordinating goroutine lifecycle | Channel + context | Clean shutdown with select |
 | Protecting shared struct fields | `sync.Mutex` / `sync.RWMutex` | Simple critical sections |
 | Simple counters, flags | `sync/atomic` | Lock-free, lower overhead |
-| Many readers, few writers on a map | `sync.Map` | Optimized for read-heavy workloads. **Concurrent map read/write causes a hard crash** |
+| Many readers, few writers on a map | `sync.Map` | Specialized for write-once/read-many or disjoint-key access; unsynchronized ordinary map reads/writes race and may cause a fatal runtime error |
 | Caching expensive computations | `sync.Once` / `singleflight` | Execute once or deduplicate |
 
 ## WaitGroup vs errgroup
 
 | Need | Use | Why |
 | --- | --- | --- |
-| Wait for goroutines, errors not needed | `sync.WaitGroup` | Fire-and-forget |
+| Wait for goroutines, errors not needed | `sync.WaitGroup` | Await completion |
 | Wait + collect first error | `errgroup.Group` | Error propagation |
 | Wait + cancel siblings on first error | `errgroup.WithContext` | Context cancellation on error |
 | Wait + limit concurrency | `errgroup.SetLimit(n)` | Built-in worker pool |
@@ -67,7 +67,7 @@ For detailed channel/select code examples, see [Channels and Select Patterns](re
 | `sync.RWMutex` | Many readers, few writers | Never upgrade RLock to Lock (deadlock) |
 | `sync/atomic` | Simple counters, flags | Prefer typed atomics (Go 1.19+): `atomic.Int64`, `atomic.Bool` |
 | `sync.Map` | Concurrent map, read-heavy | No explicit locking; use `RWMutex`+map when writes dominate |
-| `sync.Pool` | Reuse temporary objects | Always `Reset()` before `Put()`; reduces GC pressure |
+| `sync.Pool` | Reuse temporary objects | Reset before reuse; items may disappear at any time |
 | `sync.Once` | One-time initialization | Go 1.21+: `OnceFunc`, `OnceValue`, `OnceValues` |
 | `sync.WaitGroup` | Waiting for simple goroutines | Go 1.25+: prefer `wg.Go(func(){ ... })` for fire-and-wait tasks that do not panic and do not need error propagation. For Go <1.25 use `Add`/`Done`. For errors/cancellation/limits, use `errgroup` with context. |
 | `x/sync/singleflight` | Deduplicate concurrent calls | Cache stampede prevention |
@@ -108,7 +108,7 @@ For a requested concurrency audit, check:
 | `time.After` in hot loop | Reuse `time.NewTimer` + `Reset` |
 | Missing `ctx.Done()` in select | Always select on context to allow cancellation |
 | Unbounded goroutine spawning | Use `errgroup.SetLimit(n)` or semaphore |
-| Sharing pointer via channel | Send copies or immutable values |
+| Mutating shared data after a send | Transfer exclusive ownership, copy referenced mutable data, or synchronize access |
 | `wg.Add` inside goroutine | Call `Add` before `go` — `Wait` may return early otherwise |
 | Forgetting `-race` in CI | Always run `go test -race ./...` |
 | Mutex held across I/O | Keep critical sections short |

@@ -73,14 +73,16 @@ message ListUsersResponse {
 
 ```bash
 # Basic generation
-protoc --go_out=gen --go_opt=paths=source_relative \
+mkdir -p gen
+protoc -I proto --go_out=gen --go_opt=paths=source_relative \
        --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
        proto/user/v1/*.proto
 
-# With validation (using buf-validate)
-protoc --go_out=gen --go_opt=paths=source_relative \
+# With legacy protoc-gen-validate (PGV), not Buf Protovalidate.
+# Include the directory containing validate/validate.proto.
+protoc -I proto -I third_party --go_out=gen --go_opt=paths=source_relative \
        --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
-       --validate_out="lang=go:gen" \
+       --validate_out="lang=go,paths=source_relative:gen" \
        proto/user/v1/*.proto
 
 # Include external imports

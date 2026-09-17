@@ -42,11 +42,16 @@ func square(ctx context.Context, in <-chan int) <-chan int {
     out := make(chan int)
     go func() {
         defer close(out)
-        for n := range in {
+        for {
             select {
-            case out <- n * n:
             case <-ctx.Done():
                 return
+            case n, ok := <-in:
+                if !ok { return }
+                select {
+                case out <- n * n:
+                case <-ctx.Done(): return
+                }
             }
         }
     }()
@@ -124,11 +129,15 @@ func fanIn(ctx context.Context, channels ...<-chan Result) <-chan Result {
         wg.Add(1)
         go func(c <-chan Result) {
             defer wg.Done()
-            for v := range c {
+            for {
                 select {
-                case out <- v:
-                case <-ctx.Done():
-                    return
+                case <-ctx.Done(): return
+                case v, ok := <-c:
+                    if !ok { return }
+                    select {
+                    case out <- v:
+                    case <-ctx.Done(): return
+                    }
                 }
             }
         }(ch)
@@ -153,6 +162,7 @@ func processAll(ctx context.Context, tasks []Task) error {
 
     for _, task := range tasks {
         g.Go(func() error {
+            if err := ctx.Err(); err != nil { return err }
             return process(ctx, task)
         })
     }
@@ -160,7 +170,7 @@ func processAll(ctx context.Context, tasks []Task) error {
 }
 ```
 
-Use a hand-rolled worker pool only when you need:
+`SetLimit` blocks `Go` while full; cancellation does not interrupt that admission wait. Tasks must respect cancellation, and a cancelled group may still admit queued calls. Check the derived context before starting new work. Use a worker pool when you need:
 
 - Per-worker state (connections, buffers)
 - Custom backpressure or priority scheduling
@@ -176,8 +186,13 @@ func processAll(ctx context.Context, items []Item) error {
     var wg sync.WaitGroup
 
     for _, item := range items {
+        select {
+        case sem <- struct{}{}: // acquire before starting a goroutine
+        case <-ctx.Done():
+            wg.Wait()
+            return ctx.Err()
+        }
         wg.Add(1)
-        sem <- struct{}{} // acquire
         go func(item Item) {
             defer wg.Done()
             defer func() { <-sem }() // release
@@ -235,22 +250,7 @@ Use goroutine+channel pipelines when:
 
 ### samber/ro
 
-`samber/ro` provides a fluent, type-safe pipeline API for read-only collections:
-
-```go
-import "github.com/samber/ro"
-
-emails, _ := ro.Collect( // ignore error
-    ro.Pipe(
-        ro.FromSlice(users),
-        ro.Filter(func(u User) bool { return u.Active }),
-        ro.Map(func(u User) string { return u.Email }),
-    ),
-)
-
-```
-
-Use `samber/ro` for sequential data transformations that benefit from a fluent API. It might also support parallel processing if needed.
+For projects already using `samber/ro`, see `golang-samber-ro` for its observable/observer model and operators. It is an external reactive-stream library, not a standard iterator helper; consult the resolved version for Collect and Pipe signatures.
 
 ## Goroutine Leak Detection
 

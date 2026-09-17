@@ -25,15 +25,15 @@ Prevents programmer mistakes — bugs, panics, and silent data corruption in nor
 
 ## Best Practices Summary
 
-1. **Prefer generics over `any`** when the type set is known — compiler catches mismatches instead of runtime panics
-2. **Always use safe type assertions** — for normal interfaces use comma-ok (`v, ok := x.(T)`); for reflection in Go 1.25+ prefer `reflect.TypeAssert[T](value)` over `value.Interface().(T)`.
+1. **Express type relationships statically where useful** — concrete types, interfaces, and type parameters serve different contracts; `any` fits genuinely heterogeneous values
+2. **Handle fallible type assertions** — use comma-ok for recoverable mismatches; single-value assertions require an established invariant and intentional panic semantics. For reflection in Go 1.25+, `reflect.TypeAssert[T](value)` provides a checked assertion.
 3. **Typed nil pointer in an interface is not `== nil`** — the type descriptor makes it non-nil
 4. **Writing to a nil map panics** — always initialize before use
 5. **`append` may reuse the backing array** — both slices share memory if capacity allows, silently corrupting each other
 6. **Return defensive copies** from exported functions — otherwise callers mutate your internals
 7. **`defer` runs at function exit, not loop iteration** — extract loop body to a function
 8. **Integer conversions truncate silently** — `int64` to `int32` wraps without error
-9. **Float arithmetic is not exact** — use epsilon comparison or `math/big`
+9. **Choose numeric semantics deliberately** — tolerance comparisons need domain-appropriate absolute/relative limits; `math/big.Float` is also finite-precision, while integers or `big.Rat` support exact arithmetic
 10. **Design useful zero values** — nil map fields panic on first write; use lazy init
 11. **Use `sync.Once` for lazy init** — guarantees exactly-once even under concurrency
 
@@ -106,13 +106,13 @@ b := append(a[:len(a):len(a)], 4)
 
 ### Map concurrent access
 
-Maps MUST NOT be accessed concurrently — → see `samber/cc-skills-golang@golang-concurrency` for sync primitives.
+Concurrent reads are safe when no goroutine writes. Concurrent access involving a write must be synchronized — → see `samber/cc-skills-golang@golang-concurrency` for sync primitives.
 
 See **[Slice and Map Deep Dive](./references/slice-map-safety.md)** for range pitfalls, subslice memory retention, and `slices.Clone`/`maps.Clone`.
 
 ## Numeric Safety
 
-### Implicit type conversions truncate silently
+### Explicit integer conversions can truncate silently
 
 ```go
 // ✗ Bad — silently wraps around if val > math.MaxInt32 (3B becomes -1.29B)
@@ -140,7 +140,7 @@ math.Abs((a+b)-c) < epsilon // true
 
 ### Division by zero
 
-Integer division by zero panics. Float division by zero produces `+Inf`, `-Inf`, or `NaN`.
+Runtime integer division by zero panics. On IEEE-754 implementations, runtime floating division by zero produces infinity or NaN; constant division by zero is a compile-time error. The language specification does not require every implementation to permit floating division by zero.
 
 ```go
 func avg(total, count int) (int, error) {
@@ -225,15 +225,18 @@ type Cache struct { data map[string]any }
 type DB struct {
     once sync.Once
     conn *sql.DB
+    err  error
 }
 
-func (db *DB) connection() *sql.DB {
+func (db *DB) connection() (*sql.DB, error) {
     db.once.Do(func() {
-        db.conn, _ = sql.Open("postgres", connStr)
+        db.conn, db.err = sql.Open("postgres", connStr)
     })
-    return db.conn
+    return db.conn, db.err
 }
 ```
+
+Once caches initialization failure as well as success; use a different design if retry is required. sql.Open may not establish a connection; PingContext verifies reachability.
 
 ### init() function pitfalls
 
@@ -245,12 +248,12 @@ Many safety pitfalls are caught automatically by linters: `errcheck`, `forcetype
 
 ### Go 1.25+ reflection type assertions
 
-For reflection code, prefer `reflect.TypeAssert[T]` over `value.Interface().(T)`.
+For reflection code, prefer `reflect.TypeAssert[T]` over `value.Interface().(T)`. It still requires an interfaceable Value: invalid values and values obtained from unexported fields can panic; guard with CanInterface when those are possible.
 
 ```go
 v := reflect.ValueOf(x)
-if s, ok := reflect.TypeAssert[string](v); ok {
-    use(s)
+if v.CanInterface() {
+    if s, ok := reflect.TypeAssert[string](v); ok { use(s) }
 }
 ```
 
@@ -261,7 +264,7 @@ if s, ok := reflect.TypeAssert[string](v); ok {
 | Bare type assertion `v := x.(T)` | Panics on type mismatch, crashing the program. Use `v, ok := x.(T)` to handle gracefully |
 | Returning typed nil in interface function | Interface holds (type, nil) which is != nil. Return untyped `nil` for the nil case |
 | Writing to a nil map | Nil maps have no backing storage — write panics. Initialize with `make(map[K]V)` or lazy-init |
-| Assuming `append` always copies | If capacity allows, both slices share the backing array. Use `s[:len(s):len(s)]` to force a copy |
+| Assuming `append` always copies | If capacity allows, both slices share the backing array. A full slice expression only limits capacity; a nonempty append then allocates. Use slices.Clone when existing elements must be independent |
 | `defer` in a loop | `defer` runs at function exit, not loop iteration — resources accumulate. Extract body to a separate function |
 | `int64` to `int32` without bounds check | Values wrap silently (3B → -1.29B). Check against `math.MaxInt32`/`math.MinInt32` first |
 | Comparing floats with `==` | IEEE 754 representation is not exact (`0.1+0.2 != 0.3`). Use `math.Abs(a-b) < epsilon` |

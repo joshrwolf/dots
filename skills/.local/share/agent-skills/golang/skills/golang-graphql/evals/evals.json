@@ -34,7 +34,7 @@
         "Introspection is gated — either disabled in production or guarded by an environment variable check",
         "A complexity limit is set using extension.FixedComplexityLimit or equivalent",
         "Does NOT call srv.Use(extension.Introspection{}) unconditionally without an env guard",
-        "Uses handler.New or handler.NewDefaultServer from github.com/99designs/gqlgen/graphql/handler",
+        "Uses handler.New with explicit transports/introspection policy; NewDefaultServer already enables introspection.",
         "Mentions MaxDepth or complexity limiting as a protection against deeply nested queries"
       ],
       "files": []
@@ -70,7 +70,7 @@
       "expected_output": "Uses *string (pointer to string) for the nullable String field. Non-pointer string would imply non-null in graph-gophers.",
       "assertions": [
         "Uses *string (pointer) for the nullable bio field, not plain string",
-        "Explains that non-pointer = non-null and pointer = nullable in graph-gophers type mapping",
+        "Explains pointer nullability for scalar fields without extending that simplification to object resolvers or list nullability.",
         "Does not use sql.NullString or other DB-specific nullable types for the GraphQL resolver layer"
       ],
       "files": []

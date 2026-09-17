@@ -85,14 +85,14 @@
   {
     "id": 7,
     "name": "type-assertion-comma-ok",
-    "description": "Bare type assertions panic on wrong type; comma-ok is required even when the type 'should always' be correct",
+    "description": "Distinguishes established invariants from fallible event-payload assumptions",
     "prompt": "Review this Go event dispatcher and fix any issues:\n\n```go\ntype Event struct {\n    Type    string\n    Payload any\n}\n\nfunc Dispatch(e Event) error {\n    switch e.Type {\n    case \"user.created\":\n        payload := e.Payload.(*UserCreated)\n        return handleUserCreated(payload)\n    case \"order.placed\":\n        payload := e.Payload.(*OrderPlaced)\n        return handleOrderPlaced(payload)\n    case \"payment.failed\":\n        payload := e.Payload.(*PaymentFailed)\n        return handlePaymentFailed(payload)\n    default:\n        return fmt.Errorf(\"unknown event type: %s\", e.Type)\n    }\n}\n```\n\nA teammate says: 'The bare type assertions are fine here — we always put the right payload type for each event type, and we control all the callers. The comma-ok form just adds noise and extra if-checks.' Is the teammate correct? Fix the code if needed.",
-    "trap": "The teammate's argument sounds reasonable — the caller controls event construction and should always set the correct payload type. But bare type assertions panic at runtime on any mismatch (future code, deserialized events, tests with wrong setup). The model should reject the teammate's argument and use comma-ok form.",
+    "trap": "The shown Event exposes independent Type and Payload fields without enforcing their relationship. A claim that callers behave correctly is not evidence of that invariant; handle mismatches or redesign construction. Single-value assertions can still be appropriate for established invariants with intentional panic semantics.",
     "assertions": [
-      {"id": "7.1", "text": "Rejects the teammate's argument — bare type assertions panic at runtime on any type mismatch, regardless of how controlled the callers seem"},
-      {"id": "7.2", "text": "Uses comma-ok form for all three type assertions: payload, ok := e.Payload.(*UserCreated)"},
-      {"id": "7.3", "text": "Handles the !ok case by returning an error (not panicking) — e.g., 'unexpected payload type for user.created'"},
-      {"id": "7.4", "text": "Explains the failure mode: future code, deserialized events from external sources, or tests with wrong fixture setup will cause unrecoverable panics with bare assertions"}
+      {"id": "7.1", "text": "Identifies that the shown Event does not enforce the relationship between Type and Payload; explains panic versus error behavior without banning all single-value assertions"},
+      {"id": "7.2", "text": "Uses checked assertions for fallible payloads or an equivalent type-safe dispatcher design"},
+      {"id": "7.3", "text": "Handles unexpected payloads through the dispatcher error contract; accounts for typed nil payloads if handlers require non-nil values"},
+      {"id": "7.4", "text": "Explains type-assertion panic is recoverable in the same goroutine; uncontrolled mismatches still violate the dispatcher's error contract."}
     ]
   },
   {
@@ -128,7 +128,7 @@
     "name": "generics-over-any-interface",
     "description": "Tests whether the model prefers generics over any/interface{} for type-safe operations",
     "prompt": "I need to write a Go function that checks if a slice contains a given element. The function should work with any comparable type (ints, strings, etc.). What's the best approach?",
-    "trap": "Without the skill, the model may use []any and any parameters for compatibility. The skill says MUST prefer generics over any for type-safe operations (Go 1.18+).",
+    "trap": "Contains needs to preserve the relationship between element and target types. Type parameters express that relationship; do not generalize this example into requiring generics for every use of any.",
     "assertions": [
       {"id": "10.1", "text": "Uses generics with a type parameter: func Contains[T comparable](slice []T, target T) bool"},
       {"id": "10.2", "text": "Does NOT use []any or interface{} parameters"},
@@ -140,14 +140,14 @@
   {
     "id": 11,
     "name": "receiver-consistency-rule",
-    "description": "Tests whether the model enforces consistent receiver types across all methods of a type",
+    "description": "Selects receivers based on semantics and method sets.",
     "prompt": "I have a Go struct with 5 methods. Four use value receivers and one uses a pointer receiver because it modifies the struct. Is this fine?",
-    "trap": "Without the skill, the model may accept the mixed receiver approach as valid for each method. The skill says receiver type MUST be consistent -- if one method uses pointer, all should.",
+    "trap": "Treats mixed receivers as a language error or rewrites an established value API mechanically.",
     "assertions": [
-      {"id": "11.1", "text": "Says mixing pointer and value receivers on the same type is wrong or not recommended"},
-      {"id": "11.2", "text": "Recommends making ALL methods use pointer receivers since one needs to mutate"},
-      {"id": "11.3", "text": "Explains WHY: consistency rule -- if any method uses a pointer receiver, all should"},
-      {"id": "11.4", "text": "Mentions that method sets differ for T and *T which affects interface satisfaction"}
+      {"id": "11.1", "text": "Explains mixed receiver types are legal, with consistency often a useful design default."},
+      {"id": "11.2", "text": "Checks mutation, copying costs, lock-bearing fields, and value-use requirements before changing methods."},
+      {"id": "11.3", "text": "Allows intentional combinations such as value String/Marshal methods and pointer Unmarshal methods."},
+      {"id": "11.4", "text": "Explains different method sets for T and *T and the effects on interface satisfaction."}
     ]
   }
 ]

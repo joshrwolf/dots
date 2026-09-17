@@ -9,9 +9,9 @@ LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
 .PHONY: all build clean test lint run install help
 .PHONY: benchmark lint-fix outdated weight audit
-.PHONY: watch-test watch-build watch-run
+.PHONY: build-all test-short fmt deps-update watch-test watch-build watch-run
 
-all: clean lint test build
+all: lint test build
 
 ## build: Build the application
 build:
@@ -84,7 +84,7 @@ install:
 	$(GO) mod download
 	$(GO) mod tidy
 
-## deps-update: Update dependencies (patch only for safety)
+## deps-update: Update dependencies to available patch releases (review and test changes)
 deps-update:
 	$(GO) get -u=patch ./...
 	$(GO) mod tidy
@@ -92,12 +92,12 @@ deps-update:
 ## watch-test: Run tests on file changes (requires air)
 watch-test:
 	@echo "Watching for changes to run tests..."
-	air -test
+	air --build.cmd "go test ./..." --build.entrypoint "/usr/bin/true"
 
 ## watch-build: Rebuild on file changes (requires air)
 watch-build:
 	@echo "Watching for changes to rebuild..."
-	air -build
+	air --build.cmd "go build -o bin/$(BINARY_NAME) ./cmd/server" --build.entrypoint "/usr/bin/true"
 
 ## watch-run: Rebuild and run on file changes (requires air)
 watch-run:

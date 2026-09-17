@@ -46,19 +46,19 @@ func Greet(name *string) string
 **When to use pointers**:
 
 - The function **mutates** the value
-- The struct is **large** (~128+ bytes) — avoids copying overhead
+- Copying a large struct is a measured cost; a pointer may avoid it
 - **Nil is meaningful** (optional/nullable parameter)
 
 **When NOT to use pointers**:
 
 - `string`, `int`, `bool`, `float64`, `time.Time` — pass by value
-- Read-only access to small structs — pass by value (better cache locality)
-- "Just to save memory" — value copy is negligible; stack allocation is fast
+- Read-only access to small structs — values are a good default
+- "Just to save memory" without measuring copies, escape behavior, and allocation costs
 
 **Memory access trade-offs when strong performance is required**:
 
-- **Values (no pointer)**: Stack allocation, excellent CPU cache locality for small types, zero indirection cost. Slower only when copying large structs.
-- **Pointers**: One extra dereference (negligible on modern CPUs), but risk cache misses if pointed-to data isn't in cache. Essential for large structs (>~128 bytes) where copy cost dominates.
-- **Rule of thumb**: For structs <~128 bytes with read-only access, values are typically faster due to cache locality. For mutation or large structs, pointers win. When in doubt, benchmark.
+- **Values** copy their fields. Allocation placement depends on escape analysis, inlining, and the surrounding code; passing by value does not guarantee stack allocation.
+- **Pointers** can avoid copying but introduce aliasing and may affect escape analysis, cache locality, and GC work. Dereference costs are not universally negligible.
+- There is no portable byte-size cutoff where pointers become faster. Choose ownership and mutation semantics first, then benchmark representative workloads when performance matters.
 
 -> See the `samber/cc-skills-golang@golang-structs-interfaces` skill for pointer vs value **receiver** rules.

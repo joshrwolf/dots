@@ -2,22 +2,16 @@
 
 ## Hash Table Structure
 
-Go maps use hash tables with bucket-based collision resolution. The map header holds:
-
-- `count` — number of entries
-- `B` — log₂ of bucket count (2^B buckets total)
-- `buckets` — pointer to bucket array
-- `oldbuckets` — pointer to old buckets during growth
-
-Each bucket holds 8 key-value pairs. Keys and values are stored in separate arrays within buckets to minimize padding waste.
+Go 1.24 introduced Swiss Tables for built-in maps, replacing the older `hmap` bucket/overflow-chain implementation. Swiss Tables use groups of slots and control bytes to narrow key comparisons. These layouts and growth policies are runtime details, not language contracts.
 
 ## Memory Growth and Capacity
 
-- **Load factor threshold**: 6.5 entries per bucket triggers growth (sweet spot between memory efficiency and collision performance)
-- **Overflow bucket chains** also trigger growth if too long (prevents O(1)→O(n) degradation)
-- **Bucket count doubles**: 2^B → 2^(B+1) (efficient rehashing with powers of 2)
-- **Incremental evacuation**: Old and new buckets coexist during growth; entries move lazily during operations to avoid GC pauses
-- **No `cap()` function**: Capacity depends on hash distribution and load factor, not a fixed limit. Preallocation (`make(map[string]int, expectedSize)`) is worthwhile for large maps to avoid repeated growth cycles
+- `make(map[K]V, n)` supplies an initial size hint, not a fixed capacity or limit.
+- `cap` is not defined for maps.
+- Deleting entries releases references held by those entries, but does not promise to shrink the live map's storage or immediately reduce process RSS.
+- To compact a map after a large spike, copy surviving entries into a new map and release all references to the old one. Synchronize the replacement if concurrent callers can access it. RSS reclamation still depends on the allocator and scavenger.
+
+See [Faster Go maps with Swiss Tables](https://go.dev/blog/swisstable).
 
 ## Preallocation
 
@@ -25,11 +19,11 @@ Each bucket holds 8 key-value pairs. Keys and values are stored in separate arra
 // Without preallocation — multiple growths as entries are added
 m := map[string]int{}
 
-// With preallocation — allocates enough buckets upfront
+// With a size hint — lets the runtime reserve initial storage
 m := make(map[string]int, expectedSize)
 ```
 
-Preallocation avoids repeated growths. The hint is approximate — Go allocates 2^B buckets where 2^B \* 6.5 >= hint.
+Preallocation can avoid intermediate growth when the estimate is useful. Do not compute storage from an old runtime bucket formula.
 
 ## Pointers vs Values
 
@@ -43,7 +37,7 @@ m := map[string]BigStruct{}  // copies large struct
 m := map[string]*BigStruct{} // copies 8-byte pointer
 ```
 
-Trade-off: pointer maps add GC pressure. For small structs (< 128 bytes), value maps are typically faster.
+Trade-off: pointers introduce sharing, indirection, and potentially additional allocations and GC work. Measure realistic access patterns rather than using a universal size threshold.
 
 ## `maps` Package (Go 1.21+)
 
@@ -60,7 +54,8 @@ See `samber/cc-skills-golang@golang-safety` skill for `Clone`, `Equal`, and sort
 Map keys must be comparable (`==` must work). This includes:
 
 - All numeric types, `string`, `bool`
-- Pointers, channels, interfaces (compared by identity)
+- Pointers and channels (compared by identity)
+- Interfaces, provided their dynamic values are comparable; interface equality compares dynamic type and value, and can panic for a slice/map/function value
 - Arrays of comparable types
 - Structs where all fields are comparable
 

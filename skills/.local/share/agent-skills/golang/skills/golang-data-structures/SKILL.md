@@ -44,9 +44,7 @@ A slice is a 3-word header: pointer, length, capacity. Multiple slices can share
 
 ### Capacity Growth
 
-- < 256 elements: capacity doubles
-- > = 256 elements: grows by ~25% (`newcap += (newcap + 3*256) / 4`)
-- Each growth copies the entire backing array — O(n)
+The runtime uses different growth strategies for small and large slices, with bulk append size and allocator rounding affecting the result. Growth is an implementation detail; an append that reallocates copies the existing elements, not unused capacity.
 
 ### Preallocation
 
@@ -69,7 +67,7 @@ Key functions: `Sort`/`SortFunc`, `BinarySearch`, `Contains`, `Compact`, `Grow`.
 
 ## Map Internals
 
-Maps are hash tables with 8-entry buckets and overflow chains. They are reference types — assigning a map copies the pointer, not the data.
+Maps are hash tables. Go 1.24 replaced the older bucket/overflow-chain implementation with Swiss Tables. Assigning a map shares its underlying data; it does not copy entries.
 
 ### Preallocation
 
@@ -84,11 +82,11 @@ m := make(map[string]*User, len(users)) // avoids rehashing during population
 | `Collect` (1.23+) | Build map from iterator      |
 | `Insert` (1.23+)  | Insert entries from iterator |
 | `All` (1.23+)     | Iterator over all entries    |
-| `Keys`, `Values`  | Iterators over keys/values   |
+| `Keys`, `Values` (1.23+) | Iterators over keys/values   |
 
 For `Clone`, `Equal`, sorted iteration → see `samber/cc-skills-golang@golang-safety` skill.
 
-**[Map Internals Deep Dive](./references/map-internals.md)** — How Go maps store and hash data, bucket overflow chains, why maps never shrink (and what to do about it), comparing map performance to alternatives.
+**[Map Internals Deep Dive](./references/map-internals.md)** — How Go maps store and hash data, implementation changes, retained map storage (and how to rebuild), comparing map performance to alternatives.
 
 ## Arrays
 
@@ -136,7 +134,7 @@ func (s Set[T]) Contains(v T) bool { _, ok := s[v]; return ok }
 | --- | --- | --- |
 | `*T` | Normal indirection, mutation, optional values | `nil` |
 | `unsafe.Pointer` | FFI, low-level memory layout (6 spec patterns only) | `nil` |
-| `weak.Pointer[T]` (1.24+) | Caches, canonicalization, weak references | N/A |
+| `weak.Pointer[T]` (1.24+) | Caches, canonicalization, weak references | `Value()` returns nil |
 
 **[Pointer Types Deep Dive](./references/pointers.md)** — Normal pointers, `unsafe.Pointer` (the 6 valid spec patterns), and `weak.Pointer[T]` for GC-safe caches that don't prevent cleanup.
 
@@ -144,8 +142,8 @@ func (s Set[T]) Contains(v T) bool { _, ok := s[v]; return ok }
 
 | Type | Copy Behavior | Independence |
 | --- | --- | --- |
-| `int`, `float`, `bool`, `string` | Value (deep copy) | Fully independent |
-| `array`, `struct` | Value (deep copy) | Fully independent |
+| Numbers, `bool`, `string` | Value copied; strings may share immutable bytes | Independent values |
+| `array`, `struct` | Elements/fields copied by value | Reference-bearing fields still share data |
 | `slice` | Header copied, backing array shared | Use `slices.Clone` |
 | `map` | Reference copied | Use `maps.Clone` |
 | `channel` | Reference copied | Same channel |
@@ -178,7 +176,7 @@ When using third-party libraries, refer to their official documentation and code
 
 | Mistake | Fix |
 | --- | --- |
-| Growing a slice in a loop without preallocation | Each growth copies the entire backing array — O(n) per growth. Use `make([]T, 0, n)` or `slices.Grow` |
+| Growing a slice in a loop without preallocation | Reallocation copies existing elements — O(len(s)) per growth. Use `make([]T, 0, n)` or `slices.Grow` |
 | Using `container/list` when a slice would suffice | Linked lists have poor cache locality (each node is a separate heap allocation). Benchmark first |
 | `bytes.Buffer` for pure string building | Buffer's `String()` copies the underlying bytes. `strings.Builder` avoids this copy |
 | `unsafe.Pointer` stored as `uintptr` across statements | GC can move the object between statements — the `uintptr` becomes a dangling reference |

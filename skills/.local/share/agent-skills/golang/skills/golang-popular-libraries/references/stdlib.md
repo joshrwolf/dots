@@ -6,7 +6,7 @@ The Go standard library continues to evolve with v2 packages and experimental fe
 
 **math/rand/v2** (Go 1.22+) Improved random number generation with better algorithms (ChaCha8, PCG). Auto-seeded, no more rand.Seed() needed.
 
-**encoding/json/v2** (default JSON implementation as of Go 1.27; introduced experimental behind `GOEXPERIMENT=jsonv2` in Go 1.25) Next-generation JSON encoding/decoding, now the default underneath `encoding/json`. Stricter than v1: rejects duplicate object keys and invalid UTF-8. → See `samber/cc-skills-golang@golang-modernize` skill for migration guidance and the `GOEXPERIMENT=nojsonv2` rollback.
+**encoding/json/v2** (default JSON implementation as of Go 1.27; introduced experimental behind `GOEXPERIMENT=jsonv2` in Go 1.25) Next-generation JSON encoding/decoding, now the default underneath `encoding/json`. The v2 API is stricter (rejects duplicate keys and invalid UTF-8); encoding/json preserves v1 compatibility semantics even when implemented using v2. → See `samber/cc-skills-golang@golang-modernize` skill for migration guidance and the `GOEXPERIMENT=nojsonv2` rollback.
 
 ## New Packages (Promoted from x/exp)
 
@@ -14,7 +14,7 @@ The Go standard library continues to evolve with v2 packages and experimental fe
 
 **maps** (Go 1.21+) Generic map operations: Clone, Copy, DeleteFunc, Equal, EqualFunc. Go 1.23+ adds iterator helpers such as All, Collect, Insert, Keys, and Values.
 
-**cmp** (Go 1.21+) Comparison utilities: Compare, Or, Ordered. Used with the slices/maps packages.
+**cmp** (Go 1.21+) Comparison utilities: Compare and Ordered; Or was added in Go 1.22. Used with the slices/maps packages.
 
 **iter** (Go 1.23+) Iterator support for sequences. Enables range-over functions and integrates with slices/maps methods.
 
@@ -24,7 +24,7 @@ The Go standard library continues to evolve with v2 packages and experimental fe
 
 **weak** (Go 1.24+) Weak references for garbage collection. Useful for caches and observers.
 
-**structs** (Go 1.23+) Structure layout control and introspection.
+**structs** (Go 1.23+) Structure layout control via the HostLayout marker; it is not a general struct introspection package.
 
 **uuid** (Go 1.27+) UUID generation and parsing (`New`, `NewV4`, `NewV7`, `Parse`). Prefer over `github.com/google/uuid` for new code unless a v3/v5 namespaced UUID or another RFC-variant feature the stdlib package doesn't cover is needed.
 

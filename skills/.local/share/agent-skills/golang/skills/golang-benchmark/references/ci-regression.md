@@ -1,6 +1,6 @@
 # CI Benchmark Regression Detection
 
-> **Run these tools in CI only, not on local machines.** Local benchmark results are noisy due to background processes, thermal throttling, and inconsistent CPU frequency — regressions detected locally are unreliable and waste developer time. Even shared CI runners can produce significant variance (5-10%); use statistical methods like `benchstat` with multiple iterations and relative comparisons to filter noise, or invest in dedicated benchmark runners for critical paths.
+Use controlled local or CI environments. Shared CI can be noisier than a quiet developer machine; compare under matched conditions, quantify uncertainty, and reserve hard gates for measurements stable enough to support them. Tools that change Git state, especially cob, belong in disposable isolated checkouts.
 
 ## Table of Contents
 
@@ -71,7 +71,7 @@ go install github.com/knqyf263/cob@latest
 cob
 
 # Stricter threshold for critical paths (10% regression = failure)
-cob -threshold 10
+cob -threshold 0.10
 
 # Compare against a specific base commit
 cob -base main
@@ -91,9 +91,9 @@ cob -bench-args "test -run '^$' -bench . -benchmem -benchtime=3s ./..."
 # Skip cob for a specific commit: include [skip cob] in commit message
 ```
 
-**Caution:** `cob` uses `git reset` internally, which can cause data loss if uncommitted changes exist — always commit your work before running.
+**Caution:** cob resets Git state internally. Run it in a disposable isolated checkout with no user work; committing alone is not adequate isolation for untracked files or branch state.
 
-- For safety, run only in CI pipelines, not locally.
+- A disposable local checkout or CI checkout is suitable; never run it in the active working checkout.
 - `cob` requires all benchmarks to pass; it skips CI gating if any benchmark fails.
 - `cob` compares single runs without `benchstat`-style statistics, making it more susceptible to noise than `benchdiff`.
 
@@ -114,25 +114,25 @@ go install go.bobheadxi.dev/gobenchdata@latest
 go test -bench=. -benchmem -count=5 ./... | gobenchdata --json bench.json
 
 # Parse from a file
-gobenchdata --json bench.json < bench.txt
+cat bench.txt | gobenchdata --json bench.json
 
 # Add a tag to the benchmark run (e.g., git commit)
-gobenchdata --json bench.json --tag "$(git rev-parse --short HEAD)" < bench.txt
+cat bench.txt | gobenchdata --json bench.json --tag "$(git rev-parse --short HEAD)"
 
 # Evaluate regression checks against a checks config
-gobenchdata checks eval bench.txt --checks-config .gobenchdata-checks.yml
+gobenchdata checks eval base.json current.json --checks.config .gobenchdata-checks.yml
 
 # Generate the web dashboard app (static Vue.js site)
 gobenchdata web generate ./dashboard-app
 
 # Serve the dashboard locally for preview
-gobenchdata web serve ./dashboard-app
+(cd dashboard-app && gobenchdata web serve)
 
 # Merge multiple benchmark JSON files
 gobenchdata merge old-bench.json new-bench.json > combined.json
 
-# Prune old entries (keep last 30 runs)
-gobenchdata prune --count 30 bench.json
+# Append another run and retain the latest 30 history entries
+cat new-bench.txt | gobenchdata --json bench.json --append --prune 30
 ```
 
 ### GitHub Action setup
@@ -141,6 +141,8 @@ gobenchdata prune --count 30 bench.json
 # .github/workflows/benchmark.yml
 name: Benchmark
 on: [push]
+permissions:
+  contents: write # required only for the configured result publication
 jobs:
   benchmark:
     runs-on: ubuntu-latest
@@ -148,45 +150,45 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: stable
-      - name: Run benchmarks
-        run: go test -bench=. -benchmem -count=5 ./... | tee bench.txt
-      - uses: bobheadxi/gobenchdata@v1
-        with:
-          PRUNE_COUNT: 30
-          GO_TEST_PKGS: ./...
-          BENCHMARKS_OUT: bench.txt
-          PUBLISH: true
-          PUBLISH_BRANCH: gh-pages
+          go-version-file: go.mod
+      - name: Run and publish benchmarks
+        run: go run go.bobheadxi.dev/gobenchdata@v1.3.1 action
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_PRUNE_COUNT: 30
+          INPUT_GO_TEST_PKGS: ./...
+          INPUT_GO_TEST_FLAGS: -run=^$ -benchmem -count=5
+          INPUT_BENCHMARKS_OUT: benchmarks.json
+          INPUT_PUBLISH: true
+          INPUT_PUBLISH_BRANCH: gh-pages
 ```
+
+The CLI action uses the job's Go toolchain. The Docker action ships its own Go
+version, so a preceding setup-go step does not select its benchmark compiler.
+BENCHMARKS_OUT names JSON output, not previously captured go test text. Pin action
+revisions according to repository policy; restrict publication to trusted events.
 
 ### Regression gating on PRs
 
 ```yaml
 - name: Check for regressions
-  run: gobenchdata checks eval bench.txt --checks-config .gobenchdata-checks.yml
+  run: gobenchdata checks eval base.json current.json --checks.config .gobenchdata-checks.yml
 ```
 
 ```yaml
 # .gobenchdata-checks.yml
 checks:
-  - name: "No major regressions"
-    package: ./...
-    benchmarks: [".*"]
+  - name: "Runtime regression"
+    package: '^example\.com/myapp/'
+    benchmarks: ['BenchmarkParse.*']
+    diff: (current.NsPerOp - base.NsPerOp) / base.NsPerOp * 100
     thresholds:
-      - metric: NsPerOp
-        max: 1.2 # fail if >20% slower
-      - metric: AllocedBytesPerOp
-        max: 1.3 # fail if >30% more allocations
-  - name: "Critical path stability"
-    package: ./pkg/parser
-    benchmarks: ["BenchmarkParse.*"]
-    thresholds:
-      - metric: NsPerOp
-        max: 1.1 # stricter: fail if >10% slower
+      max: 20 # percentage change; choose from measured variance and tolerance
 ```
+
+Parse both benchmark outputs with gobenchdata --json before evaluating them.
+The diff expression assumes a nonzero baseline. These are threshold checks,
+not a substitute for benchstat's uncertainty analysis. Verify that expected checks actually match benchmarks: an empty match is not evidence that the workload passed a regression gate.
 
 ### Dashboard configuration
 
@@ -222,7 +224,7 @@ Best for: long-term trend tracking and visualization; complements benchdiff/cob 
 
 ## Noisy Neighbor Mitigation
 
-Cloud CI environments share hardware with other jobs. Expect 5-10% variance even on quiet machines.
+Cloud CI may share hardware and vary across allocations. Measure your actual variance; there is no universal percentage.
 
 ### Why CI benchmarks are noisy
 
@@ -234,13 +236,13 @@ Cloud CI environments share hardware with other jobs. Expect 5-10% variance even
 
 ### Strategies
 
-**Statistical rigor** — run with `-count=10` or more and compare with `benchstat`. A single run is meaningless. benchstat's p-value test filters out noise-induced false positives.
+**Statistical rigor** — run with `-count=10` or more and compare with `benchstat`. A single run is meaningless. benchstat reports statistical evidence under its assumptions; false positives and systematic bias remain possible.
 
-**Relative comparison in same job** — run both base and head benchmarks in the same CI job on the same machine, rather than comparing against historical absolute values. This cancels out machine-to-machine variation. Tools like `benchdiff` do this automatically by checking out both git refs.
+**Relative comparison in same job** — run both base and head benchmarks in the same CI job on the same machine, rather than comparing against historical absolute values. This reduces machine-to-machine differences but does not remove drift or workload interference. Tools like `benchdiff` do this automatically by checking out both git refs.
 
-**Dedicated benchmark runners** — for critical path benchmarks, use self-hosted CI runners with no other workloads. This eliminates noisy neighbors entirely but costs more infrastructure.
+**Dedicated benchmark runners** — for critical path benchmarks, use self-hosted CI runners with no other workloads. This removes competing scheduled workloads; OS activity, thermal behavior, and hardware variability still require control.
 
-**Conservative thresholds** — set regression thresholds higher on shared CI (20%+) than on dedicated runners (10%). Tight thresholds on noisy environments produce false positives that erode trust. GitHub-hosted runners show ~2-3% coefficient of variation in the best case; to guarantee <1% false positive rate, you need a 7%+ performance gate.
+Choose regression thresholds from acceptable impact, observed noise, sample count, and the number of comparisons. Neither a fixed 7%, 10%, nor 20% threshold guarantees a false-positive rate. Validate the proposed gate against repeated unchanged-code runs.
 
 **Never "retry until pass"** — rerunning benchmarks until they pass introduces selection bias. If a benchmark is flaky, fix the noise source (more iterations, dedicated runner, wider threshold) rather than retrying.
 
@@ -248,14 +250,14 @@ Cloud CI environments share hardware with other jobs. Expect 5-10% variance even
 
 > **WARNING: These commands modify kernel and CPU settings. Apply them ONLY on dedicated CI runners, NEVER on developer machines or shared servers.**
 
-When you control the CI hardware, these settings dramatically reduce benchmark variance by eliminating the main sources of non-determinism.
+When you control dedicated CI hardware, evaluate these settings and record them with results. They change the workload environment and may not represent production; architecture and kernel support vary.
 
 ### Disable CPU frequency scaling
 
-Variable CPU frequency makes benchmark times meaningless — the same code runs at different speeds depending on load and thermals:
+Variable CPU frequency can add drift. Control or record it when comparing small differences:
 
 ```bash
-# Set all CPUs to "performance" governor (fixed maximum frequency)
+# Request the performance governor (does not guarantee a fixed frequency or prevent thermal throttling)
 echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 ```
 
@@ -273,10 +275,10 @@ echo 0 | sudo tee /sys/devices/system/cpu/cpufreq/boost
 
 ### Pin benchmarks to specific CPU cores
 
-Prevents the OS from migrating the benchmark process across cores, which causes cache thrashing (L1/L2 caches are per-core):
+Restricts execution to selected logical CPUs; migration is still possible within the set. Cache topology and SMT siblings vary, so select cores using the actual machine topology:
 
 ```bash
-# Pin to cores 2 and 3 (leave cores 0-1 for OS and other processes)
+# Example only: choose CPUs appropriate for this host and reserve OS capacity separately
 taskset -c 2,3 go test -bench=. -count=10 ./...
 ```
 

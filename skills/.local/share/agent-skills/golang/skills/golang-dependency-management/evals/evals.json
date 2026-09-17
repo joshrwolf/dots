@@ -22,8 +22,8 @@
     "assertions": [
       {"id": "2.1", "text": "Strongly advises against gitignoring go.sum"},
       {"id": "2.2", "text": "Explains that go.sum contains cryptographic checksums for dependency verification"},
-      {"id": "2.3", "text": "Explains the supply-chain security risk: without go.sum, a compromised proxy could substitute malicious code"},
-      {"id": "2.4", "text": "Mentions go mod verify as the mechanism that uses go.sum for integrity checking"},
+      {"id": "2.3", "text": "Explains checksum-database verification for eligible public modules without claiming absent go.sum always permits proxy substitution."},
+      {"id": "2.4", "text": "Distinguishes go mod verify cache-tampering checks from download verification against go.sum and the checksum database."},
       {"id": "2.5", "text": "Recommends removing go.sum from .gitignore"}
     ]
   },
@@ -32,13 +32,13 @@
     "name": "patch-only-upgrade-preference",
     "description": "Tests whether the model prefers go get -u=patch over go get -u for routine updates",
     "prompt": "I want to update all my Go dependencies to the latest versions. What command should I run?",
-    "trap": "Without the skill, the model suggests go get -u ./... which upgrades to latest minor/patch, potentially introducing breaking behavioral changes",
+    "trap": "Substitutes a patch-only policy for the user's requested latest updates or treats version numbers as a compatibility guarantee.",
     "assertions": [
-      {"id": "3.1", "text": "Recommends go get -u=patch ./... as the safer default for routine updates"},
-      {"id": "3.2", "text": "Explains that -u=patch only upgrades patch versions which have no API changes per semver"},
+      {"id": "3.1", "text": "Explains go get -u -t ./... for minor/patch package dependency updates, with patch-only as a narrower alternative."},
+      {"id": "3.2", "text": "Describes patch-only as an intended compatibility scope, not proof that updates are safe."},
       {"id": "3.3", "text": "Explains that -u (without =patch) upgrades minor versions too, which can change behavior"},
       {"id": "3.4", "text": "Mentions running go mod tidy after upgrading"},
-      {"id": "3.5", "text": "Does NOT recommend go get -u ./... without warning about the risk of minor version upgrades"}
+      {"id": "3.5", "text": "Clarifies that new major module paths need deliberate migration rather than being included automatically."}
     ]
   },
   {
@@ -63,7 +63,7 @@
     "trap": "Without the skill, the model might just change the git tag to v2.0.0 without updating the module path to include /v2, breaking the import compatibility rule",
     "assertions": [
       {"id": "5.1", "text": "States that the module path in go.mod must include /v2 suffix (e.g., github.com/example/pkg/v2)"},
-      {"id": "5.2", "text": "States that all import paths must be updated to include /v2"},
+      {"id": "5.2", "text": "Updates imports of this module to /v2, without rewriting unrelated dependencies."},
       {"id": "5.3", "text": "Explains this is Go's import compatibility rule — different major versions are separate modules"},
       {"id": "5.4", "text": "Mentions that v0 and v1 do NOT have a suffix"},
       {"id": "5.5", "text": "Notes that this allows v1 and v2 to coexist in the same build"}
@@ -78,7 +78,7 @@
     "assertions": [
       {"id": "6.1", "text": "Clearly states that replace directives only take effect in the main module's go.mod"},
       {"id": "6.2", "text": "States that consumers of the library will NOT use the fork — replace is ignored when the module is consumed as a dependency"},
-      {"id": "6.3", "text": "Recommends removing replace directives before publishing a library"},
+      {"id": "6.3", "text": "Ensures published code builds without relying on consumer inheritance of local replace directives."},
       {"id": "6.4", "text": "Suggests alternative solutions (e.g., upstream the fix, publish the fork as a separate module)"}
     ]
   },
@@ -105,23 +105,23 @@
     "assertions": [
       {"id": "8.1", "text": "Recommends govulncheck as the tool to check if the vulnerability is actually reachable from your code"},
       {"id": "8.2", "text": "Explains that govulncheck uses static analysis to trace call paths to vulnerable functions"},
-      {"id": "8.3", "text": "Explains that if your code never calls the affected function, govulncheck will NOT flag it"},
+      {"id": "8.3", "text": "Describes static reachability limits and distinguishes affected modules/packages from detected vulnerable calls."},
       {"id": "8.4", "text": "Shows the govulncheck ./... command"},
       {"id": "8.5", "text": "Distinguishes govulncheck from generic CVE scanners that flag any dependency presence regardless of usage"}
     ]
   },
   {
     "id": 9,
-    "name": "go-work-sum-gitignore",
-    "description": "Tests that go.work.sum should not be committed while go.sum should be committed",
+    "name": "workspace-version-control-policy",
+    "description": "Distinguishes personal workspaces from intentionally shared repository workspaces.",
     "prompt": "I'm setting up a Go workspace with go.work for local multi-module development. Which workspace files should I commit to git?",
-    "trap": "Without the skill, the model might treat go.work.sum the same as go.sum (commit both), but go.work.sum should NOT be committed",
+    "trap": "Claims go.work.sum must always be ignored regardless of repository workspace policy.",
     "assertions": [
-      {"id": "9.1", "text": "States that go.work.sum should NOT be committed to version control"},
-      {"id": "9.2", "text": "Recommends adding go.work.sum to .gitignore"},
-      {"id": "9.3", "text": "Explains that go.work is for development only and does not affect published module consumers"},
+      {"id": "9.1", "text": "Keeps a personal local workspace out of version control unless the repository intentionally shares it."},
+      {"id": "9.2", "text": "When a workspace is intentionally shared, treats go.work.sum consistently with that policy rather than forbidding it."},
+      {"id": "9.3", "text": "Explains workspace effects on local/CI builds and that module consumers do not inherit go.work."},
       {"id": "9.4", "text": "Distinguishes this from go.sum which MUST be committed"},
-      {"id": "9.5", "text": "May mention that go.work itself can optionally be committed depending on team preference"}
+      {"id": "9.5", "text": "Recommends testing independently published modules with GOWORK=off as well."}
     ]
   },
   {
@@ -134,7 +134,7 @@
       {"id": "10.1", "text": "Uses retract for the published library (author-side: marks own version as broken)"},
       {"id": "10.2", "text": "Uses exclude for the buggy dependency (consumer-side: skips a specific version of someone else's module)"},
       {"id": "10.3", "text": "Explains that retract goes in the library's own go.mod and warns users via go list"},
-      {"id": "10.4", "text": "Explains that exclude redirects to the next higher available version"},
+      {"id": "10.4", "text": "Explains that modern Go ignores requirements on excluded versions and resolution may add a higher version."},
       {"id": "10.5", "text": "Notes that retracted versions are still downloadable but not selected by default"}
     ]
   },

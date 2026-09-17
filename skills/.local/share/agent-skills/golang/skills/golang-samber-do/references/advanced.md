@@ -26,7 +26,7 @@ Scopes SHOULD be used to organize services by module:
 root := do.New()
 
 // Register shared services in root
-do.Provide(root, func(i do.Injector) (Database, error) {
+do.Provide(root, func(i do.Injector) (*Database, error) {
     return &Database{}, nil
 })
 
@@ -34,8 +34,8 @@ do.Provide(root, func(i do.Injector) (Database, error) {
 apiScope := root.Scope("api")
 
 // Services in apiScope can access root services
-do.Provide(apiScope, func(i do.Injector) (UserService, error) {
-    db := do.MustInvoke[Database](i) // from root
+do.Provide(apiScope, func(i do.Injector) (*userService, error) {
+    db := do.MustInvoke[*Database](i) // from root
     return &userService{db: db}, nil
 })
 
@@ -59,7 +59,7 @@ do.Provide(requestScope, NewRequestContext)
 
 ## Explicit Service Aliasing
 
-For rare cases when you need to adapt to legacy code:
+Use an explicit alias when a particular implementation must supply an interface. `InvokeAs` selects the first matching service and is ambiguous when several implementations match:
 
 ```go
 do.Provide(injector, func(i do.Injector) (*PostgreSQLDatabase, error) {
@@ -73,7 +73,7 @@ db1 := do.MustInvoke[*PostgreSQLDatabase](injector)
 db2 := do.MustInvoke[Database](injector)
 ```
 
-Prefer implicit aliasing with `InvokeAs()` in most cases.
+Use `InvokeAs()` when the first matching implementation is the intended one; aliases or named services make selection explicit.
 
 ## Struct Injection
 
@@ -93,7 +93,7 @@ app := do.MustInvokeStruct[App](injector)
 
 ### Health Checks
 
-Implement the `Healthchecker` interface:
+Implement `Healthchecker` or `HealthcheckerWithContext` (choose one signature for a type):
 
 ```go
 func (d *Database) HealthCheck() error {
@@ -106,14 +106,14 @@ func (d *Database) HealthCheck(ctx context.Context) error {
 }
 
 // Check health
-if err := do.HealthCheck[Database](injector); err != nil {
+if err := do.HealthCheck[*Database](injector); err != nil {
     log.Printf("Database unhealthy: %v", err)
 }
 ```
 
 ### Graceful Shutdown
 
-Implement the `Shutdowner` interface (4 variants):
+Implement one of the four shutdown interfaces (these are alternative signatures, not methods to define together):
 
 ```go
 // Simple
@@ -178,8 +178,10 @@ func main() {
     do.Provide(injector, func(i do.Injector) (*Config, error) {
         return &Config{Port: 8080}, nil
     })
-    do.Provide(injector, NewDatabase)
-    // ... register other services
+    do.Provide(injector, func(i do.Injector) (*Database, error) {
+        return NewDatabase(do.MustInvoke[*Config](i)), nil
+    })
+    // Adapt and register the remaining constructors before invoking API.
     api := do.MustInvoke[*API](injector)
 }
 ```

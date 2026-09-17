@@ -56,7 +56,7 @@ Start with `golang-dependency-injection` for library selection. Then use the lib
 
 ## 3. samber/\* functional cluster
 
-The three core skills cover three distinct programming models. They rarely compete in the same task.
+These two skills cover distinct programming models. They rarely compete in the same task.
 
 | Skill | Unique territory | Does NOT own |
 | --- | --- | --- |
@@ -69,7 +69,6 @@ The three core skills cover three distinct programming models. They rarely compe
 - "Return an optional value without using nil" → `golang-samber-mo` (`mo.Some`/`mo.None`).
 - "Compose error-returning functions without if-err chains" → `golang-samber-mo` (`mo.Result[T]`).
 
-> Note: `golang-samber-mo` is currently absent from the mutual cross-reference between `lo` and `ro` in their descriptions. The boundary above reflects the intended design.
 
 ---
 
@@ -122,7 +121,7 @@ These four skills each own a distinct slice of "code quality". Source descriptio
 - "My CLI should exit with code 2 on bad args" → `golang-cli`.
 - "How do I add shell completion to my cobra command?" → `golang-spf13-cobra`.
 - "How do I override config values with env vars?" → `golang-spf13-viper`.
-- "I'm building a new CLI from scratch" → `golang-cli` (architecture) + `golang-spf13-cobra` (command tree) + `golang-spf13-viper` (config).
+- "I'm building a new CLI from scratch" → `golang-cli`; consult Cobra or Viper guidance if those libraries are chosen.
 
 ---
 
@@ -130,7 +129,7 @@ These four skills each own a distinct slice of "code quality". Source descriptio
 
 | Skill | Unique territory |
 | --- | --- |
-| `samber/cc-skills-golang@golang-testing` | Test strategy, table-driven patterns, `t.Parallel()`, `testcontainers`, coverage, fuzz |
+| `samber/cc-skills-golang@golang-testing` | Test strategy, table-driven patterns, `t.Parallel()`, fixtures, coverage, fuzz |
 | `golang-go-cmp` | Structural diffs, comparison options, semantic equality, and unexported fields |
 
 **Routing examples:**
@@ -159,7 +158,6 @@ These two skills overlap on "how to design Go types". The split is: type-level d
 - "How do I embed a struct without exposing its methods?" → `golang-structs-interfaces`.
 - "How do I implement the functional options pattern?" → `golang-design-patterns`.
 
-> Note: neither skill currently carries a description-level `→ See` disclaimer for this overlap. The boundary above is the intended design, not yet explicit in the source skills.
 
 ---
 
@@ -180,7 +178,6 @@ These skills overlap when goroutines are cancelled via context.
 - "How do I fan out N workers and collect results?" → `golang-concurrency`.
 - "How do I pass a deadline through multiple layers of function calls?" → `golang-context`.
 
-> Note: no description-level disclaimer currently exists between these two skills. Load both when the task involves both concerns.
 
 ---
 
@@ -200,7 +197,6 @@ Both skills prevent bugs, but with different threat models.
 - "I'm using `math/rand` to generate a token" → `golang-security` (predictable output; use `crypto/rand`).
 - "My slice grows unexpectedly after append" → `golang-safety` (append aliasing).
 
-> Note: no description-level disclaimer currently exists between these two skills. The source descriptions cross-reference in their bodies but not in the YAML frontmatter.
 
 ---
 
@@ -213,7 +209,7 @@ Both skills suggest code changes, but for different reasons.
 | `samber/cc-skills-golang@golang-modernize` | Adopting language features: range-over-int, `min`/`max` builtins, `iter.Seq`, `slices.SortFunc`, `log/slog`, `testing.T.Context` | Static analysis configuration |
 | `samber/cc-skills-golang@golang-lint` | golangci-lint YAML config, enabling/disabling linters, interpreting linter output, `//nolint` policy | Language feature adoption |
 
-**Overlap zone:** Some linters (`govet`, `deadcode`, `perfsprint`) produce warnings that overlap with modernize suggestions (e.g., "use `slog` instead of `log`"). The boundary: lint owns the tool configuration and suppression policy; modernize owns the rewrite patterns to apply once you've decided to adopt the feature.
+**Overlap zone:** Some linters (`modernize`, `perfsprint`, `exptostd`) produce warnings that overlap with modernization suggestions (for example replacing an x/exp API with its standard-library equivalent). The boundary: lint owns the tool configuration and suppression policy; modernize owns the rewrite patterns to apply once you've decided to adopt the feature.
 
 **Routing examples:**
 
@@ -224,7 +220,7 @@ Both skills suggest code changes, but for different reasons.
 
 ---
 
-## Package documentation and dependency inspection
+## 12. Package lookup / discovery cluster
 
 - Read the current package API with `golang-go-doc` (`go doc`).
 - Navigate local definitions and references with `golang-gopls`.
@@ -235,23 +231,13 @@ These are distinct tasks; reading API documentation does not audit a dependency.
 
 ## 13. golang-refactoring vs. the target-state rule skills
 
-`golang-refactoring` owns the _process_ of changing existing Go code safely at scale — planning, blast-radius mapping, ordering changes, tool-driven mechanics (gopls Rename/Inline, `gofmt -r`, `eg`), and scoped verification. It does not own what the resulting code should look like — that is split across five existing skills, each answering "refactor toward what?"
+`golang-refactoring` covers the Go-specific risks of moving or changing declarations:
+method sets, type identity, package boundaries, build constraints, initialization,
+and semantic-tool limits. Naming, layout, style, design, and modernization skills
+own the intended result.
 
-| Skill | Unique territory | Does NOT own |
-| --- | --- | --- |
-| `samber/cc-skills-golang@golang-refactoring` | The safe, staged, at-scale process: blast-radius mapping, PR ordering (structural-before-behavioral, conflict-avoidance, dependency), the refactoring-branch git model, tool-driven mechanics, coverage-adaptive safety net | Naming choices, target package layout, target design patterns, idiom adoption — the _shape_ the code should end up in |
-| `samber/cc-skills-golang@golang-naming` | What to rename an identifier _to_ | How to apply a rename safely across a large codebase |
-| `samber/cc-skills-golang@golang-project-layout` | Target package/directory layout, module splits | How to move code there without breaking every caller at once (type aliases, staged migration) |
-| `samber/cc-skills-golang@golang-code-style` | Target control-flow shape (guard clauses, function size) | The mechanical transform that gets existing code to that shape |
-| `samber/cc-skills-golang@golang-design-patterns` | Target patterns: options structs, consumer-side interfaces, DI | Sequencing a multi-step migration toward one of these patterns as reviewable PRs |
-| `samber/cc-skills-golang@golang-modernize` | Version-driven idiom adoption (`interface{}`→`any`, `slices`/`maps`) — typically a single mechanical sweep | Multi-step structural refactors that need staged, human-reviewed PRs |
+- Rename a method → `golang-naming` for the name, `golang-refactoring` and `golang-gopls` for callers and interface relationships.
+- Move a type between packages → `golang-project-layout` for placement, `golang-refactoring` for import cycles, identity, and direct caller migration.
+- Adopt a newer standard-library API → `golang-modernize`; consult refactoring guidance when the change affects more than the local expression.
 
-**Overlap zone:** almost every real refactor touches both — "rename this type and move it to a new package" needs `golang-naming` (the new name) and `golang-project-layout` (the new location) for the _target_, plus `golang-refactoring` for the _how_: blast-radius mapping, the direct caller migration, and whether this lands as one PR or a staged sequence. Load `golang-refactoring` together with whichever target-rule skill defines the destination shape.
-
-**Routing examples:**
-
-- "This function is too long, break it up" → `golang-code-style` (what "too long" means, target shape) + `golang-refactoring` (Extract Function mechanics, verify behavior preserved).
-- "Rename `Client.Send` to `Client.Publish` across the whole repo" → `golang-naming` (is this the right name) + `golang-refactoring` (workspace-wide gopls Rename, risk tier, PR staging).
-- "Move this type to a new package without breaking every caller" → `golang-project-layout` (target location) + `golang-refactoring` (direct caller migration, ordering).
-- "Convert all `interface{}` to `any` across the module" → `golang-modernize` alone is usually sufficient (single mechanical sweep); reach for `golang-refactoring`'s staged workflow only if the sweep is large enough to need progressive human review.
-- "Plan a multi-week refactor to break up this god package" → `golang-refactoring` as the primary skill (scope assessment, ordering, verification), pulling in `golang-project-layout` and `golang-design-patterns` for the target shape at each step.
+Do not introduce compatibility aliases or staging requirements as a default.

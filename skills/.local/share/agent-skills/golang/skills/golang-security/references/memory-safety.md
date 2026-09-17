@@ -39,6 +39,9 @@ func allocateBuffer(rows, cols int) []byte {
 import "math"
 
 func safeMultiply(a, b int) (int, error) {
+    if a < 0 || b < 0 {
+        return 0, errors.New("negative dimension")
+    }
     if a == 0 || b == 0 {
         return 0, nil
     }
@@ -79,7 +82,7 @@ import "math/big"
 func unsafeFraction(operations int) *big.Rat {
     r := big.NewRat(1, 1)
     for i := 0; i < operations; i++ {
-        r.Mul(r, big.NewRat(int64(i+1), int64(i+2)))  // DON'T
+        r.Add(r, big.NewRat(1, int64(i+2)))  // DON'T
     }
     return r  // Could be memory intensive
 }
@@ -91,9 +94,13 @@ func unsafeFraction(operations int) *big.Rat {
 const maxRatNumBits = 1000
 
 func safeFraction(operations int) (*big.Rat, error) {
+    // Bound work before allocating; a post-operation bit check alone is too late.
+    if operations < 0 || operations > 1000 {
+        return nil, errors.New("too many operations")
+    }
     r := big.NewRat(1, 1)
     for i := 0; i < operations; i++ {
-        r.Mul(r, big.NewRat(int64(i+1), int64(i+2)))
+        r.Add(r, big.NewRat(1, int64(i+2)))
         if r.Num().BitLen() > maxRatNumBits || r.Denom().BitLen() > maxRatNumBits {
             return nil, errors.New("fraction precision too large")
         }
@@ -106,44 +113,20 @@ func safeFraction(operations int) (*big.Rat, error) {
 
 ## Memory Aliasing Vulnerability — Medium
 
-Memory aliasing can cause data corruption and race conditions.
-
-**Bad:**
+Mutation through a slice affects other slices sharing its backing array. That is expected behavior, not itself a vulnerability. Clone when the API promises an independent result, and synchronize concurrent access.
 
 ```go
-func reverseBytes(data []byte) {
-    for i, j := 0, len(data)-1; i < j; i, j = i+1, j-1 {
-        data[i], data[j] = data[j], data[i]  // DON'T if slices alias
-    }
+func reversed(data []byte) []byte {
+    out := slices.Clone(data)
+    slices.Reverse(out)
+    return out
 }
+
+// Builtin copy explicitly supports overlapping source and destination.
+copy(data[1:], data[:len(data)-1]) // data must be non-empty
 ```
 
-**Good:**
-
-```go
-import "unsafe"
-
-func checkOverlap(a, b []byte) bool {
-    if len(a) == 0 || len(b) == 0 {
-        return false
-    }
-    aStart := uintptr(unsafe.Pointer(&a[0]))
-    aEnd := aStart + uintptr(len(a))
-    bStart := uintptr(unsafe.Pointer(&b[0]))
-    bEnd := bStart + uintptr(len(b))
-    return aStart < bEnd && bStart < aEnd
-}
-
-func safeCopy(dest, src []byte) {
-    if checkOverlap(dest, src) {
-        temp := make([]byte, len(src))
-        copy(temp, src)
-        copy(dest, temp)
-    } else {
-        copy(dest, src)
-    }
-}
-```
+No unsafe pointer-range test or temporary copy is needed for builtin `copy`.
 
 ---
 
@@ -178,13 +161,9 @@ func BytesToString(b []byte) string {
     return string(b)
 }
 
-// Safe type conversion
-import "encoding/binary"
+// Reinterpret IEEE-754 bits using the standard library.
 func Uint64ToFloat64(value uint64) float64 {
-    buf := make([]byte, 8)
-    binary.LittleEndian.PutUint64(buf, value)
-    bits := binary.LittleEndian.Uint64(buf)
-    return math.Float64frombits(bits)
+    return math.Float64frombits(value)
 }
 ```
 

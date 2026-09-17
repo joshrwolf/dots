@@ -1,6 +1,6 @@
 # Golang skills — full catalog by category
 
-42 skills. Skills marked ⭐️ are recommended for all Go projects. Skills marked ⚙️ can be superseded by a company-specific skill.
+39 skills. Select by task; the markers do not require loading a bundle. Skills marked ⚙️ can be superseded by a company-specific skill.
 
 ---
 
@@ -33,6 +33,8 @@
   - [`samber/cc-skills-golang@golang-continuous-integration`](#sambercc-skills-golanggolang-continuous-integration)
   - [`samber/cc-skills-golang@golang-dependency-management`](#sambercc-skills-golanggolang-dependency-management)
   - [`golang-go-doc`](#golang-go-doc)
+  - [`golang-gopls`](#golang-gopls)
+  - [`golang-refactoring`](#golang-refactoring)
   - [`samber/cc-skills-golang@golang-popular-libraries`](#sambercc-skills-golanggolang-popular-libraries)
   - [`samber/cc-skills-golang@golang-project-layout`](#sambercc-skills-golanggolang-project-layout)
 - [APIs](#apis)
@@ -239,6 +241,21 @@ Use when: managing go.mod, dealing with replace directives, or structuring a mul
 
 ---
 
+### `golang-go-doc`
+
+Read the locally resolved package and symbol API with `go doc`. Use module tools
+for dependency versions and vulnerability tooling for security checks.
+
+### `golang-gopls`
+
+Semantic navigation, diagnostics, and refactoring for the locally resolved build.
+
+### `golang-refactoring`
+
+Go-specific risks when changing declarations, APIs, and package boundaries.
+
+---
+
 ### `samber/cc-skills-golang@golang-popular-libraries`
 
 Curated recommendations for production-ready Golang libraries — when the stdlib is enough vs when to reach for a package.
@@ -301,7 +318,7 @@ Use when: the codebase imports `github.com/spf13/cobra`. For configuration layer
 
 ### `samber/cc-skills-golang@golang-spf13-viper`
 
-Layered configuration with spf13/viper — flag > env > file > KV > default precedence, BindPFlag, hot reload, test isolation, remote KV integration.
+Layered configuration with spf13/viper — explicit Set > changed flags > env > file > KV > default precedence, BindPFlag, hot reload, test isolation, remote KV integration.
 
 Use when: the codebase imports `github.com/spf13/viper`. For CLI command structure → `golang-spf13-cobra`. For general CLI architecture → `golang-cli`.
 
@@ -317,7 +334,7 @@ See "Dependency Injection" section above.
 
 ### `samber/cc-skills-golang@golang-samber-hot`
 
-In-memory caching with samber/hot — 9 eviction algorithms (LRU, LFU, TinyLFU, W-TinyLFU, S3FIFO, ARC, SIEVE), TTL, loaders, sharding, stale-while-revalidate, Prometheus metrics.
+In-memory caching with samber/hot — eviction policy selection, TTL, loaders, sharding, stale-while-revalidate, and Prometheus metrics. Check which algorithms the resolved release exposes through its cache builder.
 
 Use when: the codebase imports `github.com/samber/hot`.
 
@@ -368,8 +385,3 @@ Use when: a Go test needs a structural diff or customized comparison semantics. 
 ### `samber/cc-skills-golang@golang-testing` ⭐️ 🧠 ⚙️
 
 See "QA & Performance" section above.
-
-### `golang-go-doc`
-
-Read the locally resolved package and symbol API with `go doc`. Use module tools
-for dependency versions and vulnerability tooling for security checks.

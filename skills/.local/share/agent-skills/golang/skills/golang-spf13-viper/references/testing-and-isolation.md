@@ -130,7 +130,7 @@ Prefer `viper.New()` per test. Reserve `Reset()` for tools that call into viper-
 
 ## Snapshot and restore pattern
 
-When you cannot refactor to inject `*viper.Viper` and must use the global:
+The following is a lossy value copy, not restoration of a Viper instance. Do not use it to isolate tests that depend on bindings or precedence:
 
 ```go
 func snapshotViper() map[string]interface{} {
@@ -153,4 +153,4 @@ func TestWithGlobalViper(t *testing.T) {
 }
 ```
 
-This approach is fragile — `AllSettings()` only captures the resolved values, not the binding state (defaults, env bindings, etc.). Prefer injection.
+AllSettings captures resolved values, not bindings, defaults, source precedence, aliases, or watchers. Replaying them with Set makes every copied value a highest-priority override. Inject a fresh instance or recreate the full known setup in isolated tests; Reset does not stop existing watchers.

@@ -20,7 +20,7 @@
       },
       {
         "id": "1.4",
-        "text": "Validates both Host and Port conditions independently, not short-circuiting on first error if using accumulation pattern"
+        "text": "Returns the first validation error as requested; does not require accumulating all failures."
       }
     ]
   },
@@ -241,7 +241,7 @@
       },
       {
         "id": "10.2",
-        "text": "Epsilon value is reasonable (1e-9 for general precision, or 0.01 for cent-level financial precision)"
+        "text": "Selects tolerance or exact minor-unit arithmetic from the domain contract, not an arbitrary 0.01 or 1e-9 default."
       },
       {
         "id": "10.3",
@@ -412,7 +412,7 @@
     "assertions": [
       {
         "id": "17.1",
-        "text": "Guards against zero baseRate — float division by zero produces +Inf, -Inf, or NaN, not a panic. In particular, 0.0/0.0 is NaN and comparisons with NaN are always false"
+        "text": "On ordinary IEEE-754 Go targets, guards zero and non-finite inputs; ordered comparisons and equality with NaN are false, but != is true."
       },
       {
         "id": "17.2",
@@ -566,7 +566,7 @@
       },
       {
         "id": "23.2",
-        "text": "Epsilon is reasonable for financial contexts (1e-2 for cent precision or 1e-9 for general precision)"
+        "text": "Selects tolerance or exact minor-unit arithmetic from the domain contract, not an arbitrary 0.01 or 1e-9 default."
       },
       {
         "id": "23.3",
@@ -583,7 +583,7 @@
     "name": "append-aliasing-caller-slice-corruption",
     "description": "Appending to a caller-supplied slice with spare capacity silently mutates the caller's backing array",
     "prompt": "In package `pipeline`, write a function `AppendDefaults(tags []string) []string` that ensures the tags slice contains `\"env:prod\"`, `\"region:us-east\"`, and `\"service:api\"`. If a tag is already present, don't add a duplicate. Return the resulting slice.\n\nHere is a caller that will use this function:\n\n```go\ntags := make([]string, 2, 10)  // len=2, cap=10\ntags[0] = \"team:backend\"\ntags[1] = \"version:1.2\"\n\nresult := pipeline.AppendDefaults(tags)\nfmt.Println(tags[2])  // what does this print?\n```\n\nWrite the AppendDefaults function. Is there a safety concern the caller should know about?",
-    "trap": "Model writes `tags = append(tags, missing...)` and returns the modified slice without copying first. Since make([]string, 2, 10) has capacity 10, append reuses the backing array — `tags[2]` in the caller now reads 'env:prod' even though the caller never wrote to it. The model likely misses this shared-memory aliasing.",
+    "trap": "Confuses length and capacity: tags[2] is out of bounds even if the shared backing array has been changed.",
     "assertions": [
       {
         "id": "24.1",
@@ -599,7 +599,7 @@
       },
       {
         "id": "24.4",
-        "text": "Explains or demonstrates that `tags[2]` in the caller would be silently overwritten without the fix"
+        "text": "Explains tags[2] panics because len(tags)==2 regardless of spare capacity; reslicing to tags[:cap(tags)] reveals append writes."
       }
     ]
   },
@@ -782,7 +782,7 @@
       },
       {
         "id": "31.2",
-        "text": "Epsilon value is reasonable for financial contexts (1e-2 for cents, or 1e-9 for general precision)"
+        "text": "Selects tolerance or exact minor-unit arithmetic from the domain contract, not an arbitrary 0.01 or 1e-9 default."
       },
       {
         "id": "31.3",
@@ -828,11 +828,11 @@
     "name": "guard-integer-division-by-zero",
     "description": "Guards against zero capacity to prevent integer division panic",
     "prompt": "In package `pool`, write a function `Utilization(active, capacity int) int` that returns the pool utilization as a percentage (0-100). Active is current connections, capacity is max. Return `active * 100 / capacity`.",
-    "trap": "Model computes `active * 100 / capacity` directly without checking capacity == 0 — integer division by zero causes an unrecoverable runtime panic",
+    "trap": "Model computes `active * 100 / capacity` directly without checking capacity == 0 — integer division by zero causes a runtime panic",
     "assertions": [
       {
         "id": "33.1",
-        "text": "Guards against zero capacity — integer division by zero panics at runtime with an unrecoverable crash; must check capacity == 0 first"
+        "text": "Guards against zero capacity — integer division by zero panics at runtime; check capacity == 0 to handle the expected invalid input"
       },
       {
         "id": "33.2",
@@ -844,7 +844,7 @@
       },
       {
         "id": "33.4",
-        "text": "Multiplication order `active * 100 / capacity` preserves precision better than `active / capacity * 100`"
+        "text": "Checks multiplication overflow as well as zero capacity; does not blindly use active*100 for unrestricted int inputs."
       }
     ]
   },
@@ -923,7 +923,7 @@
       },
       {
         "id": "36.4",
-        "text": "Formula is mathematically correct: `float64(after-before) / float64(before) * 100` or equivalent"
+        "text": "Avoids integer overflow in after-before before converting; documents precision tradeoffs for large int values."
       }
     ]
   },

@@ -41,36 +41,23 @@ For applications (services, APIs, workers), follow [12-Factor App](https://12fac
 | **CLI Tool** | Building a command-line application | `cmd/{name}/`, `internal/`, optional `pkg/` |
 | **Library** | Creating reusable code for others | Root package or named subpackages, `internal/` for private code |
 | **Service** | HTTP API, microservice, or web app | `cmd/{service}/`, `internal/`, `api/`, `web/` |
-| **Monorepo** | Multiple related packages/modules | `go.work`, separate modules per package |
+| **Monorepo** | Multiple related packages or independently versioned modules | One go.mod often suffices; go.work only for local multi-module work |
 | **Workspace** | Developing multiple local modules | `go.work`, replace directives |
 
 ## Module Naming Conventions
 
 ### Module Name (go.mod)
 
-Your module path in `go.mod` should:
-
-- **MUST match your repository URL**: `github.com/username/project-name`
-- **Use lowercase only**: `github.com/you/my-app` (not `MyApp`)
-- **Use hyphens for multi-word**: `user-auth` not `user_auth` or `userAuth`
-- **Be semantic**: Name should clearly express purpose
-
-**Examples:**
+Choose a module path that resolves to its published source, including any subdirectory and major-version suffix. Vanity domains are valid. Uppercase letters and underscores are allowed; preserve the repository's real case and path rather than silently renaming it. Local-only main modules can use a path without a domain, but that path is unsuitable for normal remote dependency discovery.
 
 ```go
-// ✅ Good
-module github.com/jdoe/payment-processor
-module github.com/company/cli-tool
-
-// ❌ Bad
-module myproject
-module github.com/jdoe/MyProject
-module utils
+module github.com/jdoe/my-project
+module example.com/tools/parser/v2
 ```
 
 ### Package Naming
 
-Packages MUST be lowercase, singular, and match their directory name. → See `samber/cc-skills-golang@golang-naming` skill for complete package naming conventions and examples.
+Package names conventionally use concise lowercase words; they need not be singular or match the final path segment (notably main and versioned module paths). → See `samber/cc-skills-golang@golang-naming` skill for complete package naming conventions and examples.
 
 ## Directory Layout
 

@@ -12,8 +12,8 @@ Place the directive on the same line as the flagged code, or on the line immedia
 
 1. **MUST specify the linter name** — bare `//nolint` suppresses all linters on that line and makes it impossible to track what is being suppressed
 2. **MUST add a justification comment** — future readers (and your future self) need to understand why
-3. **The `nolintlint` linter enforces both rules** — it will flag bare `//nolint` and missing reasons
-4. **MUST fix the root cause before suppressing** — only suppress after confirming the issue is a false positive or an intentional pattern
+3. **Configure `nolintlint` with `require-specific` and `require-explanation` to enforce both rules** — it will flag bare `//nolint` and missing reasons
+4. **Investigate the root cause before suppressing** — only suppress after confirming the issue is a false positive or an intentional pattern
 
 ## Examples
 

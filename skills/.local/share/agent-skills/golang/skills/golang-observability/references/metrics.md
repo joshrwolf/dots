@@ -37,7 +37,7 @@ This is one of the most common sources of confusion. Both measure distributions,
 
 **Summary** computes quantiles (P50, P99, etc.) on the client side before sending them to Prometheus. This means the quantile values are pre-baked and **cannot be aggregated** — if you have 10 instances, you cannot combine their P99 values into a meaningful overall P99.
 
-**Recommendation**: Histogram SHOULD be preferred over Summary in almost all cases. Summary is only useful when you need exact quantiles for a single instance and don't care about cross-instance aggregation.
+**Recommendation**: Histogram SHOULD be preferred over Summary in almost all cases. Summary computes approximate quantiles with configured rank error for a single instance and don't care about cross-instance aggregation.
 
 ## Tracking Percentiles (P50, P90, P99, P99.9)
 
@@ -66,7 +66,7 @@ func instrumentHandler(next http.Handler) http.Handler {
         next.ServeHTTP(sw, r)
         httpRequestDuration.WithLabelValues(
             r.Method,
-            r.URL.Path,
+            r.Pattern, // Go 1.22+ ServeMux matched pattern, read after routing; not raw path
             strconv.Itoa(sw.status),
         ).Observe(time.Since(start).Seconds())
     })
@@ -111,7 +111,7 @@ Metric names MUST follow the [Prometheus naming best practices](https://promethe
 | Data size     | `_bytes`       | `_kilobytes`, `_megabytes`  |
 | Temperature   | `_celsius`     | `_fahrenheit`               |
 | Ratio/percent | `_ratio` (0–1) | `_percent` (0–100)          |
-| Mass          | `_grams`       | `_kilograms`                |
+| Mass          | `_kilograms`   | `_grams`                    |
 
 **Suffix conventions:**
 
@@ -392,7 +392,7 @@ var httpRequestDuration = promauto.NewHistogramVec(
         Subsystem: "http",
         Name:      "request_duration_seconds",
         Help:      "HTTP request duration in seconds.",
-        Buckets:   []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+        Buckets:   []float64{.005, .01, .025, .05, .1, .25, .3, .5, 1, 2.5, 5, 10},
     },
     []string{"method", "path", "status"},
 )
@@ -471,7 +471,7 @@ histogram_quantile(0.99, sum(rate(myapp_external_call_duration_seconds_bucket[5m
 
 ### Summary — client-side quantiles (use sparingly)
 
-Summaries compute quantiles on the client and cannot be aggregated across instances. Use them only for single-process diagnostics where exact quantiles matter. Prefer Histogram in all other cases.
+Summaries compute quantiles on the client and cannot be aggregated across instances. Use them only for single-process diagnostics where client-side approximate quantiles fit; their count and sum remain aggregatable even though quantiles do not. Prefer Histogram in all other cases.
 
 ```go
 // Dashboard: myapp_jobs_processing_seconds{quantile="0.5"}
@@ -525,7 +525,7 @@ For a **99.9% availability SLO** (0.1% error budget over 30 days):
 )
 ```
 
-The short window catches the incident fast; the long window confirms it's sustained. Together they eliminate false positives from transient blips.
+The short window catches the incident fast; the long window confirms it's sustained. Together they reduce noise from transient blips; evaluate missing series, zero traffic and the chosen definition of a failed request.
 
 ## High-Cardinality Labels
 
@@ -537,10 +537,9 @@ httpRequestsTotal.WithLabelValues(r.URL.Path)    // /users/alice, /users/bob, /u
 httpRequestsTotal.WithLabelValues(userID)          // one series per user
 httpRequestsTotal.WithLabelValues(r.Header.Get("X-Request-ID")) // one series per request!
 
-// ✓ Good — bounded, normalized labels
-httpRequestsTotal.WithLabelValues(routePattern)   // /users/:id (the route template, not the actual path)
-httpRequestsTotal.WithLabelValues(r.Method)        // GET, POST, PUT, DELETE (5 values)
-httpRequestsTotal.WithLabelValues(statusBucket)    // "2xx", "3xx", "4xx", "5xx" (4 values)
+// ✓ Good — all three labels match the HistogramVec/CounterVec declaration.
+// method: allowlisted HTTP method or "other"; pattern: /users/{id}; status: 2xx, etc.
+httpRequestsTotal.WithLabelValues(normalizedMethod, routePattern, statusBucket).Inc()
 ```
 
 **How to limit cardinality:**

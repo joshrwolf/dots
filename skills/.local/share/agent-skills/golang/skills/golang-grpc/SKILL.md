@@ -54,13 +54,13 @@ This skill is not exhaustive — refer to library documentation and code example
 
 ## Proto File Organization
 
-Organize by domain with versioned directories (`proto/user/v1/`). Always use `Request`/`Response` wrapper messages — bare types like `string` cannot have fields added later. Generate with `buf generate` or `protoc`.
+Organize by domain with versioned directories (`proto/user/v1/`). Always use `Request`/`Response` wrapper messages — RPC input/output types must be protobuf messages; a scalar such as `string` is not legal here. `google.protobuf.Empty` is valid for genuinely empty messages, but a named wrapper permits later additions. Generate with `buf generate` or `protoc`.
 
 [Proto & code generation reference](references/protoc-reference.md)
 
 ## Server Implementation
 
-- Implement health check service (`grpc_health_v1`) — Kubernetes probes need it to determine readiness
+- Implement health check service (`grpc_health_v1`) — required when configuring native Kubernetes gRPC probes; HTTP/exec probes are alternatives
 - Use interceptors for cross-cutting concerns (logging, auth, recovery) — keeps business logic clean
 - Use `GracefulStop()` with a timeout fallback to `Stop()` — drains in-flight RPCs while preventing hangs
 - Disable reflection in production — it exposes your full API surface
@@ -100,15 +100,16 @@ func loggingInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo
 - Reuse connections — gRPC multiplexes RPCs on a single HTTP/2 connection; one-per-request wastes TCP/TLS handshakes
 - Set deadlines on every call (`context.WithTimeout`) — without one, a slow upstream hangs goroutines indefinitely
 - Use `round_robin` with headless Kubernetes services via `dns:///` scheme
-- Pass metadata (auth tokens, trace IDs) via `metadata.NewOutgoingContext`
+- Pass metadata (auth tokens, trace IDs) via `metadata.AppendToOutgoingContext`; `NewOutgoingContext` replaces existing outgoing metadata
 
 ```go
+// Register the policy: import _ "google.golang.org/grpc/balancer/roundrobin"
 conn, err := grpc.NewClient("dns:///user-service:50051",
     grpc.WithTransportCredentials(creds),
     grpc.WithDefaultServiceConfig(`{
         "loadBalancingPolicy": "round_robin",
         "methodConfig": [{
-            "name": [{"service": ""}],
+            "name": [{"service": "user.v1.UserService", "method": "GetUser"}],
             "timeout": "5s",
             "retryPolicy": {
                 "maxAttempts": 3,
@@ -120,6 +121,8 @@ conn, err := grpc.NewClient("dns:///user-service:50051",
         }]
     }`),
 )
+if err != nil { return err }
+defer conn.Close()
 client := pb.NewUserServiceClient(conn)
 ```
 
@@ -136,7 +139,7 @@ Always return gRPC errors using `status.Error` with a specific code — a raw `e
 | `Unauthenticated`    | Missing or invalid token                    |
 | `FailedPrecondition` | System not in required state                |
 | `ResourceExhausted`  | Rate limit or quota exceeded                |
-| `Unavailable`        | Transient issue, safe to retry              |
+| `Unavailable`        | Transient issue; retry only with safe/idempotent semantics              |
 | `Internal`           | Unexpected bug                              |
 | `DeadlineExceeded`   | Timeout                                     |
 
@@ -148,7 +151,8 @@ return nil, fmt.Errorf("user not found")
 if errors.Is(err, ErrNotFound) {
     return nil, status.Errorf(codes.NotFound, "user %q not found", req.UserId)
 }
-return nil, status.Errorf(codes.Internal, "lookup failed: %v", err)
+slog.ErrorContext(ctx, "lookup failed", "error", err)
+return nil, status.Error(codes.Internal, "internal server error")
 ```
 
 For field-level validation errors, attach `errdetails.BadRequest` via `status.WithDetails`.
@@ -206,9 +210,9 @@ Most services do not need connection pooling — profile before adding complexit
 | No deadline on client calls | Slow upstream hangs indefinitely. Always `context.WithTimeout` |
 | New connection per request | Wastes TCP/TLS handshakes. Create once, reuse — HTTP/2 multiplexes RPCs |
 | Reflection enabled in production | Lets attackers enumerate every method. Enable only in dev/staging |
-| `codes.Internal` for all errors | Wrong codes break client retry logic. `Unavailable` triggers retry; `InvalidArgument` does not |
+| `codes.Internal` for all errors | Wrong codes break client retry logic. `Unavailable` may trigger a configured retry; idempotency still matters |
 | Bare types as RPC arguments | Can't add fields to `string`. Wrapper messages allow backwards-compatible evolution |
-| Missing health check service | Kubernetes can't determine readiness, kills pods during deployments |
+| Missing health check service | Configured gRPC probes fail without the service. Readiness removes endpoints; liveness failures can restart containers |
 | Ignoring context cancellation | Long operations continue after caller gave up. Check `ctx.Err()` |
 
 ## Cross-References

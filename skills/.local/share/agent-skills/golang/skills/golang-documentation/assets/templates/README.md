@@ -1,6 +1,8 @@
 # {project-name}
 
-<!-- Replace {owner} and {repo} throughout this file -->
+<!-- Replace {owner} and {repo} throughout this file. Keep license links only
+     when they point to the project's actual license file; adapt other badges and
+     relative links to the project layout. -->
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/{owner}/{repo})](https://go.dev/) [![License](https://img.shields.io/github/license/{owner}/{repo})](./LICENSE) [![Build Status](https://img.shields.io/github/actions/workflow/status/{owner}/{repo}/test.yml?branch=main)](https://github.com/{owner}/{repo}/actions) [![Coverage](https://img.shields.io/codecov/c/github/{owner}/{repo})](https://codecov.io/gh/{owner}/{repo}) [![Go Report Card](https://goreportcard.com/badge/github.com/{owner}/{repo})](https://goreportcard.com/report/github.com/{owner}/{repo}) [![Go Reference](https://pkg.go.dev/badge/github.com/{owner}/{repo}.svg)](https://pkg.go.dev/github.com/{owner}/{repo})
 
@@ -68,7 +70,7 @@ docker run --rm {registry}/{owner}/{repo}:latest --help
 ### Homebrew (macOS)
 
 ```bash
-brew install {owner}/{repo}
+brew install {owner}/{tap}/{formula}
 ```
 
 ### APT (debian/ubuntu)
@@ -81,9 +83,7 @@ apt install {package}
 
 ## ✨ Features
 
-<!-- Very detailed feature descriptions, organized by area.
-     This is the longest section of the README.
-     Use headings, tables, and code examples generously. -->
+<!-- Describe supported features; keep detail proportional to the project. -->
 
 ### Feature Area 1
 
@@ -101,7 +101,7 @@ Please read the [contributing guide](CONTRIBUTING.md) before submitting a PR.
 
 ```bash
 # Build
-go build -o myapp ./cmd/main.go
+go build -o myapp ./cmd/myapp
 
 # Run unit tests
 go test -race ./...
@@ -110,9 +110,11 @@ go test -race ./...
 go test -race -tags=integration -timeout=300s ./...
 
 # Run linter
-golangci-lint run --fix ./...
+golangci-lint run ./...
+```
 -->
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+<!-- State the project's actual license; do not assume MIT. -->
+See [LICENSE](LICENSE).

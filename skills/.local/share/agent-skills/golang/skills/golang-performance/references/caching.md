@@ -24,7 +24,7 @@ The fastest code is code that doesn't run. Caching pre-computed results, dedupli
 
 ### Regexp at package level
 
-`regexp.Compile` parses a pattern into a state machine — ~5,700ns per compilation. Match operations on a compiled regexp cost ~450ns. Compiling per-call wastes 10-12x:
+`regexp.Compile` parses and compiles a pattern. Reusing a compiled expression avoids repeating that work; costs depend on the pattern, input and toolchain:
 
 ```go
 // Bad — compiled on every call
@@ -86,22 +86,25 @@ func GetWeather(city string) (string, error) {
 
     // Only one goroutine fetches; others block on the same key
     result, err, _ := sf.Do(city, func() (any, error) {
+        // Another flight may have populated the cache since our initial miss.
+        if value, ok := cache.Load(city); ok { return value, nil }
         data, err := fetchFromAPI(city)
         if err == nil { cache.Store(city, data) }
         return data, err
     })
-    return result.(string), err
+    if err != nil { return "", err }
+    return result.(string), nil
 }
 ```
 
-→ See `samber/cc-skills-golang@golang-concurrency` skill for `singleflight` API details and `sync.Map` vs `RWMutex` decision guidance. → **Generics alternative:** Use `github.com/samber/go-singleflightx` to avoid interface{} boxing overhead; expect 2-4x faster result retrieval compared to the standard library's `singleflight.Group`.
+→ See `samber/cc-skills-golang@golang-concurrency` skill for `singleflight` API details and `sync.Map` vs `RWMutex` decision guidance. → **Generics alternative:** Use `github.com/samber/go-singleflightx` to avoid interface{} boxing overhead; benchmark against `golang.org/x/sync/singleflight` on the actual workload; this is a Go subrepository, not the standard library.
 
 ### LRU caches
 
 For bounded caches with eviction, the standard library's `container/list` works but has poor cache locality (each node is a separate heap allocation). For high-performance LRU:
 
 - **`github.com/hashicorp/golang-lru`** — thread-safe, simple API
-- **`github.com/elastic/go-freelru`** — merges hashmap and ringbuffer into contiguous memory, ~37x faster than sharded implementations
+- **`github.com/elastic/go-freelru`** — merges hashmap and ringbuffer into contiguous memory, benchmark its locality/concurrency tradeoffs against the workload
 
 When using third-party cache libraries, refer to the library's official documentation for current API signatures.
 
@@ -117,7 +120,7 @@ Before micro-optimizing, check that the algorithm itself isn't the bottleneck. A
 | --- | --- | --- | --- |
 | `slices.Contains` in a loop | O(n·m) | Build `map[T]struct{}` first, then lookup | O(n+m) |
 | Nested loops for matching | O(n²) | Index with a map, sort+binary search, or `slices.BinarySearch` | O(n log n) or O(n) |
-| Repeated `append` without prealloc | O(n²) amortized copies | `make([]T, 0, n)` | O(n) |
+| Repeated `append` without prealloc | O(n) amortized total growth/copies in Go's implementation | `make([]T, 0, n)` reduces growth allocations | O(n) |
 | String concatenation with `+=` | O(n²) total copies | `strings.Builder` | O(n) |
 | Linear scan for min/max/dedup | O(n) per query | Sort once, query many times | O(n log n) + O(log n) per query |
 
@@ -129,7 +132,7 @@ Before micro-optimizing, check that the algorithm itself isn't the bottleneck. A
 
 ### Map lookups over slice scanning
 
-`Contains(slice, element)` is O(n). Map lookups are O(1). When doing multiple membership tests against the same collection, build a map once:
+`Contains(slice, element)` is O(n). Map lookups have expected constant-time behavior; this is not a worst-case language guarantee. When doing multiple membership tests against the same collection, build a map once:
 
 ```go
 // Bad — O(n*m), checking Contains per element
@@ -168,7 +171,7 @@ return false
 
 ### Avoid iterator chains
 
-Chaining iterator operations (`Filter → Map → First`) creates closures and intermediate machinery. A direct loop is simpler and faster:
+Eager collection helpers may allocate intermediate slices, while lazy iterators can stop early. Closure calls may inline. Compare a direct loop when profiling identifies iteration overhead, rather than assuming every chain traverses the full input:
 
 ```go
 // Bad — creates 2 iterators with closures
@@ -182,7 +185,7 @@ for i := range collection {
 
 ### Replace indirect function calls with direct loops
 
-When a function wraps another function (e.g., `FromSlicePtr` calling `Map` with a closure), the closure indirection prevents inlining. Replace with a direct loop:
+When a function wraps another function (e.g., `FromSlicePtr` calling `Map` with a closure), an indirect call may inhibit optimization, depending on compiler inlining/devirtualization decisions. Replace with a direct loop:
 
 ```go
 // Bad — Map() with closure, per-element function call overhead
@@ -190,7 +193,7 @@ func FromSlicePtr(items []*T) []T {
     return Map(items, func(p *T) T { return *p })
 }
 
-// Good — direct loop, inlineable, -13% to -17% time
+// Direct loop: benchmark against the compiler-optimized helper
 func FromSlicePtr(items []*T) []T {
     result := make([]T, len(items))
     for i := range items { result[i] = *items[i] }

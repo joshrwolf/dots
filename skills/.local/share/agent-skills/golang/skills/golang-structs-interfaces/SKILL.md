@@ -139,7 +139,7 @@ func (r *Registry) Register(name string, item Item) {
 
 ## Avoid `any` / `interface{}` When a Specific Type Will Do
 
-Since Go 1.18+, MUST prefer generics over `any` for type-safe operations. Use `any` only at true boundaries where the type is genuinely unknown (e.g., JSON decoding, reflection):
+Use concrete types for fixed domains, interfaces for shared behavior, and type parameters when an operation preserves relationships across varying types. `any` remains appropriate for heterogeneous values or dynamic boundaries; adding generics is useful when the resulting contract expresses more than runtime assertions:
 
 ```go
 // Bad — loses type safety
@@ -176,7 +176,7 @@ This costs nothing at runtime. If `MyBuffer` ever stops satisfying `io.ReadWrite
 
 ## Type Assertions & Type Switches
 
-Type assertions MUST use the comma-ok form (`s, ok := val.(string)`) — the single-value form panics on a type mismatch instead of branching. Use a type switch to dispatch on the dynamic type, and an assertion to a small optional interface (`if f, ok := w.(Flusher); ok`) to exploit richer implementations without widening the declared parameter type.
+Use comma-ok assertions (`s, ok := val.(string)`) when a mismatch is an expected or recoverable outcome. A single-value assertion expresses an invariant and panics if it is violated; use it only when that failure behavior is intentional and the invariant is established. Use a type switch to dispatch on the dynamic type, and an assertion to a small optional interface (`if f, ok := w.(Flusher); ok`) to exploit richer implementations without widening the declared parameter type.
 
 → See [Type Assertions & Type Switches](references/type-assertions.md) for type switch ordering, nil cases, and the optional-behavior pattern.
 
@@ -266,7 +266,7 @@ type Order struct {
 | Receiver is a large struct | Method is a read-only accessor |
 | Consistency: if any method uses a pointer, all should | Map and function values (already reference types) |
 
-Receiver type MUST be consistent across all methods of a type — if one method uses a pointer receiver, all methods should.
+Prefer consistent receiver choices, but mixed receivers are valid when intentional (for example, value-based formatting with pointer-based unmarshaling). Check copying, mutation, and the different method sets of T and *T rather than rewriting existing APIs mechanically.
 
 ## Preventing Struct Copies with `noCopy`
 
@@ -291,7 +291,7 @@ Do not copy a used mutex or a struct containing it; use pointer receivers and pa
 | Large interfaces (5+ methods) | Split into focused 1-3 method interfaces, compose if needed |
 | Interface ownership chosen by rote | Use consumer needs and the intended public contract |
 | Return type chosen by slogan | Expose the intended API; keep implementation details private |
-| Bare type assertions without comma-ok | Always use `v, ok := x.(T)` |
+| Unchecked type assertions at fallible boundaries | Use comma-ok and handle mismatch; reserve single-value assertions for established invariants |
 | Embedding when you only need a few methods | Use a named field and delegate explicitly |
 | Missing field tags on serialized structs | Tag all exported fields in marshaled types |
 | Mixing pointer and value receivers on a type | Pick one and be consistent |

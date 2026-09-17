@@ -26,6 +26,7 @@ Set up the TracerProvider early in your application. On new projects, do this fi
 ```go
 import (
     "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/propagation"
     "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
     "go.opentelemetry.io/otel/sdk/resource"
     sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -53,9 +54,16 @@ func initTracer(ctx context.Context) (func(), error) {
         sdktrace.WithResource(res),
     )
     otel.SetTracerProvider(tp)
+    otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+        propagation.TraceContext{}, propagation.Baggage{},
+    ))
 
     shutdown := func() {
-        _ = tp.Shutdown(context.Background())
+        shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()
+        if err := tp.Shutdown(shutdownCtx); err != nil {
+            slog.Error("flush traces", "error", err)
+        }
     }
     return shutdown, nil
 }
@@ -107,7 +115,7 @@ func (r *OrderRepo) Insert(ctx context.Context, order Order) (*Order, error) {
 **Where to add spans** — spans MUST be created for:
 
 - Every service method (business logic layer)
-- Every database query
+- Database operations whose timing matters; QueryContext alone does not create spans — use an instrumented driver or explicit spans
 - Every external API call
 - Every message queue publish/consume
 - Any operation that takes measurable time or could fail
@@ -122,7 +130,7 @@ import "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 // Incoming requests — wrap your handler
 mux.Handle("/orders", otelhttp.NewHandler(orderHandler, "CreateOrder"))
 
-// Outgoing requests — HTTP clients MUST use otelhttp for automatic span propagation
+// Outgoing requests — otelhttp uses the configured global propagator
 client := &http.Client{
     Transport: otelhttp.NewTransport(http.DefaultTransport),
 }
@@ -147,7 +155,7 @@ if err != nil {
 
 ## Structured Errors with `samber/oops`
 
-Standard Go errors lose critical debugging information: there's no stack trace, no structured context, and no way to attach request-scoped metadata. When an error surfaces in a trace, you see `"connection refused"` but not where it originated or which user/tenant was affected.
+The built-in error interface provides only Error() string. Custom error types can carry structured metadata, while stack capture and exporter integration require an explicit design. When an error surfaces in a trace, you see `"connection refused"` but not where it originated or which user/tenant was affected.
 
 [`samber/oops`](https://github.com/samber/oops) is a drop-in error library that fills these gaps. Every `oops` error carries a stack trace, structured attributes, and integrates naturally with both OpenTelemetry spans and `slog`:
 
@@ -173,7 +181,7 @@ func (s *OrderService) Create(ctx context.Context, req CreateOrderRequest) (*Ord
 }
 ```
 
-When this error is logged or recorded on a span, you get the full stack trace, the domain (`order-service`), an error code (`order_insert_failed`), and structured attributes (`order_id`, `user_id`) — all machine-parseable and searchable in your observability platform.
+`span.RecordError(err)` records the error type/message by default; it does not automatically extract oops stack traces or attributes. Map approved structured fields to span attributes explicitly, and configure a log formatter/handler that understands the error. `trace.WithStackTrace(true)` captures a stack at the recording site, not necessarily the error origin.
 
 `oops` errors work with `span.RecordError()`, `errors.Is`/`errors.As`, and `slog` — see the `samber/cc-skills-golang@golang-error-handling` and `samber/cc-skills-golang@golang-samber-oops` skills for full usage patterns.
 

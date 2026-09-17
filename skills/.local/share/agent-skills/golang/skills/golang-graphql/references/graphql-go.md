@@ -44,12 +44,16 @@ http.Handle("/graphql", &relay.Handler{Schema: schema})
 One exported method per schema field; name match is case-insensitive:
 
 ```go
+type userReader interface {
+    GetUser(context.Context, string) (*domain.User, error)
+}
+
 type RootResolver struct {
-    db *sql.DB
+    db userReader
 }
 
 type QueryResolver struct {
-    db *sql.DB
+    db userReader
 }
 
 func (r *RootResolver) Query() *QueryResolver { return &QueryResolver{db: r.db} }
@@ -76,13 +80,15 @@ Return resolver wrapper structs, not domain models directly — keeps GraphQL pr
 |`Float`|`float64`||
 |`String`|`string`||
 |`Boolean`|`bool`||
-|`[T]`|`[]*T` or `[]T`||
-|Nullable `T`|`*T`|pointer = nullable|
-|Non-null `T!`|`T`|non-pointer|
-|Custom scalar|implement `UnmarshalGraphQL(input any) error` + `MarshalJSON() ([]byte, error)`||
+|`[String!]!`|`[]string`|non-null list and elements|
+|`[String]`|`*[]*string`|nullable list and elements|
+|Nullable scalar `T`|`*T`|e.g. `String` maps to `*string`|
+|Non-null scalar `T!`|`T`|e.g. `String!` maps to `string`|
+|Object fields|resolver struct or pointer|object resolvers commonly use pointers even for non-null fields|
+|Custom scalar|implement `ImplementsGraphQLType(string) bool`, `UnmarshalGraphQL(any) error`, and output marshaling||
 |Enum|typed string alias||
 |Input|exported struct with field tags optional||
-|Interface/Union|Go interface returned; `ToConcreteType() (*T, bool)` discriminators||
+|Interface/Union|Resolver wrapper with `ToConcreteType() (*T, bool)` discriminators||
 
 Common mistake: using `int` for an `Int!` field — the parser rejects it with a type mismatch error.
 
@@ -102,6 +108,8 @@ Forgetting `*` on a nullable argument causes unmarshal failure when clients send
 
 ```go
 type DateTime struct{ time.Time }
+
+func (DateTime) ImplementsGraphQLType(name string) bool { return name == "DateTime" }
 
 func (d *DateTime) UnmarshalGraphQL(input any) error {
     s, ok := input.(string)
@@ -225,7 +233,8 @@ func (r *SubscriptionResolver) MessageAdded(ctx context.Context, args struct{ Ro
             select {
             case <-ctx.Done():
                 return
-            case msg := <-sub.Chan():
+            case msg, ok := <-sub.Chan():
+                if !ok { return }
                 select {
                 case ch <- &MessageResolver{msg: msg}:
                 case <-ctx.Done():
@@ -238,7 +247,7 @@ func (r *SubscriptionResolver) MessageAdded(ctx context.Context, args struct{ Ro
 }
 ```
 
-WebSocket transport is not bundled — pair with `gorilla/websocket` or use the relay handler with a WebSocket-aware mux.
+The HTTP relay handler does not implement the GraphQL WebSocket protocol. Use a transport adapter that implements the chosen protocol and calls Schema.Subscribe; adding a WebSocket-aware mux alone is insufficient.
 
 ## Disabling Introspection
 

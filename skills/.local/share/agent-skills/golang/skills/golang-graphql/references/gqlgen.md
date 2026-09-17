@@ -66,7 +66,7 @@ models:
       posts:
         resolver: true # force a custom resolver (required for DataLoader fields)
 
-omit_slice_element_pointers: true
+omit_slice_element_pointers: false # matches []*model.Post resolver examples
 struct_fields_always_pointers: false
 resolvers_always_return_pointers: true
 ```
@@ -87,7 +87,7 @@ The generated `Config` holds a `Resolvers` field of the generated interface. You
 type Resolver struct {
     db          *sql.DB
     userService *service.UserService
-    loaders     *dataloaders.Loaders // injected per-request
+    // Per-request loaders live in context, not on this shared resolver.
 }
 ```
 
@@ -178,17 +178,32 @@ srv.AroundFields(func(ctx context.Context, next graphql.Resolver) (any, error) {
 ## Error Presenter
 
 ```go
+// Only application-approved public codes receive fixed, safe messages.
+// A gqlerror.Error can wrap internal errors too; its type alone is not trusted.
 srv.SetErrorPresenter(func(ctx context.Context, err error) *gqlerror.Error {
+    out := graphql.DefaultErrorPresenter(ctx, err) // retain path/location
+    publicMessages := map[string]string{
+        "NOT_FOUND": "user not found",
+        "FORBIDDEN": "access denied",
+        "UNAUTHENTICATED": "authentication required",
+    }
     var gqlErr *gqlerror.Error
     if errors.As(err, &gqlErr) {
-        return gqlErr
+        code, _ := gqlErr.Extensions["code"].(string)
+        if message, ok := publicMessages[code]; ok {
+            out.Message = message
+            out.Extensions = map[string]any{"code": code}
+            return out
+        }
     }
-    log.Ctx(ctx).Error("resolver error", "err", err)
-    return gqlerror.Errorf("internal server error")
+    slog.ErrorContext(ctx, "resolver failed", "error", err)
+    out.Message = "internal server error"
+    out.Extensions = nil
+    return out
 })
 
 srv.SetRecoverFunc(func(ctx context.Context, err any) error {
-    log.Ctx(ctx).Error("panic in resolver", "err", err)
+    slog.ErrorContext(ctx, "panic in resolver", "err", err)
     return fmt.Errorf("internal server error")
 })
 ```
@@ -280,6 +295,6 @@ srv.SetQueryCache(lru.New[*ast.QueryDocument](1000))
 if os.Getenv("ENV") != "production" {
     srv.Use(extension.Introspection{})
 }
-srv.Use(extension.AutomaticPersistedQuery{Cache: lru.New[string](100)})
+srv.Use(extension.AutomaticPersistedQuery{Cache: lru.New[string](100)}) // cache, not an operation allowlist
 srv.Use(extension.FixedComplexityLimit(200))
 ```

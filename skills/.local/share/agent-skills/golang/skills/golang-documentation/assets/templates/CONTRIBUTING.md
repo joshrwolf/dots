@@ -16,7 +16,7 @@ git clone https://github.com/{owner}/{repo}.git
 cd {repo}
 
 # Build
-go build -o myapp ./cmd/main.go
+go build -o myapp ./cmd/myapp
 
 # Run unit tests
 go test -race ./...
@@ -25,7 +25,7 @@ go test -race ./...
 go test -race -tags=integration -timeout=300s ./...
 
 # Run linter
-golangci-lint run --fix ./...
+golangci-lint run ./...
 ```
 
 ## Development Workflow

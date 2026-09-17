@@ -33,7 +33,7 @@
     "name": "must-prefix-enum-iota",
     "description": "New() constructor, Status not PoolStatus (anti-stutter), IsHealthy() bool, type-prefixed enums",
     "prompt": "I'm building a Go package called `dbpool` for managing database connection pools. Please write the code for `pool.go` with:\n\n1. A ConnectionState enum with values: idle, active, closed, errored\n2. An interface that any database driver must implement, with methods for Connect, Ping, Close, and a method that returns whether the connection is healthy\n3. A Pool struct with fields for maximum connections, current count, and the database DSN (data source name)\n4. A constructor that accepts a DSN string and functional options\n5. Methods to get a connection from the pool and return it\n6. A method that returns the pool's current status as a JSON-serializable struct\n7. Error variables for pool exhausted, connection failed, and invalid DSN\n8. A helper that must successfully parse the DSN or panic\n9. Constants for the default pool size (10) and the max idle timeout (5 minutes)\n\nMake sure to follow Go naming best practices.",
-    "trap": "Model uses NewPool() instead of New(), PoolStatus (stutter), bare Healthy() bool without Is prefix, Idle/Active enum values without type prefix, or bare error strings",
+    "trap": "Introduces naming changes without considering public contracts or meaningful zero values.",
     "assertions": [
       {
         "id": "2.1",
@@ -53,7 +53,7 @@
       },
       {
         "id": "2.5",
-        "text": "Enum values are prefixed with the type name (e.g., ConnectionStateIdle, ConnectionStateActive) rather than bare Idle/Active, and include a zero-value sentinel (Unknown or similar at iota position 0)"
+        "text": "Uses clear enum names and deliberate zero semantics; does not mandate an unknown state when zero is a safe default."
       },
       {
         "id": "2.6",
@@ -63,18 +63,18 @@
   },
   {
     "id": 3,
-    "name": "error-string-lowercase-acronyms",
-    "description": "Error strings and test subtest names must be fully lowercase including acronyms like ID, URL, HTTP",
+    "name": "error-and-subtest-naming",
+    "description": "Preserves acronym spelling in error strings and uses descriptive named subtests",
     "prompt": "Write a Go file `handler.go` in package `webhook` and its test file `handler_test.go`. The webhook handler should:\n\n1. A Handler struct with a secret key (for HMAC validation), a base URL for callbacks, and a boolean tracking if it's processing\n2. A method to validate an incoming webhook payload — it must verify the HMAC signature and the source URL\n3. Sentinel errors for: invalid HMAC signature, invalid source URL, missing request ID\n4. A Processor interface with a single method Process(ctx context.Context, payload []byte) error\n\nFor the test file, write table-driven tests for the validate method covering: valid request, invalid HMAC, invalid URL, missing request ID, empty payload. Use proper Go test naming conventions.",
-    "trap": "Model capitalizes acronyms in error strings ('invalid source URL', 'missing request ID') and in subtest names ('invalid URL', 'missing request ID') — but Go's convention requires fully lowercase error strings and subtest names, including acronyms.",
+    "trap": "Incorrectly insists that Go requires every character in errors and subtest names to be lowercase.",
     "assertions": [
       {
         "id": "3.1",
-        "text": "Error strings are fully lowercase including acronyms — 'invalid source url' not 'invalid source URL', 'missing request id' not 'missing request ID'. Acronyms that are capitalized in identifiers are lowercase in error strings"
+        "text": "Error messages start ordinary words lowercase and omit trailing punctuation; proper nouns and acronyms retain their normal spelling."
       },
       {
         "id": "3.2",
-        "text": "Subtest names passed to t.Run() are fully lowercase — 'invalid url' not 'invalid URL', 'missing request id' not 'missing request ID'. The same lowercase-for-acronyms rule applies to t.Run() subtest names"
+        "text": "Uses descriptive named subtests; does not claim Go requires lowercase acronyms in t.Run names."
       },
       {
         "id": "3.3",
@@ -82,11 +82,11 @@
       },
       {
         "id": "3.4",
-        "text": "All Handler methods use the same 1-2 letter receiver name consistently (e.g., 'h') rather than mixing names or using 'self'/'this'"
+        "text": "All Handler methods use a consistent, recognizable receiver name; no fixed character limit"
       },
       {
         "id": "3.5",
-        "text": "Sentinel errors use Err prefix (ErrInvalidSignature, ErrInvalidSourceURL, ErrMissingRequestID) matching the Go convention — note the capitalized acronyms in error variable names contrast with lowercase in error string values"
+        "text": "Uses Err-prefixed sentinel names with conventional acronym spelling, such as ErrInvalidSourceURL."
       }
     ]
   },
@@ -103,7 +103,7 @@
       },
       {
         "id": "4.2",
-        "text": "Package names are singular, not plural (e.g., 'currency' not 'currencies', 'email' not 'emails')"
+        "text": "Uses purposeful package names; singular and plural are both valid Go conventions."
       },
       {
         "id": "4.3",
@@ -136,7 +136,7 @@
       },
       {
         "id": "5.3",
-        "text": "Shortens the loop index `userIndex` to `i` or similar — loop indices in small scopes should be single letters"
+        "text": "Drops an unused loop index with _, or uses a short name if it is needed."
       },
       {
         "id": "5.4",
@@ -198,7 +198,7 @@
       },
       {
         "id": "7.3",
-        "text": "Flags Release() as non-canonical — the correct method name is Close() returning error to satisfy io.Closer"
+        "text": "Uses Close when final-close semantics are intended; Release may be a distinct valid operation such as returning a borrowed resource."
       },
       {
         "id": "7.4",
@@ -289,16 +289,16 @@
       },
       {
         "id": "10.5",
-        "text": "The panic function with format string uses the f suffix (Panicf or Fatalf) — not Panic with format args"
+        "text": "Uses Panicf for panic-on-format; does not confuse Fatalf, which conventionally exits the process."
       }
     ]
   },
   {
     "id": 11,
     "name": "context-variant-and-in-place-suffixes",
-    "description": "Tests WithContext suffix for context variants and In suffix for in-place mutations",
+    "description": "Names variants without inventing a universal in-place suffix.",
     "prompt": "I have a Go data processing library. I need to add variants to existing functions:\n\n1. `Fetch(key string) ([]byte, error)` needs a variant that accepts a context.Context\n2. `Sort(items []Item) []Item` (returns a new sorted slice) needs an in-place variant that modifies the slice directly\n3. `ParseConfig(path string) (*Config, error)` needs a variant that panics instead of returning an error\n4. `Reverse(s string) string` (returns a new string) needs an in-place variant for byte slices\n5. `Query(sql string) (*Rows, error)` needs a context-aware variant\n\nWhat should the variant function names be? Write the signatures.",
-    "trap": "Model uses FetchCtx/FetchWithCtx instead of FetchWithContext, SortMut/SortSlice instead of SortIn, or ParseConfigOrPanic instead of MustParseConfig.",
+    "trap": "Misrepresents project-specific naming choices as language or standard-library rules.",
     "assertions": [
       {
         "id": "11.1",
@@ -306,7 +306,7 @@
       },
       {
         "id": "11.2",
-        "text": "In-place mutation variants use the In suffix (SortIn, ReverseIn) — NOT SortMut, SortInPlace, SortSlice, or MutateSort"
+        "text": "Chooses a clear in-place variant name following local API conventions; does not claim In is a universal Go suffix."
       },
       {
         "id": "11.3",
@@ -314,16 +314,16 @@
       },
       {
         "id": "11.4",
-        "text": "All variants follow their respective conventions consistently (With* for context, In for mutation, Must for panic)"
+        "text": "Documents mutation and context behavior; uses Must to signal panic semantics."
       }
     ]
   },
   {
     "id": 12,
     "name": "import-aliasing-collision-only",
-    "description": "Import aliases are only justified when two packages have the same final path segment; aliases for readability are wrong",
+    "description": "Distinguishes package names from import path segments.",
     "prompt": "A teammate wrote this Go file. Review the import aliases:\n\n```go\npackage main\n\nimport (\n    \"context\"\n    \"encoding/json\"\n    httputil \"net/http\"\n    stdfmt \"fmt\"\n    \"crypto/rand\"\n    mrand \"math/rand/v2\"\n    apiv1 \"myapp/api/v1\"\n    apiv2 \"myapp/api/v2\"\n    \"strings\"\n    strutil \"golang.org/x/text/unicode/norm\"\n    \"github.com/rs/zerolog\"\n    zlog \"github.com/rs/zerolog/log\"\n)\n```\n\nWhich aliases are justified? Which should be removed? For each removal, explain why. For each kept alias, explain why it's necessary.",
-    "trap": "Model may approve httputil (net/http is verbose), stdfmt (explicit about stdlib origin), strutil (long package name), apiv1/apiv2 (disambiguation) and zlog (explicit about subpackage). The skill teaches: alias ONLY on actual name collision — the default package name is already the last path segment. apiv1/apiv2 are justified because both would collide as 'v2'/'v1'. mrand is justified. httputil, stdfmt, strutil, zlog are NOT justified — they add cognitive load without resolving a collision.",
+    "trap": "Assumes default import names always match the final path segment.",
     "assertions": [
       {
         "id": "12.1",
@@ -339,11 +339,11 @@
       },
       {
         "id": "12.4",
-        "text": "Keeps apiv1 and apiv2 as justified — both myapp/api/v1 and myapp/api/v2 would default to 'v2'/'v1' but the numeric suffixes are ambiguous; aliasing to apiv1/apiv2 disambiguates"
+        "text": "Checks imported package declarations: default names are not derived from the /v1 or /v2 path segments. Aliases can distinguish versions."
       },
       {
         "id": "12.5",
-        "text": "Flags strutil or zlog as unjustified — the package already has a clear default name (norm or log); renaming it to strutil or zlog adds cognitive load without resolving a collision"
+        "text": "Judges descriptive aliases by clarity and project conventions instead of forbidding all non-collision aliases."
       }
     ]
   },
@@ -397,7 +397,7 @@
       },
       {
         "id": "14.4",
-        "text": "All methods use the same 1-2 letter receiver name consistently (e.g., 's' for Server)"
+        "text": "All methods use a consistent, recognizable receiver name appropriate to Server and nearby conventions"
       }
     ]
   }

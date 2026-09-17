@@ -25,14 +25,13 @@
 - [Retry Logic](#retry-logic)
 - [Error Handling](#error-handling)
 - [Metrics & Monitoring](#metrics--monitoring)
-- [API Documentation](#api-documentation)
 - [Dependency Injection](#dependency-injection)
 - [Functional Programming & Utilities](#functional-programming--utilities)
 - [Excel & Spreadsheet](#excel--spreadsheet)
 
 ## Web Frameworks
 
-**Gin** (<https://github.com/gin-gonic/gin>) High-performance HTTP web framework with minimalist API. Up to 40x faster than some alternatives. Great for building REST APIs and microservices.
+**Gin** (<https://github.com/gin-gonic/gin>) High-performance HTTP web framework with minimalist API. Benchmark the relevant request workload rather than assuming a performance ranking. Great for building REST APIs and microservices.
 
 **Echo** (<https://github.com/labstack/echo>) Minimalist, extensible web framework. Clean middleware system, excellent performance. Good for both REST APIs and traditional web apps.
 
@@ -50,23 +49,23 @@
 
 **GORM** (<https://github.com/go-gorm/gorm>) Feature-complete ORM library. Developer-friendly, supports associations, hooks, auto-migrations. The most popular Go ORM.
 
-**SQLx** (<https://github.com/jmoiron/sqlx>) Extensions for database/sql that provide convenience while maintaining power. Type-safe, performant query helpers.
+**SQLx** (<https://github.com/jmoiron/sqlx>) Extensions for database/sql that provide convenience while maintaining power. Struct scanning and query helpers; SQL validity and row mapping are checked at runtime.
 
 **Ent** (<https://github.com/ent/ent>) Entity framework for Go. Code-generated, type-safe ORM with excellent support for complex queries and graph traversals.
 
-**Sqlc** (<https://github.com/sqlc-dev/sqlc>) Generate type-safe Go code from SQL. No runtime reflection, compiler-checked queries.
+**Sqlc** (<https://github.com/sqlc-dev/sqlc>) Generate type-safe Go code from SQL. No runtime reflection, queries checked during generation against the configured schema, not by the Go compiler against the live database.
 
 ## Database Drivers
 
-**go-sql-driver/mysql** (<https://github.com/go-sql-driver/mysql>) MySQL driver for Go's database/sql package. Maintained by the Go team, reliable and performant.
+**go-sql-driver/mysql** (<https://github.com/go-sql-driver/mysql>) MySQL driver for Go's database/sql package. Maintained by the go-sql-driver project.
 
-**lib/pq** (<https://github.com/lib/pq>) Pure Go PostgreSQL driver. The gold standard for PostgreSQL in Go.
+**lib/pq** (<https://github.com/lib/pq>) Pure Go PostgreSQL driver. Check its maintenance status and compare with pgx for new projects.
 
-**pgx** (<https://github.com/jackc/pgx>) PostgreSQL driver with advanced features. Faster than lib/pq, supports all PostgreSQL types.
+**pgx** (<https://github.com/jackc/pgx>) PostgreSQL driver with advanced features. Supports PostgreSQL-specific features and extensible type codecs; validate support for the types and workload you use.
 
 **redis-go** (<https://github.com/redis/go-redis>) Redis client for Go. Cluster support, modern Redis features, well-maintained.
 
-**mongo-go-driver** (<https://github.com/mongodb/mongo-go-driver>) Official MongoDB driver for Go. Supports async operations, transactions (in newer versions).
+**mongo-go-driver** (<https://github.com/mongodb/mongo-go-driver>) Official MongoDB driver for Go. Provides context-aware operations and transaction support; methods are generally synchronous calls.
 
 ## Testing
 
@@ -88,7 +87,7 @@
 
 **Koanf** (<https://github.com/knadh/koanf>) Lightweight, extensible library for reading config. Support for JSON, YAML, TOML, env, command line.
 
-**env** (from <https://github.com/caarlos0/env>) Parse environment variables into Go structs with defaults. Simple, type-safe, no struct tags.
+**env** (from <https://github.com/caarlos0/env>) Parse environment variables into Go structs with defaults. Uses env struct tags for keys and options (with configurable field-name fallback).
 
 ## Logging
 
@@ -96,7 +95,7 @@
 
 **Zerolog** (<https://github.com/rs/zerolog>) Zero-allocation JSON logging. Very fast, simple API, leveled logging.
 
-**Logrus** (<https://github.com/sirupsen/logrus>) Structured logger for Go. Mature, widely-used, plugin architecture. Note: deprecated in favor of structured logging.
+**Logrus** (<https://github.com/sirupsen/logrus>) Structured logger for Go. Mature, widely-used, plugin architecture. It is itself structured logging; upstream places it in maintenance mode.
 
 ## Validation
 
@@ -106,7 +105,7 @@
 
 ## JSON Processing
 
-**jsoniter** (<https://github.com/json-iterator/go>) High-performance 100% compatible drop-in replacement for encoding/json. Faster JSON parsing.
+**jsoniter** (<https://github.com/json-iterator/go>) An alternative JSON implementation with a compatibility configuration; test semantics and benchmark your workload before substituting it.
 
 ## Authentication & Authorization
 
@@ -116,7 +115,7 @@
 
 ## Caching
 
-**hot** (<https://github.com/samber/hot>) In-memory caching library for Go with 9 eviction algorithms (LRU, LFU, TinyLFU, W-TinyLFU, S3FIFO, ARC, TwoQueue, SIEVE, FIFO), TTL, loaders with singleflight deduplication, sharding, and stale-while-revalidate.
+**hot** (<https://github.com/samber/hot>) In-memory caching library for Go with 8 builder-selectable eviction algorithms in v0.13.1 (LRU, LFU, TinyLFU, W-TinyLFU, ARC, TwoQueue, SIEVE, FIFO), TTL, loaders with singleflight deduplication, sharding, and stale-while-revalidate.
 
 **Ristretto** (<https://github.com/dgraph-io/ristretto>) High-performance memory-bound Go cache.
 
@@ -126,9 +125,9 @@
 
 ## Rate Limiting
 
-**Tollbooth** (<https://github.com/ulule/limiter>) Rate limiting HTTP middleware. Simple, volume-based limiting, easy to use.
+**limiter** (<https://github.com/ulule/limiter>) Rate limiting HTTP middleware. Simple, volume-based limiting, easy to use.
 
-**golang.org/x/time/rate** (<https://golang.org/x/time/rate>) Standard library rate limiter. Token bucket algorithm, well-maintained.
+**golang.org/x/time/rate** (<https://golang.org/x/time/rate>) Rate limiter in the separate golang.org/x/time module. Token bucket algorithm, well-maintained.
 
 ## Concurrency & Goroutines
 
@@ -199,9 +198,6 @@
 **prometheus/client_golang** (<https://github.com/prometheus/client_golang>) Prometheus instrumentation library for Go. Metrics, histograms, counters, gauges.
 
 **opentelemetry-go** (<https://github.com/open-telemetry/opentelemetry-go>) OpenTelemetry Go API and SDK. Distributed tracing, metrics, logs.
-
-## API Documentation
-
 
 ## Dependency Injection
 

@@ -68,13 +68,13 @@ groups:
           description: "PostgreSQL instance is down.\n  VALUE = {{ $value }}"
 
       - alert: PostgresqlTooManyConnections
-        expr: sum by (instance, datname) (pg_stat_activity_count{datname!~"template.*|postgres"}) > pg_settings_max_connections * 0.8
+        expr: sum by (instance) (pg_stat_activity_count) > on (instance) max by (instance) (pg_settings_max_connections) * 0.8
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: "PostgreSQL too many connections (> 80%) (instance {{ $labels.instance }})"
-          description: "PostgreSQL has {{ $value }} connections on {{ $labels.datname }}."
+          description: "PostgreSQL has {{ $value }} connections on this instance."
 ```
 
 ```yaml
@@ -112,7 +112,7 @@ groups:
           summary: "High goroutine count (instance {{ $labels.instance }})"
           description: "Goroutine count is {{ $value }}, possible leak."
 
-      # GC taking too long — P99 GC pause > 100ms degrades tail latency
+      # GC taking too long — maximum observed GC pause > 100ms
       - alert: HighGCDuration
         expr: go_gc_duration_seconds{quantile="1"} > 0.1
         for: 5m
@@ -122,15 +122,15 @@ groups:
           summary: "High GC duration (instance {{ $labels.instance }})"
           description: "Max GC pause is {{ $value }}s. Check heap allocations."
 
-      # Heap growing unbounded — likely a memory leak
+      # RSS versus an explicit 512 MiB deployment budget; adapt to the service
       - alert: HighMemoryUsage
-        expr: go_memstats_alloc_bytes / go_memstats_sys_bytes > 0.9
+        expr: process_resident_memory_bytes / (512 * 1024 * 1024) > 0.9
         for: 5m
         labels:
           severity: critical
         annotations:
           summary: "High memory usage (instance {{ $labels.instance }})"
-          description: "Allocated heap is {{ $value | humanizePercentage }} of system memory."
+          description: "Process RSS is {{ $value | humanizePercentage }} of the configured budget."
 
       # Too many threads — usually caused by blocking syscalls or cgo
       - alert: HighThreadCount
@@ -171,7 +171,7 @@ The `for:` duration controls how long a condition must be true before the alert 
 
 # Good -- rate() smooths over the full window, reducing false positives
 - alert: HighErrorRate
-  expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.01
+  expr: sum by (job, instance) (rate(http_requests_total{status=~"5.."}[5m])) / sum by (job, instance) (rate(http_requests_total[5m])) > 0.01
   for: 5m
 ```
 
@@ -191,7 +191,7 @@ The `for:` duration controls how long a condition must be true before the alert 
 - alert: HighQueueDepth
   expr: myapp_queue_messages_pending > 1000
 
-# Good -- alert on sustained growth trend
+# Good -- alert on sustained high depth (not necessarily growth)
 - alert: HighQueueDepth
   expr: myapp_queue_messages_pending > 1000
   for: 10m

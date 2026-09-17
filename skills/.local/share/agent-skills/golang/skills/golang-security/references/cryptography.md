@@ -42,8 +42,8 @@ Choose the right algorithm for the job — using the wrong primitive (e.g. SHA25
 | --- | --- | --- | --- |
 | Symmetric encryption | AES-256-GCM, ChaCha20-Poly1305 | DES, 3DES, AES-ECB, RC4 | ECB reveals patterns; DES/RC4 are broken |
 | Password hashing | Argon2id (preferred), bcrypt, scrypt | MD5, SHA-1, plain SHA-256 | Fast hashes enable brute-force; memory-hard functions resist GPU attacks |
-| Message authentication | HMAC-SHA256, Poly1305 | HMAC-MD5, HMAC-SHA1 | MD5/SHA1 have known collision weaknesses |
-| Digital signatures | Ed25519, ECDSA P-256 | RSA-PKCS1v1.5 | PKCS1v1.5 has padding oracle vulnerabilities |
+| Message authentication | HMAC-SHA256; Poly1305 only with its required one-time-key construction | Avoid choosing legacy HMAC hashes for new protocols | Hash collision attacks do not directly imply a forgery against HMAC |
+| Digital signatures | Ed25519, ECDSA P-256, RSA-PSS | Avoid designing a new custom scheme | RSA PKCS#1 v1.5 signatures remain supported; encryption padding-oracle attacks are a different operation |
 | Key exchange | X25519, ECDH P-256 | Static RSA key transport | Forward secrecy requires ephemeral keys |
 | Random generation | `crypto/rand` | `math/rand` | `math/rand` output is predictable |
 | TLS | TLS 1.2+ (prefer 1.3) | TLS 1.0, 1.1, SSL | Known attacks (BEAST, POODLE) on older versions |
@@ -133,7 +133,7 @@ block, _ := aes.NewCipher(key)
 // Using block.Encrypt directly = ECB mode
 
 // Good — GCM provides authenticated encryption
-aead, err := cipher.NewGCM(block) // randomized, authenticated
+aead, err := cipher.NewGCM(block) // authenticated; caller must generate a fresh nonce
 if err != nil {
     return nil, err
 }
@@ -146,7 +146,7 @@ ciphertext := aead.Seal(nonce, nonce, plaintext, nil)
 
 ### Mistake 2: Reusing nonces — Critical
 
-A nonce reuse with AES-GCM completely breaks confidentiality and authentication:
+Nonce reuse with AES-GCM breaks confidentiality and authentication. For random 96-bit nonces, do not encrypt more than 2^32 messages under one key across all processes. Go 1.24+ `cipher.NewGCMWithRandomNonce` manages random nonces and their encoding, but the per-key message limit still applies:
 
 ```go
 // Bad — static or reused nonce
@@ -187,7 +187,7 @@ import "crypto/tls"
 func secureConfig() *tls.Config {
     return &tls.Config{
         MinVersion:       tls.VersionTLS12,
-        CurvePreferences: []tls.CurveID{tls.X25519, tls.CurveP256},
+        // Keep default curve preferences, including modern hybrid groups.
     }
 }
 ```

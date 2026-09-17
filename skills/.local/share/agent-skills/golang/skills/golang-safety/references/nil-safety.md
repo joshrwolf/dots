@@ -25,7 +25,7 @@ type Logger struct {
     prefix string
 }
 
-// ✓ Safe on nil but NEVER do that — does not dereference l
+// ✓ Safe on nil — this method explicitly supports it
 func (l *Logger) IsEnabled() bool {
     return l != nil
 }
@@ -40,7 +40,7 @@ l.IsEnabled() // false — works fine
 l.Log("test") // panic: nil pointer dereference
 ```
 
-Anyway, NEVER call a method on a nil pointer.
+A nil pointer receiver is valid when the method explicitly supports it; follow the method contract.
 
 ### Designing nil-safe receivers
 
@@ -131,13 +131,13 @@ func validate(s string) error {
 Generic code MUST handle the zero value of type parameters correctly. Type parameters constrained by `comparable` can be compared with `==`, but nil is not always a valid value:
 
 ```go
-// ✗ Confusing — T may or may not be nillable
+// Valid zero-value comparison; its semantics differ from a nil check
 func IsZero[T comparable](v T) bool {
     var zero T
     return v == zero // works, but "zero" for *Foo is nil, for int is 0
 }
 
-// ✓ Better — be explicit about what "empty" means
+// Different operation — constrain to pointer types for a nil check
 func IsNil[T interface{ ~*U }, U any](v T) bool {
     return v == nil
 }
@@ -163,7 +163,7 @@ func IsNilPtr[T any](v *T) bool {
 
 ### Constructor with defaults
 
-Require initialization through a constructor, making the zero value impossible for external callers:
+A constructor can establish invariants, but an exported struct still has an externally constructible zero value (`Client{}` or `new(Client)`). Document required initialization or support that state:
 
 ```go
 type Client struct {

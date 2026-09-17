@@ -30,7 +30,7 @@ logger := slog.New(
 )
 ```
 
-**When to use:** Every destination must receive every record (audit logs, compliance). **When NOT to use:** Handlers have different record needs (use Router) or high latency (use Pool).
+**When to use:** Every destination must receive every record (audit logs, compliance). **When NOT to use:** Handlers have different record needs (use Router) or high latency (choose buffered handlers without changing delivery semantics).
 
 ## Router — Predicate-Based Routing
 
@@ -57,7 +57,7 @@ slogmulti.MessageIsNot("healthcheck")          // exclude exact message
 slogmulti.MessageContains("timeout")           // partial message match
 slogmulti.MessageNotContains("debug")          // exclude partial message
 slogmulti.AttrValueIs("module", "billing")     // match attribute value
-slogmulti.AttrKindIs(slog.KindString)          // match attribute kind
+slogmulti.AttrKindIs("module", slog.KindString)          // match attribute kind
 ```
 
 **Custom predicate:**
@@ -119,6 +119,8 @@ logger := slog.New(
 ```
 
 **When to use:** Network sinks that may be unreliable (Loki, Logstash, remote syslog). Primary handles 99.9% of traffic; fallback catches the rest.
+
+For asynchronous sinks such as Loki, Handle can succeed when a record is queued even if later delivery fails. Failover only observes synchronous Handle errors, so it cannot guarantee outage fallback to a file. Use a durable local sink plus a forwarding agent when that guarantee is needed.
 
 ## Pool — Load-Balanced Dispatch
 
@@ -182,13 +184,15 @@ middleware := slogmulti.NewHandleInlineMiddleware(
 HTTP middlewares (`slog-gin`, `slog-echo`, etc.) inject request attributes into context. Backend handlers extract them via `AttrFromContext`.
 
 ```go
+// Application code stores values under the same private key type.
+type traceIDContextKey struct{}
 // Backend handler extracts trace_id from context
 handler := slogsentry.Option{
     Level: slog.LevelError,
     AttrFromContext: []func(ctx context.Context) []slog.Attr{
         func(ctx context.Context) []slog.Attr {
-            if traceID := ctx.Value("trace_id"); traceID != nil {
-                return []slog.Attr{slog.String("trace_id", traceID.(string))}
+            if traceID, ok := ctx.Value(traceIDContextKey{}).(string); ok {
+                return []slog.Attr{slog.String("trace_id", traceID)}
             }
             return nil
         },
@@ -196,11 +200,13 @@ handler := slogsentry.Option{
 }.NewSentryHandler()
 ```
 
-**Important:** `AttrFromContext` only works when the context actually contains the expected values. This requires an HTTP middleware (like `slog-gin`) to populate the context first. Without the middleware, `AttrFromContext` silently returns nil.
+**Important:** `AttrFromContext` only works when the context actually contains the expected values. Populate values with matching key types in application code or middleware, then pass that context to InfoContext/ErrorContext. Installing a logging middleware alone does not guarantee a particular context key is populated.
+
+`PIIFormatter("user")` only processes matching attributes; it does not sanitize arbitrary message text, nested values, or every email/IP. Use explicit redaction rules and tests for the actual log schema.
 
 ## Full Production Pipeline
 
-Canonical ordering: sampling → middleware (PII, trace) → routing → sinks.
+This example applies common formatting, then routes errors around sampling. Different retention policies may call for different ordering.
 
 ```go
 import (

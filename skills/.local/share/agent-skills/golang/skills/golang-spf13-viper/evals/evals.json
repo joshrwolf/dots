@@ -66,7 +66,7 @@
     "assertions": [
       {
         "id": "3.1",
-        "text": "Uses errors.As(err, &notFound) with *viper.ConfigFileNotFoundError"
+        "text": "Declares var notFound viper.ConfigFileNotFoundError and uses errors.As(err, &notFound); the returned error is a value, not a pointer"
       },
       {
         "id": "3.2",
@@ -143,21 +143,21 @@
   {
     "id": 6,
     "name": "bind-pflag-timing",
-    "description": "Tests that BindPFlag must be called before Execute() runs",
+    "description": "Tests that binding reads the live flag state and can happen after parsing",
     "prompt": "I'm integrating cobra and viper in my Go CLI. I call viper.BindPFlag in the command's RunE function to bind the --port flag. But viper.GetInt('port') always returns the default 8080, even when I pass --port 9090. Why?",
-    "trap": "Without the skill, the model may check the flag name spelling or viper setup. The root cause is binding after Execute() has already parsed the flags — BindPFlag must happen in init() or PersistentPreRunE, before the flags are resolved.",
+    "trap": "Without the skill, the model may check the flag name spelling or viper setup. Binding after parsing is supported; the stated symptoms require inspecting the bound flag, earlier decoding, or use of a different Viper instance.",
     "assertions": [
       {
         "id": "6.1",
-        "text": "Identifies that BindPFlag must be called before Execute() / before RunE runs"
+        "text": "Rejects the claimed timing diagnosis: BindPFlag can work in RunE if called before Get; checks the bound flag, errors, and actual config instance"
       },
       {
         "id": "6.2",
-        "text": "Recommends moving BindPFlag to init() or PersistentPreRunE"
+        "text": "May move binding earlier for organization, but does not claim doing so fixes an inherent after-parse limitation"
       },
       {
         "id": "6.3",
-        "text": "Explains that cobra parses flags before RunE runs — binding after parsing misses the Changed state"
+        "text": "Explains that Viper retains the bound flag and reads its current Changed state; binding does not take a pre-parse snapshot"
       },
       {
         "id": "6.4",
@@ -193,21 +193,21 @@
   {
     "id": 8,
     "name": "duration-decode-hook",
-    "description": "Tests that time.Duration fields in structs require a decode hook for Unmarshal to work",
+    "description": "Tests the default duration decoder and diagnosing overrides or missing keys",
     "prompt": "My Go viper config has 'timeout: 30s' in the YAML file. My struct has Timeout time.Duration and the mapstructure tag. After viper.Unmarshal, cfg.Timeout is 0. Why?",
-    "trap": "Without the skill, the model may suggest using GetDuration or changing the config format to nanoseconds. The correct fix is registering StringToTimeDurationHookFunc via a decode hook option in Unmarshal.",
+    "trap": "Without the skill, the model may suggest using GetDuration or changing the config format to nanoseconds. Viper already provides StringToTimeDurationHookFunc; restoring it is relevant only if a custom hook replaced it.",
     "assertions": [
       {
         "id": "8.1",
-        "text": "Identifies that mapstructure cannot decode a duration string into time.Duration without a hook"
+        "text": "Explains that Viper already installs the duration hook by default; checks Unmarshal errors and any custom hook that replaced it"
       },
       {
         "id": "8.2",
-        "text": "Shows viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) { dc.DecodeHook = mapstructure.ComposeDecodeHookFunc(mapstructure.StringToTimeDurationHookFunc(), ...) })"
+        "text": "Uses default Unmarshal unless a custom hook replaced the defaults; when needed restores StringToTimeDurationHookFunc in a composed DecodeHook"
       },
       {
         "id": "8.3",
-        "text": "Uses mapstructure.StringToTimeDurationHookFunc() as part of the hook"
+        "text": "Does not claim a custom duration hook is always required"
       },
       {
         "id": "8.4",
@@ -220,7 +220,7 @@
     "name": "watch-config-atomic-rename-trap",
     "description": "Tests understanding of fsnotify behavior with editors that use atomic rename",
     "prompt": "I've set up viper.WatchConfig() in my Go service. When I test it by editing the config file in vim and saving, the OnConfigChange callback sometimes doesn't fire. What's happening?",
-    "trap": "Without the skill, the model may suggest checking fsnotify version or debugging the callback. The root cause is that vim uses atomic rename (write-tmp, rename) which replaces the inode — fsnotify watches the inode and may miss or misfire for rename-based writes.",
+    "trap": "Without the skill, the model may suggest checking fsnotify version or debugging the callback. Viper watches the directory to handle atomic replacement; the failure cannot be diagnosed from editor name alone.",
     "assertions": [
       {
         "id": "9.1",
@@ -228,11 +228,11 @@
       },
       {
         "id": "9.2",
-        "text": "Explains that fsnotify watches the inode, which is replaced by rename-based writes"
+        "text": "Explains that Viper watches the containing directory specifically to handle atomic replacements; checks actual event/path/mount behavior"
       },
       {
         "id": "9.3",
-        "text": "Recommends testing hot-reload using direct writes (os.WriteFile) rather than editor saves"
+        "text": "Tests both direct writes and atomic replacement matching the real deployment, with the callback registered before WatchConfig"
       },
       {
         "id": "9.4",
@@ -375,15 +375,15 @@
       },
       {
         "id": "15.2",
-        "text": "Uses sync.RWMutex (or sync.Mutex) to protect the shared state"
+        "text": "Uses a mutex or atomic immutable snapshot to protect shared state"
       },
       {
         "id": "15.3",
-        "text": "Updates the shared state under Lock() inside OnConfigChange"
+        "text": "Publishes shared state under the chosen synchronization mechanism"
       },
       {
         "id": "15.4",
-        "text": "Readers of the shared state use RLock()"
+        "text": "Readers use the matching lock or atomic load"
       }
     ]
   },
@@ -440,21 +440,21 @@
   {
     "id": 18,
     "name": "weakly-typed-input-env-bool",
-    "description": "Tests WeaklyTypedInput for env vars that are always strings but map to bool struct fields",
+    "description": "Tests AutomaticEnv-only key discovery during Unmarshal",
     "prompt": "My Go service has a Config struct with an Enabled bool field and mapstructure tag. Setting MY_APP_ENABLED=true in the environment and calling viper.Unmarshal leaves cfg.Enabled as false, even though viper.GetBool works. Why?",
-    "trap": "Without the skill, the model may suggest BindEnv or different env var naming. The issue is that env vars are always strings — mapstructure receives the string \"true\" and cannot decode it to bool without WeaklyTypedInput or a decode hook.",
+    "trap": "The model may incorrectly add weak decoding instead of registering the key. Viper already enables weak decoding; AutomaticEnv-only keys must be registered for Unmarshal to discover them.",
     "assertions": [
       {
         "id": "18.1",
-        "text": "Identifies that env vars are always strings and mapstructure cannot decode \"true\" to bool by default"
+        "text": "Identifies that AutomaticEnv-only keys may not be enumerated by Unmarshal; weak decoding is already enabled by Viper"
       },
       {
         "id": "18.2",
-        "text": "Suggests enabling WeaklyTypedInput in the DecoderConfig or using a StringToBool decode hook"
+        "text": "Registers the key with BindEnv or SetDefault so Unmarshal includes it; examines custom decoder settings only if defaults were overridden"
       },
       {
         "id": "18.3",
-        "text": "Shows viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) { dc.WeaklyTypedInput = true }) or equivalent"
+        "text": "Shows BindEnv(\"enabled\") and checks the Unmarshal error before using the resulting config"
       },
       {
         "id": "18.4",

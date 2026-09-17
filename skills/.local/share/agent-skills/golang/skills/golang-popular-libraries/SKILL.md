@@ -41,25 +41,9 @@ This skill is not exhaustive — refer to library documentation and code example
 - Consult `go doc` for the resolved package API; see `golang-go-doc` for lookup guidance.
 - Once a candidate is added to your build, → See `samber/cc-skills-golang@golang-gopls` skill (`gopls`) to browse its actual resolved source and compare candidates side by side.
 
-## General Guidelines
+## Dependency Fit
 
-When recommending libraries:
-
-1. **Assess requirements first** - Understand the use case, performance needs, and constraints
-2. **Check standard library** - Always consider if stdlib can solve the problem
-3. **Check suitability** — inspect the license, maintenance history, and supported versions before adopting a dependency. Read its API with `go doc` when available locally.
-4. **Consider complexity** - Simpler solutions are usually better in Go
-5. **Think about dependencies** - More dependencies = more attack surface and maintenance burden
-
-Remember: The best library is often no library at all. Go's standard library is excellent and sufficient for many use cases.
-
-## Anti-Patterns to Avoid
-
-- Over-engineering simple problems with complex libraries
-- Using libraries that wrap standard library functionality without adding value
-- Abandoned or unmaintained libraries: ask the developer before recommending these
-- Suggesting libraries with large dependency footprints for simple needs
-- Ignoring standard library alternatives
+Prefer an existing dependency or the standard library when it already covers the required behavior. For a new dependency, assess the API and transitive footprint against the concrete gap it fills; maintenance and license constraints can rule out an otherwise suitable choice. Make those tradeoffs explicit rather than requiring a separate approval merely because a library is old or unfamiliar.
 
 ## Cross-References
 

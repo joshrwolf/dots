@@ -14,7 +14,7 @@
 ## Constructor
 
 ```go
-hot.NewHotCache[K comparable, V any](algorithm hot.EvictionAlgorithm, capacity int) *HotCacheBuilder[K, V]
+hot.NewHotCache[K comparable, V any](algorithm hot.EvictionAlgorithm, capacity int) hot.HotCacheConfig[K, V]
 ```
 
 **Algorithm constants:**
@@ -24,8 +24,8 @@ hot.NewHotCache[K comparable, V any](algorithm hot.EvictionAlgorithm, capacity i
 | `hot.LRU`      | Least Recently Used                    |
 | `hot.LFU`      | Least Frequently Used                  |
 | `hot.TinyLFU`  | TinyLFU with frequency decay           |
-| `hot.WTinyLFU` | Weighted TinyLFU (recommended default) |
-| `hot.S3FIFO`   | Segmented Small-Size FIFO              |
+| `hot.WTinyLFU` | Window TinyLFU (candidate to benchmark) |
+| not exposed by the v0.13.1 HotCache builder   | Segmented Small-Size FIFO              |
 | `hot.ARC`      | Adaptive Replacement Cache             |
 | `hot.TwoQueue` | Two-Queue                              |
 | `hot.SIEVE`    | SIEVE eviction                         |
@@ -38,21 +38,21 @@ Call these on the builder returned by `NewHotCache()`, then finalize with `.Buil
 | Method | Description |
 | --- | --- |
 | `WithTTL(ttl time.Duration)` | Default expiration for all entries |
-| `WithJitter(lambda float64, upperBound time.Duration)` | Randomize TTL by +/-lambda (capped at upperBound) to prevent thundering herd |
+| `WithJitter(lambda float64, upperBound time.Duration)` | Add an exponentially distributed duration in [0, upperBound); lambda is the distribution parameter, not a percentage |
 | `WithJanitor()` | Start background goroutine to evict expired entries. Mutually exclusive with `WithoutLocking()` |
 | `WithLoaders(loaders ...Loader[K, V])` | Chain of loader functions for cache misses. Execute sequentially; later loaders receive only unmapped keys |
 | `WithRevalidation(stale time.Duration, loaders ...Loader[K, V])` | Enable stale-while-revalidate. After TTL, entries become stale and trigger async refresh. Hard-expired after `stale` duration |
 | `WithRevalidationErrorPolicy(policy)` | `hot.KeepOnError` (keep stale value) or `hot.DropOnError` (drop on refresh failure) |
 | `WithMissingCache(algorithm, capacity)` | Dedicated cache for missing keys (independent eviction) |
 | `WithMissingSharedCache()` | Store missing keys in the main cache |
-| `WithSharding(shards uint64, hasher Hasher[K])` | Split into N shards to reduce lock contention. Use powers of 2 |
+| `WithSharding(shards uint64, hasher Hasher[K])` | Split into N shards to reduce lock contention. Choose shard count by measurement; more than one is required |
 | `WithCopyOnRead(fn func(V) V)` | Clone values on retrieval to prevent external mutation |
 | `WithCopyOnWrite(fn func(V) V)` | Clone values on storage to capture snapshots |
 | `WithPrometheusMetrics(cacheName string)` | Enable Prometheus metrics collection |
-| `WithEvictionCallback(fn func(K, V))` | Synchronous callback on eviction |
+| `WithEvictionCallback(fn func(base.EvictionReason, K, V))` | Callback when a value is evicted; avoid blocking/reentrant cache operations |
 | `WithoutLocking()` | Disable mutexes. Single-goroutine access only. Mutually exclusive with `WithJanitor()` |
-| `WithWarmUp(fn func() (map[K]V, []K, error))` | Pre-populate cache on build. Returns values + missing keys + error |
-| `WithWarmUpWithTimeout(timeout, fn)` | Same as WarmUp with timeout protection |
+| `WithWarmUp(fn func() (map[K]V, []K, error))` | Pre-populate on build; v0.13.1 Build discards the returned warm-up error |
+| `WithWarmUpWithTimeout(timeout, fn)` | Bounds waiting, not the callback execution; Build discards the resulting error in v0.13.1 |
 | `Build()` | Finalize and return `*HotCache[K, V]` |
 
 ## Read Operations
@@ -114,13 +114,15 @@ type Loader[K comparable, V any] func(keys []K) (found map[K]V, err error)
 - Loaders execute sequentially in provided order
 - Each loader receives only **unmapped keys** from previous loaders
 - Later loader values **overwrite** earlier values for the same key
-- Any loader error stops the chain and returns `(nil, err)`
+- Any loader error stops the chain and discards accumulated values
 - Built-in singleflight deduplication: concurrent `Get()` calls for the same key share one loader invocation
 
 ## Hasher Type (for Sharding)
 
 ```go
-type Hasher[K any] func(key K) uint64
+// WithSharding accepts sharded.Hasher[K] from github.com/samber/hot/pkg/sharded.
+// A function with this signature is assignable:
+func(key K) uint64
 ```
 
 ## Prometheus Integration
@@ -134,3 +136,5 @@ cache := hot.NewHotCache[string, *User](hot.WTinyLFU, 10_000).
 
 prometheus.MustRegister(cache)
 ```
+
+`Has`/`HasMany` in v0.13.1 inspect cached presence without checking TTL; use Get for a freshness-aware lookup. S3FIFO exists as a lower-level pkg/s3fifo implementation but has no exported HotCache eviction constant in this version.

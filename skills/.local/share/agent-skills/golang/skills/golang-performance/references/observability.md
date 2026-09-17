@@ -33,16 +33,16 @@ Third-party monitoring tools complement local profiling (pprof, benchmarks) by p
 
 | PromQL | What to look for |
 | --- | --- |
-| `go_memstats_alloc_bytes` | Should be roughly stable under constant load; continuous increase = memory leak |
+| `go_memstats_alloc_bytes` | Should be roughly stable under constant load; sustained growth in post-GC live heap warrants investigation; caches and workload changes also cause growth |
 | `rate(go_memstats_alloc_bytes_total[5m])` | Allocation rate (bytes/s) — drives GC frequency; compare before/after deploy for regressions |
-| `process_resident_memory_bytes - go_memstats_sys_bytes` | Gap = non-Go memory (cgo, mmap); growing gap = non-Go leak |
+| `process_resident_memory_bytes - go_memstats_sys_bytes` | Not an accounting identity: Sys includes nonresident/released mappings and RSS includes other memory. Inspect OS mappings and Go memory classes before attributing a leak |
 
 #### Goroutine leaks
 
 | PromQL | What to look for |
 | --- | --- |
-| `go_goroutines` | Should correlate with load; growing independently of traffic = leak |
-| `delta(go_goroutines[1h])` | Net goroutine change over 1h; positive without load increase = leak |
+| `go_goroutines` | Should correlate with load; growth independent of traffic suggests investigating ownership/lifetimes; count alone does not prove a leak |
+| `delta(go_goroutines[1h])` | Net goroutine change over 1h; positive without load increase warrants investigation, not proof of a leak |
 
 #### CPU saturation
 

@@ -111,9 +111,14 @@ func TestOutputFormat(t *testing.T) {
 
 	golden := "testdata/list-json.golden"
 	if *update { // -update flag
-		os.WriteFile(golden, buf.Bytes(), 0644)
+		if err := os.WriteFile(golden, buf.Bytes(), 0644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
 	}
-	want, _ := os.ReadFile(golden)
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
 	if got, want := buf.String(), string(want); got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -185,7 +190,9 @@ func TestCompletion(t *testing.T) {
 	buf := new(bytes.Buffer)
 	root.SetOut(buf)
 	root.SetArgs([]string{"__complete", "delete", ""})
-	root.Execute()
+	if err := root.Execute(); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
 
 	if !strings.Contains(buf.String(), "pod") {
 		t.Errorf("output %q does not contain %q", buf.String(), "pod")

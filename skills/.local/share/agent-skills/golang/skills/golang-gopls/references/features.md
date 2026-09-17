@@ -16,7 +16,7 @@ Source: [tip.golang.org/gopls/features](https://tip.golang.org/gopls/features/).
 
 **Definition** (`textDocument/definition`, CLI `gopls definition`) — jumps to a symbol's declaration. Handles more than plain identifiers: on an import path it lists the imported package's declarations; on a `go:linkname` directive it finds the linked symbol; on a `go:embed` pattern it finds the embedded file; on a doc-comment link it follows the reference; on a non-Go function it can return the assembly implementation; on `return` it locates the named result variables; on `goto`/`break`/`continue` it finds the target label or block. Already at the declaration → most clients reinterpret the request as "find references" instead.
 
-**Type Definition** (`textDocument/typeDefinition`, no CLI equivalent) — jumps to the _named type_ underlying a symbol, unwrapping pointer, array, slice, channel, and map constructors first. For `x chan []*T`, this reports the definition of `T`; it works only on symbols, not arbitrary expressions. No agent-invocable path: it is absent from the native `LSP` tool's fixed operation list (`goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, call hierarchy), so only a full editor LSP client can reach it.
+**Type Definition** (`textDocument/typeDefinition`, no CLI equivalent) — jumps to the _named type_ underlying a symbol, unwrapping pointer, array, slice, channel, and map constructors first. For `x chan []*T`, this reports the definition of `T`; it works only on symbols, not arbitrary expressions. Availability to an agent depends on whether its host exposes this LSP request.
 
 **References** (`textDocument/references`, CLI `gopls references`) — lists every use of a symbol: for an interface method, this includes concrete implementations; for a package declaration, it includes both direct imports and other files' package clauses; for an embedded field, it reports only field references (use Type Definition to find references to the type itself). **Scoping gotcha:** results reflect only the build configuration of the queried file — a query issued against `foo_windows.go` will not surface a match in `bar_linux.go`. Built-in symbols (`int`, `append`) are rejected as too numerous to be useful.
 
@@ -28,9 +28,9 @@ Source: [tip.golang.org/gopls/features](https://tip.golang.org/gopls/features/).
 
 **Selection Range** (`textDocument/selectionRange`, no CLI equivalent) — expands or contracts the current selection along syntactic boundaries (expression → statement → block → function). Useful for selecting exactly the region an Extract refactor needs.
 
-**Call Hierarchy** (`textDocument/prepareCallHierarchy` + `callHierarchyItem/incomingCalls`/`outgoingCalls`, CLI `gopls call_hierarchy`) — shows a function's callers and callees as a static graph. **Only static calls are included** — calls made through a function value or an interface method are invisible, since detecting them isn't analytically tractable. Invoke on the function declaration's name, and corroborate with References when a dynamically-dispatched call site matters.
+**Call Hierarchy** (`textDocument/prepareCallHierarchy` + `callHierarchy/incomingCalls`/`outgoingCalls`, CLI `gopls call_hierarchy`) — shows a function's callers and callees as a static graph. **Only static calls are included** — calls made through a function value or an interface method are invisible, since detecting them isn't analytically tractable. Invoke on the function declaration's name, and corroborate with References when a dynamically-dispatched call site matters.
 
-**Type Hierarchy** (`textDocument/prepareTypeHierarchy` + `typeHierarchyItem/subtypes`/`typeHierarchy/supertypes`, no CLI equivalent yet) — bidirectional view of the subtyping relation: which types implement an interface, and which interfaces a type satisfies. Resolves the asymmetry Implementation has. Limited to **named types** (unlike Implementation, which also matches unnamed function types); alias types are excluded; function-local types are visible only within the same package.
+**Type Hierarchy** (`textDocument/prepareTypeHierarchy` + `typeHierarchy/subtypes`/`typeHierarchy/supertypes`, no CLI equivalent yet) — bidirectional view of the subtyping relation: which types implement an interface, and which interfaces a type satisfies. Resolves the asymmetry Implementation has. Limited to **named types** (unlike Implementation, which also matches unnamed function types); alias types are excluded; function-local types are visible only within the same package.
 
 ## Passive (always-on)
 
@@ -58,7 +58,7 @@ Three sources, distinguished by the LSP diagnostic's `source` field:
 2. **Analysis findings** — the `go vet` analysis framework plus gopls's own analyzers, each reporting under its own analyzer name as `source`. The `printf` analyzer (format-string/argument mismatches) is a representative example.
 3. **Compiler optimization details** — off by default; toggled per-package with the `source.toggleCompilerOptDetails` code action. Surfaces escape-analysis results, nil-check elimination, and inlining decisions. Only available on packages that are otherwise error-free.
 
-**Recomputation timing:** open-file compile errors update within tens of milliseconds of a keystroke. Workspace-wide analysis diagnostics recompute after roughly a second of idle time, tunable via `diagnosticsDelay`; `diagnosticsTrigger` can switch this to save-triggered instead of edit-triggered. Clients can also request diagnostics explicitly (`textDocument/diagnostic`, "pull diagnostics") if initialized with `pullDiagnostics: true` — off by default for performance.
+**Recomputation timing:** open-file compile errors update within tens of milliseconds of a keystroke. Workspace-wide analysis diagnostics recompute after roughly a second of idle time, tunable via `diagnosticsDelay`; `diagnosticsTrigger` can switch this to save-triggered instead of edit-triggered. Client support for pull diagnostics varies; do not assume a `pullDiagnostics` setting exists. Check `gopls api-json` and client capabilities for the installed version.
 
 **Notable quick fixes**, offered as code actions attached to a diagnostic:
 
@@ -78,11 +78,11 @@ Three underlying mechanisms: **Formatting** and **Rename** are primary LSP reque
 
 **Organize Imports** (`source.organizeImports`, CLI `gopls imports`) — removes unused/duplicate imports, adds missing ones (via workspace-wide heuristics — occasionally surprising), sorts them. The `local` setting groups a path prefix as "local," matching `goimports -local`. Most editors run this on save; disable per-language if that's unwanted.
 
-**Rename** (`textDocument/rename`, CLI `gopls rename`) — two-stage: `prepareRename` reports the current name, then `rename` applies the change everywhere. Refuses renames that would introduce shadowing or break interface satisfaction. Special positions unlock extra behavior:
+**Rename** (`textDocument/rename`, CLI `gopls rename`) — two-stage: `prepareRename` reports the current name, then `rename` applies the change everywhere. Checks shadowing and known interface relationships, but does not cover every dynamic assertion, reflection-based use, external caller, or build configuration. Special positions unlock extra behavior:
 
 - Rename a **method's receiver declaration** → renames the receiver identifier across every method of that type; rename a receiver **use** → renames only that one variable.
 - Rename the **package name in a `package` clause** → moves every file in the package to a new directory (subpackages stay put unless `renameMovesSubpackages` is set); refused across module boundaries or into an existing package.
-- Rename the **`func` keyword** of a declaration → lets you edit the whole signature; parameter/result count and types must stay the same (no adding/removing parameters this way — see `refactor.rewrite.removeUnusedParam`/`moveParamLeft`/`moveParamRight` for that).
+- Rename the **`func` keyword** of a declaration to reorder its parameters. This signature-editing operation supports parameter permutations, not adding/removing parameters or changing results. The `refactor.rewrite.removeUnusedParam`, `moveParamLeft`, and `moveParamRight` code actions handle their narrower transformations separately.
 
 **Extract** (`refactor.extract.*`) — replaces a selection with a reference to a new declaration:
 
@@ -101,7 +101,7 @@ Extract is less rigorous than Rename/Inline: comments are sometimes dropped, and
 
 - `removeUnusedParam` — the `unusedparams` analyzer offers renaming to `_` (trivial) or a full signature change that also updates every caller, preserving side-effecting arguments.
 - `moveParamLeft` / `moveParamRight` — reorders one parameter, updating every call site.
-- `changeQuote` — toggles a string literal between raw (`` `...` ``) and interpreted (`"..."`) form; idempotent to apply twice.
+- `changeQuote` — toggles a string literal between raw (`` `...` ``) and interpreted (`"..."`) form; applying twice restores the original form.
 - `invertIf` — negates a plain `if`/`else` condition (no `else if` chain) and swaps the two blocks.
 - `splitLines` / `joinLines` — expands or collapses a bracketed list (composite literal, call arguments, signature) one item per line; skipped for lists that already contain `//` comments or have fewer than two items.
 - `fillStruct` — populates missing struct-literal fields, matching field names to in-scope variables/constants/functions where possible, zero value otherwise. Searches only the current file, above the cursor — run `source.organizeImports` first if the struct type was just introduced.

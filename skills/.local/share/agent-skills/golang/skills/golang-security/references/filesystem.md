@@ -90,7 +90,7 @@ Malicious zip files can escape extraction directory.
 ```go
 for _, file := range reader.File {
     path := filepath.Join(dest, file.Name) // DON'T: No validation
-    file.Create(path)
+    os.Create(path)
 }
 ```
 
@@ -101,7 +101,10 @@ root, err := os.OpenRoot(dest)
 if err != nil { return err }
 defer root.Close()
 for _, file := range reader.File {
-    f, err := root.OpenFile(file.Name, os.O_CREATE|os.O_WRONLY, 0644)
+    // Handle directories separately; reject symlinks and other special files.
+    if !file.Mode().IsRegular() { return errors.New("not a regular file") }
+    // Create parents inside root before this call. Do not overwrite existing files.
+    f, err := root.OpenFile(file.Name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
     if err != nil { return err } // rejects paths escaping root
     // ... copy contents ...
     f.Close()
@@ -145,26 +148,14 @@ io.Copy(out, gr) // DON'T: No size limits
 ```go
 const maxDecompressedSize = 100 * 1024 * 1024 // 100MB limit
 
-var errDecompressedSizeLimitExceeded = errors.New("decompressed size limit exceeded")
-
-type limitedReader struct {
-    r    io.Reader
-    read int64
-}
-
-func (l *limitedReader) Read(p []byte) (int, error) {
-    if l.read >= maxDecompressedSize {
-        // Return a sentinel error — io.EOF would be treated as success by io.Copy
-        return 0, errDecompressedSizeLimitExceeded
-    }
-    n, err := l.r.Read(p)
-    l.read += int64(n)
-    return n, err
-}
-
-lr := &limitedReader{r: gr}
-if _, err := io.Copy(out, lr); err != nil {
+// Read one extra byte to distinguish exactly-at-limit from oversized input.
+// Discard the partial output on any error; never publish it as a valid file.
+n, err := io.Copy(out, io.LimitReader(gr, maxDecompressedSize+1))
+if err != nil {
     return fmt.Errorf("decompressing: %w", err)
+}
+if n > maxDecompressedSize {
+    return errors.New("decompressed size limit exceeded")
 }
 ```
 
@@ -185,15 +176,17 @@ f.WriteString(data)
 
 ```go
 f, err := os.CreateTemp("", "myapp.*")
+if err != nil { return err }
 defer os.Remove(f.Name())
-f.Chmod(0600) // Restrictive permissions
+defer f.Close()
+// CreateTemp creates the file with mode 0600 (before umask).
 ```
 
 ---
 
 ## Insecure File Permissions — Medium
 
-Opening files with excessive permissions.
+Opening secret files with excessive permissions. Creation modes do not change permissions on existing files; check errors and use Chmod when an existing file must be tightened.
 
 **Bad:**
 
@@ -222,7 +215,7 @@ os.MkdirAll("/var/myapp/cache", 0777) // DON'T: World-writable
 **Good:**
 
 ```go
-os.MkdirAll("/var/myapp/cache", 0750) // OK: Group-writable
+os.MkdirAll("/var/myapp/cache", 0750) // Owner can write; group can read/traverse
 ```
 
 ---
@@ -240,7 +233,7 @@ os.OpenFile("app.log", os.O_CREATE, 0666) // DON'T: World-writable
 **Good:**
 
 ```go
-os.OpenFile("app.log", os.O_CREATE|os.O_APPEND, 0640) // OK
+os.OpenFile("app.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640) // OK
 ```
 
 ---

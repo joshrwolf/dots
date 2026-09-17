@@ -1,13 +1,13 @@
-# Capability → CLI → MCP → native LSP
+# Capability → CLI → MCP → LSP/editor
 
-Every gopls capability, mapped to its CLI command, MCP tool, and native `LSP` tool operation where one exists. `—` means that surface has no path to this capability.
+Common gopls capabilities mapped to CLI, MCP, and LSP/editor interfaces. A host may expose only a subset of LSP operations; check its actual tool schema. `—` marks no corresponding command/tool in this table.
 
-| Capability | CLI | MCP tool | Native LSP op |
+| Capability | CLI | MCP tool | LSP/editor operation |
 | --- | --- | --- | --- |
 | Workspace layout (module/workspace/GOPATH) | `gopls stats` | `go_workspace` | — |
 | Fuzzy-find a symbol by name, workspace-wide | `gopls workspace_symbol <query>` | `go_search` | `workspaceSymbol` |
 | Go to definition | `gopls definition f:l:c` | — (use `go_file_context`/`go_package_api`) | `goToDefinition` |
-| Go to type definition | — (unsupported) | — | — (not in the native tool's fixed op list) |
+| Go to type definition | — (unsupported) | — | `textDocument/typeDefinition` |
 | Find all references | `gopls references f:l:c` | `go_symbol_references` | `findReferences` |
 | Implements / implemented-by | `gopls implementation f:l:c` | — | `goToImplementation` |
 | Full subtype/supertype tree | — (not yet supported) | — | Type Hierarchy |
@@ -18,13 +18,13 @@ Every gopls capability, mapped to its CLI command, MCP tool, and native `LSP` to
 | A file's intra-package dependencies | — | `go_file_context` | — |
 | Hover info (type, doc, size/offset) | — | — | `hover` |
 | Signature help | `gopls signature f:l:c` | — | signature help |
-| Same-symbol identifier highlights | `gopls highlight f:l:c` | — | `documentHighlight` (not in the native tool's fixed op list) |
+| Same-symbol identifier highlights | `gopls highlight f:l:c` | — | `documentHighlight` (client dependent) |
 | Semantic tokens (rich syntax coloring) | `gopls semtok <file>` | — | `semanticTokens` (editor-automatic, not agent-invoked) |
 | Folding ranges (collapsible regions) | `gopls folding_ranges <file>` | — | `foldingRange` (editor-automatic, not agent-invoked) |
 | Document links (URLs in doc comments/imports) | `gopls links <file>` | — | `documentLink` (editor-automatic, not agent-invoked) |
-| Compiler + analyzer diagnostics | `gopls check <file>` | `go_diagnostics` | automatic, pushed after every edit |
+| Compiler + analyzer diagnostics | `gopls check <file>` | `go_diagnostics` | diagnostic notifications (client dependent) |
 | Vulnerability reachability (current build) | — | `go_vulncheck` | — |
-| Safe rename (symbol, receiver, package move, signature) | `gopls rename -w f:l:c NewName` | `go_rename_symbol` | rename |
+| Semantic rename (symbol, receiver, package move, parameter permutation) | `gopls rename -w f:l:c NewName` | `go_rename_symbol` | rename |
 | Organize / fix imports | `gopls imports -w <file>` | — | `source.organizeImports` code action |
 | Format | `gopls format -w <file>` | — | `textDocument/formatting` |
 | Refactor (extract, inline, fill, rewrite — see [features.md](features.md)) | `gopls codeaction -kind=<kind> -exec -w <file>` | — | code action |

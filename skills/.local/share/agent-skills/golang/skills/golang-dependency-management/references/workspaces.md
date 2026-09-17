@@ -15,13 +15,13 @@
 ```bash
 go work init                    # Initialize workspace
 go work use ./services/auth     # Add module to workspace
-go work use -rm ./old-module    # Remove module from workspace
-go work sync                    # Sync workspace with module changes
+go work edit -dropuse=./old-module    # Remove module from workspace
+go work sync                    # Write workspace-selected dependency versions back to each module
 ```
 
 ## Key Points
 
 - Workspaces eliminate the need for `replace` directives during local development — the workspace automatically resolves local modules
-- **Do not commit `go.work.sum`** to version control (add to `.gitignore`)
-- `go.work` is for development only — it does not affect how consumers of your published modules resolve dependencies
+- Keep personal workspaces local. If a repository intentionally shares a workspace, track its go.work and generated go.work.sum together under the project's policy
+- A workspace affects commands run inside it, including CI. Consumers do not inherit it; test independently published modules with `GOWORK=off` as well
 - For workspace directory structure examples, see the `samber/cc-skills-golang@golang-project-layout` skill

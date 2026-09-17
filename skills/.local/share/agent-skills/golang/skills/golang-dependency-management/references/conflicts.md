@@ -18,7 +18,7 @@ go list -m all
 
 ## Resolution Strategies
 
-**Force a specific version** (when two deps require incompatible versions):
+**Replace the source for a selected version** (for a deliberate patch or fork):
 
 ```bash
 go mod edit -replace=example.com/pkg@v1.2.0=example.com/pkg@v1.3.1
@@ -28,6 +28,8 @@ go mod edit -replace=example.com/pkg@v1.2.0=example.com/pkg@v1.3.1
 // go.mod
 replace example.com/pkg v1.2.0 => example.com/pkg v1.3.1
 ```
+
+This version-specific replacement applies only if v1.2.0 is selected. It does not force MVS to select that version. For ordinary version changes, prefer `go get module@version`.
 
 **Use a local fork** (for debugging or patching):
 
@@ -41,7 +43,7 @@ replace example.com/pkg => ../my-local-fork
 go mod edit -exclude=example.com/pkg@v1.3.0
 ```
 
-When a version is excluded, any requirement on that version is redirected to the next higher available version.
+Since Go 1.16, requirements on an excluded version are ignored; `go get` or `go mod tidy` may add a higher version to satisfy imports. Inspect the resulting build list.
 
 **Force upgrade a transitive dependency**:
 
@@ -49,7 +51,7 @@ When a version is excluded, any requirement on that version is redirected to the
 go get github.com/transitive/dep@v1.5.0
 ```
 
-This adds an explicit requirement in your `go.mod`, overriding whatever the transitive dependency chain would select via MVS.
+This asks `go get` to select that version and update related requirements. If it is lower than an existing requirement, Go may downgrade or remove other modules; a `require` directive alone is only a minimum, not an MVS override.
 
 ## Resolution Workflow
 
@@ -60,7 +62,7 @@ This adds an explicit requirement in your `go.mod`, overriding whatever the tran
 5. Run `go mod tidy` to clean up
 6. Verify with `go build ./...` and `go test ./...`
 
-**Important**: `replace` and `exclude` directives only take effect in the **main module's** `go.mod`. They are ignored when your module is used as a dependency. Remove `replace` directives before publishing a library.
+**Important**: `replace` and `exclude` directives only take effect in the **main module's** `go.mod`. They are ignored when your module is used as a dependency. Ensure a published library builds with its declared dependencies and does not require consumers to inherit local replacements. Workspace go.work replacements can override main-module replacements.
 
 ## Retract (For Module Authors)
 

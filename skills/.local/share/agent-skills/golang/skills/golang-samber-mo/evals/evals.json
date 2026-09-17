@@ -9,7 +9,7 @@
       {"id": "1.1", "text": "Recommends switching from *string to mo.Option[string] for the nullable fields"},
       {"id": "1.2", "text": "Explains that Option implements sql.Scanner and driver.Valuer so row.Scan works directly"},
       {"id": "1.3", "text": "Explains that Option implements json.Marshaler/Unmarshaler so the same struct works for JSON responses"},
-      {"id": "1.4", "text": "Explicitly states that *string requires custom JSON handling to distinguish null vs absent, which Option avoids"},
+      {"id": "1.4", "text": "Does not claim Option automatically distinguishes omitted and explicit null input; both *string and Option can represent nullable output, and separate presence tracking is needed when input omission matters"},
       {"id": "1.5", "text": "Does NOT recommend maintaining two separate structs (one for DB, one for JSON) as the solution"}
     ]
   },
@@ -128,7 +128,7 @@
     "id": 10,
     "name": "option-json-serialization-behavior",
     "description": "Tests knowledge of Option's JSON marshaling behavior",
-    "prompt": "In my Go API response struct, I have a field that should be null in JSON when absent and the actual value when present. I'm currently using *string with json omitempty but it shows null instead of omitting. How should I handle this with samber/mo?",
+    "prompt": "In my Go API response struct, I have a field that should be null in JSON when absent and the actual value when present. I'm currently using *string and want to understand null versus omission behavior. How should I handle this with samber/mo?",
     "trap": "Without the skill, the model doesn't know that Option marshals Some(x) to x and None to null, and that Go 1.24+ supports omitzero for full omission.",
     "assertions": [
       {"id": "10.1", "text": "Uses mo.Option[string] for the nullable JSON field"},
@@ -171,9 +171,9 @@
     "trap": "Without the skill, the model uses Map for both or FlatMap for both. Map is for infallible transforms, FlatMap is for transforms that return Result.",
     "assertions": [
       {"id": "13.1", "text": "Uses MapValue (or Map returning nil error) for the infallible uppercase operation"},
-      {"id": "13.2", "text": "Uses FlatMap for the fallible parse operation that returns Result[int]"},
+      {"id": "13.2", "text": "Uses the result.FlatMap subpackage function for the type-changing parse operation"},
       {"id": "13.3", "text": "Does NOT use FlatMap for the simple uppercase transform"},
-      {"id": "13.4", "text": "Shows the chain: result.MapValue(toUpper).FlatMap(parse) or equivalent"},
+      {"id": "13.4", "text": "Uses result.FlatMap from the subpackage for string-to-int; direct Result[string].FlatMap cannot return Result[int]"},
       {"id": "13.5", "text": "Explains the distinction: Map wraps the return value, FlatMap takes a function returning Result"}
     ]
   },
@@ -247,13 +247,13 @@
     "id": 19,
     "name": "option-vs-zero-value-distinction",
     "description": "Tests understanding of when Option adds value vs when zero values suffice",
-    "prompt": "In my Go struct, I have a 'count' field (int) and a 'nickname' field (string). For 'count', zero is a valid value meaning 'no items'. For 'nickname', empty string means 'not set'. Should I use Option for both?",
-    "trap": "Without the skill, the model either uses Option for both or neither. Option should be used only for 'nickname' where absence is semantically different from empty.",
+    "prompt": "In my Go struct, I have a 'count' field (int) and a 'nickname' field (string). For 'count', zero is a valid value meaning 'no items'. For 'nickname', empty string and 'not set' are distinct states. Should I use Option for both?",
+    "trap": "Without the skill, the model either uses Option for both or neither. Option is useful where absence is semantically different from the zero value; that can apply to numbers too if the API distinguishes absent from zero.",
     "assertions": [
       {"id": "19.1", "text": "Recommends plain int for count (zero is a valid meaningful value)"},
       {"id": "19.2", "text": "Recommends mo.Option[string] for nickname (absence differs from empty)"},
       {"id": "19.3", "text": "Explains that Option is for when absence is semantically different from the zero value"},
-      {"id": "19.4", "text": "Does NOT recommend Option[int] for count where 0 is meaningful"}
+      {"id": "19.4", "text": "Does not infer that a meaningful zero value rules out Option; chooses plain int here because no distinct absent count state is required"}
     ]
   },
   {
@@ -263,22 +263,22 @@
     "prompt": "I have a Go map[string]User and I want to look up a key and chain transformations on the result if present. How do I bridge the map lookup with samber/mo?",
     "trap": "Without the skill, the model manually checks the ok bool from map access. TupleToOption wraps the (value, bool) tuple directly.",
     "assertions": [
-      {"id": "20.1", "text": "Uses mo.TupleToOption with the map lookup: mo.TupleToOption(m[key])"},
+      {"id": "20.1", "text": "Assigns value, ok := m[key], then calls mo.TupleToOption(value, ok); passing m[key] alone does not compile"},
       {"id": "20.2", "text": "Chains Map/FlatMap on the resulting Option"},
       {"id": "20.3", "text": "Does NOT manually check ok bool and construct Some/None"},
-      {"id": "20.4", "text": "Shows the complete pattern: TupleToOption(m[key]).Map(...)"}
+      {"id": "20.4", "text": "Shows value, ok := m[key] followed by mo.TupleToOption(value, ok).Map(...)"}
     ]
   },
   {
     "id": 21,
     "name": "result-try-catch-panics",
-    "description": "Tests knowledge of mo.Try for wrapping a function that may return an error OR panic, and chaining the result",
+    "description": "Tests the distinction between mo.Try (returned errors) and mo.Do (panic recovery)",
     "prompt": "I'm integrating a third-party Go JSON schema validator that has two failure modes: it returns an error for invalid input, and it panics on malformed schemas. I want to call it, capture both failure modes, and then chain a transformation if validation succeeds — all without writing defer/recover boilerplate. I'm already using samber/mo in my project. Show the code.",
-    "trap": "Without the skill, the model writes a defer/recover wrapper function manually, then handles the error. With the skill, mo.Try captures both (T, error) returns and panics into a Result[T] in one call, enabling direct chaining with Map/FlatMap. The model often misses mo.Try entirely (using a hand-rolled wrapper) or uses it but forgets it also catches panics (thinking it only handles errors).",
+    "trap": "Without the skill, the model writes a defer/recover wrapper function manually, then handles the error. Use mo.Do around mo.Try(...).MustGet(): Try wraps returned errors, MustGet turns an Err into a panic, and Do recovers that panic or a panic from the validator.",
     "assertions": [
-      {"id": "21.1", "text": "Uses mo.Try (not a manual defer/recover) to call the validator"},
-      {"id": "21.2", "text": "Explicitly states that mo.Try catches panics AND returned errors, converting both to Err"},
-      {"id": "21.3", "text": "Shows chaining Map or FlatMap on the Try result for the transformation step"},
+      {"id": "21.1", "text": "Uses mo.Do with mo.Try(...).MustGet() or an equivalent boundary handling both failure modes"},
+      {"id": "21.2", "text": "Explains that Try handles returned errors and Do recovers panics"},
+      {"id": "21.3", "text": "Chains Map or FlatMap on the recovered Result for transformation"},
       {"id": "21.4", "text": "The mo.Try callback matches the (T, error) return signature of the wrapped function"}
     ]
   },

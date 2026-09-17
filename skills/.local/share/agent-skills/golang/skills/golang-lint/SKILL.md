@@ -26,7 +26,7 @@ paths:
 
 **Dependencies:**
 
-- golangci-lint: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
+- golangci-lint: `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`
 
 # Go Linting
 
@@ -78,7 +78,7 @@ Rules:
 
 1. **//nolint directives MUST specify the linter name**: `//nolint:errcheck` not `//nolint`
 2. **//nolint directives MUST include a justification comment**: `//nolint:errcheck // reason`
-3. **The `nolintlint` linter enforces both rules above** — it flags bare `//nolint` and missing reasons
+3. **Configure `nolintlint` with `require-specific: true` and `require-explanation: true` to enforce both rules** — it flags bare `//nolint` and missing reasons
 4. **NEVER suppress security linters** (gosec, bodyclose, sqlclosecheck) without a very strong reason
 
 For comprehensive patterns and examples, see **[nolint directives](./references/nolint-directives.md)** — when to suppress, how to write justifications, patterns for per-line vs per-function suppression, and anti-patterns.
@@ -102,11 +102,11 @@ The linter name in parentheses tells you which linter flagged it. Use this to:
 | Problem | Solution |
 | --- | --- |
 | "deadline exceeded" | Set or increase `run.timeout` in `.golangci.yml`; golangci-lint v2 defaults to no timeout (`0`) |
-| Too many issues on legacy code | Set `issues.new-from-rev: HEAD~1` to lint only new code |
+| Too many issues on legacy code | Use `issues.new-from-merge-base: main` for branch changes, or `new-from-rev` for an explicit baseline; ensure that history is fetched |
 | Linter not found | Check `golangci-lint linters` — linter may need a newer version |
 | Conflicts between linters | Disable the less useful one with a comment explaining why |
 | v1 config errors after upgrade | Run `golangci-lint migrate` to convert config format |
-| Slow on large repos | Reduce `run.concurrency` or exclude paths with `linters.exclusions.paths` / `formatters.exclusions.paths` |
+| Slow on large repos | Inspect timings and memory pressure before tuning `run.concurrency`; path exclusions filter reports and do not avoid package analysis |
 
 ## Organizing Legacy Codebase Cleanup
 

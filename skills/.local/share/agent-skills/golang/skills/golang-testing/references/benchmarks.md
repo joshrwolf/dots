@@ -5,21 +5,23 @@ Benchmarking methodology — `benchstat`, profiling from benchmarks, noise contr
 ## Shape
 
 ```go
+var benchmarkString string
+
 func BenchmarkStringConcatenation(b *testing.B) {
+    a, middle, c := strings.Repeat("a", 32), strings.Repeat("b", 32), strings.Repeat("c", 32)
     b.Run("plus-operator", func(b *testing.B) {
         for b.Loop() {
-            result := "a" + "b" + "c"
-            _ = result
+            benchmarkString = a + middle + c
         }
     })
 
     b.Run("strings.Builder", func(b *testing.B) {
         for b.Loop() {
             var builder strings.Builder
-            builder.WriteString("a")
-            builder.WriteString("b")
-            builder.WriteString("c")
-            _ = builder.String()
+            builder.WriteString(a)
+            builder.WriteString(middle)
+            builder.WriteString(c)
+            benchmarkString = builder.String()
         }
     })
 }

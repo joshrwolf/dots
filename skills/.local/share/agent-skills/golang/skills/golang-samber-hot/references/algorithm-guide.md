@@ -7,7 +7,7 @@
   - [LRU (Least Recently Used)](#lru-least-recently-used)
   - [LFU (Least Frequently Used)](#lfu-least-frequently-used)
   - [TinyLFU](#tinylfu)
-  - [W-TinyLFU (Weighted TinyLFU)](#w-tinylfu-weighted-tinylfu)
+  - [W-TinyLFU (Window TinyLFU)](#w-tinylfu-window-tinylfu)
   - [S3FIFO (Segmented Small-Size FIFO)](#s3fifo-segmented-small-size-fifo)
   - [ARC (Adaptive Replacement Cache)](#arc-adaptive-replacement-cache)
   - [TwoQueue](#twoqueue)
@@ -40,7 +40,7 @@ Do you know your access pattern?
             |-- No
                  |
                  v
-               Is throughput critical and cache is large? (>100k items, high write rate)
+               Is throughput critical and cache is large? (high write rate)
                  |-- Yes --> S3FIFO
                  |-- No
                       |
@@ -75,7 +75,7 @@ Evicts the item that hasn't been accessed for the longest time. Simple doubly-li
 Evicts the item with the fewest accesses. Tracks access counts per key.
 
 - **Strengths:** Keeps genuinely popular items regardless of access timing
-- **Weaknesses:** Stale popular items never evict — an item accessed 10,000 times yesterday blocks new hot items today. No frequency decay.
+- **Weaknesses:** Stale popularity counts can delay eviction — an item accessed 10,000 times yesterday blocks new hot items today. No frequency decay.
 - **Ideal workload:** Stable popularity rankings (DNS records, country code lookups, static configuration)
 - **Degrades when:** Popularity shifts over time or new items need to ramp up quickly
 
@@ -90,27 +90,27 @@ Combines frequency estimation with a compact Count-Min Sketch instead of per-key
 - **Ideal workload:** Read-heavy with moderate frequency bias (API response caching, content delivery metadata)
 - **Degrades when:** Write-heavy workloads where admission overhead exceeds the benefit
 
-### W-TinyLFU (Weighted TinyLFU)
+### W-TinyLFU (Window TinyLFU)
 
 **Constant:** `hot.WTinyLFU`
 
 Adds a small "window" LRU in front of TinyLFU's admission filter. New items enter the window, and the admission filter decides whether they're promoted to the main cache. Balances recency and frequency automatically.
 
-- **Strengths:** Best general-purpose hit rate across diverse workloads. Self-adapting. Handles both recency and frequency patterns.
+- **Strengths:** A useful general-purpose candidate; hit rate depends on the workload. Handles both recency and frequency patterns.
 - **Weaknesses:** Slightly more complex internals (harder to reason about eviction order during debugging)
 - **Ideal workload:** Mixed or unknown access patterns, general-purpose caching
 - **Degrades when:** Rarely — it's the safest default. May underperform specialized algorithms on extreme workloads.
 
 ### S3FIFO (Segmented Small-Size FIFO)
 
-**Constant:** `hot.S3FIFO`
+**Constant:** not exposed by the v0.13.1 HotCache builder
 
 Three-segment FIFO design: small, main, and ghost queues. Items promoted from small to main only if accessed again. Ghost queue tracks recently evicted keys for scan resistance.
 
 - **Strengths:** Excellent throughput (FIFO operations are cheaper than linked-list manipulations). Good scan resistance. Simple eviction path.
 - **Weaknesses:** Needs enough capacity for the segmented structure to work. Less effective on small caches.
-- **Ideal workload:** High-throughput systems with large caches (>100k items), CDN-like access patterns
-- **Degrades when:** Cache is very small (<1000 items) — the segments don't have enough room to differentiate access patterns
+- **Ideal workload:** High-throughput systems; benchmark the actual cache size, CDN-like access patterns
+- **Degrades when:** Cache segments are very small — the segments don't have enough room to differentiate access patterns
 
 ### ARC (Adaptive Replacement Cache)
 
@@ -119,7 +119,7 @@ Three-segment FIFO design: small, main, and ghost queues. Items promoted from sm
 Maintains four internal lists: two for recency (recent and recent-ghost) and two for frequency (frequent and frequent-ghost). Dynamically adjusts the split between recency and frequency based on which ghost list sees more hits.
 
 - **Strengths:** Self-tuning — learns from misses whether to favor recency or frequency. No manual parameter tuning.
-- **Weaknesses:** ~2x memory overhead for ghost lists. More complex implementation.
+- **Weaknesses:** Extra key/metadata storage for ghost lists (not a doubling of cached values). More complex implementation.
 - **Ideal workload:** Workloads that shift between recency and frequency patterns (mixed database query caching)
 - **Degrades when:** Memory is constrained — the ghost lists consume significant space
 
@@ -140,7 +140,7 @@ Separates items into "hot" (frequently accessed) and "cold" (recently added) que
 
 Modern eviction algorithm that uses a single bit per entry (visited/not-visited) with a circular "hand" pointer. Simple scan-resistant alternative to LRU.
 
-- **Strengths:** Very low per-item overhead (1 bit). Scan-resistant. Simple implementation.
+- **Strengths:** One visited bit in addition to entry, key/value, and queue metadata. Scan-resistant. Simple implementation.
 - **Weaknesses:** Less sophisticated than W-TinyLFU or ARC for complex patterns
 - **Ideal workload:** When you want scan resistance with minimal complexity and overhead
 - **Degrades when:** Access patterns are highly skewed — specialized algorithms capture the skew better
@@ -154,7 +154,7 @@ Evicts the oldest inserted item regardless of access pattern. No recency or freq
 - **Strengths:** Simplest possible eviction. Predictable. Zero per-access overhead.
 - **Weaknesses:** No intelligence — ignores how often or recently items are accessed
 - **Ideal workload:** TTL-driven caches where all items have similar lifetimes and eviction order doesn't matter (log buffers, time-series windows)
-- **Degrades when:** Hit rate matters — any other algorithm will outperform FIFO on non-uniform access patterns
+- **Degrades when:** Hit rate matters — other algorithms may improve hit rate; compare using representative traces
 
 ## Comparison Matrix
 
@@ -165,7 +165,7 @@ Evicts the oldest inserted item regardless of access pattern. No recency or freq
 | TinyLFU | Medium | High (with decay) | Low | Medium | None |
 | W-TinyLFU | High | High (with decay) | Low | Medium | None |
 | S3FIFO | High | Low | Medium | Very High | None |
-| ARC | High | Medium | High (2x) | Medium | None (self-tuning) |
+| ARC | High | Medium | Higher metadata | Medium | None (self-tuning) |
 | TwoQueue | Medium | Medium | Medium | Medium | Low |
 | SIEVE | Medium | None | Very Low | High | None |
 | FIFO | None | None | Very Low | Very High | None |
@@ -188,15 +188,16 @@ prometheus.MustRegister(cache)
 Key PromQL queries:
 
 ```promql
-# Hit ratio (target: >80%)
-rate(hot_cache_hit_count{cache="user_cache"}[5m]) /
-rate(hot_cache_get_count{cache="user_cache"}[5m])
+# Hit ratio (interpret against workload requirements)
+sum(rate(hot_hit_total{name="user_cache",mode="main"}[5m])) /
+(sum(rate(hot_hit_total{name="user_cache",mode="main"}[5m])) +
+ sum(rate(hot_miss_total{name="user_cache",mode="main"}[5m])))
 
 # Eviction rate (high = cache too small)
-rate(hot_cache_eviction_count{cache="user_cache"}[5m])
+rate(hot_eviction_total{name="user_cache",mode="main"}[5m])
 ```
 
-If hit rate is below your SLO: increase capacity first, then try a different algorithm.
+If hit rate misses the workload target, inspect TTL, admission, access patterns, and memory budget before changing capacity or algorithm.
 
 ## Switching Algorithms
 

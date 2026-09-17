@@ -30,7 +30,7 @@ if err != nil {
 db.SetMaxOpenConns(25)                  // total connections (match your DB capacity)
 db.SetMaxIdleConns(10)                  // keep connections warm, reduce handshake overhead
 db.SetConnMaxLifetime(5 * time.Minute)  // recycle connections (DNS changes, server restarts)
-db.SetConnMaxIdleTime(1 * time.Minute)  // release idle connections back to the pool
+db.SetConnMaxIdleTime(1 * time.Minute)  // close connections that have been idle too long
 ```
 
 | Setting | Too low | Too high |
@@ -55,7 +55,7 @@ slog.Info("db pool",
 )
 ```
 
-If `WaitCount` keeps climbing, increase `MaxOpenConns` or optimize slow queries.
+`WaitCount` is cumulative. Inspect its rate and `WaitDuration`, query latency and transaction lifetimes. Increase `MaxOpenConns` only if the database has capacity; slow work or held connections may be the actual cause.
 
 ### Prometheus Metrics
 
@@ -67,14 +67,14 @@ type DBCollector struct {
 }
 
 func NewDBCollector(pools map[string]*sqlx.DB) *DBCollector {
-    return &DBCollector{pools: pools}
+    return &DBCollector{pools: maps.Clone(pools)} // immutable membership during scrapes
 }
 
 func (c *DBCollector) Describe(ch chan<- *prometheus.Desc) {
     ch <- prometheus.NewDesc("db_open_connections", "Number of open connections", []string{"pool"}, nil)
     ch <- prometheus.NewDesc("db_in_use_connections", "Connections currently in use", []string{"pool"}, nil)
     ch <- prometheus.NewDesc("db_idle_connections", "Idle connections in pool", []string{"pool"}, nil)
-    ch <- prometheus.NewDesc("db_total_latency_seconds", "Total latency for a connection", []string{"pool"}, nil)
+    ch <- prometheus.NewDesc("db_wait_duration_seconds_total", "Total connection wait duration", []string{"pool"}, nil)
 }
 
 func (c *DBCollector) Collect(ch chan<- prometheus.Metric) {
@@ -118,7 +118,7 @@ func init() {
 **Alert thresholds:**
 
 - Open connections approaching `MaxOpenConns` → risk of request queuing
-- Wait count climbing steadily → pool is exhausted, increase `MaxOpenConns`
+- Sustained connection waits → investigate query/transaction duration and capacity before resizing
 - Idle connections too high → reduce `MaxIdleConns` or lower `ConnMaxIdleTime`
 
 ## Batch Processing
@@ -130,7 +130,7 @@ Avoid two extremes:
 
 ### Sweet spot: 100–1,000 rows per batch
 
-Adjust based on row size and database load. Larger rows → smaller batches.
+100–1,000 rows is an illustrative starting range, not a universal sweet spot. Measure using row size, parameter limits, transaction boundaries, contention and database load.
 
 ### Batch INSERT with sqlx
 
@@ -174,13 +174,16 @@ For reading large datasets, use cursor-based pagination instead of `OFFSET`. OFF
 // ✗ Bad — OFFSET re-scans rows, O(offset + limit)
 SELECT * FROM events ORDER BY created_at LIMIT 100 OFFSET 10000
 
-// ✓ Good — cursor-based, O(limit) regardless of depth
-SELECT * FROM events WHERE created_at > $1 ORDER BY created_at LIMIT 100
+// ✓ Good — unique, non-null cursor tuple with a matching (created_at, id) index
+SELECT * FROM events WHERE (created_at, id) > ($1, $2)
+ORDER BY created_at, id LIMIT 100
+// The cursor carries BOTH values. A timestamp alone skips rows with ties.
+// Index seeking avoids scanning all earlier pages; cost depends on the plan.
 ```
 
 ## Indexing Strategy
 
-**Never create or drop indexes yourself.** Index changes affect production query performance and write throughput. Always suggest to the developer and let them decide.
+Index changes affect query plans, write throughput and lock behavior. Implement requested migrations with the repository's tooling and checks; applying destructive production DDL requires explicit authorization.
 
 ### Use SQL MCP to check existing indexes
 
@@ -203,26 +206,26 @@ ORDER BY idx_scan;
 
 - Foreign key columns (PostgreSQL does NOT auto-index foreign keys)
 - Columns frequently used in `WHERE`, `JOIN`, or `ORDER BY`
-- Composite indexes for multi-column queries (leftmost column is most selective)
+- Composite indexes matching leading equality predicates, then range/order requirements; selectivity alone does not determine column order
 - Partial indexes for filtered queries (`WHERE active = true`)
 
 ### When to suggest removing indexes
 
-- Indexes with near-zero `idx_scan` count (nobody reads them)
+- Indexes with low `idx_scan` over a representative observation period; check statistics resets, rare critical queries and constraint enforcement before removal
 - Duplicate indexes (same columns in same order)
 - Indexes on write-heavy tables that slow down INSERT/UPDATE/DELETE
 - Wide composite indexes where a narrower one would suffice
 
-Always present findings as suggestions with data (scan counts, table size), never execute DDL yourself.
+Support changes with representative evidence (plans, scan counts, table size and write load); distinguish authoring a migration from applying it to production.
 
 ## Query Performance Tips
 
-- **`EXPLAIN ANALYZE`** before optimizing — measure, don't guess
+- **`EXPLAIN`** to inspect plans; `EXPLAIN ANALYZE` actually executes the statement, including writes. Use representative safe data and account for side effects even when a transaction is rolled back
 - **List columns explicitly** — avoid `SELECT *`, it fetches unnecessary data and breaks struct scanning when schema changes
 - **Use `LIMIT`** for pagination, always with an `ORDER BY`
 - **Prefer `EXISTS` over `COUNT`** for existence checks — `EXISTS` stops at the first match
 - **Avoid N+1 queries** — use `JOIN` or batch `WHERE id IN (...)` instead of querying in a loop
-- **Suggest improvements, never execute them** — performance changes (indexes, query rewrites, configuration) need human review in context of production data and workload patterns
+- **Respect the requested scope** — validate authorized query/configuration changes and migrations against representative workloads; production rollout follows the repository's process
 
 **Rules:**
 

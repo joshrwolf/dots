@@ -18,7 +18,7 @@ func ExampleCalculatePrice_singleItem() {
 
 ## Naming
 
-The suffix decides where godoc attaches the example, so a typo silently detaches it from its symbol:
+The name determines where documentation tools attach an example. `go test` runs vet checks for many invalid example names; extra suffixes must begin with a lower-case letter:
 
 | Function name               | Documents                          |
 | --------------------------- | ---------------------------------- |

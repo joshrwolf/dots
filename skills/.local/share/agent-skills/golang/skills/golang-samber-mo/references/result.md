@@ -24,7 +24,7 @@
 | `mo.Err[T](err error)` | Creates a failed Result |
 | `mo.Errf[T](format string, a ...any)` | Creates failed Result with formatted error message |
 | `mo.TupleToResult[T](value T, err error)` | Converts Go's (T, error) tuple — Ok if err is nil, Err otherwise |
-| `mo.Try[T](f func() (T, error))` | Executes function, wraps result — Ok on success, Err on error |
+| `mo.Try[T](f func() (T, error))` | Executes function, wraps result — Ok on success, Err on error; does not recover panic |
 
 ### Do Notation
 
@@ -150,7 +150,7 @@ either := result.ToEither()  // Either[error, T]
 
 ## JSON Serialization
 
-Result marshals to JSON-RPC format:
+Result marshals to a JSON-RPC-like envelope, not a complete JSON-RPC response (there is no error code, request ID, or protocol version):
 
 ```go
 // Ok(42) marshals to:

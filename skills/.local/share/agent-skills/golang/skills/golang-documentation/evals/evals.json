@@ -73,7 +73,7 @@
         },
         {
           "id": "3.5",
-          "text": "Includes an inline code Example section showing usage"
+          "text": "Documents the observable merge contract, including shallow value copying; an example is optional."
         }
       ]
     },
@@ -202,11 +202,11 @@
       "id": 10,
       "name": "review-restating-comments",
       "prompt": "Review these doc comments. My team says our documentation is solid. Do you see any issues?\n\n```go\npackage cache\n\n// Get gets a value from the cache by key.\n// Returns the value and true if found, zero value and false if not.\nfunc (c *Cache) Get(key string) (interface{}, bool) { ... }\n\n// Set sets a value in the cache for the given key.\nfunc (c *Cache) Set(key string, value interface{}) { ... }\n\n// Delete deletes a value from the cache by key.\nfunc (c *Cache) Delete(key string) { ... }\n\n// Size returns the number of items currently in the cache.\nfunc (c *Cache) Size() int { ... }\n\n// Clear clears all items from the cache.\nfunc (c *Cache) Clear() { ... }\n```",
-      "trap": "Team says docs are 'solid', creating social pressure to agree. All comments describe what the code does but not why/when/constraints — they omit thread safety, TTL/eviction behavior, and cache miss semantics. The skill requires comments to explain WHY and WHEN, not just WHAT.",
+      "trap": "Invents missing cache behavior or rejects useful concise docs merely because they describe what the API does.",
       "assertions": [
         {
           "id": "10.1",
-          "text": "Identifies that the comments describe WHAT the code does but fail to explain WHY, WHEN, or any constraints"
+          "text": "Distinguishes useful concise descriptions from missing contract information; Get already documents cache-miss behavior."
         },
         {
           "id": "10.2",
@@ -218,7 +218,7 @@
         },
         {
           "id": "10.4",
-          "text": "Rewrites at least one comment to include constraints, edge cases, or concurrent-use guarantees"
+          "text": "Does not invent concurrency, TTL, or eviction guarantees from omitted implementations."
         },
         {
           "id": "10.5",
@@ -230,27 +230,27 @@
       "id": 11,
       "name": "skip-test-func-comments",
       "prompt": "I'm adding doc comments to every function in my Go project to reach 100% documentation coverage. Please add appropriate doc comments to these test functions:\n\n```go\npackage auth_test\n\nfunc TestValidateToken(t *testing.T) { ... }\nfunc TestValidateToken_expired(t *testing.T) { ... }\nfunc TestValidateToken_invalidSignature(t *testing.T) { ... }\nfunc BenchmarkValidateToken(b *testing.B) { ... }\nfunc TestHashPassword(t *testing.T) { ... }\nfunc TestComparePassword(t *testing.T) { ... }\n```",
-      "trap": "User explicitly asks to add doc comments to test functions citing '100% documentation coverage'. Without skill, model complies and writes comments for each test. The skill's 'What to Document' table explicitly says 'Test functions: No' and the model should push back on this request.",
+      "trap": "Treats a documentation preference as a reason to override an explicit user request, or invents behavior for omitted test bodies.",
       "assertions": [
         {
           "id": "11.1",
-          "text": "Advises against or actively discourages adding doc comments to test functions"
+          "text": "Explains that routine test doc comments are usually unnecessary without refusing an explicit request."
         },
         {
           "id": "11.2",
-          "text": "Explains that test function names are designed to be self-descriptive — the name IS the documentation"
+          "text": "Uses test names as evidence of purpose, not as proof of omitted test behavior."
         },
         {
           "id": "11.3",
-          "text": "Does NOT produce doc comments for any of the standard Test/Benchmark functions listed"
+          "text": "If producing the requested comments, keeps them concise and avoids inventing test internals."
         },
         {
           "id": "11.4",
-          "text": "Clarifies that '100% documentation coverage' tools do not count unexported or test functions — this goal does not apply here"
+          "text": "Does not claim all documentation-coverage tools exclude test functions; checks the actual tool policy."
         },
         {
           "id": "11.5",
-          "text": "May suggest that complex test setup helpers warrant comments, but not the standard TestXxx/BenchmarkXxx functions themselves"
+          "text": "Distinguishes API docs from comments explaining non-obvious test setup or intent."
         }
       ]
     },
@@ -415,7 +415,7 @@
       "assertions": [
         {
           "id": "19.1",
-          "text": "Uses ExampleNew or ExampleClient for the constructor example — NOT ExampleNewClient (which stutters) or ExampleNew_client"
+          "text": "Uses ExampleNew, ExampleClient, or a valid lowercase-starting suffix such as ExampleNew_client; ExampleNewClient would require a NewClient declaration."
         },
         {
           "id": "19.2",

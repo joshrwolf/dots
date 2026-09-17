@@ -12,7 +12,7 @@
       },
       {
         "id": "1.2",
-        "text": "Uses status.Errorf with codes.Internal for unexpected errors"
+        "text": "Uses status.Error or status.Errorf with codes.Internal and a sanitized public message for unexpected errors."
       },
       {
         "id": "1.3",
@@ -37,11 +37,11 @@
     "assertions": [
       {
         "id": "2.1",
-        "text": "Uses GetProductRequest/GetProductResponse wrapper messages, not bare string or Product"
+        "text": "Uses protobuf messages for RPC inputs/outputs; scalar string is not legal, while an existing Product message may be legal but less extensible."
       },
       {
         "id": "2.2",
-        "text": "Uses DeleteProductRequest/DeleteProductResponse wrapper messages, not bare string or google.protobuf.Empty"
+        "text": "Uses a named response wrapper when future fields are anticipated; google.protobuf.Empty is valid when no payload is intended."
       },
       {
         "id": "2.3",
@@ -234,7 +234,7 @@
       },
       {
         "id": "9.4",
-        "text": "Uses status.Errorf for error returns in the handler methods"
+        "text": "Uses status.Error or status.Errorf with appropriate codes and safe client messages."
       },
       {
         "id": "9.5",
@@ -255,11 +255,11 @@
       },
       {
         "id": "10.2",
-        "text": "Configures round_robin load balancing policy via service config"
+        "text": "Registers the round_robin balancer and configures it using the service config."
       },
       {
         "id": "10.3",
-        "text": "Configures retry policy in the service config with retryableStatusCodes containing UNAVAILABLE"
+        "text": "Scopes UNAVAILABLE retries to methods whose idempotency/replay semantics permit them."
       },
       {
         "id": "10.4",

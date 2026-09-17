@@ -41,7 +41,7 @@ Apply to every piece of documentation you write or review:
 
 **Preserve meaning when editing** — keep modality intact (`must`/`should`/`may` are different obligations). Preserve conditions, warnings, required actions. A cleaner sentence that changes obligations is wrong.
 
-**Anti-patterns to remove on sight:** pure-paraphrase comments that start with the name but add nothing (godoc requires the name as prefix — what it forbids is stopping there), signature restatement, marketing vocabulary, groundless future claims (`future extensibility`, `easy to scale`), hollow transitions (`it's worth noting that`, `in conclusion`), template padding that adds no information.
+**Anti-patterns to remove on sight:** pure-paraphrase comments that start with the name but add nothing (the Go convention is to start with the name; useful comments add the API contract), signature restatement, marketing vocabulary, groundless future claims (`future extensibility`, `easy to scale`), hollow transitions (`it's worth noting that`, `in conclusion`), template padding that adds no information.
 
 ## Function & Method Doc Comments
 
@@ -63,8 +63,6 @@ The comment starts with the function name and a verb phrase. Focus on **why** an
 // Returns the final discounted price rounded to 2 decimal places.
 // Returns ErrInvalidPrice if basePrice is negative.
 // Returns ErrInvalidQuantity if quantity is zero or negative.
-//
-// Play: https://go.dev/play/p/abc123XYZ
 //
 // Example:
 //
@@ -124,7 +122,7 @@ If your project exposes an API:
 | Event-driven | AsyncAPI    | Manual or code-gen                           |
 | gRPC         | Protobuf    | buf, grpc-gateway                            |
 
-Prefer auto-generation from code annotations when possible. See [Application Documentation](./references/application.md#api-documentation) for details.
+Use the project's schema-first or code-first workflow; neither direction is universally preferred. See [Application Documentation](./references/application.md#api-documentation) for details.
 
 ## Delivery Documentation
 
@@ -139,8 +137,8 @@ go get github.com/{owner}/{repo}
 **Applications:**
 
 ```bash
-# Pre-built binary
-curl -sSL https://github.com/{owner}/{repo}/releases/latest/download/{repo}-$(uname -s)-$(uname -m) -o /usr/local/bin/{repo}
+# Pre-built binaries: link the actual release assets and document extraction,
+# checksum verification, and installation for each supported platform.
 
 # From source
 go install github.com/{owner}/{repo}@latest

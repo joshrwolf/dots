@@ -31,9 +31,9 @@ type Order struct {
 
 Notes that bite in production:
 
-- **Unexported fields are never serialized**, tag or not. A tag on an unexported field is dead weight and `go vet` flags the malformed ones only.
+- **Ordinary unexported fields are ignored by encoding/json v1.** Custom marshaling and promoted exported fields of unexported embedded structs are exceptions. go vet reports JSON/XML tags on ordinary unexported fields.
 - **In `encoding/json` v1, `omitempty` uses its documented empty-value rules.** It drops `0`, `""`, and `false`, so an explicit "zero" value becomes indistinguishable from "absent". For an always-present boolean, use no omission tag. To distinguish absent from explicit false, use `*bool` with `omitempty`: nil is omitted, a pointer to false is emitted. `omitzero` also omits plain false; it does not track presence. It can omit zero `time.Time` using `IsZero`. Preserve the chosen JSON API and wire contract when changing tags.
-- **Tag syntax is unchecked at compile time.** A missing backtick or a `json: "id"` with a stray space produces a silently ignored tag. `go vet`'s `structtag` analyzer catches malformed tags — run it in CI.
+- **Tag syntax is unchecked at compile time.** A malformed tag string such as `json: "id"` may be ignored; a missing closing backtick is instead a Go syntax error. `go vet`'s `structtag` analyzer catches malformed tags — run it in CI.
 
 **Diagnose:** 1- `go vet ./...` — the `structtag` analyzer reports malformed or duplicated tags 2- round-trip test: marshal, unmarshal, compare — catches field-name drift the compiler cannot see
 

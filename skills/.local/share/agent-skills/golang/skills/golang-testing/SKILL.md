@@ -31,7 +31,7 @@ This skill guides the creation of production-ready tests for Go applications. Fo
 2. Separate tests requiring external services according to the project's test commands; build tags provide opt-in compilation, while `testing.Short()` provides runtime selection
 3. Tests MUST NOT depend on execution order -- each test MUST be independently runnable
 4. Independent tests SHOULD use `t.Parallel()` when possible
-5. Tests MUST assert observable behavior and public API contracts, not implementation details -- a test coupled to internals turns every refactor into a test rewrite while proving nothing about the contract
+5. Prefer observable behavior and API contracts; use focused white-box tests when an internal invariant is itself the target or the user requests it. Avoid coupling tests to incidental representation
 6. Tests that start goroutines should cancel their work and verify completion before returning
 7. Use explicit standard-library checks; use go-cmp for structured failure diffs
 8. Implement focused fakes at consumed interface boundaries
@@ -53,7 +53,7 @@ package mypackage
 package mypackage_test
 ```
 
-Name the test file after the source file it tests, not after the function or method under test. Go's convention is one test file per source file (`foo.go` -> `foo_test.go`), because tools (`go test`, coverage reports, IDE "jump to test" navigation) and reviewers all resolve tests by source file, not by symbol. A source file usually declares several functions/methods; splitting its tests by symbol name scatters them across many files and breaks that file-to-file mapping.
+Name test files after the source file they cover (`foo.go` -> `foo_test.go`). This is our organizational convention: tests should be easy to locate alongside their implementation. Go itself discovers `_test.go` files at package scope and does not require a source-file match.
 
 ```
 // ✓ Good — one test file per source file
@@ -157,7 +157,7 @@ framework.
 
 ## Unit Tests
 
-Unit tests should be fast (< 1ms), isolated (no external dependencies), and deterministic.
+Unit tests should be fast, isolated from unavailable external dependencies, and repeatable; appropriate duration depends on the behavior under test.
 
 ## Testing HTTP Handlers
 
@@ -173,12 +173,12 @@ detector checks data races; it is not a leak detector.
 
 ## testing/synctest for Deterministic Goroutine Testing
 
-`testing/synctest` (Go 1.25+) provides deterministic tests for goroutines, timers, deadlines, and context cancellation. Time advances only when all goroutines are blocked, making ordering predictable.
+`testing/synctest` (Go 1.25+) provides fake time and synchronization for tests of goroutines, timers, deadlines, and context cancellation. Time advances when every goroutine in the bubble is durably blocked. Goroutine scheduling remains nondeterministic; use synchronization to establish the ordering a test requires.
 
 When to use `synctest` instead of real time:
 
 - Testing concurrent code with time-based operations (time.Sleep, time.After, time.Ticker)
-- When race conditions need to be reproducible
+- When explicit synchronization can replace timing guesses; keep `-race` enabled to detect exercised data races
 - When tests are flaky due to timing issues
 
 ```go
@@ -215,13 +215,13 @@ Use `synctest.Test` in Go 1.25+ and later. Do not use the old Go 1.24 experiment
 
 Key differences in `synctest`:
 
-- `time.Sleep` advances synthetic time instantly when the goroutine blocks
+- `time.Sleep` blocks its goroutine until synthetic time reaches the deadline
 - `time.After` fires when synthetic time reaches the duration
-- All goroutines run to blocking points before time advances
-- Test execution is deterministic and repeatable
-- Go 1.27+ adds `synctest.Sleep(d)` as a direct helper to advance the bubble's fake clock, equivalent to `time.Sleep(d)` followed by `synctest.Wait()` but without needing a real goroutine to block on
+- Time advances only when all bubble goroutines are durably blocked; external I/O does not qualify
+- `synctest.Wait()` waits for other bubble goroutines to become durably blocked; it does not impose a deterministic schedule
+- Go 1.27+ adds `synctest.Sleep(d)` as a direct helper to advance the bubble's fake clock, equivalent to `time.Sleep(d)` followed by `synctest.Wait()`
 
-Go 1.27+ also adds `httptest.NewTestServer()`, an in-memory fake-network variant of `httptest.NewServer` that composes with `synctest` — no real socket, so server tests can run inside a `synctest.Test` bubble instead of needing `httptest.NewServer` plus real timers.
+Go 1.27+ also adds `httptest.NewTestServer(t, handler)`, an in-memory fake-network variant of `httptest.NewServer` that composes with `synctest` — use its `Client()` for requests. It uses no real socket, so server tests can run inside a `synctest.Test` bubble instead of needing `httptest.NewServer` plus real timers.
 
 ## Test Timeouts
 
@@ -252,7 +252,7 @@ func TestRenderGoldenArtifact(t *testing.T) {
 }
 ```
 
-Available on `*testing.T`, `*testing.B`, and `*testing.F` in Go 1.26+.
+Available on `*testing.T`, `*testing.B`, and `*testing.F` in Go 1.26+. Run with `go test -artifacts ./artifacts ./...` to retain files; without `-artifacts`, artifact directories are temporary and removed when testing completes.
 
 ### Go 1.27+: `stdversion` runs automatically
 
@@ -368,7 +368,7 @@ Many test best practices are enforced automatically by linters: `thelper`, `para
 
 ```bash
 go test ./...                          # all tests
-go test -run TestName ./...            # specific test by exact name
+go test -run '^TestName$' ./...        # specific top-level test by exact name
 go test -run TestName/subtest ./...    # subtests within a test
 go test -run 'Test(Add|Sub)' ./...     # multiple tests (regexp OR)
 go test -run 'Test[A-Z]' ./...         # tests starting with capital letter
@@ -379,7 +379,7 @@ go test -run '/(unit|integration)' ./... # filter by subtest name
 go test -race ./...                    # race detection
 go test -cover ./...                   # coverage summary
 go test -bench=. -benchmem ./...       # benchmarks
-go test -fuzz=FuzzName ./...           # fuzzing
+go test -fuzz='^FuzzName$' ./pkgname   # fuzz one target in one package
 go test -tags=integration ./...        # integration tests
 ```
 

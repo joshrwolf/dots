@@ -18,9 +18,9 @@
       "prompt": "I have a []User slice with 500 users. I want to filter active users and extract their email addresses into a []string. Should I use samber/ro for this? Write the code.",
       "assertions": [
         "Uses a direct loop or standard-library collection operation for this finite slice",
-        "Explains WHY lo is better here: synchronous, no stream overhead, purpose-built for slices",
+        "Explains why a loop fits finite synchronous slice transformation",
         "Does NOT create an Observable pipeline for a simple slice transform",
-        "Uses lo.Filter and lo.Map (or equivalent lo functions)"
+        "Filters and appends email addresses in a straightforward loop"
       ]
     },
     {
@@ -54,7 +54,7 @@
         "Recommends BehaviorSubject (not PublishSubject or ReplaySubject)",
         "Explains that BehaviorSubject replays the last value to new subscribers",
         "Shows NewBehaviorSubject[Config](initialConfig) constructor with initial value",
-        "Shows .Send() for pushing updates and .Subscribe() for consuming",
+        "Shows .Next() for pushing updates and .Subscribe() for consuming",
         "Does NOT recommend PublishSubject (late subscribers would miss the current value)"
       ]
     },
@@ -99,12 +99,12 @@
       "name": "retry-with-backoff",
       "prompt": "I'm calling an unreliable external API via samber/ro. I want to retry up to 3 times with exponential backoff starting at 500ms, with a max delay of 10 seconds. If all retries fail, return a cached default value. Write the code.",
       "assertions": [
-        "Uses ro.RetryWithConfig (not ro.Retry which retries infinitely)",
-        "Sets Max: 3 in RetryConfig",
-        "Sets Delay: 500ms and BackoffMultiplier: 2.0 in RetryConfig",
-        "Sets MaxDelay: 10*time.Second in RetryConfig",
-        "Chains OnErrorReturn or Catch after RetryWithConfig for the fallback",
-        "Orders operators correctly: source → RetryWithConfig → fallback (retry BEFORE fallback)"
+        "Explains that RetryConfig v0.4.1 supports fixed Delay, not exponential backoff; implements bounded context-aware backoff in the source",
+        "Limits the operation to one initial attempt and at most three retries",
+        "Starts backoff at 500ms and doubles it without inventing RetryConfig fields",
+        "Caps the calculated delay at 10 seconds and permits cancellation during waiting",
+        "Applies OnErrorReturn or Catch after the retrying source for fallback",
+        "Orders operators correctly: retrying source → fallback (retry BEFORE fallback)"
       ]
     },
     {
@@ -135,9 +135,9 @@
       "name": "context-propagation",
       "prompt": "I have a long-running samber/ro pipeline that should respect a 30-second timeout from the request context. If the context is cancelled, the pipeline should stop cleanly. How do I wire context into the pipeline?",
       "assertions": [
-        "Uses ro.ContextWithTimeout or ro.ContextReset to inject the context/timeout",
+        "Derives a 30-second context and passes it through SubscribeWithContext or CollectWithContext",
         "Uses ro.ThrowOnContextCancel to convert context cancellation to a stream error",
-        "Chains these context operators in the pipeline (not just passing ctx to Subscribe)",
+        "Does not confuse ContextWithTimeout per-notification context with a total subscription deadline",
         "Handles the cancellation error in the observer's onError callback"
       ]
     },
@@ -148,8 +148,8 @@
       "assertions": [
         "Knows about the fsnotify plugin (plugins/fsnotify)",
         "Uses the fsnotify plugin to create an observable of file events",
-        "Uses ThrottleTime or a similar debounce operator to avoid rapid reloads",
-        "Filters for Write events specifically",
+        "Implements trailing-edge coalescing when debouncing is needed; does not call ThrottleTime debounce or invent a Debounce API",
+        "Accounts for Write and atomic-save Create/Rename events as relevant",
         "Shows a Map operator to reload configuration from the changed file"
       ]
     },
@@ -159,7 +159,7 @@
       "prompt": "I need a samber/ro observable that emits an event every day at midnight for a daily report generation job. What plugin should I use and how?",
       "assertions": [
         "Knows about the cron plugin (plugins/cron)",
-        "Uses cron.Schedule or similar with a cron expression like `0 0 * * *`",
+        "Uses rocron.NewScheduler with a gocron.CronJob definition such as `0 0 * * *`",
         "Shows the correct import path for the cron plugin",
         "Chains the cron observable with Map or FlatMap to trigger report generation"
       ]
@@ -216,7 +216,7 @@
       "prompt": "I need a resilient data pipeline in samber/ro: first retry transient failures 2 times, then try a secondary data source, and if everything fails, return a cached default. Write the error recovery chain.",
       "assertions": [
         "Chains recovery operators in the correct order: RetryWithConfig FIRST, then Catch/OnErrorResumeNextWith, then OnErrorReturn",
-        "Uses RetryWithConfig with Max: 2 (not infinite Retry)",
+        "Uses RetryWithConfig with MaxRetries: 2 (not infinite Retry)",
         "Uses Catch or OnErrorResumeNextWith to switch to the secondary source",
         "Uses OnErrorReturn for the final cached default",
         "Orders the operators correctly in the Pipe chain (retry → fallback source → default value)"
@@ -231,7 +231,7 @@
         "Explains that ro.FromChannel only completes when the source channel is closed",
         "Does NOT suggest modifying the channel producer or closing the channel externally",
         "Does NOT suggest polling the channel manually outside the ro pipeline",
-        "Alternatively mentions TakeUntil with a signal or Timeout as other valid completion strategies"
+        "Alternatively mentions TakeUntil with a signal or Timeout for inactivity errors (not normal completion)"
       ]
     },
     {
@@ -240,7 +240,7 @@
       "prompt": "I have a production samber/ro pipeline and I need to add logging at each stage without modifying the data flow. How should I instrument it?",
       "assertions": [
         "Uses Tap or TapOnNext/TapOnError/TapOnComplete for side-effect logging",
-        "Does NOT use Map with a side effect (which would change the return type signature)",
+        "Prefers Tap for observability; a Map returning its input can preserve the type but obscures intent",
         "Shows TapOnError for monitoring errors specifically",
         "Explains that Tap/Do operators observe without altering the stream",
         "Mentions the logging plugins (slog, zap, etc.) as structured alternatives"
@@ -253,7 +253,7 @@
       "assertions": [
         "Recommends Connectable (not Share or ShareReplay)",
         "Shows ro.Connectable[T](source) to create a ConnectableObservable",
-        "Shows setting up all 5 subscribers before calling .Connect(ctx)",
+        "Shows setting up all 5 subscribers before calling .ConnectWithContext(ctx)",
         "Explains that Connect() explicitly starts the shared execution",
         "Explains why Share() is wrong: it starts on first subscribe, so sub2-5 might miss early events"
       ]

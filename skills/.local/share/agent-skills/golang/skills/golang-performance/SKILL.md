@@ -61,8 +61,8 @@ Before optimizing Go code, verify the bottleneck is in your process — if 90% o
 | Mistake | Fix |
 | --- | --- |
 | Default `http.Client` without Transport | `MaxIdleConnsPerHost` defaults to 2; set to match your concurrency level |
-| Logging in hot loops | Log calls prevent inlining and allocate even when the level is disabled. Use `slog.LogAttrs` |
-| `panic`/`recover` as control flow | panic allocates a stack trace and unwinds the stack; use error returns |
+| Logging in hot loops | Arguments are evaluated even for disabled levels; guard expensive construction and measure handler/attribute costs |
+| `panic`/`recover` as control flow | panic unwinds deferred calls; use error returns for expected failures |
 | `unsafe` without benchmark proof | Require a measured benefit that justifies the safety and maintenance cost |
 | No GC tuning in containers | Set `GOMEMLIMIT` with headroom for non-Go memory; it is a soft runtime limit, not an OOM guarantee |
 | `reflect.DeepEqual` in production | Consider typed comparisons such as `slices.Equal`, `maps.Equal`, or `bytes.Equal`; preserve equality semantics and measure the actual workload |

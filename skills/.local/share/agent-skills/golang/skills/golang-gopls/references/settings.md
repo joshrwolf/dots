@@ -1,6 +1,6 @@
 # gopls settings reference
 
-Source: [tip.golang.org/gopls/settings](https://tip.golang.org/gopls/settings); full canonical list: `gopls api-json`. Settings are passed via the LSP client's `initializationOptions` (editor-specific config file/UI) — there is no `gopls.json` read from the workspace by default. Record the chosen settings in the project's agent-config file (CLAUDE.md, AGENTS.md, or equivalent), so future sessions pick them up without rediscovering them.
+Source: [tip.golang.org/gopls/settings](https://tip.golang.org/gopls/settings); full canonical list: `gopls api-json`. Settings are passed via the LSP client's `initializationOptions` (editor-specific config file/UI) — there is no `gopls.json` read from the workspace by default. Change persistent project or user settings only within the requested scope.
 
 ## Table of contents
 
@@ -35,11 +35,10 @@ Source: [tip.golang.org/gopls/settings](https://tip.golang.org/gopls/settings); 
 | Setting | Type | Default | Purpose |
 | --- | --- | --- | --- |
 | `analyses` | `map[string]bool` | `{}` | Enable/disable individual analyzers by name (the `go vet`-based framework plus gopls's own) |
-| `staticcheck` | `bool` | `false` | Enable the staticcheck.io analyzer suite in addition to the built-in analyzers |
+| `staticcheck` | optional `bool` | unset (selected subset) | `true` enables all staticcheck analyzers; `false` disables them; `analyses` can override individual checks |
 | `vulncheck` | enum: `Off`\|`Imports`\|`Prompt` | `"Prompt"` (or `"Off"` in some client defaults) | Whether/how vulnerability-driven diagnostics on `go.mod` run |
 | `diagnosticsDelay` | `time.Duration` | `"1s"` | Idle time after an edit before workspace-wide analysis diagnostics recompute (open-file compile errors update sooner regardless) |
 | `diagnosticsTrigger` | enum: `Edit`\|`Save` | `"Edit"` | Whether diagnostics recompute on every edit or only on save |
-| `pullDiagnostics` | `bool` | `false` | Let the client request diagnostics on demand (`textDocument/diagnostic`) instead of only receiving pushed updates |
 
 **When it matters:** a large monorepo with `diagnosticsTrigger: "Edit"` (the default) can feel laggy under `diagnosticsDelay: "1s"` on every keystroke pause — switching to `"Save"` trades immediacy for fewer full-workspace recomputations. Turning on `staticcheck` surfaces a materially different (larger) set of findings than the default analyzer set — expect more `go_diagnostics`/`gopls check` output afterward, not a regression.
 
@@ -72,7 +71,7 @@ Example:
 | --- | --- | --- | --- |
 | `symbolMatcher` | enum: `FastFuzzy`\|`Fuzzy`\|`CaseSensitive`\|`CaseInsensitive` | `"FastFuzzy"` | Matching algorithm for `workspace/symbol` / `go_search` |
 | `symbolScope` | enum: `all`\|`workspace` | `"all"` | Whether symbol search covers only workspace packages or every loaded package (including dependencies) |
-| `symbolStyle` | enum | — | How matched symbols are qualified in the response (package-qualified vs. bare) |
+| `symbolStyle` | `Dynamic` / `Full` / `Package` | `"Dynamic"` | How matched symbols are qualified in the response (package-qualified vs. bare) |
 | `codelenses` | `map[string]bool` | — | Enables/disables individual code lenses (e.g. `generate`, `tidy`, `vendor`, `run_tests`) |
 
 ---

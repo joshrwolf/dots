@@ -143,10 +143,10 @@ secureCookie := &http.Cookie{
     HttpOnly: true,
 }
 
-// __Host- prefix: Requires Secure, no Domain, origin-bound path
+// __Host- prefix: Requires Secure, no Domain, host-only cookie with Path=/ (cookies are not isolated by port)
 hostCookie := &http.Cookie{
-    Name:     "__Host-CSRF",
-    Value:    csrfToken,
+    Name:     "__Host-Session",
+    Value:    sessionID,
     Secure:   true,    // Required
     HttpOnly: true,
     Domain:   "",      // Must be empty
@@ -170,10 +170,13 @@ store := sessions.NewCookieStore([]byte("secret-key")) // DON'T: Hardcoded key
 ```go
 import "github.com/gorilla/sessions"
 
-store := sessions.NewCookieStore(
-    []byte(os.Getenv("SESSION_AUTH_KEY")),   // Use env var
-    []byte(os.Getenv("SESSION_ENC_KEY")),   // Separate encryption key
-)
+authKey, err := base64.StdEncoding.DecodeString(os.Getenv("SESSION_AUTH_KEY"))
+if err != nil || len(authKey) < 32 { return errors.New("invalid session authentication key") }
+encKey, err := base64.StdEncoding.DecodeString(os.Getenv("SESSION_ENC_KEY"))
+if err != nil || (len(encKey) != 16 && len(encKey) != 24 && len(encKey) != 32) {
+    return errors.New("invalid session encryption key")
+}
+store := sessions.NewCookieStore(authKey, encKey)
 
 store.Options = &sessions.Options{
     Path:     "/",
@@ -197,7 +200,7 @@ store.Options = &sessions.Options{
 - [ ] Use cryptographically signed cookies
 - [ ] Rotate cookie secrets regularly
 - [ ] Clear cookies on logout
-- [ ] Use double-submit cookie pattern for CSRF protection
+- [ ] Use appropriate CSRF protection (e.g. signed, session-bound double-submit tokens). A token cookie that JavaScript must read cannot be HttpOnly; authentication cookies should remain HttpOnly
 
 ---
 

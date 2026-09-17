@@ -23,21 +23,21 @@ Cobra commands have five run hooks. Cobra executes them in this fixed order:
 PersistentPreRunE → PreRunE → RunE → PostRunE → PersistentPostRunE
 ```
 
-Each `*E` hook returns `error`. The non-`*E` variants (`PersistentPreRun`, `PreRun`, `Run`, `PostRun`, `PersistentPostRun`) have signature `func(cmd *cobra.Command, args []string)` — they cannot signal failure without `os.Exit` or panic. **Always use the `*E` variants.**
+Each `*E` hook returns `error`. The non-`*E` variants (`PersistentPreRun`, `PreRun`, `Run`, `PostRun`, `PersistentPostRun`) have signature `func(cmd *cobra.Command, args []string)` — they cannot signal failure without `os.Exit` or panic. Use the `*E` variants for fallible work; callbacks that cannot fail can use the non-error variant.
 
 ### Which hook to use
 
 | Hook | Scope | When to use |
 | --- | --- | --- |
-| `PersistentPreRunE` | Parent + all descendants | Config init, auth check, telemetry setup — must run before every subcommand |
+| `PersistentPreRunE` | Command + descendants inheriting that hook | Config init, auth check, telemetry setup — must run before every subcommand |
 | `PreRunE` | This command only | Validation that runs only for this command before `RunE` |
 | `RunE` | This command only | Main handler — the primary business logic |
 | `PostRunE` | This command only | Cleanup that runs only if `RunE` succeeded |
-| `PersistentPostRunE` | Parent + all descendants | Global cleanup (close connections, flush buffers) |
+| `PersistentPostRunE` | Command + descendants inheriting that hook | Global cleanup (close connections, flush buffers) |
 
 ### Inheritance rules
 
-`PersistentPreRunE` defined on the root command runs before every subcommand. But if a child command defines **its own** `PersistentPreRunE`, it **replaces** (does not chain) the parent's hook. Call the parent explicitly if you need both:
+`PersistentPreRunE` defined on the root command is inherited by runnable descendants without a nearer persistent hook (help/version may bypass execution hooks). But if a child command defines **its own** `PersistentPreRunE`, it **replaces** (does not chain) the parent's hook. Call the parent explicitly if you need both:
 
 ```go
 var childCmd = &cobra.Command{
@@ -54,11 +54,13 @@ var childCmd = &cobra.Command{
 
 ### Execution stops on first error
 
+`cobra.EnableTraverseRunHooks = true` instead runs ancestor persistent hooks too (a package-wide setting). Avoid manually calling the parent when traversal is enabled, or it runs twice.
+
 If `PersistentPreRunE` returns an error, cobra stops — `RunE` and later hooks never run. Use this for fail-fast auth checks.
 
 ## Args validators
 
-Args validators run before `RunE`. Cobra prints a clear error message and exits without calling `RunE` when validation fails.
+Args validators run before `RunE`. Execute returns the validation error without calling PreRun/Run hooks; the caller controls process exit.
 
 ### Built-in validators
 
@@ -157,13 +159,13 @@ var internalCmd = &cobra.Command{
 }
 
 var oldCmd = &cobra.Command{
-    Deprecated: "use `newcmd` instead",  // shown in help, prints warning on use
+    Deprecated: "use `newcmd` instead",  // hidden from normal available-command help; prints warning on use
 }
 ```
 
 ## cobra.CheckErr
 
-`cobra.CheckErr(err)` is a convenience function: if `err != nil`, it prints the error to `cmd.ErrOrStderr()` and calls `os.Exit(1)`. Use it only in `main()` where you want a hard exit — not inside `RunE` where returning the error is preferred.
+`cobra.CheckErr(err)` is a convenience function: if `err != nil`, it prints the error to `os.Stderr` and calls `os.Exit(1)`. Use it only in `main()` where you want a hard exit — not inside `RunE` where returning the error is preferred.
 
 ```go
 func main() {

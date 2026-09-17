@@ -27,7 +27,7 @@ Add a `Play:` line in the doc comment:
 ```go
 // Map applies fn to each element of the slice and returns a new slice.
 //
-// Play: https://go.dev/play/p/abc123xyz
+// Play: <URL of an existing public example>
 //
 // Example:
 //
@@ -49,7 +49,9 @@ package mypackage_test
 
 import (
     "fmt"
-    "github.com/{owner}/{repo}"
+    "strings"
+
+    mypackage "github.com/{owner}/{repo}"
 )
 
 // ExampleMap demonstrates mapping over a slice.
@@ -74,10 +76,10 @@ Naming conventions:
 - `ExampleFuncName()` — example for a package-level function
 - `ExampleTypeName()` — example for a type
 - `ExampleTypeName_MethodName()` — example for a method
-- `ExampleFuncName_suffix()` — multiple examples for the same function (suffix is lowercase)
+- `ExampleFuncName_suffix()` — multiple examples for the same function (suffix starts with a lowercase letter)
 - `Example()` — example for the whole package
 
-The `// Output:` comment MUST be included for `go test` to verify the example. Without it, the example compiles but doesn't verify output.
+An `// Output:` or `// Unordered output:` comment makes the example execute and checks its output. Without either, it compiles but is not run.
 
 ---
 
@@ -112,7 +114,7 @@ func NewClient(opts ...Option) *Client {
 
 ## godoc and pkg.go.dev
 
-Your doc comments automatically render on [pkg.go.dev](https://pkg.go.dev) when you tag a release and someone imports your package. This is the primary documentation surface for public Go libraries.
+[pkg.go.dev](https://pkg.go.dev) renders public module versions after indexing them; tagging or importing a module locally does not itself guarantee indexing. This is the primary documentation surface for public Go libraries.
 
 **How godoc renders comments:**
 
@@ -120,7 +122,7 @@ Your doc comments automatically render on [pkg.go.dev](https://pkg.go.dev) when 
 - `// Package foo provides...` appears as the package description
 - Code blocks (indented by one tab) render as formatted code
 - `# Heading` syntax (Go 1.19+) creates sections
-- `[Link text]` syntax creates hyperlinks
+- `[Link text]` creates a link when a corresponding `[Link text]: URL` definition is present
 - `[Identifier]` links to other symbols in the package
 - `Deprecated:` marker gets special styling
 
@@ -135,7 +137,7 @@ go doc -all github.com/{owner}/{repo}
 
 # Start a local godoc server
 go get -tool golang.org/x/pkgsite/cmd/pkgsite@latest
-go tool pkgsite -http=:6060
+go tool pkgsite -http=localhost:6060
 # Then open http://localhost:6060
 ```
 

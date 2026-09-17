@@ -1,6 +1,6 @@
 # Structural Constraints: Import Cycles, Package Boundaries, Type Moves, API Evolution
 
-Go enforces a handful of structural rules at compile time that other languages leave to convention or linting. This file covers the load-bearing ones: why import cycles are a hard error rather than a warning, how to design a package boundary so it doesn't need to be redesigned again, the officially-blessed mechanism for moving a type across packages without breaking every caller at once, and how to evolve an exported API without a flag day.
+Go enforces a handful of structural rules at compile time that other languages leave to convention or linting. This file covers import cycles, package boundaries, moving declarations with their callers, and identifying real compatibility requirements when changing a published API.
 
 ## Table of Contents
 
@@ -27,14 +27,14 @@ Four strategies fix a cycle, in preference order:
 
 | # | Strategy | Call-site cost | Best when |
 | --- | --- | --- | --- |
-| 1 | Consumer-side interface | None — no call site changes anywhere | The consumer only calls one or two methods on the producer's type |
+| 1 | Consumer-side interface | Often unchanged direct calls; function types and construction may need edits | The consumer only calls one or two methods on the producer's type |
 | 2 | Extract shared type to a leaf package | Import path changes on both sides | Both packages genuinely need the _same concrete type_, not just its behavior |
 | 3 | `internal/` package | Import path changes for the shared code only | The shared code should never become part of the public API |
 | 4 | Mediator/bridge package | New package, both sides delegate to it | 1–3 don't fit the shape of the coupling |
 
 ### 1. Consumer-side interface (dependency inversion)
 
-- The idiomatic first move, and the cheapest one, because it requires zero changes at any call site anywhere in the codebase.
+- A narrow interface can preserve direct call syntax, but changing a parameter type changes the function type and may affect assignments, wrappers, and construction.
 - If package `x` only _uses_ behavior from package `y` — it calls a method or two on `y`'s concrete type, it doesn't need the type itself — define a small interface in `x` naming just those methods.
 - Go's implicit interface satisfaction means `y`'s existing type already satisfies that interface without `y` importing anything from `x` or even being aware `x`'s interface exists:
 
@@ -53,7 +53,7 @@ type Store struct{ /* ... */ }
 func (s *Store) Store(ctx context.Context, key string, val []byte) error { /* ... */ }
 ```
 
-- `x` no longer imports `y` at all; `y` never imported `x` to begin with.
+- `x` no longer imports `y` for this dependency; `y` may continue importing `x`. That removes one edge from the original cycle, provided the interface signatures do not still mention y-owned types.
 - The cycle is gone because one direction of the dependency graph was never real — `x` never needed `y`'s concrete type, only a name for the behavior it called.
 
 ### 2. Extract shared types to a new/lower package
@@ -101,7 +101,7 @@ order/
 ### Splitting a god package
 
 - Before reaching for a full package split, gopls's `refactor.extract.toNewFile` code action handles the lighter-weight case: moving a top-level declaration to a new file in the _same_ package, which is often enough to make a bloated package navigable without touching its import graph at all.
-- gopls also has an experimental `source.splitPackage` code action that assigns top-level declarations to acyclic components as a starting point for an actual package split — treat its output as a draft partition to review, not a final answer, since it can't know which grouping matches the domain boundaries you actually want.
+- gopls also has an experimental `source.splitPackage` code action that opens a browser visualization of package components and their dependencies. It does not rewrite files; use the graph to plan boundaries and then perform the moves explicitly. See the [official web features reference](https://go.dev/gopls/features/web#sourcesplitpackage-split-package-into-components).
 
 ## Moving Types Across Packages
 
@@ -156,10 +156,10 @@ retract (
 
 | Mistake | Fix | Why |
 | --- | --- | --- |
-| Moving a type by defining `type OldName NewName` (a new named type) instead of `type OldName = NewName` | Use `=` — a real type alias | Without `=` this declares a _distinct_ type; every existing value of the old type now fails to assign to the new one, which is the exact break the alias was supposed to avoid |
+| Confusing a defined type with an alias | `type A B` creates a distinct type; `type A = B` preserves identity | Ordinary moves update callers and remove the old declaration; aliases are only for an explicit compatibility contract |
 | Breaking a cycle by moving the _producer's_ concrete type into the consumer's package | Define the interface in the consumer instead, leave the producer's type where it is | Moving the concrete type usually just relocates the cycle to whatever else the producer's type depends on |
-| Deleting an exported symbol in the same PR that deprecates it | Deprecate first, land, wait for a release cycle, delete later | Callers outside the module have no chance to react to a deprecation notice they never saw before the symbol vanished |
-| Bumping a module to v2 without adding `/v2` to the module path | Add the `/v2` suffix to both `go.mod`'s `module` line and every import path | Without the suffix, Go's module resolution can't tell the new major version apart from the old one, and existing v1 importers silently get pulled onto breaking code on their next `go get -u` |
+| Assuming exported always means externally supported | Check actual consumers and compatibility requirements | Internal moves need no automatic deprecation stage; published contracts may |
+| Bumping a module to v2 without adding `/v2` to the module path | Add the `/v2` suffix to both `go.mod`'s `module` line and every import path | Without the suffix, Go's module resolution can't tell the new major version apart from the old one, and a module-aware v2 tag without the required suffix is generally invalid, rather than silently upgrading existing v1 importers |
 | Reaching for a generic the first time a second, similar-looking function appears | Wait for a third real occurrence with identical logic, or an existing type assertion the generic would remove | Two occurrences are often coincidentally similar rather than logically identical; a premature generic ossifies an abstraction around a coincidence |
 
 ## Cross-References

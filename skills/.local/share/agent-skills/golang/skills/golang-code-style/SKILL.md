@@ -195,7 +195,7 @@ for _, user := range users {
 
 ## Value vs Pointer Arguments
 
-Pass small types (`string`, `int`, `bool`, `time.Time`) by value. Use pointers when mutating, for large structs (~128+ bytes), or when nil is meaningful. [Details](./references/details.md)
+Pass small types (`string`, `int`, `bool`, `time.Time`) by value. Use pointers when mutating, when avoiding a measured large-struct copy cost, or when nil is meaningful. [Details](./references/details.md)
 
 ## Code Organization Within Files
 

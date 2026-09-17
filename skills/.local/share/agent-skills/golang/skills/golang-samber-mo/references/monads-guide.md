@@ -6,7 +6,7 @@
 - [What is a Monad?](#what-is-a-monad)
   - [The Railway Metaphor](#the-railway-metaphor)
 - [Why Monads Are Valuable in Go](#why-monads-are-valuable-in-go)
-  - [1. Compile-Time Nil Safety (Option)](#1-compile-time-nil-safety-option)
+  - [1. Explicit Absence (Option)](#1-explicit-absence-option)
   - [2. Railway-Oriented Error Handling (Result)](#2-railway-oriented-error-handling-result)
   - [3. Composable Pipelines](#3-composable-pipelines)
 - [The Three Core Monads](#the-three-core-monads)
@@ -53,7 +53,7 @@ This is exactly how Result.Map and Result.FlatMap work — errors propagate auto
 
 ## Why Monads Are Valuable in Go
 
-### 1. Compile-Time Nil Safety (Option)
+### 1. Explicit Absence (Option)
 
 Go's type system doesn't distinguish "this pointer could be nil" from "this pointer is always valid". Option[T] makes this explicit:
 
@@ -65,7 +65,7 @@ func FindUser(id string) *User { ... }  // might return nil
 func FindUser(id string) mo.Option[User] { ... }  // caller must handle None
 ```
 
-The type signature is the documentation. No nil pointer panics at runtime — the compiler forces you to handle absence.
+The type signature is the documentation. The compiler does not force handling: `MustGet` on None panics, and an Option of a pointer may contain nil. Use `Get`, `OrElse`, or transformations according to the required absence behavior.
 
 ### 2. Railway-Oriented Error Handling (Result)
 
@@ -132,7 +132,7 @@ Each step is a pure function. The pipeline handles None propagation. Each step i
 
 Use Option when: a value might legitimately be absent (nullable DB columns, optional config, cache lookups).
 
-Don't use Option when: a zero value is meaningful (empty string is valid, 0 is a valid count).
+Use a plain value when its zero value already represents absence. If zero and absent are distinct states, Option can preserve that distinction even when zero is a valid value.
 
 ### Result — Represents Fallibility
 
@@ -173,6 +173,6 @@ Use Either when: both outcomes are valid, neither is an "error". If one side is 
 **Stick with plain Go when:**
 
 - Simple one-step operations where `if err != nil` is clear enough
-- Performance-critical hot paths (monads add thin allocation overhead)
+- Performance-critical hot paths where measurement shows the abstraction adds cost; value-based Option/Result do not inherently require heap allocations
 - Your team isn't familiar with FP concepts (readability > cleverness)
 - The operation has complex error recovery at each step (explicit handling is clearer)

@@ -4,7 +4,7 @@ Logging sensitive information can lead to data exposure and compliance violation
 
 **Rules:**
 
-1. PII MUST NEVER be logged — filter passwords, tokens, emails, and personal data.
+1. Never log passwords or bearer credentials. Minimize personal data according to the project's policy; user IDs, usernames and IP addresses can also be personal data.
 2. Log injection MUST be prevented — sanitize user input before logging.
 3. Error messages MUST NOT expose internals to users — log details server-side, return generic messages.
 
@@ -67,12 +67,13 @@ log.Printf("User logged in: %s\n", username)  // DON'T: No sanitization
 ```go
 import "log/slog"
 
-// Sanitize user input before logging
+// For text sinks, remove control characters including CR/LF.
+// Standard slog JSONHandler also escapes newlines in string attributes.
 func sanitizeLogInput(input string) string {
     // Remove control characters
     var result strings.Builder
     for _, r := range input {
-        if !unicode.IsControl(r) || r == '\n' || r == '\t' {
+        if !unicode.IsControl(r) {
             result.WriteRune(r)
         }
     }
@@ -105,7 +106,7 @@ func dbErrorToHTTP(err error) {
 
 ```go
 func handleDatabaseError(logger *slog.Logger, err error) error {
-    // Log detailed error for debugging
+    // Log only details approved for this sink; errors may contain secrets too.
     logger.Error("database_error", "error", err.Error())
     // Return generic message to client
     return errors.New("database operation failed")
@@ -151,7 +152,7 @@ logger.Info("user_login",
 ## Log Security Checklist
 
 - [ ] No passwords, tokens, or secrets in logs
-- [ ] No PII/PHI in production logs
+- [ ] Personal data minimized and access/retention aligned with the logging policy
 - [ ] Sanitize user input before logging
 - [ ] Use structured logging (JSON)
 - [ ] Implement log level strategy

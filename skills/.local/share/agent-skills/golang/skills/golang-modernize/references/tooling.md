@@ -1,6 +1,6 @@
 # Tooling Modernization
 
-Beyond the Go language itself, suggest updating all non-functional developer tools that improve code quality or security for free. These are low-risk, high-value improvements: CI actions/plugins, linters (e.g. golangci-lint), SAST tools (e.g. gosec, Snyk, Semgrep), vulnerability scanners (e.g. govulncheck, Trivy), Docker base images, test coverage reporters, dependency management bots (e.g. Renovate, Dependabot), etc.
+Tool upgrades can change configuration, diagnostics, generated output, platform requirements, or dependency selection. Keep them within the requested scope and check compatibility; they are not behavior-free changes.
 
 ## Update to the latest Go version
 
@@ -23,9 +23,9 @@ Upgrade to golangci-lint v2. **Migration**: Run `golangci-lint migrate` to conve
 
 ## govulncheck _(works best with Go 1.22+)_
 
-`govulncheck` scans Go code for known vulnerabilities using the Go vulnerability database at `vuln.go.dev`. It analyzes call graphs to report only **reachable** vulnerabilities.
+`govulncheck` scans Go code for known vulnerabilities using the Go vulnerability database at `vuln.go.dev`. It uses static call-graph analysis to distinguish potentially reachable vulnerable symbols from affected dependencies; this is not proof that a vulnerable path executes or that an unreported path is safe.
 
-**Note**: The vulnerability database tracks Go standard library issues starting from Go 1.18. Third-party module vulnerabilities are tracked regardless of Go version. For best results (better call graph analysis), use Go 1.22+.
+Use a govulncheck release compatible with the project's Go toolchain and review source/binary analysis limitations.
 
 ```bash
 # Pin in the module (Go 1.24+)
@@ -40,13 +40,15 @@ go tool govulncheck -mode=binary ./myapp
 
 ## Profile-Guided Optimization (PGO) _(Go 1.21+)_
 
-PGO is generally available since Go 1.21, providing 2-14% performance improvements:
+PGO is generally available since Go 1.21. Gains depend on whether the CPU profile represents the production workload:
 
 ```bash
 # 1. Build and run with CPU profiling
-go test -cpuprofile=default.pgo -bench=. ./...
+go test -run='^$' -cpuprofile=default.pgo -bench=. ./internal/engine
 
-# 2. Place default.pgo in the main package directory
+# 2. Prefer a representative service CPU profile; a single-package benchmark
+#    profile is useful only when it exercises the production hot paths.
+#    Place default.pgo in the main package directory
 # 3. Rebuild — PGO is applied automatically
 go build ./...
 ```
@@ -81,6 +83,6 @@ go doc -ex net/http.Client
 
 ## AI-Driven Code Review in CI
 
-Add an AI agent as a PR reviewer alongside traditional static analysis. When configured with this skill plugin, the agent loads the relevant Go skills — `golang-security` for security review, `golang-concurrency` for concurrency issues, `golang-error-handling` for error handling, and so on — giving it the same expertise as a senior Go reviewer. This catches architectural drift, logic bugs, missing context in errors, and subtle concurrency hazards that linters cannot detect.
+Add an AI agent as a PR reviewer alongside traditional static analysis. When configured with this skill plugin, the agent loads the relevant Go skills — `golang-security` for security review, `golang-concurrency` for concurrency issues, `golang-error-handling` for error handling, and so on — providing project-specific context. It may find issues beyond linting, but can miss bugs or produce false positives; it is optional and does not replace tests or review.
 
 See the `samber/cc-skills-golang@golang-continuous-integration` skill for ready-to-use GitHub Actions assets for both Claude Code and GitHub Copilot.

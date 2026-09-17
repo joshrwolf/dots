@@ -66,15 +66,15 @@
     "assertions": [
       {
         "id": "3.1",
-        "text": "Zero value (iota = 0) is either skipped, named Unknown, Invalid, or Unspecified -- not a meaningful business value"
+        "text": "Chooses zero semantics deliberately; a meaningful safe default or an unknown sentinel can both be correct."
       },
       {
         "id": "3.2",
-        "text": "First meaningful enum value starts at 1 or higher"
+        "text": "Does not renumber an existing enum or imply named integers form a closed set."
       },
       {
         "id": "3.3",
-        "text": "Explains WHY: Go's zero value would silently pass as the first enum member if it were meaningful"
+        "text": "Explains validation requirements when zero or unknown integer values are invalid."
       },
       { "id": "3.4", "text": "Uses a custom type (not raw int or string)" }
     ]
@@ -125,7 +125,7 @@
       },
       {
         "id": "5.3",
-        "text": "Mentions that AddCleanup avoids object resurrection risk (cleanup receives a copy of the value, not the object)"
+        "text": "Prevents callback/argument references from retaining the target; uses KeepAlive where necessary."
       },
       {
         "id": "5.4",
@@ -133,7 +133,7 @@
       },
       {
         "id": "5.5",
-        "text": "Either warns against SetFinalizer or explains why AddCleanup is better"
+        "text": "Keeps explicit Close for deterministic release; cleanup timing and execution are not guaranteed."
       }
     ]
   },
@@ -146,7 +146,7 @@
     "assertions": [
       {
         "id": "6.1",
-        "text": "Uses a buffered channel (chan *Conn with fixed capacity) as the pool mechanism"
+        "text": "Uses the database client's existing pool when appropriate; a custom pool must account for all borrowed and idle connections."
       },
       { "id": "6.2", "text": "Pool has a maximum size / bounded capacity" },
       {
@@ -172,7 +172,7 @@
     "assertions": [
       {
         "id": "7.1",
-        "text": "Uses signal.NotifyContext (not raw signal.Notify with a channel)"
+        "text": "Uses signal.NotifyContext or correctly owned signal.Notify registration."
       },
       { "id": "7.2", "text": "Listens for both SIGINT and SIGTERM" },
       { "id": "7.3", "text": "Starts the HTTP server in a goroutine" },
@@ -182,7 +182,7 @@
       },
       {
         "id": "7.5",
-        "text": "Closes other resources (DB, queues) after server shutdown"
+        "text": "Handles server startup failure, waits for shutdown, and closes resources only after their users stop."
       }
     ]
   },
@@ -208,7 +208,7 @@
       { "id": "8.4", "text": "Defers rows.Close() immediately after query" },
       {
         "id": "8.5",
-        "text": "Mentions OOM risk or memory concern as motivation for streaming"
+        "text": "Checks rows.Err, scan and write/encoding errors; does not report a partial export as successful completion."
       }
     ]
   },
@@ -356,7 +356,7 @@
   {
     "id": 14,
     "name": "make-illegal-states-unrepresentable",
-    "description": "Tests whether the model uses types to enforce invariants rather than runtime validation",
+    "description": "Uses a validated email type without false constructor enforcement.",
     "prompt": "I have a Go function that sends notifications. It accepts an email address as a string parameter. Sometimes callers pass invalid emails and we only catch it at send time. How can I prevent invalid emails from reaching the send function?",
     "trap": "Without the skill, the model typically adds validation at the top of the send function. The skill says to make illegal states unrepresentable using types.",
     "assertions": [
@@ -366,7 +366,7 @@
       },
       {
         "id": "14.2",
-        "text": "Email can only be created via a constructor (NewEmail) that validates the address"
+        "text": "Constructor validates the address but an exported struct still permits Email{}; handles its invalid zero state."
       },
       {
         "id": "14.3",
@@ -378,7 +378,7 @@
       },
       {
         "id": "14.5",
-        "text": "The unexported field prevents creating an Email without validation (cannot set address from outside the package)"
+        "text": "Unexported fields restrict direct assignment, not zero construction; validation must account for that."
       }
     ]
   },
@@ -395,7 +395,7 @@
       },
       {
         "id": "15.2",
-        "text": "Recommends that the service and repository layers trust the data is already valid"
+        "text": "Enforces domain invariants on paths that bypass HTTP too; trusts only constraints actually established at the boundary."
       },
       {
         "id": "15.3",
@@ -468,16 +468,16 @@
     "assertions": [
       {
         "id": "18.1",
-        "text": "Uses int64 (cents) not float64 for the amount -- avoids floating point precision issues"
+        "text": "Uses an exact amount representation with explicit currency scale; not all currencies use cents."
       },
       { "id": "18.2", "text": "Includes a currency field" },
       {
         "id": "18.3",
-        "text": "Fields are unexported (immutable value object, can only be created via constructor)"
+        "text": "Uses unexported fields and value operations while acknowledging Go still permits zero values."
       },
       {
         "id": "18.4",
-        "text": "Add method validates currency match before addition"
+        "text": "Validates currency match and checks arithmetic overflow before addition."
       },
       {
         "id": "18.5",

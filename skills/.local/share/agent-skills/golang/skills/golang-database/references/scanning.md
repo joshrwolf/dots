@@ -26,7 +26,7 @@ err := db.SelectContext(ctx, &users, "SELECT id, name, email, deleted_at FROM us
 With pgx (v5+), use `pgx.CollectRows` for automatic struct mapping:
 
 ```go
-rows, err := pool.Query(ctx, "SELECT id, name, email FROM users WHERE active = true")
+rows, err := pool.Query(ctx, "SELECT id, name, email, deleted_at FROM users WHERE active = true")
 if err != nil {
     return fmt.Errorf("querying users: %w", err)
 }

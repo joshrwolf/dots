@@ -18,7 +18,7 @@ Severity: Critical, High, Medium, Low
 ## Code Execution
 
 - [ ] **Critical** No `exec.Command()` with shell arguments — metacharacters enable injection
-- [ ] **Critical** No eval, reflection on untrusted input — arbitrary code execution risk
+- [ ] **Critical** No execution of untrusted code or unsafe deserialization hooks; ordinary reflection-based typed decoding does not itself execute attacker-supplied code
 - [ ] **Critical** No deserialization of untrusted data — can trigger arbitrary constructors
 
 ## Cryptography
@@ -54,7 +54,7 @@ Severity: Critical, High, Medium, Low
 ## Dependency Security
 
 - [ ] **High** `govulncheck` passes — catches known CVEs in your dependency tree
-- [ ] **High** Dependencies updated regularly — unpatched deps are the #1 attack vector
+- [ ] **High** Dependencies updated regularly — unpatched reachable vulnerabilities can expose the application
 - [ ] **Medium** Third-party libraries reviewed for security posture
 
 ## HTTP Security Headers

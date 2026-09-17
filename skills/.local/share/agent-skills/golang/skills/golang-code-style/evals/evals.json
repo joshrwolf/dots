@@ -66,28 +66,28 @@
       },
       {
         "id": "3.4",
-        "text": "No struct literal in the file uses positional field syntax"
+        "text": "Does not change visibility, field names, or ownership merely to enforce a default style rule."
       }
     ]
   },
   {
     "id": 4,
     "name": "early-return-not-nested",
-    "description": "Validation uses early returns; happy path at minimal indentation despite prompt asking for nesting",
+    "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write a Go function ProcessOrder in package `orders` that takes an order struct (define it with fields: ID string, Items []Item, Status string, CustomerID string). The function should validate that the ID is not empty, that there is at least one item, that the status is 'pending', that the customer exists (simulate with a lookup function), compute the total price, apply a discount if total > 100, and return the final total with an error. Write it with deeply nested if-else blocks.",
-    "trap": "Model follows the prompt's instruction to use deeply nested if-else blocks, burying the happy path inside 4+ levels of indentation",
+    "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "4.1",
-        "text": "Validation checks (empty ID, no items, wrong status) use early return pattern — each check returns an error immediately rather than nesting the rest of the function inside an else block"
+        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
       },
       {
         "id": "4.2",
-        "text": "The happy path (compute total, apply discount, return) is at the top level of the function body (indentation level 1), not nested inside multiple if blocks"
+        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
       },
       {
         "id": "4.3",
-        "text": "The function has at most 2 levels of indentation for the main logic (excluding the error-check if blocks which return early)"
+        "text": "Preserves validation conditions, error paths, and evaluation order."
       }
     ]
   },
@@ -132,67 +132,67 @@
   {
     "id": 7,
     "name": "options-struct-not-many-params",
-    "description": "Groups params into options struct, context.Context first",
+    "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write a Go function SendNotification in package `notify` that sends a notification. It needs these parameters: ctx context.Context, userID string, message string, channel string (email/sms/push), priority int, retryCount int, dryRun bool, templateID string, metadata map[string]string, callback func(error). Put all parameters directly in the function signature.",
-    "trap": "Model follows the prompt's instruction to put all 10 parameters directly in the function signature, creating an unusable API",
+    "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "7.1",
-        "text": "context.Context is the first parameter in the function signature"
+        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
       },
       {
         "id": "7.2",
-        "text": "The function uses an options struct (or similar grouping) to reduce the parameter count to 4 or fewer in the main function signature — not all 10 parameters listed individually"
+        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
       },
       {
         "id": "7.3",
-        "text": "The options struct groups related configuration (channel, priority, retryCount, dryRun, templateID, metadata, callback) into a single parameter"
+        "text": "Preserves validation conditions, error paths, and evaluation order."
       }
     ]
   },
   {
     "id": 8,
     "name": "value-vs-pointer-params",
-    "description": "Value params for small types; pointers only for mutation — not pointer everything",
+    "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write Go functions in package `users`: (1) FormatName that takes a first name string and last name string and returns the formatted full name, (2) UpdateAge that modifies a User struct's age field, (3) FindUser that takes a user ID string and returns a User pointer, (4) CompareUsers that checks if two User structs (each about 32 bytes with Name string and Age int) are equal. Use pointer parameters for all functions.",
-    "trap": "Model follows the prompt's instruction to use pointer parameters for all functions, including small value types like string and int where pointers only add indirection",
+    "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "8.1",
-        "text": "FormatName takes string parameters by value (not *string) — strings are small fixed-size types"
+        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
       },
       {
         "id": "8.2",
-        "text": "UpdateAge takes a *User pointer parameter because it mutates the struct"
+        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
       },
       {
         "id": "8.3",
-        "text": "CompareUsers takes User structs by value (not *User) because it only reads them and they are small (<128 bytes)"
+        "text": "Preserves validation conditions, error paths, and evaluation order."
       }
     ]
   },
   {
     "id": 9,
     "name": "unexported-internal-helpers",
-    "description": "Helper functions called only within the same package stay unexported; exporting is a commitment",
+    "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write a Go file `parser.go` in package `config`. Include: an exported ParseConfig function that reads a file path and returns a *Config struct; an exported ValidateConfig function that checks required fields; a helper function that tokenizes a raw config string (used only by ParseConfig); a helper function that resolves environment variable references in values (used by ParseConfig and ValidateConfig); a helper function that formats a field path for error messages (used only in error messages inside ValidateConfig). Make all functions exported for potential future reuse from other packages.",
-    "trap": "Model follows the prompt's instruction to export all functions, leaking tokenizer, env resolver, and error formatter as public API — any future change to them becomes a breaking change",
+    "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "9.1",
-        "text": "The tokenizer helper (used only by ParseConfig) is unexported (lowercase name)"
+        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
       },
       {
         "id": "9.2",
-        "text": "The error message formatter (used only inside ValidateConfig) is unexported (lowercase name)"
+        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
       },
       {
         "id": "9.3",
-        "text": "ParseConfig and ValidateConfig remain exported — they are the true public API"
+        "text": "Preserves validation conditions, error paths, and evaluation order."
       },
       {
         "id": "9.4",
-        "text": "The env variable resolver may be exported OR unexported — both are defensible since it's used by two functions, but the model should NOT export all helpers blindly"
+        "text": "Does not change visibility, field names, or ownership merely to enforce a default style rule."
       }
     ]
   },
@@ -301,36 +301,36 @@
       },
       {
         "id": "14.2",
-        "text": "Row accumulation uses strings.Builder (WriteString or WriteByte in a loop) — NOT result += row or result = result + row in the loop body"
+        "text": "Uses encoding/csv.Writer with correct escaping and checks Writer.Error; may back it with strings.Builder or bytes.Buffer."
       },
       {
         "id": "14.3",
-        "text": "strings.Builder is declared once before the loop and .String() is called after the loop to produce the final output"
+        "text": "Preserves fields containing commas, quotes, or newlines."
       },
       {
         "id": "14.4",
-        "text": "The function does NOT contain '+=' applied to a string variable inside a loop body"
+        "text": "Avoids quadratic concatenation without penalizing an appropriate standard CSV writer."
       }
     ]
   },
   {
     "id": 15,
     "name": "named-fields-override-positional-prompt",
-    "description": "Uses named struct fields even when prompt explicitly requests positional syntax",
+    "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write Go structs in package `config` using positional field syntax for brevity. Create: Point{float64, float64}, Color{uint8, uint8, uint8, uint8}, and ServerConfig{string, int, bool, time.Duration, time.Duration, *tls.Config}. Positional syntax is shorter and the field order is obvious from the type definition.",
-    "trap": "Model follows the prompt's positional syntax instruction, creating brittle literals that silently break when struct fields are added or reordered",
+    "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "15.1",
-        "text": "Point literal uses named fields (X:, Y: or similar) — NOT Point{1.0, 2.0}"
+        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
       },
       {
         "id": "15.2",
-        "text": "Color literal uses named fields (R:, G:, B:, A: or similar) — NOT Color{255, 128, 0, 255}"
+        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
       },
       {
         "id": "15.3",
-        "text": "ServerConfig literal uses named fields — NOT positional — because positional breaks when fields are added or reordered"
+        "text": "Preserves validation conditions, error paths, and evaluation order."
       },
       {
         "id": "15.4",
@@ -341,25 +341,25 @@
   {
     "id": 16,
     "name": "early-return-override-nested-prompt",
-    "description": "Uses early returns despite prompt explicitly requesting nested if-else validation pattern",
+    "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write a Go function ValidateAndProcess in package `pipeline` that validates an input struct (check: non-empty Name, Age > 0, valid Email containing '@', Status is 'active' or 'pending', non-nil Permissions slice, at least one Permission). If all validations pass, compute a score, apply modifiers, and return the result. Use the traditional if-else pattern: if valid { if next_valid { if next { ... } else { error } } else { error } } else { error }. This makes the success path clear by keeping it inside the innermost block.",
-    "trap": "Model follows the prompt's explicit nested if-else pattern, nesting the success path 5+ levels deep",
+    "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "16.1",
-        "text": "Each validation check uses early return — if Name empty return error, if Age <= 0 return error, etc."
+        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
       },
       {
         "id": "16.2",
-        "text": "The function does NOT contain nested if-else blocks for validation (no else clause after a validation if)"
+        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
       },
       {
         "id": "16.3",
-        "text": "The happy path (score computation) is at indentation level 1, not nested inside 5+ levels"
+        "text": "Preserves validation conditions, error paths, and evaluation order."
       },
       {
         "id": "16.4",
-        "text": "Maximum indentation depth for the main logic is 2 (function body + one loop or if)"
+        "text": "Does not change visibility, field names, or ownership merely to enforce a default style rule."
       }
     ]
   },
@@ -376,7 +376,7 @@
       },
       {
         "id": "17.2",
-        "text": "The function has at most 4 parameters in its signature (ctx + db/service + maybe 1 other + options struct)"
+        "text": "Groups related inputs when that improves the API; no fixed maximum parameter count."
       },
       {
         "id": "17.3",
@@ -384,7 +384,7 @@
       },
       {
         "id": "17.4",
-        "text": "The logger is either in the options struct or a field on a Service receiver — NOT a standalone function parameter alongside ctx"
+        "text": "Places long-lived dependencies on a service or passes them explicitly according to the API."
       }
     ]
   },
@@ -470,50 +470,50 @@
   {
     "id": 21,
     "name": "switch-override-else-prompt",
-    "description": "Uses switch or early returns despite prompt explicitly requiring else after every if",
+    "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write a Go function GetPricingTier in package `billing` that takes a customer struct with fields: plan string, monthlySpend float64, isEnterprise bool, hasCustomContract bool, employeeCount int, region string. Return the pricing tier string. Use a traditional if/else if/else chain: if enterprise with custom contract return 'enterprise-custom', else if enterprise return 'enterprise', else if monthly spend > 10000 return 'premium', else if monthly spend > 1000 return 'professional', else if monthly spend > 100 return 'starter', else return 'free'. Make sure to use else after every if.",
-    "trap": "Model follows the prompt's explicit instruction to use else after every if, creating an if-else chain instead of cleaner switch or early returns",
+    "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "21.1",
-        "text": "The function uses either a switch statement or early returns — NOT an if/else-if/else chain"
+        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
       },
       {
         "id": "21.2",
-        "text": "There is NO 'else' keyword in the function body (or at most one for a final default case in switch)"
+        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
       },
       {
         "id": "21.3",
-        "text": "If using early returns: each condition returns immediately without an else block"
+        "text": "Preserves validation conditions, error paths, and evaluation order."
       },
       {
         "id": "21.4",
-        "text": "If using switch: uses tagless switch (switch { case ... }) for the multi-condition comparison"
+        "text": "Does not change visibility, field names, or ownership merely to enforce a default style rule."
       }
     ]
   },
   {
     "id": 22,
     "name": "minimal-exports",
-    "description": "Internal helpers unexported; only the true public API is exported",
+    "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write a Go file `helpers.go` in package `httputil`. Export everything for maximum reusability across packages. Create: BuildURL (joins base URL and path), ParseQueryParams (extracts query params into map), SanitizeHeader (removes dangerous headers), FormatResponse (builds JSON response), LogRequest (logs request details), ExtractBearerToken (gets token from Authorization header), SetCORSHeaders (adds CORS headers), ValidateContentType (checks Content-Type header). Make all functions exported and all helper types exported too.",
-    "trap": "Model follows the prompt's instruction to export everything, leaking internal helpers into the package API and coupling consumers to implementation details",
+    "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "22.1",
-        "text": "At least 2 functions that are purely internal helpers are unexported (lowercase) — not everything is exported"
+        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
       },
       {
         "id": "22.2",
-        "text": "Any internal helper types or structs used only within the package are unexported"
+        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
       },
       {
         "id": "22.3",
-        "text": "The truly public API functions (BuildURL, ParseQueryParams, etc.) remain exported"
+        "text": "Preserves validation conditions, error paths, and evaluation order."
       },
       {
         "id": "22.4",
-        "text": "No function that is only called by other functions in the same file is exported unnecessarily"
+        "text": "Does not change visibility, field names, or ownership merely to enforce a default style rule."
       }
     ]
   },
@@ -530,11 +530,11 @@
       },
       {
         "id": "23.2",
-        "text": "FilterActiveUsers does NOT use make([]User, len(users)) with a length argument — that would prepend len(users) zero-valued elements before any append"
+        "text": "Does not prepend unwanted zero elements; make with length is valid when filling by index."
       },
       {
         "id": "23.3",
-        "text": "EnrichUsers preallocates with make([]EnrichedUser, 0, len(users)) since every user produces exactly one enriched user (known output size)"
+        "text": "Allocates the known output size with either length and indexing or capacity and append."
       },
       {
         "id": "23.4",
@@ -545,25 +545,25 @@
   {
     "id": 24,
     "name": "early-continue-not-nesting",
-    "description": "Loop validation failures use continue; happy path at shallowest indentation",
+    "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write a Go function TransformData in package `etl` that takes a slice of RawRecord structs (each ~200 bytes with many string fields). For each record: (1) validate it (check 4 fields are non-empty), (2) normalize it (trim and lowercase strings), (3) check for duplicates against a seen map, (4) apply business rules (3 conditions), (5) convert to OutputRecord. Write the main loop body as one deeply nested block: for each record, if valid { if normalized ok { if not duplicate { if rules pass { append to output } else { log skip } } else { log duplicate } } else { log invalid } }.",
-    "trap": "Model follows the prompt's deeply nested loop body pattern, burying the happy path inside 4+ levels of indentation",
+    "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "24.1",
-        "text": "Validation failures use 'continue' to skip the record — NOT nested else blocks inside the loop"
+        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
       },
       {
         "id": "24.2",
-        "text": "The loop body has at most 2 levels of indentation (loop + one if/continue)"
+        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
       },
       {
         "id": "24.3",
-        "text": "At least one helper function is extracted (e.g., validate, normalize, or applyRules) to keep the loop body short"
+        "text": "Preserves validation conditions, error paths, and evaluation order."
       },
       {
         "id": "24.4",
-        "text": "The happy path (convert and append) is at the shallowest indentation level within the loop, not nested 4+ levels deep"
+        "text": "Does not change visibility, field names, or ownership merely to enforce a default style rule."
       }
     ]
   }

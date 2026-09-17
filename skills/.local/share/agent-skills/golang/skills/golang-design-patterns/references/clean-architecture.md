@@ -165,7 +165,7 @@ func (r *OrderPostgres) Save(ctx context.Context, order *entity.Order) error {
 package handler
 
 type OrderHandler struct {
-    placeOrder *usecase.PlaceOrderUseCase
+    placeOrder *order.PlaceOrderUseCase
 }
 
 func (h *OrderHandler) HandlePlaceOrder(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +173,8 @@ func (h *OrderHandler) HandlePlaceOrder(w http.ResponseWriter, r *http.Request) 
 
     if err := h.placeOrder.Execute(r.Context(), orderID); err != nil {
         // Map domain errors to HTTP status codes
-        http.Error(w, err.Error(), mapToHTTPStatus(err))
+        status, message := publicHTTPError(err) // translate; do not expose backend details
+        http.Error(w, message, status)
         return
     }
 
@@ -183,7 +184,9 @@ func (h *OrderHandler) HandlePlaceOrder(w http.ResponseWriter, r *http.Request) 
 
 ## Key Principle
 
-Interfaces live where they are consumed, not where they are implemented. The `usecase/order/port.go` file defines `OrderRepository` — the adapter in `adapter/repository/` implements it. This keeps the use case layer free from infrastructure imports.
+Interfaces live where they are consumed, not where they are implemented. The `internal/order/port.go` file defines `OrderRepository` — the adapter in `adapter/repository/` implements it. This keeps the use case layer free from infrastructure imports.
+
+The payment-plus-save snippets show dependency direction, not an atomic transaction across remote services. Production charging requires idempotency and a durable recovery/compensation strategy if persistence fails after a charge. Omitted repository and service methods must implement the declared interfaces.
 
 ## Wiring
 

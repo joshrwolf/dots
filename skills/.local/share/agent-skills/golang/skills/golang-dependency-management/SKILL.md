@@ -46,13 +46,13 @@ Before proposing a dependency, evaluate:
 - Are there well-known alternatives?
 - What it does and why it's needed?
 
-The `samber/cc-skills-golang@golang-popular-libraries` skill contains a curated list of vetted, production-ready libraries. Prefer recommending packages from that list. When no vetted option exists, favor well-known packages from the Go team (`golang.org/x/...`) or established organizations over obscure alternatives.
+The `golang-popular-libraries` skill lists candidates, not a security certification. Verify suitability, maintenance, and compatibility for the project's resolved version.
 
 ## Key Rules
 
-- `go.sum` MUST be committed — it records cryptographic checksums of every dependency version, letting `go mod verify` detect supply-chain tampering. Without it, a compromised proxy could silently substitute malicious code
+- Commit `go.sum` when present. Downloads are checked against recorded hashes and, for eligible public modules, the checksum database. `go mod verify` detects changes to downloaded module-cache content; it does not validate vendored files or certify the code as safe
 - `govulncheck ./...` or `go tool govulncheck ./...` before every release — catches known CVEs in your dependency tree before they reach production
-- Maintenance status, license compatibility, and stdlib alternatives are important considerations before adding a dependency — every dependency increases attack surface, maintenance burden, and binary size
+- Maintenance status, license compatibility, and stdlib alternatives are important considerations before adding a dependency — dependencies can increase attack surface and maintenance burden; linked code, not every module in go.mod, affects binary size
 - `go mod tidy` before every commit that changes dependencies — removes unused modules and adds missing ones, keeping go.mod honest
 
 ## go.mod & go.sum
@@ -63,7 +63,7 @@ The `samber/cc-skills-golang@golang-popular-libraries` skill contains a curated 
 | ----------------- | -------------------------------------------- |
 | `go mod tidy`     | Add missing deps, remove unused ones         |
 | `go mod download` | Download modules to local cache              |
-| `go mod verify`   | Verify cached modules match go.sum checksums |
+| `go mod verify`   | Check cached module content has not changed since download |
 | `go mod vendor`   | Copy deps into `vendor/` directory           |
 | `go mod edit`     | Edit go.mod programmatically (scripts, CI)   |
 | `go mod graph`    | Print the module requirement graph           |
@@ -71,7 +71,7 @@ The `samber/cc-skills-golang@golang-popular-libraries` skill contains a curated 
 
 ### Vendoring
 
-Use `go mod vendor` when you need hermetic builds (no network access), reproducibility guarantees beyond checksums, or when deploying to environments without module proxy access. CI pipelines and Docker builds sometimes benefit from vendoring. Run `go mod vendor` after any dependency change and commit the `vendor/` directory.
+Use `go mod vendor` when the project needs checked-in dependency source or builds without module-proxy access. Vendoring alone does not make builds hermetic: toolchains, generators, cgo libraries, and other inputs still need control. Regenerate and review `vendor/` after dependency changes when the project tracks it.
 
 ## Installing & Upgrading Dependencies
 
@@ -81,15 +81,15 @@ Use `go mod vendor` when you need hermetic builds (no network access), reproduci
 go get github.com/google/uuid          # Latest version
 go get github.com/google/uuid@v1.6.0   # Specific version
 go get github.com/google/uuid@latest   # Explicitly latest
-go get github.com/google/uuid@<commit> # Specific commit (pseudo-version)
+go get github.com/google/uuid@abcdef123456 # Specific commit (pseudo-version)
 ```
 
-Before pinning a version, inspect the module's available versions, importers, and known vulnerabilities on pkg.go.dev → See `golang-go-doc` skill.
+Inspect versions with `go list -m -versions`, resolved APIs with `go doc`, and known vulnerabilities with `govulncheck`. Public package pages provide additional context.
 
 ### Upgrading
 
 ```bash
-go get -u ./...            # Upgrade ALL direct+indirect deps to latest minor/patch
+go get -u ./...            # Upgrade dependencies of matched packages (use -t for test dependencies)
 go get -u=patch ./...      # Upgrade to latest patch only (safer)
 go get github.com/pkg@v1.5 # Upgrade specific package
 ```
@@ -152,7 +152,7 @@ tool (
 
 For `go 1.27` or newer, `go mod tidy` auto-merges duplicate `require` blocks and enforces a two-block layout (direct dependencies, then indirect), preserving existing comments — no manual cleanup needed after a merge that introduces a second `require` block.
 
-For Go <1.24 only, use the legacy `tools.go` blank-import workaround:
+For Go <1.24, an existing `tools.go` convention remains an option. Pin tool versions compatible with that toolchain; current tool releases may require newer Go:
 
 ```go
 //go:build tools
@@ -196,7 +196,7 @@ For future Go versions, use the project's intended target version. Do not use AP
 
 - → See `samber/cc-skills-golang@golang-continuous-integration` skill for Dependabot/Renovate CI setup
 - → See `samber/cc-skills-golang@golang-security` skill for vulnerability scanning with govulncheck
-- → See `samber/cc-skills-golang@golang-popular-libraries` skill for vetted library recommendations
+- → See `samber/cc-skills-golang@golang-popular-libraries` skill for library candidates
 
 ## Quick Reference
 
@@ -228,6 +228,6 @@ go mod why -m github.com/some/module
 # Inspect dependency graph
 go mod graph
 
-# Verify checksums
+# Verify downloaded module-cache content
 go mod verify
 ```

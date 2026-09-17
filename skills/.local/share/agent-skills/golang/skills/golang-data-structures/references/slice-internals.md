@@ -2,24 +2,21 @@
 
 ## Memory Layout
 
-A slice is a 24-byte header (3 machine words):
+A slice header uses 3 machine words (24 bytes on 64-bit targets):
 
-- **Pointer** — points to backing array (heap-allocated)
+- **Pointer** — points to backing array (which may be stack- or heap-allocated)
 - **Length** — number of elements in use
 - **Capacity** — allocated size of backing array
 
-Assigning or passing a slice copies the 24-byte header, not the backing array. Both the original and copy point to the same underlying data—mutations are visible to both.
+Assigning or passing a slice copies the header, not the backing array. Both the original and copy point to the same underlying data—mutations are visible to both.
 
 ## Capacity Growth
 
-When `append` exceeds capacity:
-
-- `oldCap < 256`: double capacity
-- `oldCap ≥ 256`: grow ~25% (`oldCap + (oldCap + 3*256) / 4`)
+When `append` exceeds capacity, the runtime allocates storage and copies the existing elements. Current implementations transition from roughly doubling small capacities toward smaller proportional growth for large slices. Bulk appends and allocator size classes affect the final capacity; no fixed growth factor is guaranteed.
 
 ### Growth Cost
 
-Each growth is O(n) — the entire array is copied to a new location. For a slice growing from 0 to N elements one at a time, the amortized cost per append is O(1), but the total copies are roughly 2N. **Preallocation eliminates all intermediate copies:**
+A reallocation copies O(len(s)) elements. Repeated one-element appends have amortized O(1) cost under geometric growth, but there is no universal “2N copies” bound for the current growth policy. Useful preallocation avoids intermediate copies:
 
 ```go
 // Known size — direct indexing
@@ -41,9 +38,9 @@ for _, v := range input {
 | --- | --- |
 | **Sort** | `Sort`, `SortFunc`, `SortStableFunc`, `IsSorted` |
 | **Search** | `BinarySearch`, `BinarySearchFunc`, `Contains`, `Index`, `IndexFunc` |
-| **Mutate** | `Insert`, `Delete`, `Replace`, `Compact`, `Reverse`, `Grow`, `Clip` |
-| **Create** | `Concat` (1.22+), `Repeat` (1.23+), `Chunk` (1.23+) |
-| **Compare** | `Clone`, `Equal`, `EqualFunc`, `Compare`, `DeleteFunc` |
+| **Mutate** | `Insert`, `Delete`, `DeleteFunc`, `Replace`, `Compact`, `Reverse`, `Grow`, `Clip` |
+| **Create** | `Clone`, `Concat` (1.22+), `Repeat` (1.23+), `Chunk` (1.23+) |
+| **Compare** | `Equal`, `EqualFunc`, `Compare`, `CompareFunc` |
 
 ## `copy()` vs `append()` vs `slices.Clone()`
 
@@ -51,5 +48,5 @@ for _, v := range input {
 | --------------------- | -------------------------------- |
 | `copy(dst, src)`      | Copying into pre-allocated slice |
 | `append(dst, src...)` | Appending to a slice             |
-| `slices.Clone(s)`     | Creating independent copy        |
+| `slices.Clone(s)`     | Shallow copy; elements may still refer to shared data        |
 | `s[:len(s):len(s)]`   | Preventing append aliasing       |

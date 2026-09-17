@@ -1,6 +1,6 @@
 # Threat Modeling Guide
 
-Systematic methodology for identifying and prioritizing security threats in Go applications.
+Go-specific threat examples, trust boundaries, and optional frameworks for a requested security analysis. Use the project's risk model; diagrams, STRIDE, and numerical scoring are not prerequisites for reviewing code.
 
 ## Table of Contents
 
@@ -11,12 +11,12 @@ Systematic methodology for identifying and prioritizing security threats in Go a
   - [Example: SQL Injection in Login Handler](#example-sql-injection-in-login-handler)
 - [Trust Boundary Analysis](#trust-boundary-analysis)
 - [OWASP Top 10 Mapping for Go](#owasp-top-10-mapping-for-go)
-- [Conducting a Threat Model](#conducting-a-threat-model)
+- [Choosing Analysis and Validation](#choosing-analysis-and-validation)
 - [Vulnerability Severity Matrix](#vulnerability-severity-matrix)
 
 ## STRIDE Methodology
 
-Apply STRIDE to every element in your system's data flow diagram. Each element type is susceptible to specific threat categories:
+When STRIDE is requested or useful for coverage, this matrix relates threat categories to data-flow elements. It is a reference, not a required traversal of every component:
 
 ### STRIDE per Element Matrix
 
@@ -32,10 +32,10 @@ Apply STRIDE to every element in your system's data flow diagram. Each element t
 **Spoofing** — Can an attacker impersonate a user or service?
 
 ```go
-// Check: Is every endpoint behind authentication?
+// Which endpoints require authentication, and which are deliberately public?
 // Check: Are JWT tokens validated (algorithm, issuer, expiry)?
-// Check: Is mTLS configured for service-to-service calls?
-r.Use(authMiddleware) // every route group must have auth
+// Does service authentication match the deployment trust model?
+r.Use(authMiddleware) // apply to a route group that requires authentication
 ```
 
 **Tampering** — Can data be modified in transit or at rest?
@@ -67,9 +67,9 @@ logger.Info("action_performed",
 
 ```go
 // Check: Are error messages generic to clients?
-// Check: Are logs free of PII?
+// Are logged fields limited to the intended audience and retention policy?
 // Check: Is TLS configured (no InsecureSkipVerify)?
-// Check: Are debug endpoints (pprof) disabled in production?
+// Are diagnostic endpoints restricted to authorized operators?
 ```
 
 **Denial of Service** — Can the service be overwhelmed?
@@ -101,7 +101,7 @@ if !user.HasPermission("admin:write") {
 
 ## DREAD Risk Scoring
 
-Score each identified threat to prioritize remediation:
+Use DREAD when the project requests that scoring method. The scales below are illustrative; their arithmetic is not a calibrated measure of risk. Explain the concrete impact and attack prerequisites behind any score:
 
 | Factor | 1-3 (Low) | 4-6 (Medium) | 7-10 (High) |
 | --- | --- | --- | --- |
@@ -123,7 +123,7 @@ Score each identified threat to prioritize remediation:
 | Affected Users  | 10    | All users with accounts                    |
 | Discoverability | 7     | Automated scanners detect easily           |
 
-**DREAD Score: 8.6 — Critical. Immediate remediation required.**
+**Illustrative DREAD score: 8.6.** This assumes the broad database privileges and exposure listed above; actual severity depends on the reachable query, database role, and affected data.
 
 ---
 
@@ -152,7 +152,7 @@ Internet ──→ [LB/WAF] ──→ [Go HTTP Server]                   │
                           External APIs (mTLS)
 ```
 
-Every arrow crossing the trust boundary needs:
+For each relevant boundary, distinguish deliberately public access from operations requiring an authenticated identity. The useful distinctions are:
 
 1. **Authentication** — who is making this request?
 2. **Input validation** — is the data well-formed and within bounds?
@@ -161,6 +161,8 @@ Every arrow crossing the trust boundary needs:
 ---
 
 ## OWASP Top 10 Mapping for Go
+
+The categories below refer to the OWASP Top 10 **2021** edition, not a version-independent taxonomy.
 
 | Rank | Vulnerability | STRIDE | Go Defense |
 | --- | --- | --- | --- |
@@ -177,21 +179,17 @@ Every arrow crossing the trust boundary needs:
 
 ---
 
-## Conducting a Threat Model
+## Choosing Analysis and Validation
 
-1. **Scope** — identify system boundaries, assets to protect, and threat actors
-2. **Diagram** — draw a data flow diagram with trust boundaries (external entities, processes, data stores, data flows)
-3. **STRIDE** — apply STRIDE to each DFD element using the matrix above
-4. **Score** — rate each threat with DREAD
-5. **Prioritize** — fix Critical/High first; document accepted risks with explicit justification
-6. **Verify** — run `gosec ./...`, `govulncheck ./...`, `go test -race ./...` to validate mitigations
-7. **Iterate** — update the model when the system changes (new endpoints, new data flows, new integrations)
+Anchor findings in a reachable attack path, the affected asset, and the controls already in place. Use a diagram when relationships or trust boundaries are difficult to follow; use formal taxonomies and scoring when the requested deliverable calls for them.
+
+Validation should address the claimed mitigation. Authorization flaws need cross-user or cross-tenant cases; input limits need boundary cases; races need exercised concurrent paths. Linters and vulnerability scans cover particular classes of defects, not the security of the whole design.
 
 ---
 
 ## Vulnerability Severity Matrix
 
-Use when no DREAD data is available — cross-reference impact with exploitability:
+An illustrative qualitative matrix for projects that use this approach. Apply the project's severity definitions and explain impact and exploitability rather than treating a matrix cell as proof:
 
 | Impact \ Exploitability | Easy     | Moderate | Difficult |
 | ----------------------- | -------- | -------- | --------- |

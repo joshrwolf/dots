@@ -40,7 +40,7 @@ for _, v := range []string{"a", "b", "c"} {
 
 ### Go 1.22+: per-iteration scoping
 
-Go 1.22 changed loop variable semantics — each iteration creates a new variable, so the closure bug no longer occurs. However, the old behavior applies if your module targets `go 1.21` or earlier in `go.mod` — check your `go.mod` version.
+Go 1.22 changed loop variables declared by the loop (`:=`) to be per-iteration. Assignment to predeclared variables (`=`) still reuses them. However, the old behavior applies if your module targets `go 1.21` or earlier in `go.mod` — check your `go.mod` version.
 
 ## Storing Pointer to Loop Variable
 
@@ -62,7 +62,7 @@ for i := range items {
 }
 ```
 
-In Go 1.22+, `&item` is safe because each iteration has its own `item`. But taking `&items[i]` is still clearer and avoids a copy.
+In Go 1.22+ loops declaring `item` with `:=`, `&item` points to a distinct copy. `&items[i]` points to the original element. Choose according to whether mutations should affect the source; these are not interchangeable.
 
 ## Slice Header vs Backing Array
 
@@ -168,7 +168,7 @@ for k, v := range m {
 Deleting from a slice during iteration requires index management:
 
 ```go
-// ✗ Bad — skips elements after deletion
+// ✗ Bad — skips elements and may panic as the slice shrinks
 for i, v := range items {
     if shouldDelete(v) {
         items = append(items[:i], items[i+1:]...) // shifts elements, next iteration skips one
@@ -188,7 +188,7 @@ items = slices.DeleteFunc(items, shouldDelete)
 
 ## Comparing Slices and Maps
 
-Slice/map comparison MUST use `slices.Equal`/`maps.Equal` (Go 1.21+), NEVER `==` (which doesn't compile for slices). Use standard library helpers:
+Slices and maps support comparison only to nil, not to another slice/map. Use slices.Equal/maps.Equal for comparable elements/values, or EqualFunc for custom semantics. These helpers treat nil and empty collections as equal; preserve any contract that distinguishes them:
 
 ```go
 import (

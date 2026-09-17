@@ -35,13 +35,13 @@ Reslicing to zero length retains the backing array, turning what would be a new 
 // Bad — allocates new slice, old one becomes garbage
 mode = []T{item}
 
-// Good — reuses existing backing array (0 allocations)
+// Reuses capacity when it suffices; earlier users must not retain this buffer
 mode = append(mode[:0], item)
 ```
 
 ### Direct indexing vs append
 
-When the output size equals the input size, use `make([]T, len(input))` with direct assignment instead of `make([]T, 0, len(input))` with `append`. Direct assignment avoids per-element bounds checking and length increment:
+When the output size equals the input size, use `make([]T, len(input))` with direct assignment instead of `make([]T, 0, len(input))` with `append`. Direct assignment avoids append length updates; either form may have bounds checks eliminated. Measure the compiled hot path:
 
 ```go
 // Slower — append overhead per element
@@ -57,22 +57,22 @@ Use append when the result might be smaller (filtering) or when early error retu
 
 ### Eliminate redundant map lookups
 
-`for k := range m { use(m[k]) }` does two lookups per iteration. Capture the value from range:
+`for k := range m { use(m[k]) }` iterates a key and then performs an unnecessary keyed lookup. Capture the value from range:
 
 ```go
-// Bad — two lookups per iteration
+// Extra keyed lookup after iteration
 for k := range in { result[k] = fn(in[k]) }
 
-// Good — single lookup
+// Use the value already yielded by iteration
 for k, v := range in { result[k] = fn(v) }
 ```
 
 ### Map size hints
 
-`make(map[K]V)` starts with a small number of buckets and rehashes as it grows. Providing a size hint avoids rehashing:
+`make(map[K]V)` starts with a small number of buckets and rehashes as it grows. Providing a size hint can reduce growth work:
 
 ```go
-m := make(map[string]int, len(items)) // single allocation, no rehashing
+m := make(map[string]int, len(items)) // capacity hint; allocation count and growth remain implementation-dependent
 ```
 
 ### Sentinel errors vs fmt.Errorf
@@ -92,10 +92,10 @@ Only use `fmt.Errorf` when you need dynamic context (field names, values).
 
 ### Interface boxing
 
-Passing concrete types through `any`/`interface{}` forces heap allocation for boxing. In hot paths, use typed parameters or generics:
+Passing concrete values through interfaces can allocate when the boxed value escapes; it does not inherently force a heap allocation. In hot paths, use typed parameters or generics:
 
 ```go
-// Bad — boxes each int, allocates
+// Caller-side boxing may allocate depending on escape behavior
 func sum(values []any) int { ... }
 
 // Good — no boxing, no allocation
@@ -133,7 +133,7 @@ Substrings share the backing array of the original string:
 // Bad — keeps entire longMsg in memory
 func extractID(msg string) string { return msg[:8] }
 
-// Good — independent copy (Go 1.20+)
+// Good — independent copy (Go 1.18+)
 func extractID(msg string) string { return strings.Clone(msg[:8]) }
 ```
 
@@ -189,7 +189,7 @@ func handleRequest(data []byte) []byte {
 
 - Reset state before `Put()` — clear references to avoid retaining large object graphs across GC cycles
 - Return copies, not pooled buffers — callers must not hold references to pooled memory
-- Don't pool objects >32KB — large allocations bypass the pool's size classes and GC already handles them efficiently
+- Pooling has no 32 KiB size limit. Bound retained buffer sizes according to the workload; large idle objects can increase memory usage, and the GC may discard pooled objects at any time.
 - Don't pool infrequently used objects — pool overhead exceeds benefit when allocations are rare
 
 → See `samber/cc-skills-golang@golang-concurrency` skill for `sync.Pool` API reference and basic usage patterns.
@@ -220,13 +220,13 @@ type Good struct {
 }
 ```
 
-**Alignment requirements:** `bool`/`byte` = 1, `int16` = 2, `int32`/`float32` = 4, `int64`/`float64`/`string`/`[]T`/`*T` = 8.
+**Typical 64-bit alignment requirements (verify the target with unsafe.Alignof):** `bool`/`byte` = 1, `int16` = 2, `int32`/`float32` = 4, `int64`/`float64`/`string`/`[]T`/`*T` = 8.
 
 **Inspect layout:** `unsafe.Sizeof(T{})`, `unsafe.Alignof(T{})`, `unsafe.Offsetof(T{}.field)`
 
 ### Zero-size field at end of struct
 
-If the last field has zero size (`struct{}`), the compiler adds word-sized padding to prevent a pointer to that field from overlapping the next memory block:
+If the last field has zero size (`struct{}`), the compiler adds one byte for the trailing field, then rounds the struct size to its alignment to prevent a pointer to that field from overlapping the next memory block:
 
 ```go
 // Bad — 16 bytes (8 for Value + 8 padding for Flag)
@@ -240,7 +240,7 @@ Having a `struct{}` field in a struct is rare and almost useless.
 
 ### Pointer receivers for large structs
 
-Value receivers copy the entire struct on every method call. Use pointer receivers for structs larger than ~128 bytes. If any method uses a pointer receiver, all methods should for consistency.
+Choose receivers for mutation, identity, method sets and copy safety first. Value receivers have copy semantics, though the compiler may eliminate the physical copy; pointer receivers can add aliasing, escape and GC costs. For large values, measure those costs rather than applying a byte threshold. Keep receiver conventions consistent where semantics permit.
 
 ### Map of pointers for large, frequently updated structs
 
@@ -251,4 +251,4 @@ players := map[string]*Player{"alice": {Score: 100}}
 players["alice"].Score += 10 // direct modification, no copy
 ```
 
-Trade-off: each pointer is a separate heap allocation, adding GC pressure. For small, mostly-read structs, `map[K]V` (value) is better.
+Trade-off: separately allocated pointees add allocations and GC scanning; pointers can also refer to elements of a shared allocation. For small, mostly-read structs, `map[K]V` (value) is better.

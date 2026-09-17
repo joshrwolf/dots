@@ -24,62 +24,50 @@ paths:
   - "**/*.go"
 ---
 
-**Dependencies:** `gopls` — `go install golang.org/x/tools/gopls@latest` (v0.20+). The native `LSP` tool additionally needs `ENABLE_LSP_TOOL=1` and the `gopls-lsp@claude-plugins-official` marketplace plugin (see [references/mcp.md](references/mcp.md)).
+Use the project's installed `gopls` version. Install or configure an integration
+only when needed for the task. MCP support requires gopls v0.20+.
 
 `gopls` analyzes the workspace and its resolved dependencies. Use `go doc`
 for package documentation; use module tools for version and replacement details.
 
-## Three ways to reach gopls
+## Ways to reach gopls
 
-Not interchangeable — pick by what you already know and what you need back:
+- **MCP** exposes symbol names, paths, and search queries. A standalone `gopls mcp`
+  process sees saved files; an attached editor session can include unsaved buffers.
+  See [MCP setup and tools](references/mcp.md).
+- **Editor or harness LSP integration** provides position-based navigation and
+  refactors. Operations and automatic diagnostic delivery depend on the client;
+  inspect its exposed capabilities rather than assuming a fixed tool surface.
+- **CLI** is useful for one-shot checks and scripted edits. It is an experimental,
+  incomplete interface. Check `gopls <command> -h` for the installed release.
+  See [CLI commands](references/cli.md).
 
-- **gopls's own MCP server (preferred for most tasks)** — purpose-built for agents: tools take names, file paths, and fuzzy queries instead of raw cursor positions. Register once per machine: `claude mcp add gopls -- gopls mcp`. Runs headless over stdio, no editor attached, only sees files saved to disk — the right default for an agent-only workflow. See [references/mcp.md](references/mcp.md) for every tool.
-- **The native `LSP` tool** — Claude Code's built-in editor-style integration. Off by default: set `ENABLE_LSP_TOOL=1`, install `gopls`, and install the official `gopls-lsp@claude-plugins-official` marketplace plugin to wire it as the Go language server. Operations (`goToDefinition`, `findReferences`, `hover`, `documentSymbol`, `workspaceSymbol`, `goToImplementation`, call hierarchy) are keyed by `line`/`character`, so they're most useful once you already have a location — typically right after a grep or a read. Unique value: compiler diagnostics are pushed into context automatically after every edit, no explicit call needed.
-- **The `gopls` CLI** — same engine, invoked as `gopls <command> <file:line:col>`. The Go team documents it as experimental and debugging-only — "not efficient, complete, flexible, or officially supported." Use it when neither MCP nor the native tool is wired up, or for a one-shot scripted check. Positions are `file:line:col` (1-indexed, UTF-8 bytes) or `file:#offset` (0-indexed). See [references/cli.md](references/cli.md).
-
-**Preference order: MCP → native `LSP` → CLI.** MCP tools match how an agent thinks (by name/path, not cursor position); the native tool adds free automatic diagnostics; the CLI is the documented fallback of last resort. Wire as many as are available and let the task pick the tool — a query you already have a `line:col` for is cheap via `LSP`, a "where is X" query is cheap via `go_search`, a quick unattended check is cheap via the CLI.
-
-## Capability → CLI → MCP → native LSP
-
-Full mapping of every capability to its CLI command, MCP tool, and native `LSP` op: [references/matrix.md](references/matrix.md).
+Choose an available interface that supports the operation. The
+[capability map](references/matrix.md) distinguishes the server's LSP features
+from the subset a particular agent host exposes.
 
 ## Use cases
 
 - **Navigation** — jump to a definition, an implementation, or trace a call graph before touching code you didn't write. Details: [references/features.md](references/features.md#navigation).
 - **Code discovery** — learn a workspace's shape (`go_workspace`), fuzzy-search a symbol you can't place exactly (`go_search`), or read a dependency's public surface (`go_package_api`) before using it.
 - **Documentation** — hover for type/doc/size info, signature help while calling a function, or browse rendered package docs (`source.doc`, including internal packages pkg.go.dev never sees).
-- **Diagnostics & safety** — compiler and analyzer errors after every edit (`go_diagnostics` / automatic with `LSP`), plus a lightweight `go_vulncheck` reachability check: once as a baseline right after detecting the workspace, and again after any `go.mod` change.
+- **Diagnostics & safety** — compiler and analyzer findings for affected code (`go_diagnostics` or client diagnostics). Use `go_vulncheck` for a requested vulnerability check or relevant dependency work; it is static analysis, not a runtime guarantee.
 - **Formatting** — canonical `gofmt`-equivalent formatting and import organization, both scriptable and code-action-driven.
-- **Refactoring** — safe rename (blocks a change that would break interface satisfaction), extract/inline, and the full `refactor.rewrite.*` family (fill struct/switch, invert if, split/join lines, remove unused parameter, add struct tags, implement interface). Full catalog with gotchas: [references/features.md](references/features.md#transformation).
+- **Refactoring** — semantic rename (checks known references and interface relationships), extract/inline, and the full `refactor.rewrite.*` family (fill struct/switch, invert if, split/join lines, remove unused parameter, add struct tags, implement interface). Full catalog with gotchas: [references/features.md](references/features.md#transformation).
 
-## Efficient workflows
+## Scope and validation
 
-These Read/Edit workflows encode the order that avoids redundant queries and half-applied edits — treat every step as required, not optional, even to save a round trip.
+Use references to inspect affected callers when changing an API. Review returned
+edits and verify the affected packages and build configurations. Diagnostics do
+not replace compilation or tests; choose test scope from the change and project
+requirements, including whole-module tests when appropriate.
 
-- **Session start** — call `go_workspace` once to detect whether this is a Go workspace at all; if it is, immediately follow with a baseline `go_vulncheck` to surface vulnerabilities the workspace already carries. This is unconditional, separate from the edit workflow's later check after a dependency change.
+**Limits worth checking:**
 
-**Read workflow** (understand before touching anything):
-
-1. `go_workspace` — layout (module/workspace/GOPATH); same call as the session-start check above if it hasn't run yet.
-2. `go_search` — fuzzy-locate a type/function/variable by name.
-3. `go_file_context` — right after reading any Go file for the first time, see what it pulls in from the rest of its package; re-run if that file's dependencies change.
-4. `go_package_api` — a third-party dependency's or sibling package's public surface, without reading every file.
-
-**Edit workflow** (iterate until diagnostics are clean):
-
-1. Read first (workflow above).
-2. `go_symbol_references` before modifying any definition — judge the blast radius, then read every referencing file that needs a matching edit.
-3. Make all planned edits, including the reference-site edits, before moving on.
-4. `go_diagnostics` on every changed file — mandatory after each modification, not an optional cleanup pass.
-5. Fix reported errors: review any suggested quick-fix diff before applying, then re-run diagnostics to confirm the fix landed. Ignore hint/info diagnostics unrelated to the task. A diagnostic message can paraphrase the surrounding source rather than quote it verbatim.
-6. Only if `go.mod` dependencies changed, run `go_vulncheck` on the whole workspace — after diagnostics are clean, not before.
-7. Run `go test <changed-package-paths>` — not `./...` unless explicitly asked, since a full-repo run slows the iteration loop.
-
-**Gotchas worth knowing before you rely on a result:**
-
+- Renames cannot prove behavior preserved across reflection, dynamic assertions, external consumers, generated inputs, or unexamined build configurations.
 - `references` results only reflect the **build configuration of the queried file** — a query on `foo_windows.go` will not surface matches in `bar_linux.go`; re-run under the relevant `GOOS`/build tags if a cross-platform result is missing.
 - `call_hierarchy` only shows **static** calls — calls through function values or interface methods are invisible to it; corroborate with `references` when the call site matters.
-- Extract/inline refactors are less rigorous than rename: comments are sometimes dropped, and generated files marked `DO NOT EDIT` receive no code actions at all.
+- Review refactoring output: comments are sometimes dropped, and generated files marked `DO NOT EDIT` receive no code actions at all.
 - `refactor.rewrite.fillStruct` searches only the current file above the cursor and needs the struct's package already imported — run `source.organizeImports` first if the type was just typed in.
 
 ## Documentation and runtime evidence

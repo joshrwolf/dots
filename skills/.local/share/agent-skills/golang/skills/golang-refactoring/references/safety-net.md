@@ -14,7 +14,7 @@ go tool cover -html=cover.out
 
 Coverage limitations:
 
-- **Go's coverage is statement coverage, not branch coverage** — a line inside an `if` block that ran once counts as fully covered even if the `else` never executed and even if a `switch` only ever hit one `case`. A function reporting 100% can still have an untested branch; treat the percentage as a floor on how much is exercised, not proof that the logic is correct, and read the actual branches in the code you're about to touch rather than trusting the summary.
+- **Go's coverage is statement coverage, not branch coverage** — executed statements do not prove every condition outcome was tested. A nonempty unexecuted else/case normally reduces coverage, but empty branches and short-circuit expression paths can remain untested at 100%; treat the percentage as a measure of executed statements, not proof that the logic is correct, and read the actual branches in the code you're about to touch rather than trusting the summary.
 - Use `-coverpkg` when tests in one package exercise code in another. Select the affected packages explicitly and inspect which appear in the resulting profile; a test run covering one package is not evidence about all its consumers.
 
 ## Seams — What to Introduce When There's No Net Yet
@@ -41,21 +41,19 @@ func (r *Report) Generate(ctx context.Context, id int) (Summary, error) {
     // ...
 }
 
-// After — a one-method interface extracted at the point of use;
-// the concrete *sql.DB already satisfies it implicitly, so the
-// producer package needs no change at all.
-type rowQuerier interface {
-    QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
+// After — a seam returns a fakeable interface, not concrete *sql.Row.
+type rowScanner interface { Scan(dest ...any) error }
+type queryRow func(context.Context, string, ...any) rowScanner
 
-func NewReport(db rowQuerier) *Report {
-    return &Report{db: db}
-}
+type Report struct { query queryRow }
 
-func (r *Report) Generate(ctx context.Context, id int) (Summary, error) {
-    row := r.db.QueryRowContext(ctx, "SELECT ... WHERE id = $1", id)
-    // ... unchanged — a characterization test can now inject a fake rowQuerier
-}
+func NewReport(query queryRow) *Report { return &Report{query: query} }
+
+// Production adapter: Go does not support covariant method return types.
+report := NewReport(func(ctx context.Context, query string, args ...any) rowScanner {
+    return db.QueryRowContext(ctx, query, args...)
+})
+// A test supplies its own rowScanner implementation through queryRow.
 ```
 
 → See `samber/cc-skills-golang@golang-design-patterns` skill for constructor and dependency-injection patterns this move builds on, and [catalog.md](catalog.md) in this skill for the Sprout/Wrap mechanics that typically pair with a freshly introduced seam.
@@ -71,10 +69,10 @@ go test ./...                                # full test suite
 go test -run TestName ./pkg/...              # target one test while iterating
 go test -race ./...                          # concurrency changes — see samber/cc-skills-golang@golang-testing for race-detector and testing/synctest mechanics
 go test -covermode=atomic -coverpkg=./... -coverprofile=cover.out ./...
-go tool cover -func=cover.out                 # per-function and total coverage, ranked
+go tool cover -func=cover.out                 # per-function and total statement coverage
 go tool cover -html=cover.out                 # visual red/green source view
 go test -bench=. -benchmem -count=10 > new.txt   # capture before AND after with the same command, then:
-benchstat old.txt new.txt                     # `~` means no statistically significant difference — the desired result for a behavior-preserving refactor; anything else is a signal to stop and investigate, not noise to shrug off
+benchstat old.txt new.txt                     # `~` means no statistically significant difference detected; it is not proof of equivalence. Inspect effect sizes and uncertainty for performance-sensitive changes
 ```
 
 ## Cross-References

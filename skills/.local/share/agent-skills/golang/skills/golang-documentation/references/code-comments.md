@@ -56,7 +56,7 @@ func GetUser(id string) (*User, error) {
 
 | Anti-pattern | Example | Fix |
 | --- | --- | --- |
-| Pure paraphrase | `// GetUser gets a user` on `func GetUser()` — starts with the name (required by godoc) but adds nothing | After the name, add _when_ to use it, constraints, and what can go wrong |
+| Pure paraphrase | `// GetUser gets a user` on `func GetUser()` — starts with the name (Go convention) but adds nothing | After the name, add _when_ to use it, constraints, and what can go wrong |
 | Signature restatement | `// Returns a string and an error` | Document _which_ error and _why_ — the signature already shows types |
 | Marketing vocabulary | `seamlessly`, `powerful`, `robust`, `enterprise-grade` | Remove — state facts instead |
 | Invented rationale | `// designed to improve scalability` | Only document what the code actually does |
@@ -65,7 +65,7 @@ func GetUser(id string) (*User, error) {
 
 ### Format
 
-Every doc comment MUST start with the function/method name followed by a verb phrase. This is how godoc renders it in package indexes.
+Start function and method comments with the declared name by convention. Godoc renders comments even without that prefix; the convention makes summaries easier to read.
 
 ```go
 // FuncName verb-phrase describing what it does.
@@ -91,8 +91,6 @@ This example shows contract details a longer comment may need. Use ordinary pros
 // Panics if [condition] (only document if the function can panic).
 //
 // It is safe for concurrent use (or: It is NOT safe for concurrent use).
-//
-// Play: https://go.dev/play/p/xxxxx
 //
 // Example:
 //
@@ -120,7 +118,7 @@ func FuncName(paramName Type, anotherParam Type) (ResultType, error) {
 
 ### Error Cases and Limitations
 
-Document every error a function can return, and any edge cases or limitations:
+Document error behavior callers can rely on, including matchable errors and relevant edge cases. Do not turn incidental implementation errors into API guarantees:
 
 ```go
 // Parse parses a duration string such as "300ms", "1.5h", or "2h45m".
@@ -214,7 +212,7 @@ When linking an existing public Go Playground example, a `Play:` line is one pos
 ```go
 // Map applies a function to each element of a slice.
 //
-// Play: https://go.dev/play/p/abc123xyz
+// Play: <URL of an existing public example>
 //
 // Example:
 //

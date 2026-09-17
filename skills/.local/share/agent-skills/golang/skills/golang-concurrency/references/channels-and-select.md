@@ -45,13 +45,13 @@ func startWorker(ctx context.Context) *sync.WaitGroup {
 
 ### Panic Recovery at Goroutine Boundaries
 
-A panic in a goroutine crashes the entire process. Always recover at goroutine boundaries in production code:
+An unrecovered panic in any goroutine terminates the process. Recover only when the operation can be safely abandoned without leaving shared state invalid. Recovery must run in the panicking goroutine, and the failure must reach its owner. For an explicitly isolated worker:
 
 ```go
 go func() {
     defer func() {
         if r := recover(); r != nil {
-            // ...
+            reportFailure(fmt.Errorf("worker panicked: %v\n%s", r, debug.Stack()))
         }
     }()
     doWork(ctx)
@@ -73,7 +73,7 @@ func consume(ch <-chan int) { ... } // receive-only
 
 ## Channel Closing
 
-Channels MUST be closed by the sender (producer), NEVER by the receiver — it causes a panic if the sender writes after close.
+Close a data channel only after all sends have finished, usually from its producer or a coordinator that waits for all producers. Receivers should signal cancellation separately. Closing is unnecessary solely for garbage collection.
 
 ```go
 // ✓ Good — producer closes when done
@@ -115,7 +115,7 @@ ch := make(chan Task, 1000) // why 1000? what if it fills?
 
 ## Select for Non-Blocking Communication
 
-Use `select` to multiplex channel operations and always include `ctx.Done()` to prevent goroutine leaks:
+For a cancellable stage, include `ctx.Done()` around potentially blocked sends and receives:
 
 ```go
 func process(ctx context.Context, in <-chan Task, out chan<- Result) {
@@ -156,7 +156,10 @@ timer := time.NewTimer(5 * time.Second)
 defer timer.Stop()
 for {
     select {
-    case msg := <-ch:
+    case msg, ok := <-ch:
+        if !ok {
+            return
+        }
         timer.Stop()
         timer.Reset(5 * time.Second)
         handle(msg)
@@ -167,4 +170,4 @@ for {
 }
 ```
 
-For Go <1.23, if `timer.Stop()` returns false, drain a possible stale value before `Reset`. In Go 1.23+, receiving from `timer.C` after `Stop` returns is guaranteed to block rather than receive a stale value.
+The synchronous timer-channel guarantees apply when the main module declares `go 1.23` or newer and `GODEBUG=asynctimerchan=1` has not restored old behavior. With old semantics, Stop returning false does not prove an unread value exists: it may already have been received. Coordinate ownership and drain only a pending value before Reset; do not blindly block on a drained timer channel.

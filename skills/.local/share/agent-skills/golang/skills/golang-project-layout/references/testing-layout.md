@@ -48,7 +48,7 @@ pkg/
 
 **Key principles:**
 
-- Tests live in the **same package** as the code (e.g., `package handler`)
+- Tests live in the same directory, in either the package or its external `_test` package
 - Test files are in the **same directory** as the code they test
 - Use `_test.go` suffix for all test files
 
@@ -89,7 +89,7 @@ func TestHandler(t *testing.T) {
 
 ## Benchmarks
 
-Benchmarks use the `_bench_test.go` suffix and contain functions with the `Benchmark` prefix.
+Benchmarks are functions with the Benchmark prefix in any `_test.go` file. `_bench_test.go` is only an organizational convention.
 
 ## Examples
 
@@ -203,7 +203,7 @@ internal/
 - Go ignores the `testdata` directory when building regular packages
 - Use `testdata/` for package-specific test data
 - Use `test/fixtures/` for cross-package shared fixtures
-- Don't put `.go` files in `testdata/` - they will be ignored
+- Go source files can be fixtures in testdata; ./... does not discover them as packages automatically
 
 ## Running Tests
 
@@ -213,7 +213,7 @@ go test ./internal/handler       # Test specific package
 go test -v ./...                 # Verbose output
 go test -race ./...              # Race detection
 go test -cover ./...             # Coverage report
-go test -short ./...             # Skip long-running tests
+go test -short ./...             # Set testing.Short(); tests must explicitly skip themselves
 ```
 
 ## Test File Summary
@@ -221,7 +221,7 @@ go test -short ./...             # Skip long-running tests
 | File Type | Suffix | Package | Purpose |
 | --- | --- | --- | --- |
 | Test | `*_test.go` | `package X` or `package X_test` | Unit/integration tests |
-| Benchmark | `*_bench_test.go` | Same as code | Performance tests |
-| Example (godoc) | `*_example_test.go` | Same as code | Documentation + verification |
+| Benchmark | `*_test.go` (optionally `*_bench_test.go`) | `package X` or `package X_test` | Performance tests |
+| Example (godoc) | `*_test.go` (optionally `*_example_test.go`) | `package X` or `package X_test` | Documentation + verification |
 | Executable example | No suffix | `package main` | Standalone demo programs |
-| Test utilities | `*_test.go` | `package testutil` | Shared test helpers |
+| Shared test utilities | `*.go` | `package testutil` | Importable helpers; `_test.go` helpers are local to that package's tests |

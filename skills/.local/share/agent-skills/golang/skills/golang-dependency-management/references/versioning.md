@@ -33,7 +33,7 @@ Tags: `v2.0.0`, `v2.1.0`, etc. The `v0` and `v1` versions have no suffix.
 ### Special Cases
 
 - **Pseudo-versions**: For untagged commits — `v0.0.0-20210101120000-abcdef123456` (base version + timestamp + commit hash)
-- **`+incompatible`**: Marks `v2+` modules that have not adopted the `/vN` path convention
+- **`+incompatible`**: Marks eligible pre-module repository versions v2+ without a go.mod or /vN path; it is not an escape hatch for a modern module's invalid path
 - **`gopkg.in`**: Always uses a version suffix with a dot — `gopkg.in/yaml.v3`
 
 ## Minimal Version Selection (MVS)
@@ -48,8 +48,8 @@ Most package managers select the **latest** compatible version of each dependenc
 
 - **Deterministic without a lock file**: Given the same `go.mod` inputs, MVS always produces the same build list. `go.sum` is just integrity verification.
 - **High fidelity**: Builds closely match what module authors tested against, since the nearest compatible version is selected rather than the latest.
-- **No solver needed**: The algorithm is simple graph traversal (under 50 lines of code), not an NP-hard constraint satisfaction problem.
-- **Reproducible across machines**: No "works on my machine" from different lock file states.
+- **No solver needed**: The algorithm traverses minimum-version requirements rather than solving arbitrary version-range constraints.
+- **Reproducible across machines**: The selected module versions are reproducible for identical graph inputs; toolchains, workspaces, local replacements, cgo, and build flags remain separate inputs.
 
 ### Upgrades and Downgrades
 

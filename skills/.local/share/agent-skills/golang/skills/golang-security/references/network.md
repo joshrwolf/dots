@@ -5,9 +5,9 @@ Network and web security vulnerabilities can lead to data leakage and unauthoriz
 **Rules:**
 
 1. Redirects MUST be validated against an allowlist of domains.
-2. HTTP servers MUST configure `ReadTimeout`, `WriteTimeout`, and `IdleTimeout`.
+2. Configure header, body, write, and idle timeouts for the endpoint; streaming handlers need a different write-timeout policy from short requests.
 3. Pprof endpoints MUST NEVER be exposed publicly.
-4. XML parsers MUST disable XXE — reject `<!DOCTYPE` and `<!ENTITY` declarations.
+4. Check XML parser behavior: standard `encoding/xml` does not resolve external entities; disable external resolution in parsers that support it.
 
 ---
 
@@ -38,17 +38,14 @@ http.Redirect(w, r, target, http.StatusFound) // DON'T
 
 ```go
 target := r.URL.Query().Get("url")
-u, _ := url.Parse(target)
+u, err := url.Parse(target)
+if err != nil || u.User != nil { return errors.New("invalid URL") }
 // Only allow http/https
 if u.Scheme != "http" && u.Scheme != "https" {
     return errors.New("invalid scheme")
 }
-// Block javascript/data schemes
-if strings.HasPrefix(target, "javascript:") || strings.HasPrefix(target, "data:") {
-    return errors.New("blocked scheme")
-}
-// Check against whitelist
-if !isAllowedDomain(u.Host) {
+// Exact hostname allowlist; validate ports too if the policy restricts them.
+if !isAllowedDomain(strings.ToLower(u.Hostname())) {
     return errors.New("invalid domain")
 }
 http.Redirect(w, r, target, http.StatusFound)
@@ -58,7 +55,7 @@ http.Redirect(w, r, target, http.StatusFound)
 
 ## Bind to All Interfaces — Medium
 
-Binding to 0.0.0.0 exposes services to all network interfaces.
+Binding to 0.0.0.0 listens on all IPv4 interfaces. This is normal for public/container services; it is a finding only when exposure violates the service boundary or lacks required access controls. Loopback is appropriate for local-only services.
 
 **Bad:**
 
@@ -96,6 +93,7 @@ server := &http.Server{
 ```go
 server := &http.Server{
     Addr:         ":8080",
+    ReadHeaderTimeout: 5 * time.Second,
     ReadTimeout:  5 * time.Second,
     WriteTimeout: 10 * time.Second,
     IdleTimeout:  120 * time.Second,
@@ -120,6 +118,7 @@ http.ListenAndServe(":8080", handler) // DON'T: No security hardening
 ```go
 server := &http.Server{
     Addr:         ":443",
+    ReadHeaderTimeout: 5 * time.Second,
     ReadTimeout:  5 * time.Second,
     WriteTimeout: 10 * time.Second,
     IdleTimeout:  120 * time.Second,
@@ -149,12 +148,13 @@ import "crypto/subtle"
 
 // For comparing fixed-length tokens or hashes:
 func checkToken(input, expected string) bool {
-    // ConstantTimeCompare already handles unequal lengths without leaking timing
+    // Unequal lengths return immediately; use a fixed-length token/hash format.
     return subtle.ConstantTimeCompare([]byte(input), []byte(expected)) == 1
 }
 
-// For passwords, use Argon2id (preferred) or bcrypt — they handle hashing
-// and constant-time comparison internally:
+// For passwords, derive with Argon2id and compare the stored/derived fixed-length
+// hashes with ConstantTimeCompare. IDKey only derives; it does not verify.
+// bcrypt.CompareHashAndPassword performs verification:
 // argon2: hash := argon2.IDKey([]byte(password), salt, 3, 64*1024, 4, 32)
 // bcrypt: err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(password))
 
@@ -178,7 +178,7 @@ Debug pprof endpoints expose sensitive runtime information.
 
 ```go
 import _ "net/http/pprof" // DON'T: Automatically registers /debug/pprof
-http.ListenAndServe(":8080", handler)
+http.ListenAndServe(":8080", nil) // nil serves DefaultServeMux
 ```
 
 **Good:**
@@ -192,7 +192,8 @@ package main
 
 import _ "net/http/pprof"
 
-// Option 2: Serve pprof on a separate internal-only listener
+// Option 2 (separate alternative; use a named "net/http/pprof" import):
+// Serve pprof on a separate internal-only listener
 func startDebugServer() {
     debugMux := http.NewServeMux()
     debugMux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -208,28 +209,18 @@ func startDebugServer() {
 
 ## XXE Vulnerability — High
 
-XML parsers that process external entity references.
-
-**Bad:**
+External entity resolution can expose files or make unintended network requests in parsers that support it. Go's standard `encoding/xml` does not resolve external entities or process DTDs; `Strict` is already true by default and is not an XXE switch. A raw substring filter is not a substitute for knowing the parser's behavior.
 
 ```go
-decoder := xml.NewDecoder(bytes.NewReader(xmlData))
-decoder.Decode(&person) // DON'T: May process external entities
-```
-
-**Good:**
-
-```go
-decoder := xml.NewDecoder(bytes.NewReader(xmlData))
-decoder.Strict = true
-
-// Block DTD declarations
-xmlStr := string(xmlData)
-if strings.Contains(xmlStr, "<!DOCTYPE") || strings.Contains(xmlStr, "<!ENTITY") {
-    return errors.New("XML contains DTD - potential XXE")
+// In an HTTP handler: bound input and handle malformed XML.
+r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+if err := xml.NewDecoder(r.Body).Decode(&person); err != nil {
+    http.Error(w, "invalid XML", http.StatusBadRequest)
+    return
 }
-decoder.Decode(&person)
 ```
+
+For a third-party XML library, verify its entity/DTD defaults and disable external resolution. Bound input and application-level nesting/work independently of XXE protection.
 
 ---
 
@@ -246,11 +237,12 @@ matched, _ := regexp.MatchString(`.+@.+\..+`, email) // DON'T: Too permissive
 **Good:**
 
 ```go
-var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
-if !emailRegex.MatchString(email) {
-    return errors.New("invalid email")
+addr, err := mail.ParseAddress(email)
+if err != nil || addr.Address != email {
+    return errors.New("invalid email address")
 }
-// Also block injection patterns
+// Parsing does not prove deliverability or ownership: verify by email when needed.
+// Use context-appropriate escaping/parameterization at each output sink.
 ```
 
 ---

@@ -34,16 +34,16 @@ For interface-based design foundations (accept interfaces, return structs), see 
 
 ## Best Practices Summary
 
-1. Dependencies MUST be injected via constructors — NEVER use global variables or `init()` for service setup
-2. Small projects (< 10 services) SHOULD use manual constructor injection — no library needed
+1. Make component dependencies explicit. Constructors suit long-lived services; function parameters or a small configuration value can suit simpler code. Avoid hidden mutable dependencies and fallible service startup in `init()`
+2. Prefer manual constructor injection while wiring remains straightforward; a service count alone does not justify a library
 3. Use narrow consumer-owned interfaces for dependency seams, or package-owned public interfaces when they deliberately hide implementations. Choose return types for the intended API and project conventions
-4. NEVER use global registries or package-level service locators
-5. The DI container MUST only exist at the composition root (`main()` or app startup) — NEVER pass the container as a dependency
-6. **Prefer lazy initialization** — only create services when first requested
-7. **Use singletons for stateful services** (DB connections, caches) and transients for stateless ones
+4. Package-level service lookup hides dependencies and complicates test isolation. Keep application wiring explicit; framework registration is a separate concern and does not require rewriting an established integration
+5. Keep container resolution in application wiring or explicit scope factories. Pass resolved dependencies to ordinary business code so its requirements remain visible
+6. **Choose initialization timing deliberately** — initialize required dependencies before readiness; lazy initialization suits optional expensive work
+7. **Choose lifetime from ownership and concurrency** — share concurrency-safe pools; isolate request state. Stateless services can be shared too
 8. **Mock at the interface boundary** — DI makes this trivial
-9. **Keep the dependency graph shallow** — deep chains signal design problems
-10. **Choose the right DI library** for your project size and team — see the decision table below
+9. **Keep ownership and dependency direction clear** — investigate cycles and unnecessary indirection; a valid layered graph can be deep
+10. Add a DI library only when its wiring or lifecycle support earns the added dependency and runtime failure modes
 
 ## Why Dependency Injection?
 
@@ -98,12 +98,7 @@ func NewUserService() *UserService {
 }
 ```
 
-Manual DI breaks down when:
-
-- You have 15+ services with cross-dependencies
-- You need lifecycle management (health checks, graceful shutdown)
-- You want lazy initialization or scoped containers
-- Wiring order becomes fragile and hard to maintain
+A container may help when repeated wiring or lifecycle coordination becomes hard to maintain. Manual DI can also support health checks, graceful shutdown, lazy initialization, and scoped values; needing these features does not itself require a library. Evaluate the additional dependency and runtime failure modes against the concrete wiring it replaces.
 
 ## Existing container-based projects
 
@@ -146,42 +141,38 @@ func TestUserService_GetUser(t *testing.T) {
 }
 ```
 
-### Testing with samber/do — Clone and Override
+### Testing in an existing samber/do v2 project
 
-Container cloning creates an isolated copy where you override only the services you need to mock:
+Register the interface type used by the provider and provide the service itself before invoking it:
 
 ```go
 func TestUserService_WithDo(t *testing.T) {
-    // Create a test injector with mock implementation
     testInjector := do.New()
-
-    // Provide the mock UserStore interface
-    do.OverrideValue[UserStore](testInjector, &MockUserStore{
+    do.ProvideValue[UserStore](testInjector, &MockUserStore{
         users: map[string]*User{"1": {ID: "1", Name: "Alice"}},
     })
-
-    // Provide other real services as needed
-    do.Provide[*slog.Logger](testInjector, func(i *do.Injector) (*slog.Logger, error) {
-        return slog.Default(), nil
+    do.Provide(testInjector, func(i do.Injector) (*UserService, error) {
+        return NewUserService(do.MustInvoke[UserStore](i), nil, slog.Default()), nil
     })
-
     svc := do.MustInvoke[*UserService](testInjector)
     user, err := svc.GetUser(context.Background(), "1")
-    // ... assertions
+    if err != nil { t.Fatal(err) }
+    if user.Name != "Alice" { t.Errorf("name = %q, want Alice", user.Name) }
 }
 ```
 
-This is particularly useful for integration tests where you want most services to be real but need to mock a specific boundary (database, external API, mailer).
+A fresh test container avoids sharing mutable production values. RootScope.Clone
+copies registrations, but values registered eagerly can still be shared; it is not
+a deep copy of application state.
 
 ## When to Adopt a DI Library
 
 | Signal | Action |
 | --- | --- |
-| < 10 services, simple dependencies | Stay with manual constructor injection |
-| 10-20 services, some cross-cutting concerns | Consider a DI library |
-| 20+ services, lifecycle management needed | Strongly recommended |
-| Need health checks, graceful shutdown | Use a library with built-in lifecycle support |
-| Team unfamiliar with DI concepts | Start manual, migrate incrementally |
+| Straightforward dependencies and startup | Stay with manual constructor injection |
+| Repeated wiring or lifecycle coordination is becoming costly | Evaluate whether a library reduces that concrete cost |
+| Need health checks, scopes, or ordered shutdown | Compare library support with explicit application wiring |
+| Team unfamiliar with DI concepts | Start manual and introduce additional machinery when it solves an observed problem |
 
 ## Common Mistakes
 
@@ -191,7 +182,7 @@ This is particularly useful for integration tests where you want most services t
 | `init()` for service setup | Explicit initialization in `main()` or container |
 | Depending on concrete types | Accept interfaces at consumption boundaries |
 | Passing the container everywhere (service locator) | Inject specific dependencies, not the container |
-| Deep dependency chains (A->B->C->D->E) | Flatten — most services should depend on repositories and config directly |
+| Dependency chains that obscure ownership or create cycles | Revisit responsibilities; chain length alone is not a reason to bypass domain boundaries |
 | Creating a new container per request | One container per application; use scopes for request-level isolation |
 
 ## Cross-References

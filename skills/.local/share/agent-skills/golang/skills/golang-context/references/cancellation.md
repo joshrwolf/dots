@@ -30,12 +30,14 @@ func processItems(ctx context.Context, items []Item) error {
         }(item)
     }
 
+    var firstErr error
     for range items {
-        if err := <-errCh; err != nil {
-            cancel() // cancel remaining goroutines on first error
-            return fmt.Errorf("processing items: %w", err)
+        if err := <-errCh; err != nil && firstErr == nil {
+            firstErr = err
+            cancel() // signal remaining goroutines, then wait for every result
         }
     }
+    if firstErr != nil { return fmt.Errorf("processing items: %w", firstErr) }
     return nil
 }
 ```
@@ -160,6 +162,8 @@ func watchResource(ctx context.Context, res *Resource) {
 }
 ```
 
+Calling stop does not wait for a running AfterFunc callback. Coordinate completion if ordinary cleanup can race with the callback; duplicate cleanup must be safe or guarded.
+
 ## `context.WithoutCancel` (Go 1.21+)
 
 Creates a child context that is not cancelled when the parent is. Use this for background work that must continue after the request completes — like async logging, audit trails, or enqueuing follow-up tasks.
@@ -176,11 +180,19 @@ func (h *Handler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 
     // Audit log must complete even if the client disconnects.
     // WithoutCancel preserves context values (trace_id) but detaches cancellation.
-    auditCtx := context.WithoutCancel(ctx)
-    go h.auditService.LogOrderCreated(auditCtx, order)
+    auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+    // h.background tracks tasks for graceful application shutdown.
+    h.background.Add(1)
+    go func() {
+        defer h.background.Done()
+        defer cancel()
+        if err := h.auditService.LogOrderCreated(auditCtx, order); err != nil {
+            slog.Error("audit event failed", "error", err)
+        }
+    }()
 
     w.WriteHeader(http.StatusCreated)
 }
 ```
 
-Without `WithoutCancel`, you'd have to choose between `ctx` (which gets cancelled when the handler returns, killing your background work) and `context.Background()` (which loses trace_id and other values). `WithoutCancel` gives you the best of both: values are preserved, but cancellation is detached.
+Without `WithoutCancel`, you'd have to choose between `ctx` (which gets cancelled when the handler returns, killing your background work) and `context.Background()` (which loses trace_id and other values). `WithoutCancel` gives you the best of both: values are preserved, but cancellation and deadlines are detached (Done is nil). Add a bounded lifetime and a shutdown owner. A goroutine is not durable delivery: if completion must survive process failure, persist the event through an outbox or durable queue.

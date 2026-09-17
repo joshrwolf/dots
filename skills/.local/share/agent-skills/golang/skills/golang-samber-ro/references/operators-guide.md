@@ -1,6 +1,6 @@
 # Operators Guide
 
-samber/ro provides 150+ operators organized by category. All operators are generic functions that take and return `Observable[T]`, designed for chaining via `Pipe`.
+samber/ro provides 150+ operators organized by category. Creation functions produce observables; pipe operators return functions transforming one observable into another; sinks such as Collect return ordinary Go values.
 
 ## Table of Contents
 
@@ -49,10 +49,10 @@ Create observables from various sources. Typically the first argument to `Pipe`.
 | `Of` | `Of[T](values ...T) Observable[T]` | Alias for Just |
 | `FromSlice` | `FromSlice[T](items []T) Observable[T]` | Create from existing slice |
 | `FromChannel` | `FromChannel[T](ch <-chan T) Observable[T]` | Wrap Go channel as observable |
-| `Range` | `Range(start, end int) Observable[int]` | Emit integer sequence |
-| `RangeWithStep` | `RangeWithStep(start, end, step int) Observable[int]` | Integer sequence with custom step |
-| `RangeWithInterval` | `RangeWithInterval(start, end int, d time.Duration) Observable[int]` | Integers with delay between each |
-| `RangeWithStepAndInterval` | `RangeWithStepAndInterval(start, end, step int, d time.Duration) Observable[int]` | Step + interval combined |
+| `Range` | `Range(start, end int64) Observable[int64]` | Emit integer sequence |
+| `RangeWithStep` | `RangeWithStep(start, end, step float64) Observable[float64]` | Integer sequence with custom step |
+| `RangeWithInterval` | `RangeWithInterval(start, end int64, d time.Duration) Observable[int64]` | Integers with delay between each |
+| `RangeWithStepAndInterval` | `RangeWithStepAndInterval(start, end, step float64, d time.Duration) Observable[float64]` | Step + interval combined |
 | `Interval` | `Interval(d time.Duration) Observable[int64]` | Emit sequential integers at intervals (infinite) |
 | `IntervalWithInitial` | `IntervalWithInitial(initial, d time.Duration) Observable[int64]` | Interval with initial delay |
 | `Timer` | `Timer(d time.Duration) Observable[int64]` | Single emission after delay |
@@ -60,14 +60,14 @@ Create observables from various sources. Typically the first argument to `Pipe`.
 | `RepeatWithInterval` | `RepeatWithInterval[T](item T, count int64, d time.Duration) Observable[T]` | Repeat with delay |
 | `Defer` | `Defer[T](factory func() Observable[T]) Observable[T]` | Lazily create observable on subscription |
 | `Future` | `Future[T](factory func() (T, error)) Observable[T]` | Single async value from function |
-| `Start` | `Start(cb func() (any, error)) Observable[any]` | Execute callback and emit result |
+| `Start` | `Start[T](cb func() T) Observable[T]` | Execute callback and emit result |
 | `Empty` | `Empty[T]() Observable[T]` | Complete immediately, no values |
 | `Never` | `Never[T]() Observable[T]` | Never emit or complete |
 | `Throw` | `Throw[T](err error) Observable[T]` | Immediately error |
 
 ```go
 // Custom observable with direct control
-obs := ro.NewObservable[int](func(ctx context.Context, observer ro.Observer[int]) error {
+obs := ro.NewObservable[int](func(observer ro.Observer[int]) ro.Teardown {
     observer.Next(1)
     observer.Next(2)
     observer.Complete()
@@ -144,7 +144,7 @@ Selectively emit values from the stream.
 | `Last[T](fn func(T) bool)` | Last matching value |
 | `Contains[T](fn func(T) bool)` | Emit bool: whether any value matches |
 
-All filtering operators have `I` (indexed), `WithContext`, and `IWithContext` variants.
+Many predicate-based filtering operators have `I` (indexed), `WithContext`, and `IWithContext` variants.
 
 ## Combining Operators
 
@@ -201,16 +201,15 @@ ro.CombineLatest2(priceStream, quantityStream)
 | `OnErrorReturn[T](value T)` | Replace error with fallback value |
 | `OnErrorResumeNextWith[T](obs ...Observable[T])` | Continue with fallback observables on error |
 | `Retry[T]()` | Retry indefinitely on error |
-| `RetryWithConfig[T](cfg RetryConfig)` | Retry with max attempts, delay, backoff |
+| `RetryWithConfig[T](cfg RetryConfig)` | Retry with MaxRetries, fixed Delay, and optional ResetOnSuccess |
 | `ThrowIfEmpty[T](fn func() error)` | Error if stream completes empty |
 
 ```go
-// RetryConfig for exponential backoff
+// RetryConfig uses fixed delay; v0.4.1 has no exponential-backoff fields.
+// MaxRetries=0 means unlimited retries.
 ro.RetryWithConfig[Response](ro.RetryConfig{
-    Max:               3,
+    MaxRetries:               3,
     Delay:             time.Second,
-    BackoffMultiplier: 2.0,
-    MaxDelay:          10 * time.Second,
 })
 ```
 
@@ -296,7 +295,7 @@ ro.ShareConfig[T]{
 | `Collect[T](obs Observable[T]) ([]T, error)` | Block, return all values as slice |
 | `CollectWithContext[T](ctx, obs) ([]T, ctx, error)` | Collect with context |
 | `ToSlice[T]()` | Operator: emit `[]T` on complete |
-| `ToChannel[T](size int)` | Convert to `<-chan Notification[T]` |
+| `ToChannel[T](size int)` | Emit a channel in `Observable[<-chan Notification[T]]` |
 | `ToMap[T, K, V](fn func(T) (K, V))` | Collect into map |
 
 ## Observer and Subscription
@@ -317,8 +316,7 @@ observer := ro.NoopObserver[T]()   // discard all events
 sub := observable.Subscribe(observer)
 sub.Wait()          // block until complete or error
 sub.Unsubscribe()   // cancel and cleanup
-sub.IsActive()      // check if still running
-sub.GetError()      // get terminal error
+sub.IsClosed()      // check whether unsubscribed; capture errors in the observer
 ```
 
 ## Scheduling
@@ -338,6 +336,6 @@ ro.NewSafeObservable[T](fn)
 // Unsafe: no synchronization, caller must guarantee single-goroutine access
 ro.NewUnsafeObservable[T](fn)
 
-// Eventually safe: allows brief unsynchronized period, then synchronizes
+// Eventually safe: concurrent delivery attempts are dropped instead of blocking
 ro.NewEventuallySafeObservable[T](fn)
 ```

@@ -3,7 +3,6 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 
@@ -11,64 +10,50 @@ import (
 	"github.com/spf13/viper"
 )
 
-var cfgFile string
-
-var rootCmd = &cobra.Command{
-	Use:   "myapp",
-	Short: "A brief description of your application",
-	Long:  "A longer description with usage examples.",
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		return initConfig()
-	},
-	SilenceUsage:  true, // don't print usage on errors from RunE
-	SilenceErrors: true, // handle error printing yourself
+func newRootCommand() *cobra.Command {
+	cfg := viper.New()
+	var cfgFile string
+	root := &cobra.Command{
+		Use:   "myapp",
+		Short: "Example application",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return initConfig(cfg, cfgFile)
+		},
+		SilenceUsage:  true,
+		SilenceErrors: true, // main prints returned errors exactly once
+	}
+	root.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default $HOME/.myapp.yaml)")
+	root.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
+	// These flags are registered directly above; a binding error is a programmer error.
+	if err := cfg.BindPFlag("log-level", root.PersistentFlags().Lookup("log-level")); err != nil {
+		panic(err)
+	}
+	root.AddCommand(newServeCommand(cfg), newVersionCommand(), newCompletionCommand())
+	return root
 }
 
-func Execute() error {
-	return rootCmd.Execute()
-}
+func Execute() error { return newRootCommand().Execute() }
 
-func init() {
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default $HOME/.myapp.yaml)")
-	rootCmd.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
-	viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
-}
-
-func initConfig() error {
+func initConfig(cfg *viper.Viper, cfgFile string) error {
 	if cfgFile != "" {
-		viper.SetConfigFile(cfgFile)
+		cfg.SetConfigFile(cfgFile)
 	} else {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("finding home directory: %w", err)
 		}
-		viper.AddConfigPath(home)
-		viper.AddConfigPath(".")
-		viper.SetConfigName(".myapp")
-		viper.SetConfigType("yaml")
+		cfg.AddConfigPath(home)
+		cfg.AddConfigPath(".")
+		cfg.SetConfigName(".myapp")
+		cfg.SetConfigType("yaml")
 	}
-
-	viper.SetEnvPrefix("MYAPP")
-	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	viper.AutomaticEnv()
-
-	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+	cfg.SetEnvPrefix("MYAPP")
+	cfg.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+	cfg.AutomaticEnv()
+	if err := cfg.ReadInConfig(); err != nil {
+		if _, missing := err.(viper.ConfigFileNotFoundError); cfgFile != "" || !missing {
 			return fmt.Errorf("reading config: %w", err)
 		}
 	}
-
-	// Set up logging based on config
-	level := slog.LevelInfo
-	switch strings.ToLower(viper.GetString("log-level")) {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
-
 	return nil
 }

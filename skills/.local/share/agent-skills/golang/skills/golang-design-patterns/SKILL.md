@@ -33,7 +33,7 @@ Idiomatic Go patterns for production-ready code. For error handling details see 
 1. Constructors SHOULD use **functional options** — they scale better as APIs evolve (one function per option, no breaking changes)
 2. Functional options MUST **return an error** if validation can fail — catch bad config at construction, not at runtime
 3. **Avoid `init()`** — runs implicitly, cannot return errors, makes testing unpredictable. Use explicit constructors
-4. Enums SHOULD **start at 1** (or Unknown sentinel at 0) — Go's zero value silently passes as the first enum member
+4. **Choose enum zero values deliberately** — reserve an Unknown sentinel if omission matters; otherwise zero can be a useful default. Validate values at boundaries
 5. Error cases MUST be **handled first** with early return — keep happy path flat
 6. **Panic is for bugs, not expected errors** — callers can handle returned errors; panics crash the process
 7. **`defer Close()` immediately after opening** — later code changes can accidentally skip cleanup
@@ -42,12 +42,12 @@ Idiomatic Go patterns for production-ready code. For error handling details see 
 10. **Limit everything** (pool sizes, queue depths, buffers) — unbounded resources grow until they crash
 11. Retry logic MUST **check context cancellation** between attempts
 12. **Use `strings.Builder`** for concatenation in loops → see `samber/cc-skills-golang@golang-code-style`
-13. string vs []byte: **use `[]byte` for mutation and I/O**, `string` for display and keys — conversions allocate
+13. string vs []byte: **use `[]byte` for mutation and I/O**, `string` for immutable bytes and keys — conversions may copy/allocate; compilers can eliminate some
 14. Iterators (Go 1.23+): **use for lazy evaluation** — avoid loading everything into memory
 15. **Stream large transfers** — loading millions of rows causes OOM; stream keeps memory constant
 16. `//go:embed` for **static assets** — embeds at compile time, eliminates runtime file I/O errors
 17. **Use `crypto/rand`** for keys/tokens — `math/rand` is predictable → see `samber/cc-skills-golang@golang-security`
-18. Regexp MUST be **compiled once at package level** — compilation is O(n) and allocates
+18. Compile **reused regular expressions once** — package-level MustCompile fits fixed developer-controlled patterns; dynamic patterns need Compile and error handling
 19. Compile-time interface checks: **`var _ Interface = (*Type)(nil)`**
 20. **A little recode > a big dependency** — each dep adds attack surface and maintenance burden
 21. **Design for testability** — accept interfaces, inject dependencies
@@ -107,7 +107,7 @@ Constructors SHOULD use **functional options** — they scale better with API ev
 
 `init()` runs implicitly, makes testing harder, and creates hidden dependencies:
 
-- Multiple `init()` functions run in declaration order, across files in **filename alphabetical order** — fragile
+- Multiple init functions follow source presentation order; Go build tools conventionally present files in lexical filename order, but the language does not mandate a filename-based contract
 - Cannot return errors — failures must panic or `log.Fatal`
 - Runs before `main()` and tests — side effects make tests unpredictable
 
@@ -131,7 +131,7 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 
 ### Enums: Start at 1
 
-Zero values should represent invalid/unset state:
+Reserve zero for invalid/unset only when the domain needs that distinction; a useful default at zero is also valid. A named integer type still accepts other integer values and needs boundary validation:
 
 ```go
 type Status int
@@ -150,6 +150,7 @@ const (
 // Good — compiled once at package level
 var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
 
+// Illustrative restricted syntax, not full email-address validation.
 func ValidateEmail(email string) bool {
     return emailRegex.MatchString(email)
 }
@@ -187,11 +188,11 @@ Error cases MUST be handled first with early return — keep the happy path at m
 
 | Type     | Default for | Use when                                            |
 | -------- | ----------- | --------------------------------------------------- |
-| `string` | Everything  | Immutable, safe, UTF-8                              |
+| `string` | Text or byte keys | Immutable bytes; not necessarily valid UTF-8                              |
 | `[]byte` | I/O         | Writing to `io.Writer`, building strings, mutations |
-| `[]rune` | Unicode ops | `len()` must mean characters, not bytes             |
+| `[]rune` | Unicode ops | Unicode code points; not grapheme clusters/user-perceived characters             |
 
-Avoid repeated conversions — each one allocates. Stay in one type until you need the other.
+Avoid unnecessary repeated conversions; they may copy or allocate. A rune is a Unicode code point, so combining sequences and emoji may occupy multiple runes. Decoding invalid UTF-8 to runes substitutes RuneError and is not byte-preserving.
 
 ### Iterators & Streaming for Large Data
 

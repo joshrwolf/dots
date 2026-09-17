@@ -1,9 +1,13 @@
 coverage:
   status:
     project:
-      default:
+      minimum:
         target: 80%
+        threshold: 0%
+      regression:
+        target: auto
         threshold: 2%
+    # Optional independent policy for newly added/changed lines.
     patch:
       default:
         target: 80%

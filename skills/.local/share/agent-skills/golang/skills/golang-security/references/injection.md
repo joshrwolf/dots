@@ -61,6 +61,7 @@ query := fmt.Sprintf("SELECT * FROM users WHERE id IN (%s)", strings.Join(ids, "
 **Good:**
 
 ```go
+// Handle an empty ids slice explicitly (for example, return an empty result).
 // Build placeholders: $1, $2, $3, ...
 placeholders := make([]string, len(ids))
 args := make([]any, len(ids))
@@ -76,6 +77,7 @@ With `sqlx`:
 
 ```go
 query, args, err := sqlx.In("SELECT * FROM users WHERE id IN (?)", ids)
+if err != nil { return err }
 query = db.Rebind(query) // converts ? to $1,$2,... for postgres
 rows, err := db.Query(query, args...)
 ```
@@ -132,7 +134,7 @@ rows, err := db.Query(query, args...)
 
 ### Prefer `sqlx` or `pgx` over raw `database/sql`
 
-Libraries like `sqlx` and `pgx` provide safer ergonomics (named parameters, `IN` clause expansion, struct scanning) while still using prepared statements under the hood. They reduce the temptation to fall back to string concatenation for complex queries.
+Libraries like `sqlx` and `pgx` provide safer ergonomics (named parameters, `IN` clause expansion, struct scanning) while supporting parameterized queries (server-side preparation depends on driver and execution mode). They reduce the temptation to fall back to string concatenation for complex queries.
 
 ---
 
@@ -192,36 +194,34 @@ cmd := exec.Command("sh", "-c", "rm -f /tmp/"+filename) // DON'T
 **Good:**
 
 ```go
-cmd := exec.Command("rm", "-f", filepath.Join("/tmp", filename))
-
-// Better: validate filename
-if filepath.Base(filename) != filename {
+if !filepath.IsLocal(filename) || filepath.Base(filename) != filename || filename == "." {
     return errors.New("invalid filename")
 }
+cmd := exec.Command("rm", "-f", "--", filepath.Join("/tmp", filename))
+// Prefer os.Root.Remove for scoped deletion without an external command.
 ```
 
 ---
 
 ## Template Injection — High
 
-Using untrusted input in templates.
+Treat template source and template data differently. Passing untrusted strings as data to a trusted `html/template` is the normal safe use; parsing attacker-controlled template source is not safe.
 
 **Bad:**
 
 ```go
-data := r.URL.Query().Get("user") // Untrusted input
-t.Execute(w, data)
+t, err := template.New("page").Parse(r.URL.Query().Get("template"))
+// Attacker controls template actions and any exposed functions/data.
 ```
 
 **Good:**
 
 ```go
-// Validate input
-user := strings.TrimSpace(r.URL.Query().Get("user"))
-if !allowedRoles[role] {
-    role = "user"
+// Source is trusted; html/template contextually escapes the untrusted value.
+t := template.Must(template.New("page").Parse("<p>{{.}}</p>"))
+if err := t.Execute(w, r.URL.Query().Get("user")); err != nil {
+    slog.ErrorContext(r.Context(), "render page", "error", err)
 }
-t.Execute(w, data)
 ```
 
 ---
@@ -281,18 +281,21 @@ resp, _ := http.Get(url) // DON'T: No validation
 
 ```go
 u, err := url.Parse(targetURL)
-// Block non-HTTP/S protocols
-if u.Scheme != "http" && u.Scheme != "https" {
-    return errors.New("invalid scheme")
+if err != nil || u.Scheme != "https" || u.User != nil ||
+    u.Host != "api.example.com" {
+    return errors.New("destination not allowed")
 }
-// Block internal hosts
-if isInternalIP(u.Hostname()) {
-    return errors.New("internal host not allowed")
+client := &http.Client{
+    Timeout: 10 * time.Second,
+    CheckRedirect: func(*http.Request, []*http.Request) error {
+        return errors.New("redirects not allowed")
+    },
 }
-// Block metadata endpoints
-if strings.Contains(u.Hostname(), "metadata.") {
-    return errors.New("metadata endpoint blocked")
-}
+// This allowlist assumes a trusted service and DNS configuration.
+// For arbitrary public URLs, also validate every resolved IPv4/IPv6 address
+// in DialContext and connect to the validated address (avoiding DNS rebinding).
+// Reject loopback, private, link-local, unspecified and other disallowed ranges;
+// enforce the same policy on redirects, proxies and network egress.
 ```
 
 ---
@@ -313,10 +316,15 @@ dec.Decode(&user)
 
 ```go
 import "encoding/json"
+r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 dec := json.NewDecoder(r.Body)
 var user User
-dec.Decode(&user) // JSON doesn't execute code
-// Validate fields
+if err := dec.Decode(&user); err != nil {
+    http.Error(w, "invalid JSON", http.StatusBadRequest)
+    return
+}
+// Validate fields. Custom UnmarshalJSON methods are application code and must
+// also handle hostile input safely; typed JSON alone does not bound all work.
 ```
 
 ---

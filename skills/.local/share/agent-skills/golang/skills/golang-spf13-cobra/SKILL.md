@@ -70,7 +70,7 @@ var rootCmd = &cobra.Command{
 }
 ```
 
-Use `AddGroup` to label subcommands in help output — register groups **before** the `AddCommand` calls that reference them; cobra does not retroactively assign groups.
+Use `AddGroup` to label subcommands in help output — register each referenced GroupID before command execution validates the tree. AddGroup may come before or after AddCommand.
 
 ## The Run\* family
 
@@ -82,8 +82,8 @@ PersistentPreRunE → PreRunE → RunE → PostRunE → PersistentPostRunE
 
 Always use `*E` variants — the non-`E` forms cannot return errors. Key rules:
 
-- `PersistentPreRunE` on the root runs before **every** subcommand — use it for config init and auth checks.
-- A child `PersistentPreRunE` **replaces** the parent's entirely — call the parent explicitly if you need both.
+- `PersistentPreRunE` on the root is inherited by runnable descendants without a nearer persistent hook — use it for config init and auth checks.
+- A child `PersistentPreRunE` **replaces** the parent's entirely — call the parent explicitly if you need both, or enable cobra.EnableTraverseRunHooks to execute ancestor hooks. Do not combine both approaches.
 - `PostRunE` runs only if `RunE` succeeded.
 
 For the full lifecycle and inheritance rules, see [commands-and-args.md](references/commands-and-args.md).
@@ -114,7 +114,7 @@ For pflag types, custom flag values, flag groups, and viper binding, see [flags.
 Cobra generates shell completions automatically. Extend them with:
 
 - **`ValidArgs []string`** — static positional arg completion.
-- **`ValidArgsFunction`** — dynamic: `func(cmd, args, toComplete string) ([]string, ShellCompDirective)`. Return `ShellCompDirectiveNoFileComp` to suppress file fallback.
+- **`ValidArgsFunction`** — dynamic: `func(cmd *cobra.Command, args []string, toComplete string) ([]string, ShellCompDirective)`. Return `ShellCompDirectiveNoFileComp` to suppress file fallback.
 - **`RegisterFlagCompletionFunc(name, fn)`** — flag value completion.
 
 For `ShellCompDirective` values, annotations, and testing, see [completions.md](references/completions.md).
@@ -141,8 +141,8 @@ Cobra accumulates flag state across `Execute()` calls — build a fresh command 
 
 ## Best Practices
 
-1. **Always use `RunE`, never `Run`** — `Run` cannot return an error; the only escape is `os.Exit` or panic, bypassing defers.
-2. **Put config initialization in `PersistentPreRunE`** — it runs before every subcommand; the right place for viper binding and auth checks.
+1. **Use `RunE` for fallible work** — errors propagate to Execute; main chooses the exit status. Run is suitable for infallible callbacks. Panic runs defers while unwinding, but os.Exit does not.
+2. **Put config initialization in `PersistentPreRunE`** — it runs for runnable descendants that inherit it; a suitable place for viper binding and auth checks.
 3. **Validate positional args with `Args`, not inside `RunE`** — `Args` gives cobra's standard error messages; `MatchAll` composes validators.
 4. **Use `cmd.OutOrStdout()` / `cmd.ErrOrStderr()` for all output** — direct `os.Stdout` writes cannot be captured by tests.
 5. **Re-create the command tree per test** — cobra accumulates flag state across `Execute()` calls on the same instance.
@@ -151,7 +151,7 @@ Cobra accumulates flag state across `Execute()` calls — build a fresh command 
 
 | Mistake | Why it fails | Fix |
 | --- | --- | --- |
-| Using `Run` instead of `RunE` | Cannot return an error — only escape is `os.Exit` or panic, bypassing defers | Use `RunE` — return the error, let cobra handle the exit |
+| Using `Run` instead of `RunE` | Cannot return a failure to Execute | Use `RunE` — return the error, let main choose the exit status |
 | Writing `len(args)` checks in `RunE` | Bypasses cobra's standard error messages ("accepts 1 arg, received 2") | Declare `Args: cobra.ExactArgs(1)` on the command |
 | Writing to `os.Stdout` directly | Tests cannot capture output — os-level file handles can't be redirected | Use `cmd.OutOrStdout()` / `cmd.ErrOrStderr()` |
 | Child `PersistentPreRunE` silently drops parent's | Cobra does not chain — the child replaces the parent's hook entirely | Call `parent.PersistentPreRunE(cmd, args)` from the child's hook |

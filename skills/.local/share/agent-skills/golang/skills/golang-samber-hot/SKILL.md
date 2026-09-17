@@ -22,7 +22,7 @@ paths:
 
 # Using samber/hot for In-Memory Caching in Go
 
-Generic, type-safe in-memory caching library for Go 1.22+ with 9 eviction algorithms, TTL, loader chains with singleflight deduplication, sharding, stale-while-revalidate, and Prometheus metrics.
+Generic, type-safe in-memory caching library for Go 1.22+ with 8 builder-selectable eviction algorithms, TTL, loader chains with singleflight deduplication, sharding, stale-while-revalidate, and Prometheus metrics.
 
 **Official Resources:**
 
@@ -48,7 +48,7 @@ Pick based on your access pattern — the wrong algorithm wastes memory or tanks
 | **LRU** | `hot.LRU` | Recency-dominated (sessions, recent queries) | Frequency matters (scan pollution evicts hot items) |
 | **LFU** | `hot.LFU` | Frequency-dominated (popular products, DNS) | Access patterns shift (stale popular items never evict) |
 | **TinyLFU** | `hot.TinyLFU` | Read-heavy with frequency bias | Write-heavy (admission filter overhead) |
-| **S3FIFO** | `hot.S3FIFO` | High throughput, scan-resistant | Small caches (<1000 items) |
+| **S3FIFO** | not exposed by the v0.13.1 HotCache builder | High throughput, scan-resistant | Measure on the actual cache size |
 | **ARC** | `hot.ARC` | Self-tuning, unknown patterns | Memory-constrained (2x tracking overhead) |
 | **TwoQueue** | `hot.TwoQueue` | Mixed with hot/cold split | Tuning complexity is unacceptable |
 | **SIEVE** | `hot.SIEVE` | Simple scan-resistant LRU alternative | Highly skewed access patterns |
@@ -72,7 +72,7 @@ cache := hot.NewHotCache[string, *User](hot.WTinyLFU, 10_000).
 defer cache.StopJanitor()
 
 cache.Set("user:123", user)
-cache.SetWithTTL("session:abc", session, 30*time.Minute)
+cache.SetWithTTL("user:456", anotherUser, 30*time.Minute)
 
 value, found, err := cache.Get("user:123")
 ```
@@ -111,17 +111,17 @@ If the item size is unknown, ask the developer to measure it with a unit test th
 
 ## Common Mistakes
 
-1. **Forgetting `WithJanitor()`** — without it, expired entries stay in memory until the algorithm evicts them. Always chain `.WithJanitor()` in the builder and `defer cache.StopJanitor()`.
+1. **Confusing expiration with cleanup** — `Get` checks expiration even without a janitor. `WithJanitor()` proactively reclaims expired entries; it is optional. Stop it when the cache is no longer needed.
 2. **Calling `SetMissing()` without missing cache config** — panics at runtime. Enable `WithMissingCache(algorithm, capacity)` or `WithMissingSharedCache()` in the builder first.
 3. **`WithoutLocking()` + `WithJanitor()`** — mutually exclusive, panics. `WithoutLocking()` is only safe for single-goroutine access without background cleanup.
-4. **Oversized cache** — a cache holding everything is a map with overhead. Size to your working set (typically 10-20% of total data). Monitor hit rate to validate.
+4. **Oversized cache** — a cache holding everything is a map with overhead. Size to measured workload and memory budget. Monitor hit rate to validate.
 5. **Ignoring loader errors** — `Get()` returns `(zero, false, err)` on loader failure. Always check `err`, not just `found`.
 
 ## Best Practices
 
-1. Always set TTL — unbounded caches serve stale data indefinitely because there is no signal to refresh
+1. Choose TTL or explicit invalidation according to freshness requirements; capacity-bounded caches do not inherently need TTL
 2. Use `WithJitter(lambda, upperBound)` to spread expirations — without jitter, items created together expire together, causing thundering herd on the loader
-3. Monitor with `WithPrometheusMetrics(cacheName)` — hit rate below 80% usually means the cache is undersized or the algorithm is wrong for the workload
+3. Monitor with `WithPrometheusMetrics(cacheName)` — interpret hit rate alongside miss cost, freshness requirements, and access patterns
 4. Use `WithCopyOnRead(fn)` / `WithCopyOnWrite(fn)` for mutable values — without copies, callers mutate cached objects and corrupt shared state
 
 For advanced patterns (revalidation, sharding, missing cache, monitoring setup), see [Production Patterns](./references/production-patterns.md).
@@ -134,4 +134,3 @@ For the complete API surface, see [API Reference](./references/api-reference.md)
 - → See `samber/cc-skills-golang@golang-performance` skill for general caching strategy and when to use in-memory cache vs Redis vs CDN
 - → See `samber/cc-skills-golang@golang-observability` skill for Prometheus metrics integration and monitoring
 - → See `samber/cc-skills-golang@golang-database` skill for database query patterns that pair with cache loaders
-- → See `samber/cc-skills@promql-cli` skill for querying Prometheus cache metrics via CLI

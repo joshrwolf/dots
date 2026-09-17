@@ -22,7 +22,7 @@ type error interface {
 }
 ```
 
-This means errors are returned, not thrown. Every function that can fail returns an `error` as its last return value, and every caller must check it.
+This means errors are returned, not thrown. Fallible operations conventionally return `error` as their last result; callers handle it according to the function contract.
 
 ```go
 // ✗ Bad — silently discarding errors
@@ -32,16 +32,19 @@ data, _ := os.ReadFile("config.yaml")
 result, err := doSomething()
 fmt.Println(result) // using result without checking err
 
-// ✓ Good — always check before using other return values
+// ✓ Good — this operation cannot proceed after ReadFile fails
 data, err := os.ReadFile("config.yaml")
 if err != nil {
     return fmt.Errorf("reading config: %w", err)
 }
 ```
 
+`io.Reader.Read` is an important exception to checking an error before using other
+results: consume the returned `n` bytes before handling `err`, including `io.EOF`.
+
 ## Error String Conventions
 
-Error strings MUST be lowercase, without trailing punctuation, and should not duplicate the context that wrapping will add.
+Error strings normally start lowercase, except for proper nouns or acronyms, and omit trailing punctuation; they should not duplicate the context that wrapping will add.
 
 ```go
 // ✗ Bad — capitalized, punctuation, redundant prefix
@@ -53,7 +56,7 @@ return errors.New("connection refused")
 return fmt.Errorf("fetching user: %w", err)
 ```
 
-When errors are wrapped through multiple layers, each layer adds its own prefix. The result reads like a chain:
+When multiple layers add distinct context, their prefixes form a readable chain:
 
 ```
 creating order: charging card: connecting to payment gateway: connection refused
@@ -71,13 +74,8 @@ var ErrUnauthorized = errors.New("unauthorized")
 ### `fmt.Errorf` — dynamic error messages
 
 ```go
-import "github.com/samber/oops"
-
-// ✗ Avoid at log/APM boundaries — each user/tenant combo becomes a unique group
-return fmt.Errorf("user %s not found in tenant %s", userID, tenantID)
-
-// ✓ Prefer for grouped production errors — static message, variable data as structured attributes
-return oops.With("user_id", userID).With("tenant_id", tenantID).Errorf("user not found")
+// Useful context in a returned error; logging policy is a separate decision.
+return fmt.Errorf("user %q not found in tenant %q", userID, tenantID)
 ```
 
 See [Low-Cardinality Error Messages](#low-cardinality-error-messages) for why this matters.
@@ -112,7 +110,7 @@ oops.With("csv_file_path", csvPath).With("csv_file_line", line).Errorf("csv pars
 
 The stdlib approach works but scatters context: the error travels up the stack and the handler logging it may no longer have access to the variable data. `samber/oops` (external dependency `github.com/samber/oops`) solves this by attaching structured attributes directly to the error, so they're available wherever the error is eventually logged.
 
-**Static wrapping prefixes are fine** — `fmt.Errorf("fetching user: %w", err)` is low-cardinality because the prefix never changes. Dynamic context in returned errors is sometimes useful for CLI output or debugging, but production logging should keep the grouping message stable and attach IDs, paths, counts, and other variable data as structured attributes.
+**A static prefix does not make the whole error low-cardinality** — `fmt.Errorf("fetching user: %w", err)` still includes the underlying error text. Dynamic context in returned errors is sometimes useful for CLI output or debugging, but production logging should keep the grouping message stable and attach IDs, paths, counts, and other variable data as structured attributes.
 
 ## Custom Error Types
 

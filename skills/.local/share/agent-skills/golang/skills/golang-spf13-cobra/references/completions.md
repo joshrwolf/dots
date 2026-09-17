@@ -36,7 +36,7 @@ The `ShellCompDirective` controls shell behavior after your completion function 
 | `ShellCompDirectiveDefault` | Fall back to file completion after your results |
 | `ShellCompDirectiveNoFileComp` | Disable file completion fallback |
 | `ShellCompDirectiveNoSpace` | Don't add a space after the completion |
-| `ShellCompDirectiveFilterFileExt(exts)` | Only show files with given extensions |
+| `ShellCompDirectiveFilterFileExt` | Return extensions as completion strings with this directive to filter files |
 | `ShellCompDirectiveFilterDirs(dirs)` | Only show directories |
 | `ShellCompDirectiveError` | Signal an error (show no completions) |
 
@@ -114,7 +114,9 @@ func TestCompletion(t *testing.T) {
 	rootCmd.SetArgs([]string{"__complete", "get", ""})
 	buf := new(bytes.Buffer)
 	rootCmd.SetOut(buf)
-	rootCmd.Execute()
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
 	if !strings.Contains(buf.String(), "pod") {
 		t.Errorf("output %q does not contain %q", buf.String(), "pod")
 	}

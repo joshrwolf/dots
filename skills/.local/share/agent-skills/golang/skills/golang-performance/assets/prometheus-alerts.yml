@@ -12,9 +12,9 @@
   annotations:
     summary: "Goroutine count >10K — check for leaked goroutines"
 
-# Memory approaching container limit
+# Memory approaching a configured deployment budget (example: 512 MiB)
 - alert: MemoryNearLimit
-  expr: predict_linear(process_resident_memory_bytes[1h], 3600) > <container_limit_bytes>
+  expr: predict_linear(process_resident_memory_bytes[1h], 3600) > 512 * 1024 * 1024
   for: 15m
   annotations:
     summary: "RSS projected to exceed container limit within 1h"

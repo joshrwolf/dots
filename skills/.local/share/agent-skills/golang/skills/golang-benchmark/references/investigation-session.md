@@ -1,10 +1,10 @@
-# Investigation Session Setup
+# Performance Investigation Reference
 
-Tools and techniques for **temporary deep-dive performance investigation** — not everyday monitoring. These are things you enable for hours or days while debugging a specific issue, then disable.
+Runtime metrics, queries, and instrumentation tradeoffs for investigating performance under real traffic. Use existing observations where they answer the question; additional instrumentation is conditional on the missing evidence.
 
 ## Table of Contents
 
-- [Setting Up a Session](#setting-up-a-session)
+- [Instrumentation Tradeoffs](#instrumentation-tradeoffs)
 - [Prometheus Go Runtime Collector](#prometheus-go-runtime-collector)
   - [Key Series](#key-series)
 - [PromQL Deep-Dive Queries](#promql-deep-dive-queries)
@@ -17,34 +17,12 @@ Tools and techniques for **temporary deep-dive performance investigation** — n
 - [Host-Level Correlation](#host-level-correlation)
 - [Cost Warnings](#cost-warnings)
 
-## Setting Up a Session
+## Instrumentation Tradeoffs
 
-Before diving into profiles, set up the environment to collect high-resolution data:
-
-1. **Reduce Prometheus scrape interval** to <=10s on the target instance (normally 15-30s). More data points during a short investigation window reveal patterns that 30s intervals miss. Revert after investigation.
-
-2. **Enable pprof** via environment variable — no recompile needed:
-
-   ```bash
-   kubectl set env deployment/my-service PPROF_ENABLED=true
-   kubectl rollout restart deployment/my-service
-   ```
-
-3. **Enable continuous profiling** on the target instance only — not fleet-wide. Pyroscope/Parca on a single instance is manageable; on 50 replicas it overwhelms the backend.
-
-   ```bash
-   kubectl set env deployment/my-service PYROSCOPE_ENABLED=true
-   kubectl rollout restart deployment/my-service
-   ```
-
-4. **Enable debug logging** via env var if needed — but only on the target instance. Debug logging has significant throughput impact:
-
-   ```bash
-   kubectl set env deployment/my-service LOG_LEVEL=debug
-   kubectl rollout restart deployment/my-service
-   ```
-
-**Key principle:** all costly debug features (pprof HTTP, continuous profiling, debug log level, trace collection) SHOULD be configurable via environment variables. This allows instant toggle without recompile. Design your application to support this from day one.
+- **Scrape resolution:** a shorter interval can reveal short-lived patterns that existing samples miss, but adds collection and storage overhead. Choose resolution for the timescale being investigated; no fixed interval is required.
+- **Runtime controls versus rollouts:** an environment variable only works if the application implements it. Changing a Deployment environment variable rolls all replicas; it is not an instant per-pod toggle. Existing runtime controls or an isolated diagnostic deployment can target one instance. Changing the pod template already triggers a rollout.
+- **Profiling scope:** select profiles and targets for the suspected bottleneck and available capacity. Continuous profiling can be fleet-wide when designed and budgeted for it.
+- **Temporary logging and tracing:** bound overhead and data volume, and restore temporary settings when no longer needed. Startup configuration may require a restart; a supported runtime control can avoid it.
 
 ## Prometheus Go Runtime Collector
 
@@ -54,9 +32,9 @@ When using `prometheus/client_golang`, refer to the library's official documenta
 
 ### Key Series
 
-→ See [prometheus-go-metrics.md](./prometheus-go-metrics.md) for the **exhaustive reference** of all Go runtime metrics (verified from official sources). **Note:** runtime/metrics list varies by Go version — use `metrics.All()` at runtime for your specific Go version.
+→ See [prometheus-go-metrics.md](./prometheus-go-metrics.md) for a version-dependent reference of common exported metrics. **Note:** runtime/metrics list varies by Go version — use `metrics.All()` at runtime for your specific Go version.
 
-**Performance note:** `go_memstats_*` metrics internally call `runtime.ReadMemStats()`, which triggers a short stop-the-world pause. In Go 1.17+, the runtime/metrics collector (`collectors.NewGoCollector()`) uses `runtime/metrics` instead, which is cheaper. Prefer the modern collector in high-throughput services:
+Modern client_golang Go collectors use runtime/metrics, including when constructing compatibility go_memstats metrics. Do not assume every scrape calls ReadMemStats or that MetricsAll switches the collection backend: it opts into more series. Check the installed library, enabled collectors, and capture evidence before attributing a pause to scraping. A custom registry makes enabled collectors explicit:
 
 ```go
 import "github.com/prometheus/client_golang/prometheus/collectors"
@@ -77,38 +55,38 @@ Use these during investigation sessions with the reduced scrape interval. Each q
 
 | PromQL | What to look for |
 | --- | --- |
-| `rate(go_gc_duration_seconds_count[5m])` | GC cycles/s. >2/s sustained = excessive allocation rate. Reduce allocations per request. |
+| `rate(go_gc_duration_seconds_count[5m])` | GC cycles/s. Compare with workload, allocation rate, live heap, and GC CPU; there is no universal excessive frequency. |
 | `rate(go_gc_duration_seconds_sum[5m]) / rate(go_gc_duration_seconds_count[5m])` | Average GC pause. Increasing trend = heap growing or too many pointers to scan. |
-| `go_gc_duration_seconds{quantile="1"}` | Worst-case GC pause. Spikes here cause tail latency (P99). |
+| `go_gc_duration_seconds{quantile="1"}` | Maximum pause among recent runtime pause samples, not an all-time maximum. Correlate with latency before attributing a P99 change. |
 
 ### Memory leak detection
 
 | PromQL | What to look for |
 | --- | --- |
-| `go_memstats_alloc_bytes` | Should be roughly stable under constant load. Continuous increase = memory leak. |
+| `go_memstats_alloc_bytes` | Should be roughly stable under constant load. Persistent growth across comparable post-GC observations can signal retention or a leak. |
 | `rate(go_memstats_alloc_bytes_total[5m])` | Allocation rate (bytes/s). Compare before/after deploy — significant increase = new allocation pattern. |
-| `process_resident_memory_bytes - go_memstats_sys_bytes` | Gap = non-Go memory (cgo, mmap). Growing gap = non-Go leak. |
+| `process_resident_memory_bytes` alongside `go_memstats_sys_bytes - go_memstats_heap_released_bytes` | RSS and Go runtime-managed memory have different accounting; their difference is not a non-Go-memory measurement. Inspect OS mappings, stacks, cgo, and released pages when they diverge. |
 
 ### Goroutine leak detection
 
 | PromQL | What to look for |
 | --- | --- |
-| `go_goroutines` | Should correlate with load. Growing independently of traffic = leak. |
-| `delta(go_goroutines[1h])` | Net goroutine change over 1h. Positive without load increase = leak. |
+| `go_goroutines` | Should correlate with load. Sustained unexplained growth warrants goroutine-stack comparison; it does not alone prove a leak. |
+| `delta(go_goroutines[1h])` | Net goroutine change over 1h. Persistent unexplained growth suggests checking goroutine ownership and stacks. |
 
 ### CPU saturation
 
 | PromQL | What to look for |
 | --- | --- |
-| `rate(process_cpu_seconds_total[5m])` | CPU cores consumed. Compare to GOMAXPROCS. |
-| `rate(process_cpu_seconds_total[5m]) / <GOMAXPROCS>` | CPU utilization ratio. >0.8 sustained = CPU-saturated. |
+| `rate(process_cpu_seconds_total[5m])` | CPU cores consumed. Compare with CPU quota, host capacity, GOMAXPROCS, and cgo/OS-thread activity. |
+| `rate(process_cpu_seconds_total[5m]) / <GOMAXPROCS>` | Approximate ratio to Go execution capacity, not a guaranteed 0–1 process CPU utilization; cgo and runtime work can use other threads. |
 
 ### Post-deploy regression detection
 
 | PromQL | What to look for |
 | --- | --- |
 | `rate(go_memstats_alloc_bytes_total[5m])` | Compare before/after deploy window. Significant increase = new allocation pattern introduced. |
-| `histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))` | P99 latency increase after deploy = performance regression. Requires app-level histogram. |
+| `histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))` | P99 latency change after deploy; correlate workload and configuration before assigning cause. Requires an app histogram and deliberate aggregation preserving le. |
 
 ### Example alerting rules
 
@@ -141,15 +119,15 @@ Adjust thresholds to your application — a data pipeline has different baseline
 
 Go runtime metrics alone don't show the full picture. Host-level metrics reveal whether the problem is in your application or the infrastructure.
 
-- **`node_exporter`** — host CPU, memory, disk I/O, network. Correlate with Go app metrics: high `node_cpu_seconds_total` with low `process_cpu_seconds_total` = noisy neighbor, not your app.
+- **`node_exporter`** — host CPU, memory, disk I/O, network. Correlate with Go app metrics: compare non-idle rates of node_cpu_seconds_total with process CPU rates and CPU quotas; high host usage with low process CPU suggests contention but does not prove a noisy neighbor.
 - **`process-exporter`** — per-process metrics on Linux. Useful when multiple Go services share a host.
 
 ## Cost Warnings
 
-**Profiles and traces are expensive to collect.** Keep them short-term and localized:
+Collection overhead depends on workload, profile type, and sampling settings:
 
-- **pprof CPU profiling** — CPU-intensive during the capture window. Don't run 30s profiles back-to-back in production. Space them out.
-- **Pyroscope continuous profiling** — ~2-5% CPU overhead **per instance, always-on**. At scale (hundreds of instances), this adds up in compute cost and backend storage. Enable on a subset of instances or on-demand via environment variable. → See `samber/cc-skills-golang@golang-observability` skill for Pyroscope setup.
-- **Execution traces** — generate large files quickly (MB/s). Capture 5-10s max. Longer traces are unwieldy and slow to analyze.
-- **Debug log level** — significant throughput impact due to allocation and I/O overhead. Never leave on permanently.
-- **All costly features** SHOULD be toggleable via environment variables for instant on/off without recompile. Design for this from day one.
+- **CPU profiles and continuous profiling** — measure CPU overhead and backend ingestion/storage; continuous collection is a valid production design with an appropriate budget.
+- **Execution traces** — start with a short capture or a flight recorder around the event of interest. Size and parsing cost vary; 5–10 seconds is a starting point, not a hard limit.
+- **Debug logging** — watch allocation, I/O, volume, and sensitive data; keep temporary verbosity bounded.
+
+- Use the existing deployment or runtime control mechanism. Changing environment variables on a running process is not an automatic live reconfiguration API.

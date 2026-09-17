@@ -31,14 +31,14 @@ When using observability libraries (Prometheus client, OpenTelemetry SDK, vendor
 
 1. **Use structured logging** with `log/slog` — choose a handler encoding supported by the log collection pipeline; JSON is common, while `TextHandler` also retains structured attributes
 2. **Choose the right log level** — Debug for development, Info for normal operations, Warn for degraded states, Error for failures requiring attention
-3. **Log with context** — use `slog.InfoContext(ctx, ...)` to correlate logs with traces
+3. **Log with context** — use `slog.InfoContext(ctx, ...)` with a context-aware handler; default handlers do not extract trace IDs automatically
 4. **Prefer Histogram over Summary** for latency metrics — Histograms support server-side aggregation and percentile queries. Every HTTP endpoint MUST have latency and error rate metrics.
 5. **Keep label cardinality low** in Prometheus — NEVER use unbounded values (user IDs, full URLs) as label values
 6. **Track percentiles** (P50, P90, P99, P99.9) using Histograms + `histogram_quantile()` in PromQL
 7. **Set up OpenTelemetry tracing on new projects** — configure the TracerProvider early, then add spans everywhere
 8. **Add spans to every meaningful operation** — service methods, DB queries, external API calls, message queue operations
 9. **Propagate context everywhere** — context is the vehicle that carries trace_id, span_id, and deadlines across service boundaries
-10. **Enable profiling via environment variables** — toggle pprof and continuous profiling on/off without redeploying
+10. **Enable profiling via environment variables** — configure pprof/continuous profiling at startup; changing environment configuration requires restart unless runtime controls are implemented
 11. **Correlate signals** — inject trace_id into logs, use exemplars to link metrics to traces
 12. **A feature is not done until it is observable** — declare metrics, add proper logging, create spans
 13. **[awesome-prometheus-alerts](https://samber.github.io/awesome-prometheus-alerts/) provides ~500 ready-to-use alerting rules** organized by technology for infrastructure and dependency monitoring
@@ -84,7 +84,7 @@ Each signal has a dedicated guide with full code examples, configuration pattern
 
 - **[Distributed Tracing](references/tracing.md)** — When and how to use OpenTelemetry SDK to trace request flows across services. Covers spans (creating, attributes, status recording), `otelhttp` middleware for HTTP instrumentation, error recording with `span.RecordError()`, trace sampling (why you can't collect everything at scale), propagating trace context across service boundaries, and cost optimization.
 
-- **[Profiling](references/profiling.md)** — On-demand profiling with pprof (CPU, heap, goroutine, mutex, block profiles) — how to enable it in production, secure it with auth, and toggle via environment variables without redeploying. Continuous profiling with Pyroscope for always-on performance visibility. Cost implications of each profiling type and mitigation strategies.
+- **[Profiling](references/profiling.md)** — On-demand profiling with pprof (CPU, heap, goroutine, mutex, block profiles) — how to enable it in production, secure it with auth, and configure at startup through environment variables; changes require restarting the process unless a runtime control is implemented. Continuous profiling with Pyroscope for always-on performance visibility. Cost implications of each profiling type and mitigation strategies.
 
 - **[Real User Monitoring](references/rum.md)** — Understanding how users actually experience your service. Covers product analytics (event tracking, funnels), Customer Data Platform integration, and critical compliance: GDPR/CCPA consent checks, data subject rights (user deletion endpoints), and privacy checklist for tracking. Server-side event tracking (PostHog, Segment) and identity key best practices.
 
@@ -101,13 +101,16 @@ Signals are most powerful when connected. A trace_id in your logs lets you jump 
 ```go
 import "go.opentelemetry.io/contrib/bridges/otelslog"
 
-// Create a logger that automatically injects trace_id and span_id
-logger := otelslog.NewHandler("my-service")
+// Configure an OTel SDK LoggerProvider with a processor/exporter first.
+// sdkLoggerProvider is that configured provider, not the TracerProvider.
+logger := otelslog.NewHandler("my-service", otelslog.WithLoggerProvider(sdkLoggerProvider))
 slog.SetDefault(slog.New(logger))
 
-// Now every slog call with context includes trace correlation
+// Records carry trace correlation when ctx contains a valid span context.
 slog.InfoContext(ctx, "order created", "order_id", orderID)
-// Output includes: {"trace_id":"abc123", "span_id":"def456", "msg":"order created", ...}
+// This exports OTel log records; it does not augment an existing JSONHandler
+// or automatically write JSON to stdout. For JSON logs, add trace/span attributes
+// via a context-aware handler instead, or explicitly configure fan-out.
 ```
 
 ### Metrics + Traces: Exemplars
@@ -139,7 +142,7 @@ If the project currently uses `zap`, `logrus`, or `zerolog`, migrate to `log/slo
 A feature is not production-ready until it is observable. Before marking a feature as done, verify:
 
 - [ ] **Metrics declared** — counters for operations/errors, histograms for latencies, gauges for saturation. Each metric var has PromQL queries and alert rules as comments above its declaration.
-- [ ] **Logging is proper** — structured key-value pairs with `slog`, context variants used (`slog.InfoContext`), no PII in logs, errors MUST be either logged OR returned (NEVER both).
+- [ ] **Logging is proper** — structured key-value pairs with `slog`, context variants used (`slog.InfoContext`), no PII in logs, avoid duplicate reports as errors propagate.
 - [ ] **Spans created** — every service method, DB query, and external API call has a span with relevant attributes, errors recorded with `span.RecordError()`.
 - [ ] **Dashboards and alerts exist** — the PromQL from your metric comments is wired into Grafana dashboards and Prometheus alerting rules. Ready-to-use alert rules for common infrastructure dependencies are available at [awesome-prometheus-alerts](https://samber.github.io/awesome-prometheus-alerts/).
 - [ ] **RUM events tracked** — key business events tracked server-side (PostHog/Segment), identity key is `user_id` (not email), consent checked before tracking.

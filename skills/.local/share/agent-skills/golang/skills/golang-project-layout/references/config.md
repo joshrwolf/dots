@@ -48,4 +48,4 @@ func loadConfig() (Config, error) {
 }
 ```
 
-Configuration MUST be loaded from env vars, files, or flags — NEVER hardcoded. Sensitive values MUST come from env vars or secret managers, NEVER config files.
+Configuration MUST be loaded from env vars, files, or flags — NEVER hardcoded. Keep secrets out of committed defaults. Use the deployment's secret mechanism, which may provide environment variables or access-controlled mounted files; neither is inherently secret merely because of its format.

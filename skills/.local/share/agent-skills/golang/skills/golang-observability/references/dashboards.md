@@ -1,6 +1,6 @@
 # Grafana Dashboards for Go Services
 
-These community Grafana dashboards visualize Go runtime performance out of the box. They display the metrics automatically exposed by `github.com/prometheus/client_golang` — no custom instrumentation needed.
+These community Grafana dashboards visualize Go runtime performance out of the box. Check each revision's PromQL and label assumptions against the deployed collector/exporter versions before importing.
 
 ## Recommended Dashboards
 
@@ -14,7 +14,7 @@ These community Grafana dashboards visualize Go runtime performance out of the b
 
 Dashboards are imported via **Dashboards > New > Import** in Grafana using the dashboard ID (e.g., `21221`), then selecting the Prometheus data source.
 
-These dashboards require the default Go collector metrics (`go_goroutines`, `go_memstats_*`, `go_gc_duration_seconds`, `process_*`). If you use the Prometheus client library with default collectors, everything works out of the box.
+These dashboards require the default Go collector metrics (`go_goroutines`, `go_memstats_*`, `go_gc_duration_seconds`, `process_*`). Verify the selected revision's metric names and scrape labels; the Kubernetes-oriented dashboard 10826 assumes per-pod metrics. Host panels can require additional metrics depending on the dashboard revision.
 
 ## When to Use Each
 

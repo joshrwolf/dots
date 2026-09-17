@@ -1,41 +1,56 @@
 package main
 
 import (
+	"fmt"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-func flagExamples() {
-	// === Persistent vs Local ===
-
-	// Persistent — inherited by all subcommands
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file path")
-
-	// Local — only for this command
-	serveCmd.Flags().IntP("port", "p", 8080, "port to listen on")
-
-	// === Required Flags ===
-
-	serveCmd.Flags().String("host", "", "hostname to bind to")
-	serveCmd.MarkFlagRequired("host")
-
-	// Mutually exclusive flags
-	rootCmd.MarkFlagsMutuallyExclusive("json", "yaml")
-
-	// At least one required
-	rootCmd.MarkFlagsOneRequired("output-file", "stdout")
-
-	// === Flag Validation with RegisterFlagCompletionFunc ===
-
-	serveCmd.Flags().String("env", "dev", "environment (dev, staging, prod)")
-	serveCmd.RegisterFlagCompletionFunc("env", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+// Standalone example; do not register the same flag twice on a command.
+func newFlagExampleCommand() *cobra.Command {
+	cfg := viper.New()
+	cmd := &cobra.Command{Use: "flags"}
+	cmd.PersistentFlags().String("config", "", "config file path")
+	cmd.Flags().IntP("port", "p", 8080, "port")
+	cmd.Flags().String("host", "", "hostname")
+	if err := cmd.MarkFlagRequired("host"); err != nil {
+		panic(err)
+	}
+	cmd.Flags().Bool("json", false, "JSON output")
+	cmd.Flags().Bool("yaml", false, "YAML output")
+	cmd.MarkFlagsMutuallyExclusive("json", "yaml")
+	cmd.Flags().String("output-file", "", "destination file")
+	cmd.Flags().Bool("stdout", false, "write to stdout")
+	cmd.MarkFlagsOneRequired("output-file", "stdout")
+	cmd.Flags().String("env", "dev", "environment")
+	if err := cmd.RegisterFlagCompletionFunc("env", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return []string{"dev", "staging", "prod"}, cobra.ShellCompDirectiveNoFileComp
-	})
-
-	// === Always Bind Flags to Viper ===
-	// This ensures viper.GetInt("port") returns the flag value, env var MYAPP_PORT,
-	// or config file value — whichever has highest precedence.
-
-	serveCmd.Flags().IntP("port", "p", 8080, "port to listen on")
-	viper.BindPFlag("port", serveCmd.Flags().Lookup("port"))
+	}); err != nil {
+		panic(err)
+	}
+	if err := cfg.BindPFlag("port", cmd.Flags().Lookup("port")); err != nil {
+		panic(err)
+	}
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		// Completion suggestions and required-flag markers do not validate values.
+		env, err := cmd.Flags().GetString("env")
+		if err != nil {
+			return err
+		}
+		switch env {
+		case "dev", "staging", "prod":
+		default:
+			return fmt.Errorf("invalid environment %q", env)
+		}
+		host, err := cmd.Flags().GetString("host")
+		if err != nil {
+			return err
+		}
+		if host == "" {
+			return fmt.Errorf("host must not be empty")
+		}
+		_ = cfg.GetInt("port")
+		return nil
+	}
+	return cmd
 }

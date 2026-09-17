@@ -118,7 +118,7 @@ needs them, rather than mechanically generating one for each field.
 
 ## Receivers
 
-Receivers MUST be **1-2 letter abbreviations** of the type name. Use the same name across all methods of a type.
+Use a short, recognizable receiver name consistently across methods of a type. `s` or `srv` can both suit `Server`; clarity and nearby conventions matter more than a character limit.
 
 ```go
 // Good — short, consistent
@@ -126,14 +126,14 @@ func (s *Server) Start() error      { ... }
 func (s *Server) Stop() error       { ... }
 func (s *Server) Handle(r *Request) { ... }
 
-// Bad — too long
+// A longer name can fit surrounding conventions
 func (server *Server) Start() error { ... }
 
 // Bad — inconsistent names across methods
 func (s *Server) Start() error      { ... }
 func (srv *Server) Stop() error     { ... }
 
-// Bad — NEVER use "this" or "self"
+// Generic receiver names hide the type context
 func (this *Server) Handle(r *Request) { ... }
 ```
 

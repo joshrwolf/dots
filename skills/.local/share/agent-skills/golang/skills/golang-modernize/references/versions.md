@@ -13,7 +13,7 @@
 - [Go 1.22 Modernizations (February 2024)](#go-122-modernizations-february-2024)
   - [SHOULD use `range` over integers _(Go 1.22+)_](#should-use-range-over-integers-go-122)
   - [Remove loop variable shadow copies _(Go 1.22+)_](#remove-loop-variable-shadow-copies-go-122)
-  - [`math/rand` MUST be replaced with `math/rand/v2` _(Go 1.22+)_](#mathrand-must-be-replaced-with-mathrandv2-go-122)
+  - [Consider `math/rand/v2` for new random-number code _(Go 1.22+)_](#consider-mathrandv2-for-new-random-number-code-go-122)
   - [Use enhanced `net/http` routing _(Go 1.22+)_](#use-enhanced-nethttp-routing-go-122)
   - [Use `strings.CutPrefix` and `strings.CutSuffix` _(Go 1.20+)_](#use-stringscutprefix-and-stringscutsuffix-go-120)
   - [Use `reflect.TypeFor[T]()` _(Go 1.22+)_](#use-reflecttypefort-go-122)
@@ -29,7 +29,7 @@
   - [Use `omitzero` JSON tag _(Go 1.24+)_](#use-omitzero-json-tag-go-124)
   - [Use `strings.SplitSeq`, `strings.FieldsSeq`, `strings.Lines` _(Go 1.24+)_](#use-stringssplitseq-stringsfieldsseq-stringslines-go-124)
   - [`t.Context()` SHOULD replace manual `context.Background()` in tests _(Go 1.24+)_](#tcontext-should-replace-manual-contextbackground-in-tests-go-124)
-  - [`b.Loop()` MUST be used in benchmarks _(Go 1.24+)_](#bloop-must-be-used-in-benchmarks-go-124)
+  - [Prefer `b.Loop()` for sequential benchmarks _(Go 1.24+)_](#prefer-bloop-for-sequential-benchmarks-go-124)
   - [Use `runtime.AddCleanup` instead of `runtime.SetFinalizer` _(Go 1.24+)_](#use-runtimeaddcleanup-instead-of-runtimesetfinalizer-go-124)
   - [Use `weak` package for weak references _(Go 1.24+)_](#use-weak-package-for-weak-references-go-124)
   - [Use `crypto/sha3`, `crypto/hkdf`, `crypto/pbkdf2` _(Go 1.24+)_](#use-cryptosha3-cryptohkdf-cryptopbkdf2-go-124)
@@ -83,7 +83,7 @@ Changelog: <https://go.dev/doc/go1.21>
 
 ### Use built-in `min`, `max`, `clear` _(Go 1.21+)_
 
-Remove custom implementations. `min`/`max` work with any ordered type and accept variadic arguments:
+Remove custom implementations. `min`/`max` work with any ordered type and accept multiple arguments (but not slice expansion with `...`):
 
 ```go
 // Before
@@ -98,7 +98,7 @@ x := min(a, b)
 smallest := min(a, b, c, d)
 ```
 
-`clear` zeroes maps and slices:
+`clear` deletes map entries and zeroes existing slice elements; it does not shrink a slice:
 
 ```go
 // Before
@@ -168,6 +168,8 @@ for k, v := range original { clone[k] = v }
 clone := maps.Clone(original)
 ```
 
+`maps.Clone(nil)` returns nil, whereas the make-and-copy loop returns a non-nil empty map. Both are shallow copies; preserve the intended nil semantics.
+
 ### Use `cmp.Or` for default values _(Go 1.22+)_
 
 ```go
@@ -197,6 +199,8 @@ var getClient = sync.OnceValue(func() *http.Client {
     return &http.Client{Timeout: 10 * time.Second}
 })
 ```
+
+Unlike `sync.Once.Do`, `OnceValue` repeats an initialization panic on later calls. `OnceValues` caches an error result too; use a different design if failures must be retried.
 
 ### Use enhanced `context` functions _(Go 1.21+)_
 
@@ -228,7 +232,7 @@ for range 10 { fmt.Println("hello") }
 
 ### Remove loop variable shadow copies _(Go 1.22+)_
 
-Go 1.22 changed loop variable semantics: each iteration creates a new variable. Loop variable captures (`v := v`) SHOULD be removed in Go 1.22+ codebases.
+Go 1.22 gives loop variables declared with `:=` a distinct variable per iteration. Assignment to predeclared variables with `=` still reuses them. Loop variable captures (`v := v`) SHOULD be removed in Go 1.22+ codebases.
 
 **Requirement**: The `go` directive in `go.mod` must be `go 1.22` or later for this behavior.
 
@@ -245,7 +249,7 @@ for _, v := range items {
 }
 ```
 
-### `math/rand` MUST be replaced with `math/rand/v2` _(Go 1.22+)_
+### Consider `math/rand/v2` for new random-number code _(Go 1.22+)_
 
 ```go
 // Before
@@ -258,13 +262,17 @@ import "math/rand/v2"
 n := rand.IntN(100) // IntN, not Intn
 ```
 
+`math/rand` is not deprecated as a package. Before migrating existing code, check
+seeded-sequence reproducibility and API differences; the generators are not
+sequence-compatible. Neither package is for security-sensitive randomness.
+
 Key `math/rand/v2` changes:
 
 - No global seed needed — automatically seeded
 - `Intn` -> `IntN`, `Int63n` -> `Int64N` (renamed)
 - `rand.N[T]()` generic function for any integer type
 - Better algorithms (ChaCha8, PCG)
-- `Read` removed — use `crypto/rand` for random bytes
+- No package-level `Read`; use `crypto/rand` for security-sensitive bytes. `(*ChaCha8).Read` supports deterministic pseudorandom bytes where that is the intended contract
 
 ### Use enhanced `net/http` routing _(Go 1.22+)_
 
@@ -281,6 +289,8 @@ func getUser(w http.ResponseWriter, r *http.Request) {
     id := r.PathValue("id")
 }
 ```
+
+`GET` patterns also match `HEAD`; trailing-slash, wildcard, conflict, and escaping rules differ between routers. Check route behavior during migration.
 
 ### Use `strings.CutPrefix` and `strings.CutSuffix` _(Go 1.20+)_
 
@@ -337,7 +347,7 @@ func AllUsers(db *sql.DB) ([]User, error) {
     var users []User
     for rows.Next() {
         var u User
-        rows.Scan(&u.ID, &u.Name)
+        if err := rows.Scan(&u.ID, &u.Name); err != nil { return nil, err }
         users = append(users, u)
     }
     return users, rows.Err()
@@ -394,10 +404,10 @@ s = handle.Value()
 
 With `go 1.23` or later in `go.mod`:
 
-- `time.Timer` and `time.Ticker` are garbage collected without calling `Stop()`
+- Unreachable channel-based timers and tickers can be collected without `Stop()`
 - Timer channels are now unbuffered (capacity 0, was 1)
 
-Remove unnecessary `Stop()` calls in defer patterns where the timer goes out of scope.
+Retain `Stop` when it cancels pending work. `AfterFunc` has different lifetime semantics: its scheduled callback is not canceled merely because the timer variable goes out of scope. Stopping a ticker does not close its channel or terminate a receiving goroutine.
 
 ---
 
@@ -415,7 +425,7 @@ type Result[T any] = struct { Value T; Err error }
 
 ### Use `os.Root` for directory-scoped file access _(Go 1.24+)_
 
-**Security-critical**: `os.Root` prevents path traversal attacks (CWE-22) at the OS level. Replace all manual `filepath.Clean` + `strings.HasPrefix` validation with `os.Root` when handling user-supplied paths. It rejects symlinks resolving outside the root and supports `Open`, `Create`, `Stat`, `OpenFile`, `Mkdir`, `Remove`, and more.
+**Security-critical**: `os.Root` prevents path traversal attacks (CWE-22) at the OS level. Replace all manual `filepath.Clean` + `strings.HasPrefix` validation with `os.Root` when handling user-supplied paths. It rejects symlinks resolving outside the root and supports `Open`, `Create`, `Stat`, `OpenFile`, `Mkdir`, `Remove`, and more (some methods require Go 1.25+). Root confines pathname traversal, not access to devices or mount points inside it.
 
 ```go
 // Before: manual path validation (risk of path traversal)
@@ -427,6 +437,8 @@ root, err := os.OpenRoot("/opt/data")
 if err != nil { return err }
 defer root.Close()
 f, err := root.Open(userInput) // cannot escape root directory
+if err != nil { return err }
+defer f.Close()
 ```
 
 ### Use `omitzero` JSON tag _(Go 1.24+)_
@@ -472,7 +484,7 @@ func TestFoo(t *testing.T) {
 }
 ```
 
-### `b.Loop()` MUST be used in benchmarks _(Go 1.24+)_
+### Prefer `b.Loop()` for sequential benchmarks _(Go 1.24+)_
 
 ```go
 // Before
@@ -492,9 +504,11 @@ func BenchmarkFoo(b *testing.B) {
 // Before
 runtime.SetFinalizer(obj, func(o *Object) { o.Close() })
 
-// After (Go 1.24+): more flexible, no cycle issues
+// After (Go 1.24+): keep cleanup independent of obj
 runtime.AddCleanup(obj, func(resource Resource) { resource.Close() }, obj.resource)
 ```
+
+Neither the cleanup closure nor its argument may retain `obj`, directly or indirectly. Keep explicit Close as the primary lifecycle; cleanups are not guaranteed at process exit. Use `runtime.KeepAlive` when a resource operation must keep its owner reachable, and coordinate explicit Close to avoid double cleanup.
 
 ### Use `weak` package for weak references _(Go 1.24+)_
 
@@ -509,7 +523,7 @@ if v := ptr.Value(); v != nil {
 
 ### Use `crypto/sha3`, `crypto/hkdf`, `crypto/pbkdf2` _(Go 1.24+)_
 
-Replace `golang.org/x/crypto` sub-packages with standard library equivalents:
+These APIs moved into the standard library, but HKDF and PBKDF2 are not import-only replacements: signatures and error handling differ. Check the resolved APIs with `go doc`:
 
 ```go
 // Before
@@ -601,8 +615,8 @@ func TestConcurrent(t *testing.T) {
 
     wg.Wait()
 
-    // Problem: Race conditions are hard to detect, timing-dependent,
-    // and flaky tests are common
+    // This WaitGroup already provides deterministic completion.
+    // The synctest version below is an alternative, not a bug fix.
     if count.Load() != 1 {
         t.Fatal("expected 1")
     }
@@ -636,7 +650,7 @@ fr.WriteTo(file) // captures recent trace data
 
 ### Container-aware `GOMAXPROCS` _(Go 1.25+)_
 
-Go 1.25 automatically respects cgroup CPU limits on Linux. Remove manual workarounds:
+Go 1.25 defaults to container-aware GOMAXPROCS on Linux for go 1.25+ modules. Before removing automaxprocs, compare rounding, the runtime's usual minimum of two CPUs, environment overrides, and dynamic updates:
 
 ```go
 // Before: using uber-go/automaxprocs
@@ -653,7 +667,7 @@ Major JSON revision, experimental via `GOEXPERIMENT=jsonv2` in Go 1.25–1.26. G
 ### Go 1.25 additions to prefer when target allows
 
 - `sync.WaitGroup.Go`: simple fire-and-wait goroutines; function must not panic; no errors/cancellation.
-- `testing/synctest.Test` and `synctest.Wait`: stable deterministic concurrent/time tests. Do not use the Go 1.24 experimental `synctest.Run` in Go 1.25+.
+- `testing/synctest.Test` and `synctest.Wait`: stable fake-time and durable-blocking synchronization for concurrent tests. Do not use the Go 1.24 experimental `synctest.Run` in Go 1.25+.
 - `net/http.CrossOriginProtection`: stdlib helper for cross-origin / CSRF-style protection in HTTP servers.
 - `reflect.TypeAssert[T](v)`: prefer over `v.Interface().(T)` in reflection code.
 - `os.Root.FS` and additional `os.Root` methods: use for confined filesystem APIs.
@@ -703,11 +717,11 @@ For new encryption use, avoid `crypto/rsa.EncryptPKCS1v15`. Prefer RSA-OAEP (`rs
 
 ### Green Tea GC enabled by default _(Go 1.26+)_
 
-Re-evaluate GC and allocation tuning under Go 1.26 Green Tea GC using profiles and benchmarks, removing legacy tuning only when data supports it. Keep `GOMEMLIMIT` when it represents a real container or service memory ceiling. Remove third-party `automaxprocs` workarounds unless the project has a measured reason, because Go 1.25+ makes `GOMAXPROCS` container-aware by default.
+Re-evaluate GC and allocation tuning under Go 1.26 Green Tea GC using profiles and benchmarks, removing legacy tuning only when data supports it. Keep `GOMEMLIMIT` when it represents a real container or service memory ceiling. Review `automaxprocs` using the container-aware GOMAXPROCS differences above before removing it.
 
 ### Go 1.26+ test artifacts
 
-Use `t.ArtifactDir()`, `b.ArtifactDir()`, and `f.ArtifactDir()` for files created by tests, benchmarks, and fuzzers that should persist for inspection.
+Use `t.ArtifactDir()`, `b.ArtifactDir()`, and `f.ArtifactDir()` for test, benchmark, and fuzz output. Pass `go test -artifacts=<directory>` to retain those files for inspection; without the flag, the artifact directory is temporary and removed after the test completes.
 
 ### Go 1.26+ slog multi-handler
 
@@ -762,7 +776,7 @@ For future Go versions, use the project's intended target version. Do not use AP
 Go 1.26 rewrote `go fix` to apply a subset of modernize-style analyzers automatically. Check `go tool fix help` for exact coverage; some modernizations still require linting or manual review.
 
 ```bash
-go fix ./...  # applies the enabled safe transformations
+go fix ./...  # applies enabled transformations; inspect and test the diff
 ```
 
 ---
@@ -776,11 +790,16 @@ Changelog: <https://go.dev/doc/go1.27>
 Go 1.27 lifted a restriction present since generics landed in Go 1.18: a method may now declare its own type parameters ([go.dev/issue/77273](https://go.dev/issue/77273), [spec: Method declarations](https://go.dev/ref/spec#Method_declarations)), so a helper that logically belongs to one type no longer needs a package-scope generic function. Interface methods still cannot declare type parameters, and a generic method cannot satisfy an interface — keep the package-level function when the operation must be part of an interface contract.
 
 ```go
-// Before: package-scope generic function, disconnected from the type it serves
-func FilterInts[T any](s []T, pred func(T) bool) []T { ... }
+type Set[T comparable] map[T]struct{}
 
-// After (Go 1.27+): generic method, scoped to the receiver
-func (s Set[T]) Filter[U comparable](pred func(T) U) Set[T] { ... }
+// Transform members into a possibly different element type.
+func (s Set[T]) Map[U comparable](transform func(T) U) Set[U] {
+    out := make(Set[U], len(s))
+    for value := range s {
+        out[transform(value)] = struct{}{}
+    }
+    return out
+}
 ```
 
 The standard library's own `(*rand.Rand).N[Int intType](n Int) Int` (`math/rand/v2`) is the reference example.
@@ -884,8 +903,11 @@ defer srv.Close()
 
 // After (Go 1.27+): in-memory fake network, composes with testing/synctest
 synctest.Test(t, func(t *testing.T) {
-    srv := httptest.NewTestServer(handler)
-    defer srv.Close()
+    srv := httptest.NewTestServer(t, handler) // cleanup registered with t
+    client := srv.Client() // transport uses the in-memory network
+    resp, err := client.Get("http://example.com/")
+    if err != nil { t.Fatal(err) }
+    defer resp.Body.Close()
 })
 ```
 
@@ -895,7 +917,7 @@ The goroutine leak profile (previously experimental behind `GOEXPERIMENT=gorouti
 
 ### `go fix` gains new modernizers _(Go 1.27+)_
 
-New analyzers: `atomictypes`, `embedlit`, `slicesbackward`, `unsafefuncs`. The `waitgroup` analyzer was renamed to `waitgroupgo`, and `fmtappendf` was removed. Run `go fix ./...` after upgrading the toolchain. → See [Tooling modernization](./tooling.md) for the full `go fix`/`go doc`/`go mod tidy` command reference.
+New analyzers: `atomictypes`, `embedlit`, `slicesbackward`, `unsafefuncs`. The `waitgroup` analyzer was renamed to `waitgroupgo`, and `fmtappendf` was removed. Run `go fix ./...` when the upgrade scope includes automated rewrites. → See [Tooling modernization](./tooling.md) for the full `go fix`/`go doc`/`go mod tidy` command reference.
 
 ### `go test` runs the `stdversion` vet check _(Go 1.27+)_
 
@@ -915,7 +937,7 @@ For modules with `go 1.27` or later in `go.mod`, `go mod tidy` consolidates dupl
 
 These changes need review before or during a bump to `go 1.27` — none of them require a code rewrite, but skipping the check risks a build failure or a silent behavior change:
 
-- **Removed `GODEBUG` settings** — `asynctimerchan`, `tlsunsafeekm`, `tlsrsakex`, `tls3des`, `tls10server`, `x509keypairleaf`, `gotypesalias`. A `godebug` line in `go.mod` or a `//go:debug` comment still pinning one of these to its old value now **fails the build**; pinning it to its current default value is accepted. Search with `grep -rn 'go:debug\|godebug' go.mod **/*.go`.
+- **Removed `GODEBUG` settings** — `asynctimerchan`, `tlsunsafeekm`, `tlsrsakex`, `tls3des`, `tls10server`, `x509keypairleaf`, `gotypesalias`. A `godebug` line in `go.mod` or a `//go:debug` comment still pinning one of these to its old value now **fails the build**; pinning it to its current default value is accepted. Search with `rg -n 'go:debug|godebug' -g go.mod -g go.work -g '*.go'`.
 - **JSON API compatibility** — retain v1 behavior on a toolchain-only upgrade. If also migrating to v2, test the changed API semantics separately against representative payloads.
 - **Size-specialized allocator** — up to 30% faster allocations under 80 bytes, roughly 1% faster overall, at the cost of ~60 KB binary size. Enabled by default; disable with `GOEXPERIMENT=nosizespecializedmalloc` if binary size is constrained, but treat that flag as scheduled for removal in Go 1.28, not a long-term setting.
 - **Darwin floor raised to macOS 13 (Ventura)** — older macOS targets can no longer run binaries built with this toolchain.
@@ -956,8 +978,10 @@ errs = multierror.Append(errs, err1)
 return errs.ErrorOrNil()
 
 // After (Go 1.20+)
-return errors.Join(err1, err2)
+return errors.Join(errs, err1)
 ```
+
+Check formatting, unwrap shape, and library-specific contracts before replacing an existing multi-error type. This is not necessarily a drop-in replacement.
 
 ### Use `net.JoinHostPort` instead of `fmt.Sprintf` _(any version)_
 

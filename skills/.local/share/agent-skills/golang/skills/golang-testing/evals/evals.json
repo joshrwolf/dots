@@ -83,15 +83,15 @@
     "name": "fake-clock-injection-for-time-dependent-tests",
     "description": "Time-dependent code must accept a clock interface so tests can use clockwork.FakeClock; real time.Sleep is unacceptable",
     "prompt": "Here is an existing RateLimiter implementation:\n\n```go\ntype RateLimiter struct {\n    limit   int\n    window  time.Duration\n    count   int\n    resetAt time.Time\n}\n\nfunc NewRateLimiter(limit int, window time.Duration) *RateLimiter {\n    return &RateLimiter{\n        limit:   limit,\n        window:  window,\n        resetAt: time.Now().Add(window),\n    }\n}\n\nfunc (r *RateLimiter) Allow() bool {\n    now := time.Now()\n    if now.After(r.resetAt) {\n        r.count = 0\n        r.resetAt = now.Add(r.window)\n    }\n    if r.count >= r.limit {\n        return false\n    }\n    r.count++\n    return true\n}\n```\n\nWrite tests that verify:\n1. Allow() returns true while under the limit\n2. Allow() returns false when the limit is exceeded\n3. The counter resets after the time window expires\n\nThe tests must run in milliseconds, not seconds. You may modify the implementation if needed.",
-    "trap": "Model uses time.Sleep(window + small margin) to test window expiration — the code uses time.Now() directly, making tests slow and flaky. The skill teaches to refactor the code to accept a clock interface (clockwork.Clock) and inject a FakeClock in tests.",
+    "trap": "Avoid unnecessary third-party clock dependencies or production refactoring when supported synctest can test the timing contract.",
     "assertions": [
       {
         "id": "4.1",
-        "text": "Modifies the RateLimiter to accept a clock interface (e.g., clockwork.Clock or a custom Now() func) rather than calling time.Now() directly"
+        "text": "Uses an injected Now function/clock or synctest when supported; does not add a third-party clock dependency unnecessarily."
       },
       {
         "id": "4.2",
-        "text": "Uses clockwork.FakeClock (or equivalent) in tests to advance time without real sleeping — tests run in microseconds"
+        "text": "Advances synthetic time without real-time sleeps; does not promise a fixed test duration."
       },
       {
         "id": "4.3",
@@ -137,19 +137,19 @@
     "name": "test-observable-behavior-not-internals",
     "description": "Tests verify behavior via public API only, not by inspecting the internal map field",
     "prompt": "Test a `UserCache` struct with `Get(id string) (*User, bool)`, `Set(id string, user *User)`, and `Len() int` methods. The cache has an internal `data map[string]*User` field. Write tests that verify the cache stores and retrieves users correctly. Make sure to verify the internal map state is consistent after each operation.",
-    "trap": "Model directly accesses the internal data map field to verify state, coupling tests to implementation details",
+    "trap": "Avoids overly broad internal coupling while honoring the explicitly requested invariant check.",
     "assertions": [
       {
         "id": "6.1",
-        "text": "Tests observable behavior through Get/Set/Len public API only"
+        "text": "Tests Get/Set/Len behavior and checks the explicitly requested internal invariant where needed."
       },
       {
         "id": "6.2",
-        "text": "Does NOT directly access or inspect the internal `data` map field"
+        "text": "Keeps any white-box assertion focused on the requested invariant rather than incidental map representation."
       },
       {
         "id": "6.3",
-        "text": "Does NOT use same-package (white-box) testing to examine cache internals"
+        "text": "Chooses same-package testing when unexported access is needed; external packages are not mandatory."
       },
       {
         "id": "6.4",
@@ -203,7 +203,7 @@
       },
       {
         "id": "8.4",
-        "text": "Explains that Example functions serve as executable documentation visible in go doc and pkg.go.dev — not just tests"
+        "text": "Explains that examples are executable documentation rendered by documentation sites such as pkg.go.dev."
       }
     ]
   },
@@ -224,7 +224,7 @@
       },
       {
         "id": "9.3",
-        "text": "Fuzz test includes property-based assertions (e.g., output contains no < or > characters, or double-sanitize is idempotent)"
+        "text": "Asserts properties justified by the sanitizer contract; does not assume stripping tags removes every literal angle bracket."
       },
       {
         "id": "9.4",
@@ -266,11 +266,11 @@
     "name": "httptest-recorder-not-real-server",
     "description": "HTTP handler tests use httptest.NewRecorder, not a real HTTP server",
     "prompt": "Write end-to-end tests for a REST API handler `HandleCreateOrder(w http.ResponseWriter, r *http.Request)` that accepts POST with JSON body `{\"product\": \"...\", \"quantity\": N}`. It returns 201 with the order JSON on success, 400 for invalid JSON, and 422 for validation errors (empty product, quantity <= 0). Test it like a real client would call it.",
-    "trap": "Model starts a real HTTP server with httptest.NewServer or net/http ListenAndServe, adding unnecessary network overhead and port allocation to tests",
+    "trap": "Chooses recorder versus test server based on whether the requested test exercises a real client/transport exchange.",
     "assertions": [
       {
         "id": "11.1",
-        "text": "Uses httptest.NewRecorder (not httptest.NewServer or a real HTTP server)"
+        "text": "Uses httptest.NewRecorder for direct handler tests or httptest.NewServer with its Client for the requested full HTTP exchange."
       },
       {
         "id": "11.2",
@@ -315,7 +315,7 @@
       },
       {
         "id": "12.5",
-        "text": "Uses the requested integration build tag"
+        "text": "Separates external integration tests according to project conventions, with matching invocation flags."
       },
       {
         "id": "12.6",
@@ -348,7 +348,7 @@
       },
       {
         "id": "13.5",
-        "text": "Prevents compiler optimization of the result (assigns to a package-level variable or uses _ =)"
+        "text": "Prevents invalid benchmark elimination using B.Loop safeguards or an appropriate sink; assigning to _ alone is not a general safeguard for b.N loops."
       },
       {
         "id": "13.6",

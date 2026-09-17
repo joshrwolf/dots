@@ -28,7 +28,7 @@ All backend handlers implement `slog.Handler` and follow the `Option{}.NewXxxHan
 
 ## Common Option Fields
 
-Every handler's `Option` struct includes:
+Common fields are listed below; not every backend supports every field (for example Slack/Telegram lack AttrFromContext):
 
 | Field | Purpose |
 | --- | --- |
@@ -47,12 +47,14 @@ import slogdatadog "github.com/samber/slog-datadog/v2"
 
 handler := slogdatadog.Option{
     Level: slog.LevelInfo,
-    // Service, Source, Hostname, Tags configured via Datadog client
+    Client: authenticatedClient, // *datadog.APIClient, configured by the application
+    Batching: true,
+    Service: "api", // Source, Hostname, GlobalTags are also Option fields
 }.NewDatadogHandler()
 defer handler.(interface{ Stop(context.Context) error }).Stop(context.Background()) // REQUIRED: flush buffered logs
 ```
 
-**Batch mode** is the default — logs are buffered and sent periodically (default 5s):
+**Batch mode is opt-in** with Batching: true. BatchDuration defaults to 5s; without batching, delivery occurs per record:
 
 - Call `Stop(ctx)` on shutdown or buffered logs are lost.
 - `Flush(ctx)` triggers a mid-lifecycle flush.
@@ -269,12 +271,12 @@ Handlers that buffer records internally and MUST be closed on shutdown:
 
 | Handler | Shutdown method | What happens without it |
 | --- | --- | --- |
-| `slog-datadog` | `handler.Stop(ctx)` | Buffered logs lost (default 5s batch) |
+| `slog-datadog` | `handler.Stop(ctx)` | Buffered logs lost when Batching is enabled (default interval 5s) |
 | `slog-loki` | `lokiClient.Stop()` | Pending push requests dropped |
 | `slog-kafka` | `writer.Close()` | Pending messages never sent |
 | `slog-parquet` | `buffer.Flush(true)` | Partial Parquet file not flushed to storage |
 
-For non-batched handlers (Sentry, Slack, Telegram, Webhook), logs are sent synchronously — no close required, but `sentry.Flush(timeout)` is recommended.
+Shutdown depends on the client: Sentry normally queues asynchronously and needs sentry.Flush; webhook delivery uses goroutines in the audited version. Do not infer synchronous delivery or safe immediate exit from the absence of a Close method.
 
 ```go
 // Production shutdown pattern

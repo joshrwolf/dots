@@ -41,7 +41,7 @@ viper.AddConfigPath(".")                 // search path 3 (lowest priority)
 
 // viper searches paths in order, stops at the first match
 if err := viper.ReadInConfig(); err != nil {
-    var notFound *viper.ConfigFileNotFoundError
+    var notFound viper.ConfigFileNotFoundError
     if !errors.As(err, &notFound) {
         return err  // real error (permission denied, malformed YAML, etc.)
     }
@@ -126,3 +126,5 @@ func init() {
 ```
 
 `ReadConfig` accepts any `io.Reader`. This is useful for shipping default config inside the binary, then layering user overrides on top via `MergeInConfig`.
+
+In Viper v1.21, the default codec registry covers JSON, TOML, YAML, and dotenv. Formats still named by SupportedExts (such as HCL, INI, and properties) may need a registered custom codec; an extension being recognized does not guarantee a decoder is installed.

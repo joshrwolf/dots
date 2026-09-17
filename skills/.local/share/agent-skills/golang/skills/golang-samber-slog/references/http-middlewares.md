@@ -16,7 +16,7 @@ All samber/slog HTTP middlewares share a consistent pattern and configuration st
 
 ## Shared Config Fields
 
-Every middleware provides a `Config` struct with these common fields:
+These common Config fields vary by framework. New(logger) uses that package's DefaultConfig; NewWithConfig uses the struct supplied and does not merge omitted fields with defaults. Check the selected version.
 
 | Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
@@ -24,21 +24,21 @@ Every middleware provides a `Config` struct with these common fields:
 | `ClientErrorLevel` | `slog.Level` | `slog.LevelWarn` | Log level for 4xx responses |
 | `ServerErrorLevel` | `slog.Level` | `slog.LevelError` | Log level for 5xx responses |
 | `WithUserAgent` | `bool` | `false` | Include `User-Agent` header |
-| `WithRequestID` | `bool` | `false` | Include request ID |
+| `WithRequestID` | `bool` | framework-specific; Gin DefaultConfig is true | Include request ID |
 | `WithRequestBody` | `bool` | `false` | Include request body (capped) |
 | `WithResponseBody` | `bool` | `false` | Include response body (capped) |
 | `WithRequestHeader` | `bool` | `false` | Include request headers |
 | `WithResponseHeader` | `bool` | `false` | Include response headers |
 | `WithSpanID` | `bool` | `false` | Include OpenTelemetry span ID |
 | `WithTraceID` | `bool` | `false` | Include OpenTelemetry trace ID |
-| `WithClientIP` | `bool` | `false` | Include client IP address |
+| `WithClientIP` | `bool` | framework-specific; Gin DefaultConfig is true | Include client IP address |
 | `Filters` | `[]Filter` | `nil` | Request filter functions |
 
 **Global configuration variables** (set before creating middleware):
 
 - `RequestBodyMaxSize` / `ResponseBodyMaxSize` — default 64KB each
 - `HiddenRequestHeaders` / `HiddenResponseHeaders` — headers to redact
-- `TraceIDKey` / `SpanIDKey` — context key names for OpenTelemetry
+- `TraceIDKey` / `SpanIDKey` — output attribute names for OpenTelemetry trace/span IDs
 
 ## Default Log Fields
 

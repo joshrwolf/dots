@@ -50,11 +50,11 @@ Every command that can modify source (`format`, `imports`, `rename`, `codeaction
 | Flag | Purpose |
 | --- | --- |
 | `-w`, `-write` | Write the edited content back to the source file(s) |
-| `-d`, `-diff` | Print a unified diff instead of writing |
+| `-d`, `-diff` | Print a unified diff instead of edited file content |
 | `-l`, `-list` | Print only the names of the files that would be/were edited |
 | `-preserve` | Combined with `-w`: keep a copy of each original file before overwriting |
 
-None of these are mutually exclusive with each other; passing none of them just computes the edit without printing or writing it.
+None of these are mutually exclusive with each other; without `-w`, edits are not saved; by default the edited file content is printed. `-d` changes the output to a diff. Some commands execute actions with other effects, such as running tests.
 
 ## Navigation commands
 
@@ -173,4 +173,4 @@ source.organizeImports
 source.test
 ```
 
-A few additional kinds exist beyond this `-kind`-documented set but are reachable only through editor UI or `execute`/code lens, not by name filter: `refactor.extract.variable-all`, `refactor.extract.constant-all`, `refactor.inline.variable`, `refactor.rewrite.moveParamLeft`, `refactor.rewrite.moveParamRight`, `refactor.rewrite.eliminateDotImport`, `refactor.rewrite.addTags`, `refactor.rewrite.removeTags`, `refactor.rewrite.implementInterface`, `source.addTest`, `source.splitPackage`, `source.toggleCompilerOptDetails`. See [features.md](features.md#transformation) for what each one does.
+Additional kinds may exist in a release beyond the CLI help's examples. Availability depends on server version, selected code, and client capabilities; some need interactive editor support: `refactor.extract.variable-all`, `refactor.extract.constant-all`, `refactor.inline.variable`, `refactor.rewrite.moveParamLeft`, `refactor.rewrite.moveParamRight`, `refactor.rewrite.eliminateDotImport`, `refactor.rewrite.addTags`, `refactor.rewrite.removeTags`, `refactor.rewrite.implementInterface`, `source.addTest`, `source.splitPackage`, `source.toggleCompilerOptDetails`. See [features.md](features.md#transformation) for what each one does.

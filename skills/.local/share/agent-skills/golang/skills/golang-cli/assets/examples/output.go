@@ -3,11 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"text/tabwriter"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // === stdout vs stderr ===
@@ -24,12 +26,9 @@ func outputExample(cmd *cobra.Command, result string, err error) {
 
 // === Detecting Pipe vs Terminal ===
 
-func isTerminal() bool {
-	fi, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+func isTerminal(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
 }
 
 // === Machine-Readable Output ===
@@ -41,7 +40,10 @@ type User struct {
 }
 
 func printUsers(cmd *cobra.Command, users []User) error {
-	format, _ := cmd.Flags().GetString("output")
+	format, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
 	switch format {
 	case "json":
 		enc := json.NewEncoder(cmd.OutOrStdout())
@@ -49,15 +51,23 @@ func printUsers(cmd *cobra.Command, users []User) error {
 		return enc.Encode(users)
 	case "plain":
 		for _, u := range users {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", u.ID, u.Name)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", u.ID, u.Name); err != nil {
+				return err
+			}
 		}
-	default: // "table"
+	case "table":
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tNAME")
-		for _, u := range users {
-			fmt.Fprintf(w, "%s\t%s\n", u.ID, u.Name)
+		if _, err := fmt.Fprintln(w, "ID\tNAME"); err != nil {
+			return err
 		}
-		w.Flush()
+		for _, u := range users {
+			if _, err := fmt.Fprintf(w, "%s\t%s\n", u.ID, u.Name); err != nil {
+				return err
+			}
+		}
+		return w.Flush()
+	default:
+		return fmt.Errorf("unsupported output format %q", format)
 	}
 	return nil
 }
@@ -65,11 +75,19 @@ func printUsers(cmd *cobra.Command, users []User) error {
 // === Colors ===
 // Use fatih/color — it auto-disables when output is not a terminal.
 
-func colorExamples(cmd *cobra.Command, env string, err error) {
-	color.Green("Success: deployed to %s", env)
-	color.Red("Error: %v", err)
-
-	// Or for reusable styles
-	success := color.New(color.FgGreen, color.Bold).SprintFunc()
-	fmt.Fprintf(cmd.OutOrStdout(), "%s deployed\n", success("v1.2.3"))
+func colorExamples(cmd *cobra.Command, env string, failure error) error {
+	output := cmd.OutOrStdout()
+	style := color.New(color.FgGreen)
+	if !isTerminal(output) {
+		style.DisableColor()
+	}
+	if _, err := style.Fprintf(output, "deployed to %s\n", env); err != nil {
+		return err
+	}
+	if failure != nil {
+		// Diagnostics go to the command's error stream, not color's global writer.
+		_, err := fmt.Fprintf(cmd.ErrOrStderr(), "error: %v\n", failure)
+		return err
+	}
+	return nil
 }

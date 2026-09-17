@@ -25,7 +25,7 @@ The key insight: sample noise (Debug/Info), never errors. Combine sampling strat
 | --- | --- | --- | --- | --- |
 | Uniform | `UniformSamplingOption` | Drop fixed % of all records randomly | Minimal | Dev/staging noise reduction |
 | Threshold | `ThresholdSamplingOption` | Log first N per interval, then sample at rate R | Low | Production — initial visibility then throttle |
-| Absolute | `AbsoluteSamplingOption` | Cap at N records per interval globally | Medium | Hard cost/throughput cap |
+| Absolute | `AbsoluteSamplingOption` | Adapt probability toward N per interval per matcher bucket | Medium | Approximate throughput target |
 | Custom | `CustomSamplingOption` | User function returns sample rate per record | Varies | Level-aware, time-aware, context-aware rules |
 
 ## Uniform Sampling
@@ -60,21 +60,21 @@ option := slogsampling.ThresholdSamplingOption{
 }
 ```
 
-**Pattern:** "Show me the first 10 occurrences of each message per 5s window. After that, show every 10th." This preserves initial visibility into new issues while limiting noise from repeated messages.
+**Pattern:** "Show me the first 10 occurrences of each message per 5s window. After that, randomly keep about 10%." This preserves initial visibility into new issues while limiting noise from repeated messages.
 
 ## Absolute Sampling
 
-Caps total throughput at a fixed number of records per interval, regardless of how many unique messages exist.
+Adapts sampling probability from the previous interval count. Max is an approximate target, not a strict cap; bursts can exceed it. MatchAll uses one global bucket. A hard quota needs a separate limiter.
 
 ```go
 option := slogsampling.AbsoluteSamplingOption{
     Tick:    1 * time.Second,
-    Max:     1000,                           // cap at 1000 records/sec
+    Max:     1000,                           // target roughly 1000 records/sec
     Matcher: slogsampling.MatchAll(),        // all records share one counter
 }
 ```
 
-**Use when:** You have a hard budget — e.g., "our log backend can handle 1000 records/sec max" or "we pay per GB ingested."
+**Use when:** You want adaptive volume reduction. Do not use it alone to enforce a hard backend quota or spending limit.
 
 ## Custom Sampling
 
@@ -124,7 +124,7 @@ threshold := slogsampling.ThresholdSamplingOption{
     Matcher: slogsampling.MatchByLevelAndMessage(),
 }.NewMiddleware()
 
-// Layer 2: global throughput cap (absolute)
+// Layer 2: global throughput target (absolute)
 absolute := slogsampling.AbsoluteSamplingOption{
     Tick: 1 * time.Second, Max: 1000,
     Matcher: slogsampling.MatchAll(),
@@ -133,14 +133,14 @@ absolute := slogsampling.AbsoluteSamplingOption{
 logger := slog.New(
     slogmulti.
         Pipe(threshold).  // first: per-message dedup
-        Pipe(absolute).   // then: global cap
+        Pipe(absolute).   // then: global target
         Handler(handler),
 )
 ```
 
 ## Pipeline Ordering
 
-Sampling MUST be the first stage in the pipeline. Placing it after formatting or routing wastes CPU on records that get dropped.
+Sampling early saves work for dropped records. Routing first is appropriate when some records must bypass sampling, and common redaction may need to cover every route.
 
 ```
 // WRONG: format then sample — CPU wasted on dropped records

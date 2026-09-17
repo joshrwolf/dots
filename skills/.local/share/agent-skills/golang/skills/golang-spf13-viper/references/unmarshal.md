@@ -35,7 +35,7 @@ if err := viper.Unmarshal(&cfg); err != nil {
 Always use `mapstructure` tags. Without them, mapstructure falls back to case-insensitive field name matching, which works for simple cases but silently fails for:
 
 - Nested structs where the outer key uses an underscore (`max_conn` → `MaxConn`)
-- Unexported fields
+- Unexported fields (tags cannot make them settable)
 - Fields where the Go name does not match the config key
 
 ```go
@@ -72,12 +72,12 @@ Prefer `UnmarshalKey` over `viper.Sub` + `Unmarshal` — fewer nil checks and le
 
 ## time.Duration
 
-Viper's `GetDuration` parses duration strings (`"1h30m"`, `"500ms"`) from config files and env vars. When using `Unmarshal`, mapstructure does not know how to decode a duration string into `time.Duration` by default.
+Viper's `GetDuration` parses duration strings (`"1h30m"`, `"500ms"`) from config files and env vars. Viper already supplies a duration decode hook by default. If this fails, check the Unmarshal error, key binding, and whether a custom hook replaced the default.
 
-Register a decode hook:
+When supplying custom hooks, preserve the conversions your config needs:
 
 ```go
-import "github.com/mitchellh/mapstructure"
+import "github.com/go-viper/mapstructure/v2"
 
 var cfg Config
 err := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
@@ -94,7 +94,7 @@ err := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
 ## net.IP and custom types
 
 ```go
-import "github.com/mitchellh/mapstructure"
+import "github.com/go-viper/mapstructure/v2"
 
 func stringToIPHookFunc() mapstructure.DecodeHookFunc {
     return func(f reflect.Type, t reflect.Type, data interface{}) (interface{}, error) {
@@ -139,13 +139,13 @@ Extra keys from the config file are collected in `Remain` instead of being silen
 
 ## Weak decoding
 
-Enable weak type decoding (e.g., string `"true"` → bool `true`) when working with env vars that are always strings:
+Viper enables WeaklyTypedInput by default (for example, string `"true"` → bool `true`). To require strict types:
 
 ```go
 var cfg Config
 err := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
-    dc.WeaklyTypedInput = true
+    dc.WeaklyTypedInput = false
 })
 ```
 
-Use with caution — weak decoding can hide bugs where a wrong value type is silently converted.
+An environment-only key read successfully with GetBool may still be absent from Unmarshal: AutomaticEnv does not register keys. BindEnv("enabled") or a SetDefault registers the key. Missing keys are not decode failures.

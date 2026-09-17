@@ -182,7 +182,7 @@ slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 ## Common Logging Mistakes
 
 ```go
-// ✗ Bad — errors MUST be either logged OR returned, NEVER both (single handling rule violation)
+// Avoid reporting the same failure here and again in the caller
 if err != nil {
     slog.Error("query failed", "error", err)
     return fmt.Errorf("query: %w", err) // error gets logged twice up the chain

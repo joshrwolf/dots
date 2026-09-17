@@ -63,8 +63,8 @@
       {"id": "5.1", "text": "Uses oops.Recover() or the builder's .Recover() method, not a raw defer/recover"},
       {"id": "5.2", "text": "The Recover wraps the risky operation in a function passed to Recover"},
       {"id": "5.3", "text": "Adds structured context to the recovery (e.g., .In(), .Code(), .With())"},
-      {"id": "5.4", "text": "Uses a named return value for the error so Recover can set it"},
-      {"id": "5.5", "text": "Includes .Hint() for debugging guidance or .Code() for identification"}
+      {"id": "5.4", "text": "Handles the error returned by Recover; no named result is required in the calling function."},
+      {"id": "5.5", "text": "Considers whether task isolation makes continuation safe; recovery is not a blanket goroutine requirement."}
     ]
   },
   {
@@ -133,7 +133,7 @@
     "assertions": [
       {"id": "10.1", "text": "Uses oops.Assertf or oops.Assert to check the invariant (amount > 0)"},
       {"id": "10.2", "text": "Wraps the assertion in an oops.Recover() call to convert the panic to a structured error"},
-      {"id": "10.3", "text": "Uses a named error return value so Recover can set it"},
+      {"id": "10.3", "text": "Handles the returned error from Recover; does not require a named error result in its caller."},
       {"id": "10.4", "text": "Notes that assertions should be rare in Go and used only for truly impossible/bug states"},
       {"id": "10.5", "text": "Adds structured context (.In(), .Code(), etc.) to the Recover builder"}
     ]

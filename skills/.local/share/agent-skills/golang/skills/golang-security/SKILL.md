@@ -38,43 +38,17 @@ for review.
 
 Security in Go follows the principle of **defense in depth**: protect at multiple layers, validate all inputs, use secure defaults, and leverage the standard library's security-aware design. Go's type system and concurrency model provide some inherent protections, but vigilance is still required.
 
-## Security Thinking Model
+## Findings and Severity
 
-Before writing or reviewing code, ask three questions:
+A finding needs a reachable attack path, attacker-controlled input, and a concrete impact. Account for validation and authorization in callers, middleware, or interceptors: concatenating an already validated integer is not SQL injection merely because placeholders would be clearer. Distinguish exploitable defects from defense-in-depth improvements.
 
-1. **What are the trust boundaries?** — Where does untrusted data enter the system? (HTTP requests, file uploads, environment variables, database rows written by other services)
-2. **What can an attacker control?** — Which inputs flow into sensitive operations? (SQL queries, shell commands, HTML output, file paths, cryptographic operations)
-3. **What is the blast radius?** — If this defense fails, what's the worst outcome? (Data leak, RCE, privilege escalation, denial of service)
+Use the project's severity definitions. Exposure, privileges, affected data, and existing controls determine priority; a vulnerability category alone does not establish severity or a remediation deadline. Explain any important preconditions in the review. Add a code comment only when it captures a non-obvious invariant future maintainers need, not to record every dismissed finding.
 
-## Severity Levels
+## Threat Modeling
 
-| Level | DREAD | Meaning |
-| --- | --- | --- |
-| Critical | 8-10 | RCE, full data breach, credential theft — fix immediately |
-| High | 6-7.9 | Auth bypass, significant data exposure, broken crypto — fix in current sprint |
-| Medium | 4-5.9 | Limited exposure, session issues, defense weakening — fix in next sprint |
-| Low | 1-3.9 | Minor info disclosure, best-practice deviations — fix opportunistically |
+For a requested threat analysis, connect the affected assets and trust boundaries to plausible attacks and mitigations. STRIDE can help organize coverage; diagrams and DREAD scoring are optional deliverables when requested or used by the project.
 
-Levels align with [DREAD scoring](./references/threat-modeling.md).
-
-## Research Before Reporting
-
-Before flagging a security issue, trace the full data flow through the codebase — don't assess a code snippet in isolation.
-
-1. **Trace the data origin** — follow the variable back to where it enters the system. Is it user input, a hardcoded constant, or an internal-only value?
-2. **Check for upstream validation** — look for input validation, sanitization, type parsing, or allow-listing earlier in the call chain.
-3. **Examine the trust boundary** — if the data never crosses a trust boundary (e.g., internal service-to-service with mTLS), the risk profile is different.
-4. **Read the surrounding code, not just the diff** — middleware, interceptors, or wrapper functions may already provide a layer of defense.
-
-**Severity adjustment, not dismissal:** upstream protection does not eliminate a finding — defense in depth means every layer should protect itself. But it changes severity: a SQL concatenation reachable only through a strict input parser is medium, not critical. Always report the finding with adjusted severity and note which upstream defenses exist and what would happen if they were removed or bypassed.
-
-**When downgrading or skipping a finding:** add a brief inline comment (e.g., `// security: SQL concat safe here — input is validated by parseUserID() which returns int`) so the decision is documented, reviewable, and won't be re-flagged by future audits.
-
-## Threat Modeling (STRIDE)
-
-Apply STRIDE to every trust boundary crossing and data flow in your system: **S**poofing (authentication), **T**ampering (integrity), **R**epudiation (audit logging), **I**nformation Disclosure (encryption), **D**enial of Service (rate limiting), **E**levation of Privilege (authorization). Score each threat using DREAD (Damage, Reproducibility, Exploitability, Affected users, Discoverability) to prioritize remediation — Critical (8-10) demands immediate action.
-
-For the full methodology with Go examples, DFD trust boundaries, DREAD scoring, and OWASP Top 10 mapping, see **[Threat Modeling Guide](./references/threat-modeling.md)**.
+The **[Threat Modeling Guide](./references/threat-modeling.md)** retains Go examples, trust-boundary diagrams, optional scoring references, and the OWASP mapping.
 
 ## Quick Reference
 
@@ -82,7 +56,7 @@ For the full methodology with Go examples, DFD trust boundaries, DREAD scoring, 
 | --- | --- | --- | --- |
 | Critical | SQL Injection | Parameterized queries separate data from code | `database/sql` with `?` placeholders |
 | Critical | Command Injection | Pass args separately, never via shell concatenation | `exec.Command` with separate args |
-| High | XSS | Auto-escaping renders user data as text, not HTML/JS | `html/template`, `text/template` |
+| High | XSS | Auto-escaping renders user data as text, not HTML/JS | `html/template` (`text/template` does not HTML-escape) |
 | High | Path Traversal | Scope untrusted file access to an allowed root | Go 1.24+: use `os.Root`. Pre-Go 1.24: use `filepath.IsLocal` + `filepath.Rel` + separator-aware checks; never rely on `filepath.Clean` + `strings.HasPrefix` alone. |
 | Medium | Timing Attacks | Constant-time comparison avoids byte-by-byte leaks | `crypto/subtle.ConstantTimeCompare` |
 | High | Crypto Issues | Use vetted algorithms; never roll your own | `crypto/aes`, `crypto/rand` |
@@ -153,8 +127,8 @@ go test -fuzz=Fuzz
 | Medium | Comparing secrets with `==` | `==` short-circuits on first differing byte, leaking timing info. Use `crypto/subtle.ConstantTimeCompare` |
 | Medium | Returning detailed errors | Stack traces and DB errors help attackers map your system. Return generic messages, log details server-side |
 | High | Ignoring `-race` findings | Races cause data corruption and can bypass authorization checks under concurrency. Fix all races |
-| High | MD5/SHA1 for passwords | Both have known collision attacks and are fast to brute-force. Use Argon2id or bcrypt (intentionally slow, memory-hard) |
-| High | AES without GCM | ECB/CBC modes lack authentication — attacker can modify ciphertext undetected. GCM provides encrypt+authenticate |
+| High | MD5/SHA1 for passwords | Fast general-purpose hashes enable offline password guessing. Prefer Argon2id; bcrypt is a deliberately slow legacy option, not memory-hard |
+| High | Encryption without authentication | Use a vetted AEAD such as AES-GCM or ChaCha20-Poly1305; unauthenticated ECB/CBC does not protect ciphertext integrity |
 | Medium | Binding to 0.0.0.0 | Exposes service to all network interfaces. Bind to specific interface to limit attack surface |
 
 ## Security Anti-Patterns

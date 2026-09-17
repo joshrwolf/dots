@@ -12,7 +12,7 @@ func TestParseToken_InvalidInput(t *testing.T) { ... }  // subcase
 
 ## Table-Driven Tests
 
-Table-driven test case names SHOULD be **fully lowercase, descriptive phrases** — including acronyms. Use `input` for inputs and `expected` for expected outputs to make the data flow clear:
+Table-driven test case names should be descriptive phrases. Ordinary words can be lowercase; acronyms may retain their spelling. Go does not require lowercase subtest names. Use `input` for inputs and `expected` for expected outputs to make the data flow clear:
 
 ```go
 tests := []struct {
@@ -24,12 +24,10 @@ tests := []struct {
     {name: "empty input", input: "", expectedCode: 400, expectedErr: true},
     {name: "valid token", input: "abc123", expectedCode: 200},
     {name: "expired token", input: "exp", expectedCode: 401, expectedErr: true},
-    {name: "invalid id", input: "???", expectedCode: 400, expectedErr: true},  // "id" not "ID"
+    {name: "invalid ID", input: "???", expectedCode: 400, expectedErr: true},
 }
 
-// Bad — mixed case in test names
-{name: "valid ID", ...}      // should be "valid id"
-{name: "Empty Input", ...}   // should be "empty input"
+// Prefer descriptive names over opaque labels such as "case 1".
 ```
 
 ## Test Helpers

@@ -8,7 +8,7 @@
     "assertions": [
       {
         "id": "1.1",
-        "text": "main.go only calls Execute() (or rootCmd.Execute()) and os.Exit on error — no configuration, flag setup, or business logic in main()"
+        "text": "Keeps process-exit handling at main and reports each error once; SilenceErrors must not suppress the only diagnostic."
       },
       {
         "id": "1.2",
@@ -53,7 +53,7 @@
       },
       {
         "id": "2.5",
-        "text": "The precedence order is correct: CLI flags > environment variables > config file > defaults"
+        "text": "States changed flags override env/file/default values, while explicit Viper Set overrides all of these."
       }
     ]
   },
@@ -66,7 +66,7 @@
     "assertions": [
       {
         "id": "3.1",
-        "text": "Configuration initialization happens in PersistentPreRunE on the root command — this ensures it runs before every subcommand"
+        "text": "Uses a shared pre-run initializer and accounts for child PersistentPreRun hooks overriding parent hooks by default."
       },
       {
         "id": "3.2",
@@ -178,11 +178,11 @@
     "name": "signal-handling-with-context",
     "description": "Tests that signal handling uses signal.NotifyContext for context-based cancellation",
     "prompt": "My Go CLI has a long-running 'serve' command that starts an HTTP server. I need graceful shutdown when the user presses Ctrl+C. Write the signal handling code.",
-    "trap": "Model uses a raw signal channel with signal.Notify instead of signal.NotifyContext, missing context propagation. May also not handle the shutdown timeout or forget SIGTERM.",
+    "trap": "Returns when ListenAndServe unblocks, before graceful shutdown finishes, or leaks a signal waiter on a startup failure.",
     "assertions": [
       {
         "id": "7.1",
-        "text": "Uses signal.NotifyContext to propagate cancellation through context — NOT a raw channel with signal.Notify and manual select"
+        "text": "Propagates signal cancellation through context; NotifyContext is concise but signal.Notify can also be correct."
       },
       {
         "id": "7.2",
@@ -194,7 +194,7 @@
       },
       {
         "id": "7.4",
-        "text": "Calls srv.Shutdown(ctx) for graceful HTTP server shutdown, not srv.Close() which drops in-flight requests"
+        "text": "Waits for Shutdown to finish before main can exit; can force Close after a bounded drain fails."
       },
       {
         "id": "7.5",
@@ -223,11 +223,11 @@
       },
       {
         "id": "8.4",
-        "text": "Uses RegisterFlagCompletionFunc to provide completion values for --env (dev, staging, prod)"
+        "text": "Validates env values explicitly; RegisterFlagCompletionFunc suggestions do not reject invalid input."
       },
       {
         "id": "8.5",
-        "text": "Binds configurable flags to Viper with viper.BindPFlag so they can be set via env vars or config file"
+        "text": "Explains required flag markers inspect flag changes, not Viper env/config values; only adds Viper if layered configuration is wanted."
       }
     ]
   },
@@ -265,7 +265,7 @@
     "assertions": [
       {
         "id": "10.1",
-        "text": "Creates an executeCommand helper that sets up a buffer, calls cmd.SetOut(buf) and cmd.SetErr(buf), sets args, and executes"
+        "text": "Constructs a fresh command tree for each test case and captures its output/error streams."
       },
       {
         "id": "10.2",
@@ -294,7 +294,7 @@
     "assertions": [
       {
         "id": "11.1",
-        "text": "Supports an --output flag with at least json and table formats (not just a --json boolean toggle)"
+        "text": "Offers stable machine-readable output through an output selector or a JSON flag consistent with the existing CLI."
       },
       {
         "id": "11.2",

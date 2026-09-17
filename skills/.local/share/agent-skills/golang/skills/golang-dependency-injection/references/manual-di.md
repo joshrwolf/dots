@@ -48,17 +48,12 @@ func main() {
 
 ## When Manual DI Works Well
 
-- Small to medium projects (< 15 services)
-- Simple dependency graph with clear layering
-- No need for lazy loading or lifecycle management
-- Team prefers explicit, visible wiring
+- Dependency relationships remain easy to follow
+- Constructors expose the required resources and test seams
+- The application can clearly own startup, cleanup, and any lazy initialization
 
-## When Manual DI Breaks Down
+## When a Container May Help
 
-- Adding a new service means editing `main()` and getting the wiring order right
-- Lifecycle management (health checks, graceful shutdown) must be hand-coded with `defer`
-- No lazy initialization — all services are created at startup, even if unused
-- Cross-cutting concerns (logging, tracing) must be threaded through every constructor
-- With 30+ services, the wiring code becomes fragile and hard to maintain
+Repeated scope setup or lifecycle coordination can justify a container when it reduces real duplication. Service count, lazy initialization, or editing `main()` alone is not a reason to adopt one. Manual wiring supports these behaviors too; compare the explicit code with the container's registration rules and runtime failure modes.
 
-Manual DI SHOULD be the default for small projects (< 15 services). Dependencies MUST be initialized in order — infrastructure first, then repositories, then services, then transport.
+Manual DI is a useful default while wiring remains clear. Initialize dependencies before their consumers and unwind successful initialization if a later step fails; the exact order follows the dependency graph.

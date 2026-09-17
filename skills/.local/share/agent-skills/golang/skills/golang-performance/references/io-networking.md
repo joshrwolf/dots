@@ -24,31 +24,25 @@ Network and I/O bottlenecks show up as goroutines blocked on syscalls or waiting
 
 ## HTTP Transport Configuration
 
-**Diagnose:** 1- `go tool pprof` (goroutine + block profile) — look for goroutines blocked on `net/http.(*Transport).dialConn` or `net/http.(*persistConn).readLoop`; many goroutines waiting here means connection pool exhaustion 2- `fgprof` — captures both on-CPU and off-CPU wait time; look for HTTP calls dominating wall-clock time even when CPU profile shows them as cheap 3- `go tool trace` — visualize goroutine lifecycles; look for long gaps where goroutines wait for network I/O instead of processing 4- Prometheus `go_goroutines` — monitor goroutine count in production; steadily rising under stable load suggests connection or goroutine leaks from misconfigured HTTP clients
+**Diagnose:** 1- `go tool pprof` (goroutine + block profile) — look for goroutines blocked on `net/http.(*Transport).dialConn` or `net/http.(*persistConn).readLoop`; idle readLoop goroutines may be normal pooled connections; inspect active waits and connection limits before diagnosing exhaustion 2- `fgprof` — captures both on-CPU and off-CPU wait time; look for HTTP calls dominating wall-clock time even when CPU profile shows them as cheap 3- `go tool trace` — visualize goroutine lifecycles; look for long gaps where goroutines wait for network I/O instead of processing 4- Prometheus `go_goroutines` — monitor goroutine count in production; steadily rising under stable load suggests connection or goroutine leaks from misconfigured HTTP clients
 
 ### Connection pooling
 
-The default `http.Transport` has conservative pool settings — `MaxIdleConnsPerHost` defaults to 2. Under high concurrency, requests queue waiting for connections instead of running in parallel:
+The default `http.Transport` has conservative pool settings — `MaxIdleConnsPerHost` defaults to 2. This limits retained idle connections, not concurrent requests. Bursts can create more connections and then discard them; `MaxConnsPerHost` is the setting that queues dials at a connection cap:
 
 ```go
-// Bad — default transport, only 2 idle connections per host
-client := &http.Client{}
-
-// Good — tuned for high-concurrency service-to-service calls
-var apiClient = &http.Client{
-    Timeout: 30 * time.Second,
-    Transport: &http.Transport{
-        MaxIdleConns:          100,             // total idle connections across all hosts
-        MaxIdleConnsPerHost:   20,              // per-host idle connections (default is 2!)
-        MaxConnsPerHost:       50,              // cap total connections per host (0 = unlimited)
-        IdleConnTimeout:       90 * time.Second,
-        TLSHandshakeTimeout:  5 * time.Second,
-        ResponseHeaderTimeout: 10 * time.Second,
-    },
-}
+// Tune a clone to retain default proxy, dial timeout and HTTP/2 behavior.
+transport := http.DefaultTransport.(*http.Transport).Clone()
+transport.MaxIdleConns = 100
+transport.MaxIdleConnsPerHost = 20
+transport.MaxConnsPerHost = 50
+transport.IdleConnTimeout = 90 * time.Second
+transport.TLSHandshakeTimeout = 5 * time.Second
+transport.ResponseHeaderTimeout = 10 * time.Second
+apiClient := &http.Client{Timeout: 30 * time.Second, Transport: transport}
 ```
 
-For web crawlers hitting many different hosts, disable keep-alive to avoid accumulating idle connections:
+For crawlers, first bound total idle connections and idle lifetime. Disabling keep-alive is an option for intentionally one-shot hosts, at the cost of repeated handshakes:
 
 ```go
 crawlerClient := &http.Client{
@@ -73,7 +67,7 @@ server := &http.Server{
 
 ### Drain response body for connection reuse
 
-Connections are only returned to the pool when the body is fully read. Even if you don't need the body, drain it:
+For HTTP/1, reading to EOF and closing permits connection reuse. Do not drain arbitrarily large or slow untrusted bodies just to save a connection; bound the read and close it instead. HTTP/2 can close a stream without draining and retain the connection:
 
 ```go
 resp, err := client.Get(url)
@@ -97,6 +91,9 @@ data, _ := io.ReadAll(f)
 // Good — process line by line, O(1) memory
 scanner := bufio.NewScanner(f)
 for scanner.Scan() { processLine(scanner.Bytes()) }
+if err := scanner.Err(); err != nil { return err }
+// Scanner limits token size (64 KiB by default); configure Buffer when needed.
+// Bytes aliases its buffer: copy if processLine retains the data.
 
 // Good — stream between reader and writer (32KB internal buffer)
 io.Copy(w, resp.Body)
@@ -106,14 +103,23 @@ io.Copy(w, resp.Body)
 
 ### Streaming JSON
 
-Use `json.NewDecoder` for large JSON payloads instead of `json.Unmarshal` (which buffers the entire body):
+A Decoder buffers an entire JSON value for each Decode call. To bound memory for a large array, consume the array delimiters and decode one element at a time (also bound each element/input size):
 
 ```go
 dec := json.NewDecoder(r)
+token, err := dec.Token()
+if err != nil { return err }
+if token != json.Delim('[') { return errors.New("expected array") }
 for dec.More() {
     var item Item
     if err := dec.Decode(&item); err != nil { return err }
     process(item) // one item at a time
+}
+if _, err := dec.Token(); err != nil { return err } // closing ]
+var extra any
+if err := dec.Decode(&extra); err != io.EOF {
+    if err != nil { return err }
+    return errors.New("unexpected trailing JSON")
 }
 ```
 
@@ -127,8 +133,8 @@ The standard `encoding/json` package uses reflection to inspect struct fields at
 
 - **Custom `MarshalJSON`/`UnmarshalJSON`** — hand-written methods for hot-path types eliminate reflection
 - **Code-generation libraries** — `easyjson`, `ffjson` generate marshal/unmarshal methods at build time, no reflection at runtime
-- **Drop-in replacements** — `github.com/goccy/go-json`, `github.com/json-iterator/go`, `github.com/bytedance/sonic` offer 2-5x better performance
-- **`encoding/json/v2`** (default JSON implementation since Go 1.27; introduced experimental behind `GOEXPERIMENT=jsonv2` in Go 1.25) — migrate deliberately: it is stricter than v1 (rejects duplicate object keys and invalid UTF-8), so re-run tests against real payloads before relying on it in a hot path
+- **Drop-in replacements** — `github.com/goccy/go-json`, `github.com/json-iterator/go`, `github.com/bytedance/sonic` may improve performance for particular workloads; verify compatibility and measure
+- **`encoding/json/v2`** (available without an experiment in Go 1.27; experimental in Go 1.25–1.26) — its API has stricter defaults such as rejecting duplicate names and invalid UTF-8. Go 1.27 also backs `encoding/json` with v2 internally while preserving v1 semantics. Switching imports is optional; verify compatibility and measure before migrating
 
 When using third-party JSON libraries, refer to the library's official documentation for up-to-date API signatures.
 
@@ -136,28 +142,32 @@ When using third-party JSON libraries, refer to the library's official documenta
 
 **Diagnose:** 1- `go tool pprof` (CPU profile + threadcreate profile) — look for `runtime.cgocall` or `runtime.asmcgocall` consuming CPU; high threadcreate count means cgo calls are pinning goroutines to OS threads 2- `go test -bench` — benchmark the cgo call loop vs a pure Go equivalent; expect ~50-100ns overhead per cgo crossing
 
-Each Go-to-C call via cgo costs ~50-100ns due to stack switching, signal mask manipulation, and scheduler coordination:
+Each Go-to-C call crosses a runtime boundary; its measured cost depends on platform and toolchain. Amortize frequent crossings when profiles show they dominate:
 
 ```go
 // Bad — cgo overhead per element dominates for tight loops
 for i, v := range values {
-    values[i] = float64(C.sqrt(C.double(v))) // ~100ns overhead PER CALL
+    values[i] = float64(C.sqrt(C.double(v))) // runtime crossing per call
 }
 
 // Good — use pure Go stdlib (math.Sqrt is as fast as C and inlineable)
 for i, v := range values { values[i] = math.Sqrt(v) }
 
 // Good — batch when C code is unavoidable
-C.batch_sqrt((*C.double)(&values[0]), C.int(len(values))) // amortize overhead
+// C helper accepts double* plus size_t; C double must match Go float64.
+// It must not retain the pointer after returning. Skip empty slices.
+if len(values) > 0 {
+    C.batch_sqrt((*C.double)(unsafe.Pointer(&values[0])), C.size_t(len(values)))
+}
 ```
 
-Additional cgo costs: goroutine is pinned to an OS thread, C code cannot be preempted (may delay GC), and function inlining is blocked at the boundary.
+Additional cgo costs: goroutine is pinned to an OS thread, Go cannot preempt the C function itself; ordinary cgo calls release the Go execution resource and do not inherently block GC, and function inlining is blocked at the boundary.
 
 ## Buffered I/O
 
 **Diagnose:** 1- `go test -bench` — benchmark buffered vs unbuffered I/O; expect 3-10x improvement from reducing syscall count 2- `go tool trace` — look for frequent short syscalls (`pread`, `pwrite`) in rapid succession; many tiny I/O operations indicate unbuffered access
 
-Unbuffered file reads/writes issue a syscall per operation. `bufio.Reader` and `bufio.Writer` batch small operations, reducing syscalls by 10x or more:
+Unbuffered file reads/writes issue a syscall per operation. `bufio.Reader` and `bufio.Writer` batch small operations, reducing the number of syscalls:
 
 ```go
 // Bad — syscall per line
@@ -171,7 +181,7 @@ w.Flush()
 
 ## Concurrent Multi-Stage Pipelines
 
-**Diagnose:** 1- `go tool trace` — visualize resource utilization across stages; look for sequential idle gaps where CPU, disk, or network sit unused while another resource is busy 2- `go tool pprof` (CPU + goroutine profile) — confirm each stage saturates a _different_ resource; if multiple stages compete for the same resource (e.g., both CPU-bound), concurrency won't help
+**Diagnose:** 1- `go tool trace` — visualize resource utilization across stages; look for sequential idle gaps where CPU, disk, or network sit unused while another resource is busy 2- `go tool pprof` (CPU + goroutine profile) — confirm each stage saturates a _different_ resource; multiple CPU-bound stages may use otherwise idle cores; measure shared resource contention
 
 In rare scenarios where each pipeline stage saturates a _different_ resource (CPU, disk I/O, network), running stages concurrently instead of sequentially can improve throughput — even with batching between stages.
 
@@ -195,7 +205,7 @@ Disk:    ..........|BBBBBBBBBB|BB........|
 Network: ..........|..........|CCCCCCCCCC|CC........|
 ```
 
-**Code pattern:**
+**Code sketch:** This illustrates overlap only. Real stages must propagate errors, close HTTP bodies, honor cancellation on every blocking send/receive, and be joined before returning. Use the cancellation/error patterns in `golang-concurrency`.
 
 ```go
 // Each stage runs in its own goroutine, bounded by channel buffers
@@ -222,28 +232,28 @@ go func() {
 
 // Stage C: network-bound uploads
 go func() {
-    for <-uploadedCh {
+    for range uploadedCh {
         client.Post(uploadURL, ...)       // saturates network
     }
 }()
 ```
 
-With batching per stage, total throughput = min(A_throughput, B_throughput, C_throughput). Without concurrency, throughput = sequential sum of stages. **Concurrent stages only help when bottlenecks don't overlap.**
+With batching per stage, total throughput = min(A_throughput, B_throughput, C_throughput). For sequential execution, per-item time is the sum of stage durations; throughput is its reciprocal. Stage overlap can help across different resources or across available CPU cores; shared bottlenecks can limit the gain.
 
 ### When to use this (and when NOT to)
 
-**Use concurrent pipelines only when ALL of these are true:**
+**Assess these tradeoffs before introducing a pipeline:**
 
-1. **Resource saturation is predictable and non-overlapping** — You measured that A saturates one resource (e.g., CPU = 95%), B saturates another (disk I/O = 90%), C saturates a third (network = 85%). Overlapping saturation means concurrency adds no benefit.
+1. **Resource saturation is predictable and non-overlapping** — You measured that A saturates one resource (e.g., CPU = 95%), B saturates another (disk I/O = 90%), C saturates a third (network = 85%). Overlapping saturation may limit benefit, depending on available parallel capacity.
 2. **Bottleneck shifts don't hurt latency** — Processing order doesn't matter, or records can flow out-of-order through stages.
 3. **Buffering overhead is acceptable** — Inter-stage channels consume memory. For large records, channel buffers can overflow system limits.
 4. **You've benchmarked the alternative** — Profile both sequential and concurrent versions. Sequential + batching often wins because it is simpler and avoids context-switching overhead.
 
 **Avoid concurrent pipelines if:**
 
-- **Records must be ordered** — Concurrent processing may reorder records; if downstream expects order, you need synchronization that kills the speedup.
-- **Resources overlap** — If A and B both compete for CPU (e.g., both compress), concurrency causes context-switching overhead with no resource utilization gain.
-- **Latency matters more than throughput** — A single record now travels through 3 stages in parallel, increasing per-record latency.
+- **Records must be ordered** — One worker per FIFO stage preserves order; multiple workers within a stage may need reordering.
+- **Resources overlap** — Stages sharing a saturated resource may add queueing without improving throughput; available CPU cores can still permit parallelism.
+- **Latency matters more than throughput** — A record still traverses stages sequentially; queueing and handoff overhead may increase its latency even as throughput improves.
 - **Memory is tight** — Each stage's channel buffer is a memory budget; deeply buffered channels can exhaust available RAM.
 
 → See `samber/cc-skills-golang@golang-concurrency` skill for detailed channel patterns and when to use worker pools instead.
@@ -264,17 +274,20 @@ for _, user := range users {
     db.Exec("INSERT INTO users (name, email) VALUES ($1, $2)", user.Name, user.Email)
 }
 
-// Good — 1 round-trip with multi-row VALUES, ~5ms
-const batchSize = 1000
-for i := 0; i < len(users); i += batchSize {
-    end := min(i+batchSize, len(users))
-    batch := users[i:end]
-    // Build multi-row INSERT or use COPY protocol
-    tx, _ := db.Begin()
-    stmt, _ := tx.Prepare(pq.CopyIn("users", "name", "email"))
-    for _, u := range batch { stmt.Exec(u.Name, u.Email) }
-    stmt.Exec()
-    tx.Commit()
+// COPY streams a batch inside a transaction; it is not literally one round trip.
+func copyUsers(ctx context.Context, db *sql.DB, users []User) error {
+    tx, err := db.BeginTx(ctx, nil)
+    if err != nil { return err }
+    defer tx.Rollback()
+    stmt, err := tx.PrepareContext(ctx, pq.CopyIn("users", "name", "email"))
+    if err != nil { return err }
+    defer stmt.Close()
+    for _, u := range users {
+        if _, err := stmt.ExecContext(ctx, u.Name, u.Email); err != nil { return err }
+    }
+    if _, err := stmt.ExecContext(ctx); err != nil { return err } // flush COPY
+    if err := stmt.Close(); err != nil { return err }
+    return tx.Commit()
 }
 ```
 

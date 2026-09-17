@@ -72,10 +72,10 @@ c := client.New(h)
 
 ## gqlgen — Testing Subscriptions
 
-Use `client.Subscription` to test subscription resolvers:
+Use `Client.Websocket` to test subscription resolvers:
 
 ```go
-sub := c.Subscription(`subscription { messageAdded(room: "general") { content } }`)
+sub := c.Websocket(`subscription { messageAdded(room: "general") { content } }`)
 defer sub.Close()
 
 // Trigger an event
@@ -121,7 +121,7 @@ func TestRelayHandler(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	relay.Handler{Schema: schema}.ServeHTTP(w, req)
+	(&relay.Handler{Schema: schema}).ServeHTTP(w, req)
 
 	if got, want := w.Code, http.StatusOK; got != want {
 		t.Fatalf("got %v, want %v", got, want)
@@ -137,15 +137,15 @@ func TestRelayHandler(t *testing.T) {
 Verify error extensions reach the client:
 
 ```go
-var resp struct {
-	Errors []struct {
-		Message    string
-		Extensions struct{ Code string }
-	}
+raw, err := c.RawPost(`{ user(id: "999") { name } }`)
+if err != nil { t.Fatalf("request: %v", err) }
+var errs gqlerror.List
+if err := json.Unmarshal(raw.Errors, &errs); err != nil {
+    t.Fatalf("decode GraphQL errors: %v", err)
 }
-c.Post(`{ user(id: "999") { name } }`, &resp)
-if got, want := resp.Errors[0].Extensions.Code, "NOT_FOUND"; got != want {
-	t.Fatalf("got %v, want %v", got, want)
+if len(errs) != 1 { t.Fatalf("errors = %v, want one", errs) }
+if got := errs[0].Extensions["code"]; got != "NOT_FOUND" {
+    t.Fatalf("code = %v, want NOT_FOUND", got)
 }
 ```
 
@@ -190,22 +190,25 @@ func TestUserQueries(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var resp struct {
-				User   *struct{ Name string }
-				Errors []struct {
-					Extensions struct{ Code string }
-				}
-			}
-			c.Post(tt.query, &resp, client.Var("id", tt.vars["id"]))
-			if tt.wantCode != "" {
-				if got, want := resp.Errors[0].Extensions.Code, tt.wantCode; got != want {
-					t.Fatalf("got %v, want %v", got, want)
-				}
-			} else {
-				if got, want := resp.User.Name, tt.wantName; got != want {
-					t.Fatalf("got %v, want %v", got, want)
-				}
-			}
+            if tt.wantCode != "" {
+                raw, err := c.RawPost(tt.query, client.Var("id", tt.vars["id"]))
+                if err != nil { t.Fatalf("request: %v", err) }
+                var errs gqlerror.List
+                if err := json.Unmarshal(raw.Errors, &errs); err != nil { t.Fatal(err) }
+                if len(errs) != 1 { t.Fatalf("errors = %v, want one", errs) }
+                if got := errs[0].Extensions["code"]; got != tt.wantCode {
+                    t.Fatalf("code = %v, want %q", got, tt.wantCode)
+                }
+                return
+            }
+            var resp struct { User *struct{ Name string } }
+            if err := c.Post(tt.query, &resp, client.Var("id", tt.vars["id"])); err != nil {
+                t.Fatalf("query: %v", err)
+            }
+            if resp.User == nil { t.Fatal("user is nil") }
+            if got := resp.User.Name; got != tt.wantName {
+                t.Fatalf("name = %q, want %q", got, tt.wantName)
+            }
 		})
 	}
 }

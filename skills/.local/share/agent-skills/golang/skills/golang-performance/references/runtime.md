@@ -21,16 +21,16 @@ Runtime settings control garbage collection frequency, memory limits, CPU schedu
 
 ## Garbage Collector Tuning
 
-**Diagnose:** 1- `GODEBUG=gctrace=1` — print one line per GC cycle; look for high GC frequency (cycles/s), high CPU% (>5% means GC is competing for CPU), or heap growing faster than expected 2- `runtime.ReadMemStats` — inspect `Alloc`, `TotalAlloc`, `NumGC`, `PauseNs`; compare `Alloc` vs `Sys` to see how much memory the GC is reclaiming vs how much the OS allocated 3- `go tool trace` — visualize GC stop-the-world pauses and GC assist stealing CPU from application goroutines; look for long STW bars or frequent assist marks 4- `debug.ReadGCStats` — get pause time percentiles (p50, p95, p99); high p99 pauses indicate large heap scans or too many pointers 5- `runtime/metrics` — programmatic access to GC stats for dashboards; monitor `/gc/cycles/total`, `/gc/heap/allocs`, `/gc/pauses` 6- `GODEBUG=gcpacertrace=1` — trace the GC pacer's decisions; useful to understand why GC triggers earlier or later than expected 7- Prometheus `rate(go_gc_duration_seconds_count[5m])` — monitor GC frequency in production; >2 cycles/s sustained suggests excessive allocation rate
+**Diagnose:** 1- `GODEBUG=gctrace=1` — print one line per GC cycle; look for high GC frequency (cycles/s), high CPU% (>5% means GC is competing for CPU), or heap growing faster than expected 2- `runtime.ReadMemStats` — inspect `Alloc`, `TotalAlloc`, `NumGC`, `PauseNs`; compare `Alloc` vs `Sys` to see how much memory the GC is reclaiming vs how much the OS allocated 3- `go tool trace` — visualize GC stop-the-world pauses and GC assist stealing CPU from application goroutines; look for long STW bars or frequent assist marks 4- `debug.ReadGCStats` — get pause time percentiles (p50, p95, p99); high p99 pauses warrant investigation; most heap scanning is concurrent, not stop-the-world 5- `runtime/metrics` — programmatic access to GC stats for dashboards; monitor `/gc/cycles/total:gc-cycles`, `/gc/heap/allocs:bytes`, `/gc/pauses:seconds` 6- `GODEBUG=gcpacertrace=1` — trace the GC pacer's decisions; useful to understand why GC triggers earlier or later than expected 7- Prometheus `rate(go_gc_duration_seconds_count[5m])` — monitor GC frequency in production; >2 cycles/s sustained suggests excessive allocation rate
 
 ### GOGC (default: 100)
 
-Controls the heap growth ratio that triggers the next GC cycle. `GOGC=100` means GC runs when the heap doubles since the last collection. Higher values reduce GC frequency but use more memory:
+Controls the heap growth ratio that triggers the next GC cycle. The target is approximately live heap + (live heap + GC roots) × GOGC/100; GC starts before the target is reached. Higher values reduce GC frequency but use more memory:
 
 ```bash
-GOGC=50  ./myapp  # latency-sensitive: more frequent, shorter GC pauses
+GOGC=50  ./myapp  # lower heap growth target; more GC CPU, not guaranteed shorter pauses
 GOGC=200 ./myapp  # throughput-oriented: less frequent GC, more memory used
-GOGC=off ./myapp  # disable GC entirely (testing only!)
+GOGC=off ./myapp  # disable the percentage trigger; GOMEMLIMIT can still trigger GC
 ```
 
 ### GOMEMLIMIT (Go 1.19+)
@@ -38,7 +38,7 @@ GOGC=off ./myapp  # disable GC entirely (testing only!)
 Soft memory limit — the runtime increases GC frequency to stay under this limit. Essential for containerized applications where exceeding the container limit triggers an OOM kill:
 
 ```bash
-# Container with 512MB limit: leave headroom for non-heap memory (goroutine stacks, OS buffers)
+# Container with 512MB limit: leave headroom for memory outside Go's accounting (e.g. C allocations, mmap and OS overhead); goroutine stacks are included in the Go limit
 GOMEMLIMIT=450MiB ./myapp
 
 # Container with 1GB limit
@@ -63,10 +63,10 @@ Use programmatic control for dynamic tuning based on observed workload, or when 
 Before GOMEMLIMIT, teams allocated a large byte array at startup to inflate the live heap size, reducing GC frequency:
 
 ```go
-var ballast [1 << 30]byte // 1 GB — obsolete pattern
+var ballast = make([]byte, 1<<30) // historical heap ballast, kept reachable
 ```
 
-**GOMEMLIMIT is strictly better** — it provides the same benefit (fewer GC cycles) without wasting physical memory. Use GOMEMLIMIT instead.
+Prefer tuning GOGC together with GOMEMLIMIT over adding ballast. A limit alone does not reproduce ballast: higher GOGC reduces collection frequency, while the soft limit constrains Go-managed memory. It is not a hard process RSS cap.
 
 ## GC Profiling and Diagnostics
 
@@ -89,11 +89,11 @@ Key fields:
 - `gc 5` — 5th GC cycle
 - `@1.234s` — time since program start
 - `2%` — total CPU time spent in GC
-- `45->92->50 MB` — heap before → peak during collection → after
+- `45->92->50 MB` — heap at GC start → heap at GC end → live heap
 - `200 MB goal` — target heap size (based on GOGC and GOMEMLIMIT)
 - `8 P` — number of processors
 
-Watch for: GC frequency (too often = too many allocations), pause times (high = large heap or many pointers), CPU% (high = tune GOGC or reduce allocations).
+Watch for: GC frequency (too often = too many allocations), pause times (correlate with scheduler, roots and GC phase), CPU% (high = tune GOGC or reduce allocations).
 
 ### runtime.ReadMemStats
 
@@ -127,7 +127,7 @@ The pacer starts collection early enough to finish before hitting the target. Fa
 
 Reducing allocations helps more than tuning GOGC — it addresses the root cause instead of managing the symptom:
 
-- **Value types over pointer types** where possible — values stay on the stack (no GC), pointers escape to the heap
+- **Value types over pointer types** where possible — escape analysis decides placement; value types and pointers can both stay on the stack or participate in heap allocations
 - **Pool frequently allocated objects** with `sync.Pool` (see [memory.md](./memory.md))
 - **Preallocate slices and maps** — → See `samber/cc-skills-golang@golang-data-structures` skill
 - **Avoid interface boxing** in hot paths — use typed parameters or generics
@@ -136,15 +136,13 @@ Reducing allocations helps more than tuning GOGC — it addresses the root cause
 
 **Diagnose:** 1- `go tool pprof` (CPU profile) — look for high `runtime.schedule` or `runtime.findRunnable` overhead; this indicates too many P's competing for work or too few P's starving goroutines 2- `go tool trace` — check if goroutines are evenly distributed across P's; uneven distribution suggests GOMAXPROCS is misconfigured for the container 3- `GODEBUG=schedtrace=1000` — print scheduler state every second; look for `runqueue` imbalances or idle P's when work is available 4- `runtime.GOMAXPROCS(0)` — query the current value; if it returns the host CPU count (e.g., 64) instead of the container limit (e.g., 2), the runtime is over-scheduling 5- Prometheus `rate(process_cpu_seconds_total[5m])` — monitor CPU cores consumed in production; if consistently near GOMAXPROCS value, the app is CPU-saturated
 
-**Go 1.25+** improves container CPU detection, particularly for cgroup v2. The runtime sets `GOMAXPROCS` based on:
+**Go 1.25+** supports CPU quota detection for Linux cgroup v1 and v2. The runtime sets `GOMAXPROCS` based on:
 
 - Logical CPUs on the machine
 - Process CPU affinity mask
 - cgroup CPU quota limits (on Linux)
 
-In a container with 2 CPU cores on a 64-core host running Go 1.25+ with **cgroup v2**, `GOMAXPROCS` is correctly set to 2 by default. For **cgroup v1** environments, validate the detected value at startup and consider using `go.uber.org/automaxprocs` to ensure correctness.
-
-**For Go 1.24 and earlier**, use the `go.uber.org/automaxprocs` library to handle container CPU detection:
+For a module with a Go 1.25+ language version, defaults account for logical CPUs, affinity and cgroup v1/v2 quotas. Fractional quotas are rounded up, with a minimum of two unless logical CPUs or affinity are lower. Modules targeting Go 1.24 or earlier retain compatibility defaults unless overridden via GODEBUG. Setting GOMAXPROCS explicitly disables automatic updates.
 
 ```go
 // Pre-Go 1.25: explicit container-aware detection
@@ -163,7 +161,7 @@ GOMAXPROCS=2 ./myapp
 GODEBUG=updatemaxprocs=0 ./myapp  # disable dynamic updates (Go 1.25+)
 ```
 
-**Known limitations (Go 1.25)**: cgroup v1 on certain systems (Oracle OCPUs) may not properly detect Kubernetes CPU limits. Manually set `GOMAXPROCS` as a workaround in these cases.
+Verify the detected value against actual affinity and quota settings. Use an explicit override only when measurements justify it; a CPU request without a CPU quota is not a limit.
 
 ## Profile-Guided Optimization (PGO)
 
@@ -202,9 +200,11 @@ Rebuild profiles after significant code changes — stale profiles can mislead t
 
 ## Logging Overhead in Hot Paths
 
-**Diagnose:** 1- `go tool pprof` (CPU profile) — look for `fmt.Sprintf`, `log.Printf`, or `slog.(*Logger).log` appearing in hot paths; these indicate log formatting consuming CPU even when the log level filters the message 2- `go build -gcflags="-m"` — check if log arguments escape to the heap; expect `"moved to heap"` for arguments boxed into `any` interface by logging functions 3- `go test -bench -benchmem` — benchmark with logging enabled vs disabled; if allocs/op doesn't change, the logger is allocating even when the level is off
-
-Log formatting allocates memory and consumes CPU even when the message is discarded because it's below the configured level:
+Measure logging with the relevant handler and level. Arguments are evaluated before
+the logging call, so `fmt.Sprintf` or an expensive attribute computation still runs
+for disabled messages. `LogAttrs` reduces variadic argument overhead; it does not
+guarantee zero allocations for arbitrary handlers or argument expressions. Guard
+expensive argument construction with `logger.Enabled(ctx, level)` when needed.
 
 ```go
 // Bad — fmt.Sprintf runs BEFORE the logger checks the level
@@ -213,7 +213,7 @@ logger.Debug(fmt.Sprintf("processing item %d with data %v", item.ID, item.Data))
 // Good — slog defers formatting until level check passes (Go 1.21+)
 slog.Debug("processing item", slog.Int("id", item.ID), slog.Any("data", item.Data))
 
-// Best — LogAttrs: zero allocations when level is disabled
+// LogAttrs avoids converting attributes through variadic any arguments
 slog.LogAttrs(ctx, slog.LevelDebug, "processing item",
     slog.Int("id", item.ID))
 ```
@@ -222,18 +222,23 @@ In hot paths, even `slog.Any` can allocate. Prefer typed attributes: `slog.Int`,
 
 ## Panic/Recover Cost
 
-**Diagnose:** 1- `go tool pprof` (CPU profile) — look for `runtime.gopanic` or `runtime.gorecover` in the profile; their presence in hot paths means panic/recover is being used for control flow 2- `go test -bench` — benchmark panic/recover vs error-return versions; expect 10-100x overhead from stack unwinding and defer execution
+Panic unwinds the current goroutine and runs deferred calls until recovery or
+termination. It does not inherently capture a printable stack trace on every
+recovered panic; `debug.Stack` explicitly captures one. Benchmark the actual path
+rather than assuming a fixed overhead multiplier.
 
-`panic` triggers stack unwinding, running all deferred functions up the call stack. `recover` catches the panic but the unwinding itself is expensive. Never use panic/recover for control flow:
+`strconv.Atoi` returns an error for invalid input; it does not panic. Recovery
+cannot compensate for discarding that error:
 
 ```go
-// Bad — panic overhead for a normal condition
+// Bad — ignores invalid input; recover is irrelevant here
 defer func() { recover() }()
-v, _ := strconv.Atoi(s) // relies on panic for invalid input
+v, _ := strconv.Atoi(s)
 
-// Good — explicit error check, no panic overhead
+// Good — handle the parse failure
 v, err := strconv.Atoi(s)
 if err != nil { continue }
 ```
 
-Panic is appropriate only for truly unrecoverable situations (programmer errors, corrupted state). Always convert panics to errors at package boundaries.
+Use errors for expected failures. Recovery belongs only at a boundary that can
+safely contain and report a failed operation; see `golang-error-handling`.

@@ -32,12 +32,12 @@
     "name": "janitor-required",
     "description": "Tests whether the model correctly includes WithJanitor() — the most common mistake",
     "prompt": "Write a simple samber/hot cache in Go with a 5-minute TTL for caching API responses. Key is string, value is []byte.",
-    "trap": "Without the skill, the model forgets WithJanitor() — expired entries stay in memory until algorithm eviction, silently serving stale data",
+    "trap": "Without the skill, the model forgets WithJanitor() — expiration is checked by Get even without a janitor; proactive reclamation and freshness are different",
     "assertions": [
-      {"id": "3.1", "text": "Includes .WithJanitor() in the builder chain"},
-      {"id": "3.2", "text": "Includes defer cache.StopJanitor() for cleanup"},
+      {"id": "3.1", "text": "Distinguishes optional background cleanup from expiration checks performed by Get"},
+      {"id": "3.2", "text": "Stops the janitor if one was started"},
       {"id": "3.3", "text": "Uses .WithTTL() for expiration"},
-      {"id": "3.4", "text": "Does NOT call cache.Janitor() as a separate method after Build() — it should be chained in the builder"}
+      {"id": "3.4", "text": "Either starts cleanup through WithJanitor or cache.Janitor, or explains why proactive cleanup is unnecessary; stops a started janitor"}
     ]
   },
   {
@@ -89,7 +89,7 @@
     "trap": "Without the skill, the model suggests WithoutLocking() (dangerous) or external sharding, missing the built-in WithSharding",
     "assertions": [
       {"id": "7.1", "text": "Uses .WithSharding() in the builder to split cache into segments"},
-      {"id": "7.2", "text": "Shard count is a power of 2 (e.g., 16, 32, 64)"},
+      {"id": "7.2", "text": "Uses a shard count greater than one; does not claim powers of two are required"},
       {"id": "7.3", "text": "Provides or discusses a hash function of type func(K) uint64"},
       {"id": "7.4", "text": "Does NOT recommend WithoutLocking() for a concurrent workload"}
     ]
@@ -103,7 +103,7 @@
     "assertions": [
       {"id": "8.1", "text": "Identifies that callers are mutating shared cached pointers"},
       {"id": "8.2", "text": "Uses .WithCopyOnRead(fn) to return cloned copies on Get()"},
-      {"id": "8.3", "text": "The copy function creates a shallow or deep copy of the struct"},
+      {"id": "8.3", "text": "Copies all mutable state callers will modify; a shallow struct copy is insufficient when maps, slices, or pointers remain shared"},
       {"id": "8.4", "text": "Does NOT suggest only adding external mutexes as the primary solution"}
     ]
   },
@@ -124,14 +124,14 @@
   {
     "id": 10,
     "name": "algorithm-scan-resistance",
-    "description": "SIEVE is the simple scan-resistant alternative to LRU; W-TinyLFU and S3FIFO are valid but heavier",
-    "prompt": "My Go service using samber/hot has a cache for product data. Periodically, a batch job scans through ALL 500k products sequentially, which evicts all the genuinely hot items. Currently using LRU.\n\nA teammate says: 'Switch to hot.WTinyLFU — it's scan-resistant and the general best-practice default.' Another says: 'hot.S3FIFO is specifically designed for scan resistance at high throughput.' My cache is small (5k items) and the access pattern outside the scans is not particularly skewed. Which should I use?",
-    "trap": "Both teammates recommend valid scan-resistant algorithms — W-TinyLFU and S3FIFO are both correct answers to scan pollution. But the skill's table shows: S3FIFO should avoid small caches (<1000 items — but 5k is borderline), and SIEVE is the 'simple scan-resistant LRU alternative' for non-highly-skewed patterns. The model should know SIEVE is the best fit when simplicity matters and access isn't highly skewed.",
+    "description": "Evaluate scan-resistant cache policies using the APIs exposed by the resolved release",
+    "prompt": "My Go service using samber/hot has a cache for product data. Periodically, a batch job scans through ALL 500k products sequentially, which evicts all the genuinely hot items. Currently using LRU.\n\nA teammate says: 'Switch to hot.WTinyLFU — it's scan-resistant and the general best-practice default.' Another says: 'the lower-level pkg/s3fifo implementation is specifically designed for scan resistance at high throughput.' My cache is small (5k items) and the access pattern outside the scans is not particularly skewed. Which should I use?",
+    "trap": "S3FIFO is not selectable through HotCache in v0.13.1. Consider SIEVE or WTinyLFU based on representative access traces; there is no universal cache-size threshold that proves one is best.",
     "assertions": [
-      {"id": "10.1", "text": "Identifies that SIEVE is the most appropriate choice: simple scan-resistant LRU alternative for non-highly-skewed access patterns"},
-      {"id": "10.2", "text": "Acknowledges that W-TinyLFU and S3FIFO are valid but notes one or both have tradeoffs: W-TinyLFU adds complexity, S3FIFO is optimized for high-throughput/larger caches"},
+      {"id": "10.1", "text": "Considers SIEVE and WTinyLFU, and validates the choice against representative access traces instead of asserting a universal winner"},
+      {"id": "10.2", "text": "Notes S3FIFO is only a lower-level implementation in the audited version, not an exported HotCache selection constant"},
       {"id": "10.3", "text": "Explains why SIEVE resists scan pollution (items must be visited multiple times before eviction — single-pass scan items get evicted while hot items are retained)"},
-      {"id": "10.4", "text": "Uses hot.SIEVE as the algorithm constant in the implementation"}
+      {"id": "10.4", "text": "Uses an exported algorithm constant such as hot.SIEVE or hot.WTinyLFU"}
     ]
   },
   {
@@ -156,8 +156,8 @@
     "assertions": [
       {"id": "12.1", "text": "Uses .WithWarmUp(fn) or .WithWarmUpWithTimeout(timeout, fn) in the builder"},
       {"id": "12.2", "text": "The warm-up function signature returns (map[K]V, []K, error) — values, missing keys, error"},
-      {"id": "12.3", "text": "Warm-up happens before Build() returns, so the cache is ready when the server starts"},
-      {"id": "12.4", "text": "Does NOT manually loop through keys calling Set() before server start"}
+      {"id": "12.3", "text": "Explains that Build waits for warm-up but discards its error in v0.13.1; calls WarmUp explicitly and checks its error if readiness depends on successful population"},
+      {"id": "12.4", "text": "Does not assume a timeout cancels the loader or that Build reports warm-up failure"}
     ]
   },
   {
@@ -169,7 +169,7 @@
     "assertions": [
       {"id": "13.1", "text": "Uses .WithPrometheusMetrics(cacheName) in the builder"},
       {"id": "13.2", "text": "Registers the cache with prometheus.MustRegister(cache) or prometheus.Register(cache)"},
-      {"id": "13.3", "text": "Mentions hit rate as a key metric to monitor (target >80%)"},
+      {"id": "13.3", "text": "Monitors hit rate against a workload-specific target using the actual hot_hit_total and hot_miss_total metrics"},
       {"id": "13.4", "text": "Does NOT create custom Prometheus counters/gauges manually for basic cache metrics"}
     ]
   },

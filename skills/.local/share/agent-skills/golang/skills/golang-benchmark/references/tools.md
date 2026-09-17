@@ -27,7 +27,7 @@ See [investigation sessions](investigation-session.md) for GC diagnostics and [e
 
 - **`runtime.ReadMemStats`** — heap size, NumGC, pause durations (PauseNs circular buffer), TotalAlloc (cumulative). Use for dashboards, alerting on heap growth.
 - **`debug.ReadGCStats`** — GC-specific statistics: pause percentiles, pause timeline, total pause duration. More focused than ReadMemStats.
-- **`runtime/metrics` (Go 1.16+)** — stable API, safe for concurrent reads, lower overhead than ReadMemStats. Keys: `/gc/cycles/total:gc-cycles`, `/gc/heap/allocs:bytes`, `/gc/pauses:seconds`, `/sched/latencies:seconds`, `/memory/classes/heap/released:bytes`.
+- **`runtime/metrics` (Go 1.16+)** — stable API, safe for concurrent reads, lower overhead than ReadMemStats. Use separate sample slices for concurrent readers; sharing the same slice or histogram backing arrays requires synchronization. Keys: `/gc/cycles/total:gc-cycles`, `/gc/heap/allocs:bytes`, `/gc/pauses:seconds`, `/sched/latencies:seconds`, `/memory/classes/heap/released:bytes`.
 - **`debug.FreeOSMemory()`** — forces GC + returns memory to OS. One-off use after large temporary allocations (not for regular use — let the runtime manage this).
 - **`expvar`** — stdlib metrics at `/debug/vars` as JSON. `import _ "expvar"` auto-registers. Lightweight, no dependencies. Integrates with Netdata, Telegraf, or custom dashboards.
 
@@ -39,7 +39,7 @@ See [investigation sessions](investigation-session.md) for GC diagnostics and [e
 | `unsafe.Sizeof` / `Alignof` / `Offsetof` | Inspect struct memory layout at compile time — compare before/after reordering to quantify savings. |
 | `go vet ./...` | Suspicious constructs: printf format mismatches, unreachable code, unused results, suspicious shifts. |
 | `staticcheck ./...` | Advanced linter: performance pitfalls (SA9003: empty branch, SA4006: unused value, SA1019: deprecated API). |
-| `go test -race ./...` | Data race detection at runtime — also useful for confirming false sharing. |
+| `go test -race ./...` | Data race detection at runtime; false sharing is cache contention between valid independent accesses and is not detected by -race. |
 
 ## Third-Party Profiling
 

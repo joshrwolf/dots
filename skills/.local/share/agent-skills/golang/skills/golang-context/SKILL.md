@@ -50,17 +50,19 @@ paths:
 
 ## Context Propagation: The Core Principle
 
-The most important rule: **propagate the same context through the entire call chain**. When you propagate correctly, cancelling the parent context cancels all downstream work automatically.
+The most important rule: **propagate the same context through the entire call chain**. When you propagate correctly, cancelling the parent context signals cancellation to downstream operations; they must cooperate, and not every database driver can interrupt an in-flight query.
 
 ```go
 // ✗ Bad — creates a new context, breaking the chain
 func (s *OrderService) Create(ctx context.Context, order Order) error {
-    return s.db.ExecContext(context.Background(), "INSERT INTO orders ...", order.ID)
+    _, err := s.db.ExecContext(context.Background(), "INSERT INTO orders ...", order.ID)
+    return err
 }
 
 // ✓ Good — propagates the caller's context
 func (s *OrderService) Create(ctx context.Context, order Order) error {
-    return s.db.ExecContext(ctx, "INSERT INTO orders ...", order.ID)
+    _, err := s.db.ExecContext(ctx, "INSERT INTO orders ...", order.ID)
+    return err
 }
 ```
 

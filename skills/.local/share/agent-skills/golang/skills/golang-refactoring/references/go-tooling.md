@@ -1,6 +1,6 @@
 # Go Tooling for Refactoring
 
-This file is the tool reference for `samber/cc-skills-golang@golang-refactoring`: every mechanical-rewrite tool worth reaching for, from the primary actuator (`gopls`) down to hand-rolled `go/analysis` fixers, ordered so you can pick the least-powerful tool that solves the problem. See [catalog.md](catalog.md) for which tool maps to which Fowler refactoring.
+This file is the tool reference for `samber/cc-skills-golang@golang-refactoring`: semantic editing, bulk rewrites, and reachability analysis, with the capabilities and limitations that distinguish them. See [catalog.md](catalog.md) for which tool maps to which Fowler refactoring.
 
 ## Table of Contents
 
@@ -11,7 +11,7 @@ This file is the tool reference for `samber/cc-skills-golang@golang-refactoring`
   - [`go/analysis` + SuggestedFixes — bespoke, testable](#goanalysis--suggestedfixes--bespoke-testable)
   - [`go fix` — the `go/analysis`-based fixer suite](#go-fix--the-goanalysis-based-fixer-suite)
   - [`dave/dst` — comment- and formatting-preserving AST edits](#davedst--comment--and-formatting-preserving-ast-edits)
-  - [Always run after a bulk rewrite](#always-run-after-a-bulk-rewrite)
+  - [Import Cleanup and Reachability](#import-cleanup-and-reachability)
 - [4. Structure-Discovery Tools (blast-radius mapping)](#4-structure-discovery-tools-blast-radius-mapping)
 - [Cross-References](#cross-references)
 
@@ -23,7 +23,7 @@ This file is the tool reference for `samber/cc-skills-golang@golang-refactoring`
 
 ## 2. Bulk Mechanical Rewrite Tools
 
-When a change recurs across many call sites, reach for a generated rewrite tool instead of hand-editing each one. The tools below are ordered by increasing power — start at the top and move down only when the current tool's limits block the rewrite you need.
+Choose tooling based on whether the change needs textual, syntactic, or type-aware matching. A generated rewrite can help with many repeated edits; direct edits can be simpler for a small, well-understood set of sites.
 
 ### `gofmt -r` — syntactic, single-expression
 
@@ -67,7 +67,7 @@ eg -t template.go -w ./...
 
 ### `go/analysis` + SuggestedFixes — bespoke, testable
 
-- For a rewrite too specific for the above three, write an `analysis.Analyzer`. Its `Run(pass)` walks the type-checked AST and reports `analysis.Diagnostic{SuggestedFixes: [...]}` at each match.
+- For a rewrite that needs custom type-aware matching, write an `analysis.Analyzer`. Its `Run(pass)` walks the type-checked AST and reports `analysis.Diagnostic{SuggestedFixes: [...]}` at each match.
 - Test it against `.golden` files with `analysistest.RunWithSuggestedFixes`, then ship it as a `singlechecker`/`multichecker -fix` binary, or run it through `go vet -vettool=<path>`.
 
 ### `go fix` — the `go/analysis`-based fixer suite
@@ -88,11 +88,15 @@ go run golang.org/x/tools/go/analysis/passes/inline/cmd/inline@latest -fix ./...
 - `dstutil.Apply` mirrors `astutil.Apply`'s visitor API, so existing `go/ast` rewrite logic ports over directly.
 - Reach for this only when a bespoke `go/analysis` fixer needs to preserve comments that `go/ast`-based rewriting would otherwise scatter.
 
-### Always run after a bulk rewrite
+### Import Cleanup and Reachability
+
+If a rewrite leaves unused or missing imports, use import organization on the affected files. A tool that already maintains imports does not require a second pass.
 
 ```bash
-goimports -w .    # organizes imports added/left dangling by gofmt -r, eg, or a hand-rolled fixer
+goimports -w changed.go    # organizes imports added/left dangling by gofmt -r, eg, or a hand-rolled fixer
 ```
+
+Reachability analysis can help after removal-heavy refactors; it is not a required check for every edit.
 
 ```bash
 deadcode ./...                     # find code orphaned by a removal-heavy refactor
@@ -101,8 +105,7 @@ deadcode -whylive=funcName ./...    # shortest reachability path proving a funct
 ```
 
 - `golang.org/x/tools/cmd/deadcode` builds its reachability graph with Rapid Type Analysis from `main`/`init`, so it is unsound with respect to assembly, `go:linkname`, and reflection-driven dispatch — treat a "dead" verdict as a strong hint, not a proof, on code that uses any of those.
-- **Never `sed`/`perl` a structural Go change by hand.** None of these text tools have grammar awareness, so a pattern that happens to match inside a string literal or a comment gets rewritten right alongside real code.
-- Always finish a bulk rewrite with `goimports`, even after a tool that claims to manage imports itself.
+- Text substitutions do not understand Go scope, types, comments, or string literals. Use semantic tools when those distinctions determine the match; bounded textual edits are reasonable when their matches can be reviewed directly.
 
 ## 4. Structure-Discovery Tools (blast-radius mapping)
 

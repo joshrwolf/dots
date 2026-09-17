@@ -111,7 +111,7 @@
       },
       {
         "id": "4.4",
-        "text": "Includes at least one security linter (bodyclose, gosec, or sqlclosecheck) for resource leak prevention"
+        "text": "Includes relevant resource-lifetime or security checks, explaining that resource checks are not a comprehensive security audit."
       },
       {
         "id": "4.5",
@@ -128,7 +128,7 @@
     "assertions": [
       {
         "id": "5.1",
-        "text": "Recommends setting issues.new-from-rev (e.g., HEAD~1 or main) in .golangci.yml to only lint new/changed code"
+        "text": "Uses new-from-merge-base or an explicit baseline available in git history, explaining that only findings on changed lines are reported."
       },
       {
         "id": "5.2",
@@ -144,7 +144,7 @@
       },
       {
         "id": "5.5",
-        "text": "Mentions using parallel sub-agents or batching fixes by linter category (security, error handling, style) to tackle cleanup efficiently"
+        "text": "Keeps cleanup scoped; delegation is optional and depends on independent work."
       }
     ]
   },
@@ -261,7 +261,7 @@
     "assertions": [
       {
         "id": "10.1",
-        "text": "For deadline exceeded: recommends increasing run.timeout in .golangci.yml (default is 5m, may need 10m+ for large repos)"
+        "text": "Explains that golangci-lint v2 defaults to no timeout; inspect any configured timeout and increase it if appropriate."
       },
       {
         "id": "10.2",
@@ -298,7 +298,7 @@
       },
       {
         "id": "11.4",
-        "text": "Notes that gci and goimports are redundant with gofumpt and can be disabled"
+        "text": "Distinguishes gofumpt formatting from goimports import insertion/removal; goimports is not redundant."
       }
     ]
   }

@@ -19,7 +19,7 @@
     "prompt": "I have three services in my Go app: (1) a database connection that must be ready before serving requests, (2) a user repository that's only needed when user endpoints are called, and (3) a request logger that should be a fresh instance per request. Register them with samber/do.",
     "trap": "Without the skill, the model registers all three with do.Provide (lazy), missing do.Eager for the database and do.ProvideTransient for the logger",
     "assertions": [
-      {"id": "2.1", "text": "Uses do.Provide with do.Eager wrapper (or equivalent) for the database connection that must be ready immediately"},
+      {"id": "2.1", "text": "Initializes the database before serving: register a constructed value with ProvideValue/Eager, or register a lazy provider and Invoke it at startup; Eager is not a Provide wrapper"},
       {"id": "2.2", "text": "Uses do.Provide (lazy, the default) for the user repository that's only needed on demand"},
       {"id": "2.3", "text": "Uses do.ProvideTransient for the request logger that needs a fresh instance each time"},
       {"id": "2.4", "text": "Correctly distinguishes between the three service lifecycle types"},
@@ -61,7 +61,7 @@
     "prompt": "In my Go web app using samber/do, I have global services (config, logger) and per-request services (request context, current user). How do I prevent per-request services from being shared across requests?",
     "trap": "Without the skill, the model registers everything in the root container, leading to shared per-request state across concurrent requests",
     "assertions": [
-      {"id": "5.1", "text": "Uses do.Scope to create child scopes for per-request services"},
+      {"id": "5.1", "text": "Uses injector.Scope to create child scopes for per-request services and shuts down each scope after its request"},
       {"id": "5.2", "text": "Registers global/stateless services (config, logger) in the root container"},
       {"id": "5.3", "text": "Creates a new scope per request for request-scoped services"},
       {"id": "5.4", "text": "Child scope services can access parent (root) services"},
@@ -75,11 +75,11 @@
     "prompt": "I have a Go service registered in samber/do that depends on a Database interface. I want to test the service with a mock database. How do I set up the test?",
     "trap": "Without the skill, the model creates a brand new container from scratch in tests, missing the Clone+Override pattern that reuses the production container configuration",
     "assertions": [
-      {"id": "6.1", "text": "Uses injector.Clone() or do.Clone() to clone the production container"},
+      {"id": "6.1", "text": "Uses a fresh test container or rootInjector.Clone(); do.Clone does not exist in v2"},
       {"id": "6.2", "text": "Uses do.Override or do.OverrideValue to replace the Database with a mock"},
       {"id": "6.3", "text": "Invokes the service under test from the cloned container"},
       {"id": "6.4", "text": "Does NOT build a completely new container from scratch for each test (unless justified)"},
-      {"id": "6.5", "text": "The test is isolated — changes to the cloned container don't affect the original"}
+      {"id": "6.5", "text": "Does not assume Clone deep-copies eager values; overrides Database with the same registered interface type before invoking dependents"}
     ]
   },
   {
@@ -91,7 +91,7 @@
     "assertions": [
       {"id": "7.1", "text": "Implements a HealthCheck() method on the database service struct"},
       {"id": "7.2", "text": "The HealthCheck method signature is either HealthCheck() error or HealthCheck(ctx context.Context) error"},
-      {"id": "7.3", "text": "Uses do.HealthCheck[Database](injector) to invoke the health check through the container"},
+      {"id": "7.3", "text": "Uses do.HealthCheck with the registered service type (for example *Database) to invoke its health check"},
       {"id": "7.4", "text": "Does NOT write a standalone function that manually fetches the service and pings it"},
       {"id": "7.5", "text": "The health check actually tests connectivity (e.g., conn.Ping())"}
     ]
@@ -129,13 +129,13 @@
     "name": "named-services-same-type",
     "description": "Tests whether the model uses named services when registering multiple instances of the same type",
     "prompt": "My Go app connects to two PostgreSQL databases — a primary for writes and a replica for reads. Both are *sql.DB instances. How do I register and retrieve them with samber/do?",
-    "trap": "Without the skill, the model tries to register both with do.Provide which overwrites the first registration, or wraps them in different types unnecessarily",
+    "trap": "Without the skill, the model tries to register both with do.Provide which panics on duplicate registration, or wraps them in different types unnecessarily",
     "assertions": [
       {"id": "10.1", "text": "Uses do.ProvideNamed to register each database with a distinct name (e.g., 'primary-db', 'replica-db')"},
       {"id": "10.2", "text": "Uses do.MustInvokeNamed or do.InvokeNamed to retrieve each database by name"},
       {"id": "10.3", "text": "Both databases are registered as the same type (*sql.DB or a Database interface)"},
       {"id": "10.4", "text": "Does NOT create unnecessary wrapper types just to distinguish the two databases"},
-      {"id": "10.5", "text": "Does NOT overwrite the first registration by using do.Provide twice for the same type"}
+      {"id": "10.5", "text": "Does not call Provide twice for the same type: duplicate registration panics"}
     ]
   },
   {

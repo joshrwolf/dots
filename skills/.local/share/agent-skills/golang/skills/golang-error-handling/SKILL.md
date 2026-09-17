@@ -27,17 +27,17 @@ This skill guides the creation of robust, idiomatic error handling in Go applica
 
 ## Best Practices Summary
 
-1. **Returned errors MUST always be checked** — NEVER discard with `_`
-2. **Errors MUST be wrapped with context** using `fmt.Errorf("{context}: %w", err)`
-3. **Error strings MUST be lowercase**, without trailing punctuation
-4. **Use `%w` internally, `%v` at system boundaries** to control error chain exposure
+1. **Handle errors according to the API contract** — do not discard meaningful failures; intentional ignores need a reason. Some APIs return useful data together with an error, such as `io.Reader.Read`
+2. **Add useful context without repeating it at every layer**; return an error unchanged when it already describes the operation
+3. **Start error strings lowercase**, except proper nouns and acronyms; avoid trailing punctuation
+4. **Choose wrapping by the error contract**: `%w` exposes the cause to callers; `%v` preserves its text but prevents unwrapping. Neither redacts sensitive text
 5. **MUST use `errors.Is` for sentinel matching and `errors.As`/`errors.AsType` for typed chain inspection** instead of direct comparison or bare type assertions. For Go 1.26+, prefer `errors.AsType[T](err)` when `T` implements `error`; use `errors.As(err, &target)` for Go <1.26 or for non-error interface targets.
 6. **SHOULD use `errors.Join`** (Go 1.20+) to combine independent errors
-7. **Errors MUST be either logged OR returned**, NEVER both (single handling rule)
+7. **Avoid duplicate error reports** — normally return to the layer owning reporting. Retry diagnostics or explicitly requested local logging can coexist with propagation
 8. **Use sentinel errors** for expected conditions, custom types for carrying data
-9. **NEVER use `panic` for expected error conditions** — reserve for truly unrecoverable states
+9. **NEVER use `panic` for expected error conditions** — reserve it for violated invariants or explicit panic-based APIs
 10. **SHOULD use `slog`** (Go 1.21+) for structured error logging — not `fmt.Println` or `log.Printf`
-11. **Use `samber/oops`** for production errors needing stack traces, user/tenant context, or structured attributes
+11. **Use existing error types and logging conventions**; `samber/oops` guidance applies when the project uses that library
 12. **Log HTTP requests** with structured middleware capturing method, path, status, and duration
 13. **Use log levels** to indicate error severity
 14. **Never expose technical errors to users** — translate internal errors to user-friendly messages, log technical details separately
@@ -45,11 +45,11 @@ This skill guides the creation of robust, idiomatic error handling in Go applica
 
 ## Detailed Reference
 
-- **[Error Creation](./references/error-creation.md)** — How to create errors that tell the story: error messages should be lowercase, no punctuation, and describe what happened without prescribing action. Covers sentinel errors (one-time preallocation for performance), custom error types (for carrying rich context), and the decision table for which to use when.
+- **[Error Creation](./references/error-creation.md)** — How to create errors that tell the story: error messages normally start lowercase, preserve proper nouns/acronyms, and omit trailing punctuation, and describe what happened without prescribing action. Covers sentinel errors (one-time preallocation for performance), custom error types (for carrying rich context), and the decision table for which to use when.
 
-- **[Error Wrapping and Inspection](./references/error-wrapping.md)** — Why `fmt.Errorf("{context}: %w", err)` beats `fmt.Errorf("{context}: %v", err)` (chains vs concatenation). How to inspect chains with `errors.Is`, `errors.As`, and Go 1.26+ `errors.AsType` for type-safe error handling, and `errors.Join` for combining independent errors.
+- **[Error Wrapping and Inspection](./references/error-wrapping.md)** — Choosing whether callers should be able to inspect an underlying error. How to inspect chains with `errors.Is`, `errors.As`, and Go 1.26+ `errors.AsType` for type-safe error handling, and `errors.Join` for combining independent errors.
 
-- **[Error Handling Patterns and Logging](./references/error-handling.md)** — The single handling rule: errors are either logged OR returned, NEVER both (prevents duplicate logs cluttering aggregators). Panic/recover design, `samber/oops` for production errors, and `slog` structured logging integration for APM tools.
+- **[Error Handling Patterns and Logging](./references/error-handling.md)** — Reporting ownership and avoiding duplicate logs. Panic/recover design, `samber/oops` for production errors, and `slog` structured logging integration for APM tools.
 
 ## Organizing Error Handling Audits
 
@@ -57,8 +57,8 @@ For a requested error-handling audit, organize findings by category:
 
 - Error creation — validate `errors.New`/`fmt.Errorf` usage, low-cardinality messages, custom types
 - Error wrapping — audit `%w` vs `%v`, verify `errors.Is`/`errors.As` patterns
-- Single handling rule — find log-and-return violations, swallowed errors, discarded errors (`_`)
-- Panic/recover — audit `panic` usage, verify recovery at goroutine boundaries
+- Reporting ownership — find duplicate reports, swallowed failures, and unjustified discarded errors (`_`)
+- Panic/recover — audit `panic` usage, check whether recovery can safely contain the failure and report it
 - Structured logging — verify `slog` usage at error sites, check for PII in error messages
 
 ## Cross-References

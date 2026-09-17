@@ -57,7 +57,7 @@ paths:
   - See [structural.md](references/structural.md).
 - **Grep for tag and reflection references after any rename.**
   - gopls Rename only guards against _compilation_ breakage — it cannot see a struct tag, a `text/template` field reference, or a `reflect`-driven dispatch that still points at the old name.
-  - Renaming a field silently desyncs it from its `json`/`db` tag.
+  - Explicit json/db tags can intentionally preserve the wire name across a Go-field rename; untagged fields and reflection-based names may change behavior.
 - **Consult focused guidance when a change introduces a specific risk.** Use
   `golang-security` for trust boundaries or security-sensitive behavior and
   `golang-safety` for correctness hazards. A logic edit alone does not require

@@ -30,13 +30,13 @@ jobs:
 
       - name: Verify dependencies
         run: |
-          go mod verify
           go mod download
+          go mod verify
 
       - name: Check go mod tidy
-        run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
+        # Tidy under the minimum supported toolchain to avoid version churn.
+        if: matrix.go == '1.26'
+        run: go mod tidy -diff
 
       - name: Build
         run: go build ./...

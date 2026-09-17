@@ -54,7 +54,7 @@ Routing alone requires no tool installation or persistent configuration changes.
 | Navigate, diagnose, or refactor local code (definitions, references, rename) | `golang-gopls` | — |
 | Adopt new Go language features | `golang-modernize` | `golang-lint` |
 | Use samber/oops (structured errors) | `golang-samber-oops` | `golang-error-handling` |
-| Use log/slog | `golang-samber-slog` | `golang-observability`, `golang-error-handling` |
+| Use log/slog | `golang-observability` | `golang-samber-slog` (when using its extensions) |
 | Use dependency injection | `golang-dependency-injection` | `golang-samber-do` (when already used) |
 
 Skill names above refer to installed skills. `golang-go-cmp` is the local
@@ -111,7 +111,7 @@ Key clusters and their owners:
 - **Gap — goroutine vs cancel**: `golang-concurrency` + `golang-context` — load both when cancelling goroutines via context
 - **Gap — correctness vs threat**: `golang-safety` (internal bugs) vs `golang-security` (external threats)
 - **Gap — features vs rules**: `golang-modernize` (language adoption) vs `golang-lint` (static analysis config)
-- **Gap — process vs target rules**: `golang-refactoring` (the safe, staged, at-scale _process_ of changing existing code — planning, ordering, gopls-driven mechanics, sequenced changes) vs `golang-naming`/`golang-code-style`/`golang-project-layout`/`golang-design-patterns`/`golang-modernize` (what the resulting code should look like) — load `golang-refactoring` alongside whichever of these owns the target shape
+- **Gap — refactor risks vs target rules**: `golang-refactoring` (Go-specific mechanics, build constraints, identity and caller migration) vs `golang-naming`/`golang-code-style`/`golang-project-layout`/`golang-design-patterns`/`golang-modernize` (what the resulting code should look like) — load `golang-refactoring` alongside whichever of these owns the target shape
 
 ## Project configuration
 

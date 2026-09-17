@@ -77,10 +77,10 @@
       "prompt": "We just upgraded to Go 1.25. Review our main.go for modernization opportunities.\n\n```go\n// go.mod\nmodule example.com/worker\ngo 1.25\n\nrequire (\n    go.uber.org/automaxprocs v1.5.3\n    go.uber.org/zap v1.27.0\n)\n\n// main.go\npackage main\n\nimport (\n    \"fmt\"\n    \"sync\"\n\n    _ \"go.uber.org/automaxprocs\"\n)\n\nfunc main() {\n    var wg sync.WaitGroup\n    items := []string{\"a\", \"b\", \"c\", \"d\", \"e\"}\n\n    for _, item := range items {\n        wg.Add(1)\n        go func() {\n            defer wg.Done()\n            process(item)\n        }()\n    }\n    wg.Wait()\n}\n\nfunc process(item string) {\n    fmt.Println(\"processing\", item)\n}\n```\n\nSuggest all modernization improvements.",
       "trap": "Go 1.25 has built-in container-aware GOMAXPROCS, making uber-go/automaxprocs unnecessary. The model must know this Go 1.25 addition — without the skill it will likely treat automaxprocs as still needed and only suggest sync.WaitGroup.Go.",
       "assertions": [
-        { "id": "6.1", "text": "Suggests removing go.uber.org/automaxprocs import and dependency" },
+        { "id": "6.1", "text": "Considers removing automaxprocs after checking CPU-quota rounding, minimum CPU behavior, environment overrides, and dynamic updates." },
         { "id": "6.2", "text": "Explains that Go 1.25 has built-in container-aware GOMAXPROCS (or cgroup CPU limits awareness)" },
         { "id": "6.3", "text": "Suggests sync.WaitGroup.Go to replace Add/go func/Done pattern" },
-        { "id": "6.4", "text": "Does NOT suggest keeping the automaxprocs dependency as still necessary" },
+        { "id": "6.4", "text": "Does not claim built-in GOMAXPROCS and automaxprocs always have identical behavior." },
         { "id": "6.5", "text": "Suggests running go mod tidy to remove the dependency from go.sum" }
       ]
     },
@@ -106,7 +106,7 @@
       "assertions": [
         { "id": "8.1", "text": "Replaces runtime.SetFinalizer with runtime.AddCleanup" },
         { "id": "8.2", "text": "AddCleanup cleanup function receives the resource (db/*sql.DB or fd/int) as a separate argument, NOT the whole wrapper struct" },
-        { "id": "8.3", "text": "Explains that SetFinalizer prevents GC when the object holds a reference to itself or another object with a finalizer (cycle restriction)" },
+        { "id": "8.3", "text": "Explains that unreachable cycles involving finalizers may prevent collection; ordinary acyclic references are not inherently invalid." },
         { "id": "8.4", "text": "Does NOT pass ManagedConn or TempFile directly as the resource to AddCleanup" },
         { "id": "8.5", "text": "Correctly attributes runtime.AddCleanup to Go 1.24 (or notes it is the modern replacement)" }
       ]
@@ -129,14 +129,14 @@
       "id": 10,
       "name": "synctest-flaky-fix",
       "prompt": "This concurrent test is flaky in CI — it passes locally but fails ~20% of the time in GitHub Actions. Fix it properly. We're on Go 1.25.\n\n```go\npackage pubsub\n\nimport (\n    \"sync\"\n    \"testing\"\n    \"time\"\n)\n\ntype Broker struct {\n    mu   sync.RWMutex\n    subs map[string][]chan string\n}\n\nfunc NewBroker() *Broker {\n    return &Broker{subs: make(map[string][]chan string)}\n}\n\nfunc (b *Broker) Subscribe(topic string) <-chan string {\n    b.mu.Lock()\n    defer b.mu.Unlock()\n    ch := make(chan string, 10)\n    b.subs[topic] = append(b.subs[topic], ch)\n    return ch\n}\n\nfunc (b *Broker) Publish(topic, msg string) {\n    b.mu.RLock()\n    defer b.mu.RUnlock()\n    for _, ch := range b.subs[topic] {\n        ch <- msg\n    }\n}\n\nfunc TestBrokerPubSub(t *testing.T) {\n    b := NewBroker()\n    ch1 := b.Subscribe(\"events\")\n    ch2 := b.Subscribe(\"events\")\n\n    go b.Publish(\"events\", \"hello\")\n\n    time.Sleep(50 * time.Millisecond) // flaky!\n\n    got1 := <-ch1\n    got2 := <-ch2\n\n    if got1 != \"hello\" {\n        t.Errorf(\"ch1: got %q, want %q\", got1, \"hello\")\n    }\n    if got2 != \"hello\" {\n        t.Errorf(\"ch2: got %q, want %q\", got2, \"hello\")\n    }\n}\n\nfunc TestBrokerMultiTopic(t *testing.T) {\n    b := NewBroker()\n    events := b.Subscribe(\"events\")\n    logs := b.Subscribe(\"logs\")\n\n    go func() {\n        b.Publish(\"events\", \"event1\")\n        b.Publish(\"logs\", \"log1\")\n    }()\n\n    time.Sleep(100 * time.Millisecond) // flaky!\n\n    if got := <-events; got != \"event1\" {\n        t.Errorf(\"events: got %q, want %q\", got, \"event1\")\n    }\n    if got := <-logs; got != \"log1\" {\n        t.Errorf(\"logs: got %q, want %q\", got, \"log1\")\n    }\n}\n```\n\nFix the flakiness without increasing sleep durations.",
-      "trap": "Go 1.25 introduced testing/synctest.Test which provides deterministic concurrent testing with synctest.Wait(). The natural fix is to increase sleep, use channels for sync, or add retries. The skill teaches synctest.Test as the modern solution. Note: synctest.Run was the old Go 1.24 experimental API — use synctest.Test in Go 1.25+.",
+      "trap": "Accepts an unsupported flakiness diagnosis and mandates synctest even though blocking channel receives already synchronize the shown code.",
       "assertions": [
-        { "id": "10.1", "text": "Uses synctest.Test (NOT the old Go 1.24 experimental synctest.Run API)" },
-        { "id": "10.2", "text": "Uses synctest.Wait() for goroutine synchronization" },
+        { "id": "10.1", "text": "Recognizes the shown channel receives already synchronize with Publish; removing the sleeps suffices." },
+        { "id": "10.2", "text": "Uses existing channel synchronization, or valid synctest.Test if there is a separate fake-time need." },
         { "id": "10.3", "text": "Removes all time.Sleep calls" },
-        { "id": "10.4", "text": "No flaky timing dependencies remain" },
-        { "id": "10.5", "text": "Correctly imports testing/synctest" },
-        { "id": "10.6", "text": "Both tests converted (TestBrokerPubSub and TestBrokerMultiTopic)" }
+        { "id": "10.4", "text": "Does not accept the asserted 20% timing failure as explained by the supplied code." },
+        { "id": "10.5", "text": "Does not add testing/synctest solely to wait for already-blocking channel receives." },
+        { "id": "10.6", "text": "Preserves both tests' message assertions." }
       ]
     },
     {
@@ -158,15 +158,15 @@
       "id": 12,
       "name": "timer-gc-greenteagc",
       "prompt": "We upgraded to Go 1.26. Review this code for things we can clean up.\n\n```go\n// go.mod\nmodule example.com/scheduler\ngo 1.26\n\n// scheduler.go\npackage scheduler\n\nimport (\n    \"os\"\n    \"runtime/debug\"\n    \"time\"\n)\n\nfunc init() {\n    // Tune GC for lower latency\n    debug.SetGCPercent(50)\n    debug.SetMemoryLimit(2 << 30) // 2GB\n    os.Setenv(\"GOGC\", \"50\")\n}\n\nfunc RunAfter(d time.Duration, fn func()) {\n    timer := time.NewTimer(d)\n    defer timer.Stop() // prevent timer leak\n    <-timer.C\n    fn()\n}\n\nfunc PeriodicTask(interval time.Duration, fn func()) chan struct{} {\n    done := make(chan struct{})\n    go func() {\n        ticker := time.NewTicker(interval)\n        defer ticker.Stop() // prevent ticker leak\n        for {\n            select {\n            case <-ticker.C:\n                fn()\n            case <-done:\n                return\n            }\n        }\n    }()\n    return done\n}\n\nfunc Debounce(d time.Duration, fn func()) func() {\n    var timer *time.Timer\n    return func() {\n        if timer != nil {\n            timer.Stop()\n        }\n        timer = time.AfterFunc(d, fn)\n    }\n}\n\nfunc Timeout(d time.Duration) <-chan time.Time {\n    timer := time.NewTimer(d)\n    defer timer.Stop()\n    return timer.C\n}\n```\n\nSuggest all modernization opportunities.",
-      "trap": "Go 1.23+ timers/tickers are GC'd without Stop(). The Stop() in PeriodicTask is still needed for correctness. Go 1.26's Green Tea GC (10-40% overhead reduction) may make manual tuning unnecessary. go fix ./... is available in Go 1.26.",
+      "trap": "Deletes Stop calls indiscriminately, misses Timeout returning a stopped channel, or claims PeriodicTask requires ticker.Stop for goroutine termination.",
       "assertions": [
         { "id": "12.1", "text": "Identifies that some defer timer.Stop() calls are unnecessary with Go 1.23+" },
         { "id": "12.2", "text": "Explains the timer/ticker GC behavior change (collected without Stop)" },
         { "id": "12.3", "text": "Suggests reviewing GC tuning (SetGCPercent/SetMemoryLimit) due to Green Tea GC" },
-        { "id": "12.4", "text": "Mentions Green Tea GC's 10-40% overhead reduction" },
-        { "id": "12.5", "text": "Does NOT suggest removing Stop() from PeriodicTask ticker (needed for correctness)" },
+        { "id": "12.4", "text": "Does not treat published GC benchmark percentages as a guaranteed improvement for this workload." },
+        { "id": "12.5", "text": "Keeps or removes PeriodicTask ticker.Stop with accurate rationale; in this example it is not required to terminate the already-returning goroutine." },
         { "id": "12.6", "text": "Suggests go fix ./... for automated modernization (Go 1.26)" },
-        { "id": "12.7", "text": "Correctly distinguishes between Stop for GC (removable) and Stop for correctness (keep)" }
+        { "id": "12.7", "text": "Retains AfterFunc cancellation in Debounce and fixes Timeout, whose deferred Stop prevents the returned channel from firing." }
       ]
     },
     {
@@ -225,10 +225,10 @@
       "id": 17,
       "name": "godebug-removed-key-build-break",
       "prompt": "Upgrade this project to the latest stable Go toolchain and update `go.mod` accordingly.\n\n```\nmodule example.com/svc\n\ngo 1.24\n\ngodebug (\n    asynctimerchan=0\n)\n\nrequire (\n    github.com/lib/pq v1.10.9\n)\n```\n\nThe `asynctimerchan=0` line was added a while ago to keep `time.Timer`/`time.Ticker` channels buffered like they were before Go 1.23, because some code relied on a stale timer value still sitting in the channel. Provide the updated `go.mod`.",
-      "trap": "Go 1.27 removed the asynctimerchan GODEBUG setting entirely; a go.mod godebug entry still pinning it to its old (pre-1.23) value now fails the build, not just prints a warning. The natural default without the skill is to bump only the go directive and leave the godebug block untouched, assuming an old GODEBUG pin is harmless leftover config.",
+      "trap": "Confuses asynctimerchan=0 (new synchronous behavior) with =1 (old buffered behavior), then invents a build failure for a default-valued pin.",
       "assertions": [
-        { "id": "17.1", "text": "Removes or updates the asynctimerchan=0 godebug entry rather than leaving it as-is" },
-        { "id": "17.2", "text": "Explains that Go 1.27 removed this GODEBUG setting and that a go.mod entry pinned to the old value now fails the build (not just a warning)" },
+        { "id": "17.1", "text": "Corrects the premise: asynctimerchan=0 selects synchronous channels; it is not the old buffered behavior." },
+        { "id": "17.2", "text": "Explains that removed settings pinned to their old value fail, whereas an accepted current-default pin is not the claimed build break." },
         { "id": "17.3", "text": "Bumps the go directive to a current Go 1.27-era version" },
         { "id": "17.4", "text": "Recommends actually fixing the underlying code that relied on buffered timer channels rather than just deleting the compatibility shim silently" },
         { "id": "17.5", "text": "Mentions checking for other Go 1.27-removed GODEBUG keys (e.g. tls3des, gotypesalias, tlsrsakex) as part of the same upgrade, not just asynctimerchan" }
@@ -270,7 +270,7 @@
         { "id": "20.2", "text": "Uses uuid.New().String() — does NOT call uuid.NewString() (does not exist in stdlib)" },
         { "id": "20.3", "text": "Knows stdlib generators return values without errors (no id, err := uuid.NewV7() error handling)" },
         { "id": "20.4", "text": "Uses uuid.NewV7() for the time-ordered database ID case" },
-        { "id": "20.5", "text": "Removes github.com/google/uuid from go.mod (e.g. via go mod tidy)" }
+        { "id": "20.5", "text": "Removes the dependency only if no callers or remaining APIs require it; explains changed exported UUID type identity and parsing behavior." }
       ]
     },
     {
@@ -294,7 +294,7 @@
         { "id": "22.1", "text": "Uses strings.CutLast for at least one of the functions" },
         { "id": "22.2", "text": "Uses the 3-result form (before, after, found) of CutLast correctly" },
         { "id": "22.3", "text": "Uses CutLast in EnvValue to simplify the ok-returning split" },
-        { "id": "22.4", "text": "Does NOT keep manual strings.LastIndex slicing arithmetic where CutLast applies" }
+        { "id": "22.4", "text": "Preserves no-separator results and the leading-dot filename case instead of returning CutLast results blindly." }
       ]
     },
     {
@@ -304,10 +304,29 @@
       "trap": "testing/synctest makes time-based tests deterministic, but a plain httptest.NewServer uses the real network, which stalls inside a synctest bubble (the bubble's fake clock waits forever on real I/O). Go 1.27 added httptest.NewTestServer, which runs on an in-memory fake network designed for synctest. Without the skill, the model either avoids synctest (retries/channels) or combines synctest with httptest.NewServer, producing a hanging test.",
       "assertions": [
         { "id": "23.1", "text": "Wraps tests in synctest.Test" },
-        { "id": "23.2", "text": "Uses httptest.NewTestServer instead of httptest.NewServer" },
-        { "id": "23.3", "text": "Explains that real-network servers do not work inside a synctest bubble (in-memory/fake network rationale)" },
+        { "id": "23.2", "text": "Uses httptest.NewTestServer(t, handler) and srv.Client() for the in-memory transport." },
+        { "id": "23.3", "text": "Explains why a real socket is unsuitable for fake-time tests, without claiming every real-network use necessarily deadlocks." },
         { "id": "23.4", "text": "Does NOT leave a plain httptest.NewServer inside a synctest bubble" },
         { "id": "23.5", "text": "Keeps both tests working (response test and client-timeout test) with deterministic time" }
+      ]
+    },
+    {
+      "id": 24,
+      "name": "seeded-random-sequence-contract",
+      "prompt": "We have a Go 1.27 simulator using math/rand.New(rand.NewSource(seed)). Saved seed values must reproduce historical runs exactly. Should we replace it with math/rand/v2 as modernization?",
+      "assertions": [
+        {
+          "id": "24.1",
+          "text": "Does not replace the generator if historical sequences must remain reproducible."
+        },
+        {
+          "id": "24.2",
+          "text": "Explains that math/rand is not deprecated as a package and v2 generators are not sequence-compatible."
+        },
+        {
+          "id": "24.3",
+          "text": "Distinguishes a future explicit data/algorithm migration from a mechanical modernization."
+        }
       ]
     }
   ]

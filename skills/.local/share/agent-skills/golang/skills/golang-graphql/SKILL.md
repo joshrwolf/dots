@@ -66,7 +66,7 @@ type Post {
 
 **Nullability rule:** mark a field `!` only when the server can _always_ return a value. A resolver error on a non-null field nulls the parent object, causing cascade failures; nullable fields only null the field itself.
 
-**Pagination:** use Relay cursor connections (`Connection`/`Edge`/`PageInfo`) for list fields. Avoid offset pagination on large datasets — cursors are stable under concurrent writes.
+**Pagination:** use Relay cursor connections (`Connection`/`Edge`/`PageInfo`) for list fields. Avoid offset pagination on large datasets — use a unique, stable ordering and carry its full key in each cursor; cursors avoid offset shifts but do not create a snapshot under concurrent writes.
 
 **Mutations:** wrap results in an envelope type so clients receive business errors alongside partial results without polluting the GraphQL `errors` array:
 
@@ -155,13 +155,28 @@ Never return raw internal errors — they leak SQL messages, stack traces, or se
 
 ```go
 // gqlgen — custom ErrorPresenter strips internal details
+// Only application-approved public codes receive fixed, safe messages.
+// A gqlerror.Error can wrap internal errors too; its type alone is not trusted.
 srv.SetErrorPresenter(func(ctx context.Context, err error) *gqlerror.Error {
+    out := graphql.DefaultErrorPresenter(ctx, err) // retain path/location
+    publicMessages := map[string]string{
+        "NOT_FOUND": "user not found",
+        "FORBIDDEN": "access denied",
+        "UNAUTHENTICATED": "authentication required",
+    }
     var gqlErr *gqlerror.Error
     if errors.As(err, &gqlErr) {
-        return gqlErr // already formatted
+        code, _ := gqlErr.Extensions["code"].(string)
+        if message, ok := publicMessages[code]; ok {
+            out.Message = message
+            out.Extensions = map[string]any{"code": code}
+            return out
+        }
     }
-    // log internal err here
-    return gqlerror.Errorf("internal error") // safe client message
+    slog.ErrorContext(ctx, "resolver failed", "error", err)
+    out.Message = "internal server error"
+    out.Extensions = nil
+    return out
 })
 
 // Add extension codes for client-side error handling
@@ -185,14 +200,16 @@ Subscriptions use long-lived WebSocket connections. The critical discipline: **a
 // ✓ Good — closes channel when client disconnects
 func (r *subscriptionResolver) MessageAdded(ctx context.Context, room string) (<-chan *model.Message, error) {
     ch := make(chan *model.Message, 1)
-    sub := r.pubsub.Subscribe(room) // subscribe once before the goroutine
+    sub := r.pubsub.Subscribe(room) // illustrative subscription handle with Chan/Unsubscribe
     go func() {
         defer close(ch) // always close; signals iteration to stop
+        defer sub.Unsubscribe()
         for {
             select {
             case <-ctx.Done():
                 return // client disconnected
-            case msg := <-sub:
+            case msg, ok := <-sub.Chan():
+                if !ok { return }
                 select {
                 case ch <- msg:
                 case <-ctx.Done():
@@ -222,7 +239,11 @@ Production GraphQL servers require explicit limits. Without them, a single deepl
 
 ```go
 // gqlgen — wire these into every production handler
-srv := handler.NewDefaultServer(es)
+// NewDefaultServer already enables introspection; use explicit configuration.
+srv := handler.New(es)
+srv.AddTransport(transport.Options{})
+srv.AddTransport(transport.GET{})
+srv.AddTransport(transport.POST{})
 srv.Use(extension.FixedComplexityLimit(200)) // max cost per query
 
 // Gate introspection — only in non-production environments
@@ -233,7 +254,7 @@ if os.Getenv("ENV") != "production" {
 
 For graph-gophers: `graphql.MaxDepth(10)` and `graphql.MaxParallelism(10)` options at `ParseSchema` time.
 
-**Query allow-listing:** in production, consider persisted queries (gqlgen APQ extension) to reject arbitrary query strings.
+**Query allow-listing:** accept only pre-registered operations when the deployment requires a safelist. gqlgen Automatic Persisted Queries (APQ) is a bandwidth cache: clients may register arbitrary queries, so APQ alone is not an allowlist.
 
 ## Common Mistakes
 

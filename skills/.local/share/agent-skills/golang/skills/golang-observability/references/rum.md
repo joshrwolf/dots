@@ -39,7 +39,7 @@ posthogClient.Enqueue(posthog.Capture{
     Event:      "order_completed",
 })
 
-// ✓ Good — user_id is immutable, stable, and not PII
+// ✓ Good — user_id is stable and less directly identifying; it is still personal data
 posthogClient.Enqueue(posthog.Capture{
     DistinctId: user.ID, // "usr_a1b2c3" — never changes, always the same user
     Event:      "order_completed",
@@ -161,11 +161,11 @@ func (s *UserService) Upgrade(ctx context.Context, userID string, plan string) e
 
 ## GDPR and CCPA Compliance
 
-RUM collects user behavior data — clicks, page views, session recordings. This triggers privacy regulation requirements. Compliance is not optional; violations carry heavy fines (GDPR: up to 4% of global revenue, CCPA: $7,500 per intentional violation).
+RUM can process personal data, including pseudonymous identifiers and behavior. Implement the product's approved collection, retention, consent/opt-out and data-subject workflows; applicable requirements depend on jurisdiction, purpose and legal basis.
 
 ### Consent Management
 
-GDPR/CCPA consent SHOULD be obtained before loading RUM SDKs or sending tracking events. This applies to both frontend scripts and server-side event tracking.
+When the product requires opt-in analytics consent, enforce it before frontend SDK loading and server-side tracking. Consent and opt-out requirements are not identical across GDPR and CCPA; use the approved policy rather than treating every event as legally requiring the same mechanism.
 
 ```go
 // Server-side: check consent before tracking
@@ -190,33 +190,25 @@ func (s *OrderService) Complete(ctx context.Context, order Order) error {
 
 ### Data Subject Rights Endpoints
 
-GDPR and CCPA require you to let users access, export, and delete their data. Implement API endpoints that propagate these requests to all systems that hold user data — your database, your analytics platform, your CDP.
+Support authenticated, authorized access/export/deletion workflows across relevant systems, subject to the product's retention obligations and exceptions. An HTTP endpoint is one implementation, not itself a legal requirement. Vendor deletion is often asynchronous: persist work and retries, and do not claim completion after logging an error.
 
 ```go
-// DELETE /api/users/:id/data — GDPR Article 17 "Right to Erasure"
+// DELETE /api/users/:id/data — application interfaces below are illustrative.
 func (h *PrivacyHandler) HandleDataDeletion(w http.ResponseWriter, r *http.Request) {
     ctx := r.Context()
     userID := chi.URLParam(r, "id")
-
-    // 1. Delete from your database
-    if err := h.userRepo.DeleteAllData(ctx, userID); err != nil {
-        slog.ErrorContext(ctx, "failed to delete user data", "user_id", userID, "error", err)
+    if !h.authorizer.CanManageUserData(ctx, userID) {
+        http.Error(w, "forbidden", http.StatusForbidden)
+        return
+    }
+    // Persist the identifiers and job before deleting account records. The worker
+    // applies retention policy, deletes data from each vendor, retries failures,
+    // and marks completion only when every required step succeeds.
+    if err := h.deletions.Enqueue(ctx, userID); err != nil {
         http.Error(w, "internal error", http.StatusInternalServerError)
         return
     }
-
-    // 2. Delete from analytics platform
-    if err := h.posthog.DeleteUser(ctx, userID); err != nil {
-        slog.ErrorContext(ctx, "failed to delete analytics data", "user_id", userID, "error", err)
-    }
-
-    // 3. Delete from CDP
-    if err := h.segment.DeleteUser(ctx, userID); err != nil {
-        slog.ErrorContext(ctx, "failed to delete CDP data", "user_id", userID, "error", err)
-    }
-
-    slog.InfoContext(ctx, "user data deletion completed", "user_id", userID)
-    w.WriteHeader(http.StatusNoContent)
+    w.WriteHeader(http.StatusAccepted)
 }
 
 // GET /api/users/:id/data — GDPR Article 15 "Right of Access"
@@ -224,6 +216,10 @@ func (h *PrivacyHandler) HandleDataExport(w http.ResponseWriter, r *http.Request
     ctx := r.Context()
     userID := chi.URLParam(r, "id")
 
+    if !h.authorizer.CanManageUserData(ctx, userID) {
+        http.Error(w, "forbidden", http.StatusForbidden)
+        return
+    }
     export, err := h.userRepo.ExportAllData(ctx, userID)
     if err != nil {
         slog.ErrorContext(ctx, "failed to export user data", "user_id", userID, "error", err)
@@ -238,14 +234,14 @@ func (h *PrivacyHandler) HandleDataExport(w http.ResponseWriter, r *http.Request
 
 ### Privacy Checklist
 
-- [ ] **Consent before tracking** — no analytics scripts load and no server-side events fire until the user consents
+- [ ] **Collection policy enforced** — when opt-in is required, no analytics scripts load or events fire until consent; honor applicable opt-outs too
 - [ ] **Consent + cookie banner** — clear opt-in (not pre-checked boxes), separate consent for analytics vs marketing vs functional (frontend responsibility, but backend must respect the consent flag)
-- [ ] **Data minimization** — only collect what you need, never track PII in analytics events
+- [ ] **Data minimization** — collect only approved fields; pseudonymous IDs remain personal data
 - [ ] **Data retention policy** — auto-delete old analytics data (e.g., 2 years for aggregated analytics)
 - [ ] **Data subject rights** — endpoints for data export (right of access) and deletion (right to erasure)
 - [ ] **Data processing agreements** — signed DPAs with all third-party analytics/CDP vendors
 - [ ] **Privacy policy** — lists all RUM tools, what data they collect, and how long it's retained
-- [ ] **Identity key is not PII** — use `user_id`, not email, as the distinct_id across all platforms
+- [ ] **Identity key is pseudonymous personal data** — use `user_id`, not email, as the distinct_id across all platforms
 - [ ] **Self-hosted option** — consider self-hosting (PostHog, Matomo) to keep data in your infrastructure and simplify compliance
 
 ## Self-Hosted vs SaaS
@@ -253,7 +249,7 @@ func (h *PrivacyHandler) HandleDataExport(w http.ResponseWriter, r *http.Request
 | Factor | Self-hosted (PostHog, Matomo) | SaaS (Amplitude, Mixpanel) |
 | --- | --- | --- |
 | **Data residency** | Full control — data stays in your infra | Data on vendor's servers |
-| **GDPR compliance** | Simpler — no cross-border data transfer | Requires DPA, SCCs, or adequacy decision |
+| **Privacy controls** | Hosting location, operators and subprocessors still matter | Assess vendor processing and applicable transfer safeguards |
 | **Cost** | Infrastructure cost, scales with volume | Per-event or per-seat pricing |
 | **Maintenance** | You manage upgrades, scaling, backups | Vendor handles everything |
 | **Features** | Catching up but improving fast | Often more polished and feature-rich |

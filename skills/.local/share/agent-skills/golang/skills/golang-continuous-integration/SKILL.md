@@ -81,14 +81,14 @@ Go 1.27 raises the Darwin floor to macOS 13 (Ventura). `macos-latest`/`macos-14`
 
 Test flags:
 
-- `-race`: CI MUST run tests with the `-race` flag (catches data races — undefined behavior in Go)
+- `-race`: run on a supported OS/architecture with cgo available; it detects races on exercised paths. Go races are bugs, but the memory model does not classify all racy behavior as unconstrained undefined behavior
 - `-shuffle=on`: Randomize test order to catch inter-test dependencies
 - `-coverprofile`: Generate coverage data
 - `git diff --exit-code`: Fails if `go mod tidy` changes anything
 
 ### Coverage Configuration
 
-CI SHOULD enforce code coverage thresholds. Configure thresholds in `codecov.yml` at the repo root — see [codecov.yml](./assets/codecov.yml)
+Use the project's chosen coverage policy; Configure thresholds in `codecov.yml` at the repo root — see [codecov.yml](./assets/codecov.yml)
 
 ---
 
@@ -114,7 +114,7 @@ Create `.golangci.yml` at the root of the project. See the `samber/cc-skills-gol
 
 `.github/workflows/security.yml` — see [security.yml](./assets/security.yml)
 
-CI MUST run `govulncheck` — it only reports vulnerabilities in code paths your project actually calls, unlike generic CVE scanners.
+Use `govulncheck` for known Go vulnerabilities. Its static analysis identifies potentially reachable symbols for the selected build, not proof of actual runtime calls. The sample SAST jobs report findings; configure required checks or code-scanning merge protection for the desired gate.
 
 - CodeQL results appear in the repository's Security tab.
 - Bearer is good at detecting sensitive data flow issues.
@@ -147,7 +147,7 @@ Minor/patch updates are grouped into a single PR. Major updates get individual P
 
 `.github/workflows/dependabot-auto-merge.yml` — see [dependabot-auto-merge.yml](./assets/dependabot-auto-merge.yml)
 
-> **Security warning:** This workflow requires `contents: write` and `pull-requests: write` — these are elevated permissions that allow merging PRs and modifying repository content. The `if: github.actor == 'dependabot[bot]'` guard restricts execution to Dependabot only. Do not remove this guard. Note that `github.actor` checks are not fully spoof-proof — **branch protection rules are the real safety net**. Ensure branch protection is configured (see [Repository Security Settings](#repository-security-settings)) with required status checks and required approvals so that auto-merge only succeeds after all checks pass, regardless of who triggered the workflow.
+> **Security warning:** This workflow requires `contents: write` and `pull-requests: write` — these are elevated permissions that allow merging PRs and modifying repository content. The `if: github.actor == 'dependabot[bot]'` guard restricts execution to Dependabot only. Do not remove this guard. Actor identity is supplied by GitHub, but identity alone does not establish the safety of a change. **Required checks and repository merge rules enforce the merge policy**. Ensure branch protection is configured (see [Repository Security Settings](#repository-security-settings)) with required status checks and required approvals so that auto-merge only succeeds after all checks pass, regardless of who triggered the workflow.
 
 ### Renovate (alternative)
 
@@ -173,7 +173,7 @@ GoReleaser automates binary builds, checksums, and GitHub Releases. The configur
 
 `.github/workflows/release.yml` — see [release.yml](./assets/release.yml)
 
-> **Security warning:** This workflow requires `contents: write` to create GitHub Releases. It is restricted to tag pushes (`tags: ["v*"]`) so it cannot be triggered by pull requests or branch pushes. Only users with push access to the repository can create tags.
+> **Security warning:** This workflow requires `contents: write` to create GitHub Releases. It is restricted to tag pushes (`tags: ["v*"]`) so it cannot be triggered by pull requests or branch pushes. Use tag rulesets and a protected release environment where the project requires controls on who may publish.
 
 ### GoReleaser for CLI/Programs
 
@@ -201,14 +201,14 @@ For projects that produce Docker images. This workflow builds multi-platform ima
 
 `.github/workflows/docker.yml` — see [docker.yml](./assets/docker.yml)
 
-> **Security warning:** Permissions are scoped per job: the `container-scan` job only gets `contents: read` + `security-events: write`, while the `docker` job gets `packages: write` (to push to GHCR) and `attestations: write` + `id-token: write` (for provenance/SBOM signing). This ensures the scan job cannot push images even if compromised. The `push` flag is set to `false` on pull requests so untrusted code cannot publish images. The `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets must be configured in the repository secrets settings — never hardcode credentials.
+> **Security warning:** Permissions are scoped per job: the `container-scan` job only gets `contents: read` + `security-events: write`, while the `docker` job gets `packages: write` (to push to GHCR). This ensures the scan job cannot push images even if compromised. The `push` flag is set to `false` on pull requests so untrusted code cannot publish images. The `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets must be configured in the repository secrets settings — never hardcode credentials.
 
 Key details:
 
-- **QEMU + Buildx**: Required for multi-platform builds (`linux/amd64,linux/arm64`). Remove platforms you don't need.
+- **Buildx**: Supports multi-platform builds; QEMU is one option when executing foreign-architecture binaries. Native builders or cross-compilation can avoid emulation. The example targets (`linux/amd64,linux/arm64`). Remove platforms you don't need.
 - **`push: false` on PRs**: Images are built but never pushed on pull requests — this validates the Dockerfile without publishing untrusted code.
 - **Metadata action**: Automatically generates semver tags (`v1.2.3` → `1.2.3`, `1.2`, `1`), branch tags (`main`), and SHA tags.
-- **Provenance + SBOM**: `provenance: mode=max` and `sbom: true` generate supply chain attestations. These require `attestations: write` and `id-token: write` permissions.
+- **Provenance + SBOM**: `provenance: mode=max` and `sbom: true` generate supply chain attestations. BuildKit attaches these to registry images; these options alone do not need GitHub's `attestations: write` or `id-token: write` permissions. GitHub artifact attestations are a separate integration.
 - **Dual registry**: Pushes to both GHCR (using `GITHUB_TOKEN`, no extra secret needed) and Docker Hub (requires `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` secrets). Remove the Docker Hub login and image line if not needed.
 - **Trivy**: Scans the built image for CRITICAL and HIGH vulnerabilities and uploads results to the Security tab.
 - Adapt the image names and registries to your project. For GHCR-only, remove the Docker Hub login step and the `docker.io/` line from `images:`.
@@ -223,7 +223,7 @@ Repository security settings (branch protection, workflow permissions, secrets, 
 
 ## AI-Driven Code Review
 
-Add AI agents as PR reviewers alongside traditional static analysis. When loaded with this skill plugin, the agent applies the relevant Go skills per review area — catching architectural drift, logic bugs, missing error context, and concurrency hazards that linters cannot detect.
+When requested, AI review can complement traditional static analysis. It can miss bugs and produce false positives. When loaded with this skill plugin, the agent applies the relevant Go skills per review area — catching architectural drift, logic bugs, missing error context, and concurrency hazards that linters cannot detect.
 
 > **Cost note:** AI review agents run concurrently per PR. For cost control, remove jobs you don't need or raise the PR trigger filter to specific branches only.
 
@@ -248,12 +248,9 @@ The Claude Code GitHub App integration is configured via the `/install-github-ap
 
 ### GitHub Copilot
 
-Copy skills into your repo, then append [copilot-review-instructions.md](./assets/copilot-review-instructions.md) to `.github/copilot-instructions.md`:
+Use the project's approved, pinned skills in the repository, then adapt [copilot-review-instructions.md](./assets/copilot-review-instructions.md) to `.github/copilot-instructions.md`:
 
-```bash
-npx skills add https://github.com/samber/cc-skills-golang --agent github-copilot --skill '*' -y --copy
-ln -s .agents .copilot
-```
+Copilot review support for loading skills differs from an interactive agent. Keep critical review guidance in `.github/copilot-instructions.md`; do not assume a symlink causes referenced files to be loaded.
 
 ---
 
@@ -261,15 +258,15 @@ ln -s .agents .copilot
 
 | Mistake | Fix |
 | --- | --- |
-| Missing `-race` in CI tests | Always use `go test -race` |
+| Race checks absent on concurrent code | Add `go test -race` on a supported CI target |
 | No `-shuffle=on` | Randomize test order to catch inter-test dependencies |
 | Caching integration test results | Use `-count=1` to disable caching |
 | `go mod tidy` not checked | Add `go mod tidy && git diff --exit-code` step |
 | Missing `fail-fast: false` | One Go version failing shouldn't cancel other jobs |
-| Not pinning action versions | GitHub Actions MUST use pinned major versions (e.g. `@vN`, not `@master`) |
+| Not pinning action versions | Use a verified full commit SHA for immutable pinning; major tags are readable examples but can move |
 | No `permissions` block | Follow least-privilege per job |
 | Ignoring govulncheck findings | Fix or suppress with justification |
-| No AI review in CI | Add Claude Code or Copilot review — catches logic, security, and architectural issues that static analysis misses |
+| Assuming AI review proves correctness | Keep tests and human review; AI review is optional |
 
 ## Related Skills
 

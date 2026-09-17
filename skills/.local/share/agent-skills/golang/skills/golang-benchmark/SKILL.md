@@ -39,9 +39,9 @@ This skill covers the full measurement workflow: write a benchmark, run it, prof
 
 Benchmark functions live in a `_bench_test.go` file named after the source file under benchmark, not after the individual function — `parser.go` -> `parser_bench_test.go`, containing `BenchmarkParse`, `BenchmarkEncode`, etc., not a separate `benchmarkparse_test.go` per function.
 
-- Keeping benchmarks in their own file (instead of mixed into `parser_test.go`) keeps `go test -bench=. ./pkg/parser` output free of unrelated `Test*` noise.
+- Keeping benchmarks in their own file separates measurement fixtures; file placement does not skip Test functions. Use `go test -run='^$' -bench=. ./pkg/parser` to exclude tests.
 - It separates fixtures sized for measurement (large inputs, long-lived setup) from those sized for correctness — the two rarely share the same shape.
-- The file still follows Go's one-test-file-per-source-file convention (→ See `samber/cc-skills-golang@golang-testing` skill), just with the `_bench` suffix marking its narrower purpose.
+- The `_bench_test.go` suffix is a useful repository convention, not a Go requirement; benchmarks may live in any `_test.go` file.
 
 Order `Benchmark*` functions inside `parser_bench_test.go` to mirror the order of the functions/methods they measure in `parser.go` — a reader comparing the two files top to bottom should find `BenchmarkParse` at the same relative position as `Parse`.
 
@@ -78,7 +78,7 @@ func BenchmarkAlloc(b *testing.B) {
 `b.ReportMetric()` adds custom metrics (e.g., throughput):
 
 ```go
-b.ReportMetric(float64(totalBytes)/b.Elapsed().Seconds(), "bytes/s") // b.Elapsed() is only valid inside b.Loop()
+b.ReportMetric(float64(totalBytes)/b.Elapsed().Seconds(), "bytes/s") // report after the loop; totalBytes is bytes processed over all iterations
 ```
 
 ### Sub-benchmarks and table-driven
@@ -106,7 +106,7 @@ go test -bench=BenchmarkEncode -benchmem -count=10 ./pkg/... | tee bench.txt
 | ---------------------- | ----------------------------------------- |
 | `-bench=.`             | Run all benchmarks (regexp filter)        |
 | `-benchmem`            | Report allocations (B/op, allocs/op)      |
-| `-count=10`            | Run 10 times for statistical significance |
+| `-count=10`            | Collect 10 samples; significance is not guaranteed |
 | `-benchtime=3s`        | Minimum time per benchmark (default 1s)   |
 | `-cpu=1,2,4`           | Run with different GOMAXPROCS values      |
 | `-cpuprofile=cpu.prof` | Write CPU profile                         |
@@ -138,7 +138,7 @@ Generate profiles directly from benchmark runs — no HTTP server needed:
 go test -bench=BenchmarkParse -cpuprofile=cpu.prof ./pkg/parser
 go tool pprof cpu.prof
 
-# Memory profile (alloc_objects shows GC churn, inuse_space shows leaks)
+# Memory profile (allocation counts versus retained bytes; neither alone proves a leak)
 go test -bench=BenchmarkParse -memprofile=mem.prof ./pkg/parser
 go tool pprof -alloc_objects mem.prof
 
@@ -163,9 +163,9 @@ For full pprof CLI reference (all commands, non-interactive mode, profile interp
 
 - **[CI Regression Detection](./references/ci-regression.md)** — Automated performance regression gating in CI pipelines. Covers three tools (benchdiff for quick PR comparisons, cob for strict threshold-based gating, gobenchdata for long-term trend dashboards), noisy neighbor mitigation strategies (why cloud CI benchmarks vary 5-10% even on quiet machines), and self-hosted runner tuning to make benchmarks reproducible. Use this when you want to ensure pull requests don't silently slow down your codebase — detecting regressions early prevents shipping performance debt.
 
-- **[Investigation Session](./references/investigation-session.md)** — Production performance troubleshooting workflow combining Prometheus runtime metrics (heap size, GC frequency, goroutine counts), PromQL queries to correlate metrics with code changes, runtime configuration flags (GODEBUG env vars to enable GC logging), and cost warnings (when you're hitting performance tax). Use this when production benchmarks look good but real traffic behaves differently.
+- **[Investigation Session](./references/investigation-session.md)** — Production performance reference covering Prometheus runtime metrics (heap size, GC frequency, goroutine counts), PromQL queries to correlate metrics with code changes, runtime configuration flags (GODEBUG env vars to enable GC logging), and cost warnings (when you're hitting performance tax). Use this when production benchmarks look good but real traffic behaves differently.
 
-- **[Prometheus Go Metrics Reference](./references/prometheus-go-metrics.md)** — Complete listing of Go runtime metrics actually exposed as Prometheus metrics by `prometheus/client_golang`. Covers 30 default metrics, 40+ optional metrics (Go 1.17+), process metrics, and common PromQL queries. Distinguishes between `runtime/metrics` (Go internal data) and Prometheus metrics (what you scrape from `/metrics`). Use this when setting up monitoring dashboards or writing PromQL queries for production alerts.
+- **[Prometheus Go Metrics Reference](./references/prometheus-go-metrics.md)** — Version-dependent reference to Go runtime metrics exposed as Prometheus metrics by `prometheus/client_golang`. Covers 30 default metrics, 40+ optional metrics (Go 1.17+), process metrics, and common PromQL queries. Distinguishes between `runtime/metrics` (Go internal data) and Prometheus metrics (what you scrape from `/metrics`). Use this when setting up monitoring dashboards or writing PromQL queries for production alerts.
 
 ## Cross-References
 

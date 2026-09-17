@@ -30,15 +30,15 @@ refreshLoader := func(keys []string) (map[string]*Config, error) {
 
 cache := hot.NewHotCache[string, *Config](hot.WTinyLFU, 1_000).
     WithTTL(5 * time.Minute).                              // stale after 5min
+    WithLoaders(refreshLoader).                           // load cold misses too
     WithRevalidation(1 * time.Minute, refreshLoader).       // hard-expire after 6min total
     WithRevalidationErrorPolicy(hot.KeepOnError).           // keep stale value if refresh fails
-    WithJitter(0.1, 30*time.Second).                        // spread expirations
     WithJanitor().
     Build()
 defer cache.StopJanitor()
 ```
 
-**Timeline for an entry set at T=0 with this config:**
+**Timeline without a successful refresh for an entry set at T=0:**
 
 - T=0 to T=5min: fresh — returned directly
 - T=5min to T=6min: stale — returned immediately, background refresh triggered
@@ -46,7 +46,7 @@ defer cache.StopJanitor()
 
 **Error policies:**
 
-- `hot.KeepOnError` — if background refresh fails, keep the stale value until hard expiry
+- `hot.KeepOnError` — if background refresh fails, reinsert the stale value with a fresh TTL (v0.13.1), so repeated refresh failures can retain it beyond the original expiry; this is not a bounded maximum-age policy
 - `hot.DropOnError` — if refresh fails, drop the entry immediately
 
 Use `KeepOnError` when stale data is better than no data (config caches, product catalogs). Use `DropOnError` when correctness matters more than availability.
@@ -70,10 +70,9 @@ defer cache.StopJanitor()
 
 **Sizing guidance:**
 
-- Use powers of 2 (4, 8, 16, 32) for optimal hash distribution
-- Rule of thumb: shard count ~= number of CPU cores for high-contention workloads
-- Each shard gets `capacity / shards` items
-- Over-sharding (>64 shards) adds overhead without benefit
+- Choose shard count using contention measurements and a well-distributed hash. Powers of two are not required.
+- Capacity is split across shards (rounded per shard); a skewed hash can fill one shard while others remain underused.
+- More shards add metadata and can reduce eviction effectiveness.
 
 ## Missing Key Caching (Negative Caching)
 
@@ -150,7 +149,7 @@ defer cache.StopJanitor()
 
 ## Copy-on-Read / Copy-on-Write
 
-Required when cached values are mutable (pointers, slices, maps):
+Copying is one way to isolate mutable values; immutable values or coordinated ownership are alternatives. This example assumes User contains only value fields:
 
 ```go
 cache := hot.NewHotCache[string, *User](hot.WTinyLFU, 10_000).
@@ -170,7 +169,7 @@ defer cache.StopJanitor()
 
 - **CopyOnRead** — clones at retrieval: callers get independent copies, mutations don't affect cache
 - **CopyOnWrite** — clones at storage: cache holds a snapshot, external mutations to the original don't corrupt cached value
-- Use both when callers read and write concurrently. Use only one when the mutation direction is known.
+- Deep-copy mutable maps, slices, and pointed-to objects too; a shallow struct copy still aliases them. The source must not be mutated concurrently while copying.
 
 ## Prometheus Monitoring
 
@@ -190,20 +189,22 @@ prometheus.MustRegister(cache)
 ### Key PromQL Queries
 
 ```promql
-# Hit ratio (target: >80%)
-rate(hot_cache_hit_count{cache="user_cache"}[5m]) /
-rate(hot_cache_get_count{cache="user_cache"}[5m])
+# Hit ratio (interpret against workload requirements)
+sum(rate(hot_hit_total{name="user_cache",mode="main"}[5m])) /
+(sum(rate(hot_hit_total{name="user_cache",mode="main"}[5m])) +
+ sum(rate(hot_miss_total{name="user_cache",mode="main"}[5m])))
 
 # Eviction rate (high = cache too small or TTL too short)
-rate(hot_cache_eviction_count{cache="user_cache"}[5m])
+rate(hot_eviction_total{name="user_cache",mode="main"}[5m])
 
 # Cache size vs capacity
-hot_cache_len{cache="user_cache"} / hot_cache_capacity{cache="user_cache"}
+sum(hot_length{name="user_cache",mode="main"}) /
+sum(hot_settings_capacity{name="user_cache",mode="main"})
 ```
 
 **Alerts to consider:**
 
-- Hit rate drops below 70% for >5 minutes — cache may be undersized
+- Hit rate drops materially below its workload baseline — investigate capacity, traffic mix, TTLs, and loader errors
 - Eviction rate spikes — working set exceeds capacity
 - Cache size near capacity — consider increasing capacity or reviewing TTLs
 
@@ -214,6 +215,7 @@ Pre-populate the cache before serving traffic:
 ```go
 cache := hot.NewHotCache[string, *User](hot.WTinyLFU, 10_000).
     WithTTL(1 * time.Hour).
+    WithMissingSharedCache(). // required for the missing keys returned below
     WithWarmUp(func() (map[string]*User, []string, error) {
         users, err := db.GetFrequentUsers(ctx)
         if err != nil {
@@ -227,7 +229,7 @@ cache := hot.NewHotCache[string, *User](hot.WTinyLFU, 10_000).
 defer cache.StopJanitor()
 ```
 
-Use `WithWarmUpWithTimeout(30*time.Second, fn)` to bound startup time.
+In v0.13.1, `Build` discards warm-up errors. If successful warm-up is required before accepting traffic, call `cache.WarmUp(fn)` explicitly and handle its error. `WithWarmUpWithTimeout` bounds waiting but does not cancel the loader; the loader needs its own deadline.
 
 ## Graceful Shutdown
 

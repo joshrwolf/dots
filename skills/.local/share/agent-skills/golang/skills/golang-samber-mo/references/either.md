@@ -108,7 +108,7 @@ e.ForEach(
 | Left/Err type | Any type L              | Always `error`          |
 | Semantics     | Two valid alternatives  | Success or failure      |
 | Use case      | Cached vs fresh, A vs B | Operation that may fail |
-| JSON          | Not supported           | JSON-RPC format         |
+| JSON          | No built-in representation | JSON-RPC-like result/error envelope |
 
 `Result[T]` is equivalent to `Either[error, T]` — use `result.ToEither()` to convert.
 

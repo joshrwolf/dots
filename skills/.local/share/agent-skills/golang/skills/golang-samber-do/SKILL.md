@@ -35,10 +35,10 @@ This skill is not exhaustive — refer to library documentation and code example
 - Consult `go doc` for the resolved package API; see `golang-go-doc` for lookup guidance.
 - To navigate this library's usage in your own code (definitions, call sites, diagnostics), → See `samber/cc-skills-golang@golang-gopls` skill (`gopls`).
 
-Install v2 — v1 is superseded and lacks the generics-based container, scopes, and lifecycle hooks documented below, so v1-era guidance misleads on every API in this skill:
+These examples target v2. The v1 library also uses generics, but its injector and scope APIs differ; check the version already used by the project:
 
 ```bash
-go get -u github.com/samber/do/v2
+go get github.com/samber/do/v2
 ```
 
 ## Core Concepts
@@ -54,13 +54,12 @@ injector := do.New()
 ### Service Types
 
 - **Lazy** (default): Created when first requested
-- **Eager**: Created immediately when the container starts
+- **Eager/value**: An already-created value registered with `ProvideValue` or `Eager`
 - **Transient**: New instance created on every request
-- **Value**: Pre-created value, no instantiation
 
 ### Provider Functions
 
-Services MUST be registered via provider functions:
+Lazy and transient services use provider functions; eager services accept values directly:
 
 ```go
 type Provider[T any] func(i Injector) (T, error)
@@ -86,8 +85,8 @@ do.ProvideTransient(injector, func(i do.Injector) (*Logger, error) {
     return &Logger{}, nil
 })
 
-// Register an eager service (created immediately at startup)
-do.ProvideValue(injector, &Config{Port: 8080})
+// For a lazy provider that must initialize before serving, invoke it at startup.
+// do.ProvideValue above already registered Config eagerly.
 ```
 
 ### 2. Invoke Services
@@ -95,15 +94,14 @@ do.ProvideValue(injector, &Config{Port: 8080})
 The container MUST only be accessed at the composition root:
 
 ```go
-// Invoke with error handling — reserve for call sites outside the DI graph
-// (e.g. an HTTP handler that must degrade gracefully instead of crashing)
+// Invoke at the composition root with error handling
 db, err := do.Invoke[Database](injector)
 
 // MustInvoke panics on error — preferred in providers, recovered by do.Invoke on the parent call
 db := do.MustInvoke[Database](injector)
 ```
 
-Inside a provider function, always use `do.MustInvoke` (or `MustInvokeAs`/`MustInvokeNamed`/`MustInvokeStruct`) rather than the error-returning variant:
+Inside a provider function, you may use `do.MustInvoke` (or `MustInvokeAs`/`MustInvokeNamed`/`MustInvokeStruct`) rather than the error-returning variant:
 
 - A provider already returns `(T, error)`, so propagating a dependency failure with `do.Invoke` costs an extra `if err != nil { return nil, err }` on every call.
 - `do.MustInvoke` panics instead, but samber/do correctly catches and recovers that panic at the enclosing `Invoke` call and converts it back into a regular error — this recover happens inside the library itself, not in caller code, so `MustInvoke` is safe to use inside providers.
@@ -121,7 +119,7 @@ func NewUserService(i do.Injector) (UserService, error) {
 do.Provide(injector, NewUserService)
 ```
 
-### 4. Implicit Aliasing (Preferred)
+### 4. Implicit Aliasing
 
 Register a concrete type and invoke as an interface without explicit aliasing:
 
@@ -160,7 +158,11 @@ var Package = do.Package(
     }),
     do.Lazy(func(i do.Injector) (*redis.Client, error) {
         cfg := do.MustInvoke[*Config](i)
-        return redis.NewClient(cfg.RedisURL), nil
+        opts, err := redis.ParseURL(cfg.RedisURL) // github.com/redis/go-redis/v9
+        if err != nil {
+            return nil, err
+        }
+        return redis.NewClient(opts), nil
     }),
 )
 
@@ -180,9 +182,23 @@ func main() {
     )
 
     server := do.MustInvoke[*http.Server](injector)
-    go server.ListenAndServe()
-
-    _ = injector.ShutdownOnSignalsWithContext(context.Background(), os.Interrupt)
+    ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+    defer stop()
+    serveErr := make(chan error, 1)
+    go func() { serveErr <- server.ListenAndServe() }()
+    select {
+    case err := <-serveErr:
+        if err != nil && !errors.Is(err, http.ErrServerClosed) {
+            log.Printf("serve: %v", err)
+        }
+    case <-ctx.Done():
+    }
+    shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    report := injector.ShutdownWithContext(shutdownCtx)
+    if !report.Succeed {
+        log.Printf("shutdown: %v", report.Error())
+    }
 }
 ```
 
@@ -190,7 +206,7 @@ func main() {
 
 1. Depend on interfaces, not concrete types — lets you swap implementations in tests without touching production code
 2. Each service should have one job — services with multiple responsibilities are harder to test and harder to replace
-3. Keep dependency trees shallow — chains beyond 3-4 levels make initialization order fragile and errors harder to trace
+3. Keep dependencies acyclic — cycles prevent successful initialization; nesting depth alone does not make initialization order incorrect
 4. Handle errors in provider functions — a silently failing provider creates a broken service that crashes later in unexpected places
 5. Use scopes to organize services by lifecycle — request-scoped services prevent leaks, global services prevent redundant initialization
 6. Use `do.MustInvoke*` inside provider functions instead of `do.Invoke*` — samber/do correctly catches and recovers the panic at the outer `Invoke` call, turning it back into a returned error, so it's safe to use inside providers and you get the same error propagation without the boilerplate

@@ -75,16 +75,15 @@ For detailed before/after examples for each Go version (1.21–1.27) and general
 
 For govulncheck, PGO, golangci-lint v2, and tool configuration, see [Tooling modernization](./references/tooling.md).
 
-## Deprecated Packages Migration
+## API migration candidates
 
-| Deprecated | Replacement | Since |
+| API to review | Alternative | Alternative available |
 | --- | --- | --- |
-| `math/rand` | `math/rand/v2` | Go 1.22 |
 | `crypto/elliptic` (most functions) | `crypto/ecdh` | Go 1.21 |
 | `reflect.SliceHeader`, `StringHeader` | `unsafe.Slice`, `unsafe.String` | Go 1.21 |
 | `reflect.PtrTo` | `reflect.PointerTo` | Go 1.22 |
 | `runtime.GOROOT()` | `go env GOROOT` | Go 1.24 |
-| `runtime.SetFinalizer` | `runtime.AddCleanup` | Go 1.24 |
+| `runtime.SetFinalizer` (not formally deprecated) | Consider `runtime.AddCleanup` for fallback cleanup | Go 1.24 |
 | `crypto/cipher.NewOFB`, `NewCFB*` | AEAD modes or `NewCTR` | Go 1.24 |
 | `golang.org/x/crypto/sha3` | `crypto/sha3` | Go 1.24 |
 | `golang.org/x/crypto/hkdf` | `crypto/hkdf` | Go 1.24 |
@@ -92,7 +91,7 @@ For govulncheck, PGO, golangci-lint v2, and tool configuration, see [Tooling mod
 | `testing/synctest.Run` | `testing/synctest.Test` | Go 1.25 |
 | `crypto/rsa.EncryptPKCS1v15` for new encryption use | RSA-OAEP (`rsa.EncryptOAEP` / `rsa.EncryptOAEPWithOptions`) or HPKE/KEM design | Go 1.26 |
 | `net/http/httputil.ReverseProxy.Director` | `ReverseProxy.Rewrite` | Go 1.26 |
-| `crypto/tls.Config.Rand` | `testing/cryptotest.SetGlobalRandom()` | Go 1.27 |
+| `crypto/tls.Config.Rand` | Leave nil in production; `testing/cryptotest.SetGlobalRandom` for tests | Go 1.27 |
 | `github.com/google/uuid` (simple cases) | `uuid` (stdlib) | Go 1.27 |
 
 ## Go 1.27+ version-bump risk checklist
