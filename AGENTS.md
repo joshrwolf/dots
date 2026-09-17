@@ -17,6 +17,10 @@ GNU stow-managed dotfiles. Package contents mirror `$HOME`, so a file such as
 - Write shared instructions for both tools. Keep tool-specific metadata or
   integrations optional and separate; do not assume a symlink makes
   tool-specific commands, hooks, or permissions portable.
+- Third-party skills are editable Git subtrees registered in `skill-sources.toml`
+  under `skills/.local/share/agent-skills/<source>`. Edit source files in dots;
+  do not replace discovery links with copies. `make skills` installs locally;
+  `make skills-update SOURCE=<name>` explicitly merges upstream. See `docs/skills.md`.
 
 ## Stow
 
