@@ -25,9 +25,7 @@ paths:
 **Modes:**
 
 - **Inline mode** (developer is actively coding): suggest only modernizations relevant to the current file or feature. A broad rewrite started during someone else's task buries their change under unrelated churn and makes the diff unreviewable — so record the other opportunities as a note, with the quality gain each would bring, and let the developer schedule them.
-- **Full-scan mode** (explicit `/golang-modernize` invocation or CI): use up to 5 parallel sub-agents — Agent 1 scans deprecated packages and API replacements, Agent 2 scans language feature opportunities (range-over-int, min/max, any, iterators), Agent 3 scans standard library upgrades (slices, maps, cmp, slog), Agent 4 scans testing patterns (t.Context, b.Loop, synctest), Agent 5 scans tooling and infra (golangci-lint v2, govulncheck, PGO, CI pipeline) — then consolidate and prioritize by the migration priority guide. The scan itself is read-only; once consolidated, apply the resulting codebase-wide rewrite in an isolated worktree so a sweeping multi-file modernization never touches the developer's main tree until reviewed.
-
-**Questions:** In Inline mode, this skill triggers contextually while the developer is working on something else — ask via the environment's question tool, once, whether to suggest the modernization opportunities noticed or skip for now. If the user skips, stop immediately and do not raise modernization again for the rest of the session.
+- **Full-scan mode** — for a requested broad audit, inspect deprecated APIs, language features, standard library changes, testing patterns, and tooling within the supported Go version. Report and prioritize findings; implement a migration when requested.
 
 # Go Code Modernization Guide
 
@@ -35,23 +33,23 @@ This skill helps you continuously modernize Go codebases by replacing outdated p
 
 **Scope**: This skill covers roughly the last 3 years of Go releases — from the oldest to the newest row in the Go Version Changelogs table below, updated each Go release. Projects targeting an older `go.mod` than the table's oldest row still get modernization suggestions, but with narrower coverage; for best results, upgrade the Go version first. Some older modernizations (e.g., `any` instead of `interface{}`, `errors.Is`/`errors.As`, `strings.Cut`) are included because they are still commonly missed, but many pre-1.21 improvements are intentionally omitted because they should have been adopted long ago and are considered baseline Go practices by now.
 
-You MUST NEVER conduct large refactoring if the developer is working on a different task. But TRY TO CONVINCE your human it would improve the code quality.
+Keep modernization within the requested scope. Do not turn an unrelated implementation task into a modernization campaign.
 
 ## Workflow
 
 When invoked:
 
 1. **Check the project's `go.mod` or `go.work`** to determine the current Go version (`go` directive)
-2. **Check the latest Go version** using the Go Version Changelogs table below and suggest upgrading if the project's `go.mod` is behind
+2. **Use the supported Go version** as the modernization target; propose toolchain upgrades only within the requested scope
 3. **Read `.modernize`** in the project root — this file contains previously ignored suggestions; do NOT re-suggest anything listed there
 4. **Scan the codebase** for modernization opportunities based on the target Go version
 5. **Run `golangci-lint`** with the `modernize` linter if available, and `go test ./...` — Go 1.27+ runs the `stdversion` vet check by default, flagging APIs newer than the module's `go` directive; bump the directive or revert the suggestion, don't ignore the hit
 6. **Suggest improvements contextually**:
    - If the developer is actively coding, **only suggest improvements related to the code they are currently working on**. Do not refactor unrelated files. Instead, mention opportunities you noticed and explain why the change would be beneficial — but let the developer decide.
    - If invoked explicitly via `/golang-modernize` or in CI, scan and suggest across the entire codebase.
-7. **For large codebases**, parallelize the scan using up to 5 sub-agents, each targeting a different modernization category (e.g. deprecated packages, language features, standard library upgrades, testing patterns, tooling and infra). Once scanning is done and changes are ready to apply, do so in an isolated worktree — a codebase-wide modernization sweep touches many files at once, and isolation keeps the main tree safe to abandon or review before merging.
-8. **Before suggesting a dependency update**, run `go mod tidy` and the test suite to verify compatibility. Ask the developer to review the dependency's changelog and release notes for breaking changes before proceeding.
-9. **If the developer explicitly ignores a suggestion**, write a short memo to `.modernize` in the project root so it is not suggested again. Format: one line per ignored suggestion, with a short description.
+7. **Group findings by affected package and prerequisite**. Keep changes coherent and follow the agreed workflow; a broad scan does not require multiple agents or worktrees.
+8. **Before applying a dependency update**, review its changelog and compatibility with the supported toolchain. Scope module changes and run affected tests. Clarify only unresolved compatibility requirements.
+9. **Respect ignored suggestions** for the session. Update `.modernize` only when persistent tracking is requested or established by project instructions.
 
 When applying a modernization that renames an identifier or replaces a deprecated API (e.g. `reflect.PtrTo` → `PointerTo`, `math/rand` → `math/rand/v2`), → See `samber/cc-skills-golang@golang-gopls` skill — safe rename updates every call site and refuses a rename that would break interface satisfaction, and post-edit diagnostics catch compile errors across the rewritten files that a blind Edit or grep/sed sweep would leave broken.
 

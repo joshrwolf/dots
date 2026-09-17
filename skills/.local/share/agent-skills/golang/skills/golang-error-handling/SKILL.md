@@ -21,9 +21,9 @@ paths:
 
 **Modes:**
 
-- **Coding mode** — writing new error handling code. Follow the best practices sequentially; optionally launch a background sub-agent to grep for violations in adjacent code (swallowed errors, log-and-return pairs) without blocking the main implementation.
+- **Coding mode** — writing new error handling code. Follow the best practices sequentially. Check touched code for swallowed errors and duplicate logging.
 - **Review mode** — reviewing a PR's error handling changes. Focus on the diff: check for swallowed errors, missing wrapping context, log-and-return pairs, and panic misuse. Sequential.
-- **Audit mode** — auditing existing error handling across a codebase. Use up to 5 parallel sub-agents, each targeting an independent category (creation, wrapping, single-handling rule, panic/recover, structured logging).
+- **Audit mode** — auditing existing error handling across a codebase. Check relevant categories (creation, wrapping, single-handling rule, panic/recover, structured logging).
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-error-handling` skill takes precedence.
 
@@ -57,15 +57,15 @@ This skill guides the creation of robust, idiomatic error handling in Go applica
 
 - **[Error Handling Patterns and Logging](./references/error-handling.md)** — The single handling rule: errors are either logged OR returned, NEVER both (prevents duplicate logs cluttering aggregators). Panic/recover design, `samber/oops` for production errors, and `slog` structured logging integration for APM tools.
 
-## Parallelizing Error Handling Audits
+## Organizing Error Handling Audits
 
-When auditing error handling across a large codebase, use up to 5 parallel sub-agents — each targets an independent error category:
+For a requested error-handling audit, organize findings by category:
 
-- Sub-agent 1: Error creation — validate `errors.New`/`fmt.Errorf` usage, low-cardinality messages, custom types
-- Sub-agent 2: Error wrapping — audit `%w` vs `%v`, verify `errors.Is`/`errors.As` patterns
-- Sub-agent 3: Single handling rule — find log-and-return violations, swallowed errors, discarded errors (`_`)
-- Sub-agent 4: Panic/recover — audit `panic` usage, verify recovery at goroutine boundaries
-- Sub-agent 5: Structured logging — verify `slog` usage at error sites, check for PII in error messages
+- Error creation — validate `errors.New`/`fmt.Errorf` usage, low-cardinality messages, custom types
+- Error wrapping — audit `%w` vs `%v`, verify `errors.Is`/`errors.As` patterns
+- Single handling rule — find log-and-return violations, swallowed errors, discarded errors (`_`)
+- Panic/recover — audit `panic` usage, verify recovery at goroutine boundaries
+- Structured logging — verify `slog` usage at error sites, check for PII in error messages
 
 ## Cross-References
 

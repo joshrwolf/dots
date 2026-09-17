@@ -25,8 +25,8 @@ paths:
 
 **Modes:**
 
-- **Review mode (architecture)** — broad scan of a package or service for structural anti-patterns (missing connection pools, unbounded goroutines, wrong data structures). Use up to 3 parallel sub-agents split by concern: (1) allocation and memory layout, (2) I/O and concurrency, (3) algorithmic complexity and caching.
-- **Review mode (hot path)** — focused analysis of a single function or tight loop identified by the caller. Work sequentially; one sub-agent is sufficient.
+- **Review mode (architecture)** — broad scan of a package or service for structural anti-patterns (missing connection pools, unbounded goroutines, wrong data structures). Check relevant concerns: (1) allocation and memory layout, (2) I/O and concurrency, (3) algorithmic complexity and caching.
+- **Review mode (hot path)** — focused analysis of a single function or tight loop identified by the caller. Focus on the identified path.
 - **Optimize mode** — a bottleneck has been identified by profiling. Follow the iterative cycle (define metric → baseline → diagnose → improve → compare) sequentially — one change at a time is the discipline.
 
 **Dependencies:**
@@ -64,7 +64,7 @@ Before optimizing Go code, verify the bottleneck is in your process — if 90% o
 
 Refer to library documentation for known patterns before inventing custom solutions. Keep all `/tmp/report-*.txt` files as an audit trail.
 
-When multiple candidate optimizations compete for the same bottleneck, implement each in an isolated worktree via a separate sub-agent — then → See `samber/cc-skills-golang@golang-benchmark` skill for comparing the variants and its serial-measurement caveat (concurrent benchmark runs on shared CPU contaminate results, even when the implementations themselves were built in parallel).
+When multiple candidate optimizations compete for the same bottleneck, compare bounded variants within the authorized experiment scope — then → See `samber/cc-skills-golang@golang-benchmark` skill for comparing the variants and its serial-measurement caveat (concurrent benchmark runs on shared CPU contaminate results, even when the implementations themselves were built in parallel).
 
 ## Decision Tree: Where Is Time Spent?
 

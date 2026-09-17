@@ -1,41 +1,34 @@
 ---
 name: golang-how-to
-description: "Route every Go coding, review, debugging, and setup task to relevant skills. Also supports disambiguating overlapping skills and configuring project skill loading."
+description: "Select relevant Go skills when their scopes overlap, or configure project skill guidance when requested."
 user-invocable: true
 license: MIT
-compatibility: Designed for Claude Code, Codex or similar harness. Requires git.
+compatibility: Designed for Claude Code, Codex or similar harness.
 metadata:
   author: samber
   version: "1.4.2"
   openclaw:
     emoji: "🧭"
     homepage: https://github.com/samber/cc-skills-golang
-    requires:
-      bins:
-        - go
-        - gopls
-    install:
-      - kind: go
-        package: golang.org/x/tools/gopls@latest
-        bins: [gopls]
 allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(git:*) Agent AskUserQuestion LSP Bash(gopls:*) mcp__gopls__*
 ---
 
 **Modes:**
 
-- **Orchestrate** — for any Go coding, review, debug, or setup task, load the primary skill plus all applicable secondary skills simultaneously.
-- **Disambiguate** — when two skills seem to overlap, show the boundary table. See [disambiguation.md](references/disambiguation.md).
-- **Configure** — write the always-load directive for `golang-how-to` itself, plus an optional `## Required Go skills` block, to the project's agent-config file (CLAUDE.md, AGENTS.md, or equivalent). Follow [project-config.md](references/project-config.md).
-
-**Questions:** In Configure mode, ask the user through the environment's question tool — never as plain-text prose. One question at a time, wait for the answer. If the environment has no question tool, ask in prose with the same options.
-
-**Dependencies:** `gopls` — `go install golang.org/x/tools/gopls@latest`; Claude Code's built-in `LSP` tool also needs `ENABLE_LSP_TOOL=1` and a Go language server wired (see `golang-gopls`).
+- **Route** — choose the skill whose scope matches the task; consult another only for a distinct need.
+- **Disambiguate** — use [disambiguation.md](references/disambiguation.md) when two skills overlap.
+- **Configure** — when requested, update project guidance using [project-config.md](references/project-config.md).
 
 ## Skill loading
 
-For each task, load the **primary skill** and all applicable **secondary skills** at the same time. Do not wait — load them together at the start.
+Start with the user's task and existing project instructions. If the relevant skill
+is already clear, use it directly; this router is not a prerequisite for Go work.
+The table offers related references, not a bundle to load automatically. Read
+supporting skills only when their guidance helps with a concrete part of the task.
+Skill consultation does not expand the requested implementation or audit scope.
+Routing alone requires no tool installation or persistent configuration changes.
 
-| Intent | Primary | Also load |
+| Intent | Primary | Consult when relevant |
 | --- | --- | --- |
 | Design an API, choose a pattern | `golang-design-patterns` | `golang-structs-interfaces`, `golang-naming` |
 | Name a type, function, or package | `golang-naming` | `golang-code-style` |
@@ -70,6 +63,17 @@ For each task, load the **primary skill** and all applicable **secondary skills*
 
 Skill names above refer to installed skills. `golang-go-cmp` is the local
 comparison skill; the other skills originate from samber/cc-skills-golang.
+
+## Choosing how to execute
+
+Decide whether to work directly or delegate based on the task. Use subagents when
+independent investigation, implementation, or review would improve speed or
+confidence enough to justify coordination and context sharing. Work directly when
+the task is small, tightly coupled, or faster to complete than to hand off.
+Choose the number and scope of agents to fit useful independent work, following
+the environment's collaboration rules. Give delegated tasks clear boundaries and
+expected results, avoid overlapping edits, and review and integrate their output.
+Reassess as the task develops; neither approach requires a fixed staffing pattern.
 
 ## Tool selection
 
@@ -111,13 +115,13 @@ Key clusters and their owners:
 - **Gap — goroutine vs cancel**: `golang-concurrency` + `golang-context` — load both when cancelling goroutines via context
 - **Gap — correctness vs threat**: `golang-safety` (internal bugs) vs `golang-security` (external threats)
 - **Gap — features vs rules**: `golang-modernize` (language adoption) vs `golang-lint` (static analysis config)
-- **Gap — process vs target rules**: `golang-refactoring` (the safe, staged, at-scale _process_ of changing existing code — planning, ordering, gopls-driven mechanics, staged PRs) vs `golang-naming`/`golang-code-style`/`golang-project-layout`/`golang-design-patterns`/`golang-modernize` (what the resulting code should look like) — load `golang-refactoring` alongside whichever of these owns the target shape
+- **Gap — process vs target rules**: `golang-refactoring` (the safe, staged, at-scale _process_ of changing existing code — planning, ordering, gopls-driven mechanics, sequenced changes) vs `golang-naming`/`golang-code-style`/`golang-project-layout`/`golang-design-patterns`/`golang-modernize` (what the resulting code should look like) — load `golang-refactoring` alongside whichever of these owns the target shape
 
 ## Configure mode
 
-Write an always-load directive for `golang-how-to` itself to the project's agent-config file (CLAUDE.md, AGENTS.md, GEMINI.md, Cursor rules, or Copilot instructions — whichever the project's harness reads), and optionally force-trigger specific secondary skills too.
-
-`samber/cc-skills-golang@golang-project-layout` writes the always-load directive automatically at project creation, with no user confirmation needed — it costs one skill description and never imposes project-specific choices. Running `/golang-how-to configure` writes it too if missing, and additionally lets the user confirm a `## Required Go skills` block for skills that must always apply beyond routing. Follow [project-config.md](references/project-config.md).
+Only change project skill configuration when the user requests it. Follow
+[project-config.md](references/project-config.md) for scoped guidance that preserves
+existing instructions and avoids compulsory skill bundles.
 
 ---
 

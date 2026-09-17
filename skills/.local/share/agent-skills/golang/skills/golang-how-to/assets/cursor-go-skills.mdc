@@ -1,14 +1,9 @@
 ---
-description: Load the Go skills orchestrator before any Go task
-alwaysApply: true
+description: Select relevant Go skills when deciding which guidance a task needs
+alwaysApply: false
 ---
 
-Before any Go coding, review, debugging, troubleshooting, or setup task, load the `samber/cc-skills-golang@golang-how-to` skill first — it routes to whichever other Go skills the task needs.
-
-## Required Go skills
-
-The following Go skills from `samber/cc-skills-golang` MUST always be applied when working on this project. Load them at the start of every Go-related task, regardless of whether the user explicitly mentions them.
-
-- `samber/cc-skills-golang@golang-error-handling`
-- `samber/cc-skills-golang@golang-security`
-- `samber/cc-skills-golang@golang-testing`
+Use the skill that matches the requested task. Consult `golang-how-to` only when
+skill boundaries are unclear. Load additional guidance for concrete needs, not as
+an automatic bundle. Follow existing project instructions and keep the work within
+the requested scope; consulting a skill does not require configuration changes.

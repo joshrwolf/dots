@@ -1,6 +1,6 @@
 # Go Tooling for Refactoring
 
-This file is the tool reference for `samber/cc-skills-golang@golang-refactoring`: every mechanical-rewrite tool worth reaching for, from the primary actuator (`gopls`) down to hand-rolled `go/analysis` fixers, ordered so you can pick the least-powerful tool that solves the problem. See [catalog.md](catalog.md) for which tool maps to which Fowler refactoring, and [workflow.md](workflow.md) for how a tool-driven step fits into the staged-PR process.
+This file is the tool reference for `samber/cc-skills-golang@golang-refactoring`: every mechanical-rewrite tool worth reaching for, from the primary actuator (`gopls`) down to hand-rolled `go/analysis` fixers, ordered so you can pick the least-powerful tool that solves the problem. See [catalog.md](catalog.md) for which tool maps to which Fowler refactoring, and [workflow.md](workflow.md) for how a tool-driven step fits into the refactoring workflow.
 
 ## Table of Contents
 
@@ -106,7 +106,7 @@ deadcode -whylive=funcName ./...    # shortest reachability path proving a funct
 
 ## 4. Structure-Discovery Tools (blast-radius mapping)
 
-These feed the planning gate in [workflow.md](workflow.md) — map the blast radius before choosing a tool from the sections above.
+These feed the scope assessment in [workflow.md](workflow.md) — map the blast radius before choosing a tool from the sections above.
 
 | Tool | What it answers |
 | --- | --- |
@@ -118,4 +118,4 @@ These feed the planning gate in [workflow.md](workflow.md) — map the blast rad
 ## Cross-References
 
 - [catalog.md](catalog.md) — the Fowler refactoring catalog mapped to Go, with the tool from this file that mechanizes each entry.
-- [workflow.md](workflow.md) — the planning gate this section's structure-discovery tools feed, and where a tool-driven step fits into the staged-PR process.
+- [workflow.md](workflow.md) — the scope assessment this section's structure-discovery tools feed, and where a tool-driven step fits into the refactoring workflow.

@@ -1,16 +1,16 @@
 [
   {
     "id": 1,
-    "name": "ask-before-adding-dependency",
-    "description": "Tests whether the AI agent asks for user confirmation before adding a new dependency via go get",
+    "name": "authorized-dependency-addition",
+    "description": "Adds a dependency within an explicit implementation request without redundant approval.",
     "prompt": "I need to parse YAML configuration files in my Go project. Add the dependency and write the config parsing code.",
-    "trap": "Without the skill, the model immediately runs go get for a YAML library without asking the user for confirmation, presenting alternatives, or checking stdlib",
+    "trap": "Pauses for approval already supplied or upgrades unrelated dependencies.",
     "assertions": [
-      {"id": "1.1", "text": "Asks the user for confirmation before running go get to add a new dependency"},
-      {"id": "1.2", "text": "Presents the package name and import path"},
-      {"id": "1.3", "text": "Mentions whether the standard library covers the use case (encoding/json does, but YAML does not have stdlib support)"},
-      {"id": "1.4", "text": "Lists known alternatives (e.g., gopkg.in/yaml.v3, github.com/goccy/go-yaml)"},
-      {"id": "1.5", "text": "Does NOT silently run go get without asking first"}
+      {"id": "1.1", "text": "Proceeds with the authorized dependency addition without asking for duplicate approval"},
+      {"id": "1.2", "text": "Explains the selected package and import path"},
+      {"id": "1.3", "text": "Checks whether the standard library or an existing dependency meets the need"},
+      {"id": "1.4", "text": "Keeps module changes scoped and verifies affected code"},
+      {"id": "1.5", "text": "Respects repository dependency restrictions and clarifies only material unresolved choices"}
     ]
   },
   {

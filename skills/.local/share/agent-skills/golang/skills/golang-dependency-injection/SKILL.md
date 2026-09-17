@@ -22,7 +22,7 @@ paths:
 **Modes:**
 
 - **Design mode** (new project, new service, or adding a service to an existing DI setup): assess the existing dependency graph and lifecycle needs; recommend manual injection or a library from the decision table; then generate the wiring code.
-- **Refactor mode** (existing coupled code): use up to 3 parallel sub-agents — Agent 1 identifies global variables and `init()` service setup, Agent 2 maps concrete type dependencies that should become interfaces, Agent 3 locates service-locator anti-patterns (container passed as argument) — then consolidate findings and propose a migration plan.
+- **Refactor mode** (existing coupled code): identify global variables and `init()` service setup, map concrete type dependencies that should become interfaces, locate service-locator anti-patterns (container passed as argument) — then consolidate findings and propose a migration plan.
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-dependency-injection` skill takes precedence.
 

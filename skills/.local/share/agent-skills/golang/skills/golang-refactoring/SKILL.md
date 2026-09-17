@@ -31,12 +31,14 @@ paths:
 
 **Modes:**
 
-- **Plan mode** (mandatory gate before any edit) — use gopls to map structure and blast radius, build a refactoring inventory, decide ordering, and get explicit user sign-off before touching code. See [workflow.md](references/workflow.md).
-- **Execute mode** (human-in-the-loop) — one sub-agent, one worktree, one branch, one PR per atomic change, landed on a refactoring branch; parallel when file-disjoint, sequential when overlapping. Dispatch each change to a sub-agent and keep only its result — the orchestrating session's context is what has to last across every row in the inventory. See [workflow.md](references/workflow.md).
-- **Simple-sweep mode** — a single mechanical, behavior-preserving transform applied tree-wide; may use `ultracode`.
-- **Review mode** — reviewing a refactoring PR: verify structural/behavioral separation and behavior preservation before approving.
+- **Plan** — map affected symbols and dependencies; scale the plan to the change.
+- **Execute** — implement the authorized refactor in coherent, verifiable steps.
+- **Review** — check behavior preservation and the affected callers.
 
-**Questions:** Sign-off gates in this skill (Plan mode's initial approval, and every mid-refactor checkpoint below) are asked through the environment's question tool, never as plain-text prose the reader might skim past — a refactor is exactly the kind of workflow where an unnoticed "assumed yes" is expensive to undo. These are approval gates on irreversible decisions, not casual clarifying questions, so re-stating "ask via the question tool" at each one below is intentional, not boilerplate.
+Use the existing request and session decisions as authorization. Clarify material
+unresolved behavior or compatibility requirements; routine file moves, deletions,
+and package edits within an agreed refactor do not require another approval gate.
+See [workflow.md](references/workflow.md).
 
 **Dependencies:** `gopls` (primary actuator) — `go install golang.org/x/tools/gopls@latest`. Optional: `golangci-lint`, `benchstat`, `deadcode`, `eg`. Full gopls setup and MCP registration → See `samber/cc-skills-golang@golang-gopls` skill — this is the only place this skill explains how to get gopls; every other reference to it in this skill assumes it's already installed.
 
@@ -48,7 +50,7 @@ paths:
 
 ## The Core Loop
 
-**Understand → Safety net → Small tool-driven step → Verify → Atomic single-category commit.** Repeat.
+**Understand → Safety net → Small tool-driven step → Verify → Review the diff.** Repeat.
 
 1. **Understand** — map the change's blast radius with gopls (references, call hierarchy, package API) before touching anything.
 2. **Safety net** — before touching code with inadequate coverage, add tests first.
@@ -57,17 +59,16 @@ paths:
    - See [safety-net.md](references/safety-net.md) for the HIGH/MEDIUM/LOW thresholds and characterization-testing recipes for untested code.
 3. **Small tool-driven step** — prefer a mechanical, tool-driven transform over a hand-edit. See [go-tooling.md](references/go-tooling.md) and [catalog.md](references/catalog.md).
 4. **Verify** — `go build ./... && go vet ./... && go test ./...`; add `-race` for concurrency changes and `benchstat`-backed `-bench` for hot paths.
-5. **Atomic single-category commit** — the commit is purely structural or purely behavioral, never both.
+5. **Review the diff** — confirm the intended scope and behavior. Commit when requested or covered by the agreed workflow.
 
 ## Hard Rules
 
 - **Never mix structural and behavioral changes in one commit or PR.**
   - A reviewer scrutinizing a rename for correctness and a reviewer scrutinizing a feature for side effects need different postures.
   - Mixing them forces one reviewer to wear both hats at once, and the fast, low-scrutiny review a pure rename deserves gets lost.
-- **Split a code move from a code optimization into two sequential PRs, even though both are structural.**
-  - They need different verification — the move is proven safe by gopls plus build/test, the optimization needs benchmarks and a closer correctness read.
-  - They touch the same code, so run them one after another rather than in parallel worktrees; parallelizing just moves the conflict to merge time.
-  - Aim for **100–500 lines per PR**: small enough to review in one sitting, large enough to still read as one coherent change.
+- **Separate code movement from optimization into reviewable steps.** Verify the
+  move with builds and tests; measure the optimization separately. Choose commit
+  and PR boundaries for the task rather than imposing a fixed count or line limit.
 - **Prefer gopls Rename/Inline over LLM hand-edits.**
   - Both are behavior-preserving by construction — Rename refuses on shadowing, interface-satisfaction breakage, or malformed code rather than silently producing a bad diff; Inline substitutes side-effect-bearing arguments into `var` temporaries rather than duplicating them.
   - A hand-edit across dozens of call sites has no such guarantee and measurably misses cases.
@@ -80,18 +81,16 @@ paths:
 - **Break import cycles with a consumer-side interface first**, before considering a package split or a shared leaf package.
   - Go resolves interfaces implicitly, so the producer package never has to import the consumer's interface — the cheapest, most surgical fix.
   - See [structural.md](references/structural.md).
-- **Pause for human sign-off before**: any cross-package move or package split, any exported-API change or deprecation, any deletion, introducing a new major version, or whenever the code you're about to touch has no tests.
-  - These are the moves a wrong call is expensive to undo.
 - **Grep for tag and reflection references after any rename.**
   - gopls Rename only guards against _compilation_ breakage — it cannot see a struct tag, a `text/template` field reference, or a `reflect`-driven dispatch that still points at the old name.
   - Renaming a field silently desyncs it from its `json`/`db` tag.
-- **Load `samber/cc-skills-golang@golang-security` (and `golang-safety` for internal-correctness risk) whenever a step changes code logic, not just its shape.**
-  - A mechanical, tool-verified transform can't introduce a vulnerability, but a behavioral change can.
-  - Treat "changes what the code does" as the trigger for a security-and-safety pass, not an afterthought reserved for the final review.
-- **Start every step from a clean, committed baseline, and revert rather than debug forward when it goes red.**
-  - Version control is the safety net underneath the test safety net.
-  - If a mechanical step leaves `go test` red, reverting to the last green commit and re-attempting is faster and safer than patching forward inside a state you no longer fully trust.
-  - Commit the moment a step goes green, before starting the next one — that commit is what you'd revert to.
+- **Consult focused guidance when a change introduces a specific risk.** Use
+  `golang-security` for trust boundaries or security-sensitive behavior and
+  `golang-safety` for correctness hazards. A logic edit alone does not require
+  loading both skills or auditing unrelated code.
+- **Inspect the working tree before editing and preserve unrelated changes.**
+  Verify each coherent step. Investigate failures and fix or undo your own edits;
+  do not require a clean tree, automatically commit, or reset someone else's work.
 
 ## When Not to Refactor
 
@@ -101,14 +100,14 @@ Refactoring is an investment that only pays off if a future change is coming to 
   - A stable, rarely-read package earns nothing from being restructured for its own sake.
   - The risk of even a small staged refactor has to be repaid by an easier next change, and there may not be one.
 - **It's critical production code with no tests.** Don't refactor it directly.
-  - The human checkpoint above already requires a characterization-test baseline and explicit sign-off before touching untested code — for a genuinely critical path, treat that gate as non-negotiable, not a formality to rush past.
+  - Establish a characterization-test baseline for the affected behavior. If the required behavior is unclear, clarify it before changing that behavior.
 - **The deadline is tight.**
-  - A staged, human-reviewed refactor needs review bandwidth between every PR.
+  - A broad refactor needs enough time for verification and review.
   - Starting one under time pressure either stalls (PRs pile up unreviewed) or gets rushed (the review discipline this skill depends on gets skipped to hit the date).
   - Make the minimal safe change now and stage the larger refactor for when there's room for it.
 - **There's no clear purpose.**
   - "Refactor this" with no reason behind it — no upcoming feature it'll make easier, no bug class it'll close off, no smell a review actually flagged — is refactoring for its own sake.
-  - Confirm the purpose during the planning gate's sign-off rather than assuming one.
+  - Infer the purpose from the request and context; clarify only if the missing purpose changes the work.
 
 ## Risk Stratification
 
@@ -116,24 +115,20 @@ Refactoring is an investment that only pays off if a future change is coming to 
 | --- | --- | --- |
 | **Low** | gopls Rename, Extract Variable/Constant, Inline Variable, `gofmt -s`, organize imports, local `refactor.rewrite.*` actions | Build/vet/test after the step is enough |
 | **Medium** | Extract Function/Method (Extract is best-effort — verify comments/behavior survived), Inline Call across packages, single-parameter add/remove, introducing generics | Add or confirm targeted tests over the blast radius first |
-| **High** | Change signature across many callers, moving types/functions across packages, splitting/merging packages, breaking import cycles, exported-API or major-version changes | Full safety net + human checkpoint before landing |
+| **High** | Change signature across many callers, moving types/functions across packages, splitting/merging packages, breaking import cycles, exported-API or major-version changes | Tests over affected callers and resolved compatibility requirements |
 
 **Diagnose:** 1- gopls refusing a Rename or Inline is a real semantic hazard, not a tool bug — investigate the shadowing/interface conflict before forcing the change by hand 2- `go vet ./...` / `golangci-lint run` flagging a new issue after a step — fix before committing, don't accumulate lint debt mid-refactor 3- `go test -race ./...` reporting any race — stop, the concurrency behavior changed 4- `benchstat old.txt new.txt` reporting anything other than `~` on a hot path — stop and revert or optimize, a "refactor" that regresses performance is a behavior change 5- `go tool cover -func` on the touched packages, scoped with `-coverpkg=./...` — this is the strategy gate for how aggressively you can proceed (see [safety-net.md](references/safety-net.md))
 
-## Workflow: Plan → Stage → Land
+## Workflow
 
-- A refactor of any real size does not land as one commit or even one PR — it lands as an ordered sequence of small, independently reviewable PRs, staged on a refactoring branch, with a human approving each merge.
-- [workflow.md](references/workflow.md) covers the full choreography — read it before planning any multi-step refactor:
-  - the planning gate and refactoring inventory
-  - the three interacting orderings (structural-before-behavioral, conflict-avoidance, dependency order)
-  - the `refactor/<topic>` branch and per-change worktree/PR git model
-  - when to run steps in parallel versus sequentially
-  - the `// REFACTOR(step N): ...` marker convention
-  - why Workflows/`ultracode` are the wrong tool for this
+Use [workflow.md](references/workflow.md) for scope, ordering, verification, and
+recovery. A small refactor can be one coherent change; larger migrations may need
+stages. Branches, worktrees, delegation, commits, and publication follow the
+session's agreed workflow rather than a skill-mandated sequence.
 
 ## Detailed References
 
-- **[workflow.md](references/workflow.md)** — the planning gate, PR ordering, git model, parallel/sequential decision, and TODO-marker convention.
+- **[workflow.md](references/workflow.md)** — scope, change ordering, verification, and recovery.
 - **[catalog.md](references/catalog.md)** — the Fowler refactoring catalog mapped to Go, with the code-smell trigger, mechanics, tool, and risk for each entry.
 - **[go-tooling.md](references/go-tooling.md)** — gopls code actions, CLI invocation, `gofmt -r`, `eg`, `go/analysis`/`//go:fix inline`, `dave/dst`, and the deprecated-tool notes.
 - **[safety-net.md](references/safety-net.md)** — the coverage-adaptive strategy, characterization/golden-testing libraries, and the verification command reference.
@@ -148,4 +143,4 @@ Refactoring is an investment that only pays off if a future change is coming to 
 - → See `samber/cc-skills-golang@golang-design-patterns` skill for target patterns (options struct, DI, consumer-side interfaces) this skill helps you migrate toward.
 - → See `samber/cc-skills-golang@golang-testing` skill for the test-writing practices that make the safety net in this skill trustworthy.
 - → See `samber/cc-skills-golang@golang-lint` skill for configuring `golangci-lint`, run here only as a post-step verification gate.
-- → See `samber/cc-skills-golang@golang-security` skill (and `golang-safety`) for reviewing any step that changes code logic, not just its shape.
+- → See `samber/cc-skills-golang@golang-security` skill (and `golang-safety`) when the change raises a specific security or correctness concern.

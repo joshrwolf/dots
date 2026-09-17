@@ -117,11 +117,11 @@ go test -bench=BenchmarkEncode -benchmem -count=10 ./pkg/... | tee bench.txt
 
 ## Comparing Optimization Variants in Parallel
 
-When several competing optimization hypotheses exist for the same bottleneck, implement each variant in its own isolated worktree via a separate sub-agent, so their code changes never collide in the shared working tree.
+When several competing optimization hypotheses exist for the same bottleneck, keep each variant reproducible and separate. Consider subagents for independent implementations when this would save time; develop small or closely related variants directly. Use worktrees when useful to isolate edits under the agreed workflow.
 
 **Run the benchmarks serially, not concurrently.** Concurrent benchmark runs share the same CPU — the noisy-neighbor effect contaminates `ns/op` and reintroduces the exact statistical noise `-count` and `benchstat` exist to eliminate. Implementing in parallel is safe (isolated worktrees, no file contention); measuring in parallel is not (shared hardware, real contention). Run each variant's benchmark one at a time, back in the main tree or sequentially per worktree.
 
-Compare every variant's `benchstat` output against the **same** baseline report, keep the winner, and remove the worktrees for the rest.
+Compare every variant's `benchstat` output against the **same** baseline report, keep the best verified result, and clean up temporary artifacts created for the experiment.
 
 ## Documenting Results in Commits
 

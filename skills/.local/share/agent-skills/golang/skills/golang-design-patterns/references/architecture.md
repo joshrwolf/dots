@@ -12,7 +12,7 @@
 
 ## Choose the Right Level of Architecture
 
-Architecture complexity MUST match project scope — don't over-architect small projects. When starting a new project, ask the developer what architecture they prefer:
+Architecture complexity MUST match project scope — don't over-architect small projects. Use the requested architecture or existing conventions; clarify only when missing requirements would materially change the design:
 
 | Project Size | Recommended Approach |
 | --- | --- |

@@ -221,9 +221,9 @@ func Contains[T comparable](slice []T, target T) bool  // not []any
 - **Don't abstract prematurely** — extract when the pattern is stable
 - **Minimize public surface** — every exported name is a commitment
 
-## Parallelizing Code Style Reviews
+## Organizing Code Style Reviews
 
-When reviewing code style across a large codebase, use up to 5 parallel sub-agents, each targeting an independent style concern (e.g. control flow, function design, variable declarations, string handling, code organization).
+For a requested style review, organize findings by relevant concern: control flow, function design, declarations, strings, and code organization.
 
 ## Enforce with Linters
 

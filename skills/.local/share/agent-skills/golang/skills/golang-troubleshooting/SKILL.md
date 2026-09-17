@@ -21,8 +21,8 @@ paths:
 
 **Modes:**
 
-- **Single-issue debug** (default): Follow the sequential Golden Rules — read the error, reproduce, one hypothesis at a time. Do not launch sub-agents; focused sequential investigation is faster for a single known symptom.
-- **Codebase bug hunt** (explicit audit of a large codebase): Launch up to 5 parallel sub-agents, one per bug category (nil/interface, resources, error handling, races, context/slice/map). Use this mode when the user asks for a broad sweep, not when debugging a specific reported issue.
+- **Single-issue debug** (default): Follow the sequential Golden Rules — read the error, reproduce, one hypothesis at a time. Work directly when the investigation depends on one evolving hypothesis; consider subagents for independent reproductions, subsystem investigations, or a fresh review when these would help resolve the issue.
+- **Codebase bug hunt** (explicit audit of a large codebase): Check relevant bug categories (nil/interface, resources, error handling, races, context/slice/map). Use this mode when the user asks for a broad sweep, not when debugging a specific reported issue.
 
 # Go Troubleshooting Guide
 

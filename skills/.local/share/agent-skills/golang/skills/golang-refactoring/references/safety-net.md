@@ -9,7 +9,7 @@ The right amount of caution before a refactor is not a fixed policy — it is ga
   - Run the fast net (build/vet/test) after each step, and escalate to `-race`/`-bench` only when the step touches concurrency or a hot path.
   - Larger steps are acceptable here because a well-covered blast radius means the net catches a regression within one test run — the cost of being wrong is cheap and immediate, so there is little reason to slow down.
 - **MEDIUM coverage (~40-80%)** — harden the blast radius before refactoring it, not after.
-  - First measure exactly what the change touches: gopls references and call hierarchy tell you the real call graph, not the one you remember from reading the code (see the planning gate in [workflow.md](workflow.md)).
+  - First measure exactly what the change touches: gopls references and call hierarchy tell you the real call graph, not the one you remember from reading the code (see the scope assessment in [workflow.md](workflow.md)).
   - Add targeted table-driven or golden tests covering precisely those paths, confirm they pass against the current code, and only then refactor.
   - The step that's easy to skip and shouldn't be: re-run with `-coverprofile` afterward and check that the new tests actually exercise the lines you're about to change. A test that imports the right package but never reaches the branch you're editing gives false confidence — it looks like safety net from the outside and catches nothing.
 - **LOW/ZERO coverage (<40%, or the specific touched lines are uncovered even if the package average looks fine) — Feathers mode** — write characterization (a.k.a. golden or pinning) tests _first_, capturing what the code actually does today, warts and all, before changing a single line.
@@ -97,4 +97,4 @@ benchstat old.txt new.txt                     # `~` means no statistically signi
 - → See `samber/cc-skills-golang@golang-testing` skill for general test-writing craft, race-detector mechanics, and `testing/synctest` — this file assumes them as a baseline and only covers when a refactor's safety net needs to reach for them.
 - → See `samber/cc-skills-golang@golang-benchmark` skill for interpreting a `benchstat` delta and the full profiling methodology.
 - [catalog.md](catalog.md) — the Fowler refactoring catalog mapped to Go, including the Sprout/Wrap entries referenced in the Feathers-mode and seams sections above.
-- [workflow.md](workflow.md) — the planning gate that measures the blast radius this file's tiers are gated on, and the human-checkpoint rule for touching untested code.
+- [workflow.md](workflow.md) — the scope assessment that measures the blast radius this file's tiers are gated on, and verification guidance for untested code.

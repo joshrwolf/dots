@@ -297,7 +297,7 @@
       {"id": "22.2", "text": "Step 1: Use samber/slog-zap bridge handler to route slog output through zap"},
       {"id": "22.3", "text": "Step 2: Gradually replace zap.L().Info(...) calls with slog.Info(...)"},
       {"id": "22.4", "text": "Step 3: Once fully migrated, replace the bridge with native slog JSONHandler and remove zap dependency"},
-      {"id": "22.5", "text": "Mentions using parallel sub-agents for large codebase migration (assigning independent packages to each)"}
+      {"id": "22.5", "text": "Groups a large migration into coherent package-level changes without requiring parallel agents"}
     ]
   },
   {
@@ -494,16 +494,16 @@
   },
   {
     "id": 37,
-    "name": "parallel-observability-audit",
-    "description": "Tests the recommendation to use parallel sub-agents for observability audits in large codebases",
+    "name": "scoped-observability-audit",
+    "description": "Organizes an observability audit by relevant signals without fixed agent staffing.",
     "prompt": "I need to audit observability across a Go monolith with 200+ packages. How should I approach this efficiently?",
-    "trap": "Without the skill, the model may suggest a linear, package-by-package approach",
+    "trap": "Requires a fixed number of agents or expands a review into unrequested implementation.",
     "assertions": [
-      {"id": "37.1", "text": "Recommends using up to 5 parallel sub-agents (via the Agent tool)"},
-      {"id": "37.2", "text": "Assigns one sub-agent per signal: metrics, logging, tracing, profiling, RUM"},
-      {"id": "37.3", "text": "Sub-agent for metrics: verify metric declarations and PromQL comments"},
-      {"id": "37.4", "text": "Sub-agent for logging: check structured logging, PII in logs, error logging patterns"},
-      {"id": "37.5", "text": "Sub-agent for tracing: verify span creation in service methods, DB calls, API calls"}
+      {"id": "37.1", "text": "Keeps the audit within the requested scope without requiring delegation"},
+      {"id": "37.2", "text": "Organizes relevant findings by metrics, logging, tracing, profiling, and RUM"},
+      {"id": "37.3", "text": "For metrics, verifies declarations and PromQL comments"},
+      {"id": "37.4", "text": "For logging, checks structured logs, PII, and error logging"},
+      {"id": "37.5", "text": "For tracing, checks spans in service methods, database calls, and API calls"}
     ]
   },
   {

@@ -236,7 +236,7 @@ These are distinct tasks; reading API documentation does not audit a dependency.
 
 ## 13. golang-refactoring vs. the target-state rule skills
 
-`golang-refactoring` owns the _process_ of changing existing Go code safely at scale — planning, blast-radius mapping, ordering staged PRs, tool-driven mechanics (gopls Rename/Inline, `gofmt -r`, `eg`), and the human-in-the-loop git model. It does not own what the resulting code should look like — that is split across five existing skills, each answering "refactor toward what?"
+`golang-refactoring` owns the _process_ of changing existing Go code safely at scale — planning, blast-radius mapping, ordering changes, tool-driven mechanics (gopls Rename/Inline, `gofmt -r`, `eg`), and scoped verification. It does not own what the resulting code should look like — that is split across five existing skills, each answering "refactor toward what?"
 
 | Skill | Unique territory | Does NOT own |
 | --- | --- | --- |
@@ -254,5 +254,5 @@ These are distinct tasks; reading API documentation does not audit a dependency.
 - "This function is too long, break it up" → `golang-code-style` (what "too long" means, target shape) + `golang-refactoring` (Extract Function mechanics, verify behavior preserved).
 - "Rename `Client.Send` to `Client.Publish` across the whole repo" → `golang-naming` (is this the right name) + `golang-refactoring` (workspace-wide gopls Rename, risk tier, PR staging).
 - "Move this type to a new package without breaking every caller" → `golang-project-layout` (target location) + `golang-refactoring` (type-alias gradual-repair recipe, ordering).
-- "Convert all `interface{}` to `any` across the module" → `golang-modernize` alone is usually sufficient (single mechanical sweep); reach for `golang-refactoring`'s staged-PR flow only if the sweep is large enough to need progressive human review.
-- "Plan a multi-week refactor to break up this god package" → `golang-refactoring` as the primary skill (planning gate, ordering, staged PRs), pulling in `golang-project-layout` and `golang-design-patterns` for the target shape at each step.
+- "Convert all `interface{}` to `any` across the module" → `golang-modernize` alone is usually sufficient (single mechanical sweep); reach for `golang-refactoring`'s staged workflow only if the sweep is large enough to need progressive human review.
+- "Plan a multi-week refactor to break up this god package" → `golang-refactoring` as the primary skill (scope assessment, ordering, verification), pulling in `golang-project-layout` and `golang-design-patterns` for the target shape at each step.

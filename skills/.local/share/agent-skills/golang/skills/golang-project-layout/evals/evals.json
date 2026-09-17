@@ -1,16 +1,16 @@
 [
   {
     "id": 1,
-    "name": "ask-architecture-before-structuring",
-    "description": "Tests whether the model asks the developer about architecture preference before imposing one",
+    "name": "scope-appropriate-project-setup",
+    "description": "Chooses simple project structure without imposing an architecture questionnaire.",
     "prompt": "I'm starting a new Go web service project. Set up the directory structure for me.",
-    "trap": "Without the skill, the model immediately generates a directory structure without asking. The skill says to ASK the developer what architecture they prefer before structuring.",
+    "trap": "Blocks routine setup on architecture and DI questions or silently adds mandatory skill-loading configuration.",
     "assertions": [
-      {"id": "1.1", "text": "Asks the developer which software architecture they prefer (clean, hexagonal, DDD, flat, etc.)"},
-      {"id": "1.2", "text": "Asks about the project scope/size to right-size the structure"},
-      {"id": "1.3", "text": "Does NOT immediately impose a specific architecture without asking"},
-      {"id": "1.4", "text": "Mentions dependency injection approach as a follow-up question"},
-      {"id": "1.5", "text": "Mentions that small projects should not be over-structured"}
+      {"id": "1.1", "text": "Uses request context and existing conventions to choose a simple starting structure"},
+      {"id": "1.2", "text": "Asks only about missing requirements that materially affect structure"},
+      {"id": "1.3", "text": "Avoids imposing unnecessary architecture layers"},
+      {"id": "1.4", "text": "Does not install DI libraries or add agent configuration as a side effect"},
+      {"id": "1.5", "text": "Keeps small projects minimally structured"}
     ]
   },
   {

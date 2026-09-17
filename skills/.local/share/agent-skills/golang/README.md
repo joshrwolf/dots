@@ -324,7 +324,7 @@ Modernize Go code to use recent language features. Range-over-int, min/max built
 
 #### `golang-refactoring`
 
-Safe, at-scale refactoring process for existing Go code. Coverage-adaptive safety net, tool-driven behavior-preserving transforms (gopls Rename/Inline/Extract, gofmt -r, eg), the Fowler catalog mapped to Go, breaking import cycles, type-alias gradual code repair, and a human-in-the-loop workflow of staged PRs on a refactoring branch.
+Safe, at-scale refactoring process for existing Go code. Coverage-adaptive safety net, tool-driven behavior-preserving transforms (gopls Rename/Inline/Extract, gofmt -r, eg), the Fowler catalog mapped to Go, breaking import cycles, type-alias gradual code repair, and a scoped workflow of coherent changes with verification appropriate to the affected code.
 
 ### QA & Performance
 

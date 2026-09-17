@@ -18,6 +18,9 @@ and upstream updates. Preserve the upstream MIT license and attribution.
 - Keep instructions shared between agents. Put harness-specific setup in optional
   references and do not assume a tool is installed because a skill mentions it.
 - Maintain canonical AGENTS.md files and sibling relative CLAUDE.md symlinks.
+- Encourage task-based delegation decisions. Give useful criteria for working
+  directly or using subagents; avoid fixed staffing, mandatory fan-out, and blanket
+  prohibitions. Keep delegation within the environment's collaboration rules.
 
 ## Local tool choices
 

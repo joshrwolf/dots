@@ -26,8 +26,8 @@ paths:
 **Modes:**
 
 - **Review mode** — reviewing a PR for security issues. Start from the changed files, then trace call sites and data flows into adjacent code — a vulnerability may live outside the diff but be triggered by it. Sequential.
-- **Audit mode** — full codebase security scan. Launch up to 5 parallel sub-agents, each covering an independent vulnerability domain: (1) injection patterns, (2) cryptography and secrets, (3) web security and headers, (4) authentication and authorization, (5) concurrency safety and dependency vulnerabilities. Aggregate findings, score with DREAD, and report by severity. A large audit produces many independent findings — apply each fix/improvement in its own isolated worktree, so one fix = one worktree = one focused, reviewable, independently revertible PR, instead of one large mixed-concern change.
-- **Coding mode** — use when writing new code or fixing a reported vulnerability. Follow the skill's sequential guidance. Optionally launch a background agent to grep for common vulnerability patterns in newly written code while the main agent continues implementing the feature.
+- **Audit mode** — full codebase security scan. Check relevant vulnerability domains: (1) injection patterns, (2) cryptography and secrets, (3) web security and headers, (4) authentication and authorization, (5) concurrency safety and dependency vulnerabilities. Aggregate findings, score with DREAD, and report by severity. Report findings for an audit request; implement fixes when authorized, grouping related changes for review.
+- **Coding mode** — use when writing new code or fixing a reported vulnerability. Follow the skill's sequential guidance. Check the affected code for relevant vulnerability patterns.
 
 **Dependencies:**
 

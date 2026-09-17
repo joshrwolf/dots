@@ -23,7 +23,7 @@ paths:
 
 - **Write mode** — implement concurrent code (goroutines, channels, sync primitives, worker pools, pipelines). Follow the sequential instructions below.
 - **Review mode** — reviewing a PR's concurrent code changes. Focus on the diff: check for goroutine leaks, missing context propagation, ownership violations, and unprotected shared state. Sequential.
-- **Audit mode** — auditing existing concurrent code across a codebase. Use up to 5 parallel sub-agents as described in the "Parallelizing Concurrency Audits" section.
+- **Audit mode** — auditing existing concurrent code across a codebase. Use the checks in "Concurrency Audits" within the requested scope.
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-concurrency` skill takes precedence.
 
@@ -95,9 +95,9 @@ Before spawning a goroutine, answer:
 
 For pipeline patterns (fan-out/fan-in, bounded workers, generator chains, Go 1.23+ iterators, `samber/ro`), see [Pipelines and Worker Pools](references/pipelines.md).
 
-## Parallelizing Concurrency Audits
+## Concurrency Audits
 
-When auditing concurrency across a large codebase, use up to 5 parallel sub-agents:
+For a requested concurrency audit, check:
 
 1. Find all goroutine spawns (`go func`, `go method`) and verify shutdown mechanisms
 2. Search for mutable globals and shared state without synchronization

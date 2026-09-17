@@ -21,8 +21,8 @@ paths:
 
 **Modes:**
 
-- **Write mode** — generating or filling in missing documentation (doc comments, README, CONTRIBUTING, CHANGELOG, llms.txt). Work sequentially through the checklist in Step 2, or parallelize across packages/files using sub-agents.
-- **Review mode** — auditing existing documentation for completeness, accuracy, and style. Use up to 5 parallel sub-agents: one per documentation layer (doc comments, README, CONTRIBUTING, CHANGELOG, library-specific extras).
+- **Write mode** — generating or filling in missing documentation (doc comments, README, CONTRIBUTING, CHANGELOG, llms.txt). Use the relevant parts of the checklist in Step 2.
+- **Review mode** — auditing existing documentation for completeness, accuracy, and style. Check the requested documentation layers (doc comments, README, CONTRIBUTING, CHANGELOG, library-specific extras).
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-documentation` skill takes precedence.
 
@@ -93,13 +93,13 @@ Every Go project needs these (ordered by priority):
 
 A private project might not need a documentation website, llms.txt, Go Playground demos...
 
-## Parallelizing Documentation Work
+## Organizing Documentation Work
 
-When documenting a large codebase with many packages, use up to 5 parallel sub-agents for independent tasks:
+For a requested documentation pass, group the relevant work by package and document:
 
-- Assign each sub-agent to verify and fix doc comments in a different set of packages
-- Generate `ExampleXxx` test functions for multiple packages simultaneously
-- Generate project docs in parallel: one sub-agent per file (README, CONTRIBUTING, CHANGELOG, llms.txt)
+- Verify and fix doc comments in the affected packages
+- Generate `ExampleXxx` test functions for the relevant packages
+- Update requested project docs (README, CONTRIBUTING, CHANGELOG, llms.txt)
 
 ## Step 3: Function & Method Doc Comments
 

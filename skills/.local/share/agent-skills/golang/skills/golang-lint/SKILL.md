@@ -27,8 +27,8 @@ paths:
 **Modes:**
 
 - **Setup mode** — configuring `.golangci.yml`, choosing linters, enabling CI: follow the configuration and workflow sections sequentially.
-- **Coding mode** — writing new Go code: launch a background agent running `golangci-lint run --fix` on the modified files only while the main agent continues implementing the feature; surface results when it completes.
-- **Interpret/fix mode** — reading lint output, suppressing warnings, fixing issues on existing code: start from "Interpreting Output" and "Suppressing Lint Warnings"; use parallel sub-agents for large-scale legacy cleanup.
+- **Coding mode** — writing new Go code: run the project lint checks after edits; inspect findings before applying fixes.
+- **Interpret/fix mode** — reading lint output, suppressing warnings, fixing issues on existing code: start from "Interpreting Output" and "Suppressing Lint Warnings"; group legacy cleanup by concern within the requested scope.
 
 **Dependencies:**
 
@@ -138,15 +138,15 @@ The linter name in parentheses tells you which linter flagged it. Use this to:
 | v1 config errors after upgrade | Run `golangci-lint migrate` to convert config format |
 | Slow on large repos | Reduce `run.concurrency` or exclude paths with `linters.exclusions.paths` / `formatters.exclusions.paths` |
 
-## Parallelizing Legacy Codebase Cleanup
+## Organizing Legacy Codebase Cleanup
 
-When adopting linting on a legacy codebase, use up to 5 parallel sub-agents to fix independent linter categories simultaneously:
+For a requested legacy lint cleanup, group findings by category. Apply fixes sequentially when they touch the same files, and inspect automatic fixes before proceeding:
 
-- Sub-agent 1: Run `golangci-lint run --fix ./...` for auto-fixable issues
-- Sub-agent 2: Fix security linter findings (bodyclose, sqlclosecheck, gosec)
-- Sub-agent 3: Fix error handling issues (errcheck, nilerr, wrapcheck)
-- Sub-agent 4: Fix style and formatting (gofumpt, goimports, revive)
-- Sub-agent 5: Fix code quality (gocritic, unused, ineffassign)
+- Run `golangci-lint run --fix ./...` for auto-fixable issues
+- Fix security linter findings (bodyclose, sqlclosecheck, gosec)
+- Fix error handling issues (errcheck, nilerr, wrapcheck)
+- Fix style and formatting (gofumpt, goimports, revive)
+- Fix code quality (gocritic, unused, ineffassign)
 
 ## Cross-References
 
