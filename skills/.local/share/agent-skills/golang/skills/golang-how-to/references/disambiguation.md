@@ -247,12 +247,12 @@ These are distinct tasks; reading API documentation does not audit a dependency.
 | `samber/cc-skills-golang@golang-design-patterns` | Target patterns: options structs, consumer-side interfaces, DI | Sequencing a multi-step migration toward one of these patterns as reviewable PRs |
 | `samber/cc-skills-golang@golang-modernize` | Version-driven idiom adoption (`interface{}`→`any`, `slices`/`maps`) — typically a single mechanical sweep | Multi-step structural refactors that need staged, human-reviewed PRs |
 
-**Overlap zone:** almost every real refactor touches both — "rename this type and move it to a new package" needs `golang-naming` (the new name) and `golang-project-layout` (the new location) for the _target_, plus `golang-refactoring` for the _how_: blast-radius mapping, the type-alias gradual-repair recipe, and whether this lands as one PR or a staged sequence. Load `golang-refactoring` together with whichever target-rule skill defines the destination shape.
+**Overlap zone:** almost every real refactor touches both — "rename this type and move it to a new package" needs `golang-naming` (the new name) and `golang-project-layout` (the new location) for the _target_, plus `golang-refactoring` for the _how_: blast-radius mapping, the direct caller migration, and whether this lands as one PR or a staged sequence. Load `golang-refactoring` together with whichever target-rule skill defines the destination shape.
 
 **Routing examples:**
 
 - "This function is too long, break it up" → `golang-code-style` (what "too long" means, target shape) + `golang-refactoring` (Extract Function mechanics, verify behavior preserved).
 - "Rename `Client.Send` to `Client.Publish` across the whole repo" → `golang-naming` (is this the right name) + `golang-refactoring` (workspace-wide gopls Rename, risk tier, PR staging).
-- "Move this type to a new package without breaking every caller" → `golang-project-layout` (target location) + `golang-refactoring` (type-alias gradual-repair recipe, ordering).
+- "Move this type to a new package without breaking every caller" → `golang-project-layout` (target location) + `golang-refactoring` (direct caller migration, ordering).
 - "Convert all `interface{}` to `any` across the module" → `golang-modernize` alone is usually sufficient (single mechanical sweep); reach for `golang-refactoring`'s staged workflow only if the sweep is large enough to need progressive human review.
 - "Plan a multi-week refactor to break up this god package" → `golang-refactoring` as the primary skill (scope assessment, ordering, verification), pulling in `golang-project-layout` and `golang-design-patterns` for the target shape at each step.

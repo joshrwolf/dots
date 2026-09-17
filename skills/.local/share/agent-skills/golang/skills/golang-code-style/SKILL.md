@@ -19,7 +19,7 @@ paths:
   - "**/*.go"
 ---
 
-> **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-code-style` skill takes precedence.
+> Apply repository instructions and required project skills first. These guidelines are defaults where the project leaves a choice.
 
 # Go Code Style
 
@@ -27,11 +27,11 @@ Style rules that require human judgment — linters handle formatting, this skil
 
 > "Clear is better than clever." — Go Proverbs
 
-When ignoring a rule, add a comment to the code.
+Follow applicable project instructions and formatting tools before these defaults. Explain meaningful constraints in comments, not routine stylistic choices.
 
 ## Line Length & Breaking
 
-No rigid line limit, but lines beyond ~120 characters MUST be broken. Break at **semantic boundaries**, not arbitrary column counts. Function calls with 4+ arguments MUST use one argument per line — even when the prompt asks for single-line code:
+Wrap at semantic boundaries when it improves readability, following project conventions and explicit requests. Argument count and line length alone do not require wrapping. A call with long arguments can benefit from this layout:
 
 ```go
 // Good — each argument on its own line, closing paren separate
@@ -47,7 +47,7 @@ mux.HandleFunc("/api/users", func(w http.ResponseWriter, r *http.Request) {
 })
 ```
 
-When a function signature is too long, the real fix is often **fewer parameters** (use an options struct) rather than better line wrapping. For multi-line signatures, put each parameter on its own line.
+Group related options when that improves the API, not merely to shorten a line. Use the project formatter for mechanical formatting.
 
 ## Variable Declarations
 
@@ -61,14 +61,19 @@ var buf bytes.Buffer       // zero value is ready to use
 
 ### Slice & Map Initialization
 
-Slices and maps MUST be initialized explicitly, never nil. Nil maps panic on write; nil slices serialize to `null` in JSON (vs `[]` for empty slices), surprising API consumers.
+Use nil slices when the zero value fits the operation. Initialize a map before
+writing to it; read-only use does not require allocating an empty map. Preserve
+API contracts: when an empty JSON array is required, produce a non-nil empty slice
+at that boundary. Do not change existing null/empty behavior as a style cleanup.
 
 ```go
-users := []User{}                       // always initialized
-m := map[string]int{}                   // always initialized
-users := make([]User, 0, len(ids))      // preallocate when capacity is known
-m := make(map[string]int, len(items))   // preallocate when size is known
+var users []User                       // zero value; ready for append
+users = append(users, user)
+lookup := make(map[string]int, len(items)) // allocate before writes
+results := make([]User, 0, len(ids))    // known expected capacity
 ```
+
+When using `make` and expected capacity is known, supply it.
 
 Do not preallocate speculatively — `make([]T, 0, 1000)` wastes memory when the common case is 10 items.
 
@@ -131,7 +136,7 @@ if debug {
 
 ### Complex Conditions & Init Scope
 
-When an `if` condition has 3+ operands, MUST extract into named booleans — a wall of `||` is unreadable and hides business logic. Keep expensive checks inline for short-circuit benefit. [Details](./references/details.md)
+Extract a condition when its name explains a domain concept or makes the logic easier to follow. Keep simple checks inline; do not introduce single-use variables merely to meet an operand threshold. Preserve evaluation order and short-circuit behavior, including nil guards and side effects. [Details](./references/details.md)
 
 ```go
 // Good — named booleans make intent clear

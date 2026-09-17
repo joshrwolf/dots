@@ -37,7 +37,7 @@ For interface-based design foundations (accept interfaces, return structs), see 
 
 1. Dependencies MUST be injected via constructors — NEVER use global variables or `init()` for service setup
 2. Small projects (< 10 services) SHOULD use manual constructor injection — no library needed
-3. Interfaces MUST be defined where consumed, not where implemented — accept interfaces, return structs
+3. Use narrow consumer-owned interfaces for dependency seams, or package-owned public interfaces when they deliberately hide implementations. Choose return types for the intended API and project conventions
 4. NEVER use global registries or package-level service locators
 5. The DI container MUST only exist at the composition root (`main()` or app startup) — NEVER pass the container as a dependency
 6. **Prefer lazy initialization** — only create services when first requested

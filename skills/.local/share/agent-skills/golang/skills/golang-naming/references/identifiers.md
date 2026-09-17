@@ -111,27 +111,10 @@ func HasPrefix(a, b string) bool    // which is the prefix?
 
 ## Booleans
 
-Boolean variables and fields MUST read naturally as true/false questions. Use prefixes like `is`, `has`, `can`, `allow`, `should`. This applies to **both variables and struct fields**.
-
-```go
-// Good — struct fields use is/has prefix
-type Client struct {
-    isConnected  bool  // reads as "client is connected"
-    hasPermission bool // reads as "client has permission"
-}
-
-// Good — variables
-isReady := true
-hasPermission := user.CanEdit(doc)
-
-// Bad — bare adjective is ambiguous
-type Client struct {
-    connected  bool   // could be confused with a connection object
-    permission bool   // noun, not a question
-}
-```
-
-For exported boolean methods, the prefix becomes part of the method name: `IsValid()`, `HasPrefix()`, `CanRetry()`. The unexported field keeps the prefix too: `isConnected` field → `IsConnected()` method.
+Boolean names should communicate their meaning in context. `connected`,
+`hasPermission`, and `canRetry` are all reasonable. Follow surrounding conventions;
+no prefix is required for every field or variable. Add accessors only when the API
+needs them, rather than mechanically generating one for each field.
 
 ## Receivers
 

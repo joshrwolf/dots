@@ -10,7 +10,7 @@
       {"id": "1.2", "text": "Explicitly advises against package-level variables for service dependencies"},
       {"id": "1.3", "text": "Explains why globals are problematic (untestable, hidden dependencies, or coupling)"},
       {"id": "1.4", "text": "Does NOT use init() for service initialization"},
-      {"id": "1.5", "text": "Returns a concrete struct pointer from the constructor, not an interface"}
+      {"id": "1.5", "text": "Selects the constructor return type for the intended public contract"}
     ]
   },
   {
@@ -18,13 +18,13 @@
     "name": "interface-defined-at-consumer",
     "description": "Tests that interfaces are defined where consumed, not where implemented",
     "prompt": "I'm building a Go service that uses a UserStore. Should I define the UserStore interface in the same package as the PostgreSQL implementation or somewhere else? Show me the correct pattern.",
-    "trap": "Without the skill, the model often defines the interface in the implementation package (next to the struct). The skill requires interfaces to be defined at the consumption site.",
+    "trap": "Treats interface ownership as unconditional instead of considering package API requirements.",
     "assertions": [
-      {"id": "2.1", "text": "Defines the interface in the consuming package (e.g. service package), not the implementation package"},
-      {"id": "2.2", "text": "Explains the principle: accept interfaces, return structs"},
-      {"id": "2.3", "text": "The implementation package returns a concrete struct pointer"},
-      {"id": "2.4", "text": "The consumer depends on its own locally-defined interface"},
-      {"id": "2.5", "text": "Does NOT have the implementation package import the consumer's interface"}
+      {"id": "2.1", "text": "Shows a narrow consumer-owned interface as one suitable dependency seam"},
+      {"id": "2.2", "text": "Explains that interface ownership depends on the intended contract"},
+      {"id": "2.3", "text": "Allows a concrete return or an interface hiding a private implementation"},
+      {"id": "2.4", "text": "Avoids requiring callers to depend on unneeded implementation details"},
+      {"id": "2.5", "text": "Does not introduce an import cycle to declare interface satisfaction"}
     ]
   },
   {

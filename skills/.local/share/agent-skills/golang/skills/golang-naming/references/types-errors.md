@@ -120,7 +120,7 @@ const (
 )
 ```
 
-**Always protect the zero value.** A `var s Status` will silently be 0 — if that maps to a real state like `StatusReady`, code can behave as if a status was deliberately chosen when it wasn't. Either place an explicit `Unknown` sentinel at iota 0, or start at `iota + 1`. This is not optional — uninitialized enums are a common source of silent bugs.
+Choose the zero value deliberately. Use an unspecified sentinel when omission must be distinguishable from a valid selection, and validate it where required. A safe, useful default may occupy zero. Preserve existing numeric values and serialization contracts; do not insert a sentinel into an established enum as a naming cleanup.
 
 ## Errors
 

@@ -112,7 +112,7 @@ eg -t template.go -w ./...   # staged migration for adding/generalizing a parame
 - **Smell trigger:** Feature Envy — a function reads and manipulates another package's data more than its own — or a type whose responsibilities clearly belong to a different package than the one it currently lives in.
 - **Go mechanics:**
   - No one-shot gopls action moves a symbol across package boundaries yet.
-  - The gradual-repair sequence: introduce the symbol in its new home; leave a **type alias** (`type Old = pkg.New`) for a moved type, or a thin wrapper function/forwarding variable for a moved function, in the old location so both the old and new names keep working; migrate callers to the new name incrementally, one small commit at a time; delete the old name (and the alias/wrapper) only once nothing references it.
+  - Move the declaration, update affected imports and callers, remove the old declaration, and verify the affected packages. Do not add aliases or forwarding wrappers unless an actual compatibility contract requires them.
   - Splitting a large file into a new file _within the same package_ is a distinct, one-shot gopls action.
 - **Tool:**
 
@@ -120,11 +120,11 @@ eg -t template.go -w ./...   # staged migration for adding/generalizing a parame
 gopls codeaction -exec -kind=refactor.extract.toNewFile file.go:#start,#end   # same-package file split
 ```
 
-Cross-package moves are the manual type-alias/wrapper sequence above — there is no equivalent one-shot command.
+Cross-package moves require updating declarations, imports, and callers as above — there is no equivalent one-shot command.
 
 - **Risk:** High.
 
-→ See `samber/cc-skills-golang@golang-project-layout` skill for target package layout. See [structural.md](structural.md) for the full type-alias gradual-repair recipe.
+→ See `samber/cc-skills-golang@golang-project-layout` skill for target package layout. See [structural.md](structural.md) for the cross-package move guidance.
 
 ## Split Package / Merge Package
 
@@ -226,7 +226,7 @@ Divergent Change and Shotgun Surgery point to opposite fixes even though both ar
 
 ## Cross-References
 
-- → See [structural.md](structural.md) for the full type-alias gradual-repair recipe used by Move Function/Field/Type, and for breaking import cycles ahead of a package split or merge.
+- → See [structural.md](structural.md) for the cross-package move guidance used by Move Function/Field/Type, and for breaking import cycles ahead of a package split or merge.
 - → See [safety-net.md](safety-net.md) for the coverage-adaptive strategy that determines when Sprout/Wrap Method should replace an in-place edit.
 - → See [go-tooling.md](go-tooling.md) for the full gopls code-action reference, `gofmt -r`, `eg`, invocation details.
 - → See `samber/cc-skills-golang@golang-naming` skill for what to rename identifiers _to_.

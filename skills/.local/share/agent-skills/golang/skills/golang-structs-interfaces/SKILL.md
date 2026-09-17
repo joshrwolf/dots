@@ -19,7 +19,7 @@ paths:
   - "**/*.go"
 ---
 
-> **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-structs-interfaces` skill takes precedence.
+> Apply repository instructions and required project skills first. These guidelines are defaults where the project leaves a choice.
 
 # Go Structs & Interfaces
 
@@ -61,9 +61,9 @@ type ReadWriteCloser interface {
 
 ### Define Interfaces Where They're Consumed
 
-Interfaces Belong to Consumers.
+Choose interface ownership around the contract.
 
-Interfaces MUST be defined where consumed, not where implemented. This keeps the consumer in control of the contract and avoids importing a package just for its interface.
+A consumer-owned interface is useful when a caller needs a narrow capability. A package may instead own a public interface when that interface is its intended API over private implementations. Follow project conventions and actual consumer needs; do not relocate an established contract merely to enforce a slogan.
 
 ```go
 // package notification — defines only what it needs
@@ -78,16 +78,20 @@ type Service struct {
 
 The `email` package exports a concrete `Client` struct — it doesn't need to know about `Sender`.
 
-### Accept Interfaces, Return Structs
+### Choose the Public Contract
 
-Functions SHOULD accept interface parameters for flexibility and return concrete types for clarity. Callers get full access to the returned type's fields and methods; consumers upstream can still assign the result to an interface variable if needed.
+Accept the capabilities a function needs. Return a concrete type when callers
+need its API and exposing it is appropriate. Return an interface when the intended
+public contract hides a private implementation or supports interchangeable behavior.
+Do not add interfaces speculatively, or expose an implementation solely to satisfy
+a return-type rule. Follow explicit project API-design requirements.
 
 ```go
-// Good — accepts interface, returns concrete
-func NewService(store UserStore) *Service { ... }
+// Concrete return when the concrete type is the public API.
+func NewClient(store Store) *Client
 
-// Bad — an interface return hides every other method of the concrete type from callers
-func NewService(store UserStore) ServiceInterface { ... }
+// Interface return when implementations are deliberately private.
+func NewService(store Store) Service
 ```
 
 ### Don't Create Interfaces Prematurely
@@ -285,8 +289,8 @@ A struct holding a mutex, a channel, or internal pointers breaks when copied: th
 | Mistake | Fix |
 | --- | --- |
 | Large interfaces (5+ methods) | Split into focused 1-3 method interfaces, compose if needed |
-| Defining interfaces in the implementor package | Define where consumed |
-| Returning interfaces from constructors | Return concrete types |
+| Interface ownership chosen by rote | Use consumer needs and the intended public contract |
+| Return type chosen by slogan | Expose the intended API; keep implementation details private |
 | Bare type assertions without comma-ok | Always use `v, ok := x.(T)` |
 | Embedding when you only need a few methods | Use a named field and delegate explicitly |
 | Missing field tags on serialized structs | Tag all exported fields in marshaled types |

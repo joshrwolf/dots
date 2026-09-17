@@ -20,28 +20,28 @@
       },
       {
         "id": "1.4",
-        "text": "tags is initialized with []string{} or make([]string, 0) — never nil — because nil slices serialize to null in JSON"
+        "text": "Allows a nil slice for tags unless the requested contract requires a non-nil empty collection"
       }
     ]
   },
   {
     "id": 2,
     "name": "empty-slice-map-not-nil",
-    "description": "Empty collections initialized as []T{} or make(), never nil",
+    "description": "Choose collection initialization from use and contract.",
     "prompt": "Write a Go file `handler.go` in package `api`. Create a Handler struct. Add a method ListUsers that returns a slice of User structs (define User with Name and Email fields). Add a method GetTags that returns a map[string]string. Both methods should return empty collections when there's no data. Add a method BuildResponse that takes a slice of results and a map of metadata and processes them.",
-    "trap": "Model returns nil slices/maps or uses uninitialized var declarations for empty collections, causing nil != empty issues in JSON serialization and caller code",
+    "trap": "Applies a blanket style rule instead of the requested behavior and project conventions.",
     "assertions": [
       {
         "id": "2.1",
-        "text": "Empty slice return uses []User{} or make([]User, 0) — never returns nil or an uninitialized var declaration without assignment"
+        "text": "Allows nil slices for empty results when no non-nil contract is specified"
       },
       {
         "id": "2.2",
-        "text": "Empty map return uses map[string]string{} or make(map[string]string) — never returns nil or an uninitialized var declaration without assignment"
+        "text": "Initializes maps before writes; does not allocate read-only empty maps solely to avoid nil"
       },
       {
         "id": "2.3",
-        "text": "When capacity is known (e.g., from len(input)), make() with capacity hint is used for preallocating slices or maps"
+        "text": "Uses known expected capacity when allocating with make"
       }
     ]
   },
@@ -224,67 +224,67 @@
   {
     "id": 11,
     "name": "named-boolean-conditions-method-calls",
-    "description": "Expensive method calls in complex conditions extracted to named booleans to make intent readable",
+    "description": "Keep requested inline conditions readable and preserve evaluation.",
     "prompt": "Write a Go function CanPublish in package `cms` that determines whether a user can publish an article. The user struct has: Role string, ID string, IsVerified bool, IsSuspended bool. The article struct has: AuthorID string, Status string, ReviewerIDs []string, Tags []string. The permission check requires: (user.Role == 'editor' || user.Role == 'admin') AND NOT user.IsSuspended AND user.IsVerified AND (user.ID == article.AuthorID || contains(article.ReviewerIDs, user.ID)) AND article.Status == 'reviewed' AND NOT contains(article.Tags, 'restricted'). Implement this as a direct return statement with all conditions combined.",
-    "trap": "Model inlines all conditions into a single return statement or if condition, making it a wall of boolean logic where the business rule (who can publish?) is buried in implementation details",
+    "trap": "Applies a blanket style rule instead of the requested behavior and project conventions.",
     "assertions": [
       {
         "id": "11.1",
-        "text": "At least 3 of the conditions are extracted into named boolean variables before the final if or return"
+        "text": "Honors the requested direct return expression"
       },
       {
         "id": "11.2",
-        "text": "Named booleans reflect business meaning — names like isEditor, isEligibleAuthor, isArticleReady rather than cond1, checkA"
+        "text": "Preserves all authorization conditions and their grouping"
       },
       {
         "id": "11.3",
-        "text": "The final expression reads like a policy statement: return isEligibleUser && isAuthorOrReviewer && isArticleReady (or similar)"
+        "text": "Preserves short-circuit evaluation without hoisting calls"
       }
     ]
   },
   {
     "id": 12,
     "name": "line-breaks-at-semantic-boundaries",
-    "description": "Function calls with 4+ arguments broken at argument boundaries; no line over ~120 chars",
+    "description": "Wrap long calls for readability without arbitrary thresholds.",
     "prompt": "Write a Go function RegisterRoutes in package `router` that takes an *http.ServeMux and registers 6 API routes. Each route handler is a closure that delegates to a processRequest function taking: an http.ResponseWriter, an *http.Request, a serviceName string constant 'com.example.platform.api', a *Config, a *slog.Logger, and an authMiddleware func. Write idiomatic Go.",
-    "trap": "Model writes each mux.HandleFunc and inner processRequest call as a single long line since that is the most compact and natural first draft",
+    "trap": "Applies a blanket style rule instead of the requested behavior and project conventions.",
     "assertions": [
       {
         "id": "12.1",
-        "text": "The processRequest call inside each handler is broken across multiple lines — each argument on its own line — because it has 6 arguments"
+        "text": "Formats calls readably without using argument count as a mandatory threshold"
       },
       {
         "id": "12.2",
-        "text": "Line breaks occur at semantic boundaries (after commas between arguments) — not at arbitrary column positions mid-expression"
+        "text": "Breaks at semantic boundaries when wrapping"
       },
       {
         "id": "12.3",
-        "text": "Closing parentheses for multi-line function calls appear on their own line (Go trailing-comma style)"
+        "text": "Uses valid Go formatting and trailing commas for multiline calls"
       },
       {
         "id": "12.4",
-        "text": "No single line in the file exceeds approximately 140 characters"
+        "text": "Avoids redesigning the function API solely to shorten lines"
       }
     ]
   },
   {
     "id": 13,
     "name": "never-nil-return-for-collection",
-    "description": "Returns initialized empty collections even when no data — nil slices serialize to JSON null; nil maps panic on write",
-    "prompt": "Write a Go HTTP handler ListProducts in package `api` that queries a database for products matching a filter and returns JSON. Also write a function BuildMetaHeaders that collects response metadata (pagination info, request-id, rate-limit remaining) into a map[string]string to be set as HTTP headers. Both functions should be production-ready and handle the case where there are no results.",
-    "trap": "When no products are found, the model returns a nil slice (var result []Product or return nil) which serializes to JSON null instead of []; for the map, the model may return nil which panics if the caller writes a key",
+    "description": "Honor explicit JSON and writable-map contracts.",
+    "prompt": "Write a Go HTTP handler ListProducts returning JSON, with [] required when no products match. Also write BuildMetaHeaders returning a map[string]string that callers can add headers to. Handle database errors explicitly.",
+    "trap": "Applies a blanket style rule instead of the requested behavior and project conventions.",
     "assertions": [
       {
         "id": "13.1",
-        "text": "ListProducts initializes the result slice with []Product{} or make([]Product, 0) — NOT var result []Product left nil — so an empty result serializes to [] not null"
+        "text": "Empty product results encode as [] as required"
       },
       {
         "id": "13.2",
-        "text": "BuildMetaHeaders initializes and returns map[string]string{} or make(map[string]string) — NOT nil — because nil maps panic on write"
+        "text": "Returns an initialized metadata map because the caller adds keys"
       },
       {
         "id": "13.3",
-        "text": "Neither function contains 'return nil' as a success/no-data path (nil is only paired with a non-nil error)"
+        "text": "Preserves error handling without imposing non-nil collections on unrelated internal helpers"
       }
     ]
   },
@@ -420,50 +420,50 @@
   {
     "id": 19,
     "name": "named-conditions-override-inline-prompt",
-    "description": "Extracts complex conditions to named booleans despite prompt explicitly saying NOT to",
+    "description": "Honor inline conditions while preserving guards.",
     "prompt": "Write a Go function AssignPermission in package `rbac` that determines a user's effective permission level. Check these conditions with a traditional if-else chain — do NOT use variables to store intermediate results: if user.Role == 'superadmin' && !user.IsSuspended, or if user.Role == 'admin' && user.Department == resource.Department && user.TenantID == resource.TenantID, or if resource.IsPublic && user.IsVerified && !user.IsRestricted, or if user.Groups.Contains(resource.RequiredGroup) && user.MFA.IsEnabled() && time.Since(user.MFA.LastVerified) < 24*time.Hour, or if resource.ACL.HasEntry(user.ID) && resource.ACL.GetPermission(user.ID).Level >= MinReadLevel. Return the matching permission level or ErrAccessDenied.",
-    "trap": "Model follows the prompt's explicit instruction NOT to use intermediate variables, inlining all complex conditions into the if-else chain",
+    "trap": "Applies a blanket style rule instead of the requested behavior and project conventions.",
     "assertions": [
       {
         "id": "19.1",
-        "text": "At least 3 conditions are extracted into named boolean variables before the if/switch"
+        "text": "Honors the request to avoid intermediate boolean variables"
       },
       {
         "id": "19.2",
-        "text": "Named booleans have domain-meaningful names (e.g., isSuperAdmin, isSameDepartment, isPublicAndVerified, hasMFAAccess, hasACLEntry)"
+        "text": "Keeps the permission branches readable"
       },
       {
         "id": "19.3",
-        "text": "The final if/switch reads like business logic: if isSuperAdmin || isDepartmentAdmin || isPublicAccess || hasMFAGroupAccess || hasACLPermission"
+        "text": "Preserves branch order and returned permission levels"
       },
       {
         "id": "19.4",
-        "text": "The most expensive checks (Groups.Contains + MFA, ACL.HasEntry + GetPermission) are either kept inline for short-circuit or extracted last"
+        "text": "Keeps ACL.HasEntry before GetPermission and preserves short-circuit behavior"
       }
     ]
   },
   {
     "id": 20,
     "name": "line-breaks-override-compact-prompt",
-    "description": "Breaks long lines despite prompt requesting single-line compact code",
+    "description": "Honor compact formatting requests.",
     "prompt": "Write a Go function SetupHandlers in package `api` that registers 8 REST endpoint handlers on an http.ServeMux. Each handler closure calls processRequest with: the http.ResponseWriter, *http.Request, the service name \"com.example.platform.microservices.user-management.api.v2\", a config struct, a logger, a metrics collector, a rate limiter, and a tracer. Write compact code — each mux.HandleFunc call should be on a single line for easy scanning.",
-    "trap": "Model follows the prompt's compact single-line instruction, creating 200+ character lines that are unreadable in diffs and editors",
+    "trap": "Applies a blanket style rule instead of the requested behavior and project conventions.",
     "assertions": [
       {
         "id": "20.1",
-        "text": "The inner processRequest call is broken across multiple lines with each argument on its own line"
+        "text": "Keeps the requested handler registrations on single lines where valid Go formatting permits"
       },
       {
         "id": "20.2",
-        "text": "No single line in the file exceeds ~140 characters"
+        "text": "Does not impose an arbitrary line-length cap"
       },
       {
         "id": "20.3",
-        "text": "Closing parentheses appear on their own line after multi-argument calls"
+        "text": "Produces syntactically valid formatter-compatible Go"
       },
       {
         "id": "20.4",
-        "text": "The service name string is extracted to a constant or variable, not repeated inline 8 times"
+        "text": "May factor repeated service names without changing the requested layout"
       }
     ]
   },

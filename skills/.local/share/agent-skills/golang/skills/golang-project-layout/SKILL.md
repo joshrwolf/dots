@@ -39,7 +39,7 @@ For applications (services, APIs, workers), follow [12-Factor App](https://12fac
 | Project Type | Use When | Key Directories |
 | --- | --- | --- |
 | **CLI Tool** | Building a command-line application | `cmd/{name}/`, `internal/`, optional `pkg/` |
-| **Library** | Creating reusable code for others | `pkg/{name}/`, `internal/` for private code |
+| **Library** | Creating reusable code for others | Root package or named subpackages, `internal/` for private code |
 | **Service** | HTTP API, microservice, or web app | `cmd/{service}/`, `internal/`, `api/`, `web/` |
 | **Monorepo** | Multiple related packages/modules | `go.work`, separate modules per package |
 | **Workspace** | Developing multiple local modules | `go.work`, replace directives |
@@ -74,13 +74,13 @@ Packages MUST be lowercase, singular, and match their directory name. → See `s
 
 ## Directory Layout
 
-All `main` packages must reside in `cmd/` with minimal logic — parse flags, wire dependencies, call `Run()`. Business logic belongs in `internal/` or `pkg/`. Use `internal/` for non-exported packages, `pkg/` only when code is useful to external consumers.
+Preserve existing layout unless restructuring is requested. A small command can have a root `main` package; use `cmd/<name>` when separating binaries is useful. Keep entrypoints focused and extract substantial reusable or testable logic as needed. Prefer `internal/` for implementation packages not intended for external import. Public packages need no `pkg/` wrapper.
 
 See [directory layout examples](references/directory-layouts.md) for universal, small project, and library layouts, plus common mistakes.
 
 ## Essential Configuration Files
 
-Every Go project should include at the root:
+Follow project requirements, including required package documentation and examples. Reuse existing build and lint configuration; add files where they serve the task. These are available templates, not a mandatory scaffold:
 
 - **Makefile** — build automation. See [Makefile template](assets/Makefile)
 - **.gitignore** — git ignore patterns. See [.gitignore template](assets/.gitignore)
@@ -107,9 +107,9 @@ When starting a new Go project:
 - [ ] Choose module name (matches repo URL, lowercase, hyphens)
 - [ ] Run `go version` to detect the current go version
 - [ ] Run `go mod init github.com/user/project-name`
-- [ ] Create `cmd/{name}/main.go` for entry point
-- [ ] Create `internal/` for private code
-- [ ] Create `pkg/` only if you have public libraries
+- [ ] Choose a root entrypoint or `cmd/{name}` to fit the project
+- [ ] Use `internal/` when implementation needs separate private packages
+- [ ] Place public packages according to existing conventions; `pkg/` is optional
 - [ ] For monorepos: Initialize `go work` and add modules
 - [ ] Run `gofmt -s -w .` to ensure formatting
 - [ ] Add `.gitignore` with `/vendor/` and binary patterns
@@ -121,5 +121,5 @@ When starting a new Go project:
 - → See `samber/cc-skills-golang@golang-lint` skill for golangci-lint configuration.
 - → See `samber/cc-skills-golang@golang-continuous-integration` skill for CI/CD pipeline setup.
 - → See `samber/cc-skills-golang@golang-design-patterns` skill for architectural patterns.
-- → See `samber/cc-skills-golang@golang-refactoring` skill for safely moving or splitting existing code into the layout above via type-alias gradual code repair and sequenced changes, without a big-bang break.
+- → See `samber/cc-skills-golang@golang-refactoring` skill for safely moving or splitting existing code into the layout above by updating affected callers and verifying the resulting dependency graph.
 - → Use `golang-how-to` Configure mode only when project skill configuration is requested.

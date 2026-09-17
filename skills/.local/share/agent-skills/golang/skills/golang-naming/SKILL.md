@@ -19,7 +19,7 @@ paths:
   - "**/*.go"
 ---
 
-> **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-naming` skill takes precedence.
+> Apply repository instructions and required project skills first. These guidelines are defaults where the project leaves a choice.
 
 # Go Naming Conventions
 
@@ -46,7 +46,7 @@ To ignore a rule, just add a comment to the code.
 | Error variable | `Err` prefix | `ErrNotFound`, `ErrTimeout` |
 | Error type | `Error` suffix | `PathError`, `SyntaxError` |
 | Constructor | `New` (single type) or `NewTypeName` (multi-type) | `ring.New`, `http.NewRequest` |
-| Boolean field | `is`, `has`, `can` prefix on **fields** and methods | `isReady`, `IsConnected()` |
+| Boolean field | Clear predicate, following local conventions | `ready`, `hasCredentials` |
 | Test function | `Test` + function name | `TestParseToken` |
 | Acronym | all caps or all lower | `URL`, `HTTPServer`, `xmlParser` |
 | Variant: context | `WithContext` suffix | `FetchWithContext`, `QueryContext` |
@@ -103,11 +103,11 @@ These conventions are correct but non-obvious — they are the most common sourc
 
 **Constructor naming:** When a package exports a single primary type, the constructor is `New()`, not `NewTypeName()`. This avoids stuttering — callers write `apiclient.New()` not `apiclient.NewClient()`. Use `NewTypeName()` only when a package has multiple constructible types (like `http.NewRequest`, `http.NewServeMux`).
 
-**Boolean struct fields:** Unexported boolean fields MUST use `is`/`has`/`can` prefix — `isConnected`, `hasPermission`, not bare `connected` or `permission`. The exported getter keeps the prefix: `IsConnected() bool`. This reads naturally as a question and distinguishes booleans from other types.
+**Booleans:** Choose names that read clearly in context and match surrounding conventions: `closed`, `hasCredentials`, and `canRetry` are all useful shapes. Prefixes are optional. Do not add getters solely to satisfy a naming pattern.
 
 **Error strings are fully lowercase — including acronyms.** Write `"invalid message id"` not `"invalid message ID"`, because error strings are often concatenated with other context (`fmt.Errorf("parsing token: %w", err)`) and mixed case looks wrong mid-sentence. Sentinel errors should include the package name as prefix: `errors.New("apiclient: not found")`.
 
-**Enum zero values:** Always place an explicit `Unknown`/`Invalid` sentinel at iota position 0. A `var s Status` silently becomes 0 — if that maps to a real state like `StatusReady`, code can behave as if a status was deliberately chosen when it wasn't.
+**Enum zero values:** Choose the zero value deliberately. Use an unspecified sentinel when omission must be distinguishable from a valid selection, and validate it where required. A safe, useful default may occupy zero. Preserve existing numeric values and serialization contracts; do not insert a sentinel into an established enum as a naming cleanup.
 
 **Subtest names:** Table-driven test case names in `t.Run()` should be fully lowercase descriptive phrases: `"valid id"`, `"empty input"` — not `"valid ID"` or `"Valid Input"`.
 

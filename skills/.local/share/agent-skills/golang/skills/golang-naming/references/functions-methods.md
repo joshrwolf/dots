@@ -62,7 +62,7 @@ func (u *User) GetName() string      { return u.name }
 
 Only use `Get` when the underlying concept inherently uses "get" (e.g., HTTP GET). For expensive or blocking operations, use `Fetch` or `Compute` to signal that the call is not trivial.
 
-**Exception — boolean predicates keep the `Is`/`Has`/`Can` prefix.** The no-Get rule applies to value getters, not boolean predicates. A method returning `bool` SHOULD use `Is`/`Has`/`Can` to read naturally as a question — this follows the standard library pattern (`reflect.Type.IsVariadic()`, `net.IP.IsLoopback()`, `big.Int.IsInt64()`).
+Boolean predicates may use `Is`, `Has`, or `Can` when they clarify meaning. Bare names such as `Healthy()` or `Ready()` are also valid; follow the existing API.
 
 ```go
 // Good — boolean predicate keeps Is prefix
@@ -74,7 +74,7 @@ func (s *Server) Port() int         { return s.port }
 // Good — richer return type, bare name is fine (different semantics)
 func (s *Server) Healthy() (HealthStatus, error)
 
-// Bad — bare adjective for bool is ambiguous
+// Also valid — concise predicate matching the API
 func (s *Server) Healthy() bool     { return s.healthy }
 
 // Bad — Get prefix on value getter is redundant

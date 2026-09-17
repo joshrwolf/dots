@@ -4,7 +4,7 @@
     "name": "interface-at-consumer-not-implementor",
     "description": "Tests whether the model defines interfaces where they are consumed, not where they are implemented",
     "prompt": "I'm writing a Go notification service that can send emails. I have an email package with a Client struct that has a Send method. I also have a notification package that needs to use this email client. Where should I define the interface?",
-    "trap": "Without the skill, the model often puts the interface in the email package (the implementor). The skill says interfaces MUST be defined where consumed, not where implemented.",
+    "trap": "Without the skill, the model often puts the interface in the email package (the implementor). A narrow consumer-owned interface fits this example; public package-owned contracts are also valid.",
     "assertions": [
       {"id": "1.1", "text": "Interface is defined in the notification package (the consumer), NOT in the email package"},
       {"id": "1.2", "text": "Interface has only the methods the notification package needs (not the full email.Client API)"},
@@ -16,15 +16,15 @@
   {
     "id": 2,
     "name": "return-structs-not-interfaces",
-    "description": "Tests whether the model returns concrete types from constructors, not interfaces",
+    "description": "Select a return type from the intended public API.",
     "prompt": "I'm designing a Go package with a UserService that depends on a UserStore interface. Should my NewUserService constructor return *UserService or UserServiceInterface? Show me the constructor signature.",
-    "trap": "Without the skill, the model may suggest returning an interface for 'flexibility' or 'abstraction'. The skill says functions SHOULD return concrete types -- NEVER return interfaces from constructors.",
+    "trap": "Applies a blanket style rule instead of the requested behavior and project conventions.",
     "assertions": [
-      {"id": "2.1", "text": "Constructor returns *UserService (concrete type), NOT an interface"},
-      {"id": "2.2", "text": "Constructor accepts UserStore as an interface parameter (accept interfaces)"},
-      {"id": "2.3", "text": "Explains WHY: callers get full access to the concrete type's fields/methods; consumers can assign to interface if needed"},
-      {"id": "2.4", "text": "Explicitly states that returning interfaces from constructors is bad practice"},
-      {"id": "2.5", "text": "The accept-interfaces-return-structs principle is stated or demonstrated"}
+      {"id": "2.1", "text": "Explains when a concrete return is useful to callers"},
+      {"id": "2.2", "text": "Keeps the dependency contract focused on needed methods"},
+      {"id": "2.3", "text": "Explains when an interface return hides a deliberately private implementation"},
+      {"id": "2.4", "text": "Does not label interface-returning constructors inherently bad"},
+      {"id": "2.5", "text": "Follows existing project API conventions and avoids speculative abstractions"}
     ]
   },
   {

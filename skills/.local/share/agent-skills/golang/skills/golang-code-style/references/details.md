@@ -2,37 +2,26 @@
 
 ## Extract Complex Conditions
 
-When `if` conditions span multiple operands, extract into named booleans:
+Name a condition when the name adds meaning; a count of operands is not a reason
+to extract it. Straightforward checks can remain inline:
 
 ```go
-// Good — self-documenting
-isAdmin := user.Role == RoleAdmin
-isOwner := resource.OwnerID == user.ID
-hasOverride := permissions.Contains(PermOverride)
-if isAdmin || isOwner || hasOverride {
-    allow()
-}
-
-// Bad — wall of logic
-if user.Role == RoleAdmin || resource.OwnerID == user.ID || permissions.Contains(PermOverride) {
-    allow()
+if x == nil || y == nil || z == nil {
+    return errMissingInput
 }
 ```
 
-**Exception:** When the last condition involves expensive processing, keep it inline to benefit from short-circuit evaluation:
+Preserve short-circuit evaluation. Hoisting a function call can introduce work,
+side effects, or a panic on a path that previously skipped it:
 
 ```go
-// Good — avoid expensive operation when possible
 if isAdmin || isOwner || expensivePermissionCheck(user, resource) {
     allow()
 }
-
-// Wasteful — always runs expensive check
-canOverride := expensivePermissionCheck(user, resource)
-if isAdmin || isOwner || canOverride {
-    allow()
-}
 ```
+
+Follow the requested form and surrounding style. Avoid inventing temporary boolean
+variables when they only restate the expression.
 
 ## Value vs Pointer Arguments
 

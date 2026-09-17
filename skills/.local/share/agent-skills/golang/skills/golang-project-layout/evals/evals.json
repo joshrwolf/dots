@@ -18,13 +18,13 @@
     "name": "cmd-directory-minimal-logic",
     "description": "Tests whether the model keeps cmd/ main.go minimal with no business logic",
     "prompt": "I'm organizing a Go project with an HTTP server. Here's my cmd/server/main.go that has 200 lines including request parsing, database queries, and response formatting. Is this OK?",
-    "trap": "Without the skill, the model may accept the large main.go or only suggest minor improvements. The skill says cmd/ MUST contain only main.go with minimal logic -- parse flags, wire dependencies, call Run().",
+    "trap": "Without the skill, the model may accept the large main.go or only suggest minor improvements. Substantial reusable logic can move into focused internal packages; cmd packages may contain multiple files and tests.",
     "assertions": [
       {"id": "2.1", "text": "Says business logic does NOT belong in cmd/server/main.go"},
       {"id": "2.2", "text": "Says cmd/ should contain minimal logic: parse flags, wire dependencies, call Run()"},
       {"id": "2.3", "text": "Recommends moving business logic to internal/ or pkg/"},
       {"id": "2.4", "text": "main.go should primarily do dependency wiring and startup"},
-      {"id": "2.5", "text": "NEVER put request parsing, database queries, or response formatting in cmd/"}
+      {"id": "2.5", "text": "Extracts substantial reusable or independently testable logic without requiring a fixed main-package file count"}
     ]
   },
   {
@@ -39,7 +39,7 @@
       {"id": "3.3", "text": "Rejects helpers/ as a generic package name"},
       {"id": "3.4", "text": "Rejects common/ as a generic package name"},
       {"id": "3.5", "text": "Suggests domain-specific package names instead (e.g. format/, stringconv/)"},
-      {"id": "3.6", "text": "Recommends putting main.go inside cmd/{name}/ not at root or in src/"}
+      {"id": "3.6", "text": "Allows a root main package for a small command or cmd/{name} when separating entrypoints helps"}
     ]
   },
   {

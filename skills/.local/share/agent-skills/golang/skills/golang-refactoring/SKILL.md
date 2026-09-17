@@ -27,7 +27,7 @@ paths:
   - "**/*.go"
 ---
 
-> **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-refactoring` skill takes precedence.
+> Apply repository instructions and required project skills first. These guidelines are defaults where the project leaves a choice.
 
 **Modes:**
 
@@ -75,9 +75,12 @@ See [workflow.md](references/workflow.md).
 - **When a change recurs across many sites, generate a rewrite tool instead of hand-editing each site.**
   - Escalate `gofmt -r` → `eg` → a `go/analysis` fixer, in order of increasing power (see [go-tooling.md](references/go-tooling.md)).
   - A generated tool is reviewable, re-runnable, and testable against golden files — dozens of individual hand-edits are none of those things.
-- **Use a type alias (`type A = B`) for every type moved across packages.**
-  - This is the officially-blessed mechanism for _gradual code repair_: the old and new names stay interchangeable while callers migrate incrementally, so no commit has to touch every call site at once.
-  - See [structural.md](references/structural.md).
+- **Move declarations and update affected callers directly.** Remove obsolete
+  declarations and imports, then verify affected packages and consumers. Do not
+  introduce compatibility aliases, forwarding wrappers, or deprecation stages by
+  default. If actual external consumers impose a compatibility contract, resolve
+  that requirement before changing the public API. See [structural.md](references/structural.md).
+
 - **Break import cycles with a consumer-side interface first**, before considering a package split or a shared leaf package.
   - Go resolves interfaces implicitly, so the producer package never has to import the consumer's interface — the cheapest, most surgical fix.
   - See [structural.md](references/structural.md).
@@ -132,7 +135,7 @@ session's agreed workflow rather than a skill-mandated sequence.
 - **[catalog.md](references/catalog.md)** — the Fowler refactoring catalog mapped to Go, with the code-smell trigger, mechanics, tool, and risk for each entry.
 - **[go-tooling.md](references/go-tooling.md)** — gopls code actions, CLI invocation, `gofmt -r`, `eg`, `go/analysis`/`//go:fix inline`, `dave/dst`, and the deprecated-tool notes.
 - **[safety-net.md](references/safety-net.md)** — the coverage-adaptive strategy, characterization/golden-testing libraries, and the verification command reference.
-- **[structural.md](references/structural.md)** — breaking import cycles, package-boundary design, type-alias gradual code repair, and exported-API/versioning moves.
+- **[structural.md](references/structural.md)** — breaking import cycles, package-boundary design, direct cross-package moves, and exported-API/versioning moves.
 
 ## Cross-References
 
