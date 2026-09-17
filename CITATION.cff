@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use these skills, please cite them as below."
+title: "samber/cc-skills-golang: AI Agent Skills for production-ready Go projects"
+abstract: >-
+  A collection of AI agent skills that extend coding assistants with Go-specific
+  expertise: language idioms, naming, error handling, testing, security,
+  performance, concurrency, observability and project layout.
+type: software
+authors:
+  - family-names: Berthe
+    given-names: Samuel
+    orcid: "https://orcid.org/0009-0000-2060-7721"
+    email: hello@samuel-berthe.fr
+doi: 10.5281/zenodo.21605229
+date-released: 2026-03-22
+license: MIT
+repository-code: "https://github.com/samber/cc-skills-golang"
+url: "https://github.com/samber/cc-skills-golang"
+keywords:
+  - golang
+  - go
+  - ai-agent
+  - agent-skills
+  - claude-code
+  - llm
+  - developer-productivity
