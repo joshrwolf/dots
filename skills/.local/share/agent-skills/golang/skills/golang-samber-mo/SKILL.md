@@ -1,6 +1,6 @@
 ---
 name: golang-samber-mo
-description: "Monadic types for Golang using samber/mo — Option, Result, Either, Future, IO, Task, and State types for type-safe nullable values, error handling, and functional composition with pipeline sub-packages. Apply when using or adopting samber/mo, when the codebase imports `github.com/samber/mo`, or when considering functional programming patterns as a safety design for Golang. Not for nil-safety and zero-value design without this library (→ See `samber/cc-skills-golang@golang-safety` skill), nor for native error wrapping with fmt.Errorf, errors.Is and errors.As (→ See `samber/cc-skills-golang@golang-error-handling` skill)."
+description: "Use samber/mo types in Go. Apply to Option, Result, Either, Future, IO, Task, and State when the project uses or is adopting this library."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -15,14 +15,10 @@ metadata:
         - go
     install: []
     skill-library-version: "1.16.0"
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch mcp__context7__resolve-library-id mcp__context7__query-docs AskUserQuestion Bash(godig:*) Bash(gopls:*) LSP mcp__gopls__*
+allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch AskUserQuestion Bash(gopls:*) LSP mcp__gopls__*
 paths:
   - "**/*.go"
 ---
-
-**Persona:** You are a Go engineer bringing functional programming safety to Go. You use monads to make impossible states unrepresentable — nil checks become type constraints, error handling becomes composable pipelines.
-
-**Thinking mode:** Reason as thoroughly as possible when designing multi-step Option/Result/Either pipelines — wrong type choice creates unnecessary wrapping/unwrapping that defeats the purpose of monads. On Claude Code, use `ultrathink` to trigger extended thinking explicitly.
 
 # samber/mo — Monads and Functional Abstractions for Go
 
@@ -35,9 +31,8 @@ Go 1.18+ library providing type-safe monadic types with zero dependencies. Inspi
 
 This skill is not exhaustive — refer to library documentation and code examples for more information:
 
-- For Go package docs, symbols, versions, importers, and known vulnerabilities, → See `samber/cc-skills-golang@golang-pkg-go-dev` skill (`godig`), preferred over Context7 for Go package facts.
+- Consult `go doc` for the resolved package API; see `golang-go-doc` for lookup guidance.
 - To navigate this library's usage in your own code (definitions, call sites, diagnostics), → See `samber/cc-skills-golang@golang-gopls` skill (`gopls`).
-- Context7 remains a fallback for docs not indexed on pkg.go.dev.
 
 ```bash
 go get github.com/samber/mo
@@ -270,11 +265,9 @@ str := mo.Fold[error, int, string](
 
 For advanced types (Future, IO, Task, State), see [Advanced Types Reference](./references/advanced-types.md).
 
-If you encounter a bug or unexpected behavior in samber/mo, open an issue at <https://github.com/samber/mo/issues>.
 
 ## Cross-References
 
-- → See `samber/cc-skills-golang@golang-samber-lo` skill for functional collection transforms (Map, Filter, Reduce on slices) that compose with mo types
 - → See `samber/cc-skills-golang@golang-error-handling` skill for idiomatic Go error handling patterns
 - → See `samber/cc-skills-golang@golang-safety` skill for nil-safety and defensive Go coding
 - → See `samber/cc-skills-golang@golang-database` skill for database access patterns

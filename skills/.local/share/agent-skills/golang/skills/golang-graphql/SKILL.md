@@ -1,6 +1,6 @@
 ---
 name: golang-graphql
-description: "Implements GraphQL APIs in Golang using gqlgen or graphql-go. Apply when building GraphQL servers, designing schemas, writing resolvers, handling subscriptions, or integrating GraphQL with existing Go HTTP services. Also apply when the codebase imports `github.com/99designs/gqlgen` or `github.com/graph-gophers/graphql-go`."
+description: "Build GraphQL APIs in Go with gqlgen or graphql-go. Use for schemas, resolvers, subscriptions, authorization, and API tests."
 user-invocable: false
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -15,12 +15,10 @@ metadata:
         - go
     install: []
     skill-library-version: "0.17.89"
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch mcp__context7__resolve-library-id mcp__context7__query-docs Bash(curl:*) Bash(godig:*) Bash(gopls:*) LSP mcp__gopls__*
+allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch Bash(curl:*) Bash(gopls:*) LSP mcp__gopls__*
 paths:
   - "**/*.go"
 ---
-
-**Persona:** You are a Go GraphQL engineer. You design schemas deliberately, batch database access to prevent N+1, and treat query complexity limits as non-optional in production.
 
 **Modes:**
 
@@ -35,9 +33,8 @@ Both major libraries are schema-first: write SDL (`.graphql` files), bind Go res
 
 This skill is not exhaustive — refer to each library's official documentation and code examples for current API signatures:
 
-- For Go package docs, symbols, versions, importers, and known vulnerabilities, → See `samber/cc-skills-golang@golang-pkg-go-dev` skill (`godig`), preferred over Context7 for Go package facts.
+- Consult `go doc` for the resolved package API; see `golang-go-doc` for lookup guidance.
 - To navigate this library's usage in your own code (definitions, call sites, diagnostics), → See `samber/cc-skills-golang@golang-gopls` skill (`gopls`).
-- Context7 remains a fallback for docs not indexed on pkg.go.dev.
 
 ## Library Choice
 
@@ -276,7 +273,3 @@ For graph-gophers: `graphql.MaxDepth(10)` and `graphql.MaxParallelism(10)` optio
 - [gqlgen](https://github.com/99designs/gqlgen)
 - [graph-gophers/graphql-go](https://github.com/graph-gophers/graphql-go)
 - [Relay cursor connections spec](https://relay.dev/graphql/connections.htm)
-
-If you encounter a bug or unexpected behavior in gqlgen, open an issue at <https://github.com/99designs/gqlgen/issues>.
-
-If you encounter a bug or unexpected behavior in graph-gophers/graphql-go, open an issue at <https://github.com/graph-gophers/graphql-go/issues>.

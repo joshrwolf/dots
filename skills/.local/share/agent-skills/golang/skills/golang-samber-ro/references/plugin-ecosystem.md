@@ -145,7 +145,6 @@ ro.Pipe1(workStream, ro.TakeUntil[Work, os.Signal](shutdown))
 
 | Plugin  | Import            | Purpose                                |
 | ------- | ----------------- | -------------------------------------- |
-| Testify | `plugins/testify` | Test assertions for observable streams |
 
 ## Utilities
 

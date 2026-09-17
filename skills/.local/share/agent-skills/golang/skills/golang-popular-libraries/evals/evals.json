@@ -143,11 +143,11 @@
     "name": "slices-maps-packages-go121",
     "description": "Tests whether the model recommends the standard library slices/maps packages (Go 1.21+) instead of external utility libraries for basic operations",
     "prompt": "I need utility functions for slice operations in my Go 1.22 project — things like contains, sort, filter, and reverse. What should I use?",
-    "trap": "Without the skill, the model recommends samber/lo or a similar utility library for basic operations that the standard library slices package already provides since Go 1.21",
+    "trap": "Without the skill, the model recommends an external collection helper or a similar utility library for basic operations that the standard library slices package already provides since Go 1.21",
     "assertions": [
       {"id": "11.1", "text": "Recommends the standard library slices package (Go 1.21+) for Contains, Sort, Reverse, and similar operations"},
       {"id": "11.2", "text": "Does NOT recommend only external libraries for basic slice operations that slices package covers"},
-      {"id": "11.3", "text": "May mention samber/lo or similar for functional operations (Map, Filter, Reduce) not in stdlib slices"},
+      {"id": "11.3", "text": "Uses direct loops for transformations not supplied by stdlib slices"},
       {"id": "11.4", "text": "Distinguishes between operations covered by stdlib (Contains, Sort, Reverse, Compact, BinarySearch) and those requiring external libraries (Map, Filter, GroupBy)"},
       {"id": "11.5", "text": "Applies the 'standard library first' principle"}
     ]

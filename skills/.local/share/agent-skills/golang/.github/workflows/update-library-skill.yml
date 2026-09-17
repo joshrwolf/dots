@@ -28,7 +28,6 @@ jobs:
             The library name is {library-name}. Not all skills describe a library.
             Examples of library skills:
             - golang-samber-hot
-            - golang-samber-lo
             - golang-samber-mo
             - golang-samber-slog
             - golang-samber-do

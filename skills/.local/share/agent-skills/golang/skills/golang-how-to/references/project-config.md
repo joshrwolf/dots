@@ -112,7 +112,6 @@ Additional skills to suggest based on codebase context:
 - CI config detected (`.github/workflows/`) → suggest `golang-continuous-integration`
 - Cobra imports detected → suggest `golang-spf13-cobra`
 - Viper imports detected → suggest `golang-spf13-viper`
-- samber/lo imports detected → suggest `golang-samber-lo`
 - Any other library-specific import → suggest the matching library skill
 
 ## Step 4 — Write the block

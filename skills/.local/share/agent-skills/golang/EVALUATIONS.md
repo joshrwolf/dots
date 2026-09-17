@@ -1,3 +1,6 @@
+> Upstream evaluation archive. These results predate the dots customizations,
+> including the replacement of the Testify skill. They are not local validation.
+
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable table-column-style -->
 <!-- markdownlint-disable no-space-in-emphasis -->

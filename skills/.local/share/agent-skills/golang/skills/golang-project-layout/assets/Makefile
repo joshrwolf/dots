@@ -62,12 +62,12 @@ fmt:
 ## outdated: Check for outdated dependencies
 outdated:
 	@echo "Checking for outdated dependencies..."
-	go list -u -m -json all | go-mod-outdated -update -direct
+	$(GO) list -m -u all
 
-## weight: Analyze package dependencies
+## weight: List build package dependencies
 weight:
-	@echo "Analyzing package weight..."
-	goweight
+	@echo "Listing build package dependencies..."
+	$(GO) list -deps ./...
 
 ## audit: Audit dependencies for security vulnerabilities
 audit:

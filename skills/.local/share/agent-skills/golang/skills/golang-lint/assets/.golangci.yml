@@ -57,7 +57,6 @@ linters:
     - sloglint # consistent log/slog code style
     - loggercheck # key-value pair validation for structured loggers (zap, slog, logr)
     # testing
-    - testifylint # testify best practices
     - thelper # test helpers missing t.Helper()
     - usetesting # use t.Setenv/t.TempDir instead of os equivalents in tests
     - paralleltest # tests and subtests missing t.Parallel()
@@ -139,7 +138,6 @@ formatters:
     # - gofmt    # redundant: gofumpt already applies gofmt's rules
     # - gci      # import grouping/ordering — gofumpt already handles standard grouping
     # - golines  # line wrapping — too opinionated, can break readability
-    # - swaggo   # swaggo comment formatting — only for swaggo users
   settings:
     gofumpt:
       extra-rules: true

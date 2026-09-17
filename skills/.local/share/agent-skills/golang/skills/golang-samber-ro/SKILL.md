@@ -1,6 +1,6 @@
 ---
 name: golang-samber-ro
-description: "Reactive streams and event-driven programming in Golang using samber/ro — ReactiveX implementation with 150+ type-safe operators, cold/hot observables, 5 subject types (Publish, Behavior, Replay, Async, Unicast), declarative pipelines via Pipe, 40+ plugins (HTTP, cron, fsnotify, JSON, logging), automatic backpressure, error propagation, and Go context integration. Apply when using or adopting samber/ro, when the codebase imports github.com/samber/ro, or when building asynchronous event-driven pipelines, real-time data processing, streams, or reactive architectures in Go. Not for finite slice transforms (→ See `samber/cc-skills-golang@golang-samber-lo` skill)."
+description: "Use samber/ro reactive streams in Go. Apply to observables, subjects, operators, subscriptions, backpressure, and stream integrations."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -15,14 +15,10 @@ metadata:
         - go
     install: []
     skill-library-version: "0.3.0"
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent mcp__context7__resolve-library-id mcp__context7__query-docs AskUserQuestion Bash(godig:*) Bash(gopls:*) LSP mcp__gopls__*
+allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent AskUserQuestion Bash(gopls:*) LSP mcp__gopls__*
 paths:
   - "**/*.go"
 ---
-
-**Persona:** You are a Go engineer who reaches for reactive streams when data flows asynchronously or infinitely. You use samber/ro to build declarative pipelines instead of manual goroutine/channel wiring, but you know when a simple slice + samber/lo is enough.
-
-**Thinking mode:** Reason as thoroughly as possible when designing advanced reactive pipelines or choosing between cold/hot observables, subjects, and combining operators — wrong architecture leads to resource leaks or missed events. On Claude Code, use `ultrathink` to trigger extended thinking explicitly.
 
 # samber/ro — Reactive Streams for Go
 
@@ -36,9 +32,8 @@ Go implementation of [ReactiveX](https://reactivex.io/). Generics-first, type-sa
 
 This skill is not exhaustive — refer to library documentation and code examples for more information:
 
-- For Go package docs, symbols, versions, importers, and known vulnerabilities, → See `samber/cc-skills-golang@golang-pkg-go-dev` skill (`godig`), preferred over Context7 for Go package facts.
+- Consult `go doc` for the resolved package API; see `golang-go-doc` for lookup guidance.
 - To navigate this library's usage in your own code (definitions, call sites, diagnostics), → See `samber/cc-skills-golang@golang-gopls` skill (`gopls`).
-- Context7 remains a fallback for docs not indexed on pkg.go.dev.
 
 ## Why samber/ro (Streams vs Slices)
 
@@ -48,7 +43,7 @@ Go channels + goroutines become unwieldy for complex async pipelines: manual cha
 
 | Scenario | Tool | Why |
 | --- | --- | --- |
-| Transform a slice (map, filter, reduce) | `samber/lo` | Finite, synchronous, eager — no stream overhead needed |
+| Transform a slice (map, filter, reduce) | loops and stdlib collections | Finite, synchronous, eager — no stream overhead needed |
 | Simple goroutine fan-out with error handling | `errgroup` | Standard lib, lightweight, sufficient for bounded concurrency |
 | Infinite event stream (WebSocket, tickers, file watcher) | `samber/ro` | Declarative pipeline with backpressure, retry, timeout, combine |
 | Real-time data enrichment from multiple async sources | `samber/ro` | CombineLatest/Zip compose dependent streams without manual select |
@@ -56,7 +51,7 @@ Go channels + goroutines become unwieldy for complex async pipelines: manual cha
 
 **Key differences: lo vs ro**
 
-| Aspect | `samber/lo` | `samber/ro` |
+| Aspect | loops and stdlib collections | `samber/ro` |
 | --- | --- | --- |
 | Data | Finite slices | Infinite streams |
 | Execution | Synchronous, blocking | Asynchronous, non-blocking |
@@ -146,7 +141,7 @@ For the complete operator catalog (150+ operators with signatures), see [Operato
 | Using untyped `Pipe()` instead of `Pipe2`/`Pipe3` | Loses compile-time type safety, errors surface at runtime | Use `Pipe2`, `Pipe3`...`Pipe25` for typed operator chains |
 | Forgetting `.Unsubscribe()` on infinite streams | Goroutine leak — the observable runs forever | Use `TakeUntil(signal)`, context cancellation, or explicit `Unsubscribe()` |
 | Using `Share()` when cold is sufficient | Unnecessary complexity, harder to reason about lifecycle | Use hot observables only when multiple consumers need the same stream |
-| Using `samber/ro` for finite slice transforms | Stream overhead (goroutines, subscriptions) for a synchronous operation | Use `samber/lo` — it's simpler, faster, and purpose-built for slices |
+| Using `samber/ro` for finite slice transforms | Stream overhead (goroutines, subscriptions) for a synchronous operation | Use a loop — it is purpose-built for slices |
 | Not propagating context for cancellation | Streams ignore shutdown signals, causing resource leaks on termination | Chain `ContextWithTimeout` or `ThrowOnContextCancel` in the pipeline |
 
 ## Best Practices
@@ -156,7 +151,7 @@ For the complete operator catalog (150+ operators with signatures), see [Operato
 3. **Prefer typed Pipe functions** — `Pipe2`, `Pipe3`...`Pipe25` catch type mismatches at compile time. Reserve untyped `Pipe` for dynamic operator chains
 4. **Bound infinite streams** — use `Take(n)`, `TakeUntil(signal)`, `Timeout(d)`, or context cancellation. Unbounded streams leak goroutines
 5. **Use `Tap`/`Do` for observability** — log, trace, or meter emissions without altering the stream. Chain `TapOnError` for error monitoring
-6. **Prefer `samber/lo` for simple transforms** — if the data is a finite slice and you need Map/Filter/Reduce, use `lo`. Reach for `ro` when data arrives over time, from multiple sources, or needs retry/timeout/backpressure
+6. **Use loops for finite slice transforms.** Reach for `ro` when data arrives over time, from multiple sources, or needs retry/timeout/backpressure
 
 ## Plugin Ecosystem
 
@@ -176,11 +171,9 @@ For the full plugin catalog with import paths and usage examples, see [Plugin Ec
 
 For real-world reactive patterns (retry+timeout, WebSocket fan-out, graceful shutdown, stream combination), see [Patterns](./references/patterns.md).
 
-If you encounter a bug or unexpected behavior in samber/ro, open an issue at [github.com/samber/ro/issues](https://github.com/samber/ro/issues).
 
 ## Cross-References
 
-- → See `samber/cc-skills-golang@golang-samber-lo` skill for finite slice transforms (Map, Filter, Reduce, GroupBy) — use lo when data is already in a slice
 - → See `samber/cc-skills-golang@golang-samber-mo` skill for monadic types (Option, Result, Either) that compose with ro pipelines
 - → See `samber/cc-skills-golang@golang-samber-hot` skill for in-memory caching (also available as an ro plugin)
 - → See `samber/cc-skills-golang@golang-concurrency` skill for goroutine/channel patterns when reactive streams are overkill

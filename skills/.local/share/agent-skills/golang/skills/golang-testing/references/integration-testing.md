@@ -79,87 +79,76 @@ INSERT INTO orders (user_id, amount, status) VALUES
 
 ## Using Fixtures in Tests
 
+Start the test services outside the test process, wait for readiness, and provide
+`TEST_DATABASE_URL`. Give each test an isolated transaction; every query under
+test must use that transaction for rollback to provide isolation. Tests that
+commit transactions need their own database or schema instead.
+
 ```go
 //go:build integration
 
 package database_test
 
 import (
-    "database/sql"
-    "os"
-    "os/exec"
-    "testing"
-    "time"
-    "github.com/stretchr/testify/assert"
-    "github.com/stretchr/testify/suite"
+	"context"
+	"database/sql"
+	"os"
+	"testing"
+
+	_ "github.com/lib/pq"
 )
 
-type DatabaseTestSuite struct {
-    suite.Suite
-    db *sql.DB
+func fixtureTx(t *testing.T) *sql.Tx {
+	t.Helper()
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Fatal("TEST_DATABASE_URL must point to an isolated test database")
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("begin fixture transaction: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := tx.Rollback(); err != nil {
+			t.Errorf("rollback fixture transaction: %v", err)
+		}
+	})
+	for _, path := range []string{"testdata/schema.sql", "testdata/testdata.sql"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if _, err := tx.Exec(string(data)); err != nil {
+			t.Fatalf("load %s: %v", path, err)
+		}
+	}
+	return tx
 }
 
-func (s *DatabaseTestSuite) SetupSuite() {
-    cmd := exec.Command("docker-compose", "-f", "testdata/docker-compose.yml", "up", "-d")
-    if err := cmd.Run(); err != nil {
-        s.T().Fatalf("failed to start docker-compose: %v", err)
-    }
-
-    time.Sleep(5 * time.Second)
-
-    db, err := sql.Open("postgres", "postgres://test:test@localhost:5433/testdb?sslmode=disable")
-    if err != nil {
-        s.T().Fatalf("failed to connect to database: %v", err)
-    }
-    s.db = db
-
-    schema, _ := os.ReadFile("testdata/schema.sql")
-    _, err = db.Exec(string(schema))
-    if err != nil {
-        s.T().Fatalf("failed to run schema: %v", err)
-    }
-}
-
-func (s *DatabaseTestSuite) TearDownSuite() {
-    cmd := exec.Command("docker-compose", "-f", "testdata/docker-compose.yml", "down", "-v")
-    _ = cmd.Run()
-}
-
-func (s *DatabaseTestSuite) SetupTest() {
-    _, err := s.db.Exec("TRUNCATE TABLE orders, users CASCADE")
-    if err != nil {
-        s.T().Fatalf("failed to clear database: %v", err)
-    }
-
-    testdata, _ := os.ReadFile("testdata/testdata.sql")
-    _, err = s.db.Exec(string(testdata))
-    if err != nil {
-        s.T().Fatalf("failed to load test data: %v", err)
-    }
-}
-
-func (s *DatabaseTestSuite) TestUserCount() {
-    is := assert.New(s.T())
-
-    var count int
-    err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
-    is.NoError(err)
-    is.Equal(3, count)
-}
-
-func (s *DatabaseTestSuite) TestOrderSum() {
-    is := assert.New(s.T())
-
-    var sum float64
-    err := s.db.QueryRow("SELECT SUM(amount) FROM orders").Scan(&sum)
-    is.NoError(err)
-    is.InDelta(350.0, sum, 0.01)
-}
-
-func TestDatabaseTestSuite(t *testing.T) {
-    suite.Run(t, new(DatabaseTestSuite))
+func TestUserCount(t *testing.T) {
+	tx := fixtureTx(t)
+	var count int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM users").Scan(&count); err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if count != 3 {
+		t.Errorf("user count = %d, want 3", count)
+	}
 }
 ```
+
+Cleanup registration order ensures rollback happens before the connection closes.
+The fixtures assume an empty, disposable database; do not load them into a shared
+or production database. Match the SQL driver to the application's existing stack.
 
 ## Test Helper with Embedded Fixtures
 

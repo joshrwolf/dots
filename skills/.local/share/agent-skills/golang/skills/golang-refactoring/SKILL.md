@@ -1,6 +1,6 @@
 ---
 name: golang-refactoring
-description: "Golang refactoring — safe, at-scale restructuring of existing Go code: a coverage-adaptive safety net, behavior-preserving transforms (gopls Rename/Extract, `gofmt -r`, `gopatch`), the Fowler catalog mapped to Go, breaking import cycles, and small stacked PRs. Apply when a function or type has grown too large, a code smell blocks a feature, or the user asks to refactor Go code — also for renaming at scale, extracting functions or interfaces, moving code between packages, or planning a multi-step refactor. Target styles owned elsewhere → See `samber/cc-skills-golang@golang-naming` (renames), `samber/cc-skills-golang@golang-project-layout` (splits), `samber/cc-skills-golang@golang-modernize` (idioms), `samber/cc-skills-golang@golang-code-style` (control flow), `samber/cc-skills-golang@golang-design-patterns` (patterns/DI)."
+description: "Plan and execute Go refactors. Use for renaming, extracting functions, moving code across packages, breaking import cycles, or sequencing structural changes."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang. Requires gopls and git.
@@ -29,12 +29,6 @@ paths:
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-refactoring` skill takes precedence.
 
-**Persona:** You are a Go refactoring engineer. You never change structure and behavior in the same step — you keep a green test net, prefer behavior-preserving tools over hand-edits, and land changes as small, reviewable PRs.
-
-**Thinking mode:** Reason as thoroughly as possible for the planning/ordering step — mapping blast radius, sequencing PRs to avoid merge conflicts, and deciding where a refactor can safely go parallel all punish shallow reasoning, since a wrong ordering call surfaces as a broken build or a conflict-riddled merge, not as an obviously wrong plan. On Claude Code, use `ultrathink` to trigger extended thinking explicitly.
-
-**Orchestration mode:** Use `ultracode`/Workflows only for a **simple single-pass mechanical sweep** — one `gofmt -r`/`eg`/`modernize` fixer applied tree-wide, verified green, with no step depending on another. Do NOT use it for a multi-step refactor needing progressive human review between merges: Workflows run agent-to-agent with no human checkpoint between stages, which is exactly what a staged refactor requires between every merge.
-
 **Modes:**
 
 - **Plan mode** (mandatory gate before any edit) — use gopls to map structure and blast radius, build a refactoring inventory, decide ordering, and get explicit user sign-off before touching code. See [workflow.md](references/workflow.md).
@@ -44,7 +38,7 @@ paths:
 
 **Questions:** Sign-off gates in this skill (Plan mode's initial approval, and every mid-refactor checkpoint below) are asked through the environment's question tool, never as plain-text prose the reader might skim past — a refactor is exactly the kind of workflow where an unnoticed "assumed yes" is expensive to undo. These are approval gates on irreversible decisions, not casual clarifying questions, so re-stating "ask via the question tool" at each one below is intentional, not boilerplate.
 
-**Dependencies:** `gopls` (primary actuator) — `go install golang.org/x/tools/gopls@latest`. Optional: `golangci-lint`, `benchstat`, `deadcode`, `eg`, `gopatch`. Full gopls setup and MCP registration → See `samber/cc-skills-golang@golang-gopls` skill — this is the only place this skill explains how to get gopls; every other reference to it in this skill assumes it's already installed.
+**Dependencies:** `gopls` (primary actuator) — `go install golang.org/x/tools/gopls@latest`. Optional: `golangci-lint`, `benchstat`, `deadcode`, `eg`. Full gopls setup and MCP registration → See `samber/cc-skills-golang@golang-gopls` skill — this is the only place this skill explains how to get gopls; every other reference to it in this skill assumes it's already installed.
 
 # Go Refactoring — Safe Change at Scale
 
@@ -78,7 +72,7 @@ paths:
   - Both are behavior-preserving by construction — Rename refuses on shadowing, interface-satisfaction breakage, or malformed code rather than silently producing a bad diff; Inline substitutes side-effect-bearing arguments into `var` temporaries rather than duplicating them.
   - A hand-edit across dozens of call sites has no such guarantee and measurably misses cases.
 - **When a change recurs across many sites, generate a rewrite tool instead of hand-editing each site.**
-  - Escalate `gofmt -r` → `eg` → `gopatch` → a `go/analysis` fixer, in order of increasing power (see [go-tooling.md](references/go-tooling.md)).
+  - Escalate `gofmt -r` → `eg` → a `go/analysis` fixer, in order of increasing power (see [go-tooling.md](references/go-tooling.md)).
   - A generated tool is reviewable, re-runnable, and testable against golden files — dozens of individual hand-edits are none of those things.
 - **Use a type alias (`type A = B`) for every type moved across packages.**
   - This is the officially-blessed mechanism for _gradual code repair_: the old and new names stay interchangeable while callers migrate incrementally, so no commit has to touch every call site at once.
@@ -141,7 +135,7 @@ Refactoring is an investment that only pays off if a future change is coming to 
 
 - **[workflow.md](references/workflow.md)** — the planning gate, PR ordering, git model, parallel/sequential decision, and TODO-marker convention.
 - **[catalog.md](references/catalog.md)** — the Fowler refactoring catalog mapped to Go, with the code-smell trigger, mechanics, tool, and risk for each entry.
-- **[go-tooling.md](references/go-tooling.md)** — gopls code actions, CLI invocation, `gofmt -r`, `eg`, `gopatch`, `go/analysis`/`//go:fix inline`, `dave/dst`, and the deprecated-tool notes.
+- **[go-tooling.md](references/go-tooling.md)** — gopls code actions, CLI invocation, `gofmt -r`, `eg`, `go/analysis`/`//go:fix inline`, `dave/dst`, and the deprecated-tool notes.
 - **[safety-net.md](references/safety-net.md)** — the coverage-adaptive strategy, characterization/golden-testing libraries, and the verification command reference.
 - **[structural.md](references/structural.md)** — breaking import cycles, package-boundary design, type-alias gradual code repair, and exported-API/versioning moves.
 
@@ -155,5 +149,3 @@ Refactoring is an investment that only pays off if a future change is coming to 
 - → See `samber/cc-skills-golang@golang-testing` skill for the test-writing practices that make the safety net in this skill trustworthy.
 - → See `samber/cc-skills-golang@golang-lint` skill for configuring `golangci-lint`, run here only as a post-step verification gate.
 - → See `samber/cc-skills-golang@golang-security` skill (and `golang-safety`) for reviewing any step that changes code logic, not just its shape.
-
-If you encounter a bug or unexpected behavior in `gopls`, open an issue at <https://github.com/golang/go/issues>.

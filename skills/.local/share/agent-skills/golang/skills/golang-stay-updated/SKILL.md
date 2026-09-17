@@ -1,6 +1,6 @@
 ---
 name: golang-stay-updated
-description: "Golang ecosystem watch list — official sources (go.dev/blog, pkg.go.dev, tour.golang.org, golang-nuts), newsletters (Golang Weekly, Awesome Go Newsletter), communities (r/golang, gophers.slack.com, Go Forum, go.dev/wiki), blogs (Dave Cheney, Ardan Labs, Rob Pike), YouTube channels (Gopher Academy, GopherCon EU/UK), conferences, and Go contributors to follow on GitHub, X and Bluesky. Use when seeking Golang learning resources, discovering new libraries or tools, finding community channels or meetups, picking Go people to follow, or keeping up with Go language changes and releases. Not for querying a specific module's versions, docs, or vulnerabilities from the CLI (→ See `samber/cc-skills-golang@golang-pkg-go-dev` skill)."
+description: "Find Go ecosystem news and learning resources. Use when asked about release announcements, newsletters, communities, talks, or conferences."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -132,7 +132,7 @@ Follow these influential Go developers and contributors:
 2. **Follow 10-20 key people** on X/Bluesky who post regularly
 3. **Check Go.dev/blog weekly** for official announcements
 4. **Join Go Slack** for real-time discussions
-5. **Bookmark pkg.go.dev** to discover new libraries — → See `samber/cc-skills-golang@golang-pkg-go-dev` skill to query a module's latest versions, docs, and vulnerabilities from the CLI
+5. **Bookmark pkg.go.dev** to discover new libraries — → See `golang-go-doc` skill to query a module's latest versions, docs, and vulnerabilities from the CLI
 6. **Attend a GopherCon** (virtual or in-person) yearly
 
 ---

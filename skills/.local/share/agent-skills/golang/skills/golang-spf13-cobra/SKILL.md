@@ -1,6 +1,6 @@
 ---
 name: golang-spf13-cobra
-description: "Golang CLI command tree library using spf13/cobra — cobra.Command, RunE vs Run, PersistentPreRunE hook chain, Args validators (NoArgs, ExactArgs, MatchAll, custom), persistent vs local flags, command groups, ValidArgsFunction, RegisterFlagCompletionFunc, ShellCompDirective, usage/help template customization, man-page and markdown doc generation, and testing with SetArgs/SetOut/SetErr. Apply when using or adopting spf13/cobra, or when the codebase imports `github.com/spf13/cobra`. For configuration layering alongside cobra, see the `samber/cc-skills-golang@golang-spf13-viper` skill. For general CLI architecture (project layout, exit codes, signal handling, I/O patterns), see `samber/cc-skills-golang@golang-cli`."
+description: "Use spf13/cobra for Go command trees. Apply to command hooks, arguments, flags, completions, help output, and command tests."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -15,12 +15,10 @@ metadata:
         - go
     install: []
     skill-library-version: "1.10.2"
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch mcp__context7__resolve-library-id mcp__context7__query-docs Bash(godig:*) Bash(gopls:*) LSP mcp__gopls__*
+allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch Bash(gopls:*) LSP mcp__gopls__*
 paths:
   - "**/*.go"
 ---
-
-**Persona:** You are a Go CLI engineer building command trees that feel native to the Unix shell. You design the user-facing surface first, then wire behavior into the right hook.
 
 **Modes:**
 
@@ -40,9 +38,8 @@ Cobra is the de facto standard for Go CLI applications. It provides the command/
 
 This skill is not exhaustive — refer to library documentation and code examples for more information:
 
-- For Go package docs, symbols, versions, importers, and known vulnerabilities, → See `samber/cc-skills-golang@golang-pkg-go-dev` skill (`godig`), preferred over Context7 for Go package facts.
+- Consult `go doc` for the resolved package API; see `golang-go-doc` for lookup guidance.
 - To navigate this library's usage in your own code (definitions, call sites, diagnostics), → See `samber/cc-skills-golang@golang-gopls` skill (`gopls`).
-- Context7 remains a fallback for docs not indexed on pkg.go.dev.
 
 ```bash
 go get github.com/spf13/cobra@latest
@@ -131,11 +128,15 @@ Test commands by executing them programmatically. **Never use `os.Stdout` / `os.
 
 ```go
 func TestServeCmd(t *testing.T) {
-    buf := new(bytes.Buffer)
-    rootCmd.SetOut(buf)
-    rootCmd.SetArgs([]string{"serve", "--port", "9090"})
-    require.NoError(t, rootCmd.Execute())
-    assert.Contains(t, buf.String(), "listening on :9090")
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetArgs([]string{"serve", "--port", "9090"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("rootCmd.Execute: %v", err)
+	}
+	if !strings.Contains(buf.String(), "listening on :9090") {
+		t.Errorf("output %q does not contain %q", buf.String(), "listening on :9090")
+	}
 }
 ```
 
@@ -172,5 +173,3 @@ Cobra accumulates flag state across `Execute()` calls — build a fresh command 
 - → See `samber/cc-skills-golang@golang-cli` skill for general CLI architecture — project layout, exit codes, signal handling, I/O patterns
 - → See `samber/cc-skills-golang@golang-spf13-viper` skill for configuration layering alongside cobra (flag → env → file → default precedence)
 - → See `samber/cc-skills-golang@golang-testing` skill for general Go testing patterns
-
-If you encounter a bug or unexpected behavior in spf13/cobra, open an issue at <https://github.com/spf13/cobra/issues>.

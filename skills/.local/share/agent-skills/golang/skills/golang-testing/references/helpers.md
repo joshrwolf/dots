@@ -1,42 +1,26 @@
-# Test Helpers
+# Test helpers and cleanup
 
-## Test Timeout
-
-For tests that may hang, use a timeout helper that panics with caller location:
+Use helpers for domain setup: constructing a valid fixture, opening a test
+resource, or starting an in-process server. Call `t.Helper()` so failures point
+to the caller, and register cleanup as soon as a resource is acquired.
 
 ```go
-// https://github.com/stretchr/testify/issues/1101
-func testWithTimeout(t *testing.T, timeout time.Duration) {
-    t.Helper()
-
-    testFinished := make(chan struct{})
-    t.Cleanup(func() {
-        close(testFinished)
-    })
-
-    var pc [1]uintptr
-    n := runtime.Callers(2, pc[:])
-    line, funcName := "", ""
-    if n > 0 {
-        frames := runtime.CallersFrames(pc[:])
-        frame, _ := frames.Next()
-        line = frame.File + ":" + strconv.Itoa(frame.Line)
-        funcName = frame.Function
-    }
-
-    go func() {
-        select {
-        case <-testFinished:
-        case <-time.After(timeout):
-            panic(fmt.Sprintf("%s: Test timed out after: %v\n%s", funcName, timeout, line))
-        }
-    }()
-}
-
-// Usage
-func TestLongRunningOperation(t *testing.T) {
-    testWithTimeout(t, 2*time.Second)
-    result := LongRunningOperation()
-    // If this takes longer than 2 seconds, the test panics with location info
+func writeConfig(t *testing.T, contents string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write test config: %v", err)
+	}
+	return path
 }
 ```
+
+`t.Cleanup` runs after a test and its subtests complete, in reverse registration
+order. Use `t.Errorf` for cleanup errors so later cleanup actions still run.
+Use `t.Setenv` for environment changes; these tests cannot run in parallel with
+other tests because the environment is process-wide.
+
+For blocking operations, pass a cancellable context with an appropriate timeout
+and wait for owned goroutines to exit. Set `go test -timeout` as a final bound;
+a detached watchdog that panics can terminate unrelated tests. Do not call
+`t.Fatal` from a worker goroutine: send its result back to the test goroutine.

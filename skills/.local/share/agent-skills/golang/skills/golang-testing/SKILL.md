@@ -1,6 +1,6 @@
 ---
 name: golang-testing
-description: "Production-ready Golang tests — table-driven tests, testify suites and mocks, parallel tests, fuzzing, fixtures, goroutine leak detection with goleak, snapshot testing, code coverage, integration tests, idiomatic test naming. Use when writing or reviewing Go tests, choosing a testing approach, setting up Go test CI, or debugging flaky/slow tests. For testify-specific APIs see `samber/cc-skills-golang@golang-stretchr-testify`; for measurement methodology see `samber/cc-skills-golang@golang-benchmark`."
+description: "Write, review, and debug Go tests using testing and focused fakes. Use for test cases, failure diagnostics, fixtures, integration tests, fuzzing, and flaky tests."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -13,34 +13,20 @@ metadata:
     requires:
       bins:
         - go
-        - gotests
-    install:
-      - kind: go
-        package: github.com/cweill/gotests/gotests@latest
-        bins: [gotests]
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent Bash(gotests:*) AskUserQuestion
+    install: []
+allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent AskUserQuestion
 paths:
   - "**/*.go"
 ---
 
-**Persona:** You are a Go engineer who treats tests as executable specifications. You write tests to constrain behavior, not to hit coverage targets.
-
-**Thinking mode:** Reason as thoroughly as possible for test strategy design and failure analysis — shallow reasoning misses edge cases and produces brittle tests that pass today but break tomorrow. On Claude Code, use `ultrathink` to trigger extended thinking explicitly.
-
-**Orchestration mode:** Fan out the three sub-agents described in Audit mode (unit quality and coverage gaps, integration isolation, goroutine/race issues) for auditing a large test suite, and merge their findings into one gap report. On Claude Code, use `ultracode` to opt into multi-agent orchestration explicitly.
-
 **Modes:**
 
-- **Write mode** — generating new tests for existing or new code. Work sequentially through the code under test; use `gotests` to scaffold table-driven tests, then enrich with edge cases and error paths.
+- **Write mode** — generating new tests for existing or new code. Work sequentially through the code under test; write focused cases for observable behavior, edge cases, and error paths.
 - **Review mode** — reviewing a PR's test changes. Focus on the diff: check coverage of new behaviour, assertion quality, table-driven structure, and absence of flakiness patterns. Sequential.
 - **Audit mode** — auditing an existing test suite for gaps, flakiness, or bad patterns (order-dependent tests, missing `t.Parallel()`, implementation-detail coupling). Launch up to 3 parallel sub-agents split by concern: (1) unit test quality and coverage gaps, (2) integration test isolation and build tags, (3) goroutine leaks and race conditions.
 - **Debug mode** — a test is failing or flaky. Work sequentially: reproduce reliably, isolate the failing assertion, trace the root cause in production code or test setup.
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-testing` skill takes precedence.
-
-**Dependencies:**
-
-- gotests: `go install github.com/cweill/gotests/gotests@latest`
 
 # Go Testing Best Practices
 
@@ -53,9 +39,9 @@ This skill guides the creation of production-ready tests for Go applications. Fo
 3. Tests MUST NOT depend on execution order -- each test MUST be independently runnable
 4. Independent tests SHOULD use `t.Parallel()` when possible
 5. Tests MUST assert observable behavior and public API contracts, not implementation details -- a test coupled to internals turns every refactor into a test rewrite while proving nothing about the contract
-6. Packages with goroutines SHOULD use `goleak.VerifyTestMain` in `TestMain` to detect goroutine leaks
-7. Use testify as helpers, not a replacement for standard library
-8. Mock interfaces, not concrete types
+6. Tests that start goroutines should cancel their work and verify completion before returning
+7. Use explicit standard-library checks; use go-cmp for structured failure diffs
+8. Implement focused fakes at consumed interface boundaries
 9. Keep unit tests fast (< 1ms), use build tags for integration tests
 10. Run tests with race detection in CI
 11. Include examples as executable documentation
@@ -74,7 +60,7 @@ package mypackage
 package mypackage_test
 ```
 
-Name the test file after the source file it tests, not after the function or method under test. Go's convention is one test file per source file (`foo.go` -> `foo_test.go`), because tools (`go test`, coverage reports, IDE "jump to test" navigation, `gotests`) and reviewers all resolve tests by source file, not by symbol. A source file usually declares several functions/methods; splitting its tests by symbol name scatters them across many files and breaks that file-to-file mapping.
+Name the test file after the source file it tests, not after the function or method under test. Go's convention is one test file per source file (`foo.go` -> `foo_test.go`), because tools (`go test`, coverage reports, IDE "jump to test" navigation) and reviewers all resolve tests by source file, not by symbol. A source file usually declares several functions/methods; splitting its tests by symbol name scatters them across many files and breaks that file-to-file mapping.
 
 ```
 // ✓ Good — one test file per source file
@@ -142,33 +128,39 @@ func TestCalculatePrice(t *testing.T) {
 }
 ```
 
-## Common Pitfall: Assert Scope Leaking into Subtests
+## Checks and failure diagnostics
 
-Never create a testify `assert`/`require` instance in the parent test function and reuse it inside `t.Run` closures. `assert.New(t)` captures the exact `*testing.T` it was built with, so if that `t` belongs to the parent, every failure raised inside the subtest gets attributed to the _parent_ test in `go test` output — the failing subtest itself still reports `--- PASS`, silently hiding which case broke. This happens whether or not the subtest calls `t.Parallel()`.
+Use explicit `if` checks with `t.Errorf` for independent failures. Use `t.Fatalf`
+when a failed prerequisite makes further checks invalid, such as a constructor
+error before dereferencing its result. Include the operation, actual value, and
+expected value. Use the current subtest's `t`, and return worker-goroutine errors
+to the test goroutine before calling `Fatalf`.
 
 ```go
-// WRONG -- `is` is bound to the parent's t
-func TestCalculatePrice(t *testing.T) {
-    is := assert.New(t)
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            is.Equal(tt.expected, CalculatePrice(tt.quantity, tt.unitPrice)) // misattributed on failure
-        })
-    }
+got, err := Parse(input)
+if err != nil {
+	t.Fatalf("Parse(%q): %v", input, err)
 }
-
-// RIGHT -- each subtest builds its own instance from its own t
-func TestCalculatePrice(t *testing.T) {
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            is := assert.New(t)
-            is.Equal(tt.expected, CalculatePrice(tt.quantity, tt.unitPrice))
-        })
-    }
+if got.Name != wantName {
+	t.Errorf("Parse(%q).Name = %q, want %q", input, got.Name, wantName)
 }
 ```
 
-Verify with a deliberately-broken case: if `go test -v -run TestName` shows `--- FAIL: TestName` but every `--- PASS: TestName/subtest_name` line still says PASS, the assert scope is leaking.
+Use `errors.Is` for sentinel errors and `errors.As` for typed errors; check error
+text only when that text is the contract. Use direct equality for scalars,
+`bytes.Equal` for bytes, and `slices.Equal` or `maps.Equal` when their equality
+semantics fit. For structured values needing readable diagnostics:
+
+```go
+if diff := cmp.Diff(want, got); diff != "" {
+	t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+}
+```
+
+Import `github.com/google/go-cmp/cmp`. Read `golang-go-cmp` when comparison
+options or unexported fields require special handling. Keep checks visible at
+the call site; helpers should arrange domain fixtures, not implement an assertion
+framework.
 
 ## Unit Tests
 
@@ -178,39 +170,13 @@ Unit tests should be fast (< 1ms), isolated (no external dependencies), and dete
 
 Use `httptest` for handler tests with table-driven patterns. See [HTTP Testing](./references/http-testing.md) for examples with request/response bodies, query parameters, headers, and status code assertions.
 
-## Goroutine Leak Detection with goleak
+## Goroutine lifetime tests
 
-Use `go.uber.org/goleak` to detect leaking goroutines, especially for concurrent code:
-
-```go
-import (
-    "testing"
-    "go.uber.org/goleak"
-)
-
-func TestMain(m *testing.M) {
-    goleak.VerifyTestMain(m)
-}
-```
-
-To exclude specific goroutine stacks (for known leaks or library goroutines):
-
-```go
-func TestMain(m *testing.M) {
-    goleak.VerifyTestMain(m,
-        goleak.IgnoreCurrent(),
-    )
-}
-```
-
-Or per-test:
-
-```go
-func TestWorkerPool(t *testing.T) {
-    defer goleak.VerifyNone(t)
-    // ... test code ...
-}
-```
+Give owned goroutines a cancellation path and an observable completion signal.
+Exercise success, error, and cancellation paths, then wait for completion before
+the test ends. Use channels or a WaitGroup rather than sleeps. A global goroutine
+count is noisy and cannot prove that a particular worker stopped. The race
+detector checks data races; it is not a leak detector.
 
 ## testing/synctest for Deterministic Goroutine Testing
 
@@ -266,7 +232,7 @@ Go 1.27+ also adds `httptest.NewTestServer()`, an in-memory fake-network variant
 
 ## Test Timeouts
 
-For tests that may hang, use a timeout helper that panics with caller location. See [Helpers](./references/helpers.md).
+Bound potentially blocking operations with cancellation and the test runner timeout. See [Helpers](./references/helpers.md).
 
 ## Benchmarks
 
@@ -305,23 +271,24 @@ Use `t.Parallel()` to run tests concurrently:
 
 ```go
 func TestParallelOperations(t *testing.T) {
-    tests := []struct {
-        name string
-        data []byte
-    }{
-        {"small data", make([]byte, 1024)},
-        {"medium data", make([]byte, 1024*1024)},
-    }
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"small data", make([]byte, 1024)},
+		{"medium data", make([]byte, 1024*1024)},
+	}
 
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            t.Parallel()
-            is := assert.New(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-            result := Process(tt.data)
-            is.NotNil(result)
-        })
-    }
+			result := Process(tt.data)
+			if result == nil {
+				t.Fatal("Process returned nil")
+			}
+		})
+	}
 }
 ```
 
@@ -383,25 +350,25 @@ Run integration tests separately:
 go test -tags=integration ./...
 ```
 
-For Docker Compose fixtures, SQL schemas, and integration test suites, see [Integration Testing](./references/integration-testing.md).
+For Docker Compose fixtures, SQL schemas, and integration tests with cleanup helpers, see [Integration Testing](./references/integration-testing.md).
 
 ## Mocking
 
-Mock interfaces, not concrete types. Define interfaces where consumed, then create mock implementations.
+Define narrow interfaces where consumed, then implement focused fakes with explicit behavior and recorded inputs. Avoid generating a framework of expectations for simple dependencies.
 
 For mock patterns, test fixtures, and time mocking, see [Mocking](./references/mocking.md).
 
 ## Enforce with Linters
 
-Many test best practices are enforced automatically by linters: `thelper`, `paralleltest`, `testifylint`. See the `samber/cc-skills-golang@golang-lint` skill for configuration and usage.
+Many test best practices are enforced automatically by linters: `thelper`, `paralleltest`. See the `samber/cc-skills-golang@golang-lint` skill for configuration and usage.
 
 ## Cross-References
 
-- → See `samber/cc-skills-golang@golang-stretchr-testify` skill for detailed testify API (assert, require, mock, suite)
+- See `golang-go-cmp` for structural diffs and comparison semantics
 - → See `samber/cc-skills-golang@golang-database` skill (testing.md) for database integration test patterns
-- → See `samber/cc-skills-golang@golang-concurrency` skill for goroutine leak detection with goleak
+- → See `samber/cc-skills-golang@golang-concurrency` skill for goroutine ownership and shutdown
 - → See `samber/cc-skills-golang@golang-continuous-integration` skill for CI test configuration and GitHub Actions workflows
-- → See `samber/cc-skills-golang@golang-lint` skill for testifylint and paralleltest configuration
+- → See `samber/cc-skills-golang@golang-lint` skill for test helper and paralleltest configuration
 - → See `samber/cc-skills-golang@golang-continuous-integration` skill for automated AI-driven code review in CI using these guidelines
 
 ## Quick Reference

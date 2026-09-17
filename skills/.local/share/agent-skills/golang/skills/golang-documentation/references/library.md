@@ -29,7 +29,6 @@ Not all documentation applies equally. Adapt to your audience:
 | Go Playground demos | Recommended | N/A (code not public) |
 | pkg.go.dev / godoc | Primary docs surface | Use `go doc` locally or internal tooling |
 | Documentation website | Large projects | Only if many teams consume the library |
-| Register in Context7/DeepWiki/etc. | Recommended | N/A |
 | llms.txt | Recommended | Optional |
 | CHANGELOG.md | Recommended | Recommended |
 | CONTRIBUTING.md | Recommended | Recommended (internal wiki may suffice) |
@@ -204,7 +203,6 @@ This is an emerging convention for making projects AI-friendly. Place it alongsi
 
 Make your library findable by AI agents and documentation aggregators:
 
-- **Context7** — <https://context7.com> — submit your library for inclusion in AI-accessible documentation
 - **DeepWiki** — <https://deepwiki.com> — auto-generates wiki-style docs from GitHub repos
 - **OpenDeep** — <https://opendeep.wiki> — open documentation platform for AI consumption
 - **zRead** — <https://zread.ai> — developer documentation reader

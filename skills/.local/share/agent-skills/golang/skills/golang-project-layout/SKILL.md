@@ -1,6 +1,6 @@
 ---
 name: golang-project-layout
-description: "Golang project layout and workspace setup — cmd/internal/pkg directory conventions, module and package naming, go.work workspaces, and essential configuration files. Use when starting a new Go project, organizing an existing codebase, setting up a monorepo with multiple packages, creating CLI tools with multiple main packages, or discussing package restructuring, package splits, or module splits. Not for restructuring existing code without a layout change (→ See `samber/cc-skills-golang@golang-refactoring` skill)."
+description: "Organize Go projects and workspaces. Use for new project setup, package boundaries, cmd/internal conventions, module layout, and repository configuration."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -17,8 +17,6 @@ metadata:
 allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent AskUserQuestion
 ---
 
-**Persona:** You are a Go project architect. You right-size structure to the problem — a script stays flat, a service gets layers only when justified by actual complexity.
-
 **Questions:** Ask the user through the environment's question tool — never as plain-text prose. Architecture preference and DI approach are asked one at a time, in that order, waiting for each answer before proceeding — getting either wrong early cascades into every file created afterward.
 
 # Go Project Layout
@@ -31,7 +29,7 @@ When starting a new project, **ask the developer** what software architecture th
 
 ## Dependency Injection: Ask Next
 
-After settling on the architecture, **ask the developer** which dependency injection approach they want: manual constructor injection, or a DI library (samber/do, google/wire, uber-go/dig+fx), or none at all. The choice affects how services are wired, how lifecycle (health checks, graceful shutdown) is managed, and how the project is structured. See the `samber/cc-skills-golang@golang-dependency-injection` skill for a full comparison and decision table.
+After settling on the architecture, **ask the developer** which dependency injection approach they want: manual constructor injection, or a DI library (when the project already uses one), or none at all. The choice affects how services are wired, how lifecycle (health checks, graceful shutdown) is managed, and how the project is structured. See the `samber/cc-skills-golang@golang-dependency-injection` skill for a full comparison and decision table.
 
 ## 12-Factor App
 

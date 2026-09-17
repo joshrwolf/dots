@@ -39,7 +39,7 @@ The recommended configuration enables linters across these domains:
 | Performance | perfsprint, unconvert, ineffassign, goconst | Conversions, string ops, dead assigns |
 | Security | gosec, bidichk, bodyclose, noctx, containedctx, fatcontext, sqlclosecheck, rowserrcheck | Security issues, resource leaks (HTTP, SQL) |
 | Logging | sloglint, loggercheck | Structured log consistency |
-| Testing | thelper, paralleltest, testifylint, usetesting | Test hygiene and best practices |
+| Testing | thelper, paralleltest, usetesting | Test hygiene and best practices |
 | Modernization | modernize, exptostd, intrange, usestdlibvars, exhaustive, nolintlint | Modern Go idioms, lint hygiene |
 | Formatting | gofmt, gofumpt | Code formatting |
 
@@ -105,7 +105,6 @@ All linters are enabled in the [recommended .golangci.yml](../assets/.golangci.y
 
 - **thelper** — Ensures test helpers call `t.Helper()` so failures report the correct call site
 - **paralleltest** — Detects tests and subtests missing `t.Parallel()` calls
-- **testifylint** — Enforces testify best practices (e.g., `assert.Equal(t, expected, actual)` over `assert.True(t, expected == actual)`)
 - **usetesting** — Suggests `t.Setenv`/`t.TempDir` instead of `os.Setenv`/`os.MkdirTemp` in tests (automatic cleanup, proper isolation)
 
 ### Modernization & Meta

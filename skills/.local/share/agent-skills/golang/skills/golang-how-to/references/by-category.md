@@ -33,19 +33,15 @@
   - [`samber/cc-skills-golang@golang-cli`](#sambercc-skills-golanggolang-cli)
   - [`samber/cc-skills-golang@golang-continuous-integration`](#sambercc-skills-golanggolang-continuous-integration)
   - [`samber/cc-skills-golang@golang-dependency-management`](#sambercc-skills-golanggolang-dependency-management)
-  - [`samber/cc-skills-golang@golang-pkg-go-dev`](#sambercc-skills-golanggolang-pkg-go-dev)
+  - [`golang-go-doc`](#golang-go-doc)
   - [`samber/cc-skills-golang@golang-popular-libraries`](#sambercc-skills-golanggolang-popular-libraries)
   - [`samber/cc-skills-golang@golang-project-layout`](#sambercc-skills-golanggolang-project-layout)
   - [`samber/cc-skills-golang@golang-stay-updated`](#sambercc-skills-golanggolang-stay-updated)
 - [APIs](#apis)
   - [`samber/cc-skills-golang@golang-graphql`](#sambercc-skills-golanggolang-graphql)
   - [`samber/cc-skills-golang@golang-grpc`](#sambercc-skills-golanggolang-grpc)
-  - [`samber/cc-skills-golang@golang-swagger`](#sambercc-skills-golanggolang-swagger)
 - [Dependency Injection](#dependency-injection)
   - [`samber/cc-skills-golang@golang-dependency-injection` ⚙️](#sambercc-skills-golanggolang-dependency-injection-%EF%B8%8F-1)
-  - [`samber/cc-skills-golang@golang-google-wire`](#sambercc-skills-golanggolang-google-wire)
-  - [`samber/cc-skills-golang@golang-uber-dig`](#sambercc-skills-golanggolang-uber-dig)
-  - [`samber/cc-skills-golang@golang-uber-fx`](#sambercc-skills-golanggolang-uber-fx)
   - [`samber/cc-skills-golang@golang-samber-do`](#sambercc-skills-golanggolang-samber-do)
 - [Frameworks](#frameworks)
   - [`samber/cc-skills-golang@golang-spf13-cobra`](#sambercc-skills-golanggolang-spf13-cobra)
@@ -53,13 +49,12 @@
 - [samber/\*](#samber)
   - [`samber/cc-skills-golang@golang-samber-do`](#sambercc-skills-golanggolang-samber-do-1)
   - [`samber/cc-skills-golang@golang-samber-hot`](#sambercc-skills-golanggolang-samber-hot)
-  - [`samber/cc-skills-golang@golang-samber-lo`](#sambercc-skills-golanggolang-samber-lo)
   - [`samber/cc-skills-golang@golang-samber-mo` 🧠](#sambercc-skills-golanggolang-samber-mo-)
   - [`samber/cc-skills-golang@golang-samber-oops`](#sambercc-skills-golanggolang-samber-oops)
   - [`samber/cc-skills-golang@golang-samber-ro` 🧠](#sambercc-skills-golanggolang-samber-ro-)
   - [`samber/cc-skills-golang@golang-samber-slog`](#sambercc-skills-golanggolang-samber-slog)
 - [Testing](#testing)
-  - [`samber/cc-skills-golang@golang-stretchr-testify`](#sambercc-skills-golanggolang-stretchr-testify)
+  - [`golang-go-cmp`](#golang-go-cmp)
   - [`samber/cc-skills-golang@golang-testing` ⭐️ 🧠 ⚙️](#sambercc-skills-golanggolang-testing-%EF%B8%8F--%EF%B8%8F-1)
 
 ## Code Quality
@@ -164,9 +159,9 @@ Use when: writing SQL queries, designing repository patterns, or configuring dat
 
 ### `samber/cc-skills-golang@golang-dependency-injection` ⚙️
 
-Dependency injection patterns in Golang — constructor injection, interface-based DI, wire/dig/fx comparison, and when DI is worth the complexity.
+Dependency injection patterns in Golang — constructor injection, interface-based DI, explicit dependency wiring, and when DI is worth the complexity.
 
-Use when: deciding whether to use DI, designing constructor signatures, or comparing DI libraries. For a specific DI library → `golang-google-wire`, `golang-uber-dig`, `golang-uber-fx`, or `golang-samber-do`.
+Use when: deciding whether to use DI, designing constructor signatures, or comparing DI libraries.
 
 ---
 
@@ -214,15 +209,15 @@ Use when: applying optimization patterns after profiling. Not for measurement me
 
 ### `samber/cc-skills-golang@golang-testing` ⭐️ 🧠 ⚙️
 
-Production-ready Golang tests — table-driven tests, fuzzing, fixtures, goroutine leak detection (goleak), snapshot testing, code coverage, integration tests, parallel tests.
+Production-ready Golang tests — table-driven tests, fuzzing, fixtures, goroutine leak detection (cancellation and completion), snapshot testing, code coverage, integration tests, parallel tests.
 
-Use when: writing or reviewing tests. For testify-specific APIs → `golang-stretchr-testify`. For measurement methodology → `golang-benchmark`.
+Use when: writing or reviewing tests. For structural comparison options → `golang-go-cmp`. For measurement methodology → `golang-benchmark`.
 
 ---
 
 ### `samber/cc-skills-golang@golang-troubleshooting` ⭐️ 🧠
 
-Systematic Golang debugging — common pitfalls, test-driven debugging, pprof capture, Delve debugger, race detection, GODEBUG tracing, production debugging.
+Systematic Golang debugging — common pitfalls, test-driven debugging, pprof capture, race detection, GODEBUG tracing, production debugging.
 
 Use when: debugging a panic, unexpected output, or hard-to-reproduce bug. Not for interpreting profiles (→ `golang-benchmark`) or applying optimization patterns (→ `golang-performance`).
 
@@ -251,14 +246,6 @@ Use when: setting up or improving a CI pipeline for a Go project.
 Golang module dependency strategies — go.mod conventions, versioning, replace directives, tool dependencies, and multi-module workspaces.
 
 Use when: managing go.mod, dealing with replace directives, or structuring a multi-module repo.
-
----
-
-### `samber/cc-skills-golang@golang-pkg-go-dev`
-
-Golang package and module exploration via `godig`, a pkg.go.dev API client (CLI + MCP server) — docs, symbols, versions, importers, licenses, and known vulnerabilities.
-
-Use when: looking up a module's available versions, CVEs, docs/symbols, or who imports it, or searching pkg.go.dev. For upgrading deps → `golang-dependency-management`; for choosing a library → `golang-popular-libraries`.
 
 ---
 
@@ -300,15 +287,7 @@ Use when: building a GraphQL API in Go.
 
 gRPC in Golang — protobuf organization, service definitions, streaming, interceptors, error codes, code generation workflow.
 
-Use when: building or consuming a gRPC service. For OpenAPI/REST documentation → `golang-swagger`.
-
----
-
-### `samber/cc-skills-golang@golang-swagger`
-
-OpenAPI/Swagger docs with swaggo/swag — annotation comments, code generation, framework integrations (gin, echo, fiber, chi), security definitions.
-
-Use when: generating OpenAPI documentation from Go code annotations.
+Use when: building or consuming a gRPC service.
 
 ---
 
@@ -317,30 +296,6 @@ Use when: generating OpenAPI documentation from Go code annotations.
 ### `samber/cc-skills-golang@golang-dependency-injection` ⚙️
 
 See "Architecture & Design" section above.
-
----
-
-### `samber/cc-skills-golang@golang-google-wire`
-
-Compile-time dependency injection with google/wire — provider sets, injector generation, wire.Build, and structured DI patterns.
-
-Use when: the codebase imports `github.com/google/wire` or the team has chosen compile-time DI. For runtime DI with reflection → `golang-uber-dig`.
-
----
-
-### `samber/cc-skills-golang@golang-uber-dig`
-
-Reflection-based DI with uber-go/dig — Provide/Invoke, dig.In/dig.Out, named values, value groups, optional dependencies, Decorate.
-
-Use when: the codebase imports `go.uber.org/dig`. For higher-level lifecycle and modules → `golang-uber-fx`.
-
----
-
-### `samber/cc-skills-golang@golang-uber-fx`
-
-Application framework with uber-go/fx — fx.New, fx.Provide/Invoke, fx.Module, lifecycle hooks, fx.Annotate, fx.Decorate, signal-aware Run.
-
-Use when: the codebase imports `go.uber.org/fx`. For raw DI without lifecycle → `golang-uber-dig`.
 
 ---
 
@@ -386,14 +341,6 @@ Use when: the codebase imports `github.com/samber/hot`.
 
 ---
 
-### `samber/cc-skills-golang@golang-samber-lo`
-
-Functional programming helpers with samber/lo — 500+ type-safe generic functions for slices, maps, channels, strings. Immutable (lo), parallel (lop), mutable (lom), iterators (loi), SIMD.
-
-Use when: the codebase imports `github.com/samber/lo`. Not for streaming pipelines (→ `golang-samber-ro`).
-
----
-
 ### `samber/cc-skills-golang@golang-samber-mo` 🧠
 
 Monadic types with samber/mo — Option, Result, Either, Future, IO, Task, State for type-safe nullable values, error handling, and functional composition.
@@ -414,7 +361,7 @@ Use when: the codebase imports `github.com/samber/oops`.
 
 Reactive streams with samber/ro — 150+ type-safe operators, cold/hot observables, 5 subject types, 40+ plugins, automatic backpressure, Go context integration.
 
-Use when: the codebase imports `github.com/samber/ro`. Not for finite slice transforms (→ `golang-samber-lo`).
+Use when: the codebase imports `github.com/samber/ro`.
 
 ---
 
@@ -428,14 +375,19 @@ Use when: the codebase imports any `github.com/samber/slog-*` package.
 
 ## Testing
 
-### `samber/cc-skills-golang@golang-stretchr-testify`
+### `golang-go-cmp`
 
-Testing with stretchr/testify — assert, require, mock, and suite packages. Assertions, mock expectations, argument matchers, suite lifecycle, custom matchers.
+Structural comparisons with google/go-cmp — readable diffs, comparison options, and semantic equality.
 
-Use when: the codebase imports `github.com/stretchr/testify`. For test architecture and strategy → `golang-testing`.
+Use when: a Go test needs a structural diff or customized comparison semantics. For test architecture and strategy → `golang-testing`.
 
 ---
 
 ### `samber/cc-skills-golang@golang-testing` ⭐️ 🧠 ⚙️
 
 See "QA & Performance" section above.
+
+### `golang-go-doc`
+
+Read the locally resolved package and symbol API with `go doc`. Use module tools
+for dependency versions and vulnerability tooling for security checks.

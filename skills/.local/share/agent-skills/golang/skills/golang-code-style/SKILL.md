@@ -1,6 +1,6 @@
 ---
 name: golang-code-style
-description: "Golang code style conventions — line length and breaking, variable declarations, control flow clarity, when comments help vs hurt. Use when writing or reviewing Go code, asking about style or clarity, or establishing project coding standards. Not for naming conventions (→ See `samber/cc-skills-golang@golang-naming` skill), linter configuration (→ See `samber/cc-skills-golang@golang-lint` skill), or doc comments (→ See `samber/cc-skills-golang@golang-documentation` skill)."
+description: "Review Go code for clarity and style. Use when writing or reviewing control flow, declarations, formatting choices, or project coding conventions."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -18,8 +18,6 @@ allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(g
 paths:
   - "**/*.go"
 ---
-
-**Orchestration mode:** Fan out the sub-agents described in the "Parallelizing Code Style Reviews" section, each covering an independent style concern, when reviewing code style across a large codebase, and merge their findings. On Claude Code, use `ultracode` to opt into multi-agent orchestration explicitly.
 
 > **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-code-style` skill takes precedence.
 
@@ -218,7 +216,7 @@ func Contains[T comparable](slice []T, target T) bool  // not []any
 ## Philosophy
 
 - **"A little copying is better than a little dependency"**
-- **Use `slices` and `maps` standard packages**; for filter/group-by/chunk, use `github.com/samber/lo`
+- **Use `slices` and `maps` standard packages**; use explicit loops for transformations not covered by the standard library
 - **"Reflection is never clear"** — avoid `reflect` unless necessary
 - **Don't abstract prematurely** — extract when the pattern is stable
 - **Minimize public surface** — every exported name is a commitment

@@ -1,6 +1,6 @@
 ---
 name: golang-gopls
-description: "Golang semantic code intelligence via `gopls`, the official Go language server — go-to-definition, find references, call/implementation hierarchy, workspace symbol search, package API discovery, diagnostics, safe rename, refactors (extract/inline/fill/rewrite code actions), formatting, and generated tests. Reaches an agent via gopls's own MCP server (`go_*` tools), Claude Code's native `LSP` tool, or the `gopls` CLI. Use when navigating or refactoring Go code — jumping to a definition, finding call sites before a rename, understanding a file's or package's dependencies, running diagnostics after an edit, or extracting/inlining/renaming. Not for the published ecosystem — packages not in your `go.mod`, versions, licenses, importers — → See `samber/cc-skills-golang@golang-pkg-go-dev` skill (`godig`). Not for a whole-tree vulnerability audit → See `samber/cc-skills-golang@golang-security` skill (`govulncheck`)."
+description: "Navigate and refactor Go code with gopls. Use for semantic definitions and references, diagnostics, safe renames, code actions, or resolved dependency APIs."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness. Requires the gopls binary (go install golang.org/x/tools/gopls@latest) v0.20+ on PATH.
@@ -24,11 +24,10 @@ paths:
   - "**/*.go"
 ---
 
-**Persona:** You are a Go engineer who reaches for semantic code intelligence instead of grep whenever a question is about the resolved build — grep finds text, `gopls` finds meaning (types, call graphs, shadowing, implementation relationships).
-
 **Dependencies:** `gopls` — `go install golang.org/x/tools/gopls@latest` (v0.20+). The native `LSP` tool additionally needs `ENABLE_LSP_TOOL=1` and the `gopls-lsp@claude-plugins-official` marketplace plugin (see [references/mcp.md](references/mcp.md)).
 
-`gopls` is the official Go language server. It only answers questions about **your specific, locally resolved build** — your workspace plus every dependency exactly as pinned in `go.sum`, including `replace` directives. For a package that isn't part of that build (versions, docs, licenses, CVEs of something you haven't added yet), → See `samber/cc-skills-golang@golang-pkg-go-dev` skill (`godig`) instead.
+`gopls` analyzes the workspace and its resolved dependencies. Use `go doc`
+for package documentation; use module tools for version and replacement details.
 
 ## Three ways to reach gopls
 
@@ -83,12 +82,8 @@ These Read/Edit workflows encode the order that avoids redundant queries and hal
 - Extract/inline refactors are less rigorous than rename: comments are sometimes dropped, and generated files marked `DO NOT EDIT` receive no code actions at all.
 - `refactor.rewrite.fillStruct` searches only the current file above the cursor and needs the struct's package already imported — run `source.organizeImports` first if the type was just typed in.
 
-## gopls vs godig vs Context7 vs govulncheck
+## Documentation and runtime evidence
 
-`gopls` only reasons about code present and resolvable in the local build:
-
-- For anything not tied to that build (version history, license, ecosystem-wide importers, CVEs of a package not yet added) → See `samber/cc-skills-golang@golang-pkg-go-dev` skill (`godig`) — it queries pkg.go.dev directly, no local checkout needed.
-- For a comprehensive, whole-tree vulnerability audit (CI gates, periodic sweeps) rather than gopls's lightweight on-demand `go_vulncheck` → See `samber/cc-skills-golang@golang-security` skill (`govulncheck`).
-- Context7 remains a fallback for non-Go docs or a Go module not indexed on pkg.go.dev.
-
-The full task-to-tool matrix lives in the `samber/cc-skills-golang@golang-how-to` skill's "`godig` vs gopls vs Context7 vs govulncheck" section.
+Use `golang-go-doc` for API documentation and `golang-security` for vulnerability
+checks. Use reproductions, stack traces, the race detector, pprof, and execution
+traces for runtime evidence. Gopls does not step through a running process.

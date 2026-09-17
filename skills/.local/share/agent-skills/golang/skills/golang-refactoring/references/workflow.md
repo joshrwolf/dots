@@ -165,7 +165,7 @@ Structural-only PRs are reversible and low-risk by construction (Beck's separati
 ## Cross-References
 
 - [catalog.md](catalog.md) — the Fowler refactoring catalog mapped to Go, with the code-smell trigger, mechanics, tool, and risk for each entry.
-- [go-tooling.md](go-tooling.md) — gopls code actions, CLI invocation, `gofmt -r`, `eg`, `gopatch`, and `go/analysis` fixers referenced throughout the inventory examples above.
+- [go-tooling.md](go-tooling.md) — gopls code actions, CLI invocation, `gofmt -r`, `eg`, and `go/analysis` fixers referenced throughout the inventory examples above.
 - [safety-net.md](safety-net.md) — the coverage-adaptive strategy and characterization-testing recipes referenced in the Human Checkpoints section.
 - [structural.md](structural.md) — import-cycle breaking, package-boundary design, and the type-alias gradual-repair mechanism referenced in the inventory example above.
 - → See `samber/cc-skills-golang@golang-security` skill (and `golang-safety`) for reviewing any PR that changes code logic, per Step 3 above.

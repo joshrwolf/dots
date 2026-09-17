@@ -70,11 +70,9 @@
 
 ## Testing
 
-**Testify** (<https://github.com/stretchr/testify>) Sacred extension to the testing package. Assertions, mocking, suite testing. Essential for Go testing.
+**Testing**: use the standard `testing` package for test structure and explicit checks. Use [go-cmp](https://github.com/google/go-cmp) when structured values need readable failure diffs; see `golang-go-cmp` for comparison options.
 
-**gomock** (<https://github.com/uber-go/mock>) Mocking framework for Go interfaces. Widely used, integrates well with testing package.
 
-**go-sqlmock** (<https://github.com/DATA-DOG/go-sqlmock>) SQL mock driver for testing database operations. Test database code without a real database.
 
 **testcontainers-go** (<https://golang.testcontainers.org>) Integration testing with real dependencies in Docker containers. Spin up databases, message queues, etc.
 
@@ -204,21 +202,16 @@
 
 ## API Documentation
 
-**swag** (<https://github.com/swaggo/swag>) Auto-generate OpenAPI/Swagger specs from Go code annotations, parsing comment-based annotations (`@Summary`, `@Param`, `@Success`, `@Router`, etc.) on handler functions to produce `swagger.json`/`swagger.yaml`. Integrates with Gin (`gin-swagger`), Echo (`echo-swagger`), Fiber (`fiber-swagger`), Chi, and net/http, with Swagger 2.0 and OpenAPI 3.x output.
 
 ## Dependency Injection
 
 **do** (<https://github.com/samber/do>) Dependency injection library for Go. Simple, runtime DI with service locator pattern and health checks.
 
-**Wire** (<https://github.com/google/wire>) Code-generated dependency injection for Go. Compile-time dependency injection without reflection.
 
-**Dig** (<https://github.com/uber-go/dig>) Dependency injection container for Go. Runtime DI with lifecycle management.
 
-**Fx** (<https://github.com/uber-go/fx>) Application framework for Go. Built on Dig, provides lifecycle management, dependency injection, and observability.
 
 ## Functional Programming & Utilities
 
-**lo** (<https://github.com/samber/lo>) A generics-based helper library for Go. Slice, map, and tuple operations with functional programming style.
 
 **mo** (<https://github.com/samber/mo>) Monads and functional programming helpers for Go. Option, Either, Try, and other functional patterns.
 

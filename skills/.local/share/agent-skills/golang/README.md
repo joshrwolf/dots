@@ -1,3 +1,7 @@
+> This subtree is customized in dots. See [local workflow](../../../../../docs/skills.md)
+> for installation and updates. Upstream scores and token counts below predate
+> local edits; they are not measurements of this customized collection.
+
 # Agent Skills for production-ready Golang projects
 
 AI agent skills are reusable instruction sets that extend your coding assistant with domain-specific expertise, loaded on demand so they don't bloat your context. This repository covers **Go-specific** skills only (language, testing, security, observability, etc.); for dev workflow skills (git conventions, CI/CD, PR reviews) you'll want to add a separate skills plugin.
@@ -168,7 +172,7 @@ These skills are designed as **atomic, cross-referencing units**. A skill may re
     │   APIs       │      DI        │  Frameworks  │  samber/*   │  Testing  │
     ├──────────────┼────────────────┼──────────────┼─────────────┼───────────┤
     │ grpc         │ google-wire    │ spf13-cobra  │ samber-lo   │ stretchr- │
-    │ graphql      │ uber-dig       │ spf13-viper  │ samber-mo   │  testify  │
+    │ graphql      │ uber-dig       │ spf13-viper  │ samber-mo   │  go-cmp   │
     │ swagger      │ uber-fx        │              │ samber-ro   │           │
     │              │                │              │ samber-do   │           │
     │              │                │              │ samber-hot  │           │
@@ -222,7 +226,7 @@ These skills are designed as **atomic, cross-referencing units**. A skill may re
 |  | ✅ `golang-observability` | ⚡ 🤖 ⚙️ | -37% | 164 | 3,128 | 19,583 |
 |  | ✅ `golang-performance` | ⚡ 🧠 🤖 | -39% | 130 | 2,226 | 19,820 |
 |  | ✅ `golang-gopls` | ⚡ | — | 219 | 2,317 | 12,312 |
-|  | ✅ `golang-pkg-go-dev` | ⚡ | — | 170 | 3,442 | 5,386 |
+|  | ✅ `golang-go-doc` | ⚡ | — | 170 | 3,442 | 5,386 |
 |  | ✅ `golang-popular-libraries` | ⚡ | -30% | 156 | 1,181 | 5,093 |
 |  | ✅ `golang-project-layout` | ⚡ | -38% | 105 | 1,761 | 6,257 |
 |  | ✅ `golang-stay-updated` | ⚡ | -56% | 44 | 1,802 | 1,802 |
@@ -231,23 +235,18 @@ These skills are designed as **atomic, cross-referencing units**. A skill may re
 
 | Skill | Flags | Error rate gap | Description (tok) | SKILL.md (tok) | Directory (tok) |
 | --- | --- | --- | --- | --- | --- |
-| ✅ `golang-google-wire` | ⚡ | -16% | 122 | 2,670 | 7,400 |
 | ✅ `golang-graphql` |  | -16% | 76 | 3,070 | 7,941 |
 | ✅ `golang-grpc` | ⚡ | -41% | 70 | 2,341 | 5,157 |
 | ✅ `golang-spf13-cobra` | ⚡ | — | 176 | 2,580 | 7,351 |
 | ✅ `golang-spf13-viper` | ⚡ | — | 170 | 2,551 | 7,098 |
-| ✅ `golang-swagger` | ⚡ | — | 144 | 2,342 | 3,347 |
-| ✅ `golang-uber-dig` | ⚡ | -10% | 107 | 2,585 | 6,257 |
-| ✅ `golang-uber-fx` | ⚡ | -5% | 118 | 2,825 | 7,060 |
 | ✅ `golang-samber-do` | ⚡ | -81% | 71 | 2,145 | 3,660 |
 | ✅ `golang-samber-hot` | ⚡ | -54% | 119 | 1,986 | 7,416 |
-| ✅ `golang-samber-lo` | ⚡ | -40% | 166 | 2,610 | 10,288 |
 | ✅ `golang-samber-mo` | ⚡ 🧠 | -48% | 82 | 2,967 | 11,382 |
 | ✅ `golang-samber-oops` | ⚡ | -59% | 70 | 2,544 | 2,856 |
 | ✅ `golang-samber-ro` | ⚡ 🧠 | -50% | 153 | 2,976 | 11,192 |
 | ✅ `golang-samber-slog` | ⚡ | -19% | 119 | 3,120 | 9,842 |
 | ❌ `golang-temporal` |  | — | 0 | 0 | 0 |
-| ✅ `golang-stretchr-testify` | ⚡ | -47% | 92 | 1,858 | 2,677 |
+| `golang-go-cmp` | Local replacement | Not evaluated | — | — | — |
 
 ## 🧪 Skill evaluations
 
@@ -325,7 +324,7 @@ Modernize Go code to use recent language features. Range-over-int, min/max built
 
 #### `golang-refactoring`
 
-Safe, at-scale refactoring process for existing Go code. Coverage-adaptive safety net, tool-driven behavior-preserving transforms (gopls Rename/Inline/Extract, gofmt -r, eg, gopatch), the Fowler catalog mapped to Go, breaking import cycles, type-alias gradual code repair, and a human-in-the-loop workflow of staged PRs on a refactoring branch.
+Safe, at-scale refactoring process for existing Go code. Coverage-adaptive safety net, tool-driven behavior-preserving transforms (gopls Rename/Inline/Extract, gofmt -r, eg), the Fowler catalog mapped to Go, breaking import cycles, type-alias gradual code repair, and a human-in-the-loop workflow of staged PRs on a refactoring branch.
 
 ### QA & Performance
 
@@ -343,11 +342,11 @@ Go performance optimization. Allocation reduction, CPU efficiency, memory layout
 
 #### `golang-testing`
 
-Production-ready Go tests. Table-driven tests, fuzzing, fixtures, goroutine leak detection (goleak), snapshot testing, code coverage, integration tests, parallel tests. Overridable.
+Production-ready Go tests. Table-driven tests, fuzzing, fixtures, goroutine leak detection (explicit shutdown checks), snapshot testing, code coverage, integration tests, parallel tests. Overridable.
 
 #### `golang-troubleshooting`
 
-Systematic Go debugging methodology. Common pitfalls, test-driven debugging, pprof capture, Delve debugger, race detection, GODEBUG tracing, production debugging.
+Systematic Go debugging methodology. Common pitfalls, test-driven debugging, pprof capture, race detection, GODEBUG tracing, production debugging.
 
 ### Project Setup
 
@@ -366,10 +365,6 @@ Go module dependency strategies. go.mod conventions, versioning, replace directi
 #### `golang-gopls`
 
 Semantic code intelligence for your local build via `gopls`, the official Go language server. Go-to-definition, find references, call/implementation hierarchy, workspace symbol search, diagnostics, safe rename, and refactors (extract/inline/fill/rewrite). Reachable via gopls's own MCP server, Claude Code's native `LSP` tool, or the `gopls` CLI.
-
-#### `golang-pkg-go-dev`
-
-Go package and module exploration via `godig`, a pkg.go.dev API client (CLI + MCP server). Package docs, API references, symbols, code examples, versions, importers, licenses, and known vulnerabilities. Prefer over Context7 for Go packages.
 
 #### `golang-popular-libraries`
 
@@ -393,23 +388,7 @@ GraphQL API development in Go using gqlgen/graphql-go. Schema definition, resolv
 
 gRPC in Go. Protobuf organization, service definitions, streaming, interceptors, error codes, and code generation workflow.
 
-#### `golang-swagger`
-
-OpenAPI/Swagger docs with swaggo/swag. Annotation comments, code generation, framework integrations (gin, echo, fiber, chi), security definitions.
-
 ### Dependency Injection
-
-#### `golang-google-wire`
-
-Compile-time dependency injection with google/wire. Provider sets, injector generation, wire.Build, and structured DI patterns.
-
-#### `golang-uber-dig`
-
-Reflection-based DI with uber-go/dig. Provide/Invoke, dig.In/dig.Out, named values, value groups, optional dependencies, and Decorate.
-
-#### `golang-uber-fx`
-
-Application framework with uber-go/fx. fx.New, fx.Provide/Invoke, fx.Module, lifecycle hooks, fx.Annotate, fx.Decorate, signal-aware Run.
 
 ### Frameworks
 
@@ -431,10 +410,6 @@ Dependency injection with samber/do. Type-safe service containers, lifecycle man
 
 In-memory caching with samber/hot. 9 eviction algorithms (LRU, LFU, TinyLFU, W-TinyLFU, S3FIFO, ARC, SIEVE...), TTL, loaders, sharding, stale-while-revalidate, Prometheus metrics.
 
-#### `golang-samber-lo`
-
-Functional programming helpers with samber/lo. 500+ type-safe generic functions for slices, maps, channels, strings. Immutable (lo), parallel (lop), mutable (lom), iterators (loi), SIMD.
-
 #### `golang-samber-mo`
 
 Monadic types with samber/mo. Option, Result, Either, Future, IO, Task, State for type-safe nullable values, error handling, and functional composition.
@@ -453,9 +428,9 @@ Structured logging pipeline with samber/slog-\*\*\*\* packages. Multi-handler ro
 
 ### Testing
 
-#### `golang-stretchr-testify`
+#### `golang-go-cmp`
 
-Testing with stretchr/testify. assert, require, mock, and suite packages. Assertions, mock expectations, argument matchers, suite lifecycle, and custom matchers.
+Structural comparisons with google/go-cmp: readable diffs, comparison options, semantic equality, and unexported-field handling.
 
 ## 🕵 Use in CI for AI-driven reviews
 

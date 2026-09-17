@@ -1,0 +1,100 @@
+[
+  {
+    "id": 1,
+    "name": "structured-diff",
+    "prompt": "Compare nested records returned by LoadConfig with an expected value and make failures readable.",
+    "assertions": [
+      {
+        "id": "1.1",
+        "text": "Uses cmp.Diff(want, got) and a nonempty-diff failure check"
+      },
+      {
+        "id": "1.2",
+        "text": "Labels the diagnostic -want +got and identifies the operation"
+      },
+      {
+        "id": "1.3",
+        "text": "Does not add a separate equality pass or a generic assertion wrapper"
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "name": "scalar-check",
+    "prompt": "Test a function returning an integer count and an error.",
+    "assertions": [
+      {
+        "id": "2.1",
+        "text": "Checks the error before dependent results"
+      },
+      {
+        "id": "2.2",
+        "text": "Uses a direct integer comparison and testing.T diagnostics without adding go-cmp solely for a scalar"
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "name": "ordered-results",
+    "prompt": "The API promises ranked results. The test fails only because the returned order differs. Fix the test appropriately.",
+    "assertions": [
+      {
+        "id": "3.1",
+        "text": "Preserves ordering as part of the contract rather than adding SortSlices to make the test pass"
+      },
+      {
+        "id": "3.2",
+        "text": "Investigates whether the expected order or implementation violates the promised ranking"
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "name": "nil-versus-empty",
+    "prompt": "An API must return [] rather than null when JSON encoded. Comparing its result with an empty slice fails. Should we use EquateEmpty?",
+    "assertions": [
+      {
+        "id": "4.1",
+        "text": "Keeps nil and empty distinct for this contract"
+      },
+      {
+        "id": "4.2",
+        "text": "Checks the promised representation rather than masking it with EquateEmpty"
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "name": "unexported-fields",
+    "prompt": "cmp.Diff panics on a third-party struct with private state. We only care about its public behavior.",
+    "assertions": [
+      {
+        "id": "5.1",
+        "text": "Compares a public projection or uses a documented semantic comparer"
+      },
+      {
+        "id": "5.2",
+        "text": "Does not broadly allow third-party private fields or ignore all meaningful state"
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "name": "unordered-results",
+    "prompt": "The result is a slice of records with unique IDs; order is explicitly unspecified. Write a useful comparison.",
+    "assertions": [
+      {
+        "id": "6.1",
+        "text": "Uses a deterministic ID ordering with cmpopts.SortSlices or compares an appropriate keyed representation"
+      },
+      {
+        "id": "6.2",
+        "text": "Keeps all relevant record fields and duplicate-count behavior visible"
+      },
+      {
+        "id": "6.3",
+        "text": "Reports a structured diff with expected and actual orientation"
+      }
+    ]
+  }
+]

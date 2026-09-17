@@ -194,34 +194,7 @@
         }
       ]
     },
-    {
-      "id": 8,
-      "name": "llms-txt",
-      "prompt": "I have a Go library `github.com/acme/querybuilder` that provides a type-safe SQL query builder. It has these main types: Builder, Query, Condition, JoinClause. Main functions: New(), Select(), Insert(), Update(), Delete(). Errors: ErrInvalidColumn, ErrMissingTable. I want to make my library more accessible to AI coding assistants. What should I do and can you create any needed files?",
-      "trap": "Model without skill won't know about llms.txt convention. Might suggest better README or doc comments only.",
-      "assertions": [
-        {
-          "id": "8.1",
-          "text": "Creates or recommends creating an llms.txt file at the repository root"
-        },
-        {
-          "id": "8.2",
-          "text": "llms.txt includes an Overview section explaining what the library does"
-        },
-        {
-          "id": "8.3",
-          "text": "llms.txt includes Key Concepts or API Reference listing the main types and functions"
-        },
-        {
-          "id": "8.4",
-          "text": "llms.txt includes Common Patterns section with code examples"
-        },
-        {
-          "id": "8.5",
-          "text": "Mentions registering for discoverability platforms (Context7, DeepWiki, or similar)"
-        }
-      ]
-    },
+
     {
       "id": 9,
       "name": "brief-doc-comment-trap",
@@ -362,34 +335,7 @@
         }
       ]
     },
-    {
-      "id": 14,
-      "name": "grpc-api-docs",
-      "prompt": "I have a Go gRPC service for user management. The proto file currently has no comments at all. A teammate says I should use swaggo/swag since we already use it for our REST API. What's the right way to document a gRPC API?",
-      "trap": "Teammate explicitly suggests swaggo/swag for gRPC. The model must know that swaggo/swag generates OpenAPI from Go HTTP annotations — it has no concept of protobufs. Without skill knowledge, the model might go along with the suggestion or give a vague answer. With skill, the model knows proto files are the source of truth and buf is the right tool.",
-      "assertions": [
-        {
-          "id": "14.1",
-          "text": "Clearly states that swaggo/swag is NOT the right tool for gRPC — it generates OpenAPI for REST APIs, not protobuf documentation"
-        },
-        {
-          "id": "14.2",
-          "text": "States that proto files themselves serve as the API contract AND documentation — add comments there"
-        },
-        {
-          "id": "14.3",
-          "text": "Recommends adding comments directly to proto messages, services, and RPCs"
-        },
-        {
-          "id": "14.4",
-          "text": "Recommends buf for proto linting and breaking change detection"
-        },
-        {
-          "id": "14.5",
-          "text": "Mentions grpc-gateway as an option for projects needing both REST and gRPC from the same proto"
-        }
-      ]
-    },
+
     {
       "id": 15,
       "name": "app-disguised-as-library",
@@ -530,34 +476,7 @@
         }
       ]
     },
-    {
-      "id": 20,
-      "name": "discoverability-registration",
-      "prompt": "I just published my Go library on GitHub (public repo, MIT license, tagged v1.0.0). I have a good README, doc comments, ExampleXxx tests, and a CHANGELOG. What else should I do to make sure developers and AI tools can find and use my library?",
-      "trap": "Model without skill knowledge of the specific platforms will give generic answers: 'share on social media', 'write a blog post', 'submit to HackerNews'. The skill teaches specific discoverability platforms: Context7, DeepWiki, OpenDeep, zRead — names the model won't know without the skill.",
-      "assertions": [
-        {
-          "id": "20.1",
-          "text": "Recommends registering with Context7 (context7.com) specifically for AI-accessible documentation"
-        },
-        {
-          "id": "20.2",
-          "text": "Recommends registering with DeepWiki (deepwiki.com) specifically"
-        },
-        {
-          "id": "20.3",
-          "text": "Recommends adding an llms.txt file at the repository root"
-        },
-        {
-          "id": "20.4",
-          "text": "Recommends adding Go Playground demos linked from doc comments with the // Play: format"
-        },
-        {
-          "id": "20.5",
-          "text": "Names at least 3 specific discoverability platforms (from: Context7, DeepWiki, OpenDeep, zRead) — not generic promotion advice"
-        }
-      ]
-    },
+
     {
       "id": 21,
       "name": "deprecated-marker-format",

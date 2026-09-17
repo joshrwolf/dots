@@ -21,7 +21,7 @@ curl http://localhost:6060/debug/pprof/goroutineleak?debug=2
 go tool pprof http://localhost:6060/debug/pprof/goroutineleak
 ```
 
-Keep existing tools: `go.uber.org/goleak` in tests, `runtime.NumGoroutine()` for coarse monitoring, `/debug/pprof/goroutine?debug=2` for stack dumps, and `go test -race ./...` for race checks.
+Keep existing tools: `runtime.NumGoroutine()` for coarse monitoring, `/debug/pprof/goroutine?debug=2` for stack dumps, and `go test -race ./...` for race checks.
 
 ```go
 // Programmatic monitoring — log goroutine count to detect leaks
@@ -32,9 +32,6 @@ go func() {
     }
 }()
 
-// In tests, use goleak to detect goroutine leaks
-// import "go.uber.org/goleak"
-// func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
 ```
 
 **Common causes:**

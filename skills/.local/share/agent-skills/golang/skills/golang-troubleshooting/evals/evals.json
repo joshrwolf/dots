@@ -241,7 +241,7 @@
     "id": 18,
     "name": "time-equal-not-double-equals",
     "description": "Tests the time.Time == vs .Equal() gotcha from common-go-bugs",
-    "prompt": "My Go test comparing time values fails intermittently. I store a time.Time in the database and read it back, then compare with ==. The test passes when I use a fixed time but fails when I use time.Now():\n\n```go\nt1 := time.Now()\nsaveToDatabase(t1)\nt2 := loadFromDatabase()\nassert.True(t, t1 == t2) // fails!\n```\nThe times represent the same instant. Why does == fail?",
+    "prompt": "My Go test comparing time values fails intermittently. I store a time.Time in the database and read it back, then compare with ==. The test passes when I use a fixed time but fails when I use time.Now():\n\n```go\nt1 := time.Now()\nsaveToDatabase(t1)\nt2 := loadFromDatabase()\nif t1 != t2 { t.Errorf(\"times differ: %v, %v\", t1, t2) } // fails!\n```\nThe times represent the same instant. Why does == fail?",
     "trap": "Model suggests the database truncates nanoseconds or timezone differences, not the monotonic clock component",
     "assertions": [
       {"id": "18.1", "text": "Identifies that time.Now() includes a monotonic clock reading that database serialization strips"},
@@ -445,7 +445,7 @@
       {"id": "32.2", "text": "Explains that goroutine leaks cause slow memory growth without appearing in heap profiles"},
       {"id": "32.3", "text": "Recommends using the pprof goroutine endpoint with ?debug=2 for human-readable stack dumps"},
       {"id": "32.4", "text": "Lists common causes: unclosed channels, missing context cancellation, forgotten response body close"},
-      {"id": "32.5", "text": "Suggests goleak for detection in tests"}
+      {"id": "32.5", "text": "Verifies worker shutdown with cancellation and explicit completion signals"}
     ]
   },
   {

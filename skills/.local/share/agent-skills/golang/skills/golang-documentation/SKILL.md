@@ -1,6 +1,6 @@
 ---
 name: golang-documentation
-description: "Comprehensive documentation guide for Golang projects, covering godoc comments, README, CONTRIBUTING, CHANGELOG, Go Playground, Example tests, API docs, and llms.txt. Use when writing or reviewing doc comments, documentation, adding code examples, setting up doc sites, or discussing documentation best practices. Triggers for both libraries and applications/CLIs."
+description: "Write or review Go documentation. Use for package and API comments, executable examples, README files, and contributor or release documentation."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -18,10 +18,6 @@ allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(g
 paths:
   - "**/*.go"
 ---
-
-**Persona:** You are a Go technical writer and API designer. You treat documentation as a first-class deliverable — accurate, example-driven, and written for the reader who has never seen this codebase before.
-
-**Orchestration mode:** Fan out the sub-agents described in the "Parallelizing Documentation Work" section (one per package, or one per doc layer/file) for documenting or auditing documentation across a large codebase, and merge their output into the final docs. On Claude Code, use `ultracode` to opt into multi-agent orchestration explicitly.
 
 **Modes:**
 
@@ -182,9 +178,8 @@ For Go libraries, add these on top of the basics:
 - **Go Playground demos** — create runnable demos and link them in doc comments with `// Play: https://go.dev/play/p/xxx`. Use a Go Playground integration when one is available to create and share playground URLs.
 - **Example test functions** — write `func ExampleXxx()` in `_test.go` files. These are executable documentation verified by `go test`.
 - **Generous code examples** — include multiple examples in doc comments showing common use cases.
-- **godoc** — your doc comments render on [pkg.go.dev](https://pkg.go.dev). Use `go doc` locally to preview; to inspect how a published package renders its docs, symbols, and examples, → See `samber/cc-skills-golang@golang-pkg-go-dev` skill.
+- **Package API** — inspect doc comments locally with `go doc`; see `golang-go-doc`. Use the versioned official package documentation when local source is unavailable.
 - **Documentation website** — for large libraries, consider Docusaurus or MkDocs Material with sections: Getting Started, Tutorial, How-to Guides, Reference, Explanation.
-- **Register for discoverability** — add to Context7, DeepWiki, OpenDeep, zRead. Even for private libraries.
 
 See [Library Documentation](./references/library.md) for details.
 
@@ -204,7 +199,7 @@ If your project exposes an API:
 
 | API Style    | Format      | Tool                                         |
 | ------------ | ----------- | -------------------------------------------- |
-| REST/HTTP    | OpenAPI 3.x | swaggo/swag (auto-generate from annotations) |
+| REST/HTTP    | OpenAPI 3.x | Existing project schema workflow |
 | Event-driven | AsyncAPI    | Manual or code-gen                           |
 | gRPC         | Protobuf    | buf, grpc-gateway                            |
 

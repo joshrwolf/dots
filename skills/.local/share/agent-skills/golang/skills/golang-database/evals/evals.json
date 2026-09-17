@@ -176,7 +176,7 @@
       {"id": "13.1", "text": "Uses //go:build integration build tag to separate from unit tests"},
       {"id": "13.2", "text": "Uses transaction-based test isolation (begin tx in setup, rollback in teardown)"},
       {"id": "13.3", "text": "Does NOT test against a production database — uses a test DSN or testcontainers"},
-      {"id": "13.4", "text": "Uses testify/suite or a similar setup/teardown pattern"},
+      {"id": "13.4", "text": "Uses ordinary test functions and setup helpers with t.Cleanup for teardown"},
       {"id": "13.5", "text": "Tests actual SQL correctness (not mocked — this is integration)"}
     ]
   },

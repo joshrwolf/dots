@@ -74,7 +74,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: >-
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__context7__resolve-library-id,mcp__context7__query-docs,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment, pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
 
           prompt: |
             REPO: ${{ github.repository }}
@@ -152,7 +152,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: >-
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__context7__resolve-library-id,mcp__context7__query-docs,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment, pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
 
           prompt: |
             REPO: ${{ github.repository }}
@@ -231,7 +231,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: >-
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__context7__resolve-library-id,mcp__context7__query-docs,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment, pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
 
           prompt: |
             REPO: ${{ github.repository }}
@@ -309,7 +309,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: >-
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__context7__resolve-library-id,mcp__context7__query-docs,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment, pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
 
           prompt: |
             REPO: ${{ github.repository }}

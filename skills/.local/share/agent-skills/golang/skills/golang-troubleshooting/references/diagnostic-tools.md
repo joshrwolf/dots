@@ -7,11 +7,6 @@
   - [GC Tracing](#gc-tracing)
   - [Scheduler Tracing](#scheduler-tracing)
   - [GOTRACEBACK](#gotraceback)
-- [Delve Debugger](#delve-debugger)
-  - [Installation](#installation)
-  - [Basic Usage](#basic-usage)
-  - [Common Commands](#common-commands)
-  - [IDE Integration](#ide-integration)
 - [Advanced Analysis](#advanced-analysis)
 
 ## Runtime Diagnostics (GODEBUG)
@@ -65,65 +60,6 @@ GOTRACEBACK=all ./app
 | `single` | Current goroutine only (default)      |
 | `all`    | All goroutines (useful for deadlocks) |
 | `system` | All goroutines + runtime frames       |
-
----
-
-## Delve Debugger
-
-### Installation
-
-```bash
-go install github.com/go-delve/delve/cmd/dlv@latest
-```
-
-### Basic Usage
-
-```bash
-dlv debug ./cmd/myapp          # debug a program
-dlv test ./mypackage           # debug a test
-dlv attach 12345               # attach to running process
-dlv exec ./myapp -- --flag=v   # execute binary with args
-```
-
-### Common Commands
-
-```
-break main.main      # set breakpoint
-break file.go:42     # break at line
-continue             # continue execution
-next                 # step over (n)
-step                 # step into (s)
-stepout              # step out
-print variable       # print variable
-locals               # print all locals
-args                 # print function arguments
-goroutines           # list all goroutines
-goroutine 5          # switch to goroutine 5
-stack                # show stack trace
-```
-
-### IDE Integration
-
-**VS Code:**
-
-```json
-// .vscode/launch.json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Launch Package",
-      "type": "go",
-      "request": "launch",
-      "mode": "auto",
-      "program": "${workspaceFolder}",
-      "env": { "GOTRACEBACK": "all" }
-    }
-  ]
-}
-```
-
-**GoLand:** Run -> Edit Configurations -> Go Build. Click gutter to set breakpoints. Use Debugger tab.
 
 ---
 

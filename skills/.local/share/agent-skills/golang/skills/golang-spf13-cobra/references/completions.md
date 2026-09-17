@@ -111,12 +111,16 @@ cmd.MarkFlagDirname("dir")
 
 ```go
 func TestCompletion(t *testing.T) {
-    rootCmd.SetArgs([]string{"__complete", "get", ""})
-    buf := new(bytes.Buffer)
-    rootCmd.SetOut(buf)
-    rootCmd.Execute()
-    assert.Contains(t, buf.String(), "pod")
-    assert.Contains(t, buf.String(), "service")
+	rootCmd.SetArgs([]string{"__complete", "get", ""})
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.Execute()
+	if !strings.Contains(buf.String(), "pod") {
+		t.Errorf("output %q does not contain %q", buf.String(), "pod")
+	}
+	if !strings.Contains(buf.String(), "service") {
+		t.Errorf("output %q does not contain %q", buf.String(), "service")
+	}
 }
 ```
 

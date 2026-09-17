@@ -28,7 +28,7 @@ Four skills form a "deep analysis" cluster. `golang-observability` is the always
 | --- | --- | --- |
 | `samber/cc-skills-golang@golang-performance` | Optimization patterns — "if allocation bottleneck → use sync.Pool", "if hot-path → avoid reflection" | Measurement, profile capture, root cause analysis |
 | `samber/cc-skills-golang@golang-benchmark` | pprof/trace capture, flame graph interpretation, benchstat comparison, CI regression detection | Deciding which optimization to apply |
-| `samber/cc-skills-golang@golang-troubleshooting` | Debugging workflow: reproduce, bisect, Delve, race detector, GODEBUG, test-driven debugging | Profile interpretation, optimization patterns |
+| `samber/cc-skills-golang@golang-troubleshooting` | Debugging workflow: reproduce, bisect, race detector, GODEBUG, test-driven debugging | Profile interpretation, optimization patterns |
 | `samber/cc-skills-golang@golang-observability` | Always-on production signals: structured logs, Prometheus counters, OTel traces, alerting | Temporary investigation, benchmark runs |
 
 **Routing examples:**
@@ -36,7 +36,7 @@ Four skills form a "deep analysis" cluster. `golang-observability` is the always
 - "My HTTP handler is slow in production" → start with `golang-observability` (check metrics/traces), then `golang-benchmark` (capture profiles), then `golang-performance` (apply fixes).
 - "My benchmark regressed by 20%" → `golang-benchmark` (benchstat comparison, detect root cause via pprof).
 - "I need to reduce allocations in the hot path" → `golang-performance` (pooling, struct layout, escape analysis).
-- "The process crashes after 10 minutes under load" → `golang-troubleshooting` (race detector, memory leak, Delve attach).
+- "The process crashes after 10 minutes under load" → `golang-troubleshooting` (race detector, memory leak, stack traces).
 
 ---
 
@@ -47,17 +47,11 @@ Start with `golang-dependency-injection` for library selection. Then use the lib
 | Skill | Unique territory |
 | --- | --- |
 | `samber/cc-skills-golang@golang-dependency-injection` | Concepts (why DI, manual injection), constructor patterns, library comparison table |
-| `samber/cc-skills-golang@golang-google-wire` | Compile-time codegen: `wire.Build`, `wire.NewSet`, `wire.Bind`, `ProviderSet` |
-| `samber/cc-skills-golang@golang-uber-dig` | Runtime reflection: `dig.Provide`, `dig.In`/`dig.Out`, value groups, `Decorate` |
-| `samber/cc-skills-golang@golang-uber-fx` | Full application framework on top of dig: `fx.New`, `fx.Module`, lifecycle hooks, `fx.Annotate` |
 | `samber/cc-skills-golang@golang-samber-do` | Type-safe container, `do.Provide`, scopes, health checks, graceful shutdown |
 
 **Routing examples:**
 
 - "Should I use DI in my project?" → `golang-dependency-injection`.
-- "My project uses google/wire, `wire.Build` is failing" → `golang-google-wire`.
-- "I want lifecycle hooks with my DI container" → `golang-uber-fx` (not `golang-uber-dig` — dig is lower-level).
-- "I want type-safe DI without code generation" → `golang-samber-do` or `golang-uber-dig`.
 
 ---
 
@@ -67,13 +61,11 @@ The three core skills cover three distinct programming models. They rarely compe
 
 | Skill | Unique territory | Does NOT own |
 | --- | --- | --- |
-| `samber/cc-skills-golang@golang-samber-lo` | Finite collections: `lo.Map`, `lo.Filter`, `lo.Reduce`, `lo.Uniq`, `lo.GroupBy` — 500+ helpers | Infinite streams, event-driven pipelines |
 | `samber/cc-skills-golang@golang-samber-ro` | Infinite/event-driven: observables, subjects, operators like `Map`/`Filter`/`Throttle`, backpressure | Finite slice transforms |
 | `samber/cc-skills-golang@golang-samber-mo` | Monadic types: `mo.Option[T]`, `mo.Result[T]`, `mo.Either[L,R]`, `mo.Future[T]` | Slice helpers, reactive streams |
 
 **Routing examples:**
 
-- "Transform a slice of users into a map by ID" → `golang-samber-lo` (`lo.KeyBy`).
 - "Stream events from a channel with backpressure and rate limiting" → `golang-samber-ro`.
 - "Return an optional value without using nil" → `golang-samber-mo` (`mo.Some`/`mo.None`).
 - "Compose error-returning functions without if-err chains" → `golang-samber-mo` (`mo.Result[T]`).
@@ -139,14 +131,14 @@ These four skills each own a distinct slice of "code quality". Source descriptio
 
 | Skill | Unique territory |
 | --- | --- |
-| `samber/cc-skills-golang@golang-testing` | Test strategy, table-driven patterns, `t.Parallel()`, `testcontainers`, goleak, coverage, fuzz |
-| `samber/cc-skills-golang@golang-stretchr-testify` | `assert.Equal`, `require.NoError`, `mock.On`, `mock.AssertExpectations`, `testify/suite` lifecycle |
+| `samber/cc-skills-golang@golang-testing` | Test strategy, table-driven patterns, `t.Parallel()`, `testcontainers`, coverage, fuzz |
+| `golang-go-cmp` | Structural diffs, comparison options, semantic equality, and unexported fields |
 
 **Routing examples:**
 
 - "How do I write a table-driven test in Go?" → `golang-testing`.
-- "How do I assert a mock was called with specific args?" → `golang-stretchr-testify`.
-- "How do I detect goroutine leaks in tests?" → `golang-testing` (goleak).
+- "How do I compare nested results while ignoring an irrelevant field?" → `golang-go-cmp`.
+- "How do I detect goroutine leaks in tests?" → `golang-testing` (cancellation and completion).
 
 ---
 
@@ -233,43 +225,18 @@ Both skills suggest code changes, but for different reasons.
 
 ---
 
-## 12. Package lookup / discovery cluster
+## Package documentation and dependency inspection
 
-These four skills all touch "third-party packages", but each owns a different stage. `golang-pkg-go-dev` is the read-only lookup layer (query facts about an _existing_ import path on pkg.go.dev); the others decide, manage, or remediate.
+- Read the current package API with `golang-go-doc` (`go doc`).
+- Navigate local definitions and references with `golang-gopls`.
+- Inspect versions and replacements with `golang-dependency-management`.
+- Audit vulnerability reachability with `golang-security`.
 
-| Skill | Unique territory | Does NOT own |
-| --- | --- | --- |
-| `samber/cc-skills-golang@golang-pkg-go-dev` | Querying pkg.go.dev for a known path: available versions, docs/symbols/examples, importers (`imported-by`), licenses, known CVEs — via the `godig` CLI/MCP | Deciding which library to pick, editing go.mod, scanning your own tree, navigating local/resolved code (→ `samber/cc-skills-golang@golang-gopls`) |
-| `samber/cc-skills-golang@golang-popular-libraries` | Recommending a library for a use case; stdlib-vs-third-party judgment | Looking up facts about a specific published package |
-| `samber/cc-skills-golang@golang-dependency-management` | Editing go.mod: `go get`, upgrading, pinning, `replace`/`exclude`, workspaces | Browsing a package's docs or version history |
-| `samber/cc-skills-golang@golang-security` | Whole-tree vulnerability scanning with `govulncheck`, remediation across the module | Checking one module's CVEs without scanning the tree |
-
-**Overlap zone:** "is dependency X safe / current?" — `golang-pkg-go-dev` answers facts (which versions exist, does this version have CVEs, who imports it); `golang-dependency-management` performs the upgrade/pin; `golang-security` scans your own code path for reachable vulnerabilities.
-
-**Routing examples:**
-
-- "What versions of github.com/samber/lo exist?" → `golang-pkg-go-dev` (`versions`).
-- "Does golang.org/x/text v0.3.0 have known vulnerabilities?" → `golang-pkg-go-dev` (`vulns`).
-- "Which packages import my library?" → `golang-pkg-go-dev` (`imported-by`).
-- "Which logging library should I adopt?" → `golang-popular-libraries`.
-- "Upgrade github.com/foo/bar to the latest version" → `golang-dependency-management`.
-- "Scan my whole module for reachable CVEs" → `golang-security` (`govulncheck`).
-
-> Note: this skill cross-references the other three in its body (and they reference it back). Prefer `golang-pkg-go-dev` over Context7 for any Go package fact-lookup.
-
-**Sub-boundary — `godig` vs `gopls`:** both touch third-party code, but `godig` queries the remote pkg.go.dev index (works for packages not yet added to the project, no local build needed) while `gopls` (→ `samber/cc-skills-golang@golang-gopls`, via its MCP server, the native `LSP` tool, or its CLI) reasons about your actual resolved build in `go.sum` (including `replace`d forks).
-
-- "Where is `Foo` defined in my repo?" or "find every call site of this dependency's function in my code" → `golang-gopls` (`go_search`/`go_symbol_references`), not `golang-pkg-go-dev` — godig has no visibility into local, unpublished code or call sites inside your own repo.
-- "Does this package I haven't added yet have known CVEs?" → `golang-pkg-go-dev` (`vulns`).
-- "Can my current build actually reach a vulnerability in a dependency I already use?" → `golang-gopls` (`go_vulncheck`) or `golang-security` (`govulncheck` whole-tree).
-
-See the `samber/cc-skills-golang@golang-gopls` skill for the full gopls reference, and the `samber/cc-skills-golang@golang-how-to` skill's "`godig` vs gopls vs Context7 vs govulncheck" section for the full breakdown.
-
----
+These are distinct tasks; reading API documentation does not audit a dependency.
 
 ## 13. golang-refactoring vs. the target-state rule skills
 
-`golang-refactoring` owns the _process_ of changing existing Go code safely at scale — planning, blast-radius mapping, ordering staged PRs, tool-driven mechanics (gopls Rename/Inline, `gofmt -r`, `eg`, `gopatch`), and the human-in-the-loop git model. It does not own what the resulting code should look like — that is split across five existing skills, each answering "refactor toward what?"
+`golang-refactoring` owns the _process_ of changing existing Go code safely at scale — planning, blast-radius mapping, ordering staged PRs, tool-driven mechanics (gopls Rename/Inline, `gofmt -r`, `eg`), and the human-in-the-loop git model. It does not own what the resulting code should look like — that is split across five existing skills, each answering "refactor toward what?"
 
 | Skill | Unique territory | Does NOT own |
 | --- | --- | --- |

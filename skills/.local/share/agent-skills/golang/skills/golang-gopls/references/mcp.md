@@ -78,4 +78,4 @@ The gopls MCP server wraps LSP functionality with these boundaries:
 - **Can**: read files from the filesystem and return their contents; execute `go` commands to load package metadata (which may reach `proxy.golang.org` and write to the local Go module/build cache); write to gopls's own cache/configuration files; upload telemetry if the user has opted in.
 - **Cannot**: make arbitrary writes to the source tree outside of the edits a tool call explicitly returns; make arbitrary network requests beyond what `go` itself needs to resolve the build.
 
-Either mode — MCP or native `LSP` — only ever reasons about code that is present and resolvable in the local build: the workspace plus every dependency exactly as pinned in `go.sum`, including `replace` directives. For anything outside that boundary, → See `samber/cc-skills-golang@golang-pkg-go-dev` skill (`godig`).
+Both integrations analyze the locally resolved build. Read API documentation with `go doc` and use module tools to inspect versions and replacements.

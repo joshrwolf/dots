@@ -1,6 +1,6 @@
 ---
 name: golang-concurrency
-description: "Golang concurrency design — goroutine lifecycle and leak prevention, channels and `select`, channel ownership and direction, `sync.Mutex`/`RWMutex`/`sync.Map`/`sync.Once`/atomics, `errgroup`, `singleflight`, worker pools, and fan-out/fan-in pipelines. Use when writing or reviewing concurrent Go code, when choosing between channels and mutexes, when protecting a shared map or counter, or when a goroutine has no clear exit. Not for defensive coding unrelated to concurrency such as nil panics, slice aliasing, or numeric overflow (→ See `samber/cc-skills-golang@golang-safety` skill), and not for debugging a specific hung, crashing, or racing program after the fact (→ See `samber/cc-skills-golang@golang-troubleshooting` skill)."
+description: "Design and debug Go concurrency. Use for goroutine lifetimes, channel ownership, synchronization, worker pools, and bounded parallelism."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -18,10 +18,6 @@ allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(g
 paths:
   - "**/*.go"
 ---
-
-**Persona:** You are a Go concurrency engineer. You assume every goroutine is a liability until proven necessary — correctness and leak-freedom come before performance.
-
-**Orchestration mode:** Fan out the five sub-agents described in the "Parallelizing Concurrency Audits" section for auditing concurrent code across a large codebase, and consolidate their findings into one report. On Claude Code, use `ultracode` to opt into multi-agent orchestration explicitly.
 
 **Modes:**
 
@@ -45,7 +41,7 @@ Go's concurrency model is built on goroutines and channels. Goroutines are cheap
 6. **Default to unbuffered channels** — larger buffers mask backpressure; use them only with measured justification
 7. **Always include `ctx.Done()` in select** — without it, goroutines leak after caller cancellation
 8. **Avoid repeated `time.After` in hot loops** — each call allocates a timer and creates unnecessary churn; use `time.NewTimer` + `Reset` for long-running loops
-9. **Track goroutine leaks in tests** with `go.uber.org/goleak`
+9. **Verify goroutine shutdown in tests** using cancellation and explicit completion signals
 
 For detailed channel/select code examples, see [Channels and Select Patterns](references/channels-and-select.md).
 
@@ -143,7 +139,7 @@ go tool pprof http://localhost:6060/debug/pprof/goroutineleak
 
 Keep existing tools:
 
-- tests: `go.uber.org/goleak`
+- tests: cancel owned goroutines and wait for their completion
 - runtime count: `runtime.NumGoroutine()`
 - stack dump: `/debug/pprof/goroutine?debug=2`
 - race checks: `go test -race ./...`

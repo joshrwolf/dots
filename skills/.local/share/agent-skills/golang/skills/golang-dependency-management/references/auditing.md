@@ -23,7 +23,10 @@ go get -u -t ./...    # Upgrade deps, INCLUDING test-only deps
 
 ### Impact on Binary Size
 
-To check whether a large dependency is actually linked into your binary (vs. only used in tests), use `goweight` or `go-size-analyzer` — if the package doesn't appear in the binary breakdown, it's test-only and not contributing to binary size.
+Use `go list -deps ./cmd/myapp` to inspect the build's package graph and
+`go version -m ./myapp` for embedded module metadata. These do not measure each
+module's linked size. For an unstripped binary, `go tool nm -size ./myapp` shows
+symbol sizes; compare binaries built with the same flags to assess a change.
 
 ## Vulnerability Scanning with govulncheck
 
@@ -49,36 +52,13 @@ Output shows the vulnerability ID, affected module, fixed version, and the call 
 
 For CI pipeline integration, see the `samber/cc-skills-golang@golang-continuous-integration` skill.
 
-## Tracking Outdated Dependencies with go-mod-outdated
+## Available dependency updates
 
-`psampaz/go-mod-outdated` lists outdated direct dependencies with available updates.
-
-```bash
-# Show outdated direct dependencies with available updates
-go list -u -m -json all | go-mod-outdated -update -direct
-
-# Fail in CI if dependencies are outdated
-go list -u -m -json all | go-mod-outdated -update -direct -ci
-
-# Markdown output
-go list -u -m -json all | go-mod-outdated -update -direct -style markdown
+```sh
+go list -m -u all
+go list -m -u -json all
 ```
 
-Output columns: MODULE, CURRENT version, WANTED (latest minor/patch), LATEST (latest overall), and VALID TIMESTAMPS (warns if an "update" is chronologically older than current).
-
-## Analyzing Dependency Size with goweight
-
-`jondot/goweight` lists every package linked into the binary sorted by size contribution. It helps identify bloated dependencies and evaluate whether a lighter alternative exists.
-
-```bash
-goweight          # Sort by size
-goweight --json   # JSON output for CI tracking
-```
-
-**Modern alternative**: [go-size-analyzer](https://github.com/Zxilly/go-size-analyzer) (`gsa`) supports ELF, Mach-O, PE, and WebAssembly formats with interactive HTML/SVG visualization:
-
-```bash
-go get -tool github.com/Zxilly/go-size-analyzer/cmd/gsa@latest
-go build -o ./myapp ./cmd/myapp
-go tool gsa -f html -o size-report.html ./myapp
-```
+Review the selected versions and replacements before updating. This reports
+available updates without changing the module. Use `go mod why -m module/path`
+to investigate why a dependency is present.

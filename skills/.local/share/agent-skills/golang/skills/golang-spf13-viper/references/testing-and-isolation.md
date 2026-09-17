@@ -17,10 +17,12 @@ The top-level `viper.*` functions operate on a global `*viper.Viper` instance sh
 ```go
 // ✗ Bad — sets global state that affects later tests
 func TestPortConfig(t *testing.T) {
-    viper.SetDefault("port", 8080)
-    viper.Set("port", 9090)
-    assert.Equal(t, 9090, viper.GetInt("port"))
-    // global viper now has port=9090 for all subsequent tests
+	viper.SetDefault("port", 8080)
+	viper.Set("port", 9090)
+	if got, want := viper.GetInt("port"), 9090; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	// global viper now has port=9090 for all subsequent tests
 }
 ```
 
@@ -28,16 +30,20 @@ func TestPortConfig(t *testing.T) {
 
 ```go
 func TestPortConfig(t *testing.T) {
-    v := viper.New()
-    v.SetDefault("port", 8080)
-    v.Set("port", 9090)
-    assert.Equal(t, 9090, v.GetInt("port"))
+	v := viper.New()
+	v.SetDefault("port", 8080)
+	v.Set("port", 9090)
+	if got, want := v.GetInt("port"), 9090; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
 }
 
 func TestDefaultPort(t *testing.T) {
-    v := viper.New()
-    v.SetDefault("port", 8080)
-    assert.Equal(t, 8080, v.GetInt("port"))  // clean — not affected by TestPortConfig
+	v := viper.New()
+	v.SetDefault("port", 8080)
+	if got, want := v.GetInt("port"), 8080; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	} // clean — not affected by TestPortConfig
 }
 ```
 
@@ -48,29 +54,31 @@ For test isolation to work, your application code must accept a `*viper.Viper` i
 ```go
 // ✓ Good — accepts a viper instance
 type Server struct {
-    cfg *viper.Viper
+	cfg *viper.Viper
 }
 
 func NewServer(v *viper.Viper) *Server {
-    return &Server{cfg: v}
+	return &Server{cfg: v}
 }
 
 func (s *Server) Port() int {
-    return s.cfg.GetInt("port")
+	return s.cfg.GetInt("port")
 }
 
 // In tests:
 func TestServer(t *testing.T) {
-    v := viper.New()
-    v.Set("port", 9090)
-    s := NewServer(v)
-    assert.Equal(t, 9090, s.Port())
+	v := viper.New()
+	v.Set("port", 9090)
+	s := NewServer(v)
+	if got, want := s.Port(), 9090; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
 }
 
 // In main:
 func main() {
-    // viper setup...
-    s := NewServer(viper.GetViper())  // pass the global instance in production
+	// viper setup...
+	s := NewServer(viper.GetViper()) // pass the global instance in production
 }
 ```
 
@@ -78,10 +86,14 @@ func main() {
 
 ```go
 func TestReadConfig(t *testing.T) {
-    v := viper.New()
-    v.SetConfigFile("testdata/config.yaml")
-    require.NoError(t, v.ReadInConfig())
-    assert.Equal(t, "localhost", v.GetString("host"))
+	v := viper.New()
+	v.SetConfigFile("testdata/config.yaml")
+	if err := v.ReadInConfig(); err != nil {
+		t.Fatalf("v.ReadInConfig: %v", err)
+	}
+	if got, want := v.GetString("host"), "localhost"; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
 }
 ```
 
@@ -93,14 +105,16 @@ Use `testdata/` for config files. Go test tooling sets the working directory to 
 
 ```go
 func TestEnvBinding(t *testing.T) {
-    t.Setenv("MYAPP_PORT", "9090")
+	t.Setenv("MYAPP_PORT", "9090")
 
-    v := viper.New()
-    v.SetEnvPrefix("MYAPP")
-    v.AutomaticEnv()
+	v := viper.New()
+	v.SetEnvPrefix("MYAPP")
+	v.AutomaticEnv()
 
-    assert.Equal(t, 9090, v.GetInt("port"))
-    // t.Setenv restores original MYAPP_PORT (or unsets it) after this test
+	if got, want := v.GetInt("port"), 9090; got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	// t.Setenv restores original MYAPP_PORT (or unsets it) after this test
 }
 ```
 

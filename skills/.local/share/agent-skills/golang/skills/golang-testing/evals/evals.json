@@ -1,26 +1,26 @@
 [
   {
     "id": 1,
-    "name": "goleak-goroutine-leak-detection",
-    "description": "Tests use goleak for goroutine leak detection, not just task completion",
+    "name": "worker-shutdown",
+    "description": "Verify worker completion and cancellation without global goroutine counts",
     "prompt": "Write tests for a `workerpool` package. The package has a `Pool` struct with `Start(numWorkers int)`, `Submit(task func())`, and `Stop()` methods. Start spawns goroutines, Submit enqueues work, Stop shuts down gracefully. Write comprehensive unit tests covering start, submit tasks, and stop.",
-    "trap": "Model writes normal unit tests verifying task completion but omits goroutine leak detection — Stop() may appear to work while leaking goroutines",
+    "trap": "Tests only check completed work and never exercise stopping idle or blocked workers",
     "assertions": [
       {
         "id": "1.1",
-        "text": "Uses goleak (go.uber.org/goleak) — either goleak.VerifyTestMain in TestMain or goleak.VerifyNone per-test — to detect goroutine leaks from the worker pool"
+        "text": "Exercises Stop with idle workers and in-flight work"
       },
       {
         "id": "1.2",
-        "text": "Has a TestMain function if using goleak.VerifyTestMain (the package-level approach)"
+        "text": "Waits for owned worker completion with explicit synchronization rather than sleeps"
       },
       {
         "id": "1.3",
-        "text": "Tests verify that Stop() properly cleans up goroutines (not just that tasks complete)"
+        "text": "Registers cleanup immediately so failed checks do not leave workers running"
       },
       {
         "id": "1.4",
-        "text": "Imports go.uber.org/goleak"
+        "text": "Uses a bounded test timeout and explains when the public API cannot prove worker shutdown"
       }
     ]
   },
@@ -116,7 +116,7 @@
       },
       {
         "id": "5.2",
-        "text": "Creates mock implementations of these interfaces (using testify/mock or manual mocks)"
+        "text": "Creates mock implementations of these interfaces using focused fakes with explicit behavior"
       },
       {
         "id": "5.3",
@@ -292,34 +292,34 @@
   },
   {
     "id": 12,
-    "name": "testify-suite-for-integration",
-    "description": "Integration tests use testify/suite with SetupSuite/TearDownTest for organized setup/teardown",
+    "name": "integration-fixture-cleanup",
+    "description": "Integration tests isolate fixtures and clean resources with ordinary testing functions",
     "prompt": "Write integration tests for an `OrderRepository` that interacts with PostgreSQL. It has `Create(order *Order) error`, `GetByID(id string) (*Order, error)`, and `ListByUserID(userID string) ([]*Order, error)`. Tests need database setup (create tables), per-test data cleanup, and graceful teardown. Organize them cleanly so setup/teardown happens automatically. These must not run during normal unit tests.",
-    "trap": "Model uses TestMain or plain setup functions with defer for teardown, mixing setup concerns into each test instead of a suite",
+    "trap": "Shared state leaks between tests, or cleanup is registered only after setup can fail",
     "assertions": [
       {
         "id": "12.1",
-        "text": "Uses testify/suite.Suite struct embedding for test organization"
+        "text": "Uses ordinary Test functions and focused setup helpers with t.Helper()"
       },
       {
         "id": "12.2",
-        "text": "Has SetupSuite (or similar) for one-time database connection and schema setup"
+        "text": "Checks connection and schema setup errors before using the database"
       },
       {
         "id": "12.3",
-        "text": "Has SetupTest or TearDownTest for per-test data cleanup (e.g., TRUNCATE)"
+        "text": "Isolates per-test data with rollback or a separate schema/database"
       },
       {
         "id": "12.4",
-        "text": "Has TearDownSuite for graceful shutdown (close DB, docker-compose down)"
+        "text": "Registers t.Cleanup immediately after acquisition, with rollback before connection close"
       },
       {
         "id": "12.5",
-        "text": "Uses `//go:build integration` build tag"
+        "text": "Uses the requested integration build tag"
       },
       {
         "id": "12.6",
-        "text": "Has a runner function `func TestXxx(t *testing.T) { suite.Run(t, ...) }`"
+        "text": "Checks behavior with explicit testing.T failures and go-cmp where a structural diff is useful"
       }
     ]
   },

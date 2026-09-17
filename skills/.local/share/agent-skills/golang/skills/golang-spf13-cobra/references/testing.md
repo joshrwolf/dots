@@ -16,17 +16,23 @@
 
 ```go
 func TestServeCmd(t *testing.T) {
-    stdout := new(bytes.Buffer)
-    stderr := new(bytes.Buffer)
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
 
-    rootCmd.SetOut(stdout)
-    rootCmd.SetErr(stderr)
-    rootCmd.SetArgs([]string{"serve", "--port", "9090", "--dry-run"})
+	rootCmd.SetOut(stdout)
+	rootCmd.SetErr(stderr)
+	rootCmd.SetArgs([]string{"serve", "--port", "9090", "--dry-run"})
 
-    err := rootCmd.Execute()
-    require.NoError(t, err)
-    assert.Contains(t, stdout.String(), "listening on :9090")
-    assert.Empty(t, stderr.String())
+	err := rootCmd.Execute()
+	if err := err; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "listening on :9090") {
+		t.Errorf("output %q does not contain %q", stdout.String(), "listening on :9090")
+	}
+	if len(stderr.String()) != 0 {
+		t.Errorf("expected empty value, got %v", stderr.String())
+	}
 }
 ```
 
@@ -38,16 +44,18 @@ Cobra accumulates flag state across `Execute()` calls on the same command instan
 
 ```go
 func newRootCmd() *cobra.Command {
-    root := &cobra.Command{Use: "myapp", SilenceUsage: true, SilenceErrors: true}
-    root.AddCommand(newServeCmd())
-    return root
+	root := &cobra.Command{Use: "myapp", SilenceUsage: true, SilenceErrors: true}
+	root.AddCommand(newServeCmd())
+	return root
 }
 
 func TestServeCmd(t *testing.T) {
-    root := newRootCmd()
-    root.SetArgs([]string{"serve", "--port", "9090"})
-    err := root.Execute()
-    require.NoError(t, err)
+	root := newRootCmd()
+	root.SetArgs([]string{"serve", "--port", "9090"})
+	err := root.Execute()
+	if err := err; err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 ```
 
@@ -71,16 +79,21 @@ Commands must use `cmd.OutOrStdout()` / `cmd.ErrOrStderr()` instead of `os.Stdou
 ```go
 // In command handler:
 func runServe(cmd *cobra.Command, args []string) error {
-    fmt.Fprintln(cmd.OutOrStdout(), "Server started")
-    fmt.Fprintln(cmd.ErrOrStderr(), "Debug: listening on port 8080")
-    return nil
+	fmt.Fprintln(cmd.OutOrStdout(), "Server started")
+	fmt.Fprintln(cmd.ErrOrStderr(), "Debug: listening on port 8080")
+	return nil
 }
 
-// In test:
-buf := new(bytes.Buffer)
-rootCmd.SetOut(buf)
-rootCmd.Execute()
-assert.Contains(t, buf.String(), "Server started")
+func TestServeOutput(t *testing.T) {
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Server started") {
+		t.Errorf("output %q does not contain %q", buf.String(), "Server started")
+	}
+}
 ```
 
 ## Golden file tests
@@ -89,17 +102,21 @@ For commands with structured or lengthy output, use golden files:
 
 ```go
 func TestOutputFormat(t *testing.T) {
-    buf := new(bytes.Buffer)
-    rootCmd.SetOut(buf)
-    rootCmd.SetArgs([]string{"list", "--output", "json"})
-    require.NoError(t, rootCmd.Execute())
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetArgs([]string{"list", "--output", "json"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("rootCmd.Execute: %v", err)
+	}
 
-    golden := "testdata/list-json.golden"
-    if *update {  // -update flag
-        os.WriteFile(golden, buf.Bytes(), 0644)
-    }
-    want, _ := os.ReadFile(golden)
-    assert.Equal(t, string(want), buf.String())
+	golden := "testdata/list-json.golden"
+	if *update { // -update flag
+		os.WriteFile(golden, buf.Bytes(), 0644)
+	}
+	want, _ := os.ReadFile(golden)
+	if got, want := buf.String(), string(want); got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
 }
 ```
 
@@ -109,13 +126,17 @@ Run with `-update` to regenerate golden files after intentional output changes.
 
 ```go
 func TestInvalidArgs(t *testing.T) {
-    stderr := new(bytes.Buffer)
-    rootCmd.SetErr(stderr)
-    rootCmd.SetArgs([]string{"delete"})  // missing required arg
+	stderr := new(bytes.Buffer)
+	rootCmd.SetErr(stderr)
+	rootCmd.SetArgs([]string{"delete"}) // missing required arg
 
-    err := rootCmd.Execute()
-    assert.Error(t, err)
-    assert.Contains(t, err.Error(), "accepts 1 arg")
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatalf("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "accepts 1 arg") {
+		t.Errorf("output %q does not contain %q", err.Error(), "accepts 1 arg")
+	}
 }
 ```
 
@@ -123,30 +144,36 @@ func TestInvalidArgs(t *testing.T) {
 
 ```go
 tests := []struct {
-    name    string
-    args    []string
-    wantOut string
-    wantErr bool
+	name    string
+	args    []string
+	wantOut string
+	wantErr bool
 }{
-    {"no flags", []string{"serve"}, "listening on :8080", false},
-    {"custom port", []string{"serve", "--port", "9090"}, "listening on :9090", false},
-    {"invalid port", []string{"serve", "--port", "abc"}, "", true},
+	{"no flags", []string{"serve"}, "listening on :8080", false},
+	{"custom port", []string{"serve", "--port", "9090"}, "listening on :9090", false},
+	{"invalid port", []string{"serve", "--port", "abc"}, "", true},
 }
 
 for _, tt := range tests {
-    t.Run(tt.name, func(t *testing.T) {
-        root := newRootCmd()  // fresh command tree per test
-        buf := new(bytes.Buffer)
-        root.SetOut(buf)
-        root.SetArgs(tt.args)
-        err := root.Execute()
-        if tt.wantErr {
-            assert.Error(t, err)
-        } else {
-            require.NoError(t, err)
-            assert.Contains(t, buf.String(), tt.wantOut)
-        }
-    })
+	t.Run(tt.name, func(t *testing.T) {
+		root := newRootCmd() // fresh command tree per test
+		buf := new(bytes.Buffer)
+		root.SetOut(buf)
+		root.SetArgs(tt.args)
+		err := root.Execute()
+		if tt.wantErr {
+			if err == nil {
+				t.Fatalf("expected an error, got nil")
+			}
+		} else {
+			if err := err; err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(buf.String(), tt.wantOut) {
+				t.Errorf("output %q does not contain %q", buf.String(), tt.wantOut)
+			}
+		}
+	})
 }
 ```
 
@@ -154,13 +181,17 @@ for _, tt := range tests {
 
 ```go
 func TestCompletion(t *testing.T) {
-    root := newRootCmd()
-    buf := new(bytes.Buffer)
-    root.SetOut(buf)
-    root.SetArgs([]string{"__complete", "delete", ""})
-    root.Execute()
+	root := newRootCmd()
+	buf := new(bytes.Buffer)
+	root.SetOut(buf)
+	root.SetArgs([]string{"__complete", "delete", ""})
+	root.Execute()
 
-    assert.Contains(t, buf.String(), "pod")
-    assert.Contains(t, buf.String(), "service")
+	if !strings.Contains(buf.String(), "pod") {
+		t.Errorf("output %q does not contain %q", buf.String(), "pod")
+	}
+	if !strings.Contains(buf.String(), "service") {
+		t.Errorf("output %q does not contain %q", buf.String(), "service")
+	}
 }
 ```

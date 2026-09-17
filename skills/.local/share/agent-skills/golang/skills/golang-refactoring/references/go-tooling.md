@@ -8,7 +8,6 @@ This file is the tool reference for `samber/cc-skills-golang@golang-refactoring`
 - [2. Bulk Mechanical Rewrite Tools](#2-bulk-mechanical-rewrite-tools)
   - [`gofmt -r` — syntactic, single-expression](#gofmt--r--syntactic-single-expression)
   - [`eg` — type-aware, example-based](#eg--type-aware-example-based)
-  - [`gopatch` — statement-level, import-aware](#gopatch--statement-level-import-aware)
   - [`go/analysis` + SuggestedFixes — bespoke, testable](#goanalysis--suggestedfixes--bespoke-testable)
   - [`go fix` — the `go/analysis`-based fixer suite](#go-fix--the-goanalysis-based-fixer-suite)
   - [`dave/dst` — comment- and formatting-preserving AST edits](#davedst--comment--and-formatting-preserving-ast-edits)
@@ -65,25 +64,6 @@ eg -t template.go -w ./...
 - Matching is semantic, not textual — `func(x int)` in the template also matches `func(y int)` at the call site, since `eg` matches by type and structure.
 - Limits: expressions only, no statements or function-literal patterns; a rewrite can't change the expression's type; imports are added but never removed (run `goimports` afterward); and duplicating a wildcard variable in the `after` template duplicates whatever side effect the matched expression had.
 
-### `gopatch` — statement-level, import-aware
-
-`github.com/uber-go/gopatch` operates at the statement level and tracks imports as part of the patch, so it can work on code that doesn't fully compile mid-refactor — useful for the messy in-between states of a large migration. A patch declares metavariables between `@@` markers, then a diff-like body:
-
-```
-@@
-var x expression
-@@
--errors.New(fmt.Sprintf(x))
-+fmt.Errorf(x)
-```
-
-```bash
-gopatch -p rewrite.patch ./...
-gopatch -d -p rewrite.patch ./...    # dry-run — show the diff only
-```
-
-- Still beta; the project frames it as covering roughly 80% of a migration, not 100%.
-- A pattern can't match an import statement in isolation — something must follow it in the pattern for a match to occur.
 
 ### `go/analysis` + SuggestedFixes — bespoke, testable
 

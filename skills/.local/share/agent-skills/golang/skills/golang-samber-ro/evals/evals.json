@@ -17,7 +17,7 @@
       "name": "lo-vs-ro-boundary",
       "prompt": "I have a []User slice with 500 users. I want to filter active users and extract their email addresses into a []string. Should I use samber/ro for this? Write the code.",
       "assertions": [
-        "Recommends samber/lo instead of samber/ro for this finite slice operation",
+        "Uses a direct loop or standard-library collection operation for this finite slice",
         "Explains WHY lo is better here: synchronous, no stream overhead, purpose-built for slices",
         "Does NOT create an Observable pipeline for a simple slice transform",
         "Uses lo.Filter and lo.Map (or equivalent lo functions)"

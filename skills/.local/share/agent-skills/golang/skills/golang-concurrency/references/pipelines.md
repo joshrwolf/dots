@@ -254,13 +254,8 @@ Use `samber/ro` for sequential data transformations that benefit from a fluent A
 
 ## Goroutine Leak Detection
 
-Goroutine leaks SHOULD be detected with goleak in tests. Use `go.uber.org/goleak` in `TestMain` to catch leaked goroutines across all tests:
-
-```go
-func TestMain(m *testing.M) {
-    goleak.VerifyTestMain(m)
-}
-```
+Cancel each pipeline stage and wait for its completion in tests, including when
+a consumer stops early. Exercise blocked sends and receives explicitly.
 
 ## Common Pipeline Mistakes
 

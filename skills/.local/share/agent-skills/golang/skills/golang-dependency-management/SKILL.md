@@ -1,6 +1,6 @@
 ---
 name: golang-dependency-management
-description: "Dependency management for Golang projects — go.mod and go.sum, `go get` install and upgrade flows, Minimal Version Selection, conflict resolution with replace/exclude/retract, `govulncheck` scanning of the module tree, outdated dependency and binary size auditing, vendoring, `tool` directives, and go.work workspaces. Use when adding, removing, or upgrading Go dependencies, deciding whether to take on a package, resolving version conflicts, or auditing what a module pulls in. Covers choosing and upgrading dependency versions, not the surrounding tooling: do NOT use for fixing an exploitable vulnerability in code (→ See `samber/cc-skills-golang@golang-security` skill) or for wiring Dependabot/Renovate update bots into CI workflows (→ See `samber/cc-skills-golang@golang-continuous-integration` skill)."
+description: "Manage Go modules and dependencies. Use for go.mod/go.sum changes, version selection, replace directives, vendoring, workspaces, and vulnerability checks."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -20,8 +20,6 @@ metadata:
         bins: [govulncheck]
 allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent Bash(govulncheck:*) AskUserQuestion
 ---
-
-**Persona:** You are a Go dependency steward. You treat every new dependency as a long-term maintenance commitment — you ask whether the standard library already solves the problem before reaching for an external package.
 
 **Dependencies:**
 
@@ -78,7 +76,7 @@ go get github.com/google/uuid@latest   # Explicitly latest
 go get github.com/google/uuid@<commit> # Specific commit (pseudo-version)
 ```
 
-Before pinning a version, inspect the module's available versions, importers, and known vulnerabilities on pkg.go.dev → See `samber/cc-skills-golang@golang-pkg-go-dev` skill.
+Before pinning a version, inspect the module's available versions, importers, and known vulnerabilities on pkg.go.dev → See `golang-go-doc` skill.
 
 ### Upgrading
 
@@ -176,7 +174,7 @@ For future Go versions, use the project's intended target version. Do not use AP
 
 - **[Versioning & MVS](./references/versioning.md)** — Semantic versioning rules (major.minor.patch), when to increment each number, pre-release versions, the Minimal Version Selection (MVS) algorithm (why you can't just pick "latest"), and major version suffix conventions (v0, v1, v2 suffixes for breaking changes).
 
-- **[Auditing Dependencies](./references/auditing.md)** — Vulnerability scanning with `govulncheck`, tracking outdated dependencies, analyzing which dependencies make the binary large (`goweight`), and distinguishing test-only vs binary dependencies to keep `go.mod` clean.
+- **[Auditing Dependencies](./references/auditing.md)** — Vulnerability scanning with `govulncheck`, inspecting module updates and build dependencies, and distinguishing test-only vs binary dependencies to keep `go.mod` clean.
 
 - **[Dependency Conflicts & Resolution](./references/conflicts.md)** — Diagnosing version conflicts (what `go get` does when you request incompatible versions), resolution strategies (`replace` directives for local development, `exclude` for broken versions, `retract` for published versions that should be skipped), and workflows for conflicts across your dependency tree.
 
@@ -211,16 +209,16 @@ go mod tidy
 govulncheck ./...   # or: go tool govulncheck ./...
 
 # Check for outdated deps
-go list -u -m -json all | go-mod-outdated -update -direct
+go list -m -u all
 
-# Analyze binary size by dependency
-goweight
+# Inspect the build package graph
+go list -deps ./...
 
 # Understand why a dep exists
 go mod why -m github.com/some/module
 
-# Visualize dependency graph
-go mod graph | modgraphviz | dot -Tpng -o deps.png
+# Inspect dependency graph
+go mod graph
 
 # Verify checksums
 go mod verify

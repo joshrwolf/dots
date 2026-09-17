@@ -124,30 +124,10 @@ We use PostgreSQL because...
 
 ### REST APIs — OpenAPI / Swagger
 
-Use [swaggo/swag](https://github.com/swaggo/swag) to auto-generate OpenAPI docs from Go annotations:
-
-```go
-// @Summary Get user by ID
-// @Description Returns a single user
-// @Tags users
-// @Accept json
-// @Produce json
-// @Param id path int true "User ID"
-// @Success 200 {object} User
-// @Failure 404 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /users/{id} [get]
-func GetUser(w http.ResponseWriter, r *http.Request) {
-```
-
-Generate the spec:
-
-```bash
-go get -tool github.com/swaggo/swag/cmd/swag@latest
-go tool swag init -g cmd/server/main.go -o docs/swagger
-```
-
-This produces `docs/swagger/swagger.json` and `docs/swagger/swagger.yaml`. Serve with Swagger UI or Redoc.
+Maintain the project's OpenAPI document alongside handler changes. Keep paths,
+request/response schemas, status codes, and authentication requirements aligned
+with the actual API. Use the project's existing validation or generation command;
+package documentation and gopls do not generate this schema.
 
 ### Event-Driven — AsyncAPI
 
@@ -213,7 +193,7 @@ For REST+gRPC, use [grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway
 
 | API Style | Format | Auto-generation |
 | --- | --- | --- |
-| REST/HTTP with Go handlers | OpenAPI 3.x | swaggo/swag from annotations |
+| REST/HTTP with Go handlers | OpenAPI 3.x | Existing project schema workflow |
 | REST/HTTP with framework | OpenAPI 3.x | Framework-specific (e.g., huma) |
 | gRPC services | Protobuf | Proto files are the source of truth |
 | gRPC + REST gateway | Protobuf + OpenAPI | grpc-gateway generates OpenAPI |

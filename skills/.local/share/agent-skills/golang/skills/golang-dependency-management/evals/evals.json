@@ -142,7 +142,7 @@
     "id": 11,
     "name": "test-dependency-upgrade-flag",
     "description": "Tests knowledge of the -t flag for including test dependencies in upgrades",
-    "prompt": "I ran go get -u ./... to upgrade my Go dependencies, but my test dependencies (like testify) weren't upgraded. Why?",
+    "prompt": "I ran go get -u ./... to upgrade my Go dependencies, but my test dependencies (like go-cmp) weren't upgraded. Why?",
     "trap": "Without the skill, the model doesn't know about the -t flag and suggests upgrading test deps individually",
     "assertions": [
       {"id": "11.1", "text": "Explains that go get -u ./... excludes test-only dependencies by default"},
