@@ -3,9 +3,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 const configuredTempRoot = process.env.PI_SUBAGENTS_TEMP_ROOT?.trim();
+// macOS's default temp path exceeds Unix socket limits after fixture nesting.
+// Resolve /tmp as well so module resolution and fixture paths use the same alias.
+const systemTempRoot = process.platform === "darwin" ? fs.realpathSync("/tmp") : os.tmpdir();
 const tempRoot = configuredTempRoot
 	? path.resolve(configuredTempRoot)
-	: fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-test-root-"));
+	: fs.mkdtempSync(path.join(systemTempRoot, "pi-subagents-test-root-"));
 fs.mkdirSync(tempRoot, { recursive: true });
 if (process.platform === "darwin") fs.closeSync(fs.openSync(path.join(tempRoot, ".metadata_never_index"), "a"));
 process.env.PI_SUBAGENTS_TEMP_ROOT = tempRoot;

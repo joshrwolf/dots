@@ -55,6 +55,8 @@ describe("settings subagents.agentExcludeDirs", () => {
 		const userPlugins = path.join(user, "agents", "plugins");
 		const projectPlugins = path.join(project, ".agents", "plugins");
 		const fixedProjectRoot = path.join(project, ".pi", "agents");
+		const isExcludedPluginPath = (filePath: string) => [userPlugins, projectPlugins]
+			.some((dir) => filePath === dir || filePath.startsWith(`${dir}${path.sep}`));
 		writeAgent(path.join(user, "agents"), "user-legacy");
 		writeAgent(path.join(project, ".agents"), "project-legacy");
 		fs.mkdirSync(fixedProjectRoot, { recursive: true });
@@ -70,14 +72,14 @@ describe("settings subagents.agentExcludeDirs", () => {
 			for (const result of [discoverAgents(project, scope), discoverAgentSnapshot(project, scope, undefined, { includeChains: false }).effective]) {
 				assert.equal(result.agents.some((agent) => agent.name === "plugin-only"), false);
 				assert.equal(result.agents.some((agent) => agent.name === (scope === "project" ? "project-legacy" : "user-legacy")), true);
-				assert.equal(result.agentDiagnostics?.some((diagnostic) => diagnostic.filePath.includes("plugins")), false);
-				assert.equal(result.directories?.some((directory) => directory.path.includes("plugins")), false);
+				assert.equal(result.agentDiagnostics?.some((diagnostic) => isExcludedPluginPath(diagnostic.filePath)), false);
+				assert.equal(result.directories?.some((directory) => isExcludedPluginPath(directory.path)), false);
 			}
 		}
 		const all = discoverAgentsAll(project);
 		assert.equal([...all.user, ...all.project, ...all.package].some((agent) => agent.name === "plugin-only"), false);
-		assert.equal([...all.user, ...all.project, ...all.package].some((agent) => agent.filePath.includes("plugins")), false, "collision inputs must not retain excluded definitions");
-		assert.equal(all.agentDiagnostics?.some((diagnostic) => diagnostic.filePath.includes("plugins")), false);
+		assert.equal([...all.user, ...all.project, ...all.package].some((agent) => isExcludedPluginPath(agent.filePath)), false, "collision inputs must not retain excluded definitions");
+		assert.equal(all.agentDiagnostics?.some((diagnostic) => isExcludedPluginPath(diagnostic.filePath)), false);
 		assert.equal(discoverAgents(project, "project").directories?.some((directory) => directory.path === fixedProjectRoot), false);
 		assert.equal(discoverAgentSnapshot(project, "project", undefined, { includeChains: false }).all.agentDiagnostics?.some((diagnostic) => diagnostic.filePath.startsWith(fixedProjectRoot)), false);
 	});
