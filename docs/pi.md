@@ -22,18 +22,20 @@ placement, navigation, and workflow policy in our companion package. Herdr-side
 Rust features still belong in `herdr-plugins/` and use `herdrkit`.
 
 The initial registry selects pi-subagents v0.70.1 at
-`1ac7b5e2652e9571164847ac2905ab4aded92791`. The initial scaffold does not contain
-that subtree yet: importing it is a separate operation that creates commits.
+`1ac7b5e2652e9571164847ac2905ab4aded92791`. That subtree is included in dots;
+fresh clones can proceed directly to dependency setup and checks.
 
-## Initial import (once, by a maintainer)
+## Importing a new source (maintainers only)
 
-First commit the setup and finish any unrelated working-tree changes. Import
-and update refuse dirty trees, including untracked files; they never stash or
-commit unrelated work for you.
+Add the source to `pi-sources.toml`, commit it, and finish any unrelated
+working-tree changes. Import and update refuse dirty trees, including untracked
+files; they never stash or commit unrelated work for you. For a new source:
 
 ```sh
-make pi-import SOURCE=pi-subagents
+make pi-import SOURCE=<name>
 ```
+
+Do not repeat the import for pi-subagents; use `pi-update` for an existing subtree.
 
 This uses `git subtree add --squash` against the registered exact SHA. Review
 the imported source and license before executing it. Audit it for the public
@@ -58,10 +60,10 @@ make pi-check     # manager tests, upstream typecheck/test:all, companion checks
 make pi-install   # npm ci --ignore-scripts, then register local paths with Pi
 ```
 
-`pi-check` neither downloads dependencies nor registers packages. Before the
-initial subtree import, `pi-deps`, the full `pi-check`, and `pi-install` fail
-with an import instruction, before package setup side effects. Scaffold checks
-can still run independently:
+`pi-check` neither downloads dependencies nor registers packages. If a registered
+source has not been imported, `pi-deps`, the full `pi-check`, and `pi-install`
+fail with an import instruction before package setup side effects. Manager and
+companion checks can also run independently:
 
 ```sh
 make -C pi-plugins check-manager
@@ -109,12 +111,28 @@ There are three independent version concerns:
 3. Pi itself supplies the extension runtime. Homebrew currently installs Pi
    without an exact version pin. A dependency lockfile is **not** a host Pi pin.
 
-The setup was designed using installed Pi 0.85.1 documentation. The selected
-pi-subagents revision's development dependencies target Pi 0.86.1. Compatibility
-with the actual host must be smoke-tested before relying on it; passing upstream
-tests against its own development dependencies does not establish host
-compatibility. Local Herdr-native subagent execution is a future implementation,
-not provided by this package scaffold.
+The selected pi-subagents revision's development dependencies target Pi 0.86.1.
+A no-model RPC startup check on installed Pi 0.85.1 verified extension loading
+and registration of the doctor/fleet commands. This is not an end-to-end child
+execution test; passing upstream tests against its own development dependencies
+also does not establish full host compatibility. Repeat the host smoke test
+when updating either side. Local Herdr-native subagent execution is a future
+implementation, not provided by this package setup.
+
+### Local upstream customizations
+
+The imported revision has small test-portability patches, separate from the
+subtree import commit:
+
+- On macOS, test temporary roots use canonical `/private/tmp` to avoid Unix
+  socket path-length limits and `/var` versus `/private/var` alias mismatches.
+- npm test scripts limit file concurrency to two, as upstream's unit CI does,
+  to avoid starving short-deadline fixtures under load.
+- Agent exclusion assertions check the actual excluded fixture directories,
+  not any absolute path containing `plugins` (such as this repository's layout).
+- A relative `CLAUDE.md -> AGENTS.md` link follows dots' instruction convention.
+
+These changes do not alter subagent runtime behavior.
 
 Never develop inside `~/.pi/agent/git/` or `npm/`: Pi can reset/clean managed Git
 clones during reconciliation. Pi updates do not manage these local source paths.

@@ -43,8 +43,8 @@ No extensions or custom keybindings are required for this base setup.
 Optional Pi extensions live in `pi-plugins/`: pinned, editable upstream subtrees
 and our own companion package. `make pi-install` installs locked dependencies
 and registers local packages; `make pi-check` runs their checks. Neither is part
-of plain `make`. See [Pi package setup and maintenance](docs/pi.md), including
-the initial subtree import prerequisite.
+of plain `make`. See [Pi package setup and maintenance](docs/pi.md) for source
+pins, upstream updates, and compatibility notes.
 
 Edit `theme/.config/theme/themes/github-light/pi.json` to tune the palette;
 Pi hot-reloads edits to the active theme. After changing the central `current`
