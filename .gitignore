@@ -29,6 +29,16 @@ herdr-plugins/target/
 herdr-plugins/*/bin/
 
 
+# Pi package build/dependency artifacts and local runtime data.
+pi-plugins/**/node_modules/
+pi-plugins/**/dist/
+pi-plugins/**/dist-pkg/
+pi-plugins/**/coverage/
+pi-plugins/**/.pi/
+pi-plugins/**/*.tgz
+pi-plugins/**/__pycache__/
+scripts/__pycache__/
+
 # Scratch handoff notes, not part of the dotfiles.
 herdr-plugins/HANDOFF.md
 

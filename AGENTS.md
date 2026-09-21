@@ -7,7 +7,8 @@ GNU stow-managed dotfiles. Package contents mirror `$HOME`, so a file such as
 
 - Keep instructions in `AGENTS.md`, with a sibling relative symlink
   `CLAUDE.md -> AGENTS.md` at every instruction scope. Edit the canonical file;
-  do not maintain separate copies.
+  do not maintain separate copies. Exception: Pi's personal instruction scope at
+  `pi/.pi/agent/` uses its own `AGENTS.md` only, without a `CLAUDE.md` link.
 - Keep each skill in one directory with a standard `SKILL.md` containing
   `name` and `description` frontmatter. Use relative paths for supporting files.
 - For shared personal skills, use Stow to install the canonical directories at
@@ -25,13 +26,24 @@ GNU stow-managed dotfiles. Package contents mirror `$HOME`, so a file such as
 ## Stow
 
 The root Makefile lists packages explicitly. Plain `make` restows only the base
-`aerospace`, `brew`, `codex`, `ghostty`, `skills`, `theme`, and `zsh` packages. `make
+`aerospace`, `brew`, `codex`, `ghostty`, `pi`, `skills`, `theme`, and `zsh` packages. `make
 herdr` owns the optional Herdr setup and restows `herdr` and `nvim` after
 building the plugins.
 
 Use the root Make targets so package scope remains visible. Herdr plugin build
 and check implementation lives in `herdr-plugins/Makefile`; root targets delegate
 to it.
+
+## Pi packages
+
+- Third-party Pi packages are editable squashed subtrees under
+  `pi-plugins/vendor/<source>`, pinned to full Git SHAs in `pi-sources.toml`.
+  Our companion package lives in `pi-plugins/dots`. See `docs/pi.md`.
+- Use root `make pi-deps`, `make pi-check`, and `make pi-install`. Installation
+  registers local source paths through Pi; settings and runtime state remain
+  machine-local. Do not also install these packages from npm or Git.
+- `make pi-import SOURCE=<name>` and `make pi-update SOURCE=<name>` are explicit
+  clean-tree operations that create subtree commits. Plain `make` does neither.
 
 ## This repo is public
 

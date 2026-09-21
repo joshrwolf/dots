@@ -1,0 +1,17 @@
+{
+  "name": "@joshrwolf/pi-dots",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal Pi workflow extensions maintained in dots",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": [],
+    "skills": [],
+    "prompts": [],
+    "themes": []
+  },
+  "scripts": {
+    "check": "node --test"
+  }
+}

@@ -1,6 +1,7 @@
-STOW_PACKAGES := aerospace brew codex ghostty skills theme zsh
+STOW_PACKAGES := aerospace brew codex ghostty pi skills theme zsh
 HERDR_STOW_PACKAGES := herdr nvim
 HERDR_PLUGINS := herdr-plugins
+PI_PLUGINS := pi-plugins
 
 all: stow
 
@@ -26,6 +27,14 @@ skills-update:
 skills-import:
 	python3 scripts/skill-sources.py import "$(SOURCE)"
 
+# Explicit Pi package operations; plain make never installs dependencies or packages.
+pi-install pi-deps pi-check:
+	$(MAKE) -C $(PI_PLUGINS) $(patsubst pi-%,%,$@)
+
+# Deliberate subtree operations; require a clean tree and create commits.
+pi-import pi-update:
+	$(MAKE) -C $(PI_PLUGINS) $(patsubst pi-%,%,$@) SOURCE="$(SOURCE)"
+
 # Preserve the required setup order: binaries, config, then registration.
 herdr: herdr-build
 	stow --verbose --target="$(HOME)" --restow $(HERDR_STOW_PACKAGES)
@@ -47,4 +56,4 @@ herdr-issue-build:
 plugin-build-%:
 	$(MAKE) -C $(HERDR_PLUGINS) $@
 
-.PHONY: all stow unstow nvim skills skills-links skills-update skills-import herdr herdr-build herdr-link herdr-check herdr-issue-build
+.PHONY: all stow unstow nvim skills skills-links skills-update skills-import pi-install pi-deps pi-check pi-import pi-update herdr herdr-build herdr-link herdr-check herdr-issue-build

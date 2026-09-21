@@ -1,0 +1,6 @@
+# Editable squashed subtrees at pi-plugins/vendor/<name>.
+# Change and commit the exact ref before running make pi-update SOURCE=<name>.
+[sources.pi-subagents]
+url = "https://github.com/nicobailon/pi-subagents.git"
+ref = "1ac7b5e2652e9571164847ac2905ab4aded92791" # v0.70.1
+checks = ["typecheck", "test:all"]
