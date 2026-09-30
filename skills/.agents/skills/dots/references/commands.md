@@ -12,7 +12,7 @@ Help and skill generation work offline. Commands document their own effects and 
 Usage: dots [OPTIONS] [COMMAND]
 
 Commands:
-  github  Inspect GitHub CI status and investigate failed checks
+  github  Inspect GitHub CI evidence and PR review threads
   skills  Export agent discovery documentation from this command tree
 
 Options:
@@ -38,12 +38,13 @@ Options:
 ## dots github
 
 ```text
-Inspect GitHub CI status and investigate failed checks
+Inspect GitHub CI evidence and PR review threads
 
 Usage: dots github [OPTIONS] <COMMAND>
 
 Commands:
-  ci  Inspect PR, ref, commit, or workflow-run CI and retrieve failure evidence
+  ci       Inspect PR, ref, commit, or workflow-run CI and retrieve failure evidence
+  reviews  Inspect unresolved PR review threads and read exact conversations
 
 Options:
       --repo <[HOST/]OWNER/REPO>
@@ -289,6 +290,94 @@ Options:
           Annotation page to read; follow the returned command to continue
 
           [default: 1]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots github reviews
+
+```text
+Read-only review-thread investigation. Defaults to unresolved threads, including outdated feedback. Opening-comment previews are not full conversations. Follow the returned thread command for replies and reviewed diff context. Use --json for agent workflows. General PR discussion, review submission, replies, resolution, and merging remain with gh or GitHub. Fresh lists traverse at most 1000 threads; conversations at most 200 comments. Query errors and incomplete traversals fail explicitly. Saved observations expire after five minutes; paging requires local credential/keychain access but makes no GitHub requests. Refresh preserves the filter and page size and restarts at offset zero. JSON has_more indicates continuation; complete means this page contains the entire matching collection.
+
+Usage: dots github reviews [OPTIONS]
+       dots github reviews <COMMAND>
+
+Commands:
+  thread  Read an exact review thread, its replies, and original reviewed diff context
+
+Options:
+      --pr <PR>
+          PR URL or number; defaults to the current branch's PR
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --snapshot <SNAPSHOT>
+          Page a saved thread index without GitHub queries
+
+      --all
+          Include resolved threads; outdated and resolved are separate states
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --limit <LIMIT>
+          Maximum thread previews to return
+
+          [default: 10]
+
+      --offset <OFFSET>
+          Skip this many matching threads
+
+          [default: 0]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots github reviews thread
+
+```text
+Read an exact review conversation. Diff context appears only at offset zero; later pages provide context_command to recover it. original_commit_id identifies the original reviewed revision; commit_id is GitHub's current comment association and may be a later commit. full_diff_hunk_command retrieves the untruncated review hunk, not surrounding file source. Use gh or the checkout for broader context. has_more indicates another page; complete means all comments are in this page. Snapshot reads need local credentials but make no GitHub requests.
+
+Usage: dots github reviews thread [OPTIONS] <REFERENCE>
+
+Arguments:
+  <REFERENCE>
+          Exact reference emitted by review-thread discovery
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --snapshot <SNAPSHOT>
+          Page the saved conversation without GitHub queries
+
+      --json
+          Return JSON instead of readable output
+
+      --limit <LIMIT>
+          Maximum comments to return; each body is bounded to 4 KiB
+
+          [default: 5]
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --offset <OFFSET>
+          Skip this many comments in chronological API order
+
+          [default: 0]
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
   -h, --help
           Print help (see a summary with '-h')

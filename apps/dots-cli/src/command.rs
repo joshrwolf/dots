@@ -2,7 +2,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use github_ci::{Repository, SnapshotRef};
+use github_inspect::{Repository, SnapshotRef};
 
 #[derive(Debug, Parser)]
 #[command(name = "dots", version, about = "Workflow tools for coding agents", long_about = "Workflow tools for coding agents across local tools, services, and host integrations.\nUse the available command groups for supported tasks; native tools remain available.\nHelp and skill generation work offline. Commands document their own effects and prerequisites.", disable_help_subcommand = true, term_width = 100, color = clap::ColorChoice::Never)]
@@ -25,7 +25,7 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
-    /// Inspect GitHub CI status and investigate failed checks
+    /// Inspect GitHub CI evidence and PR review threads
     Github {
         #[command(subcommand)]
         command: GitHubCommand,
@@ -44,6 +44,11 @@ pub(crate) enum GitHubCommand {
         long_about = "Inspect CI for a PR, remote ref, commit, or exact workflow run/attempt.\nRead-only; uses existing gh authentication and needs no Herdr session.\nWith no subcommand, inspect the current branch's PR. Use --pr URL for another PR, --ref main or --sha SHA with --repo, or --run RUN_URL [--attempt N].\nA ref selects its current commit, not the latest historical/scheduled run. Use gh run list for run discovery; pass a run URL here for diagnosis.\nDetails default to failed, cancelled, unknown and pending checks. --all includes passing/skipped checks; --name TEXT searches check names across all states. Both remain paged; summary always covers every check.\nFailed or pending CI is data, not a command error. No checks does not mean CI passed.\nFollow returned commands rather than constructing job references or selecting the latest run."
     )]
     Ci(Box<CiArgs>),
+    /// Inspect unresolved PR review threads and read exact conversations
+    #[command(
+        long_about = "Read-only review-thread investigation. Defaults to unresolved threads, including outdated feedback. Opening-comment previews are not full conversations. Follow the returned thread command for replies and reviewed diff context. Use --json for agent workflows. General PR discussion, review submission, replies, resolution, and merging remain with gh or GitHub. Fresh lists traverse at most 1000 threads; conversations at most 200 comments. Query errors and incomplete traversals fail explicitly. Saved observations expire after five minutes; paging requires local credential/keychain access but makes no GitHub requests. Refresh preserves the filter and page size and restarts at offset zero. JSON has_more indicates continuation; complete means this page contains the entire matching collection."
+    )]
+    Reviews(Box<ReviewArgs>),
 }
 
 #[derive(Debug, Args)]
@@ -169,4 +174,54 @@ fn positive(value: &str) -> Result<usize, String> {
         .ok()
         .filter(|number| *number > 0)
         .ok_or_else(|| "line must be a positive integer".into())
+}
+
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub(crate) struct ReviewArgs {
+    #[command(flatten)]
+    pub list: ReviewListArgs,
+    #[command(subcommand)]
+    pub command: Option<ReviewCommand>,
+}
+#[derive(Debug, Subcommand)]
+pub(crate) enum ReviewCommand {
+    /// Read an exact review thread, its replies, and original reviewed diff context
+    #[command(
+        long_about = "Read an exact review conversation. Diff context appears only at offset zero; later pages provide context_command to recover it. original_commit_id identifies the original reviewed revision; commit_id is GitHub's current comment association and may be a later commit. full_diff_hunk_command retrieves the untruncated review hunk, not surrounding file source. Use gh or the checkout for broader context. has_more indicates another page; complete means all comments are in this page. Snapshot reads need local credentials but make no GitHub requests."
+    )]
+    Thread(ReviewThreadArgs),
+}
+#[derive(Debug, Args)]
+pub(crate) struct ReviewListArgs {
+    /// PR URL or number; defaults to the current branch's PR
+    #[arg(long)]
+    pub pr: Option<String>,
+    /// Page a saved thread index without GitHub queries
+    #[arg(long, conflicts_with_all = ["pr", "repo", "no_cache"])]
+    pub snapshot: Option<SnapshotRef>,
+    /// Include resolved threads; outdated and resolved are separate states
+    #[arg(long)]
+    pub all: bool,
+    /// Maximum thread previews to return
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u16).range(1..=20))]
+    pub limit: u16,
+    /// Skip this many matching threads
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=100000))]
+    pub offset: u32,
+}
+#[derive(Debug, Args)]
+pub(crate) struct ReviewThreadArgs {
+    /// Exact reference emitted by review-thread discovery
+    #[arg(conflicts_with = "repo")]
+    pub reference: github_inspect::reviews::ThreadRef,
+    /// Page the saved conversation without GitHub queries
+    #[arg(long, conflicts_with = "no_cache")]
+    pub snapshot: Option<SnapshotRef>,
+    /// Maximum comments to return; each body is bounded to 4 KiB
+    #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..=20))]
+    pub limit: u16,
+    /// Skip this many comments in chronological API order
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=100000))]
+    pub offset: u32,
 }

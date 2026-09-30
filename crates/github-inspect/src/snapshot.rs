@@ -21,6 +21,13 @@ impl SnapshotRef {
     }
     pub fn refresh_command(&self) -> String {
         match crate::target::Resource::parse(&self.url()).map(|(_, resource)| resource) {
+            Ok(
+                crate::target::Resource::ReviewThreads(pr)
+                | crate::target::Resource::ReviewThread(pr, _),
+            ) => format!(
+                "dots github reviews --pr {}/pull/{pr}",
+                self.repository.url()
+            ),
             Ok(crate::target::Resource::Pr(_)) => format!("dots github ci --pr {}", self.url()),
             Ok(crate::target::Resource::Commit(sha)) => {
                 format!("dots github ci --repo {} --sha {sha}", self.repository)

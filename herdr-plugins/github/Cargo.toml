@@ -15,7 +15,7 @@ name = "herdr-github"
 path = "src/main.rs"
 
 [dependencies]
-github-ci.workspace = true
+github-inspect.workspace = true
 anyhow.workspace = true
 github-client.workspace = true
 review-core.workspace = true

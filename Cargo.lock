@@ -444,7 +444,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "github-ci",
+ "github-inspect",
  "serde_json",
  "time",
 ]
@@ -601,7 +601,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "github-ci"
+name = "github-client"
+version = "0.1.0"
+dependencies = [
+ "nix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "github-inspect"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -612,17 +623,6 @@ dependencies = [
  "sha2",
  "thiserror 2.0.20",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "github-client"
-version = "0.1.0"
-dependencies = [
- "nix",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -669,8 +669,8 @@ name = "herdr-github"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "github-ci",
  "github-client",
+ "github-inspect",
  "herdrkit",
  "review-core",
  "rusqlite",

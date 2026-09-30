@@ -1,4 +1,4 @@
-//! Read-only CI inspection shared by local commands and integration adapters.
+//! Read-only GitHub inspection shared by local commands and integration adapters.
 //!
 //! No Herdr invocation, agent lifecycle, output formatting, or persistent service
 //! belongs here. References pin jobs; querying a newer PR never redirects logs.
@@ -11,6 +11,7 @@ mod logview;
 mod output;
 mod provider;
 mod reference;
+pub mod reviews;
 mod snapshot;
 pub mod status;
 mod subjects;
@@ -34,7 +35,7 @@ pub use target::{Repository, Subject, Target};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    #[error("could not read or store job log evidence")]
+    #[error("could not read or store GitHub evidence")]
     LogIo(#[from] std::io::Error),
     #[error("{operation} failed: {message}")]
     Query { operation: String, message: String },
@@ -42,7 +43,7 @@ pub enum Error {
     Command(#[from] github_client::Error),
     #[error("could not decode GitHub response")]
     Decode(#[from] serde_json::Error),
-    #[error("invalid CI reference: {0}")]
+    #[error("invalid GitHub reference: {0}")]
     InvalidReference(String),
     #[error("{0}")]
     InvalidResponse(String),

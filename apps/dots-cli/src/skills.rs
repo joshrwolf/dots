@@ -5,7 +5,7 @@ use clap::{Command, CommandFactory as _};
 
 use crate::command::Cli;
 
-const GUIDANCE: &str = "Use `dots` for supported workflows before assembling equivalent shell/API calls. Native tools remain available for unsupported operations or useful follow-up.\n\nStart with `dots --help` to discover the installed command groups, then use the relevant command's `--help`. For detailed syntax, read [the generated command reference](references/commands.md). Help is authoritative if this skill and the installed binary differ.\n\nUse the task's explicit target or working directory; do not silently substitute another checkout or workspace. Follow the references and next commands returned by the tool. Treat partial or unavailable evidence as such. Tool availability does not authorize mutations beyond the user's request.\n";
+const GUIDANCE: &str = "Use `dots` for supported workflows before assembling equivalent shell/API calls. Native tools remain available for unsupported operations or useful follow-up.\n\nStart with `dots --help` to discover the installed command groups, then use the relevant command's `--help`. For detailed syntax, read [the generated command reference](references/commands.md). Help is authoritative if this skill and the installed binary differ.\n\nFor agent workflows, request `--json`; generated dots follow-up commands preserve JSON mode.\n\nUse the task's explicit target or working directory; do not silently substitute another checkout or workspace. Follow the references and next commands returned by the tool. Treat partial or unavailable evidence as such. Tool availability does not authorize mutations beyond the user's request.\n";
 
 fn tree() -> Command {
     let mut command = Cli::command();

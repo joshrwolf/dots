@@ -113,6 +113,8 @@ pub(crate) fn encode(value: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Resource {
     Pr(u64),
+    ReviewThreads(u64),
+    ReviewThread(u64, String),
     Commit(String),
     Run { id: u64, attempt: Option<u64> },
     Job { id: u64, run: Option<u64> },
@@ -124,6 +126,10 @@ impl Resource {
         let parts: Vec<_> = path.split('/').collect();
         let resource = match parts.as_slice() {
             ["pull", n] => Self::Pr(id(n)?),
+            ["pull", n, "review-threads"] => Self::ReviewThreads(id(n)?),
+            ["pull", n, "review-threads", thread] if crate::reviews::valid_node(thread) => {
+                Self::ReviewThread(id(n)?, (*thread).into())
+            }
             ["commit", head] => Self::Commit(sha(head)?),
             ["actions", "runs", n] => Self::Run {
                 id: id(n)?,

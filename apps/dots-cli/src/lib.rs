@@ -1,13 +1,15 @@
 //! Agent-facing command parsing and presentation over shared domain operations.
 mod command;
+mod json;
 mod render;
+mod reviews;
 mod skills;
 
 use std::ffi::OsString;
 
 use anyhow::{Context as _, Result};
 use clap::{CommandFactory as _, Parser as _};
-use github_ci::GitHub;
+use github_inspect::GitHub;
 
 use command::{CiCommand, Cli, Command, GitHubCommand, InspectArgs, SkillCommand};
 
@@ -36,9 +38,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
         } else {
             skills::skill()
         }),
-        Command::Github {
-            command: GitHubCommand::Ci(args),
-        } => {
+        Command::Github { command } => {
             let directory = cli
                 .directory
                 .map_or_else(std::env::current_dir, Ok)
@@ -49,65 +49,71 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
             {
                 provider = provider.with_cache(&cache);
             }
-            match args.command {
-                None => inspect(&provider, &args.inspect, cli.repo.as_ref(), cli.json),
-                Some(CiCommand::Inspect(args)) => {
-                    inspect(&provider, &args, cli.repo.as_ref(), cli.json)
+            match command {
+                GitHubCommand::Ci(args) => ci(&provider, *args, cli.repo.as_ref(), cli.json),
+                GitHubCommand::Reviews(args) => {
+                    reviews::run(&provider, *args, cli.repo.as_ref(), cli.json)
                 }
-                Some(CiCommand::Output(args)) => {
-                    let result = github_ci::check_output_target(
-                        &provider,
-                        &args.reference,
-                        cli.repo.as_ref(),
-                        github_ci::OutputOptions {
-                            snapshot: args.snapshot.as_ref(),
-                            start: args.start,
-                            lines: usize::from(args.lines.unwrap_or(if args.search.is_some() {
-                                20
-                            } else {
-                                40
-                            })),
-                            search: args.search.as_deref(),
-                            annotations: args.annotations,
-                            annotation_page: args.annotation_page as usize,
-                        },
-                    )?;
-                    if cli.json {
-                        Ok(
-                            serde_json::to_string_pretty(&serde_json::json!({"evidence":result}))?
-                                + "\n",
-                        )
-                    } else {
-                        Ok(render::check_output(&result))
-                    }
-                }
-                Some(CiCommand::Logs(args)) => {
-                    let lines = usize::from(args.lines.unwrap_or(if args.search.is_some() {
+            }
+        }
+    }
+}
+
+fn ci(
+    provider: &GitHub<'_>,
+    args: command::CiArgs,
+    repository: Option<&github_inspect::Repository>,
+    json: bool,
+) -> Result<String> {
+    match args.command {
+        None => inspect(provider, &args.inspect, repository, json),
+        Some(CiCommand::Inspect(args)) => inspect(provider, &args, repository, json),
+        Some(CiCommand::Output(args)) => {
+            let result = github_inspect::check_output_target(
+                provider,
+                &args.reference,
+                repository,
+                github_inspect::OutputOptions {
+                    snapshot: args.snapshot.as_ref(),
+                    start: args.start,
+                    lines: usize::from(args.lines.unwrap_or(if args.search.is_some() {
                         20
                     } else {
-                        100
-                    }));
-                    let result = github_ci::job_logs(
-                        &provider,
-                        &args.reference,
-                        cli.repo.as_ref(),
-                        github_ci::LogOptions {
-                            snapshot: args.snapshot.as_ref(),
-                            start: args.start,
-                            lines,
-                            search: args.search.as_deref(),
-                            test: args.test.as_deref(),
-                        },
-                    )?;
-                    if cli.json {
-                        Ok(
-                            serde_json::to_string_pretty(&serde_json::json!({"evidence":result}))?
-                                + "\n",
-                        )
-                    } else {
-                        Ok(render::evidence(&result))
-                    }
-                }
+                        40
+                    })),
+                    search: args.search.as_deref(),
+                    annotations: args.annotations,
+                    annotation_page: args.annotation_page as usize,
+                },
+            )?;
+            if json {
+                Ok(json::render(serde_json::json!({"evidence":result})))
+            } else {
+                Ok(render::check_output(&result))
+            }
+        }
+        Some(CiCommand::Logs(args)) => {
+            let lines =
+                usize::from(
+                    args.lines
+                        .unwrap_or(if args.search.is_some() { 20 } else { 100 }),
+                );
+            let result = github_inspect::job_logs(
+                provider,
+                &args.reference,
+                repository,
+                github_inspect::LogOptions {
+                    snapshot: args.snapshot.as_ref(),
+                    start: args.start,
+                    lines,
+                    search: args.search.as_deref(),
+                    test: args.test.as_deref(),
+                },
+            )?;
+            if json {
+                Ok(json::render(serde_json::json!({"evidence":result})))
+            } else {
+                Ok(render::evidence(&result))
             }
         }
     }
@@ -116,11 +122,11 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
 fn inspect(
     provider: &GitHub<'_>,
     args: &InspectArgs,
-    repository: Option<&github_ci::Repository>,
+    repository: Option<&github_inspect::Repository>,
     json: bool,
 ) -> Result<String> {
     let limit = usize::from(args.limit);
-    let options = github_ci::InspectOptions {
+    let options = github_inspect::InspectOptions {
         include_evidence: !args.no_logs,
         offset: args.offset,
         limit,
@@ -128,24 +134,24 @@ fn inspect(
         name: args.name.as_deref(),
     };
     let result = if let Some(reference) = &args.snapshot {
-        github_ci::inspect_snapshot_filtered(provider, reference, options)?
+        github_inspect::inspect_snapshot_filtered(provider, reference, options)?
     } else {
         let target = if let Some(value) = &args.run {
-            github_ci::Target::Run {
+            github_inspect::Target::Run {
                 value,
                 attempt: args.attempt,
             }
         } else if let Some(value) = &args.git_ref {
-            github_ci::Target::Ref(value)
+            github_inspect::Target::Ref(value)
         } else if let Some(value) = &args.sha {
-            github_ci::Target::Commit(value)
+            github_inspect::Target::Commit(value)
         } else {
-            github_ci::Target::PullRequest(args.pr.as_deref())
+            github_inspect::Target::PullRequest(args.pr.as_deref())
         };
-        github_ci::inspect_target(provider, target, repository, options)?
+        github_inspect::inspect_target(provider, target, repository, options)?
     };
     if json {
-        Ok(serde_json::to_string_pretty(&result)? + "\n")
+        Ok(json::render(serde_json::to_value(&result)?))
     } else {
         Ok(render::inspection(&result))
     }
@@ -158,5 +164,5 @@ fn cache_directory() -> Option<std::path::PathBuf> {
         .or_else(|| {
             std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache"))
         })?;
-    Some(root.join("dots/github-ci"))
+    Some(root.join("dots/github"))
 }

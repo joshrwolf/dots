@@ -75,11 +75,11 @@ cli-skills:
 
 cli-check:
 	cargo fmt --all --check
-	cargo clippy -p dots-cli -p github-ci -p github-client --all-targets -- -D warnings
+	cargo clippy -p dots-cli -p github-inspect -p github-client --all-targets -- -D warnings
 	cargo build --package dots-cli
 	python3 scripts/cli-skills.py check target/debug/dots
-	cargo nextest run -p dots-cli -p github-ci -p github-client --all-targets
-	cargo test -p dots-cli -p github-ci -p github-client --doc
+	cargo nextest run -p dots-cli -p github-inspect -p github-client --all-targets
+	cargo test -p dots-cli -p github-inspect -p github-client --doc
 
 .PHONY: cli cli-build cli-check cli-skills rust-check
 

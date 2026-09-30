@@ -1,7 +1,7 @@
 //! Herdr-specific managed-review resolution over shared GitHub CI operations.
 
 use anyhow::Result;
-pub use github_ci::status::*;
+pub use github_inspect::status::*;
 use std::path::Path;
 
 /// Local inputs to gh's repository selection plus any explicitly bound review.
@@ -12,7 +12,7 @@ pub(crate) fn checkout_identity(
     server: &str,
     workspace: &herdrkit::WorkspaceId,
 ) -> Result<String> {
-    let local = github_ci::status::local_identity(dir)?;
+    let local = github_inspect::status::local_identity(dir)?;
     Ok(serde_json::to_string(&(
         local,
         review_url(dir, server, workspace)?,

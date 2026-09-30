@@ -1,4 +1,4 @@
-use github_ci::{Evidence, Inspection};
+use github_inspect::{Evidence, Inspection};
 use std::fmt::Write as _;
 
 pub(super) fn inspection(value: &Inspection) -> String {
@@ -8,7 +8,7 @@ pub(super) fn inspection(value: &Inspection) -> String {
     };
     let mut out = subject_header(subject);
     let _ = writeln!(out, "Observed: {}", observed_time(value.observed_at));
-    if matches!(value.source, github_ci::ObservationSource::Snapshot) {
+    if matches!(value.source, github_inspect::ObservationSource::Snapshot) {
         out.push_str("Saved observation: current GitHub status was not queried.\n");
     }
     let summary = &value.summary;
@@ -99,20 +99,20 @@ pub(super) fn inspection(value: &Inspection) -> String {
     printable(&out)
 }
 
-fn subject_header(subject: &github_ci::Subject) -> String {
+fn subject_header(subject: &github_inspect::Subject) -> String {
     match subject {
-        github_ci::Subject::PullRequest { pr, .. } => format!(
+        github_inspect::Subject::PullRequest { pr, .. } => format!(
             "{} ({})\nPR head: {}\nScope: PR checks.\n",
             pr.url, pr.state, pr.head_ref_oid
         ),
-        github_ci::Subject::Commit {
+        github_inspect::Subject::Commit {
             sha, requested_ref, ..
         } => format!(
             "{}\nRevision: {sha}\nResolved ref: {}\nScope: reported checks/statuses on this commit; not branch history or merge eligibility.\n",
             subject.url(),
             requested_ref.as_deref().unwrap_or("exact SHA")
         ),
-        github_ci::Subject::Run {
+        github_inspect::Subject::Run {
             attempt,
             sha,
             name,
@@ -173,7 +173,7 @@ pub(super) fn evidence(value: &Evidence) -> String {
         }
     }
     let _ = writeln!(out, "Observed: {}", observed_time(value.observed_at));
-    if matches!(value.source, github_ci::ObservationSource::Snapshot) {
+    if matches!(value.source, github_inspect::ObservationSource::Snapshot) {
         out.push_str("Saved job evidence: GitHub was not queried.\n");
     }
     render_log(value, &mut out);
@@ -193,10 +193,10 @@ fn render_log(value: &Evidence, out: &mut String) {
     }
 }
 
-fn render_page(log: &github_ci::LogPage, command: &str, label: &str, out: &mut String) {
+fn render_page(log: &github_inspect::LogPage, command: &str, label: &str, out: &mut String) {
     let source = match log.source {
-        github_ci::LogSource::Network => "network",
-        github_ci::LogSource::Cache => "cache",
+        github_inspect::LogSource::Network => "network",
+        github_inspect::LogSource::Cache => "cache",
     };
     let _ = writeln!(
         out,
@@ -278,7 +278,7 @@ fn render_page(log: &github_ci::LogPage, command: &str, label: &str, out: &mut S
     }
 }
 
-pub(super) fn check_output(value: &github_ci::CheckOutput) -> String {
+pub(super) fn check_output(value: &github_inspect::CheckOutput) -> String {
     let mut out = format!(
         "\nCheck: {}\nCheck head: {}\nObserved revision: {}\nStatus: {} / {}\nObserved: {}\n",
         value.name,
@@ -288,7 +288,7 @@ pub(super) fn check_output(value: &github_ci::CheckOutput) -> String {
         value.conclusion.as_deref().unwrap_or("unknown"),
         observed_time(value.observed_at)
     );
-    if matches!(value.source, github_ci::ObservationSource::Snapshot) {
+    if matches!(value.source, github_inspect::ObservationSource::Snapshot) {
         out.push_str("Saved check output: GitHub was not queried.\n");
     }
     for warning in &value.warnings {
@@ -339,7 +339,7 @@ pub(super) fn check_output(value: &github_ci::CheckOutput) -> String {
 
 // Provider-controlled names and logs may contain terminal controls. Preserve
 // them visibly instead of allowing output to rewrite surrounding evidence.
-fn printable(text: &str) -> String {
+pub(super) fn printable(text: &str) -> String {
     strip_sgr(text)
         .chars()
         .flat_map(|character| {

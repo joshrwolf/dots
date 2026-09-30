@@ -2,7 +2,7 @@
 resolver = "3"
 members = [
     "apps/dots-cli",
-    "crates/github-ci",
+    "crates/github-inspect",
     "herdr-plugins/contracts",
     "crates/github-client",
     "herdr-plugins/issue",
@@ -23,7 +23,7 @@ publish = false
 
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
-github-ci = { path = "crates/github-ci" }
+github-inspect = { path = "crates/github-inspect" }
 github-client = { path = "crates/github-client" }
 tokio = { version = "1", features = ["rt", "sync", "time", "net", "io-util", "macros", "fs", "process"] }
 herdrkit = { path = "herdr-plugins/crates/herdrkit" }

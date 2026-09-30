@@ -17,7 +17,7 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 anyhow.workspace = true
-github-ci.workspace = true
+github-inspect.workspace = true
 serde_json.workspace = true
 time.workspace = true
 

@@ -5,6 +5,9 @@ tools, services, and host integrations through a consistent command interface.
 Each workflow provides explicit context, structured results, and useful next
 steps so an agent can spend less time assembling plumbing.
 
+Agents should request --json. Structured follow-up commands preserve JSON mode;
+provider text and native-tool fallback commands are left intact.
+
 Native tools remain available. The CLI packages recurring workflows; it does
 not try to replace every command offered by an integration.
 
@@ -24,6 +27,8 @@ stages the executable and regenerates its skill without installing anything.
 
 GitHub CI diagnosis is the first workflow. It accepts PRs, remote refs, commits,
 workflow runs/attempts, and direct job/check URLs. See [CI usage](../../docs/github-ci.md).
+Review-thread inspection lists unresolved feedback and reads exact conversations.
+See [review usage](../../docs/github-reviews.md).
 Future commands belong under their integration or domain; only implemented
 capabilities appear in help and skill discovery.
 
@@ -74,7 +79,8 @@ continue from partial results. Run `make cli-skills` and add behavior tests.
 The generator traverses the command tree, so new groups and subcommands enter
 the skill and reference without a second command registry.
 
-The CI library separates validated repository/target selection, a tagged subject
+The shared github-inspect library owns CI and review-thread inspection over the
+same provider and credential-scoped snapshot cache. CI separates validated repository/target selection, a tagged subject
 (PR, commit, or pinned run attempt), and immutable evidence references. PR context
 is optional provenance. All subjects share filtering, summaries, snapshots,
 evidence budgets, and rendering. JSON output exposes the subject

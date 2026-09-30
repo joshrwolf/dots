@@ -65,7 +65,7 @@ original observation time. Run the ordinary inspection command for fresh status.
 `--directory PATH` selects a checkout. Explicit PR URLs work outside a checkout.
 Queries are read-only, noninteractive, and never launch or prompt an agent.
 Exit zero means the query completed, including failing/pending CI or no PR;
-query and usage errors exit one. JSON output has a tagged
+query and usage errors exit one. JSON follow-up commands preserve --json. JSON output has a tagged
 `subject` for PR, commit, or run scope. Evidence carries `observed_head`,
 optional PR provenance, and exact run/job/check identity. Output and opaque
 references have one current format; there is no compatibility layer for prior
@@ -185,8 +185,8 @@ at most 64 entries and 1 GiB, with private file permissions and integrity
 checks. Missing credentials, corrupt files, and unwritable cache paths are
 cache misses; errors and incomplete jobs are never cached.
 
-The CLI uses `$XDG_CACHE_HOME/dots/github-ci/logs`, or
-`$HOME/.cache/dots/github-ci/logs`. `--no-cache` bypasses reads, writes, and
+The CLI uses `$XDG_CACHE_HOME/dots/github/logs`, or
+`$HOME/.cache/dots/github/logs`. `--no-cache` bypasses reads, writes, and
 credential lookup. Log output reports its source and original fetch time.
 Fresh inspection never reads saved status implicitly. `--snapshot` explicitly
 reads the original saved observation. Inspection snapshots disable automatic
@@ -197,7 +197,7 @@ storage, absent entries, expiration, and integrity failures where detectable.
 Missing entries cannot distinguish eviction from a different credential/cache
 location. Credential failures suggest checking authentication and sandbox/keychain
 access without exposing credential output. Snapshot reads use the active credential fingerprint but do not query
-GitHub to recheck its current permissions. Snapshots live alongside logs in `dots/github-ci/snapshots`, with the
+GitHub to recheck its current permissions. Snapshots live alongside logs in `dots/github/snapshots`, with the
 same size/count and permission bounds but a five-minute lifetime. When saving is
 unavailable, the continuation falls back to explicit fresh `--pr` inspection.
 `--offset` without `--snapshot` still queries fresh status. Rate limits and other API failures do not

@@ -57,6 +57,8 @@ esac
                 .env("DOTS_TEST_LARGE_LOG", self.0.join("large-log"))
                 .env("DOTS_TEST_LOG_REQUESTS", self.0.join("log-requests"))
                 .env("DOTS_TEST_CHECK_REQUESTS", self.0.join("check-requests"))
+                .env("DOTS_TEST_REVIEW_INDEX", self.0.join("review-index"))
+                .env("DOTS_TEST_REVIEW_THREAD", self.0.join("review-thread"))
                 .output()
                 .unwrap()
         }
@@ -66,6 +68,103 @@ esac
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn review_followups_preserve_json_and_saved_conversations_need_no_network() {
+        let fixture = Fixture::new();
+        let head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let url = "https://github.com/example/project/pull/7";
+        let comment = serde_json::json!({"id":"C1","databaseId":42,"author":{"login":"reviewer"},
+            "body":"Check this branch","url":format!("{url}#discussion_r42"),"createdAt":"2026-01-01T00:00:00Z","replyTo":null});
+        let mut thread = serde_json::json!({"id":"T1","isResolved":false,"isOutdated":true,
+            "path":"src/main.rs","line":null,"originalLine":7,"diffSide":"RIGHT","subjectType":"LINE",
+            "comments":{"totalCount":2,"nodes":[comment.clone()]}});
+        let index = serde_json::json!({"data":{"repository":{"pullRequest":{"url":url,"headRefOid":head,
+            "reviewThreads":{"totalCount":1,"nodes":[thread.clone()],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}});
+        let fields = thread.as_object_mut().unwrap();
+        fields.insert(
+            "pullRequest".into(),
+            serde_json::json!({"url":url,"headRefOid":head}),
+        );
+        fields.insert(
+            "anchor".into(),
+            serde_json::json!({"nodes":[{"url":"https://github.com/example/project/pull/7#discussion_r42","databaseId":42,"diffHunk":"@@ -7 +7 @@
+-old
++new","originalCommit":{"oid":head},"commit":{"oid":head}}]}),
+        );
+        let mut reply = comment.clone();
+        *reply.get_mut("id").unwrap() = Value::from("C2");
+        fields.insert(
+            "comments".into(),
+            serde_json::json!({"totalCount":2,"nodes":[comment,reply],
+            "pageInfo":{"hasNextPage":false,"endCursor":null}}),
+        );
+        fs::write(
+            fixture.0.join("review-index"),
+            serde_json::to_vec(&index).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            fixture.0.join("review-thread"),
+            serde_json::to_vec(&serde_json::json!({"data":{"node":thread}})).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            fixture.0.join("gh"),
+            r#"#!/bin/sh
+case "$*" in
+ 'auth token --hostname github.com') echo neutral-test-token ;;
+ *'reviewThreads(first:50'*) cat "$DOTS_TEST_REVIEW_INDEX" ;;
+ *'anchor:comments'*) cat "$DOTS_TEST_REVIEW_THREAD" ;;
+ *) exit 99 ;;
+esac
+"#,
+        )
+        .unwrap();
+        let output = fixture.run(&["github", "reviews", "--pr", url, "--json"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let index: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(index.pointer("/summary/unresolved_outdated").unwrap(), 1);
+        let command = index
+            .pointer("/threads/0/next_command")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(command.starts_with("dots --json "));
+        let mut args: Vec<_> = command.split_whitespace().skip(1).collect();
+        args.extend(["--limit", "1"]);
+        let output = fixture.run(&args);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let thread: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(thread.get("comments_total").unwrap(), 2);
+        assert_eq!(thread.get("returned").unwrap(), 1);
+        fs::write(
+            fixture.0.join("gh"),
+            r#"#!/bin/sh
+case "$*" in 'auth token --hostname github.com') echo neutral-test-token ;; *) exit 99 ;; esac
+"#,
+        )
+        .unwrap();
+        let next = thread.get("next_command").unwrap().as_str().unwrap();
+        let output = fixture.run(&next.split_whitespace().skip(1).collect::<Vec<_>>());
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let page: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(page.get("source").unwrap(), "snapshot");
+        assert_eq!(page.pointer("/comments/0/id").unwrap(), "C2");
+        assert_eq!(page.get("observed_at"), thread.get("observed_at"));
     }
 
     #[test]
@@ -133,9 +232,8 @@ esac
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            let text = String::from_utf8(output.stdout).unwrap();
-            assert!(text.contains("Saved job evidence: GitHub was not queried."));
-            assert!(text.contains("Refresh: dots github ci logs job:"));
+            let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(value.pointer("/evidence/source").unwrap(), "snapshot");
         }
         let mut search = args.clone();
         search.extend(["--search", "absent"]);
@@ -147,7 +245,7 @@ esac
         disabled.push("--no-cache");
         assert!(!fixture.run(&disabled).status.success());
         // Evicted bytes must not silently trigger a download or return partial evidence.
-        let logs = fixture.0.join("cache/dots/github-ci/logs");
+        let logs = fixture.0.join("cache/dots/github/logs");
         assert!(logs.is_dir(), "{}", logs.display());
         fs::remove_dir_all(logs).unwrap();
         let output = fixture.run(&args);
@@ -209,12 +307,14 @@ esac
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(
-            String::from_utf8(output.stdout)
-                .unwrap()
-                .contains("error: missing symbol")
+        assert!(serde_json::from_slice::<Value>(&output.stdout).is_ok());
+        let rendered = fixture.run(
+            &context
+                .split_whitespace()
+                .skip(1)
+                .filter(|arg| *arg != "--json")
+                .collect::<Vec<_>>(),
         );
-        let rendered = fixture.run(&context.split_whitespace().skip(1).collect::<Vec<_>>());
         let rendered = String::from_utf8(rendered.stdout).unwrap();
         let beginning = rendered
             .lines()
@@ -530,8 +630,9 @@ esac
             String::from_utf8_lossy(&output.stderr)
         );
         let text = String::from_utf8(output.stdout).unwrap();
-        assert!(text.contains("attempt 2"));
-        assert!(text.contains("Log source: cache"));
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value.pointer("/evidence/run_attempt").unwrap(), 2);
+        assert_eq!(value.pointer("/evidence/log/source").unwrap(), "cache");
         assert_eq!(
             fs::read_to_string(fixture.0.join("log-requests"))
                 .unwrap()
@@ -547,11 +648,8 @@ esac
         uncached.push("--no-cache");
         let output = fixture.run(&uncached);
         assert!(output.status.success());
-        assert!(
-            String::from_utf8(output.stdout)
-                .unwrap()
-                .contains("Log source: network")
-        );
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value.pointer("/evidence/log/source").unwrap(), "network");
         assert_eq!(
             fs::read_to_string(fixture.0.join("log-requests"))
                 .unwrap()
@@ -559,7 +657,15 @@ esac
                 .count(),
             2
         );
-        assert!(text.contains("2: ##[error] expected 2, got 1"));
+        assert!(
+            value
+                .pointer("/evidence/log/lines")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|line| line == "##[error] expected 2, got 1")
+        );
     }
 
     #[test]
@@ -583,7 +689,6 @@ esac
         let command = first.get("next_command").unwrap().as_str().unwrap();
         assert!(command.contains("--snapshot snapshot:"));
         let mut args = command.split_whitespace().skip(1).collect::<Vec<_>>();
-        args.push("--json");
         let second = fixture.run(&args);
         assert!(
             second.status.success(),
