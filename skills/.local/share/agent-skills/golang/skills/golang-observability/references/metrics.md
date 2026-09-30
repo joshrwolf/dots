@@ -163,13 +163,10 @@ mux.Handle("/metrics", promhttp.Handler())
 
 ## Document Metrics with PromQL Comments
 
-EVERY METRIC declaration SHOULD include the relevant PromQL queries and alert rules as comments directly above the variable. This makes metrics self-documenting — when a developer reads the code, they immediately see how the metric is used in dashboards and alerts, without hunting through Grafana or alert configurations.
+Document metric meaning, units, labels, and intended use in the project's established location. Nearby PromQL examples can help when developers need query guidance at the declaration; use them selectively and keep them synchronized. Link to existing dashboard or alert definitions when copying queries would create a second source of truth. Not every metric needs an alert.
 
 ```go
-// ✗ Bad — metric exists but nobody knows how to query or alert on it
-var httpRequestsTotal = promauto.NewCounterVec(...)
-
-// ✓ Good — PromQL queries and alert rules are part of the code
+// Optional query examples beside a declaration:
 //
 // Dashboard: rate(myapp_http_requests_total[5m])
 // Dashboard: sum by (status) (rate(myapp_http_requests_total[5m]))
@@ -177,7 +174,7 @@ var httpRequestsTotal = promauto.NewCounterVec(...)
 var httpRequestsTotal = promauto.NewCounterVec(...)
 ```
 
-This convention has practical benefits: PromQL queries are reviewed in PRs alongside the metric, queries stay in sync with metric changes (label renames, bucket changes), and new team members can understand the metric's purpose at a glance.
+Review affected queries alongside metric name, label, or bucket changes, wherever those queries are maintained.
 
 ## Metric Examples and PromQL Queries
 

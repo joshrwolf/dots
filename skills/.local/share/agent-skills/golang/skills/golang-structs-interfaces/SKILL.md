@@ -41,6 +41,10 @@ Methods should expose meaningful operations over that state. Use the extraction
 guidance in `golang-code-style`: a chain of single-use methods can impose the same
 navigation cost as a chain of free functions.
 
+For optional pointer-valued fields, use the `new(value)` guidance in
+`golang-code-style` on Go 1.26+; do not introduce a pointer helper solely to
+initialize a field.
+
 ## Interface Design Principles
 
 ### Keep Interfaces Small
@@ -282,7 +286,6 @@ type Order struct {
 | Method modifies the receiver | Receiver is small and immutable |
 | Receiver contains `sync.Mutex` or similar | Receiver is a basic type (int, string) |
 | Receiver is a large struct | Method is a read-only accessor |
-| Consistency: if any method uses a pointer, all should | Map and function values (already reference types) |
 
 Prefer consistent receiver choices, but mixed receivers are valid when intentional (for example, value-based formatting with pointer-based unmarshaling). Check copying, mutation, and the different method sets of T and *T rather than rewriting existing APIs mechanically.
 
@@ -312,7 +315,6 @@ Do not copy a used mutex or a struct containing it; use pointer receivers and pa
 | Unchecked type assertions at fallible boundaries | Use comma-ok and handle mismatch; reserve single-value assertions for established invariants |
 | Embedding when you only need a few methods | Use a named field and delegate explicitly |
 | Missing field tags on serialized structs | Tag all exported fields in marshaled types |
-| Mixing pointer and value receivers on a type | Pick one and be consistent |
 | Forgetting compile-time interface check | Add `var _ Interface = (*Type)(nil)` |
 | Using `ToString()` instead of `String()` | Honor canonical method names |
 | Premature interface with a single implementation | Start concrete, extract interface when needed |

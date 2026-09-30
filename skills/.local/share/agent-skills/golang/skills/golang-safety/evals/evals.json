@@ -1010,5 +1010,26 @@
       {"id": "42.4", "text": "If suggesting t.Round(0), notes it strips the monotonic reading but does not normalize the location; Equal remains appropriate for instant comparison"},
       {"id": "42.5", "text": "Does NOT primarily blame database precision or timezone differences"}
     ]
+  },
+  {
+    "name": "reflection-invalid-and-unexported-values",
+    "description": "Reviews a reflective string extraction across invalid and inaccessible values.",
+    "prompt": "Review this Go 1.25 function for correctness. Callers pass values from reflect.ValueOf as well as struct fields. func stringValue(v reflect.Value) (string, bool) { if v.CanInterface() { return reflect.TypeAssert[string](v) }; return \"\", false }",
+    "trap": "Assumes CanInterface can safely be called on every reflect.Value.",
+    "assertions": [
+      {
+        "id": "43.1",
+        "text": "Identifies that CanInterface panics for an invalid reflect.Value, including ValueOf(nil)."
+      },
+      {
+        "id": "43.2",
+        "text": "Checks validity before interfaceability and assertion, preserving a false result for invalid and unexported values."
+      },
+      {
+        "id": "43.3",
+        "text": "Preserves successful extraction of interfaceable strings and a false result for other types."
+      }
+    ],
+    "id": 43
   }
 ]

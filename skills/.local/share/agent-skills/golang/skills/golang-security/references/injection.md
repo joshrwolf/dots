@@ -308,7 +308,7 @@ Deserializing untrusted input can lead to resource exhaustion, type confusion, o
 
 ```go
 dec := gob.NewDecoder(r.Body) // DON'T: gob is not hardened for adversarial input
-var user interface{}
+var user any
 dec.Decode(&user)
 ```
 

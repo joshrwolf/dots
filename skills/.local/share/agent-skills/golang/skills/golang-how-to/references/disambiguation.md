@@ -209,11 +209,11 @@ Both skills suggest code changes, but for different reasons.
 | `samber/cc-skills-golang@golang-modernize` | Adopting language features: range-over-int, `min`/`max` builtins, `iter.Seq`, `slices.SortFunc`, `log/slog`, `testing.T.Context` | Static analysis configuration |
 | `samber/cc-skills-golang@golang-lint` | golangci-lint YAML config, enabling/disabling linters, interpreting linter output, `//nolint` policy | Language feature adoption |
 
-**Overlap zone:** Some linters (`modernize`, `perfsprint`, `exptostd`) produce warnings that overlap with modernization suggestions (for example replacing an x/exp API with its standard-library equivalent). The boundary: lint owns the tool configuration and suppression policy; modernize owns the rewrite patterns to apply once you've decided to adopt the feature.
+**Overlap zone:** Some linters (`modernize`, `perfsprint`, `exptostd`) produce warnings that overlap with modernization suggestions (for example replacing an x/exp API with its standard-library equivalent). The boundary: lint owns the tool configuration and suppression policy; modernize owns version requirements and semantic migration choices during ordinary work as well as explicit upgrades.
 
 **Routing examples:**
 
-- "How do I replace a `for i := 0; i < n; i++` loop with the new range syntax?" → `golang-modernize`.
+- "Add an optional field to this configuration" → `golang-code-style` for current syntax; consult `golang-modernize` when the module target or a migration constraint needs checking.
 - "My CI fails on `perfsprint` lint rule" → `golang-lint` (interpret the rule and decide whether to fix or suppress).
 - "Should I migrate from `log` to `slog`?" → `golang-modernize`.
 - "How do I configure golangci-lint to run only security-relevant linters?" → `golang-lint`.

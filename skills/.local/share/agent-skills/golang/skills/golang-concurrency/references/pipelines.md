@@ -81,6 +81,8 @@ func main() {
 
 ## Fan-Out / Fan-In
 
+These examples use `WaitGroup.Go` (Go 1.25+); tasks observe the passed context.
+
 **Fan-out**: multiple goroutines read from the same channel to parallelize CPU-bound work. **Fan-in**: multiple channels are merged into a single output channel.
 
 ```go
@@ -89,10 +91,8 @@ func fanOut(ctx context.Context, in <-chan Task, workers int) <-chan Result {
     out := make(chan Result)
     var wg sync.WaitGroup
 
-    for i := 0; i < workers; i++ {
-        wg.Add(1)
-        go func() {
-            defer wg.Done()
+    for range workers {
+        wg.Go(func() {
             for {
                 select {
                 case task, ok := <-in:
@@ -108,7 +108,7 @@ func fanOut(ctx context.Context, in <-chan Task, workers int) <-chan Result {
                     return
                 }
             }
-        }()
+        })
     }
 
     go func() {
@@ -126,13 +126,11 @@ func fanIn(ctx context.Context, channels ...<-chan Result) <-chan Result {
     var wg sync.WaitGroup
 
     for _, ch := range channels {
-        wg.Add(1)
-        go func(c <-chan Result) {
-            defer wg.Done()
+        wg.Go(func() {
             for {
                 select {
                 case <-ctx.Done(): return
-                case v, ok := <-c:
+                case v, ok := <-ch:
                     if !ok { return }
                     select {
                     case out <- v:
@@ -140,7 +138,7 @@ func fanIn(ctx context.Context, channels ...<-chan Result) <-chan Result {
                     }
                 }
             }
-        }(ch)
+        })
     }
 
     go func() {
@@ -192,12 +190,10 @@ func processAll(ctx context.Context, items []Item) error {
             wg.Wait()
             return ctx.Err()
         }
-        wg.Add(1)
-        go func(item Item) {
-            defer wg.Done()
+        wg.Go(func() {
             defer func() { <-sem }() // release
             process(ctx, item)
-        }(item)
+        })
     }
     wg.Wait()
     return nil

@@ -1,5 +1,7 @@
 # Testing database code
 
+Examples use test-owned contexts on Go 1.24+; see `golang-testing` for cleanup ordering.
+
 Use a focused fake for service behavior and a real test database for SQL semantics.
 
 ## Service tests with a fake
@@ -28,7 +30,7 @@ func TestUserServiceGetUser(t *testing.T) {
 	want := &User{ID: 1, Name: "Alice", Email: "alice@example.com"}
 	reader := &fakeUserReader{user: want, found: true}
 	svc := NewUserService(reader)
-	got, err := svc.GetUser(context.Background(), 1)
+	got, err := svc.GetUser(t.Context(), 1)
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}

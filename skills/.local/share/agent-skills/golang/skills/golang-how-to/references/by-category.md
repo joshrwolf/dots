@@ -177,7 +177,7 @@ Use when: choosing architectural patterns, designing APIs, or implementing resil
 
 Modernize Golang code using recent language features — range-over-int, min/max builtins, iterators, slices/maps/cmp/slog stdlib packages, testing patterns (t.Context, b.Loop, synctest), and tooling upgrades.
 
-Use when: upgrading a codebase to a newer Go version or replacing pre-generics patterns. Not for lint rule enforcement (→ `golang-lint`).
+Use when: choosing version-sensitive idioms during ordinary implementation or review, migrating older patterns, or upgrading Go. Everyday defaults stay with their topic owners; lint configuration belongs to `golang-lint`.
 
 ---
 

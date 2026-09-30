@@ -133,11 +133,11 @@ Prefer `viper.New()` per test. Reserve `Reset()` for tools that call into viper-
 The following is a lossy value copy, not restoration of a Viper instance. Do not use it to isolate tests that depend on bindings or precedence:
 
 ```go
-func snapshotViper() map[string]interface{} {
+func snapshotViper() map[string]any {
     return viper.AllSettings()
 }
 
-func restoreViper(snapshot map[string]interface{}) {
+func restoreViper(snapshot map[string]any) {
     viper.Reset()
     for k, v := range snapshot {
         viper.Set(k, v)

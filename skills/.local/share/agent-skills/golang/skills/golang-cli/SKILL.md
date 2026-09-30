@@ -45,7 +45,7 @@ For trivial single-purpose tools with no subcommands and few flags, stdlib `flag
 
 ## Project Structure
 
-Organize CLI commands in `cmd/myapp/` with one file per command. Keep `main.go` minimal — it executes the command, reports a returned error, and sets the process status.
+Follow the project's existing layout; `cmd/myapp/` is useful when separating binaries. Keep related commands together and split files only for distinct responsibilities or technical constraints, not one file per command. Keep process entry focused on executing the command, reporting a returned error, and setting the exit status. The following is one possible layout, not a required file list:
 
 ```
 myapp/

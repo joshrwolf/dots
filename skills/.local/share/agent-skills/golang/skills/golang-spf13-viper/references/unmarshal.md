@@ -97,7 +97,7 @@ err := viper.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
 import "github.com/go-viper/mapstructure/v2"
 
 func stringToIPHookFunc() mapstructure.DecodeHookFunc {
-    return func(f reflect.Type, t reflect.Type, data interface{}) (interface{}, error) {
+    return func(f reflect.Type, t reflect.Type, data any) (any, error) {
         if f.Kind() != reflect.String || t != reflect.TypeOf(net.IP{}) {
             return data, nil
         }
@@ -130,8 +130,8 @@ Without `,squash`, the base config must be nested under a `baseconfig` key in th
 
 ```go
 type Config struct {
-    Port     int                    `mapstructure:"port"`
-    Remain   map[string]interface{} `mapstructure:",remain"`
+    Port     int            `mapstructure:"port"`
+    Remain   map[string]any  `mapstructure:",remain"`
 }
 ```
 

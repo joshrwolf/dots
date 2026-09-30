@@ -248,11 +248,11 @@ Many safety pitfalls are caught automatically by linters: `errcheck`, `forcetype
 
 ### Go 1.25+ reflection type assertions
 
-For reflection code, prefer `reflect.TypeAssert[T]` over `value.Interface().(T)`. It still requires an interfaceable Value: invalid values and values obtained from unexported fields can panic; guard with CanInterface when those are possible.
+For reflection code, prefer `reflect.TypeAssert[T]` over `value.Interface().(T)`. It still requires an interfaceable Value. Check `IsValid` before `CanInterface`: `reflect.ValueOf(nil)` is invalid, and `CanInterface` itself panics on invalid values. Values obtained from unexported fields are not interfaceable.
 
 ```go
 v := reflect.ValueOf(x)
-if v.CanInterface() {
+if v.IsValid() && v.CanInterface() {
     if s, ok := reflect.TypeAssert[string](v); ok { use(s) }
 }
 ```

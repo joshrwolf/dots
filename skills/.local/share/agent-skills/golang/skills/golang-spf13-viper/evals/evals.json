@@ -161,7 +161,7 @@
       },
       {
         "id": "6.4",
-        "text": "Shows the correct pattern: define flag + BindPFlag in init()"
+        "text": "Binds the intended flag before the first dependent configuration read, using the correct command and Viper instances; does not require init()."
       }
     ]
   },

@@ -117,7 +117,11 @@ func (p *ConnPool) Put(conn *Conn) {
 
 ## Graceful Shutdown
 
-Graceful shutdown MUST use `signal.NotifyContext` for clean termination. All resources (connections, files, channels) MUST be drained before process exit. Use `os/signal` and context cancellation:
+Use `signal.NotifyContext` to initiate shutdown, stop accepting work, and wait for
+in-flight operations before closing their dependencies. Choose what happens when
+the grace period expires. This schematic executable uses a hard process exit on
+failure; it assumes ordinary HTTP handlers own all work using `db`, with no
+hijacked connections or detached background workers:
 
 ```go
 func main() {
@@ -134,12 +138,14 @@ func main() {
 
     slog.Info("server started", "addr", ":8080")
 
-    // Wait for interrupt signal
+    // Wait for interrupt or serving failure, retaining a failure exit status.
+    exitCode := 0
     select {
     case <-ctx.Done():
     case err := <-serveErr:
         if !errors.Is(err, http.ErrServerClosed) {
             slog.Error("server error", "error", err)
+            exitCode = 1
         }
     }
     stop() // restore normal signal handling for a second interrupt
@@ -151,20 +157,33 @@ func main() {
 
     if err := srv.Shutdown(shutdownCtx); err != nil {
         slog.Error("shutdown error", "error", err)
-        srv.Close() // policy: force-close after the grace period
+        // Policy: terminate without closing dependencies under active handlers.
+        // os.Exit skips defers; the OS reclaims connections, but work may be lost.
+        os.Exit(1)
     }
 
-    // Close other resources: database connections, message queues, etc.
-    db.Close()
+    // Successful Shutdown has waited for ordinary HTTP handlers to return.
+    if err := db.Close(); err != nil {
+        slog.Error("database close error", "error", err)
+        os.Exit(1)
+    }
     slog.Info("shutdown complete")
+    if exitCode != 0 {
+        os.Exit(exitCode)
+    }
 }
 ```
 
-This schematic main logs server failure and completes cleanup. In an executable,
-put the lifecycle in a run() error function and return startup/shutdown failures;
-main should set a nonzero exit status only after run has completed cleanup.
+`Server.Close` closes connections but does not join handler goroutines; calling
+it after a timed-out `Shutdown` does not make it safe to close their dependencies.
+If a hard exit is unacceptable, explicitly cancel and await all owned work before
+closing those dependencies, accepting that non-cooperative work can delay exit.
 
-HTTP Shutdown does not wait for hijacked connections such as WebSockets. Track and close them and background workers separately before closing their dependencies.
+`Shutdown` does not wait for hijacked connections such as WebSockets or detached
+background workers. Track their completion separately. In applications with a
+`run() error` boundary, preserve the same distinction: graceful completion permits
+cleanup; a timeout requires the chosen wait-or-exit policy, not unconditional
+deferred dependency closure.
 
 This pattern applies to any long-running service — gRPC servers, message consumers, background workers. The key elements are:
 
@@ -172,6 +191,6 @@ This pattern applies to any long-running service — gRPC servers, message consu
 2. Start the server in a goroutine
 3. Block on context cancellation
 4. Shut down with a timeout to drain in-flight requests
-5. Close all remaining resources in order
+5. Close dependencies after their users finish, or apply the explicit hard-exit policy
 
 For goroutine shutdown patterns, see the `samber/cc-skills-golang@golang-concurrency` skill.

@@ -1,21 +1,21 @@
 # Tooling Modernization
 
-Tool upgrades can change configuration, diagnostics, generated output, platform requirements, or dependency selection. Keep them within the requested scope and check compatibility; they are not behavior-free changes.
+Tool upgrades can change configuration, diagnostics, generated output, and
+platform requirements. Include the necessary companion changes and verify them.
 
-## Update to the latest Go version
+## Go target upgrades
 
-Compare the project's `go` directive in `go.mod` against the latest stable release and suggest updating it and the `toolchain` directive if present. Each Go release brings performance improvements, security fixes, and new features.
+Prefer the latest stable release. Check the project's support policy and module
+consumers before raising its minimum version; an old directive alone does not
+establish a continuing requirement for old Go. Update the `go` directive,
+`toolchain` selection when present, CI matrix, and build images consistently.
+Verify the selected release against the official release notes rather than
+copying a version number from this guide.
 
-```bash
-# Check current version
-go version
-
-# Update go.mod to target a newer version
-go mod edit -go=1.27
-
-# Update toolchain
-go get toolchain@latest
-```
+Use `go version` to identify the running toolchain and inspect `go.mod` / `go.work`
+for language targets. `go get go@<version>` selects a target version; update an
+explicit toolchain pin if the project uses one. Re-run the project's checks and
+review module/dependency changes after an upgrade.
 
 ## golangci-lint v2 _(golangci-lint v2.0.0+, March 2025)_
 
@@ -57,15 +57,16 @@ Go 1.22+ expanded PGO to devirtualize more interface calls. Go 1.23+ reduced PGO
 
 ## `go fix` and `go doc` changes _(Go 1.27+)_
 
-`go fix` now applies more of the `modernize` fixer suite automatically. Coverage shifted between Go 1.26 and 1.27:
+Use `go fix` or the project's configured modernize linter on affected packages to catch routine older forms. Review the patch and preserve behavior; diagnostics supplement judgment. `go fix` now applies more of the `modernize` fixer suite automatically. Coverage shifted between Go 1.26 and 1.27:
 
 - **Added**: `atomictypes`, `embedlit`, `slicesbackward`, `unsafefuncs`
 - **Removed**: `fmtappendf` (superseded by other fixers)
 - **Renamed**: `waitgroup` → `waitgroupgo`
 
 ```bash
-go fix ./...          # applies the enabled safe transformations
-go tool fix help      # check exact fixer coverage for the installed toolchain
+go fix -diff ./path/to/affected/package  # preview; nonzero status also means changes available
+go fix ./path/to/affected/package        # apply and inspect the resulting diff
+go tool fix help                        # check installed fixer coverage
 ```
 
 `go doc` accepts `package@version` to look up a specific module version without changing `go.mod`, and `-ex` lists executable examples:

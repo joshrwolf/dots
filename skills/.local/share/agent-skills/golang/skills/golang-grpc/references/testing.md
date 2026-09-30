@@ -1,5 +1,7 @@
 # gRPC Testing Reference
 
+Examples use test-owned contexts on Go 1.24+; see `golang-testing` for cleanup ordering.
+
 ## Table of Contents
 
 - [Testing with `bufconn`](#testing-with-bufconn)
@@ -87,7 +89,7 @@ Always verify that RPCs return the expected gRPC status codes — clients rely o
 ```go
 func TestGetUser_NotFound(t *testing.T) {
     client := setupTest(t)
-    _, err := client.GetUser(context.Background(), &pb.GetUserRequest{UserId: "nonexistent"})
+    _, err := client.GetUser(t.Context(), &pb.GetUserRequest{UserId: "nonexistent"})
 
     st, ok := status.FromError(err)
     if !ok {
@@ -124,7 +126,7 @@ func TestGetUser_Errors(t *testing.T) {
 
     for _, tt := range tests {
         t.Run(tt.name, func(t *testing.T) {
-            _, err := client.GetUser(context.Background(), tt.req)
+            _, err := client.GetUser(t.Context(), tt.req)
             st, ok := status.FromError(err)
             if !ok {
                 t.Fatalf("expected gRPC status error, got: %v", err)
@@ -146,7 +148,7 @@ func TestGetUser_Errors(t *testing.T) {
 // This differs from the unary pagination example in protoc-reference.md.
 func TestListUsers_Stream(t *testing.T) {
     client := setupTest(t)
-    stream, err := client.ListUsers(context.Background(), &pb.ListUsersRequest{})
+    stream, err := client.ListUsers(t.Context(), &pb.ListUsersRequest{})
     if err != nil {
         t.Fatalf("ListUsers: %v", err)
     }
@@ -174,7 +176,7 @@ func TestListUsers_Stream(t *testing.T) {
 ```go
 func TestBatchCreate_ClientStream(t *testing.T) {
     client := setupTest(t)
-    stream, err := client.BatchCreateUsers(context.Background())
+    stream, err := client.BatchCreateUsers(t.Context())
     if err != nil {
         t.Fatalf("BatchCreateUsers: %v", err)
     }
@@ -204,14 +206,14 @@ func TestAuth_Metadata(t *testing.T) {
     client := setupTestWithInterceptors(t)
 
     // Without auth token → Unauthenticated
-    _, err := client.GetUser(context.Background(), &pb.GetUserRequest{UserId: "1"})
+    _, err := client.GetUser(t.Context(), &pb.GetUserRequest{UserId: "1"})
     if st, _ := status.FromError(err); st.Code() != codes.Unauthenticated {
         t.Errorf("expected Unauthenticated without token, got %s", st.Code())
     }
 
     // With valid token → success
     md := metadata.Pairs("authorization", "Bearer valid-token")
-    ctx := metadata.NewOutgoingContext(context.Background(), md)
+    ctx := metadata.NewOutgoingContext(t.Context(), md)
     resp, err := client.GetUser(ctx, &pb.GetUserRequest{UserId: "1"})
     if err != nil {
         t.Fatalf("expected success with valid token: %v", err)
@@ -228,7 +230,7 @@ func TestAuth_Metadata(t *testing.T) {
 func TestGetUser_DeadlineExceeded(t *testing.T) {
     client := setupTest(t) // server handler sleeps for 5s
 
-    ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+    ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
     defer cancel()
 
     _, err := client.GetUser(ctx, &pb.GetUserRequest{UserId: "slow"})
@@ -259,7 +261,7 @@ func TestUserService_Integration(t *testing.T) {
     client := pb.NewUserServiceClient(conn)
 
     // Test full roundtrip
-    created, err := client.CreateUser(context.Background(), &pb.CreateUserRequest{
+    created, err := client.CreateUser(t.Context(), &pb.CreateUserRequest{
         Name:  "integration-test",
         Email: "test@example.com",
     })
@@ -267,7 +269,7 @@ func TestUserService_Integration(t *testing.T) {
         t.Fatalf("CreateUser: %v", err)
     }
 
-    got, err := client.GetUser(context.Background(), &pb.GetUserRequest{
+    got, err := client.GetUser(t.Context(), &pb.GetUserRequest{
         UserId: created.User.Id,
     })
     if err != nil {

@@ -26,13 +26,13 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 ## JSON Pitfalls
 
-### Numbers into `interface{}` become `float64`
+### Numbers into `any` become `float64`
 
-When unmarshaling into `map[string]interface{}` or `interface{}`, all JSON numbers become `float64`. Type-asserting to `int` panics. Integers outside the exactly representable float64 range can lose precision.
+When unmarshaling into `map[string]any` or `any`, all JSON numbers become `float64`. Type-asserting to `int` panics. Integers outside the exactly representable float64 range can lose precision.
 
 ```go
 // BAD
-var result map[string]interface{}
+var result map[string]any
 json.Unmarshal([]byte(`{"id": 1234567890123456789}`), &result)
 id := result["id"].(int) // PANIC: it's float64, not int
 
@@ -41,10 +41,10 @@ type Response struct {
     ID int64 `json:"id"`
 }
 
-// GOOD — use json.Number when you must use interface{}
+// GOOD — use json.Number when you must use any
 dec := json.NewDecoder(bytes.NewReader(data))
 dec.UseNumber()
-var result map[string]interface{}
+var result map[string]any
 if err := dec.Decode(&result); err != nil {
     return err
 }

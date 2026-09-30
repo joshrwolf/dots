@@ -63,11 +63,11 @@
     "assertions": [
       {
         "id": "3.1",
-        "text": "Moves wg.Add(1) BEFORE the go statement — wg.Add inside the goroutine races with wg.Wait(), which can return before all goroutines have registered"
+        "text": "Uses WaitGroup.Go when supported, or moves Add before launching the goroutine for older targets; registration must precede Wait."
       },
       {
         "id": "3.2",
-        "text": "Suggests using wg.Add(len(urls)) before the loop as a more efficient alternative — a single atomic operation instead of N separate wg.Add(1) calls in the loop"
+        "text": "Does not require manual Add bookkeeping when WaitGroup.Go expresses the task; for older targets, registration before the loop is also valid."
       },
       { "id": "3.3", "text": "Keeps defer wg.Done() inside the goroutine" },
       {
@@ -352,6 +352,27 @@
       {
         "id": "13.5",
         "text": "Does NOT build a multi-goroutine pipeline for this use case"
+      }
+    ]
+  },
+  {
+    "id": 14,
+    "name": "ordinary-worker-start",
+    "description": "Exercises everyday Go choices without an explicit modernization request.",
+    "prompt": "For a Go 1.27 package, implement Start(ctx context.Context, fn func(context.Context)) func(). It calls fn once in a new goroutine and returns a function that waits for fn to return. fn must not panic and must return when ctx is canceled. No results or error aggregation are needed.",
+    "trap": "Uses manual WaitGroup Add/Done bookkeeping out of habit, or assumes WaitGroup.Go cannot run a context-aware function.",
+    "assertions": [
+      {
+        "id": "14.1",
+        "text": "Uses WaitGroup.Go for goroutine registration and completion."
+      },
+      {
+        "id": "14.2",
+        "text": "Passes the caller context to fn and returns an actual completion wait."
+      },
+      {
+        "id": "14.3",
+        "text": "Does not add errgroup solely because fn accepts a context."
       }
     ]
   }

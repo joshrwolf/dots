@@ -15,16 +15,27 @@
   },
   {
     "id": 2,
-    "name": "promql-comments-convention-discoverability",
-    "description": "Tests the PromQL-as-comments convention above metric variable declarations",
+    "name": "metric-query-discoverability",
+    "description": "Makes metric semantics and query usage discoverable near the code.",
     "prompt": "My team declares Prometheus metrics scattered across many files. When writing alerts or dashboards, engineers have to grep the codebase to find the metric name and then guess what PromQL to write. How do I make metrics more self-documenting without adding a wiki or external doc?",
-    "trap": "Without the skill, the model suggests external documentation, a README section, or godoc comments with metric descriptions — missing the PromQL-as-comments convention taught by the skill",
+    "trap": "Requires fixed comment labels or an alert for every metric instead of explaining how to query it.",
     "assertions": [
-      {"id": "2.1", "text": "Recommends placing PromQL queries and alert expressions as comments directly above each metric variable declaration"},
-      {"id": "2.2", "text": "Shows example with Dashboard: and Alert: comment lines containing actual PromQL above the var block"},
-      {"id": "2.3", "text": "Explains that colocating PromQL with the metric declaration means queries are reviewed in PRs alongside metric changes"},
-      {"id": "2.4", "text": "Mentions that when the metric name or labels change, the PromQL comments change in the same commit — preventing stale queries"},
-      {"id": "2.5", "text": "Shows that this enables new team members to understand the metric's purpose and how to query it at a glance"}
+      {
+        "id": "2.1",
+        "text": "Provides nearby documentation or links showing metric meaning, units, and bounded label semantics within the requested no-wiki constraint."
+      },
+      {
+        "id": "2.2",
+        "text": "Shows a useful query for the demonstrated metric; does not require literal Dashboard: or Alert: labels."
+      },
+      {
+        "id": "2.3",
+        "text": "Explains how query documentation stays consistent when names or labels change."
+      },
+      {
+        "id": "2.4",
+        "text": "Adds alert guidance only where there is an actionable operational condition."
+      }
     ]
   },
   {
@@ -123,16 +134,27 @@
   },
   {
     "id": 9,
-    "name": "promql-comments-convention",
-    "description": "Tests whether the model recommends documenting metrics with PromQL comments above declarations",
-    "prompt": "I'm declaring Prometheus metrics in my Go service. Here's my pattern:\n\nvar httpRequestsTotal = promauto.NewCounterVec(\n    prometheus.CounterOpts{\n        Namespace: \"myapp\",\n        Subsystem: \"http\",\n        Name:      \"requests_total\",\n        Help:      \"Total number of HTTP requests.\",\n    },\n    []string{\"method\", \"path\", \"status\"},\n)\n\nHow can I make my metrics more discoverable for my team?",
-    "trap": "Without the skill, the model may suggest external documentation or wiki pages, missing the PromQL-as-comments convention",
+    "name": "existing-metric-query-ownership",
+    "description": "Reuses maintained query definitions instead of duplicating them in source comments.",
+    "prompt": "I'm declaring Prometheus metrics in my Go service. Here's my pattern:\n\nvar httpRequestsTotal = promauto.NewCounterVec(\n    prometheus.CounterOpts{\n        Namespace: \"myapp\",\n        Subsystem: \"http\",\n        Name:      \"requests_total\",\n        Help:      \"Total number of HTTP requests.\",\n    },\n    []string{\"method\", \"path\", \"status\"},\n)\n\nHow can I make my metrics more discoverable for my team? The repository already maintains dashboards and alerts in versioned configuration files.",
+    "trap": "Copies all dashboard and alert expressions into comments, creating a second source of truth.",
     "assertions": [
-      {"id": "9.1", "text": "Recommends adding PromQL queries and alert rules as comments directly above the metric variable declaration"},
-      {"id": "9.2", "text": "Shows example Dashboard: and Alert: comment lines above the metric var"},
-      {"id": "9.3", "text": "Explains that this keeps PromQL queries reviewed in PRs alongside the metric"},
-      {"id": "9.4", "text": "Mentions that queries stay in sync with metric changes (label renames, bucket changes)"},
-      {"id": "9.5", "text": "Notes that new team members can understand the metric's purpose at a glance from the comments"}
+      {
+        "id": "9.1",
+        "text": "Makes the declaration and its existing dashboard or alert definitions easy to locate through concise documentation or references."
+      },
+      {
+        "id": "9.2",
+        "text": "Explains the metric purpose and units, including that path labels should contain bounded route patterns."
+      },
+      {
+        "id": "9.3",
+        "text": "Keeps query expressions maintained in one place unless a specific nearby example adds value."
+      },
+      {
+        "id": "9.4",
+        "text": "Checks affected queries when metric names or labels change without imposing a comment format."
+      }
     ]
   },
   {
@@ -217,15 +239,26 @@
   {
     "id": 16,
     "name": "where-to-add-spans",
-    "description": "Tests knowledge of which operations must have spans in OpenTelemetry",
+    "description": "Selects useful tracing boundaries without duplicating instrumentation.",
     "prompt": "I'm adding OpenTelemetry tracing to my existing Go service. Which functions should I add spans to? I don't want to instrument everything unnecessarily.",
-    "trap": "Without the skill, the model may give vague guidance like 'important functions', missing the specific categories the skill defines",
+    "trap": "Requires a span on every function that can fail or take measurable time.",
     "assertions": [
-      {"id": "16.1", "text": "Lists service methods (business logic layer) as requiring spans"},
-      {"id": "16.2", "text": "Lists database queries as requiring spans"},
-      {"id": "16.3", "text": "Lists external API calls as requiring spans"},
-      {"id": "16.4", "text": "Lists message queue publish/consume operations as requiring spans"},
-      {"id": "16.5", "text": "States any operation that takes measurable time or could fail should have a span"}
+      {
+        "id": "16.1",
+        "text": "Chooses boundaries that explain request flow, latency, or failure, such as service operations and external calls."
+      },
+      {
+        "id": "16.2",
+        "text": "Checks existing middleware and driver instrumentation before adding manual spans."
+      },
+      {
+        "id": "16.3",
+        "text": "Avoids requiring spans on every method or duplicating already useful spans."
+      },
+      {
+        "id": "16.4",
+        "text": "Considers sampling, attribute cardinality, and collection overhead."
+      }
     ]
   },
   {
@@ -436,32 +469,56 @@
   },
   {
     "id": 32,
-    "name": "five-signals-completeness",
-    "description": "Tests knowledge of the five observability signals and their distinct roles",
+    "name": "task-appropriate-signals",
+    "description": "Chooses production signals based on service needs.",
     "prompt": "I'm building a new Go microservice. What observability signals should I implement for production readiness?",
-    "trap": "Without the skill, the model typically covers logs, metrics, traces but misses profiles and RUM",
+    "trap": "Treats all signal types, including product analytics, as universal deployment requirements.",
     "assertions": [
-      {"id": "32.1", "text": "Lists all five signals: logs, metrics, traces, profiles, and RUM"},
-      {"id": "32.2", "text": "Associates logs with 'what happened' (discrete events, audit trails)"},
-      {"id": "32.3", "text": "Associates metrics with 'how much/how fast' (aggregated measurements, alerting, SLOs)"},
-      {"id": "32.4", "text": "Associates traces with 'where did time go' (request flow across services)"},
-      {"id": "32.5", "text": "Associates profiles with 'why is it slow/using memory' (CPU hotspots, memory leaks)"},
-      {"id": "32.6", "text": "Associates RUM with 'how do users experience it' (product analytics, funnels)"}
+      {
+        "id": "32.1",
+        "text": "Relates logs, metrics, traces, and profiles to distinct operational questions."
+      },
+      {
+        "id": "32.2",
+        "text": "Uses service needs and the existing stack to prioritize instrumentation."
+      },
+      {
+        "id": "32.3",
+        "text": "Treats user monitoring and product analytics as conditional product needs."
+      },
+      {
+        "id": "32.4",
+        "text": "Does not require installing every signal or vendor before a service can be production-ready."
+      }
     ]
   },
   {
     "id": 33,
-    "name": "definition-of-done-observability",
-    "description": "Tests the observability definition of done checklist before shipping a feature",
+    "name": "observability-readiness-context",
+    "description": "Assesses operational readiness against existing instrumentation and requirements.",
     "prompt": "I'm about to ship a new payment processing feature in my Go service. My code works, tests pass, and it's been code-reviewed. Am I ready to deploy?",
-    "trap": "Without the skill, the model may say yes or mention generic deployment checks, missing the observability-specific definition of done",
+    "trap": "Declares readiness without evidence or demands every observability tool and artifact for the feature.",
     "assertions": [
-      {"id": "33.1", "text": "States that a feature is not production-ready until it is observable"},
-      {"id": "33.2", "text": "Checks for metric declarations (counters, histograms, gauges) with PromQL comments"},
-      {"id": "33.3", "text": "Checks for proper structured logging with slog and context variants"},
-      {"id": "33.4", "text": "Checks for OpenTelemetry spans on service methods, DB queries, and external calls"},
-      {"id": "33.5", "text": "Checks for dashboards and alerts being wired up"},
-      {"id": "33.6", "text": "Avoids duplicate error reports as errors propagate; intentional reporting boundaries may log and return."}
+      {
+        "id": "33.1",
+        "text": "Identifies what operational evidence is needed to assess the changed payment behavior rather than assuming code review proves readiness."
+      },
+      {
+        "id": "33.2",
+        "text": "Checks existing signals and alerting for detecting payment failures and diagnosing the changed path."
+      },
+      {
+        "id": "33.3",
+        "text": "Suggests additions only for identified gaps, preserving the existing logger and telemetry stack."
+      },
+      {
+        "id": "33.4",
+        "text": "Does not impose PromQL comments, a span per method, product analytics, or a logger migration as universal completion gates."
+      },
+      {
+        "id": "33.5",
+        "text": "Avoids duplicate error reports while preserving intentional reporting boundaries."
+      }
     ]
   },
   {
@@ -511,11 +568,26 @@
     "prompt": "I need to audit observability across a Go monolith with 200+ packages. How should I approach this efficiently?",
     "trap": "Requires a fixed number of agents or expands a review into unrequested implementation.",
     "assertions": [
-      {"id": "37.1", "text": "Keeps the audit within the requested scope without requiring delegation"},
-      {"id": "37.2", "text": "Organizes relevant findings by metrics, logging, tracing, profiling, and RUM"},
-      {"id": "37.3", "text": "For metrics, verifies declarations and PromQL comments"},
-      {"id": "37.4", "text": "For logging, checks structured logs, PII, and error logging"},
-      {"id": "37.5", "text": "For tracing, checks spans in service methods, database calls, and API calls"}
+      {
+        "id": "37.1",
+        "text": "Keeps the audit within the requested scope without requiring delegation"
+      },
+      {
+        "id": "37.2",
+        "text": "Organizes findings by the signals relevant to the service; does not presume every signal must be installed."
+      },
+      {
+        "id": "37.3",
+        "text": "For metrics, checks useful declarations, bounded labels, and consistency with existing queries and operational documentation."
+      },
+      {
+        "id": "37.4",
+        "text": "For logging, checks structured logs, PII, and error logging"
+      },
+      {
+        "id": "37.5",
+        "text": "For tracing, checks diagnostic coverage and context propagation without demanding a manual span on every method."
+      }
     ]
   },
   {
@@ -556,5 +628,26 @@
       {"id": "40.3", "text": "Explains RecordError does not automatically extract oops stacks/metadata; explicit mapping/exporter integration is required."},
       {"id": "40.4", "text": "Mentions compatibility with errors.Is/errors.As and slog"}
     ]
+  },
+  {
+    "name": "scoped-existing-logger-change",
+    "description": "Preserves an established logging stack during a narrow diagnostic change.",
+    "prompt": "Our Go service uses zap and already collects structured logs. Add the order ID to this warning so support can find a failed order: logger.Warn(\"order submission failed\", zap.Error(err)). The local variable orderID is a string. Show the change.",
+    "trap": "Expands a field addition into a slog migration or a new metrics, tracing, or product analytics rollout.",
+    "assertions": [
+      {
+        "id": "41.1",
+        "text": "Adds the order ID as a structured field using the existing zap logger."
+      },
+      {
+        "id": "41.2",
+        "text": "Preserves the warning and existing error field."
+      },
+      {
+        "id": "41.3",
+        "text": "Keeps the response scoped to the requested diagnostic change without requiring a telemetry migration or additional signal stack."
+      }
+    ],
+    "id": 41
   }
 ]

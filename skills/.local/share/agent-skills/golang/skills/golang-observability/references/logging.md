@@ -136,7 +136,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 ## Migrating from zap / logrus / zerolog
 
-`log/slog` is the standard library logger since Go 1.21. If the project uses `zap`, `logrus`, or `zerolog`, migrate to `slog` — it has a stable API, broad ecosystem support, and eliminates an unnecessary dependency.
+`log/slog` is the standard library logger since Go 1.21. Preserve an existing logger unless migration is requested or solves an identified requirement. For an intentional migration, check output compatibility, levels, caller information, performance, and downstream collection before replacing the existing integration.
 
 **Step 1: Bridge** — route `slog` output through the existing logger so you can migrate call sites incrementally without changing log output:
 

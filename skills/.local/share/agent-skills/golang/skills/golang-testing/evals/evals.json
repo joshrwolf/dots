@@ -424,5 +424,26 @@
         "text": "Recognizes distinct logical responsibilities and technical constraints as valid boundaries without imposing a maximum file size."
       }
     ]
+  },
+  {
+    "id": 17,
+    "name": "test-owned-worker-cleanup",
+    "description": "Exercises everyday Go choices without an explicit modernization request.",
+    "prompt": "In a Go 1.27 package, Start(ctx context.Context, fn func(context.Context)) func() launches fn once and returns a function that waits for completion. Add a test proving that a worker owned by the test receives cancellation and fully stops during test cleanup. The worker does not panic and returns after ctx.Done. Avoid sleeps and real timers.",
+    "trap": "Uses an unowned background context, or defers a wait that needs test-context cancellation and deadlocks.",
+    "assertions": [
+      {
+        "id": "17.1",
+        "text": "Uses the current test context for test-owned work, or a derived context when the test requires earlier cancellation."
+      },
+      {
+        "id": "17.2",
+        "text": "Waits for worker completion in cleanup after test-context cancellation, or explicitly cancels a derived context before waiting."
+      },
+      {
+        "id": "17.3",
+        "text": "Observes worker startup and completion with synchronization, without sleeps, retries, or goroutine-count guesses."
+      }
+    ]
   }
 ]

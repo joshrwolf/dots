@@ -41,6 +41,25 @@ This skill guides the creation of production-ready tests for Go applications. Fo
 12. Extend the corresponding source file's `_test.go` file; separate tests only for a distinct logical responsibility or technical constraint, not file size or a newly added test
 13. Test functions SHOULD appear in the same order as the functions/methods they test in the source file
 
+## Current Testing Defaults
+
+Use the module's supported Go APIs and update older forms in tests being changed.
+For Go 1.24+, prefer `t.Context()` for work owned by the current test or subtest,
+`t.TempDir()` for temporary files, and `t.Setenv()` / `t.Chdir()` for process state
+with automatic restoration. Environment and directory changes cannot be used in
+parallel tests or tests with parallel ancestors. Keep an independent context only
+when its distinct lifetime is part of the behavior under test.
+
+`t.Context()` is canceled before `t.Cleanup` callbacks run. Register a cleanup that
+waits for test-owned workers, or cancel a derived context explicitly before waiting
+inside the test body. Do not defer a wait that needs `t.Context()` cancellation:
+defers run before that cancellation and can deadlock. Cleanup operations that must
+run after cancellation may need their own bounded context.
+
+Use `httptest.NewRequestWithContext(t.Context(), ...)` for handler requests on
+Go 1.24+. The benchmark and concurrency sections cover `b.Loop` and `synctest`;
+use them without waiting for a separate modernization request.
+
 ## Test Structure and Organization
 
 ### File Conventions
@@ -145,8 +164,10 @@ if got.Name != wantName {
 }
 ```
 
-Use `errors.Is` for sentinel errors and `errors.As` for typed errors; check error
-text only when that text is the contract. Use direct equality for scalars,
+Use `errors.Is` for sentinel errors and, on Go 1.26+, `errors.AsType[T]` for
+typed error inspection when `T` implements `error`. Use `errors.As` for older
+modules or non-error interface targets. Check error text only when it is the
+contract. Use direct equality for scalars,
 `bytes.Equal` for bytes, and `slices.Equal` or `maps.Equal` when their equality
 semantics fit. For structured values needing readable diagnostics:
 

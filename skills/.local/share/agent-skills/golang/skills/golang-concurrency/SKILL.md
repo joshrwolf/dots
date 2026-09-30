@@ -59,17 +59,23 @@ For detailed channel/select code examples, see [Channels and Select Patterns](re
 | Wait + cancel siblings on first error | `errgroup.WithContext` | Context cancellation on error |
 | Wait + limit concurrency | `errgroup.SetLimit(n)` | Built-in worker pool |
 
+For new or changed Go 1.25+ code, prefer `wg.Go` over manual `Add`/`go`/`Done`
+when the task only needs completion tracking and the function must not panic.
+Cancellation can still be handled inside that function. Use `errgroup` when the
+group should propagate errors, cancel siblings, or limit concurrency. Keep manual
+bookkeeping for older targets or lifetimes that are not one function invocation.
+
 ## Sync Primitives Quick Reference
 
 | Primitive | Use case | Key notes |
 | --- | --- | --- |
-| `sync.Mutex` | Protect shared state | Keep critical sections short; never hold across I/O |
+| `sync.Mutex` | Protect shared state | Keep critical sections short; hold across I/O only when the protected operation requires serialization |
 | `sync.RWMutex` | Many readers, few writers | Never upgrade RLock to Lock (deadlock) |
 | `sync/atomic` | Simple counters, flags | Prefer typed atomics (Go 1.19+): `atomic.Int64`, `atomic.Bool` |
 | `sync.Map` | Concurrent map, read-heavy | No explicit locking; use `RWMutex`+map when writes dominate |
 | `sync.Pool` | Reuse temporary objects | Reset before reuse; items may disappear at any time |
 | `sync.Once` | One-time initialization | Go 1.21+: `OnceFunc`, `OnceValue`, `OnceValues` |
-| `sync.WaitGroup` | Waiting for simple goroutines | Go 1.25+: prefer `wg.Go(func(){ ... })` for fire-and-wait tasks that do not panic and do not need error propagation. For Go <1.25 use `Add`/`Done`. For errors/cancellation/limits, use `errgroup` with context. |
+| `sync.WaitGroup` | Await task completion | Prefer `Go` on Go 1.25+ as described above; `Wait` does not signal cancellation |
 | `x/sync/singleflight` | Deduplicate concurrent calls | Cache stampede prevention |
 | `x/sync/errgroup` | Goroutine group + errors | `SetLimit(n)` replaces hand-rolled worker pools |
 
@@ -111,7 +117,6 @@ For a requested concurrency audit, check:
 | Mutating shared data after a send | Transfer exclusive ownership, copy referenced mutable data, or synchronize access |
 | `wg.Add` inside goroutine | Call `Add` before `go` — `Wait` may return early otherwise |
 | Forgetting `-race` in CI | Always run `go test -race ./...` |
-| Mutex held across I/O | Keep critical sections short |
 
 ## Cross-References
 

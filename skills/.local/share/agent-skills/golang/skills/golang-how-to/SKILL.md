@@ -43,7 +43,7 @@ Routing alone requires no tool installation or persistent configuration changes.
 | Debug a panic or unexpected behavior | `golang-safety` | `golang-concurrency` (goroutines), `golang-benchmark` (runtime profiles) |
 | Monitor in production | `golang-observability` | `golang-performance` (if SLO breach) |
 | Audit security vulnerabilities | `golang-security` | `golang-safety`, `golang-lint` |
-| Review formatting and style | `golang-code-style` | `golang-naming`, `golang-lint` |
+| Write or review Go code | `golang-code-style` | `golang-modernize` (version-sensitive choices), task-specific skills |
 | Refactor or restructure existing code | `golang-refactoring` | `golang-naming`, `golang-code-style`, `golang-project-layout` |
 | Configure golangci-lint | `golang-lint` | `golang-code-style` |
 | Write godoc / README / CHANGELOG | `golang-documentation` | `golang-naming` |
@@ -52,7 +52,7 @@ Routing alone requires no tool installation or persistent configuration changes.
 | Choose a library | `golang-popular-libraries` | relevant library-specific skill |
 | Read a package's documentation or API | `golang-go-doc` | `golang-dependency-management` |
 | Navigate, diagnose, or refactor local code (definitions, references, rename) | `golang-gopls` | — |
-| Adopt new Go language features | `golang-modernize` | `golang-lint` |
+| Choose current idioms or migrate older Go patterns | `golang-modernize` | relevant topic owner, `golang-lint` |
 | Use samber/oops (structured errors) | `golang-samber-oops` | `golang-error-handling` |
 | Use log/slog | `golang-observability` | `golang-samber-slog` (when using its extensions) |
 | Use dependency injection | `golang-dependency-injection` | `golang-samber-do` (when already used) |

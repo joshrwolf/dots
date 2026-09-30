@@ -315,26 +315,22 @@
   },
   {
     "id": 15,
-    "name": "named-fields-override-positional-prompt",
+    "name": "explicit-positional-literals",
     "description": "Respects explicit requirements while preserving correctness.",
     "prompt": "Write Go structs in package `config` using positional field syntax for brevity. Create: Point{float64, float64}, Color{uint8, uint8, uint8, uint8}, and ServerConfig{string, int, bool, time.Duration, time.Duration, *tls.Config}. Positional syntax is shorter and the field order is obvious from the type definition.",
     "trap": "Lets a default style preference override the user's explicit request.",
     "assertions": [
       {
         "id": "15.1",
-        "text": "Honors the explicitly requested code shape or signature while preserving valid Go and the requested behavior."
+        "text": "Uses the explicitly requested positional literals with valid named field declarations for the Go types."
       },
       {
         "id": "15.2",
-        "text": "Explains any relevant readability or API tradeoff without silently overriding the request."
+        "text": "Preserves the declared field order and types in every positional literal."
       },
       {
         "id": "15.3",
-        "text": "Preserves validation conditions, error paths, and evaluation order."
-      },
-      {
-        "id": "15.4",
-        "text": "No struct literal in the file uses positional field syntax"
+        "text": "Explains relevant readability or API tradeoffs without silently overriding the requested syntax."
       }
     ]
   },
@@ -589,6 +585,48 @@
       {
         "id": "25.4",
         "text": "Applies the same reasoning to free functions and receiver methods instead of proposing a method chain as the solution."
+      }
+    ]
+  },
+  {
+    "id": 26,
+    "name": "ordinary-pointer-field-extension",
+    "description": "Exercises everyday Go choices without an explicit modernization request.",
+    "prompt": "In a Go 1.27 module, extend Config with RetryLimit *int and change New to take retryLimit int as its second parameter. Existing code: type Config struct { Timeout *time.Duration }; func ptr[T any](v T) *T { return &v }; func New(timeout time.Duration) Config { return Config{Timeout: ptr(timeout)} }. Each configuration must own its values independently. Show the updated implementation.",
+    "trap": "Copies the pointer helper pattern into the new field solely because existing code uses it.",
+    "assertions": [
+      {
+        "id": "26.1",
+        "text": "Uses new(value) to initialize the optional values without introducing or retaining an otherwise unused pointer helper."
+      },
+      {
+        "id": "26.2",
+        "text": "Updates the nearby Timeout initializer as part of the same straightforward change."
+      },
+      {
+        "id": "26.3",
+        "text": "Preserves pointer types, configured values, and independent ownership."
+      }
+    ]
+  },
+  {
+    "id": 27,
+    "name": "explicit-older-go-contract",
+    "description": "Exercises everyday Go choices without an explicit modernization request.",
+    "prompt": "This public module must continue supporting Go 1.23. Implement New(attempts int) Settings, where type Settings struct { Attempts *int }. The settings must own its count independently of the caller. Keep the documented version support and module directive.",
+    "trap": "Uses new(value) or raises the Go target despite the explicit support contract.",
+    "assertions": [
+      {
+        "id": "27.1",
+        "text": "Uses a Go 1.23-compatible way to return a pointer to an independently owned value."
+      },
+      {
+        "id": "27.2",
+        "text": "Keeps the module target and support contract unchanged."
+      },
+      {
+        "id": "27.3",
+        "text": "Does not treat a newer installed compiler as permission to use newer language features."
       }
     ]
   }

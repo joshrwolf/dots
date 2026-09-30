@@ -328,6 +328,27 @@
           "text": "Distinguishes a future explicit data/algorithm migration from a mechanical modernization."
         }
       ]
+    },
+    {
+      "id": 25,
+      "name": "ordinary-change-nearby-idioms",
+      "description": "Exercises everyday Go choices without an explicit modernization request.",
+      "prompt": "In a Go 1.27 module, update Names so its result is sorted and contains no duplicates. It currently copies the input and sorts with sort.Strings: func Names(in []string) []string { out := append([]string(nil), in...); sort.Strings(out); return out }. Callers require that input is unchanged and nil input returns nil. Show the implementation.",
+      "trap": "Adds a manual deduplication loop without considering current standard-library operations, or changes nil/aliasing behavior.",
+      "assertions": [
+        {
+          "id": "25.1",
+          "text": "Uses current slices operations for copying, sorting, and adjacent duplicate removal where their semantics fit."
+        },
+        {
+          "id": "25.2",
+          "text": "Preserves nil input as nil and never mutates the caller slice."
+        },
+        {
+          "id": "25.3",
+          "text": "Makes the relevant migration directly without asking whether modernization is wanted."
+        }
+      ]
     }
   ]
 }

@@ -1,6 +1,6 @@
 ---
 name: golang-modernize
-description: "Modernize Go code for its supported toolchain. Use when adopting language features, replacing deprecated APIs, or upgrading Go and related tooling."
+description: "Choose current Go idioms when writing, reviewing, or refactoring code. Use for version-sensitive API choices, proactive modernization, and Go or tooling upgrades."
 user-invocable: true
 license: MIT
 compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
@@ -22,30 +22,35 @@ paths:
 
 <!-- markdownlint-disable ol-prefix -->
 
-During feature work, suggest only modernizations relevant to that feature; record
-unrelated opportunities separately rather than expanding the diff. For a requested
-broad audit, inspect deprecated APIs, language features, standard library changes,
-testing patterns, and tooling within the supported Go version. Report and prioritize
-findings; implement a migration when requested.
+# Go Code Modernization
 
-# Go Code Modernization Guide
+Prefer current idioms during ordinary implementation and review. Apply
+straightforward, behavior-preserving modernizations in affected code and nearby
+uses of the same pattern; an explicit modernization request is not necessary.
+Existing older syntax is not by itself a reason to repeat it. Keep unrelated,
+large migrations separate so the requested change remains reviewable.
 
-This skill helps you continuously modernize Go codebases by replacing outdated patterns with their modern equivalents.
+## Version and behavior contracts
 
-**Scope**: This skill covers roughly the last 3 years of Go releases — from the oldest to the newest row in the Go Version Changelogs table below, updated each Go release. Projects targeting an older `go.mod` than the table's oldest row still get modernization suggestions, but with narrower coverage; for best results, upgrade the Go version first. Some older modernizations (e.g., `any` instead of `interface{}`, `errors.Is`/`errors.As`, `strings.Cut`) are included because they are still commonly missed, but many pre-1.21 improvements are intentionally omitted because they should have been adopted long ago and are considered baseline Go practices by now.
+Check the module's `go` directive, workspace modules, CI matrix, and documented
+consumer requirements. Use the latest stable Go for new projects. For existing
+projects, move the target forward when useful and no actual support requirement
+blocks it; align module directives, toolchain selection, CI, and relevant build
+images as one change. A newer installed compiler alone does not change the
+module's language or API contract. Do not invent older-version support, or silently
+drop explicitly supported consumers to use a newer convenience API.
 
-Keep modernization within the requested scope. Do not turn an unrelated implementation task into a modernization campaign.
+Prefer stable language and standard-library replacements that simplify the code.
+Check semantic differences: pointer identity, nil versus empty collections, JSON
+wire behavior, random sequences, cancellation, and public API types can matter.
+Newest is not a reason to break those contracts or enable experimental APIs.
+For a requested audit, report findings; for implementation, make the relevant
+modernizations and verify them rather than merely suggesting them.
 
-## Toolchain constraints
-
-Target the Go version supported by the project, including per-module `go`
-directives in a workspace. A newer installed toolchain does not authorize newer
-language features or APIs in an older module. Keep toolchain upgrades within the
-requested scope.
-
-For semantic renames, see `golang-gopls`; inspect dynamic assertions, reflection,
-and external consumers separately. API replacements may change behavior even when
-the result compiles.
+Everyday defaults belong to `golang-code-style`, `golang-testing`,
+`golang-concurrency`, and `golang-error-handling`. Use this skill's references for
+release-specific details and migration hazards. For semantic renames, use
+`golang-gopls` and review dynamic or external consumers separately.
 
 ## Go Version Changelogs
 

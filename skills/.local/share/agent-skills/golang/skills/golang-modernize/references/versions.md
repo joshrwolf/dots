@@ -110,7 +110,7 @@ clear(m)
 
 ### Use `log/slog` instead of third-party loggers _(Go 1.21+)_
 
-`log/slog` is the standard structured logging package. New code SHOULD migrate to `slog` over `zap`, `logrus`, or `zerolog`.
+`log/slog` is the standard structured logging package and the default choice for new projects. Preserve an established logging integration during a narrow change; migrate when it solves an identified need, including dependency simplification in a modernization task.
 
 ```go
 // Before: zap
@@ -126,7 +126,7 @@ slog.Info("request handled", "method", r.Method, "status", status)
 slog.Info("request handled", slog.String("method", r.Method), slog.Int("status", status))
 ```
 
-**Migration guidance**: For existing projects heavily invested in third-party loggers, migration is optional; for new projects, prefer `slog`. The `samber/slog-*` ecosystem provides handlers for routing slog output to various backends. Go 1.24 added `slog.DiscardHandler` for silent loggers.
+**Migration guidance**: Treat logger replacement as a coordinated migration with output and collection checks, not a mechanical call-site rename. See `golang-observability` for migration boundaries. The `samber/slog-*` ecosystem provides handlers for routing slog output to various backends. Go 1.24 added `slog.DiscardHandler` for silent loggers.
 
 ### Use `slices` package instead of `sort` and manual loops _(Go 1.21+)_
 
@@ -478,11 +478,15 @@ func TestFoo(t *testing.T) {
     ctx := context.Background()
 }
 
-// After (Go 1.24+): auto-cancelled when test ends
+// After (Go 1.24+): canceled before t.Cleanup callbacks run
 func TestFoo(t *testing.T) {
     ctx := t.Context()
 }
 ```
+
+Use the current subtest's `t`. A deferred wait runs before this context is
+canceled; put waits that depend on cancellation in `t.Cleanup`, or cancel a derived
+context before waiting. See `golang-testing` for resource lifetime guidance.
 
 ### Prefer `b.Loop()` for sequential benchmarks _(Go 1.24+)_
 
@@ -666,7 +670,7 @@ Major JSON revision, experimental via `GOEXPERIMENT=jsonv2` in Go 1.25–1.26. G
 
 ### Go 1.25 additions to prefer when target allows
 
-- `sync.WaitGroup.Go`: simple fire-and-wait goroutines; function must not panic; no errors/cancellation.
+- `sync.WaitGroup.Go`: simple fire-and-wait goroutines; function must not panic; the group tracks completion, while tasks may obey an external context.
 - `testing/synctest.Test` and `synctest.Wait`: stable fake-time and durable-blocking synchronization for concurrent tests. Do not use the Go 1.24 experimental `synctest.Run` in Go 1.25+.
 - `net/http.CrossOriginProtection`: stdlib helper for cross-origin / CSRF-style protection in HTTP servers.
 - `reflect.TypeAssert[T](v)`: prefer over `v.Interface().(T)` in reflection code.

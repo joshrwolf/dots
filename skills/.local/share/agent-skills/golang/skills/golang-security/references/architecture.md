@@ -174,7 +174,7 @@ func validateJWT(authHeader string) (*jwt.RegisteredClaims, error) {
     }
     tokenString := fields[1]
     token, err := jwt.ParseWithClaims(tokenString, &jwt.RegisteredClaims{},
-        func(token *jwt.Token) (interface{}, error) {
+        func(token *jwt.Token) (any, error) {
             // Pin signing algorithm — prevents algorithm confusion
             if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
                 return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])

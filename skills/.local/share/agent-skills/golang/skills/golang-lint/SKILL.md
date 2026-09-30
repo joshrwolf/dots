@@ -60,6 +60,15 @@ golangci-lint run --verbose ./...
 
 The [example .golangci.yml](./assets/.golangci.yml) illustrates configuration options. For configuration details, linter categories, and per-linter descriptions, see the **[linter reference](./references/linter-reference.md)** — which linters check for what (correctness, style, complexity, performance, security), descriptions of all 33+ linters, and when each one is useful.
 
+## Modernization Checks
+
+Use the configured `modernize` linter, or preview `go fix -diff` on affected
+packages with Go 1.26+, to catch outdated forms during ordinary implementation.
+Check `go help fix` for available flags. Apply relevant fixes, inspect the diff,
+and run the project's checks; do not stop at recommending a straightforward
+migration. When setting up linting, enable modernization checks supported by the
+toolchain. Existing configuration still controls which checks are required.
+
 ## Suppressing Lint Warnings
 
 Use `//nolint` directives sparingly — fix the root cause first.

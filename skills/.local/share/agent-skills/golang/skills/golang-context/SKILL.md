@@ -32,7 +32,7 @@ paths:
 3. Pass context through function parameters instead of storing it in a struct — the struct outlives the request that filled it, so later calls reuse a context that is already cancelled or belongs to someone else.
 4. Pass `context.TODO()` rather than a `nil` context — `nil` panics on the first `Done()` or `Value()` call, far from the caller that passed it.
 5. Call `cancel()` on all control-flow paths for `WithCancel`/`WithTimeout`/`WithDeadline`, unless ownership of the context and cancel function is explicitly returned or transferred — an uncalled `cancel()` keeps the child attached to its parent and leaks its timer until the parent finishes.
-6. Create `context.Background()` only at top-level entry points (main, init, tests). Deeper in the call chain — especially mid-request — it detaches the work from the caller's deadline and cancellation, the propagation break shown below.
+6. Use `t.Context()` for test-owned work on Go 1.24+ (see `golang-testing` for cleanup ordering). Create `context.Background()` at application roots or when an explicitly independent lifetime is required. Deeper in the call chain — especially mid-request — it detaches the work from the caller's deadline and cancellation, the propagation break shown below.
 7. Use `context.TODO()` as a placeholder when a context is needed but none exists yet — it marks the gap for a later fix instead of hiding it behind a `Background()` that looks deliberate.
 8. Declare context value keys as unexported types — with a plain `string` key, two packages using `"user"` silently overwrite each other.
 9. Carry only request-scoped metadata in context values, never function parameters — values retrieved through `Value()` lose compile-time typing and disappear from the function signature.
@@ -42,7 +42,8 @@ paths:
 
 | Situation | Use |
 | --- | --- |
-| Entry point (main, init, test) | `context.Background()` |
+| Application root | `context.Background()` |
+| Test-owned work (Go 1.24+) | `t.Context()` |
 | Function needs context but caller doesn't provide one yet | `context.TODO()` |
 | Inside an HTTP handler | `r.Context()` |
 | Need cancellation control | `context.WithCancel(parentCtx)` |

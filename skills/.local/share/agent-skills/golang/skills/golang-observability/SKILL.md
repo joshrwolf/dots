@@ -23,25 +23,31 @@ paths:
 
 # Go Observability Best Practices
 
-Observability is the ability to understand a system's internal state from its external outputs. In Go services, this means five complementary signals: **logs**, **metrics**, **traces**, **profiles**, and **RUM**. Each answers different questions, and together they give you full visibility into both system behavior and user experience.
+Use the project's existing telemetry stack. Add signals needed to diagnose the
+changed behavior, considering cardinality, privacy, runtime overhead, and cost.
+Introduce tracing, dashboards, product analytics, or logger migrations when
+requested or required by the task; loading this skill does not make every signal
+a feature-completion requirement.
 
-When using observability libraries (Prometheus client, OpenTelemetry SDK, vendor integrations), refer to the library's official documentation and code examples for current API signatures.
+When using observability libraries, check their official documentation for the
+project's resolved API versions.
 
-## Best Practices Summary
+## Essential Decisions
 
-1. **Use structured logging** with `log/slog` — choose a handler encoding supported by the log collection pipeline; JSON is common, while `TextHandler` also retains structured attributes
-2. **Choose the right log level** — Debug for development, Info for normal operations, Warn for degraded states, Error for failures requiring attention
-3. **Log with context** — use `slog.InfoContext(ctx, ...)` with a context-aware handler; default handlers do not extract trace IDs automatically
-4. **Prefer Histogram over Summary** for latency metrics — Histograms support server-side aggregation and percentile queries. Every HTTP endpoint MUST have latency and error rate metrics.
-5. **Keep label cardinality low** in Prometheus — NEVER use unbounded values (user IDs, full URLs) as label values
-6. **Track percentiles** (P50, P90, P99, P99.9) using Histograms + `histogram_quantile()` in PromQL
-7. **Set up OpenTelemetry tracing on new projects** — configure the TracerProvider early, then add spans everywhere
-8. **Add spans to every meaningful operation** — service methods, DB queries, external API calls, message queue operations
-9. **Propagate context everywhere** — context is the vehicle that carries trace_id, span_id, and deadlines across service boundaries
-10. **Enable profiling via environment variables** — configure pprof/continuous profiling at startup; changing environment configuration requires restart unless runtime controls are implemented
-11. **Correlate signals** — inject trace_id into logs, use exemplars to link metrics to traces
-12. **A feature is not done until it is observable** — declare metrics, add proper logging, create spans
-13. **[awesome-prometheus-alerts](https://samber.github.io/awesome-prometheus-alerts/) provides ~500 ready-to-use alerting rules** organized by technology for infrastructure and dependency monitoring
+- Choose signals for an operational question: logs for events, metrics for
+  aggregate behavior, traces for request flow, profiles for resource consumption.
+  Product analytics and user monitoring serve separate product needs.
+- Preserve structured fields and record boundaries through the existing log
+  pipeline. For new logging APIs without an established stack, consider `log/slog`.
+  Use context-aware calls and handlers when trace correlation is needed; default
+  slog handlers do not extract trace IDs automatically.
+- For Prometheus latency metrics that need aggregation across instances, prefer
+  histograms and choose buckets for the observed range. Keep labels bounded;
+  user IDs and raw URLs are usually unsuitable labels.
+- Add spans at useful diagnostic boundaries, accounting for existing automatic
+  instrumentation and sampling. Preserve context through instrumented calls.
+- Protect profiling endpoints and measure collection overhead. Environment
+  variables read at startup require restart to change configuration.
 
 ## Cross-References
 
@@ -64,7 +70,7 @@ logger := slog.New(slog.NewMultiHandler(
 
 Use third-party slog handler libraries only when the stdlib handler composition is insufficient.
 
-## The Five Signals
+## Signal Selection
 
 | Signal | Question it answers | Tool | When to use |
 | --- | --- | --- | --- |
@@ -76,17 +82,17 @@ Use third-party slog handler libraries only when the stdlib handler composition 
 
 ## Detailed Guides
 
-Each signal has a dedicated guide with full code examples, configuration patterns, and cost analysis:
+Read only the guides needed for the requested work:
 
 - **[Structured Logging](references/logging.md)** — Why structured logging matters for log aggregation at scale. Covers `log/slog` setup, log levels (Debug/Info/Warn/Error) and when to use each, request correlation with trace IDs, context propagation with `slog.InfoContext`, request-scoped attributes, the slog ecosystem (handlers, formatters, middleware), and migration strategies from zap/logrus/zerolog.
 
-- **[Metrics Collection](references/metrics.md)** — Prometheus client setup and the four metric types (Counter for rate-of-change, Gauge for snapshots, Histogram for latency aggregation). Deep dive: why Histograms beat Summaries (server-side aggregation, supports `histogram_quantile` PromQL), naming conventions, the PromQL-as-comments convention (write queries above metric declarations for discoverability), production-grade PromQL examples, multi-window SLO burn rate alerting, and the high-cardinality label problem (why unbounded values like user IDs destroy performance).
+- **[Metrics Collection](references/metrics.md)** — Prometheus client setup and the four metric types (Counter for rate-of-change, Gauge for snapshots, Histogram for latency aggregation). Deep dive: why Histograms beat Summaries (server-side aggregation, supports `histogram_quantile` PromQL), naming conventions, optional PromQL comments near declarations for discoverability, production-grade PromQL examples, multi-window SLO burn rate alerting, and the high-cardinality label problem (why unbounded values like user IDs destroy performance).
 
 - **[Distributed Tracing](references/tracing.md)** — When and how to use OpenTelemetry SDK to trace request flows across services. Covers spans (creating, attributes, status recording), `otelhttp` middleware for HTTP instrumentation, error recording with `span.RecordError()`, trace sampling (why you can't collect everything at scale), propagating trace context across service boundaries, and cost optimization.
 
 - **[Profiling](references/profiling.md)** — On-demand profiling with pprof (CPU, heap, goroutine, mutex, block profiles) — how to enable it in production, secure it with auth, and configure at startup through environment variables; changes require restarting the process unless a runtime control is implemented. Continuous profiling with Pyroscope for always-on performance visibility. Cost implications of each profiling type and mitigation strategies.
 
-- **[Real User Monitoring](references/rum.md)** — Understanding how users actually experience your service. Covers product analytics (event tracking, funnels), Customer Data Platform integration, and critical compliance: GDPR/CCPA consent checks, data subject rights (user deletion endpoints), and privacy checklist for tracking. Server-side event tracking (PostHog, Segment) and identity key best practices.
+- **[Real User Monitoring](references/rum.md)** — For requested user monitoring or product analytics work. Covers product analytics (event tracking, funnels), Customer Data Platform integration, and critical compliance: GDPR/CCPA consent checks, data subject rights (user deletion endpoints), and privacy checklist for tracking. Server-side event tracking (PostHog, Segment) and identity key best practices.
 
 - **[Alerting](references/alerting.md)** — Proactive problem detection. Covers the four golden signals (latency, traffic, errors, saturation), [awesome-prometheus-alerts](https://samber.github.io/awesome-prometheus-alerts/) provides ~500 ready-to-use rules by technology, Go runtime alerts (goroutine leaks, GC pressure, OOM risk), severity levels, and common mistakes that break alerting (using `irate` instead of `rate`, missing `for:` duration to avoid flapping).
 
@@ -126,26 +132,20 @@ if eo, ok := obs.(prometheus.ExemplarObserver); ok {
 }
 ```
 
-## Migrating Legacy Loggers
+## Logger Migration
 
-If the project currently uses `zap`, `logrus`, or `zerolog`, migrate to `log/slog`. It is the standard library logger since Go 1.21, has a stable API, and the ecosystem has consolidated around it. Continuing with third-party loggers means maintaining an extra dependency for no benefit.
+Keep working zap, logrus, or zerolog integrations unless migration is requested or
+needed for an identified requirement. For an intentional move to slog, read
+[the migration guide](references/logging.md#migrating-from-zap--logrus--zerolog)
+and preserve output, levels, and downstream collection behavior during the change.
 
-**Migration strategy:**
+## Verification
 
-1. Add `slog` as the new logger with `slog.SetDefault()`
-2. Bridge handlers during migration route slog output through the existing logger: [samber/slog-zap](https://github.com/samber/slog-zap), [samber/slog-logrus](https://github.com/samber/slog-logrus), [samber/slog-zerolog](https://github.com/samber/slog-zerolog)
-3. Gradually replace all `zap.L().Info(...)` / `logrus.Info(...)` / `log.Info().Msg(...)` calls with `slog.Info(...)`
-4. Once fully migrated, remove the bridge handler and the old logger dependency
-
-## Definition of Done for Observability
-
-A feature is not production-ready until it is observable. Before marking a feature as done, verify:
-
-- [ ] **Metrics declared** — counters for operations/errors, histograms for latencies, gauges for saturation. Each metric var has PromQL queries and alert rules as comments above its declaration.
-- [ ] **Logging is proper** — structured key-value pairs with `slog`, context variants used (`slog.InfoContext`), no PII in logs, avoid duplicate reports as errors propagate.
-- [ ] **Spans created** — every service method, DB query, and external API call has a span with relevant attributes, errors recorded with `span.RecordError()`.
-- [ ] **Dashboards and alerts exist** — the PromQL from your metric comments is wired into Grafana dashboards and Prometheus alerting rules. Ready-to-use alert rules for common infrastructure dependencies are available at [awesome-prometheus-alerts](https://samber.github.io/awesome-prometheus-alerts/).
-- [ ] **RUM events tracked** — key business events tracked server-side (PostHog/Segment), identity key is `user_id` (not email), consent checked before tracking.
+Verify the signals changed by the task: records retain useful fields, metric
+labels remain bounded, and traces preserve context where instrumentation exists.
+Check changed queries, dashboards, or alerts against the emitted names and labels.
+Keep operational documentation in the project's established location; PromQL
+comments beside metric declarations are an option, not a required duplicate.
 
 ## Common Mistakes
 

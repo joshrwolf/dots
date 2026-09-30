@@ -51,7 +51,7 @@ Go favors short, readable names. Capitalization controls visibility — uppercas
 | Variant: in-place | Clear API naming and documentation | `Sort`, `Reverse`, or project-specific `SortInPlace` |
 | Variant: error | `Must` prefix | `MustParse()`, `MustLoadConfig()` |
 | Option func | `With` + field name | `WithPort()`, `WithLogger()` |
-| Enum (iota) | type name prefix, zero-value = unknown | `StatusUnknown` at 0, `StatusReady` |
+| Enum (iota) | Name states clearly; choose zero semantics deliberately (see below) | `StatusUnknown`, `StatusReady` |
 | Named return | descriptive, for docs only | `(n int, err error)` |
 | Error string | lowercase ordinary words; preserve acronyms; no trailing punctuation | `"image: unknown format"`, `"invalid id"` |
 | Import alias | short, only on collision | `mrand "math/rand"`, `pb "app/proto"` |
@@ -137,7 +137,6 @@ For complete rules, examples, and rationale, see:
 | Unclear boolean name | Use a clear predicate such as connected, hasCredentials, or canRetry, matching local conventions |
 | `"Invalid message ID."` error | Start ordinary words lowercase and omit trailing punctuation: `"invalid message ID"` |
 | Accidental enum zero semantics | Choose a useful default or an explicit unknown state; preserve existing numeric contracts |
-| `"not found"` error string | Sentinel errors should include the package name — `"mypackage: not found"` identifies the origin |
 | `userSlice` type-in-name | Types encode implementation detail — `users` describes what it holds, not how |
 | Inconsistent receiver names | Switching names across methods of the same type confuses readers — use one name consistently |
 | `snake_case` identifiers | Underscores conflict with Go's MixedCaps convention and tooling expectations — use `mixedCaps` |

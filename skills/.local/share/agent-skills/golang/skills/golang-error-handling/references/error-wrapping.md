@@ -84,16 +84,18 @@ if errors.Is(err, sql.ErrNoRows) {
 ```go
 // ✗ Bad — type assertion breaks on wrapped errors
 if ve, ok := err.(*ValidationError); ok {
-
-// ✓ Good — traverses the entire error chain
-var ve *ValidationError
-if errors.As(err, &ve) {
-    log.Printf("validation failed on field %s: %s", ve.Field, ve.Msg)
+    slog.Error("validation failed", "field", ve.Field, "error", ve)
 }
 
-// ✓ Better (Go 1.26+) — same behavior, simpler syntax
+// ✓ Preferred (Go 1.26+) — traverses the chain with a typed result
 if ve, ok := errors.AsType[*ValidationError](err); ok {
-    log.Printf("validation failed on field %s: %s", ve.Field, ve.Msg)
+    slog.Error("validation failed", "field", ve.Field, "error", ve)
+}
+
+// Compatibility (Go <1.26), or use As for non-error interface targets
+var ve *ValidationError
+if errors.As(err, &ve) {
+    slog.Error("validation failed", "field", ve.Field, "error", ve)
 }
 ```
 

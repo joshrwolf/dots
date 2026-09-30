@@ -228,7 +228,7 @@ Rules:
 - `WaitGroup.Go` is Go 1.25+, not Go 1.24.
 - The function passed to `wg.Go` must not panic.
 - `WaitGroup` does not propagate errors and does not cancel siblings.
-- For first-error-wins, cancellation, concurrency limits, or returned values, use `golang.org/x/sync/errgroup`.
+- For first-error handling, sibling cancellation, or bounded task groups, use `golang.org/x/sync/errgroup`.
 
 **Benefits of `wg.Go()`**:
 
@@ -236,7 +236,7 @@ Rules:
 - Lower risk of `Add`/`Wait` ordering bugs
 - Cleaner API for simple fire-and-wait work
 
-**When to use**: Go 1.25+ projects for simple goroutines that must all finish, do not return errors, do not need cancellation, and must not panic. Use `errgroup` when work returns errors, needs cancellation, limits, or first-error behavior.
+**When to use**: Go 1.25+ projects for goroutines that need completion tracking and must not panic. Tasks may still obey a passed context. Use `errgroup` for returned errors, group-driven sibling cancellation, limits, or first-error behavior.
 
 ### Go <1.25 fallback
 

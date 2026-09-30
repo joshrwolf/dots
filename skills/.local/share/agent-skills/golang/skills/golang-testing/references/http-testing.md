@@ -1,6 +1,6 @@
 # HTTP Handler Testing
 
-Use `httptest` package for testing HTTP handlers without starting a server.
+Use `httptest` for testing HTTP handlers without starting a server. The examples use test-owned contexts (Go 1.24+).
 
 ## Basic Handler Test
 
@@ -26,7 +26,7 @@ func TestCreateUserHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			req := httptest.NewRequest(http.MethodPost, "/users", strings.NewReader(tt.body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/users", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
 
 			w := httptest.NewRecorder()
@@ -68,7 +68,7 @@ func TestListUsersHandler(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 
-			req := httptest.NewRequest(http.MethodGet, "/users"+tt.query, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/users"+tt.query, nil)
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
 			}

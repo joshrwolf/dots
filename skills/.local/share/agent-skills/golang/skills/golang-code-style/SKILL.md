@@ -29,6 +29,25 @@ Style rules that require human judgment — linters handle formatting, this skil
 
 Follow applicable project instructions and formatting tools before these defaults. Explain meaningful constraints in comments, not routine stylistic choices.
 
+## Current Go Defaults
+
+Use current idioms in new and changed code, and modernize nearby older forms when
+the change is straightforward and preserves behavior. Establish the module's Go
+target first; use `golang-modernize` for version-specific choices and coordinated
+target upgrades. Older code nearby is not a reason to perpetuate an obsolete form.
+
+- Use `any` for the empty interface; prefer a concrete type when the contract allows.
+- Use built-in `min`, `max`, and `clear`, and standard `slices`, `maps`, and `strings`
+  operations when they express the actual semantics. Check nil, copying, and
+  evaluation behavior before replacing a loop or helper.
+- For Go 1.26+, use `new(value)` for a pointer to a freshly initialized value,
+  rather than a pointer helper or a temporary created only to take its address.
+  Keep `&existing` when identity with the existing variable matters. Use typed
+  values when needed, such as `new(int64(30))`; `new(30)` produces `*int`.
+- Use the task owners' modern defaults: `golang-testing` for test lifetimes and
+  benchmarks, `golang-concurrency` for goroutine bookkeeping, and
+  `golang-error-handling` for typed error inspection.
+
 ## Line Length & Breaking
 
 Wrap at semantic boundaries when it improves readability, following project conventions and explicit requests. Argument count and line length alone do not require wrapping. A call with long arguments can benefit from this layout:

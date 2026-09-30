@@ -14,7 +14,7 @@
 
 ## File Naming Conventions
 
-Go uses suffix-based naming for test-related files:
+Go recognizes `_test.go` files. Additional `_bench` and `_example` components are optional organizational conventions:
 
 | Suffix | Purpose | Build Tag |
 | --- | --- | --- |
@@ -49,7 +49,6 @@ pkg/
 **Key principles:**
 
 - Tests live in the same directory, in either the package or its external `_test` package
-- Test files are in the **same directory** as the code they test
 - Use `_test.go` suffix for all test files
 - Extend the corresponding existing test file. Follow `golang-testing` for naming
   and separation: new files need a distinct logical responsibility or technical
@@ -98,7 +97,7 @@ Benchmarks are functions with the Benchmark prefix in any `_test.go` file. `_ben
 
 Examples serve two purposes: documentation and verification.
 
-**In libraries** - use `*_example_test.go` files:
+**In libraries**, put examples in the appropriate existing `_test.go` file. A separate `*_example_test.go` can make sense for an external test package or a distinct documentation suite:
 
 ```
 pkg/
@@ -131,7 +130,6 @@ func ExampleLogger_Info() {
 - The `// Output:` comment verifies the output
 - Examples are runnable tests: `go test` will fail if output doesn't match
 - `godoc` displays examples as documentation
-- File name format: `{package}_example_test.go` (e.g., `logger_example_test.go`)
 
 **For executable examples** (standalone demo programs):
 
@@ -143,23 +141,12 @@ examples/
 
 ## Test Utilities
 
-When you have shared test helpers, use a dedicated package:
-
-```
-test/
-└── testutils/
-    ├── mock.go
-    └── fixtures.go
-```
-
-Or use the `internal/testutil` pattern:
-
-```
-internal/
-└── testutil/
-    ├── mock.go
-    └── fixtures.go
-```
+Keep helpers used within one package in its appropriate existing `_test.go` file.
+Consider an importable package such as `internal/testutil` only when multiple
+packages need the same coherent test support. Its helpers use ordinary `.go`
+files because another package cannot import declarations from `_test.go` files.
+Sharing alone does not require a new file or package; follow `golang-testing`
+for helper contracts and placement.
 
 ## Test Fixtures
 

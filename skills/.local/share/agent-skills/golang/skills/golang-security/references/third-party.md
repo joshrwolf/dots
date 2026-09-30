@@ -133,8 +133,8 @@ func NewDataFilter() *DataFilter {
     }
 }
 
-func (f *DataFilter) Filter(data map[string]interface{}) map[string]interface{} {
-    result := make(map[string]interface{})
+func (f *DataFilter) Filter(data map[string]any) map[string]any {
+    result := make(map[string]any)
     for k, v := range data {
         keyLower := strings.ToLower(k)
         isSensitive := false

@@ -226,7 +226,7 @@
         },
         {
           "id": "12.3",
-          "text": "Uses errors.As internally within the gateway to inspect backend error types before translating"
+          "text": "Uses errors.AsType when supported, or errors.As, internally to inspect backend error types before translating"
         },
         {
           "id": "12.4",
@@ -273,6 +273,27 @@
         {
           "id": "14.3",
           "text": "Handles destination write failures without discarding them."
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "name": "ordinary-wrapped-error-query",
+      "description": "Exercises everyday Go choices without an explicit modernization request.",
+      "prompt": "A Go 1.27 package defines type RetryError struct { Retryable bool } with Error() string. Implement IsRetryable(err error) bool. The first matching *RetryError in the error tree determines the result; return its Retryable field, or false when no non-nil match exists. Errors can be wrapped with fmt.Errorf and %w.",
+      "trap": "Uses a bare assertion or defaults to the pre-generic typed-error extraction form.",
+      "assertions": [
+        {
+          "id": "15.1",
+          "text": "Uses errors.AsType[*RetryError] to inspect wrapped errors on the supported version."
+        },
+        {
+          "id": "15.2",
+          "text": "Returns false for nil or unrelated errors and for Retryable false."
+        },
+        {
+          "id": "15.3",
+          "text": "Preserves wrapped-error inspection rather than matching error text."
         }
       ]
     }

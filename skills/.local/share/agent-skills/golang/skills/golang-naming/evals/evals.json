@@ -2,9 +2,9 @@
   {
     "id": 1,
     "name": "new-constructor-naming",
-    "description": "New() constructor for single primary type; error strings with package prefix; clear boolean field naming",
+    "description": "Constructor, error, acronym, and boolean names fit their API context.",
     "prompt": "Create a Go package called `apiclient` that provides an HTTP client for a REST API. The package exports a single primary type — the client struct — along with functional options, sentinel errors, and a custom error type. Include:\n\n1. The client struct with base URL, timeout, http.Client, and a boolean tracking connection state\n2. A constructor accepting a DSN-like connection string and functional options\n3. Sentinel errors for 'not found' and 'unauthorized'\n4. A custom error type wrapping the HTTP status code\n5. A method to fetch a resource by ID\n\nWrite `apiclient.go` with proper Go naming throughout.",
-    "trap": "Model names the constructor NewClient() because the package name is apiclient and 'client' is prominent — anti-stutter means the primary type should use New(). Also likely to write 'not found' error strings without 'apiclient:' prefix, and use bare `connected bool` instead of `isConnected bool`.",
+    "trap": "Adds redundant names or treats optional package prefixes and boolean prefixes as mandatory.",
     "assertions": [
       {
         "id": "1.1",
@@ -12,7 +12,7 @@
       },
       {
         "id": "1.2",
-        "text": "Sentinel error strings include the package name as prefix (e.g., 'apiclient: not found', 'apiclient: unauthorized') — bare strings like 'not found' lose origin when wrapped with fmt.Errorf"
+        "text": "Uses informative sentinel error messages; a package prefix is optional when useful for identifying origin."
       },
       {
         "id": "1.3",
@@ -57,7 +57,7 @@
       },
       {
         "id": "2.6",
-        "text": "Sentinel error strings include the package name as prefix (e.g., 'dbpool: pool exhausted'), not bare strings like 'pool exhausted'"
+        "text": "Uses informative sentinel error messages without requiring a package prefix."
       }
     ]
   },

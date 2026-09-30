@@ -1,30 +1,30 @@
 [
   {
     "id": 1,
-    "name": "functional-options-over-builder",
-    "description": "Tests whether the model recommends functional options (not builder pattern) as the preferred constructor pattern in Go, and whether options return errors for validation",
+    "name": "constructor-configuration-tradeoffs",
+    "description": "Chooses a constructor API for required inputs, cohesive configuration, defaults, and validation.",
     "prompt": "I need to create a Go HTTP server struct with optional configuration: read timeout, write timeout, max connections, TLS config, and a logger. Design the constructor API. The config will grow over time as we add features.",
-    "trap": "Without the skill, the model may default to a builder pattern, config struct, or positional arguments instead of functional options. It may also forget that options should return errors when validation can fail.",
+    "trap": "Treats functional options, a builder, or a config struct as mandatory solely because configuration will grow.",
     "assertions": [
       {
         "id": "1.1",
-        "text": "Uses functional options pattern (Option type as func that modifies the struct)"
+        "text": "Chooses parameters, a configuration struct, or functional options with a reason tied to this API; accepts reasonable alternatives."
       },
       {
         "id": "1.2",
-        "text": "Constructor accepts variadic ...Option parameter"
+        "text": "Keeps required inputs identifiable and explains default and omission semantics."
       },
       {
         "id": "1.3",
-        "text": "Each option is a With* function returning an Option"
+        "text": "Makes configuration readable at call sites without introducing a builder solely for field assignment."
       },
       {
         "id": "1.4",
-        "text": "Sets sensible defaults inside the constructor before applying options"
+        "text": "Validates individual values and cross-field constraints before returning a usable server."
       },
       {
         "id": "1.5",
-        "text": "Mentions that functional options should return an error if validation can fail, or demonstrates error-returning option variant"
+        "text": "Reports invalid configuration through the constructor or options without requiring every option function to return an error."
       }
     ]
   },
@@ -168,14 +168,20 @@
     "name": "graceful-shutdown-signal-notifycontext",
     "description": "Tests whether the model uses signal.NotifyContext for graceful shutdown",
     "prompt": "I'm building a Go HTTP server that needs to handle SIGINT and SIGTERM for graceful shutdown. Show me how to implement this properly.",
-    "trap": "Without the skill, the model may use a raw os.Signal channel with signal.Notify instead of signal.NotifyContext. The skill specifically says to use signal.NotifyContext.",
+    "trap": "Closes shared dependencies after a timed-out Shutdown without establishing that their users have stopped.",
     "assertions": [
       {
         "id": "7.1",
         "text": "Uses signal.NotifyContext or correctly owned signal.Notify registration."
       },
-      { "id": "7.2", "text": "Listens for both SIGINT and SIGTERM" },
-      { "id": "7.3", "text": "Starts the HTTP server in a goroutine" },
+      {
+        "id": "7.2",
+        "text": "Listens for both SIGINT and SIGTERM"
+      },
+      {
+        "id": "7.3",
+        "text": "Starts the HTTP server in a goroutine"
+      },
       {
         "id": "7.4",
         "text": "Creates a separate timeout context for the shutdown phase (e.g. context.WithTimeout for draining)"
@@ -183,6 +189,10 @@
       {
         "id": "7.5",
         "text": "Handles server startup failure, waits for shutdown, and closes resources only after their users stop."
+      },
+      {
+        "id": "7.6",
+        "text": "Distinguishes successful draining from timeout; timeout uses explicit cancellation and completion tracking or a documented hard process exit, not Server.Close followed by dependency cleanup."
       }
     ]
   },

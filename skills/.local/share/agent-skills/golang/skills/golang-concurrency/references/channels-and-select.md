@@ -24,12 +24,10 @@ func startWorker() {
     }()
 }
 
-// ✓ Good — goroutine respects context cancellation, caller can wait
+// ✓ Good (Go 1.25+) — task respects context cancellation, caller can wait
 func startWorker(ctx context.Context) *sync.WaitGroup {
     var wg sync.WaitGroup
-    wg.Add(1)
-    go func() {
-        defer wg.Done()
+    wg.Go(func() {
         for {
             select {
             case <-ctx.Done():
@@ -38,7 +36,7 @@ func startWorker(ctx context.Context) *sync.WaitGroup {
                 doWork(ctx)
             }
         }
-    }()
+    })
     return &wg
 }
 ```

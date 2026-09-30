@@ -21,7 +21,7 @@ When a request crosses multiple services, logs from each service are isolated. T
 
 ## OTel SDK Setup
 
-Set up the TracerProvider early in your application. On new projects, do this first — then add spans everywhere incrementally.
+When adding tracing, initialize the TracerProvider before instrumented work starts. Reuse an existing provider and propagation setup when the project already has one.
 
 ```go
 import (
@@ -71,7 +71,7 @@ func initTracer(ctx context.Context) (func(), error) {
 
 ## Creating Spans
 
-Every meaningful operation should have a span. Think of spans as the building blocks of a trace — they show where time was spent.
+Add spans where they answer a diagnostic question about request flow, latency, or failure. Check existing middleware and library instrumentation before adding manual spans for the same operation.
 
 ```go
 import "go.opentelemetry.io/otel"
@@ -112,13 +112,13 @@ func (r *OrderRepo) Insert(ctx context.Context, order Order) (*Order, error) {
 }
 ```
 
-**Where to add spans** — spans MUST be created for:
+**Candidate span boundaries** — choose those needed to explain the operation:
 
-- Every service method (business logic layer)
+- Business operations whose timing or failure is otherwise hard to identify
 - Database operations whose timing matters; QueryContext alone does not create spans — use an instrumented driver or explicit spans
-- Every external API call
-- Every message queue publish/consume
-- Any operation that takes measurable time or could fail
+- External API calls not already adequately instrumented
+- Message queue publish/consume boundaries
+- Other expensive or failure-prone steps when the added detail helps diagnosis
 
 ## HTTP Middleware with `otelhttp`
 

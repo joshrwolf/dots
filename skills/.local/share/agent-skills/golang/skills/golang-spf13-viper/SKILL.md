@@ -169,10 +169,8 @@ For `t.Setenv` interactions and `Reset()` limitations, see [testing-and-isolatio
 
 | Mistake | Why it fails | Fix |
 | --- | --- | --- |
-| `AutomaticEnv` without `SetEnvKeyReplacer` | `database.host` looks for `MYAPP_DATABASE.HOST` (dot preserved) — never matches | Add `SetEnvKeyReplacer(strings.NewReplacer(".", "_"))` before `AutomaticEnv` |
 | No `mapstructure` tags on struct fields | Silently misses nested and underscore-named fields | Add `mapstructure:"key_name"` to every field |
 | Using global viper in tests | State from one test contaminates the next, causing flaky ordering | Create `viper.New()` per test |
-| Missing `ConfigFileNotFoundError` check | Missing config file crashes a service that should run on flags/env alone | `errors.As(err, &notFound)` — only propagate non-not-found errors |
 
 ## Further Reading
 

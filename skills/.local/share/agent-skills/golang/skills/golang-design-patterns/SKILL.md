@@ -30,8 +30,8 @@ Idiomatic Go patterns for production-ready code. For error handling details see 
 
 ## Best Practices Summary
 
-1. Constructors SHOULD use **functional options** — they scale better as APIs evolve (one function per option, no breaking changes)
-2. Functional options MUST **return an error** if validation can fail — catch bad config at construction, not at runtime
+1. **Choose constructor inputs by their contract** — see Constructor Configuration below for parameters, configuration structs, and functional options
+2. **Validate configuration before returning a usable value** — return errors from options or the constructor, including checks across related fields
 3. **Avoid `init()`** — runs implicitly, cannot return errors, makes testing unpredictable. Use explicit constructors
 4. **Choose enum zero values deliberately** — reserve an Unknown sentinel if omission matters; otherwise zero can be a useful default. Validate values at boundaries
 5. Error cases MUST be **handled first** with early return — keep happy path flat
@@ -64,54 +64,20 @@ Choose the representation to make the operation easier to understand. See
 `golang-structs-interfaces` for types that own coherent state and invariants, and
 `golang-code-style` for keeping cohesive operations together.
 
-## Constructor Patterns: Functional Options vs Builder
+## Constructor Configuration
 
-### Functional Options (Preferred)
+Use direct parameters for required inputs and a configuration struct when options
+form a coherent value. Functional options can suit extensible public APIs with
+optional settings or reusable configuration behavior; choose them when those
+benefits justify the extra functions and application-order semantics. A growing
+field count alone does not require them. Builders suit genuinely staged
+construction, not ordinary field assignment.
 
-```go
-type Server struct {
-    addr         string
-    readTimeout  time.Duration
-    writeTimeout time.Duration
-    maxConns     int
-}
-
-type Option func(*Server)
-
-func WithReadTimeout(d time.Duration) Option {
-    return func(s *Server) { s.readTimeout = d }
-}
-
-func WithWriteTimeout(d time.Duration) Option {
-    return func(s *Server) { s.writeTimeout = d }
-}
-
-func WithMaxConns(n int) Option {
-    return func(s *Server) { s.maxConns = n }
-}
-
-func NewServer(addr string, opts ...Option) *Server {
-    // Default options
-    s := &Server{
-        addr:         addr,
-        readTimeout:  5 * time.Second,
-        writeTimeout: 10 * time.Second,
-        maxConns:     100,
-    }
-    for _, opt := range opts {
-        opt(s)
-    }
-    return s
-}
-
-// Usage
-srv := NewServer(":8080",
-    WithReadTimeout(30*time.Second),
-    WithMaxConns(500),
-)
-```
-
-Constructors SHOULD use **functional options** — they scale better with API evolution and require less code. Use builder pattern only if you need complex validation between configuration steps.
+Preserve the project's established API unless changing it is part of the task.
+Document defaults and validate the final configuration, especially constraints
+across fields. With functional options, validation may live in an option or the
+constructor; an error-returning option type is not required when the constructor
+can report all invalid combinations.
 
 ## Constructors & Initialization
 
