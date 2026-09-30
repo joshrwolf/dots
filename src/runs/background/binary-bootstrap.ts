@@ -1,8 +1,16 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createJiti } from "jiti";
+import * as piCore from "@earendil-works/pi-agent-core";
+import * as piAi from "@earendil-works/pi-ai/compat";
+import * as piTui from "@earendil-works/pi-tui";
 import * as sdk from "@earendil-works/pi-coding-agent";
+import * as typebox from "typebox";
+import * as typeboxCompile from "typebox/compile";
+import * as typeboxValue from "typebox/value";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
-import { runConfiguredSubagent, type SubagentRunConfig } from "./subagent-runner.ts";
+import { runConfiguredSubagent, validateSubagentRunConfig } from "./subagent-runner-bootstrap.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 
 /**
@@ -17,10 +25,9 @@ export default async function runBinaryBootstrap(): Promise<never> {
 	delete process.env.PI_SUBAGENT_RUNNER_CONFIG;
 	try {
 		if (!configPath || !path.isAbsolute(configPath)) throw new Error("Missing absolute PI_SUBAGENT_RUNNER_CONFIG path");
-		const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as SubagentRunConfig;
-		if (!config || typeof config.id !== "string" || typeof config.asyncDir !== "string" || !Array.isArray(config.steps)) {
-			throw new Error("Invalid binary runner configuration");
-		}
+		const rawConfig: unknown = JSON.parse(fs.readFileSync(configPath, "utf8"));
+		validateSubagentRunConfig(rawConfig);
+		const config = rawConfig;
 		try {
 			fs.unlinkSync(configPath);
 		} catch {
@@ -29,7 +36,28 @@ export default async function runBinaryBootstrap(): Promise<never> {
 		// Pi applies httpIdleTimeoutMs to its dispatcher only after extension
 		// factories return; this factory never does, so install the runner's own.
 		installRunnerHttpDispatcher({ agentDir: getAgentDir(), cwd: process.cwd() });
-		await runConfiguredSubagent(config, { loadPiCodingAgent: async () => sdk });
+		await runConfiguredSubagent(config, {
+			loadPiCodingAgent: async () => sdk,
+			loadExecutionModule: async () => {
+				// Native Bun imports bypass Pi's Jiti virtual peers in the compiled host.
+				const jiti = createJiti(import.meta.url, {
+					tryNative: false,
+					moduleCache: false,
+					virtualModules: {
+						"@earendil-works/pi-agent-core": piCore,
+						"@earendil-works/pi-ai": piAi,
+						"@earendil-works/pi-ai/compat": piAi,
+						"@earendil-works/pi-tui": piTui,
+						"@earendil-works/pi-coding-agent": sdk,
+						typebox,
+						"typebox/compile": typeboxCompile,
+						"typebox/value": typeboxValue,
+					},
+				});
+				const runner = `./subagent-runner${path.extname(fileURLToPath(import.meta.url))}`;
+				return jiti.import<typeof import("./subagent-runner.ts")>(runner);
+			},
+		});
 		process.exit(0);
 	} catch (error) {
 		console.error("Subagent binary runner error:", error);

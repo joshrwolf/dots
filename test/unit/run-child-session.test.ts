@@ -48,3 +48,27 @@ it("settles a timed-out run whose session creation never returns, and contains l
 	assert.equal(disposeAttempted, true);
 	assert.equal(prompted, false);
 });
+
+it("reports the created child's context window before prompting", { timeout: 10_000 }, async () => {
+	const reported: number[] = [];
+	let timeout: (() => void) | undefined;
+	let promptedAfterReport = false;
+	const session: ChildSession = {
+		subscribe() { return () => {}; },
+		async prompt() { promptedAfterReport = reported.length === 1; timeout?.(); },
+		async steer() {}, async followUp() {}, async abort() {}, async dispose() {},
+		messages: [], sessionId: "window-session", modelId: "openai-codex/gpt-6-sol", contextWindow: 1_050_000,
+	};
+	const factory: ChildSessionFactory = { create: async () => session, async dispose() {} };
+	await runChildSession({
+		factory,
+		launch,
+		prompt: "report window",
+		timeoutMessage: "done",
+		appendChildEvent() {}, writeOutputLine() {},
+		registerTimeout(handler) { timeout = handler; },
+		onContextWindow: (contextWindow) => { reported.push(contextWindow); },
+	});
+	assert.deepEqual(reported, [1_050_000]);
+	assert.equal(promptedAfterReport, true);
+});

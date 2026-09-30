@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, it } from "node:test";
+import { writeMissionAsyncBinding } from "../../src/missions/lifecycle.ts";
+import { createMission, missionRecordPath, resolveMissionStoreLocation, updateMission } from "../../src/missions/store.ts";
 import { ASYNC_RETENTION_BATCH_SIZE, cleanupAsyncRetention } from "../../src/runs/background/async-retention.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -193,6 +195,8 @@ describe("async retention cleanup", () => {
 			const mission = writeOldRun(roots.asyncDirRoot, "mission");
 			fs.writeFileSync(path.join(mission, "mission.json"), "{}");
 			writeOldRun(roots.asyncDirRoot, "workflow", { mode: "workflow" });
+			const revived = writeOldRun(roots.asyncDirRoot, "revived-workflow-child");
+			fs.writeFileSync(path.join(revived, "workflow-revival-origin.json"), "{}");
 			writeOldRun(roots.asyncDirRoot, "nested", { isNested: true });
 			writeOldRun(roots.asyncDirRoot, "handoff", { parallelHandoff: { path: "/tmp/handoff.json" } });
 			writeOldRun(roots.asyncDirRoot, "waited");
@@ -201,7 +205,7 @@ describe("async retention cleanup", () => {
 
 			const result = await cleanupAsyncRetention({ ...cleanupOptions(roots), protectedRunIds: ["runtime"] });
 
-			for (const runId of ["active", "paused", "recent", "resumable", "status-session", "step-session", "uninspectable-session", "malformed-ended-at", "malformed-last-update", "missing-mode", "non-finite-ended-at", "mission", "workflow", "nested", "handoff", "waited", "runtime"]) {
+			for (const runId of ["active", "paused", "recent", "resumable", "status-session", "step-session", "uninspectable-session", "malformed-ended-at", "malformed-last-update", "missing-mode", "non-finite-ended-at", "mission", "workflow", "revived-workflow-child", "nested", "handoff", "waited", "runtime"]) {
 				assert.equal(fs.existsSync(path.join(roots.asyncDirRoot, runId)), true, runId);
 			}
 			assert.equal(result.deletedRuns, 0);
@@ -212,11 +216,59 @@ describe("async retention cleanup", () => {
 			assert.equal(result.skipped["invalid-status"], 1);
 			assert.equal(result.skipped["unknown-age"], 3);
 			assert.equal(result.skipped["mission-reference"], 1);
-			assert.equal(result.skipped["workflow-reference"], 1);
+			assert.equal(result.skipped["workflow-reference"], 2);
 			assert.equal(result.skipped["nested-reference"], 1);
 			assert.equal(result.skipped["handoff-reference"], 1);
 			assert.equal(result.skipped["wait-reference"], 1);
 			assert.equal(result.skipped["runtime-reference"], 1);
+		} finally {
+			fs.rmSync(roots.root, { recursive: true, force: true });
+		}
+	});
+
+	it("reclaims runs bound to terminal or pruned missions and keeps pending syncs and unreadable records", async () => {
+		const roots = makeRoots();
+		try {
+			const projectRoot = path.join(roots.root, "project");
+			const agentDir = path.join(roots.root, "agent");
+			const location = resolveMissionStoreLocation({ projectRoot, agentDir });
+			const bindMission = (runDir: string, missionId: string): void => {
+				writeMissionAsyncBinding(runDir, { missionId, location, autoCreated: true });
+				fs.utimesSync(runDir, OLD / 1000, OLD / 1000);
+			};
+
+			const terminalMission = createMission(location, { title: "Closed mission", objective: "Deliver and close" });
+			updateMission(location, terminalMission.id, { status: "completed" });
+			const terminalRun = writeOldRun(roots.asyncDirRoot, "terminal-mission-run");
+			bindMission(terminalRun, terminalMission.id);
+			const pendingRun = writeOldRun(roots.asyncDirRoot, "pending-sync-run");
+			bindMission(pendingRun, terminalMission.id);
+			const observerDir = path.join(roots.resultsDir, "result-index", "observers", "mission");
+			fs.mkdirSync(observerDir, { recursive: true });
+			fs.writeFileSync(path.join(observerDir, "pending-sync-run.json"), "{}");
+
+			const activeMission = createMission(location, { title: "Open mission", objective: "Still running" });
+			updateMission(location, activeMission.id, { status: "active" });
+			const activeRun = writeOldRun(roots.asyncDirRoot, "active-mission-run");
+			bindMission(activeRun, activeMission.id);
+
+			const prunedRun = writeOldRun(roots.asyncDirRoot, "pruned-mission-run");
+			bindMission(prunedRun, "mission-record-pruned-by-retention");
+
+			const corruptMission = createMission(location, { title: "Corrupt record", objective: "Unreadable on disk" });
+			fs.writeFileSync(missionRecordPath(location, corruptMission.id), "{ corrupt record");
+			const corruptRun = writeOldRun(roots.asyncDirRoot, "corrupt-record-run");
+			bindMission(corruptRun, corruptMission.id);
+
+			const result = await cleanupAsyncRetention(cleanupOptions(roots));
+
+			assert.equal(fs.existsSync(terminalRun), false);
+			assert.equal(fs.existsSync(prunedRun), false);
+			assert.equal(fs.existsSync(activeRun), true);
+			assert.equal(fs.existsSync(pendingRun), true);
+			assert.equal(fs.existsSync(corruptRun), true);
+			assert.equal(result.deletedRuns, 2);
+			assert.equal(result.skipped["mission-reference"], 3);
 		} finally {
 			fs.rmSync(roots.root, { recursive: true, force: true });
 		}
@@ -239,11 +291,11 @@ describe("async retention cleanup", () => {
 			fs.rmSync(liveLock, { recursive: true });
 			fs.mkdirSync(liveLock);
 			fs.writeFileSync(path.join(liveLock, "owner.json"), JSON.stringify({ version: 1, token: "old-token", pid: process.pid, hostname: "test-host", processStartIdentity: "old-process", startedAt: NOW - 60_000 }));
-			const reusedPidLockResult = await cleanupAsyncRetention({ ...cleanupOptions(roots), hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: () => "current-process" });
+			const reusedPidLockResult = await cleanupAsyncRetention({ ...cleanupOptions(roots), hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: async () => "current-process" });
 			assert.equal(reusedPidLockResult.acquired, true);
 			fs.mkdirSync(liveLock);
 			fs.writeFileSync(path.join(liveLock, "owner.json"), JSON.stringify({ version: 1, token: "other-token", pid: process.pid, hostname: "test-host", processStartIdentity: "current-process", startedAt: NOW - 60_000 }));
-			const protectedLockResult = await cleanupAsyncRetention({ ...cleanupOptions(roots), hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: () => "current-process" });
+			const protectedLockResult = await cleanupAsyncRetention({ ...cleanupOptions(roots), hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: async () => "current-process" });
 			assert.equal(protectedLockResult.acquired, false);
 			assert.equal(JSON.parse(fs.readFileSync(path.join(liveLock, "owner.json"), "utf-8")).token, "other-token");
 			fs.rmSync(liveLock, { recursive: true });
@@ -260,7 +312,7 @@ describe("async retention cleanup", () => {
 			})();
 			const cursorPath = path.join(roots.root, ".async-retention-cursor.json");
 			const cursorBeforeOwnerChange = fs.readFileSync(cursorPath, "utf-8");
-			const changedOwnerResult = await cleanupAsyncRetention({ ...cleanupOptions(roots), randomId: () => "owned-token", protectedRunIds: mutatingReferences, hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: () => "current-process" });
+			const changedOwnerResult = await cleanupAsyncRetention({ ...cleanupOptions(roots), randomId: () => "owned-token", protectedRunIds: mutatingReferences, hostname: "test-host", processStartIdentity: "current-process", getProcessStartIdentity: async () => "current-process" });
 			assert.equal(changedOwnerResult.acquired, true);
 			assert.equal(changedOwnerResult.skipped["lock-owner-changed"], 1);
 			assert.equal(fs.readFileSync(cursorPath, "utf-8"), cursorBeforeOwnerChange);
@@ -317,7 +369,7 @@ describe("async retention cleanup", () => {
 				hostname: "test-host",
 				processStartIdentity: "cleaner-process",
 				isProcessAlive: (pid: number) => pid === reusedPid || pid === process.pid,
-				getProcessStartIdentity: (pid: number) => pid === reusedPid ? currentIdentity : "cleaner-process",
+				getProcessStartIdentity: async (pid: number) => pid === reusedPid ? currentIdentity : "cleaner-process",
 			};
 			const first = await cleanupAsyncRetention(options);
 			assert.equal(first.acquired, false);

@@ -22,7 +22,7 @@ import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { findNestedRouteForRootId, hasLiveNestedDescendants, retainNestedLookupRoute, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
-import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
+import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR, externalJobBridgeEligibility, serviceExternalJobBridgeRequests } from "../shared/external-job-bridge.ts";
 import { shouldUseNativeFsWatch } from "../../shared/watch-strategy.ts";
 import { parseWorkflowChildSummary } from "../../workflows/workflow-child-summary.ts";
 import { validHostStepNodes } from "../shared/host-step-status.ts";
@@ -51,6 +51,11 @@ const MAX_RECENT_FLEET_JOBS = 20;
 const DEFAULT_LIVENESS_INTERVAL_MS = 5000;
 const EVENT_REFRESH_DEBOUNCE_MS = 25;
 const WATCH_ATTACHMENT_RETRY_MS = 100;
+/** A native supervisor request is already its own parent turn; its attention notice only escalates an unanswered one. */
+const SUPERVISOR_NOTICE_GRACE_MS = 60_000;
+
+type ControlRecord = { event: ControlEvent; channels: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
+type ControlPayload = { event: ControlEvent; source: "async"; asyncDir: string; childIntercomTarget?: string; noticeText: string };
 
 const isTerminalJobStatus = (status: AsyncJobState["status"]): boolean =>
 	status === "complete" || status === "failed" || status === "partial" || status === "paused" || status === "rejected" || status === "stopped";
@@ -85,19 +90,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	// Early native failure is visible before its publisher finishes. Retain only
 	// that scoped observation, using the existing liveness sweep to renew delivery.
 	const terminalPublications = new Map<string, { instanceId: string; pending: true } | { pending: false }>();
-	const externalJobBridgeEligibility = (steps: AsyncJobState["steps"]): "required" | "not-required" | "unknown" => {
-		if (!Array.isArray(steps)) return "unknown";
-		for (const step of steps) {
-			const runner = (step as { runner?: unknown } | null)?.runner;
-			if (runner === undefined) continue;
-			if (!runner || typeof runner !== "object" || Array.isArray(runner)) return "unknown";
-			const runnerType = (runner as { type?: unknown }).type;
-			if (typeof runnerType !== "string") return "unknown";
-			if (runnerType === "external-job") return "required";
-			if (runnerType !== "pi" && runnerType !== "external-cli") return "unknown";
-		}
-		return "not-required";
-	};
+	const supervisorNoticeTimers = new Map<string, { asyncId: string; timer: ReturnType<typeof setTimeout> }>();
 	let rootWatcher: fs.FSWatcher | undefined;
 	let nextLivenessAt = Date.now() + livenessIntervalMs;
 	let nextWidgetAnimationAt = Date.now() + WIDGET_ANIMATION_INTERVAL_MS;
@@ -230,6 +223,46 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		}, completionRetentionMs);
 		state.cleanupTimers.set(asyncId, timer);
 	};
+	const deliverControlRecord = (record: ControlRecord, payload: ControlPayload) => {
+		if (record.channels.includes("event")) {
+			pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
+		}
+		if (record.event.type !== "active_long_running" && record.channels.includes("intercom") && record.intercom?.to && record.intercom.message) {
+			pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
+				...payload,
+				to: record.intercom.to,
+				message: record.intercom.message,
+			});
+		}
+	};
+	const readSupervisorRequestState = (event: ControlEvent, asyncDir: string): "pending" | "resolved" | "unknown" => {
+		try {
+			return options.supervisorRequestState?.(event) ?? "unknown";
+		} catch (error) {
+			console.error(`Failed to resolve supervisor request state for async control event in '${asyncDir}':`, error);
+			return "unknown";
+		}
+	};
+	const scheduleSupervisorNotice = (asyncId: string, record: ControlRecord, payload: ControlPayload) => {
+		const key = `${asyncId}:${record.event.index}:${record.event.toolCallId}`;
+		if (supervisorNoticeTimers.has(key)) return;
+		const timer = setTimeout(() => {
+			supervisorNoticeTimers.delete(key);
+			const job = state.asyncJobs.get(asyncId);
+			if (job?.status !== "running" && job?.status !== "queued") return;
+			if (readSupervisorRequestState(record.event, payload.asyncDir) === "resolved") return;
+			deliverControlRecord(record, payload);
+		}, SUPERVISOR_NOTICE_GRACE_MS);
+		timer.unref?.();
+		supervisorNoticeTimers.set(key, { asyncId, timer });
+	};
+	const clearSupervisorNotices = (asyncId?: string) => {
+		for (const [key, entry] of supervisorNoticeTimers) {
+			if (asyncId !== undefined && entry.asyncId !== asyncId) continue;
+			clearTimeout(entry.timer);
+			supervisorNoticeTimers.delete(key);
+		}
+	};
 	const emitNewControlEvents = (job: AsyncJobState) => {
 		const eventsPath = path.join(job.asyncDir, "events.jsonl");
 		let fd: number;
@@ -264,24 +297,28 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				if (!parsed || typeof parsed !== "object") return;
 				if ((parsed as { type?: unknown }).type === "subagent.child-status") {
 					const event = parsed as Partial<SubagentChildStatusEvent>;
-					if (event.version !== 1 || typeof event.runId !== "string" || typeof event.childId !== "string" || (event.status !== "stopping" && event.status !== "stopped") || typeof event.ts !== "number") return;
-					pi.events.emit(SUBAGENT_CHILD_STATUS_EVENT, {
-						type: "subagent.child-status",
-						version: 1,
-						runId: event.runId,
-						childId: event.childId,
-						status: event.status,
-						ts: event.ts,
-						...(typeof event.reason === "string" ? { reason: event.reason } : {}),
-						source: event.source === "rpc" ? "rpc" : "async",
-						asyncDir: job.asyncDir,
-						...(typeof event.stepIndex === "number" ? { stepIndex: event.stepIndex } : {}),
-						...(typeof event.agent === "string" ? { agent: event.agent } : {}),
-						...(typeof event.childRunId === "string" ? { childRunId: event.childRunId } : {}),
-						...(typeof event.workflowKey === "string" ? { workflowKey: event.workflowKey } : {}),
-						...(typeof event.phase === "string" ? { phase: event.phase } : {}),
-						...(typeof event.label === "string" ? { label: event.label } : {}),
-					} satisfies SubagentChildStatusEvent);
+					if (event.version !== 1 || typeof event.runId !== "string" || typeof event.childId !== "string" || (event.status !== "started" && event.status !== "stopping" && event.status !== "stopped") || typeof event.ts !== "number") return;
+					try {
+						pi.events.emit(SUBAGENT_CHILD_STATUS_EVENT, {
+							type: "subagent.child-status",
+							version: 1,
+							runId: event.runId,
+							childId: event.childId,
+							status: event.status,
+							ts: event.ts,
+							...(typeof event.reason === "string" ? { reason: event.reason } : {}),
+							source: event.source === "rpc" ? "rpc" : "async",
+							asyncDir: job.asyncDir,
+							...(typeof event.stepIndex === "number" ? { stepIndex: event.stepIndex } : {}),
+							...(typeof event.agent === "string" ? { agent: event.agent } : {}),
+							...(typeof event.childRunId === "string" ? { childRunId: event.childRunId } : {}),
+							...(typeof event.workflowKey === "string" ? { workflowKey: event.workflowKey } : {}),
+							...(typeof event.phase === "string" ? { phase: event.phase } : {}),
+							...(typeof event.label === "string" ? { label: event.label } : {}),
+						} satisfies SubagentChildStatusEvent);
+					} catch (error) {
+						console.error("Failed to emit async child status event:", error);
+					}
 					return;
 				}
 				if ((parsed as { type?: unknown }).type === "subagent.steering.notice") {
@@ -301,34 +338,27 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					return;
 				}
 				if ((parsed as { type?: unknown }).type !== "subagent.control") return;
-				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
-				if (!record.event || !Array.isArray(record.channels)) return;
-				if (record.event.type === "needs_attention" && record.event.reason === "supervisor_request" && options.supervisorRequestState) {
-					let requestState: "pending" | "resolved" | "unknown" = "unknown";
-					try {
-						requestState = options.supervisorRequestState(record.event);
-					} catch (error) {
-						console.error(`Failed to resolve supervisor request state for async control event in '${job.asyncDir}':`, error);
-					}
-					if (requestState === "resolved") return;
-				}
-				const payload = {
+				const candidate = parsed as Partial<ControlRecord>;
+				if (!candidate.event || !Array.isArray(candidate.channels)) return;
+				// SAFETY: event is present and channels is an array; every other ControlRecord field is optional.
+				const record = candidate as ControlRecord;
+				const supervisorRequest = record.event.type === "needs_attention" && record.event.reason === "supervisor_request" && options.supervisorRequestState !== undefined;
+				if (supervisorRequest && readSupervisorRequestState(record.event, job.asyncDir) === "resolved") return;
+				const payload: ControlPayload = {
 					event: record.event,
-					source: "async" as const,
+					source: "async",
 					asyncDir: job.asyncDir,
 					childIntercomTarget: record.childIntercomTarget,
 					noticeText: record.noticeText ?? formatControlNoticeMessage(record.event, record.childIntercomTarget),
 				};
-				if (record.channels.includes("event")) {
-					pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
+				// External intercom asks have no native lifecycle to re-check, so they keep the immediate notice.
+				if (supervisorRequest && record.event.currentTool !== "intercom") {
+					// Status and waits still react now; the parent notice and intercom copy wait for the grace period.
+					if (record.channels.includes("event")) pi.events.emit(SUBAGENT_CONTROL_EVENT, { ...payload, noticeDeferred: true });
+					scheduleSupervisorNotice(job.asyncId, record, payload);
+					return;
 				}
-				if (record.event.type !== "active_long_running" && record.channels.includes("intercom") && record.intercom?.to && record.intercom.message) {
-					pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
-						...payload,
-						to: record.intercom.to,
-						message: record.intercom.message,
-					});
-				}
+				deliverControlRecord(record, payload);
 			};
 			let readCursor = cursor;
 			let lastCompleteCursor = cursor;
@@ -389,6 +419,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		runningJobIds.delete(asyncId);
 		externalJobBridgeRuns.delete(asyncId);
 		terminalPublications.delete(asyncId);
+		clearSupervisorNotices(asyncId);
 	};
 
 	const refreshJob = (job: AsyncJobState): boolean => {
@@ -696,7 +727,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		const agents = firstGroupCount && firstGroupCount > 0
 			? rawAgents?.slice(0, firstGroupCount)
 			: rawAgents;
-		const sessionRoot = state.liveAsyncSessionRoots?.get(info.id);
+		const existingJob = state.asyncJobs.get(info.id);
+		const sessionRoot = state.liveAsyncSessionRoots?.get(info.id) ?? existingJob?.sessionRoot;
 		state.liveAsyncSessionRoots?.delete(info.id);
 		externalJobBridgeRuns.delete(info.id);
 		terminalPublications.delete(info.id);
@@ -781,6 +813,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		runningJobIds.clear();
 		externalJobBridgeRuns.clear();
 		terminalPublications.clear();
+		clearSupervisorNotices();
 	};
 
 	const resetJobs = (ctx?: ExtensionContext) => {

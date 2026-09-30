@@ -35,7 +35,7 @@ function writeMcpFixture(): void {
 	const agentDir = process.env.PI_CODING_AGENT_DIR;
 	assert.equal(typeof agentDir, "string");
 	const definition = { command: "github-mcp" };
-	writeJson(path.join(agentDir, "mcp.json"), { mcpServers: { github: definition } });
+	writeJson(path.join(agentDir, "mcp-adapter.json"), { mcpServers: { github: definition } });
 	writeJson(path.join(agentDir, "mcp-cache.json"), {
 		version: 1,
 		servers: {
@@ -769,6 +769,18 @@ Project prompt.
 		assert.ok(result.contract.tools.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fanout-child.ts")));
 		assert.ok(result.contract.tools.extensionArgs.includes("/tmp/config-ext.ts"));
 		assert.ok(result.contract.tools.extensionArgs.includes("/tmp/subagent-only.ts"));
+	});
+
+	it("resolves mcp: selectors against the built-in MCP of the given host", async () => {
+		const cwd = path.join(tempDir, "builtin-mcp-repo");
+		writeAgent(path.join(cwd, ".pi", "agents", "docs.md"), "---\nname: docs\ndescription: Docs\ntools:\n  - read\n  - mcp:docs/search\n---\n");
+		const result = await resolveSubagentLaunchContract({ agent: "docs", cwd, runtimeSnapshotHost: {
+			events: { emit() {} },
+			getCommands: () => [{ name: "mcp", sourceInfo: { path: "builtin:mcp" } }],
+			getAllTools: () => [{ name: "mcp__docs__search", exposure: "codemode", namespace: { name: "mcp__docs" } }],
+		} });
+		assert.equal(result.ok, true);
+		assert.deepEqual(result.contract.tools.effectiveMcpTools, ["mcp__docs__search"]);
 	});
 
 	it("inherits agent structured output and honors false for native and external runners", async () => {

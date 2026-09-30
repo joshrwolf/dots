@@ -64,7 +64,7 @@ function createCtx(input: {
 	models?: Model<any>[];
 	authenticated?: string[];
 	thinkingLevel?: string;
-	providerConfig?: { provider: string; api: string; streamSimple: StreamFn };
+	registryStream?: StreamFn;
 	cwd?: string;
 }) {
 	const allModels = input.models ?? (input.current ? [input.current] : []);
@@ -83,7 +83,7 @@ function createCtx(input: {
 			getApiKeyAndHeaders: async (entry: Model<any>) => authenticated.has(`${entry.provider}/${entry.id}`)
 				? { ok: true as const, apiKey: `key-${entry.provider}-${entry.id}`, headers: { "x-model": entry.id }, env: { WATCHDOG_PROVIDER: entry.provider } }
 				: { ok: false as const, error: `No auth for ${entry.provider}/${entry.id}` },
-			getRegisteredProviderConfig: (provider: string) => input.providerConfig?.provider === provider ? input.providerConfig : undefined,
+			streamSimple: input.registryStream ?? (() => { throw new Error("Unexpected model registry stream call"); }),
 		},
 	} as never;
 }
@@ -356,12 +356,12 @@ describe("main watchdog review adapter", () => {
 		const current = model("openai", "gpt-diff");
 		const ctx = createCtx({ current });
 		const withBaseline = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
-		await createMainWatchdogReview(ctx, { streamFn: withBaseline.streamFn, diffBaseline: () => ({ root: "/tmp/watchdog-review", ref: "abc123" }) })(request(enabledConfig(), []));
+		await createMainWatchdogReview(ctx, { streamFn: withBaseline.streamFn, diffBaseline: async () => ({ root: "/tmp/watchdog-review", ref: "abc123" }) })(request(enabledConfig(), []));
 		assert.deepEqual(getCurrentTools(withBaseline.calls[0]!.context.messages).map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_diff", "watchdog_warn"]);
 		assert.match(getCurrentSystemPrompt(withBaseline.calls[0]!.context.messages), /watchdog_diff/);
 
 		const without = createStreamFn([fauxAssistantMessage("done", { stopReason: "stop" })]);
-		await createMainWatchdogReview(ctx, { streamFn: without.streamFn, diffBaseline: () => undefined })(request(enabledConfig(), []));
+		await createMainWatchdogReview(ctx, { streamFn: without.streamFn, diffBaseline: async () => undefined })(request(enabledConfig(), []));
 		const tools = getCurrentTools(without.calls[0]!.context.messages);
 		assert.deepEqual(tools.map((tool) => tool.name).sort(), ["find", "grep", "ls", "read", "watchdog_warn"]);
 		assert.doesNotMatch(getCurrentSystemPrompt(without.calls[0]!.context.messages), /watchdog_diff/);
@@ -410,10 +410,10 @@ describe("main watchdog review adapter", () => {
 		);
 	});
 
-	it("uses the registered stream for matching custom providers", async () => {
+	it("uses the session model registry stream for complete providers", async () => {
 		const current = model("custom-provider", "watchdog", { api: "custom-api" });
 		const { streamFn, calls } = createStreamFn([fauxAssistantMessage("clean", { stopReason: "stop" })]);
-		const ctx = createCtx({ current, providerConfig: { provider: current.provider, api: "custom-api", streamSimple: streamFn } });
+		const ctx = createCtx({ current, registryStream: streamFn });
 		const warnings: WatchdogWarning[] = [];
 
 		const result = await createMainWatchdogReview(ctx)(request(enabledConfig(), warnings));

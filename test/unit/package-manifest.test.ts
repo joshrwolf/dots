@@ -18,18 +18,21 @@ const hostPeerPackages = [
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-coding-agent",
 	"@earendil-works/pi-tui",
+	"typebox",
 ] as const;
 const expectedHostPeerRanges = {
 	"@earendil-works/pi-agent-core": "*",
-	"@earendil-works/pi-ai": ">=0.80.0",
+	"@earendil-works/pi-ai": ">=0.86.1",
 	"@earendil-works/pi-coding-agent": "*",
 	"@earendil-works/pi-tui": "*",
+	typebox: "*",
 } satisfies Record<(typeof hostPeerPackages)[number], string>;
 const expectedHostDevVersions = {
-	"@earendil-works/pi-agent-core": "0.86.1",
-	"@earendil-works/pi-ai": "0.86.1",
-	"@earendil-works/pi-coding-agent": "0.86.1",
-	"@earendil-works/pi-tui": "0.86.1",
+	"@earendil-works/pi-agent-core": "0.87.0",
+	"@earendil-works/pi-ai": "0.87.0",
+	"@earendil-works/pi-coding-agent": "0.87.0",
+	"@earendil-works/pi-tui": "0.87.0",
+	typebox: "1.3.27",
 } satisfies Record<(typeof hostPeerPackages)[number], string>;
 
 test("the root entrypoint exposes the runtime error flag to TypeScript consumers", () => {
@@ -118,6 +121,7 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.deepEqual(packageJson.exports, {
 		".": "./index.ts",
 		"./agents": "./src/api/agents.ts",
+		"./inspectors": "./src/api/inspectors.ts",
 		"./background-work": "./src/api/background-work.ts",
 		"./external-job-provider": "./src/api/external-job-provider.ts",
 		"./external-runs": "./src/api/external-runs.ts",
@@ -136,6 +140,9 @@ test("published extension APIs use supported package entrypoints", async () => {
 	assert.equal(agents.RUNTIME_AGENT_REGISTER_EVENT, "pi-subagents:runtime-agent-register:v1");
 	assert.equal(agents.RUNTIME_AGENT_REGISTER_VERSION, 1);
 	assert.equal(typeof agents.registerAgentViaEvents, "function");
+	const inspectors = await import("pi-subagents/inspectors");
+	assert.equal(inspectors.INSPECTOR_REGISTER_EVENT, "pi-subagents:inspector-register:v1");
+	assert.deepEqual(Object.keys(inspectors).sort(), ["INSPECTOR_REGISTER_EVENT", "registerInspector"]);
 	const backgroundWork = await import("pi-subagents/background-work");
 	assert.equal(backgroundWork.BACKGROUND_WORK_PROTOCOL_VERSION, 1);
 	assert.equal(backgroundWork.BACKGROUND_WORK_REGISTRY_KEY, "pi-subagents.background-work.v1");
@@ -218,15 +225,6 @@ test("host-owned packages are optional peers with supported ranges, not producti
 		assert.deepEqual(packageJson.peerDependenciesMeta?.[name], { optional: true }, `${name} should be an optional peer`);
 	}
 });
-test("typebox is a bundled runtime dependency", () => {
-	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
-
-	assert.equal(packageJson.dependencies?.typebox, "1.1.38");
-	assert.equal(packageJson.peerDependencies?.typebox, undefined);
-	assert.equal(packageJson.peerDependenciesMeta?.typebox, undefined);
-	assert.equal(packageJson.devDependencies?.typebox, undefined);
-});
-
 test("host-owned development packages use the supported SDK baseline", () => {
 	const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf-8"));
 

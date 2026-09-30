@@ -13,7 +13,7 @@ import fsDefault from "node:fs";
 import * as fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import * as path from "node:path";
-import { events, makeAgent, makeMinimalCtx, resolveMockPiCallArgs } from "../support/helpers.ts";
+import { createEventBus, events, makeAgent, makeMinimalCtx, resolveMockPiCallArgs } from "../support/helpers.ts";
 import { registerSubagentCapabilityCeiling } from "../../src/api/capability-ceiling.ts";
 import { registerWorkflowResource } from "../../src/api/workflow-resources.ts";
 import type { WorkflowReceipt } from "../../src/workflows/workflow-receipt.ts";
@@ -21,7 +21,12 @@ import { resolveSubagentLaunchContract } from "../../src/api/preflight.ts";
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { runSync } from "../../src/runs/foreground/execution.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
-import type { SubagentState } from "../../src/shared/types.ts";
+import {
+	SUBAGENT_ASYNC_STARTED_EVENT,
+	SUBAGENT_CHILD_STATUS_EVENT,
+	type SubagentChildStatusEvent,
+	type SubagentState,
+} from "../../src/shared/types.ts";
 import type { AsyncExecutionResult, AsyncResultPayload, AsyncStatusPayload, MockPiCallRecord } from "../support/async-execution-fixture.ts";
 import {
 	installAsyncExecutionHooks, mockAssistantMessage, available, isAsyncAvailable,
@@ -33,6 +38,16 @@ import {
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installAsyncExecutionHooks();
+	const makeLifecycleExecutor = (eventBus: ReturnType<typeof createEventBus>) => createSubagentExecutor!({
+		pi: { events: eventBus, getSessionName: () => undefined, sendMessage() {} },
+		state: { baseCwd: tempDir, currentSessionId: null, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+		config: {},
+		asyncByDefault: false,
+		tempArtifactsDir: tempDir,
+		getSubagentSessionRoot: () => tempDir,
+		expandTilde: (value: string) => value,
+		discoverAgents: () => ({ agents: [makeAgent("worker")] }),
+	});
 
 	it("executes a registered mixed background workflow with captured grants after disposal", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const ctx = makeMinimalCtx(tempDir);
@@ -109,6 +124,234 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 	it("reports jiti availability as boolean", () => {
 		const result = isAsyncAvailable();
 		assert.equal(typeof result, "boolean");
+	});
+
+	it("announces an async workflow root and each dynamically materialized keyed child through public lifecycle events", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const eventBus = createEventBus();
+		const rootEvents: Array<Record<string, unknown>> = [];
+		const childEvents: SubagentChildStatusEvent[] = [];
+		eventBus.on(SUBAGENT_ASYNC_STARTED_EVENT, (payload) => rootEvents.push(payload as Record<string, unknown>));
+		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, (payload) => childEvents.push(payload as SubagentChildStatusEvent));
+		const executor = makeLifecycleExecutor(eventBus);
+		const context = makeMinimalCtx(tempDir);
+		const ownerSession = path.join(tempDir, "workflow-owner-session.jsonl");
+		context.sessionManager.getSessionFile = () => ownerSession;
+		mockPi.onCall({ output: "scan complete" });
+		mockPi.onCall({ output: "review complete" });
+
+		const launch = await executor.execute(
+			"workflow-lifecycle-events",
+			{
+				workflowScript: `const scan = await runs.run("scan", { agent: "worker", task: "Scan" }); return await runs.run("review", { agent: "worker", task: "Review " + scan.output });`,
+				async: true,
+				mission: false,
+			},
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const runId = launch.details.asyncId;
+		assert.ok(runId);
+		await waitForAsyncResultFile(runId);
+
+		const matchingRoots = rootEvents.filter((event) => event.id === runId);
+		assert.equal(matchingRoots.length, 1);
+		const root = matchingRoots[0]!;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		assert.equal(root.mode, "workflow");
+		assert.equal(root.asyncDir, asyncDir);
+		assert.equal(root.sessionId, ownerSession);
+		assert.equal(root.cwd, tempDir);
+		assert.equal(root.goal, "[prompt redacted]");
+
+		const startedChildren = childEvents.filter((event) => event.runId === runId && event.status === "started");
+		assert.deepEqual(startedChildren.map((event) => event.workflowKey), ["scan", "review"]);
+		assert.deepEqual(startedChildren.map((event) => event.stepIndex), [0, 1]);
+		assert.ok(startedChildren.every((event) => event.asyncDir === asyncDir));
+		assert.ok(startedChildren.every((event) => typeof event.childRunId === "string" && event.childRunId.length > 0));
+		assert.equal(new Set(startedChildren.map((event) => event.childRunId)).size, 2);
+
+		const journalStarted = fs.readFileSync(path.join(asyncDir, "events.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as SubagentChildStatusEvent)
+			.filter((event) => event.type === "subagent.child-status" && event.status === "started");
+		assert.deepEqual(
+			journalStarted.map(({ runId: eventRunId, workflowKey, childRunId }) => ({ eventRunId, workflowKey, childRunId })),
+			startedChildren.map(({ runId: eventRunId, workflowKey, childRunId }) => ({ eventRunId, workflowKey, childRunId })),
+		);
+	});
+
+	it("announces a retained workflow child with its revived run identity", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const eventBus = createEventBus();
+		const childEvents: SubagentChildStatusEvent[] = [];
+		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, (payload) => childEvents.push(payload as SubagentChildStatusEvent));
+		const executor = makeLifecycleExecutor(eventBus);
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionFile = () => path.join(tempDir, "retained-workflow-owner.jsonl");
+		mockPi.onCall({ output: "initial retained output" });
+		const source = await executor.execute(
+			"retained-workflow-source",
+			{ agent: "worker", task: "Create retained child", async: true },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const sourceRunId = source.details.asyncId;
+		assert.ok(sourceRunId);
+		await waitForAsyncResultFile(sourceRunId);
+
+		mockPi.onCall({ output: "retained continuation complete" });
+		const launch = await executor.execute(
+			"retained-workflow-lifecycle",
+			{
+				workflowScript: `return await runs.run("retained", { resume: ${JSON.stringify(sourceRunId)}, task: "Continue retained child" });`,
+				async: true,
+				mission: false,
+			},
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const workflowRunId = launch.details.asyncId;
+		assert.ok(workflowRunId);
+		const result = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(workflowRunId), "utf8")) as AsyncResultPayload;
+		assert.equal(result.success, true, result.error);
+		assert.equal(result.results[0]?.output, "retained continuation complete");
+		const finalStatus = await waitForAsyncState(workflowRunId, (status) => status.state === "complete");
+		const started = childEvents.filter((event) => event.runId === workflowRunId && event.status === "started");
+		assert.equal(started.length, 1);
+		assert.equal(started[0]?.workflowKey, "retained");
+		assert.equal(started[0]?.childId, "retained");
+		assert.equal(started[0]?.childRunId, finalStatus.steps?.[0]?.runId);
+		assert.notEqual(started[0]?.childRunId, sourceRunId);
+		const journalStarted = fs.readFileSync(path.join(ASYNC_DIR, workflowRunId, "events.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as SubagentChildStatusEvent)
+			.filter((event) => event.type === "subagent.child-status" && event.status === "started");
+		assert.deepEqual(journalStarted.map(({ workflowKey, childRunId }) => ({ workflowKey, childRunId })), started.map(({ workflowKey, childRunId }) => ({ workflowKey, childRunId })));
+	});
+
+	it("delays a workflow child announcement until launch identity persistence recovers", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
+		const eventBus = createEventBus();
+		const childEvents: SubagentChildStatusEvent[] = [];
+		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, (payload) => childEvents.push(payload as SubagentChildStatusEvent));
+		const executor = makeLifecycleExecutor(eventBus);
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionFile = () => path.join(tempDir, "failed-identity-owner.jsonl");
+		mockPi.onCall({ output: "child still completed" });
+		const originalRenameSync = fsDefault.renameSync;
+		let failedIdentityWrites = 0;
+		let identityWriteAttempts = 0;
+		t.mock.method(fsDefault, "renameSync", ((source: fs.PathLike, target: fs.PathLike) => {
+			if (path.basename(String(target)) === "status.json") {
+				const payload = JSON.parse(fs.readFileSync(source, "utf8")) as AsyncStatusPayload;
+				if (payload.mode === "workflow" && payload.steps?.some((step) => typeof step.runId === "string" && step.runId.length > 0)) {
+					identityWriteAttempts += 1;
+					if (identityWriteAttempts <= 2) assert.equal(childEvents.length, 0);
+					if (failedIdentityWrites === 0) {
+						failedIdentityWrites += 1;
+						const error = Object.assign(new Error("simulated identity status write failure"), { code: "EACCES" });
+						throw error;
+					}
+				}
+			}
+			return originalRenameSync(source, target);
+		}) as typeof fsDefault.renameSync);
+		syncBuiltinESMExports();
+		t.after(() => syncBuiltinESMExports());
+		const originalError = console.error;
+		console.error = () => {};
+		t.after(() => { console.error = originalError; });
+
+		const launch = await executor.execute(
+			"workflow-failed-identity-persist",
+			{ workflowScript: `return await runs.run("child", { agent: "worker", task: "Continue after persistence failure" });`, async: true, mission: false },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const runId = launch.details.asyncId;
+		assert.ok(runId);
+		const result = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(runId), "utf8")) as AsyncResultPayload;
+		assert.equal(result.success, true, result.error);
+		assert.equal(result.results[0]?.output, "child still completed");
+		assert.equal(mockPi.callCount(), 1);
+		assert.equal(failedIdentityWrites, 1);
+		assert.ok(identityWriteAttempts >= 2);
+		const finalStatus = await waitForAsyncState(runId, (status) => status.state === "complete");
+		const startedChildren = childEvents.filter((event) => event.runId === runId && event.status === "started");
+		assert.equal(startedChildren.length, 1);
+		assert.equal(startedChildren[0]?.childRunId, finalStatus.steps?.[0]?.runId);
+		const journal = fs.readFileSync(path.join(ASYNC_DIR, runId, "events.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as SubagentChildStatusEvent);
+		const journalStarted = journal.filter((event) => event.type === "subagent.child-status" && event.status === "started");
+		assert.equal(journalStarted.length, 1);
+		assert.equal(journalStarted[0]?.childRunId, startedChildren[0]?.childRunId);
+	});
+
+	it("continues async workflow execution when a root-start subscriber throws", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
+		const eventBus = createEventBus();
+		eventBus.on(SUBAGENT_ASYNC_STARTED_EVENT, () => { throw new Error("simulated root-start subscriber failure"); });
+		const executor = makeLifecycleExecutor(eventBus);
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionFile = () => path.join(tempDir, "throwing-root-subscriber-owner.jsonl");
+		mockPi.onCall({ output: "workflow child completed" });
+		const diagnostics: unknown[][] = [];
+		const originalError = console.error;
+		console.error = (...args: unknown[]) => { diagnostics.push(args); };
+		t.after(() => { console.error = originalError; });
+
+		const launch = await executor.execute(
+			"workflow-throwing-root-start-subscriber",
+			{ workflowScript: `return await runs.run("child", { agent: "worker", task: "Continue workflow" });`, async: true, mission: false },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const runId = launch.details.asyncId;
+		assert.ok(runId);
+		const result = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(runId), "utf8")) as AsyncResultPayload;
+		assert.equal(result.success, true, result.error);
+		assert.equal(result.results[0]?.output, "workflow child completed");
+		assert.equal(mockPi.callCount(), 1);
+		assert.ok(diagnostics.some(([message]) => message === "Failed to emit async workflow start event:"));
+	});
+
+	it("continues workflow child execution when a child-status subscriber throws", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async (t) => {
+		const eventBus = createEventBus();
+		eventBus.on(SUBAGENT_CHILD_STATUS_EVENT, () => { throw new Error("simulated child-status subscriber failure"); });
+		const executor = makeLifecycleExecutor(eventBus);
+		const context = makeMinimalCtx(tempDir);
+		context.sessionManager.getSessionFile = () => path.join(tempDir, "throwing-subscriber-owner.jsonl");
+		mockPi.onCall({ output: "child completed despite observer" });
+		const diagnostics: unknown[][] = [];
+		const originalError = console.error;
+		console.error = (...args: unknown[]) => { diagnostics.push(args); };
+		t.after(() => { console.error = originalError; });
+
+		const launch = await executor.execute(
+			"workflow-throwing-child-status-subscriber",
+			{ workflowScript: `return await runs.run("child", { agent: "worker", task: "Ignore observer failure" });`, async: true, mission: false },
+			new AbortController().signal,
+			undefined,
+			context,
+		);
+		const runId = launch.details.asyncId;
+		assert.ok(runId);
+		const result = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(runId), "utf8")) as AsyncResultPayload;
+		assert.equal(result.success, true, result.error);
+		assert.equal(result.results[0]?.output, "child completed despite observer");
+		assert.equal(mockPi.callCount(), 1);
+		assert.ok(diagnostics.some(([message]) => message === "Failed to emit workflow child status event:"));
+		const journal = fs.readFileSync(path.join(ASYNC_DIR, runId, "events.jsonl"), "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as SubagentChildStatusEvent);
+		assert.equal(journal.some((event) => event.type === "subagent.child-status" && event.status === "started"), true);
 	});
 
 	it("persists the committed terminal workflow outcome when result index creation fails", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
@@ -366,6 +609,62 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		}
+	});
+
+	describe("with Pi's built-in MCP", () => {
+		const host = {
+			events: { emit() {} },
+			getCommands: () => [{ name: "mcp", sourceInfo: { path: "builtin:mcp" } }],
+			getAllTools: () => [["docs", "search"], ["docs", "fetch"], ["ext", "ping"]].map(([server, tool]) => ({ name: `mcp__${server}__${tool}`, exposure: "codemode", namespace: { name: `mcp__${server}` } })),
+			getMcpServers: () => [{ name: "ext" }],
+		};
+		const runForeground = (agent: ReturnType<typeof makeAgent>, projectTrusted?: boolean) => runSync(tempDir, [agent], agent.name, "Use MCP", { runtimeSnapshotHost: host, acceptance: false, projectTrusted });
+		const runBackground = async (agent: ReturnType<typeof makeAgent>) => {
+			const id = `async-builtin-mcp-${Date.now().toString(36)}`;
+			executeAsyncSingle(id, {
+				agent: agent.name, task: "Use MCP", agentConfig: agent,
+				ctx: { pi: host, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2, acceptance: false,
+			});
+			assert.equal((await readAsyncPayload(id)).success, true);
+			const callFile = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-") && name.endsWith(".json")).sort().at(-1)!;
+			return (JSON.parse(fs.readFileSync(path.join(mockPi.dir, callFile), "utf-8")) as MockPiCallRecord).launch!;
+		};
+
+		it("gives foreground and background children exactly the selected tools", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+			const agent = makeAgent("worker", { tools: ["read"], mcpDirectTools: ["docs/search"] });
+			mockPi.onCall({ output: "foreground done" });
+			assert.equal((await runForeground(agent)).exitCode, 0);
+			const foreground = mockPi.sessions.at(-1)!.launch;
+			assert.deepEqual(foreground.builtinMcpTools, [{ name: "mcp__docs__search", selector: "docs/search" }]);
+			assert.ok(foreground.tools?.includes("mcp__docs__search"));
+
+			mockPi.onCall({ output: "background done" });
+			const background = await runBackground(agent);
+			assert.deepEqual(background.builtinMcpTools, [{ name: "mcp__docs__search", selector: "docs/search" }]);
+			assert.ok(background.tools?.includes("mcp__docs__search"));
+			assert.equal(background.processEnv?.MCP_DIRECT_TOOLS, "__none__");
+		});
+
+		it("grants extension-registered servers only to background children", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+			const agent = makeAgent("worker", { tools: ["read"], mcpDirectTools: ["ext"] });
+			await assert.rejects(runForeground(agent), /extensions registered \(ext\)\. Only background children \(async: true\) load those extensions/);
+
+			mockPi.onCall({ output: "background done" });
+			const background = await runBackground(agent);
+			assert.deepEqual(background.builtinMcpTools, [{ name: "mcp__ext__ping", selector: "ext" }]);
+			assert.equal(background.ambientExtensions, true);
+		});
+
+		it("counts a project's .pi/mcp.json for foreground children only when the project is trusted", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+			const agent = makeAgent("worker", { tools: ["read"], mcpDirectTools: ["ext"] });
+			fs.mkdirSync(path.join(tempDir, ".pi"), { recursive: true });
+			fs.writeFileSync(path.join(tempDir, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { ext: { command: "ext-mcp" } } }));
+			await assert.rejects(runForeground(agent, false), /extensions registered \(ext\)/);
+			mockPi.onCall({ output: "foreground done" });
+			assert.equal((await runForeground(agent, true)).exitCode, 0);
+		});
 	});
 
 	it("matches preflight launch and definition digests for executor-launched async runs with the Intercom bridge active", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
@@ -747,6 +1046,20 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		assert.ok(outputPath?.startsWith(`${expectedDir}${path.sep}`));
 		assert.equal(fs.readFileSync(outputPath, "utf-8"), "async session artifact");
 		assert.equal(fs.existsSync(path.join(tempDir, ".pi/subagents", "artifacts")), false);
+	});
+
+	it("launches foreground and background children with the parent session's project trust", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const executor = makeAsyncExecutor([makeAgent("worker")]);
+		const ctx = { ...makeMinimalCtx(tempDir), isProjectTrusted: () => false };
+		mockPi.onCall({ output: "foreground done" });
+		const foreground = await executor.execute("trust-foreground", { agent: "worker", task: "Inspect", acceptance: false }, new AbortController().signal, undefined, ctx);
+		assert.equal(foreground.isError, undefined, foreground.content[0]?.text);
+		mockPi.onCall({ output: "background done" });
+		const background = await executor.execute("trust-background", { agent: "worker", task: "Inspect", async: true, acceptance: false }, new AbortController().signal, undefined, ctx) as AsyncExecutionResult;
+		await readAsyncPayload(background.details.asyncId!);
+		const trust = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-") && name.endsWith(".json"))
+			.map((name) => JSON.parse(fs.readFileSync(path.join(mockPi.dir, name), "utf-8")).launch.projectTrusted);
+		assert.deepEqual(trust, [false, false]);
 	});
 
 	it("persists async capability ceiling audit to status, results, events, and metadata", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {

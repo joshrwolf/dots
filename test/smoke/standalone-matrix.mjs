@@ -30,25 +30,35 @@ const inputs = ["index.ts", "package.json", "package-lock.json", "scripts/build-
 ].filter((file) => fs.statSync(path.join(source, file)).isFile()).sort();
 const frozen = Object.fromEntries(inputs.map((file) => [file, sha(path.join(source, file))]));
 fs.writeFileSync(path.join(root, "inputs.json"), JSON.stringify(frozen, null, 2));
+const assertFrozen = () => assert.deepEqual(Object.fromEntries(inputs.map((file) => [file, sha(path.join(source, file))])), frozen, "execution inputs changed during the gate");
+// Every mode must exercise the same candidate, so build and pack exactly once.
+const candidateDir = path.join(root, "candidate");
+fs.mkdirSync(candidateDir);
+const built = spawnSync(process.execPath, ["scripts/build-package.mjs"], { cwd: source, encoding: "utf8", timeout: 180000, maxBuffer: 10 * 1024 * 1024 });
+assert.ifError(built.error);
+assert.equal(built.status, 0, `${built.stdout}${built.stderr}`);
+const packed = spawnSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", candidateDir, path.join(source, "dist-pkg")], { cwd: source, encoding: "utf8", timeout: 90000, maxBuffer: 10 * 1024 * 1024 });
+assert.ifError(packed.error);
+assert.equal(packed.status, 0, packed.stderr);
+const candidate = path.join(candidateDir, JSON.parse(packed.stdout)[0].filename);
+const packageSha = sha(candidate);
 const modes = ["single", "workflow", "shared-run", "parallel-stop", "targeted-controls", "steer", "interrupt", "stop", "child-stop", "child-timeout", "run-timeout", "tool-timeout", "missing-bootstrap", "persistence-failure", "authorization-failure", "sdk-init-failure", "bootstrap-errors", "revival"];
 const receipt = { release, complete: false, cases: [] };
-let packageSha;
+// Modes run one at a time: they are CPU-bound, and four concurrent modes missed the parent's 45s deadline.
 for (const mode of modes) {
-	assert.deepEqual(Object.fromEntries(inputs.map((file) => [file, sha(path.join(source, file))])), frozen, "execution inputs changed during the gate");
-	const startedAt = new Date().toISOString();
-	const result = spawnSync(process.execPath, [path.join(source, "test/smoke/standalone-background.mjs"), binary, path.join(root, mode), mode], { cwd: source, encoding: "utf8", timeout: 180000, maxBuffer: 10 * 1024 * 1024 });
+	assertFrozen();
+	const startedAt = Date.now();
+	const result = spawnSync(process.execPath, [path.join(source, "test/smoke/standalone-background.mjs"), binary, path.join(root, mode), mode, candidate], { cwd: source, encoding: "utf8", timeout: 180000, maxBuffer: 10 * 1024 * 1024 });
 	fs.writeFileSync(path.join(root, `${mode}.log`), `${result.stdout ?? ""}${result.stderr ?? ""}`);
-	receipt.cases.push({ mode, startedAt, exitCode: result.status, error: result.error?.message });
+	receipt.cases.push({ mode, startedAt: new Date(startedAt).toISOString(), durationMs: Date.now() - startedAt, exitCode: result.status, error: result.error?.message });
 	fs.writeFileSync(path.join(root, "matrix.json"), JSON.stringify(receipt, null, 2));
 	assert.ifError(result.error);
 	assert.equal(result.status, 0, `${mode} failed; inspect ${path.join(root, `${mode}.log`)}`);
 	const identity = JSON.parse(fs.readFileSync(path.join(root, mode, "identity.json"), "utf8"));
-	const currentPackageSha = sha(path.join(root, mode, identity.packed));
-	packageSha ??= currentPackageSha;
-	assert.equal(currentPackageSha, packageSha, "matrix modes used different packaged candidates");
-	console.log(`PASS ${mode}`);
+	assert.equal(sha(path.join(root, mode, identity.packed)), packageSha, "matrix modes used different packaged candidates");
+	console.log(`PASS ${mode} (${Math.round((Date.now() - startedAt) / 1000)}s)`);
 }
-assert.deepEqual(Object.fromEntries(inputs.map((file) => [file, sha(path.join(source, file))])), frozen, "execution inputs changed during the gate");
+assertFrozen();
 receipt.complete = true;
 receipt.packageSha256 = packageSha;
 fs.writeFileSync(path.join(root, "matrix.json"), JSON.stringify(receipt, null, 2));

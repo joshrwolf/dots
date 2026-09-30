@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { getArtifactsDir } from "../../src/shared/artifacts.ts";
-import { SUBAGENT_CHILD_STATUS_EVENT, SUBAGENT_CONTROL_EVENT, type ControlEvent } from "../../src/shared/types.ts";
+import { SUBAGENT_CHILD_STATUS_EVENT, SUBAGENT_CONTROL_EVENT, SUBAGENT_CONTROL_INTERCOM_EVENT, type ControlEvent } from "../../src/shared/types.ts";
 import { ACTIVE_RUN_INDEX_DIR, updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { EXTERNAL_JOB_BRIDGE_REQUEST_DIR } from "../../src/runs/shared/external-job-bridge.ts";
 import { createNativeSupervisorChannel, ensureSupervisorChannelDir, resolveSupervisorChannelDir } from "../../src/intercom/native-supervisor-channel.ts";
@@ -171,6 +171,25 @@ function createNativeSupervisorHarness(sessionId: string) {
 	return { channel, tools, sent };
 }
 
+/** Starts a run whose events.jsonl holds one native supervisor attention record. Requires mock timers. */
+function startSupervisorAttentionRun(asyncRoot: string, runId: string, timers: { tick(ms: number): void }) {
+	const runDir = path.join(asyncRoot, runId);
+	writeRunningAsyncStatus(runDir, runId, "session-grace");
+	fs.writeFileSync(path.join(runDir, "events.jsonl"), `${JSON.stringify({
+		type: "subagent.control",
+		channels: ["event", "intercom"],
+		event: supervisorControlEvent(runId, "call-grace"),
+		intercom: { to: "main", message: "SUBAGENT NEEDS ATTENTION: worker" },
+	})}\n`, "utf-8");
+	let answered = false;
+	const recorder = createEventRecorder();
+	const tracker = createTracker(recorder.pi, createState() as never, asyncRoot, { supervisorRequestState: () => answered ? "resolved" : "pending" });
+	tracker.handleStarted({ id: runId, asyncDir: runDir, agent: "worker", sessionId: "session-grace" });
+	timers.tick(25); // the tracker's event-refresh debounce
+	assert.deepEqual(recorder.events.map((entry) => [entry.channel, (entry.data as { noticeDeferred?: boolean }).noticeDeferred]), [[SUBAGENT_CONTROL_EVENT, true]], "status consumers see the request immediately, marked deferred");
+	return { tracker, answer: () => { answered = true; }, events: recorder.events };
+}
+
 function pidGone(): never {
 	const error = new Error("missing") as NodeJS.ErrnoException;
 	error.code = "ESRCH";
@@ -198,6 +217,7 @@ function createUiContext() {
 			theme: {
 				fg: (_theme: string, text: string) => text,
 				bold: (text: string) => text,
+				getThinkingBorderColor: (_level: string) => (text: string) => text,
 			},
 			setWidget: (_key: string, value: unknown) => {
 				widgets.push(value);
@@ -289,6 +309,33 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 			assert.equal(state.liveAsyncSessionRoots.has("run-custom-session"), false);
 		} finally {
 			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("preserves a workflow job's established session root when attaching its start event", () => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-workflow-session-root-");
+		const sessionRoot = createTempDir("pi-explicit-workflow-sessions-");
+		try {
+			const state = createState();
+			const tracker = createTracker(createEventRecorder().pi, state as never, asyncRoot);
+			const runId = "workflow-established-session-root";
+			const asyncDir = path.join(asyncRoot, runId);
+			state.asyncJobs.set(runId, {
+				asyncId: runId,
+				asyncDir,
+				sessionRoot,
+				status: "running",
+				mode: "workflow",
+				startedAt: 100,
+				updatedAt: 100,
+			});
+
+			tracker.handleStarted({ id: runId, asyncDir, agent: "workflow", mode: "workflow" });
+
+			assert.equal(state.asyncJobs.get(runId)?.sessionRoot, sessionRoot);
+		} finally {
+			removeTempDir(asyncRoot);
+			removeTempDir(sessionRoot);
 		}
 	});
 
@@ -1690,6 +1737,47 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
+	it("sends no parent notice for a supervisor request answered within the grace period", (t) => {
+		const asyncRoot = createTempDir("pi-async-job-supervisor-grace-answered-");
+		t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		try {
+			const run = startSupervisorAttentionRun(asyncRoot, "run-grace-answered", t.mock.timers);
+			run.answer();
+			t.mock.timers.tick(60_000);
+			assert.equal(run.events.length, 1);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("escalates a supervisor request still unanswered after the grace period once", (t) => {
+		const asyncRoot = createTempDir("pi-async-job-supervisor-grace-pending-");
+		t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		try {
+			const run = startSupervisorAttentionRun(asyncRoot, "run-grace-pending", t.mock.timers);
+			t.mock.timers.tick(59_000);
+			assert.equal(run.events.length, 1);
+			t.mock.timers.tick(1_000);
+			t.mock.timers.tick(120_000);
+			assert.deepEqual(run.events.slice(1).map((entry) => [entry.channel, (entry.data as { noticeDeferred?: boolean }).noticeDeferred]), [[SUBAGENT_CONTROL_EVENT, undefined], [SUBAGENT_CONTROL_INTERCOM_EVENT, undefined]]);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("drops a pending supervisor notice when the run finishes during the grace period", (t) => {
+		const asyncRoot = createTempDir("pi-async-job-supervisor-grace-finished-");
+		t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+		try {
+			const run = startSupervisorAttentionRun(asyncRoot, "run-grace-finished", t.mock.timers);
+			run.tracker.handleComplete({ id: "run-grace-finished", success: true });
+			t.mock.timers.tick(60_000);
+			assert.equal(run.events.filter((entry) => entry.channel === SUBAGENT_CONTROL_EVENT || entry.channel === SUBAGENT_CONTROL_INTERCOM_EVENT).length, 1);
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
 	it("delivers an external intercom ask with the native lifecycle lookup enabled", async () => {
 		const asyncRoot = createTempDir("pi-async-job-supervisor-replay-external-");
 		const sessionId = `session-${Date.now()}`;
@@ -2183,7 +2271,7 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 		}
 	});
 
-	it("bridges async child status events from events.jsonl to the parent event bus", async () => {
+	it("bridges async child started events from events.jsonl to the parent event bus", async () => {
 		const asyncRoot = createTempDir("pi-async-job-tracker-");
 		try {
 			const runDir = path.join(asyncRoot, "run-child-status");
@@ -2201,9 +2289,8 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				version: 1,
 				runId: "run-child-status",
 				childId: "slow",
-				status: "stopped",
+				status: "started",
 				ts: 123,
-				reason: "user",
 				stepIndex: 0,
 				agent: "worker",
 				workflowKey: "slow",
@@ -2227,15 +2314,63 @@ describe("async job tracker", { skip: !available ? "pi packages not available" :
 				version: 1,
 				runId: "run-child-status",
 				childId: "slow",
-				status: "stopped",
+				status: "started",
 				ts: 123,
-				reason: "user",
 				source: "async",
 				asyncDir: runDir,
 				stepIndex: 0,
 				agent: "worker",
 				workflowKey: "slow",
 			});
+		} finally {
+			removeTempDir(asyncRoot);
+		}
+	});
+
+	it("continues replay after a child-status subscriber throws", async (t) => {
+		const asyncRoot = createTempDir("pi-async-job-tracker-");
+		try {
+			const runDir = path.join(asyncRoot, "run-throwing-child-status");
+			fs.mkdirSync(runDir, { recursive: true });
+			fs.writeFileSync(path.join(runDir, "status.json"), JSON.stringify({
+				runId: "run-throwing-child-status",
+				mode: "workflow",
+				state: "running",
+				startedAt: Date.now() - 1000,
+				lastUpdate: Date.now(),
+				steps: [{ agent: "worker", status: "running", workflowKey: "child" }],
+			}), "utf-8");
+			const childEvent = (status: "started" | "stopped", ts: number) => JSON.stringify({
+				type: "subagent.child-status",
+				version: 1,
+				runId: "run-throwing-child-status",
+				childId: "child",
+				status,
+				ts,
+				workflowKey: "child",
+			});
+			fs.writeFileSync(path.join(runDir, "events.jsonl"), `${childEvent("started", 123)}\n${childEvent("stopped", 124)}\n`, "utf-8");
+
+			let emitAttempts = 0;
+			const delivered: unknown[] = [];
+			const pi = { events: { emit(channel: string, data: unknown) {
+				if (channel !== SUBAGENT_CHILD_STATUS_EVENT) return;
+				emitAttempts += 1;
+				if (emitAttempts === 1) throw new Error("simulated replay subscriber failure");
+				delivered.push(data);
+			} } };
+			const diagnostics: unknown[][] = [];
+			const originalError = console.error;
+			console.error = (...args: unknown[]) => { diagnostics.push(args); };
+			t.after(() => { console.error = originalError; });
+			const tracker = createTracker(pi, createState() as never, asyncRoot, { pollIntervalMs: 10 });
+			tracker.handleStarted({ id: "run-throwing-child-status", asyncDir: runDir, agent: "workflow" });
+
+			await waitForCondition(() => delivered.length === 1, "later child status event");
+			await new Promise((resolve) => setTimeout(resolve, 30));
+			assert.equal(emitAttempts, 2);
+			assert.equal((delivered[0] as { status?: string }).status, "stopped");
+			assert.ok(diagnostics.some(([message]) => message === "Failed to emit async child status event:"));
 		} finally {
 			removeTempDir(asyncRoot);
 		}

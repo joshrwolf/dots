@@ -27,6 +27,8 @@ export interface SubagentNotifyChildOutput {
 	runId?: string;
 	agent?: string;
 	status: string;
+	/** Latest detached revival of this failed child, e.g. `Revived → <run>: completed`. */
+	revival?: string;
 	savedOutputPath?: string;
 	outputArtifactPath?: string;
 	structuredOutputPath?: string;
@@ -93,6 +95,7 @@ export interface CompletionNotification {
 		agent?: string;
 		status?: string;
 		state?: string;
+		revival?: string;
 		success?: boolean;
 		output?: string;
 		structuredOutput?: unknown;
@@ -141,6 +144,7 @@ export interface RegisterSubagentNotifyOptions {
 	timers?: NotifyTimerApi;
 	now?: () => number;
 	ownership?: Pick<ResultDeliveryOwnership, "owns">;
+	sendRegistry?: CompletionSendRegistry;
 }
 
 export interface CompletionNotifier {
@@ -152,6 +156,8 @@ export interface CompletionNotifier {
 const CHILD_OUTPUT_PREVIEW_MAX_BYTES = 4 * 1024;
 const CHILD_OUTPUT_PREVIEW_COUNT = 8;
 const PREVIEW_TRUNCATION_MARKER = "...[preview truncated]";
+const COMPLETION_SEND_TTL_MS = 10 * 60 * 1000;
+const COMPLETION_SEND_REGISTRY_CAP = 4_096;
 type CompletionChild = NonNullable<CompletionNotification["results"]>[number];
 interface RetainedPathError { path: string; code?: string; message: string }
 type RetainedPathProjection =
@@ -266,6 +272,7 @@ function formatChildOutputBlock(children: SubagentNotifyChildOutput[] | undefine
 		const runId = child.runId ? boundedSafeText(child.runId) : "unavailable";
 		const status = boundedSafeText(child.status) || "unavailable";
 		lines.push(`- key=${key} run=${runId} status=${status}`);
+		if (child.revival) lines.push(`  ${boundedSafeText(child.revival)}`);
 		lines.push(`  Saved output: ${child.savedOutputPath ? boundedSafeText(child.savedOutputPath) : "unavailable"}`);
 		if (child.outputArtifactPath) lines.push(`  Output artifact (retention-managed): ${boundedSafeText(child.outputArtifactPath)}`);
 		if (child.structuredOutputPath) lines.push(`  Structured output (retention-managed): ${boundedSafeText(child.structuredOutputPath)}`);
@@ -492,7 +499,7 @@ const notificationDebug = debuglog("pi-subagents-notify");
 type TraceIdentity = Pick<CompletionNotification, "id" | "runId" | "source">;
 type NotificationReason = "disposed" | "missing_session" | "foreground_session_mismatch" | "not_owned"
 	| "intercom_delivered" | "deduped_ttl" | "deduped_pending" | "batch_deferred"
-	| "emit_foreground_session_mismatch" | "emit_not_owned" | "send_accepted" | "send_failed" | "dispose_pending";
+	| "emit_foreground_session_mismatch" | "emit_not_owned" | "send_joined" | "send_accepted" | "send_failed" | "dispose_pending";
 
 // Slice before sanitizing: diagnostic work and each identity are bounded even for
 // malformed result metadata. Never include task/output, paths, or error bodies.
@@ -520,6 +527,72 @@ interface PendingCompletion {
 	triggerTurn: boolean;
 	resolve(accepted: boolean): void;
 }
+
+export interface CompletionSendClaim {
+	owned: boolean;
+	outcome: Promise<boolean>;
+	settle?(accepted: boolean): void;
+}
+
+export interface CompletionSendRegistry {
+	claim(key: string, now: number): CompletionSendClaim;
+}
+
+interface CompletionSendEntry {
+	outcome: Promise<boolean>;
+	resolve(accepted: boolean): void;
+	deliveredAt?: number;
+}
+
+/** A fresh registry is injectable so tests and separately scoped runtimes stay isolated. */
+export function createCompletionSendRegistry(
+	ttlMs = COMPLETION_SEND_TTL_MS,
+	cap = COMPLETION_SEND_REGISTRY_CAP,
+): CompletionSendRegistry {
+	const entries = new Map<string, CompletionSendEntry>();
+	const prune = (now: number) => {
+		for (const [key, entry] of entries) {
+			if (entry.deliveredAt !== undefined && now - entry.deliveredAt > ttlMs) entries.delete(key);
+		}
+		if (entries.size <= cap) return;
+		for (const [key, entry] of entries) {
+			if (entries.size <= cap) break;
+			if (entry.deliveredAt !== undefined) entries.delete(key);
+		}
+	};
+	return {
+		claim(key, now) {
+			prune(now);
+			const existing = entries.get(key);
+			if (existing) return { owned: false, outcome: existing.outcome };
+			let resolve!: (accepted: boolean) => void;
+			const entry: CompletionSendEntry = {
+				outcome: new Promise<boolean>((settle) => { resolve = settle; }),
+				resolve: (accepted) => resolve(accepted),
+			};
+			entries.set(key, entry);
+			return {
+				owned: true,
+				outcome: entry.outcome,
+				settle(accepted) {
+					if (entries.get(key) !== entry) return;
+					if (accepted) {
+						entry.deliveredAt = now;
+						prune(now);
+					} else {
+						entries.delete(key);
+					}
+					entry.resolve(accepted);
+				},
+			};
+		},
+	};
+}
+
+const completionSendRegistrySymbol = Symbol.for("pi-subagents.completion-send-registry.v1");
+const processGlobal = globalThis as typeof globalThis & { [completionSendRegistrySymbol]?: CompletionSendRegistry };
+const processCompletionSendRegistry = processGlobal[completionSendRegistrySymbol]
+	?? (processGlobal[completionSendRegistrySymbol] = createCompletionSendRegistry());
 
 function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCompletion[]): boolean {
 	if (items.length === 0) return true;
@@ -627,6 +700,7 @@ export function buildCompletionDetails(result: CompletionNotification): Subagent
 				...(runId ? { runId } : {}),
 				...(typeof child.agent === "string" ? { agent: child.agent } : {}),
 				status: childStatus(child, result.state),
+				...(typeof child.revival === "string" && child.revival ? { revival: child.revival } : {}),
 				...(savedOutputPath ? { savedOutputPath } : {}),
 				...(outputArtifact.status === "verified" ? { outputArtifactPath: outputArtifact.path } : {}),
 				...(structuredOutput.status === "verified" ? { structuredOutputPath: structuredOutput.path } : {}),
@@ -690,8 +764,9 @@ export default function registerSubagentNotify(
 ): CompletionNotifier {
 	const seen = new Map<string, number>();
 	const pending = new Map<string, Promise<boolean>>();
-	const ttlMs = 10 * 60 * 1000;
+	const ttlMs = COMPLETION_SEND_TTL_MS;
 	const now = options.now ?? Date.now;
+	const sendRegistry = options.sendRegistry ?? processCompletionSendRegistry;
 	const batchConfig = resolveCompletionBatchConfig(options.batchConfig);
 	const batchers = new Map<string, CompletionBatcher<PendingCompletion>>();
 	let disposed = false;
@@ -719,8 +794,20 @@ export default function registerSubagentNotify(
 			(owned ? accepted : rejected).push(item);
 		}
 		settle(rejected, false);
-		const sent = sendCompletion(pi, accepted);
-		settle(accepted, sent, sent ? "send_accepted" : "send_failed");
+		const claimed: Array<{ item: PendingCompletion; claim: CompletionSendClaim }> = [];
+		for (const item of accepted) {
+			const claim = sendRegistry.claim(item.key, now());
+			if (claim.owned) {
+				claimed.push({ item, claim });
+				continue;
+			}
+			traceNotification("send_joined", item.trace);
+			void claim.outcome.then((outcome) => settle([item], outcome, outcome ? undefined : "send_failed"));
+		}
+		const claimedItems = claimed.map(({ item }) => item);
+		const sent = sendCompletion(pi, claimedItems);
+		for (const { claim } of claimed) claim.settle?.(sent);
+		settle(claimedItems, sent, sent ? "send_accepted" : "send_failed");
 	};
 	const getBatcher = (result: CompletionNotification) => {
 		const key = completionBatchKey(result);
@@ -796,6 +883,7 @@ export default function registerSubagentNotify(
 	};
 
 	const unsubscribeAsync = pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) => {
+		if ((data as CompletionNotification).awaitedByWorkflow === true) return;
 		void deliver(data as CompletionNotification);
 	});
 	const unsubscribeForeground = pi.events.on(SUBAGENT_FOREGROUND_COMPLETE_EVENT, (data) => {

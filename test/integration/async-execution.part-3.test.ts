@@ -19,8 +19,11 @@ import { createEventBus, createTempDir, events, makeAgent, makeMinimalCtx, remov
 import { discoverAgents } from "../../src/agents/agents.ts";
 import { ACTIVE_ASYNC_CAPACITY_DIR, acquireActiveAsyncCapacity, activeAsyncCapacitySessionKey, getActiveAsyncCapacitySnapshot } from "../../src/runs/background/active-async-capacity.ts";
 import { readPendingChainAppendRequests } from "../../src/runs/background/chain-append.ts";
+import { readActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
 import { createRunFanoutBudget, getRunFanoutBudgetSnapshot, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
 import { deriveForkPromptCacheKey } from "../../src/runs/shared/child-tool-plan.ts";
+import { INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR, validateStructuredOutputValue } from "../../src/runs/shared/structured-output.ts";
+import type { ChildRuntimeConfig } from "../../src/runs/shared/child-runtime-config.ts";
 import type { AsyncExecutionResult, AsyncResultPayload, AsyncStatusPayload } from "../support/async-execution-fixture.ts";
 import {
 	installAsyncExecutionHooks, waitForMockPiRuntime, available, isAsyncAvailable,
@@ -30,6 +33,62 @@ import {
 	readLastMockPiArgs, readMockPiArgs, readMockPiArgsMatching, tempDir, mockPi,
 	makeAsyncExecutor, readAsyncPayload, observeSharedCwdRunner,
 } from "../support/async-execution-fixture.ts";
+
+const WATCH_TIMEOUT_MS = 30_000;
+
+// A runner that never starts or never settles must fail this test by name, not stall the whole CI step.
+function watchTimeoutMessage(what: string, asyncDir: string, extra?: () => string): string {
+	const read = (name: string) => {
+		try { return fs.readFileSync(path.join(asyncDir, name), "utf8").slice(-2000); } catch (error) { return `<${(error as NodeJS.ErrnoException).code ?? "unreadable"}>`; }
+	};
+	let details = "";
+	if (extra) {
+		try { details = `\n${extra()}`; } catch (error) { details = `\n<diagnostics failed: ${String(error)}>`; }
+	}
+	return `Timed out after ${WATCH_TIMEOUT_MS}ms waiting for ${what}\nstatus.json: ${read("status.json")}\nrunner.stderr.log: ${read("runner.stderr.log")}${details}`;
+}
+
+function waitForPath(file: string, asyncDir: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			fs.unwatchFile(file, inspect);
+			reject(new Error(watchTimeoutMessage(file, asyncDir)));
+		}, WATCH_TIMEOUT_MS);
+		const inspect = () => {
+			if (!fs.existsSync(file)) return;
+			clearTimeout(timer);
+			fs.unwatchFile(file, inspect);
+			resolve();
+		};
+		fs.watchFile(file, { interval: 20 }, inspect);
+		inspect();
+	});
+}
+
+function waitForJson<T>(file: string, predicate: (value: T) => boolean, asyncDir: string, extra?: () => string): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			fs.unwatchFile(file, inspect);
+			reject(new Error(watchTimeoutMessage(`a matching ${file}`, asyncDir, extra)));
+		}, WATCH_TIMEOUT_MS);
+		const inspect = () => {
+			try {
+				const value = JSON.parse(fs.readFileSync(file, "utf8")) as T;
+				if (!predicate(value)) return;
+				clearTimeout(timer);
+				fs.unwatchFile(file, inspect);
+				resolve(value);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+				clearTimeout(timer);
+				fs.unwatchFile(file, inspect);
+				reject(error);
+			}
+		};
+		fs.watchFile(file, { interval: 20 }, inspect);
+		inspect();
+	});
+}
 
 describe("async execution utilities", { skip: !available ? "pi packages not available" : undefined }, () => {
 	installAsyncExecutionHooks();
@@ -742,6 +801,72 @@ export default function() {
 		assert.equal(savedOutput, JSON.stringify(expectedStructuredOutput, null, 2));
 	});
 
+	it("background settlement preserves rejected structured_output evidence", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const diagnostic = "Structured output validation failed: ok: is required";
+		mockPi.onCall({
+			jsonl: [
+				{ type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", id: "structured-rejected", name: "structured_output", arguments: { value: {} } }], model: "mock/test-model", stopReason: "toolUse", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+				{ type: "tool_execution_start", toolCallId: "structured-rejected", toolName: "structured_output", args: { value: {} } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "structured-rejected", toolName: "structured_output", isError: true, content: [{ type: "text", text: diagnostic }] } },
+				{ type: "tool_execution_end", toolCallId: "structured-rejected", toolName: "structured_output" },
+			],
+		});
+		const id = `async-single-schema-rejected-${Date.now().toString(36)}`;
+
+		executeAsyncSingle(id, {
+			agent: "worker",
+			task: "Return structured data",
+			agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false,
+			sessionRoot: path.join(tempDir, "sessions"),
+			maxSubagentDepth: 2,
+			acceptance: false,
+			structuredOutputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+		});
+
+		const payload = JSON.parse(fs.readFileSync(await waitForAsyncResultFile(id, 10_000), "utf-8")) as AsyncResultPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+		assert.equal(payload.success, false);
+		assert.match(payload.results[0]?.error ?? "", /Structured output validation failed: ok: is required/);
+		assert.doesNotMatch(payload.results[0]?.error ?? "", /Missing structured_output call/);
+		assert.equal(payload.results[0]?.structuredOutputFailed, true);
+		assert.match(status.steps?.[0]?.error ?? "", /Structured output validation failed: ok: is required/);
+	});
+
+	it("does not persist malformed outputSchema compiler text in background evidence", { skip: !isAsyncAvailable() ? "jiti not available" : undefined }, async () => {
+		const sentinel = "BACKGROUND_PRIVATE_SCHEMA_SENTINEL";
+		const structuredOutputSchema = { type: "string", pattern: `${sentinel}_[invalid` };
+		const validation = await validateStructuredOutputValue(structuredOutputSchema, "value");
+		assert.equal(validation.status, "invalid");
+		if (validation.status !== "invalid") return;
+		assert.match(validation.message, new RegExp(sentinel));
+		mockPi.onCall({
+			jsonl: [
+				{ type: "tool_execution_start", toolCallId: "structured-malformed-schema", toolName: "structured_output", args: { value: "value" } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolCallId: "structured-malformed-schema", toolName: "structured_output", isError: true, content: [{ type: "text", text: `Structured output validation failed: ${validation.message}` }] } },
+				{ type: "tool_execution_end", toolCallId: "structured-malformed-schema", toolName: "structured_output" },
+			],
+		});
+		const id = `async-single-malformed-schema-${Date.now().toString(36)}`;
+		executeAsyncSingle(id, {
+			agent: "worker", task: "Return structured data", agentConfig: makeAgent("worker"),
+			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+			shareEnabled: false, sessionRoot: path.join(tempDir, "sessions"), maxSubagentDepth: 2,
+			acceptance: false, structuredOutputSchema,
+		});
+
+		const resultPath = await waitForAsyncResultFile(id, 10_000);
+		const payloadText = fs.readFileSync(resultPath, "utf-8");
+		const payload = JSON.parse(payloadText) as AsyncResultPayload;
+		const status = await waitForAsyncState(id, (candidate) => candidate.state === "failed");
+		assert.match(payload.results[0]?.error ?? "", new RegExp(`^${escapeRegExp(INVALID_STRUCTURED_OUTPUT_SCHEMA_ERROR)}`));
+		assert.equal(payloadText.includes(sentinel), false);
+		assert.equal((status.steps?.[0]?.error ?? "").includes(sentinel), false);
+	});
+
 	it("background execution inherits a discovered agent outputSchema", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
 		const agentDir = path.join(tempDir, ".pi", "agents");
 		fs.mkdirSync(agentDir, { recursive: true });
@@ -1257,6 +1382,163 @@ export default function() {
 			const args = readMockPiArgs(mockPi, index * 2 + 1);
 			assert.equal(args[args.indexOf("--model") + 1], route);
 			assert.equal(args[args.indexOf("--session") + 1], sessionFile);
+		}
+	});
+
+	it("revives retained agents without treating their descendant allowlist as parent authority", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const planner = makeAgent("planner", { allowedAgents: ["researcher"] });
+		const agents = [planner, makeAgent("researcher")];
+		const parentSessionFile = path.join(tempDir, "allowlist-parent.jsonl");
+		const plannerSessionFile = path.join(tempDir, "allowlist-planner.jsonl");
+		const header = JSON.stringify({ type: "session", version: 1, id: "allowlist", cwd: fs.realpathSync(tempDir) });
+		fs.writeFileSync(parentSessionFile, `${header}\n`);
+		fs.writeFileSync(plannerSessionFile, `${header}\n`);
+		const sessionId = "resume-allowlist-session";
+		const ctx = {
+			...makeMinimalCtx(tempDir),
+			sessionManager: {
+				getSessionId: () => sessionId,
+				getSessionFile: () => parentSessionFile,
+				getLeafId: () => "leaf",
+				openSession: () => ({ createBranchedSession: () => plannerSessionFile }),
+			},
+		};
+		const callerRuntime: ChildRuntimeConfig = {
+			capabilityCeiling: { version: 1, allowedTools: ["grep", "read"], allowedAgents: ["planner", "researcher"], denyExtensions: false, sources: ["original-parent"] },
+		};
+		const makeExecutor = () => createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined },
+			state: { baseCwd: tempDir, currentSessionId: sessionId, asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents }),
+			childRuntime: callerRuntime,
+		});
+		const executor = makeExecutor();
+		mockPi.onCall({ output: "Initial planning complete" });
+		const launch = await executor.execute(
+			"allowlist-launch", { agent: "planner", task: "Plan", async: true, context: "fork", acceptance: false },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		assert.equal((await readAsyncPayload(launch.details.asyncId)).success, true);
+		callerRuntime.capabilityCeiling = { version: 1, allowedTools: ["read"], allowedAgents: ["planner", "researcher"], denyExtensions: false, sources: ["current-caller"] };
+
+		let retainedId = launch.details.asyncId;
+		for (const [index, output] of ["First continuation complete", "Second continuation complete"].entries()) {
+			mockPi.onCall({ output });
+			const resumed = await executor.execute(
+				`allowlist-resume-${index}`, { action: "resume", id: retainedId, message: "Continue", acceptance: false },
+				new AbortController().signal, undefined, ctx,
+			) as AsyncExecutionResult;
+			assert.ok(!resumed.isError, resumed.content[0]?.text);
+			assert.ok(resumed.details.asyncId);
+			retainedId = resumed.details.asyncId;
+			const payload = await readAsyncPayload(retainedId);
+			assert.equal(payload.success, true);
+			assert.deepEqual(payload.capabilityCeiling, {
+				version: 1,
+				allowedTools: ["read"],
+				allowedAgents: ["researcher"],
+				denyExtensions: false,
+				sources: ["agent:planner", "current-caller", "original-parent"],
+			});
+			const descriptor = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, retainedId, "recovery-descriptor.json"), "utf-8"));
+			assert.deepEqual(descriptor.allowedAgents, ["researcher"]);
+			assert.deepEqual(descriptor.capabilityCeiling, {
+				version: 1,
+				allowedTools: ["read"],
+				allowedAgents: ["planner", "researcher"],
+				denyExtensions: false,
+				sources: ["current-caller", "original-parent"],
+			});
+		}
+
+		callerRuntime.capabilityCeiling = { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["restricted-current-caller"] };
+		const restrictedExecutor = makeExecutor();
+		const rejected = await restrictedExecutor.execute(
+			"allowlist-rejected", { action: "resume", id: retainedId, message: "Continue", acceptance: false },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.equal(rejected.isError, true);
+		assert.match(rejected.content[0]?.text ?? "", /does not allow agent 'planner'/);
+	});
+
+	it("revives a current workflow child from persisted parent admission authority", { skip: !isAsyncAvailable() || !createSubagentExecutor ? "jiti or executor not available" : undefined }, async () => {
+		const agents = [makeAgent("planner", { allowedAgents: ["researcher"] }), makeAgent("researcher")];
+		const parentAuthority = { version: 1 as const, allowedAgents: ["planner", "researcher"], denyExtensions: false, sources: ["workflow-parent"] };
+		const ctx = makeMinimalCtx(tempDir);
+		const executor = createSubagentExecutor!({
+			pi: { events: createEventBus(), getSessionName: () => undefined, sendMessage() {} },
+			state: { baseCwd: tempDir, currentSessionId: "session-123", asyncJobs: new Map(), foregroundControls: new Map(), lastForegroundControlId: null },
+			config: {},
+			asyncByDefault: false,
+			tempArtifactsDir: tempDir,
+			getSubagentSessionRoot: () => tempDir,
+			expandTilde: (value: string) => value,
+			discoverAgents: () => ({ agents }),
+			childRuntime: { capabilityCeiling: parentAuthority },
+		});
+		mockPi.onCall({ output: "Initial workflow child complete" });
+		const launch = await executor.execute(
+			"workflow-parent-authority-launch",
+			{ workflowScript: `return await runs.run("planner", { agent: "planner", task: "Plan", acceptance: false })`, async: true, mission: false, capabilityCeiling: parentAuthority },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!launch.isError, launch.content[0]?.text);
+		assert.ok(launch.details.asyncId);
+		await readAsyncPayload(launch.details.asyncId);
+		const status = JSON.parse(fs.readFileSync(path.join(ASYNC_DIR, launch.details.asyncId, "status.json"), "utf-8"));
+		assert.deepEqual(status.admissionCapabilityCeiling, parentAuthority);
+
+		mockPi.onCall({ output: "Workflow child resumed" });
+		const resumed = await executor.execute(
+			"workflow-parent-authority-resume", { action: "resume", id: launch.details.asyncId, message: "Continue", acceptance: false },
+			new AbortController().signal, undefined, ctx,
+		) as AsyncExecutionResult;
+		assert.ok(!resumed.isError, resumed.content[0]?.text);
+		assert.ok(resumed.details.asyncId);
+		const payload = await readAsyncPayload(resumed.details.asyncId);
+		assert.equal(payload.success, true);
+		assert.deepEqual(payload.capabilityCeiling, {
+			version: 1,
+			allowedAgents: ["researcher"],
+			denyExtensions: false,
+			sources: ["agent:planner", "workflow-parent"],
+		});
+	});
+
+	it("fails closed when a retained workflow child lacks original-authority metadata", { skip: !createSubagentExecutor ? "executor not available" : undefined }, async () => {
+		const runId = `legacy-workflow-resume-${Date.now().toString(36)}`;
+		const asyncDir = path.join(ASYNC_DIR, runId);
+		const sessionFile = path.join(tempDir, "legacy-workflow-child.jsonl");
+		fs.mkdirSync(asyncDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "{}\n");
+		fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+			runId,
+			sessionId: "session-123",
+			mode: "workflow",
+			state: "complete",
+			startedAt: 100,
+			lastUpdate: 200,
+			cwd: tempDir,
+			capabilityCeiling: { version: 1, allowedAgents: ["researcher"], denyExtensions: false, sources: ["agent:planner"] },
+			steps: [{ agent: "planner", status: "complete", sessionFile }],
+		}));
+		try {
+			const result = await makeAsyncExecutor([makeAgent("planner", { allowedAgents: ["researcher"] }), makeAgent("researcher")]).execute(
+				"legacy-workflow-resume", { action: "resume", id: runId, message: "Continue", acceptance: false },
+				new AbortController().signal, undefined, makeMinimalCtx(tempDir),
+			) as AsyncExecutionResult;
+			assert.equal(result.isError, true);
+			assert.match(result.content[0]?.text ?? "", /missing its required run fan-out recovery identity/);
+			assert.equal(mockPi.callCount(), 0);
+		} finally {
+			fs.rmSync(asyncDir, { recursive: true, force: true });
 		}
 	});
 
@@ -2041,7 +2323,7 @@ syncBuiltinESMExports();
 
 		const preloadFile = path.join(tempDir, "exit-before-ready.mjs");
 		fs.writeFileSync(preloadFile, `
-if (process.argv.some((arg) => arg.endsWith("subagent-runner.ts"))) process.exit(1);
+if (process.argv.some((arg) => arg.endsWith("subagent-runner-bootstrap.ts"))) process.exit(1);
 `);
 		const previousNodeOptions = process.env.NODE_OPTIONS;
 		const startedAt = Date.now();
@@ -2172,5 +2454,184 @@ syncBuiltinESMExports();
 		assert.equal(Object.values((terminalEmission.candidate as { expectedWriters: Record<string, number> }).expectedWriters).every((count) => count === 0), true);
 		assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false, "a pre-proceed exit must not publish a result");
 	});
+
+	for (const revival of [false, true]) {
+		it(`${revival ? "revival" : "fresh"} post-proceed import rejection settles parent-owned lifecycle`, async () => {
+			const id = `post-proceed-import-${revival ? "revival" : "fresh"}-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, id);
+			const sessionId = `session-${id}`;
+			const startedPath = path.join(tempDir, `${id}-import-started`);
+			const rejectPath = path.join(tempDir, `${id}-reject`);
+			const watchStartedPath = path.join(tempDir, `${id}-watch-started`);
+			const rejectSeenPath = path.join(tempDir, `${id}-reject-seen`);
+			const fixturePath = path.join(tempDir, `${id}-execution.mjs`);
+			fs.writeFileSync(fixturePath, `
+import fs from "node:fs";
+import path from "node:path";
+const started = process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED;
+const reject = process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT;
+const watchStarted = ${JSON.stringify(watchStartedPath)};
+const rejectSeen = ${JSON.stringify(rejectSeenPath)};
+const mark = (file, text) => { try { fs.writeFileSync(file, text); } catch {} };
+fs.writeFileSync(started, "started");
+await new Promise((resolve) => {
+  mark(watchStarted, "watching");
+  // fs.watchFile missed the parent's rejection marker on Ubuntu CI; poll existence directly.
+  const timer = setInterval(() => { if (fs.existsSync(reject)) { clearInterval(timer); mark(rejectSeen, "seen"); resolve(); } }, 20);
+});
+throw new Error("injected parent-visible heavy import rejection");
+`);
+			const sessionFile = path.join(tempDir, `${id}.jsonl`);
+			if (revival) fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 1, id: `child-${id}`, cwd: fs.realpathSync(tempDir) })}\n`);
+			const callsBefore = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length;
+			const previousModule = process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE;
+			const previousStarted = process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED;
+			const previousReject = process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT;
+			const processEvents = new Map<number, Array<{ type: "exit" | "close"; at: string; exitCode: number | null; signal: NodeJS.Signals | null }>>();
+			const childProcessChannel = channel("child_process");
+			const observeProcess = (message: unknown) => {
+				// Diagnostics must never affect the spawn they observe.
+				try {
+					const proc = (message as { process?: unknown }).process;
+					if (!(proc instanceof ChildProcess) || typeof proc.pid !== "number") return;
+					const pid = proc.pid;
+					const seen: Array<{ type: "exit" | "close"; at: string; exitCode: number | null; signal: NodeJS.Signals | null }> = [];
+					processEvents.set(pid, seen);
+					proc.once("exit", (exitCode, signal) => { seen.push({ type: "exit", at: new Date().toISOString(), exitCode, signal }); });
+					proc.once("close", (exitCode, signal) => { seen.push({ type: "close", at: new Date().toISOString(), exitCode, signal }); });
+				} catch {}
+			};
+			const timeoutDetails = () => {
+				const read = (name: string) => {
+					try { return fs.readFileSync(path.join(asyncDir, name), "utf8"); } catch (error) { return `<${(error as NodeJS.ErrnoException).code ?? "unreadable"}>`; }
+				};
+				const status = (() => { try { return JSON.parse(read("status.json")) as { pid?: unknown }; } catch { return {}; } })();
+				const pid = status.pid;
+				let liveness = "unknown (no runner PID in status.json)";
+				if (typeof pid === "number") {
+					try { process.kill(pid, 0); liveness = "PID exists (not proof of runner identity or exit)"; }
+					catch (error) { liveness = `PID check failed: ${(error as NodeJS.ErrnoException).code ?? String(error)}`; }
+				}
+				return [
+					`diagnostic timestamp: ${new Date().toISOString()}`,
+					`process-terminal.json: ${read("process-terminal.json")}`,
+					`process-terminal-candidate.json: ${read("process-terminal-candidate.json")}`,
+					`runner-startup-proceed.json (authorization, not readiness): ${read("runner-startup-proceed.json")}`,
+					`events.jsonl tail: ${read("events.jsonl").slice(-4000)}`,
+					`fixture markers: ${JSON.stringify({ importStarted: fs.existsSync(startedPath), rejection: fs.existsSync(rejectPath), watchStarted: fs.existsSync(watchStartedPath), rejectSeen: fs.existsSync(rejectSeenPath) })}`,
+					`runner PID ${String(pid)} liveness: ${liveness}`,
+					`runner ChildProcess events: ${JSON.stringify(typeof pid === "number" ? processEvents.get(pid) ?? "not captured" : "PID unavailable")}`,
+				].join("\n");
+			};
+			childProcessChannel.subscribe(observeProcess);
+			try {
+				try {
+					process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE = pathToFileURL(fixturePath).href;
+					process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED = startedPath;
+					process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT = rejectPath;
+					executeAsyncSingle(id, {
+						agent: "worker", task: "Must never start", agentConfig: makeAgent("worker"),
+						ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId },
+						artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+						shareEnabled: false,
+						...(revival ? { sessionFile, revivalLease: { sessionFile, runId: id, sourceRunId: `source-${id}`, parentSessionId: sessionId } } : {}),
+						maxSubagentDepth: 2,
+					});
+					await waitForPath(startedPath, asyncDir);
+				} finally {
+					if (previousModule === undefined) delete process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE; else process.env.PI_SUBAGENTS_TEST_RUNNER_EXECUTION_MODULE = previousModule;
+					if (previousStarted === undefined) delete process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED; else process.env.PI_SUBAGENTS_TEST_IMPORT_STARTED = previousStarted;
+					if (previousReject === undefined) delete process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT; else process.env.PI_SUBAGENTS_TEST_IMPORT_REJECT = previousReject;
+				}
+				assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, callsBefore);
+				fs.writeFileSync(rejectPath, "reject");
+				const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending", asyncDir, timeoutDetails);
+				const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
+				const candidate = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8"));
+				assert.equal(status.state, "failed");
+				assert.match(status.error, /injected parent-visible heavy import rejection/);
+				assert.equal(terminal.state, "observed");
+				assert.deepEqual(candidate.writers, {});
+				assert.deepEqual(candidate.expectedWriters, { 0: 0 });
+				assert.equal(readActiveRunIndex(ASYNC_DIR)?.includes(id) ?? false, false);
+				assert.equal(getActiveAsyncCapacitySnapshot(sessionId, 1).used, 0);
+				assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
+				if (revival) {
+					assert.equal(fs.realpathSync(candidate.sessionFile), fs.realpathSync(sessionFile));
+					assert.equal(typeof candidate.revivalLeaseToken, "string");
+					assert.equal(candidate.revivalLeaseReleaseAcknowledged, true);
+				}
+			} finally {
+				childProcessChannel.unsubscribe(observeProcess);
+			}
+		});
+	}
+
+	for (const revival of [false, true]) {
+		it(`${revival ? "revival" : "fresh multi-step"} post-import setup rejection settles parent-owned lifecycle`, async () => {
+			const id = `post-import-setup-${revival ? "revival" : "fresh"}-${Date.now().toString(36)}`;
+			const asyncDir = path.join(ASYNC_DIR, id);
+			const sessionId = `session-${id}`;
+			const startedPath = path.join(tempDir, `${id}-setup-started`);
+			const rejectPath = path.join(tempDir, `${id}-setup-reject`);
+			const factoryPath = path.join(tempDir, `${id}-factory.mjs`);
+			fs.writeFileSync(factoryPath, `
+import fs from "node:fs";
+import path from "node:path";
+const started = ${JSON.stringify(startedPath)};
+const reject = ${JSON.stringify(rejectPath)};
+fs.writeFileSync(started, "started");
+await new Promise((resolve) => {
+  const timer = setInterval(() => { if (fs.existsSync(reject)) { clearInterval(timer); resolve(); } }, 20);
+});
+throw new Error("injected pre-run child factory rejection");
+`);
+			const sessionFile = path.join(tempDir, `${id}.jsonl`);
+			if (revival) fs.writeFileSync(sessionFile, `${JSON.stringify({ type: "session", version: 1, id: `child-${id}`, cwd: fs.realpathSync(tempDir) })}\n`);
+			const callsBefore = fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length;
+			const originalFactoryModule = childSessionFactoryModule();
+			try {
+				setChildSessionFactoryModule(factoryPath);
+				const common = {
+					ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: sessionId },
+					artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+					shareEnabled: false,
+					maxSubagentDepth: 2,
+				};
+				if (revival) {
+					executeAsyncSingle(id, {
+						agent: "worker", task: "Must never start", agentConfig: makeAgent("worker"), ...common,
+						sessionFile, revivalLease: { sessionFile, runId: id, sourceRunId: `source-${id}`, parentSessionId: sessionId },
+					});
+				} else {
+					executeAsyncChain(id, {
+						chain: [{ agent: "worker", task: "First must never start" }, { agent: "worker", task: "Second must never start" }],
+						agents: [makeAgent("worker")], ...common, sessionRoot: path.join(tempDir, "sessions"),
+					});
+				}
+				await waitForPath(startedPath, asyncDir);
+			} finally {
+				setChildSessionFactoryModule(originalFactoryModule);
+			}
+			assert.equal(fs.readdirSync(mockPi.dir).filter((name) => name.startsWith("call-")).length, callsBefore);
+			fs.writeFileSync(rejectPath, "reject");
+			const terminal = await waitForJson<{ state: string }>(path.join(asyncDir, "process-terminal.json"), (value) => value.state !== "pending", asyncDir);
+			const status = JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf8"));
+			const candidate = JSON.parse(fs.readFileSync(path.join(asyncDir, "process-terminal-candidate.json"), "utf8"));
+			assert.equal(status.state, "failed");
+			assert.match(status.error, /injected pre-run child factory rejection/);
+			assert.equal(terminal.state, "observed");
+			assert.deepEqual(candidate.writers, {});
+			assert.deepEqual(candidate.expectedWriters, revival ? { 0: 0 } : { 0: 0, 1: 0 });
+			assert.equal(readActiveRunIndex(ASYNC_DIR)?.includes(id) ?? false, false);
+			assert.equal(getActiveAsyncCapacitySnapshot(sessionId, 1).used, 0);
+			assert.equal(fs.existsSync(path.join(RESULTS_DIR, `${id}.json`)), false);
+			if (revival) {
+				assert.equal(fs.realpathSync(candidate.sessionFile), fs.realpathSync(sessionFile));
+				assert.equal(typeof candidate.revivalLeaseToken, "string");
+				assert.equal(candidate.revivalLeaseReleaseAcknowledged, true);
+			}
+		});
+	}
 
 });

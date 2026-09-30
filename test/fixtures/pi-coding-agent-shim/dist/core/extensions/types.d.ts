@@ -222,6 +222,8 @@ export interface ExtensionContext {
     modelRegistry: ModelRegistry;
     /** Current model (may be undefined) */
     model: Model<any> | undefined;
+    /** Resolved scoped-model snapshot for /scoped-models; optional for older hosts */
+    scopedModels?: ReadonlyArray<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
     /** Whether the agent is idle (not streaming) */
     isIdle(): boolean;
     /** Whether project-local trust is active for this context. */

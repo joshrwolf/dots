@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { formatWatchdogReviewMessage, formatWatchdogTurnDelta } from "../../src/watchdog/turn-delta.ts";
+import { formatWatchdogOrchestrationActivity, formatWatchdogReviewMessage, formatWatchdogTurnDelta } from "../../src/watchdog/turn-delta.ts";
 import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../src/watchdog/types.ts";
 
 describe("watchdog turn delta formatter", () => {
@@ -126,5 +126,42 @@ describe("watchdog turn delta formatter", () => {
 
 		assert.match(delta, /Assistant stop: stop/);
 		assert.match(delta, /Final assistant stop: stop without tool call/);
+	});
+
+	it("distinguishes a validated structured terminal from an ordinary empty terminal", () => {
+		const messages = [{ role: "assistant", content: [], stopReason: "stop" }];
+		const ordinary = formatWatchdogTurnDelta({ messages, finalAssistantStop: true });
+		const structured = formatWatchdogTurnDelta({ messages, finalAssistantStop: true, structuredTerminal: true });
+
+		assert.match(ordinary, /Assistant: \(no text\)/);
+		assert.match(ordinary, /stop without tool call/);
+		assert.doesNotMatch(structured, /\(no text\)|stop without tool call/);
+		assert.match(structured, /validated structured output is the terminal response; no prose is required/);
+		assert.match(structured, /validated structured output completed the response/);
+	});
+
+	it("keeps independent tool evidence visible at a structured terminal", () => {
+		const delta = formatWatchdogTurnDelta({
+			structuredTerminal: true,
+			messages: [
+				{ role: "toolResult", toolName: "bash", isError: true, content: "tests failed" },
+				{ role: "assistant", content: [], stopReason: "stop" },
+			],
+		});
+
+		assert.match(delta, /Tool result: bash\nError: tool reported an error\nOutput:\ntests failed/);
+		assert.match(delta, /validated structured output is the terminal response/);
+	});
+
+	it("counts subagent workflow launches in every workflow form as orchestration activity", () => {
+		const calls = [{ workflow: true }, { workflow: "./ci/sweep.js" }, { workflow: "review" }, { workflowScript: "return 1" }]
+			.map((args, index) => ({ type: "toolCall", id: `call-${index}`, name: "subagent", arguments: args }));
+		const activity = formatWatchdogOrchestrationActivity({
+			type: "turn_end",
+			message: { content: calls },
+			toolResults: calls.map((call) => ({ role: "toolResult", toolCallId: call.id, toolName: "subagent", content: [{ type: "text", text: `launched ${call.id}` }] })),
+		});
+		for (const id of ["call-0", "call-1", "call-2"]) assert.match(activity, new RegExp(`launched ${id}`));
+		assert.doesNotMatch(activity, /launched call-3/);
 	});
 });

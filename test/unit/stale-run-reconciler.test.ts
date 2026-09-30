@@ -31,6 +31,74 @@ describe("async stale-run reconciliation", () => {
 		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
 	});
 
+	it("repairs a run whose PID belongs to another namespace only after status goes stale", () => {
+		const root = tempRoot("pi-stale-run-pid-namespace-");
+		try {
+			const asyncDir = path.join(root, "run-live");
+			writeStatus(asyncDir, {
+				runId: "run-live",
+				mode: "single",
+				state: "running",
+				pid: 1404,
+				pidNamespaceScope: "pid:[runner]",
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "reviewer", status: "running", startedAt: 1000 }],
+			});
+
+			const result = reconcileAsyncRun(asyncDir, {
+				kill: () => { throw errno("ESRCH"); },
+				pidNamespaceScope: () => "pid:[observer]",
+				now: () => 2000,
+			});
+
+			assert.equal(result.repaired, false);
+			assert.equal(result.status?.state, "running");
+			assert.equal(JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")).state, "running");
+
+			const stale = reconcileAsyncRun(asyncDir, {
+				kill: () => { throw errno("ESRCH"); },
+				pidNamespaceScope: () => "pid:[observer]",
+				staleAlivePidMs: 5000,
+				now: () => 7000,
+			});
+
+			assert.equal(stale.repaired, true);
+			assert.equal(stale.status?.state, "failed");
+			assert.match(stale.message ?? "", /PID 1404 cannot be probed from this process; status has not updated for 6000ms/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not repair a recent namespaced run from an observer without a PID namespace", () => {
+		const root = tempRoot("pi-stale-run-pid-namespace-unknown-");
+		try {
+			const asyncDir = path.join(root, "run-dead");
+			writeStatus(asyncDir, {
+				runId: "run-dead",
+				mode: "single",
+				state: "running",
+				pid: 1404,
+				pidNamespaceScope: "pid:[runner]",
+				startedAt: 1000,
+				lastUpdate: 1000,
+				steps: [{ agent: "reviewer", status: "running", startedAt: 1000 }],
+			});
+
+			const result = reconcileAsyncRun(asyncDir, {
+				kill: () => { throw errno("ESRCH"); },
+				pidNamespaceScope: () => undefined,
+				now: () => 2000,
+			});
+
+			assert.equal(result.repaired, false);
+			assert.equal(result.status?.state, "running");
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("marks a dead runner failed and writes exactly one completion result", () => {
 		const root = tempRoot("pi-stale-run-");
 		try {
@@ -44,6 +112,7 @@ describe("async stale-run reconciliation", () => {
 				mode: "single",
 				state: "running",
 				pid: 12345,
+				pidNamespaceScope: "pid:[same]",
 				processTerminal: { version: 1, state: "pending", runId: "run-dead", runnerProcessInstanceId: "runner-dead" },
 				startedAt: 1000,
 				lastUpdate: 1000,
@@ -54,6 +123,7 @@ describe("async stale-run reconciliation", () => {
 			const result = reconcileAsyncRun(asyncDir, {
 				resultsDir,
 				kill: () => { throw errno("ESRCH"); },
+				pidNamespaceScope: () => "pid:[same]",
 				now: () => 2000,
 			});
 
@@ -84,6 +154,37 @@ describe("async stale-run reconciliation", () => {
 			});
 			assert.equal(second.repaired, false);
 			assert.equal(fs.readFileSync(path.join(resultsDir, "run-dead.json"), "utf-8"), resultText);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reports the observed runner exit code and signal when a killed runner left no result", () => {
+		const root = tempRoot("pi-stale-run-killed-");
+		try {
+			const asyncDir = path.join(root, "run-killed");
+			const resultsDir = path.join(root, "results");
+			writeStatus(asyncDir, {
+				lifecycleArtifactVersion: 3,
+				runId: "run-killed",
+				sessionId: "session-current",
+				mode: "single",
+				state: "running",
+				pid: 4242,
+				startedAt: 1000,
+				lastUpdate: 1000,
+				currentStep: 0,
+				steps: [{ agent: "worker", status: "running", startedAt: 1000 }],
+			});
+			initializeProcessTerminal(asyncDir, "run-killed", "runner-killed");
+			const proof = finalizeProcessTerminal(asyncDir, "run-killed", { processInstanceId: "runner-killed", closeObservedAt: 1500, exitCode: null, signal: "SIGKILL" });
+			assert.equal(proof.state, "unknown");
+
+			reconcileAsyncRun(asyncDir, { resultsDir, kill: () => { throw errno("ESRCH"); }, now: () => 2000 });
+
+			const resultJson = JSON.parse(fs.readFileSync(path.join(resultsDir, "run-killed.json"), "utf-8"));
+			assert.equal(resultJson.state, "failed");
+			assert.match(resultJson.summary, /Async runner process 4242 exited with code none \(signal SIGKILL\) before writing a result/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -511,7 +612,7 @@ describe("async stale-run reconciliation", () => {
 
 			assert.equal(result.repaired, true);
 			assert.equal(result.status?.state, "failed");
-			assert.match(result.message ?? "", /live PID, but status has not updated/);
+			assert.match(result.message ?? "", /PID .* is still live; status has not updated/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

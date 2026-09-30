@@ -11,6 +11,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createTempDir, events, makeAgent, makeMinimalCtx, removeTempDir, resolveMockPiCallArgs } from "../support/helpers.ts";
 import { deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, requestAsyncSteer } from "../../src/runs/background/control-channel.ts";
 import { writeAtomicJson } from "../../src/shared/atomic-json.ts";
@@ -203,29 +204,55 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 		mockPi.onCall({ output: "first done" });
 		mockPi.onCall({ delay: 10_000, output: "second done" });
 		const id = `async-paused-stop-race-${Date.now().toString(36)}`;
-		executeAsyncChain(id, {
-			chain: [{ parallel: [{ agent: "first", task: "Finish", acceptance: false }, { agent: "second", task: "Wait", acceptance: false }], concurrency: 2 }],
-			resultMode: "parallel",
-			agents: [makeAgent("first"), makeAgent("second")],
-			ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
-			artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
-			shareEnabled: false,
-			maxSubagentDepth: 2,
-		});
-
 		const asyncDir = path.join(ASYNC_DIR, id);
+		const gateDir = path.join(tempDir, `${id}-gate`);
+		fs.mkdirSync(gateDir);
+		const preload = path.join(tempDir, `${id}-close-stop-inbox.mjs`);
+		fs.writeFileSync(preload, `
+import fs from "node:fs";
+import path from "node:path";
+import { syncBuiltinESMExports } from "node:module";
+const gateDir = process.env.PAUSED_STOP_GATE_DIR;
+const originalRename = fs.renameSync;
+fs.renameSync = function(source, target) {
+  if (path.basename(String(target)) === "stop-inbox-closed.json") {
+    fs.writeFileSync(path.join(gateDir, "reached"), "");
+    // Longer than the test's own waits, so a slow test process still delivers stop before closure.
+    const deadline = Date.now() + 60000;
+    while (!fs.existsSync(path.join(gateDir, "release")) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+  }
+  return originalRename.call(this, source, target);
+};
+syncBuiltinESMExports();
+`);
+		const previousNodeOptions = process.env.NODE_OPTIONS;
+		process.env.NODE_OPTIONS = [previousNodeOptions, `--import=${pathToFileURL(preload).href}`].filter(Boolean).join(" ");
+		process.env.PAUSED_STOP_GATE_DIR = gateDir;
+		try {
+			executeAsyncChain(id, {
+				chain: [{ parallel: [{ agent: "first", task: "Finish", acceptance: false }, { agent: "second", task: "Wait", acceptance: false }], concurrency: 2 }],
+				resultMode: "parallel",
+				agents: [makeAgent("first"), makeAgent("second")],
+				ctx: { pi: { events: { emit() {} } }, cwd: tempDir, currentSessionId: "session-1" },
+				artifactConfig: { enabled: false, includeInput: false, includeOutput: false, includeJsonl: false, includeMetadata: false, cleanupDays: 7 },
+				shareEnabled: false,
+				maxSubagentDepth: 2,
+			});
+		} finally {
+			if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = previousNodeOptions;
+			delete process.env.PAUSED_STOP_GATE_DIR;
+		}
+
 		const running = await waitForAsyncState(id, (status) => status.steps?.[1]?.status === "running" && typeof status.pid === "number");
-		const pausedStop = new Promise<void>((resolve) => {
-			const timer = setInterval(() => {
-				const status = readStatus(asyncDir);
-				if (status?.state !== "paused") return;
-				deliverStopRequest({ asyncDir, pid: status.pid, source: "test" });
-				clearInterval(timer);
-				resolve();
-			}, 1);
-		});
 		deliverInterruptRequest({ asyncDir, pid: running.pid, source: "test" });
-		await pausedStop;
+		const gateDeadline = Date.now() + 30_000;
+		while (!fs.existsSync(path.join(gateDir, "reached")) && Date.now() < gateDeadline) await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(fs.existsSync(path.join(gateDir, "reached")), true, "runner must reach stop-inbox closure before the test delivers stop");
+		try {
+			deliverStopRequest({ asyncDir, pid: running.pid, source: "test" });
+		} finally {
+			fs.writeFileSync(path.join(gateDir, "release"), "");
+		}
 
 		const resultPath = await waitForAsyncResultFile(id, 30_000);
 		const payload = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as AsyncResultPayload;
@@ -2148,10 +2175,11 @@ describe("async execution utilities", { skip: !available ? "pi packages not avai
 				events.toolStart("write", { path: "side-effect.txt", content: "done" }),
 				events.toolEnd("write"),
 				events.toolResult("write", "Wrote side-effect.txt"),
-				{ type: "compaction_start" },
-				{ type: "message_end", message: { role: "assistant", content: [], model: "openai/gpt-5-mini", stopReason: "aborted", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+				{ type: "message_end", message: { role: "assistant", content: [], model: "openai/gpt-5-mini", stopReason: "error", errorMessage: "This operation was aborted", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
 				{ type: "agent_settled" },
+				{ type: "compaction_start" },
 			],
+			omitImplicitFinalEvents: true,
 			writeFiles: [{ path: "side-effect.txt", content: "done" }, { path: sessionFile, content: "{}\n" }],
 			keepAliveAfterFinalMessageMs: 5_000,
 			exitCode: 0,

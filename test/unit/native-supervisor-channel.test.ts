@@ -328,11 +328,13 @@ describe("native supervisor channel", () => {
 			cwd: process.cwd(), hasUI: false,
 			sessionManager: { getSessionId: () => currentSessionId, getSessionFile: () => null, getEntries: () => [] },
 		};
+		const state = makeState(currentSessionId, ctx);
+		state.foregroundControls.set("run-a", { runId: "run-a" } as never);
 		const channel = createNativeSupervisorChannel({
 			getAllTools: () => [], registerTool: () => {},
 			sendMessage: (message: { details?: { id?: string } }) => { sent.push(message); },
 			getSessionName: () => "shared-name",
-		} as never, makeState(currentSessionId, ctx), {
+		} as never, state, {
 			platform: "win32",
 			timers: {
 				setInterval: ((callback: () => void) => { tick = callback; return 1; }) as never,
@@ -364,6 +366,28 @@ describe("native supervisor channel", () => {
 			fsDefault.readdirSync = readdir;
 			syncBuiltinESMExports();
 		}
+	});
+
+	it("stops idle Windows polling and restarts it on transport demand", () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const state = makeState(currentSessionId, { sessionManager: { getSessionId: () => currentSessionId } });
+		let tick: (() => void) | undefined;
+		const channel = createNativeSupervisorChannel({ getAllTools: () => [], registerTool: () => {}, sendMessage: () => {} } as never, state, {
+			platform: "win32",
+			timers: {
+				setInterval: ((callback: () => void) => { tick = callback; return 1; }) as never,
+				clearInterval: (() => { tick = undefined; }) as never,
+				setImmediate, clearImmediate,
+			},
+		});
+		try {
+			channel.start();
+			tick!();
+			assert.equal(tick, undefined, "an idle parent stops polling");
+			state.foregroundControls.set("run-a", { runId: "run-a" } as never);
+			channel.activateTransport();
+			assert.equal(typeof tick, "function", "demand restarts polling");
+		} finally { channel.dispose(); }
 	});
 
 	it("does not classify UNKNOWN as a missing supervisor directory off Windows", () => {
@@ -1048,6 +1072,34 @@ describe("native supervisor channel", () => {
 		assert.equal(fs.existsSync(requestFile(inactiveRunId, inactiveId)), false);
 		assert.equal(fs.existsSync(requestFile(progressRunId, progressId)), false);
 		assert.equal(fs.existsSync(requestFile(foreignRunId, foreignId)), true);
+	});
+
+	it("lists each pending request with its question text", async () => {
+		const currentSessionId = `session-${randomUUID()}`;
+		const runId = `run-${randomUUID()}`;
+		const requestId = writeRequest({ sessionId: currentSessionId, runId, message: "Rerun each failed job separately?\nOr rerun the whole run?" });
+		const registeredTools = new Map<string, { execute: (_id: string, params: { action: string }) => Promise<{ content: Array<{ text: string }> }> }>();
+		const ctx = {
+			cwd: process.cwd(),
+			hasUI: false,
+			sessionManager: { getSessionId: () => currentSessionId, getSessionFile: () => null, getEntries: () => [] },
+		};
+		const pi = {
+			getAllTools: () => [...registeredTools.keys()].map((name) => ({ name })),
+			registerTool: (tool: { name: string; execute: (_id: string, params: { action: string }) => Promise<{ content: Array<{ text: string }> }> }) => { registeredTools.set(tool.name, tool); },
+			sendMessage: () => {},
+			getSessionName: () => "shared-name",
+		};
+		const channel = createNativeSupervisorChannel(pi as never, makeState(currentSessionId, ctx));
+		try {
+			channel.start();
+			const result = await registeredTools.get(NATIVE_SUPERVISOR_TOOL_NAME)!.execute("pending", { action: "pending" });
+			const text = result.content[0]!.text;
+			assert.match(text, new RegExp(`^- ${requestId}: `));
+			assert.match(text, /\n {2}Rerun each failed job separately\?\n {2}Or rerun the whole run\?/);
+		} finally {
+			channel.dispose();
+		}
 	});
 
 	it("refreshes pending requests before listing or replying", async () => {
