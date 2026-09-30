@@ -47,7 +47,41 @@ herdr-link:
 	$(MAKE) -C $(HERDR_PLUGINS) link
 
 herdr-check:
+	$(MAKE) rust-check
+
+# Shared Rust workspace: local commands and Herdr adapters use one lockfile/gate.
+rust-check:
 	$(MAKE) -C $(HERDR_PLUGINS) check
+
+# Local commands are independently installable; no Herdr session is needed.
+cli: cli-build skills-links
+	stow --verbose --target="$(HOME)" --restow cli skills
+
+cli-build:
+	cargo build --release --package dots-cli
+	@destination="cli/.local/bin/dots"; \
+		mkdir -p "$$(dirname "$$destination")"; \
+		temporary="$$destination.tmp.$$$$"; \
+		trap 'rm -f "$$temporary"' EXIT HUP INT TERM; \
+		cp target/release/dots "$$temporary"; \
+		chmod +x "$$temporary"; \
+		mv -f "$$temporary" "$$destination"; \
+		trap - EXIT HUP INT TERM
+	python3 scripts/cli-skills.py generate cli/.local/bin/dots
+
+cli-skills:
+	cargo build --package dots-cli
+	python3 scripts/cli-skills.py generate target/debug/dots
+
+cli-check:
+	cargo fmt --all --check
+	cargo clippy -p dots-cli -p github-ci -p github-client --all-targets -- -D warnings
+	cargo build --package dots-cli
+	python3 scripts/cli-skills.py check target/debug/dots
+	cargo nextest run -p dots-cli -p github-ci -p github-client --all-targets
+	cargo test -p dots-cli -p github-ci -p github-client --doc
+
+.PHONY: cli cli-build cli-check cli-skills rust-check
 
 herdr-issue-build:
 	$(MAKE) -C $(HERDR_PLUGINS) tool-build-issue

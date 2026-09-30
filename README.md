@@ -50,3 +50,15 @@ Edit `theme/.config/theme/themes/github-light/pi.json` to tune the palette;
 Pi hot-reloads edits to the active theme. After changing the central `current`
 symlink, use `/reload` or restart Pi. New theme directories should provide a
 `pi.json` adapter with the stable name `dots`.
+
+## Agent CLI
+
+`dots` is a general-purpose workflow CLI for coding agents. Commands bridge local
+tools and integrations through a shared interface with discoverable help and
+structured results. GitHub CI inspection is its first workflow.
+
+`make cli` installs the executable and its generated discovery skill for Codex,
+Claude, and Pi. Start with `dots --help`.
+
+See [the CLI home](apps/dots-cli/README.md) for architecture, command discovery,
+and how to add new workflows.

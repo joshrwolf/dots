@@ -13,6 +13,10 @@
 /worktrunk/
 /tools/
 
+# Private skills and their generated Claude discovery links stay machine-local.
+/skills/.agents/skills/local-*
+/skills/.claude/skills/local-*
+
 **/*.old
 **/*hide.lua
 **/keys/
@@ -45,3 +49,8 @@ herdr-plugins/HANDOFF.md
 # Standalone Herdr handoff binary staged before optional Stow installation.
 herdr/.local/bin/herdr-issue
 herdr/.local/bin/herdr-issue.tmp.*
+
+# Shared Rust workspace and staged local CLI.
+/target/
+/cli/.local/bin/dots
+/cli/.local/bin/dots.tmp.*

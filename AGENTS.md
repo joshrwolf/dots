@@ -15,6 +15,9 @@ GNU stow-managed dotfiles. Package contents mirror `$HOME`, so a file such as
   `~/.agents/skills/<name>` and individual relative symlinks at
   `~/.claude/skills/<name>`. For repo-local skills, use the equivalent paths
   under the repository. Add both discovery paths when creating a skill.
+- Machine-local skills live in ignored `skills/.agents/skills/local-*/`
+  directories. `make skills` generates their ignored Claude discovery links.
+  Never commit these skills or their links; reserve `local-` names for them.
 - Write shared instructions for both tools. Keep tool-specific metadata or
   integrations optional and separate; do not assume a symlink makes
   tool-specific commands, hooks, or permissions portable.
@@ -22,6 +25,12 @@ GNU stow-managed dotfiles. Package contents mirror `$HOME`, so a file such as
   under `skills/.local/share/agent-skills/<source>`. Edit source files in dots;
   do not replace discovery links with copies. `make skills` installs locally;
   `make skills-update SOURCE=<name>` explicitly merges upstream. See `docs/skills.md`.
+
+## Third-party subtrees
+
+Stay in sync with upstream and keep local patches minimal. Check upstream before
+patching compatibility issues; prefer an upstream update, and remove superseded
+patches when updating. Keep personal features outside vendored code.
 
 ## Stow
 
@@ -33,6 +42,17 @@ building the plugins.
 Use the root Make targets so package scope remains visible. Herdr plugin build
 and check implementation lives in `herdr-plugins/Makefile`; root targets delegate
 to it.
+
+## Rust applications and shared libraries
+
+- Root `Cargo.toml` owns one workspace for `apps/`, `crates/`, and the existing
+  Herdr packages. Root `Cargo.lock`, `rust-toolchain.toml`, and `clippy.toml`
+  are canonical. Herdr-specific libraries remain under `herdr-plugins/crates`.
+- `apps/dots-cli` owns the `dots` frontend; `crates/` owns provider/domain code
+  shared across local commands and host adapters. See `apps/dots-cli/README.md`.
+- Use `make cli-build`, `make cli-check`, and `make cli` to stage, check, and
+  explicitly install local commands. Plain `make` does not install the CLI.
+- `make rust-check` is the complete Rust gate; `make herdr-check` delegates to it.
 
 ## Pi packages
 

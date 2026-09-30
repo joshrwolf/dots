@@ -1,16 +1,18 @@
 [workspace]
 resolver = "3"
 members = [
-    "contracts",
+    "apps/dots-cli",
+    "crates/github-ci",
+    "herdr-plugins/contracts",
     "crates/github-client",
-    "issue",
-    "crates/herdrkit",
-    "crates/review-core",
-    "find",
-    "github",
-    "nav",
-    "nvim",
-    "review",
+    "herdr-plugins/issue",
+    "herdr-plugins/crates/herdrkit",
+    "herdr-plugins/crates/review-core",
+    "herdr-plugins/find",
+    "herdr-plugins/github",
+    "herdr-plugins/nav",
+    "herdr-plugins/nvim",
+    "herdr-plugins/review",
 ]
 
 [workspace.package]
@@ -20,11 +22,13 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+github-ci = { path = "crates/github-ci" }
 github-client = { path = "crates/github-client" }
 tokio = { version = "1", features = ["rt", "sync", "time", "net", "io-util", "macros", "fs", "process"] }
-herdrkit = { path = "crates/herdrkit" }
-herdr-review = { path = "review" }
-review-core = { path = "crates/review-core" }
+herdrkit = { path = "herdr-plugins/crates/herdrkit" }
+herdr-review = { path = "herdr-plugins/review" }
+review-core = { path = "herdr-plugins/crates/review-core" }
 anyhow = "1"
 nucleo = "0.5"
 nix = { version = "0.29", features = ["process", "signal"] }

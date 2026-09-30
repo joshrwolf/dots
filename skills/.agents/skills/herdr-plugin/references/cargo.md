@@ -6,7 +6,7 @@ versions or lint settings.
 
 ## Workspace shape
 
-`herdr-plugins/Cargo.toml` is the authority for workspace membership,
+The repository-root `Cargo.toml` is the authority for workspace membership,
 resolver, edition, and minimum Rust version.
 
 Dependencies and lints are declared at the workspace root. Every member uses

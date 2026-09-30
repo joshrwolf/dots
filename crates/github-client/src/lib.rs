@@ -104,6 +104,40 @@ impl Client {
         )
     }
 
+    /// Query with a caller's remaining operation budget, capped at the normal deadline.
+    pub fn gh_with_timeout(
+        &self,
+        checkout: &Path,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Result<std::process::Output> {
+        command_with_timeout(
+            checkout,
+            "gh",
+            &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            timeout.min(COMMAND_TIMEOUT),
+        )
+    }
+
+    /// Spool raw job logs to a caller-owned file, capped at 512 MiB.
+    /// Metadata and stderr retain their normal bounds; no log body is buffered.
+    pub fn gh_log_to_file(
+        &self,
+        checkout: &Path,
+        args: &[&str],
+        timeout: Duration,
+        destination: std::fs::File,
+    ) -> Result<std::process::Output> {
+        command_with_destination(
+            checkout,
+            "gh",
+            &args.iter().map(OsString::from).collect::<Vec<_>>(),
+            timeout.min(COMMAND_TIMEOUT),
+            512 * 1024 * 1024,
+            Some(destination),
+        )
+    }
+
     /// Resolves the checkout repository and one pull request without listing or
     /// searching other pull requests, rejecting targets from another repository.
     pub fn resolve(self, checkout: &Path, target: &Target) -> Result<PullRequest> {
@@ -834,18 +868,29 @@ fn command_with_timeout(
     args: &[OsString],
     timeout: Duration,
 ) -> Result<CommandOutput> {
+    command_with_limits(cwd, program, args, timeout, MAX_COMMAND_OUTPUT_BYTES)
+}
+
+fn command_with_limits(
+    cwd: &Path,
+    program: &str,
+    args: &[OsString],
+    timeout: Duration,
+    stdout_limit: usize,
+) -> Result<CommandOutput> {
+    command_with_destination(cwd, program, args, timeout, stdout_limit, None)
+}
+
+fn command_with_destination(
+    cwd: &Path,
+    program: &str,
+    args: &[OsString],
+    timeout: Duration,
+    stdout_limit: usize,
+    destination: Option<std::fs::File>,
+) -> Result<CommandOutput> {
     let started = Instant::now();
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .current_dir(cwd)
-        .env_remove("GH_REPO")
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GH_HTTP_TIMEOUT", "10")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
+    let mut command = configured_command(cwd, program, args);
     let mut child = command.spawn().map_err(|source| Error::StartCommand {
         program: command_description(program, args),
         cwd: cwd.to_path_buf(),
@@ -867,9 +912,34 @@ fn command_with_timeout(
             stream: "stderr",
             source: std::io::Error::other("stderr pipe was not captured"),
         })?;
-    let stdout = read_in_background(stdout);
-    let stderr = read_in_background(stderr);
+    let (overflow_sender, overflow) = mpsc::channel();
+    let stdout = read_in_background(
+        stdout,
+        "stdout",
+        stdout_limit,
+        destination,
+        overflow_sender.clone(),
+    );
+    let stderr = read_in_background(
+        stderr,
+        "stderr",
+        MAX_COMMAND_OUTPUT_BYTES,
+        None,
+        overflow_sender,
+    );
     let status = loop {
+        if let Ok(stream) = overflow.try_recv() {
+            terminate_process_group(&mut child);
+            return Err(Error::CommandOutputTooLarge {
+                program: command_description(program, args),
+                stream,
+                limit: if stream == "stdout" {
+                    stdout_limit
+                } else {
+                    MAX_COMMAND_OUTPUT_BYTES
+                },
+            });
+        }
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() < timeout => thread::sleep(COMMAND_POLL_INTERVAL),
@@ -896,7 +966,7 @@ fn command_with_timeout(
         return Err(Error::CommandOutputTooLarge {
             program: command_description(program, args),
             stream: "stdout",
-            limit: MAX_COMMAND_OUTPUT_BYTES,
+            limit: stdout_limit,
         });
     }
     if stderr.truncated {
@@ -913,12 +983,37 @@ fn command_with_timeout(
     })
 }
 
+fn configured_command(cwd: &Path, program: &str, args: &[OsString]) -> Command {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(cwd)
+        .env_remove("GH_REPO")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GH_HTTP_TIMEOUT", "10")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    command
+}
+
 fn read_in_background(
     reader: impl std::io::Read + Send + 'static,
+    stream: &'static str,
+    limit: usize,
+    destination: Option<std::fs::File>,
+    overflow: mpsc::Sender<&'static str>,
 ) -> Receiver<std::io::Result<Captured>> {
     let (sender, receiver) = mpsc::sync_channel(1);
     thread::spawn(move || {
-        let _ = sender.send(read_bounded(reader));
+        let output = capture(reader, limit, destination);
+        if output.as_ref().is_ok_and(|captured| captured.truncated) {
+            // Notify the process supervisor before the producer can spend its
+            // remaining deadline downloading output that cannot be retained.
+            let _ = overflow.send(stream);
+        }
+        let _ = sender.send(output);
     });
     receiver
 }
@@ -967,7 +1062,18 @@ struct Captured {
     truncated: bool,
 }
 
-fn read_bounded(mut reader: impl std::io::Read) -> std::io::Result<Captured> {
+#[cfg(test)]
+fn read_bounded(reader: impl std::io::Read, limit: usize) -> std::io::Result<Captured> {
+    capture(reader, limit, None)
+}
+
+fn capture(
+    mut reader: impl std::io::Read,
+    limit: usize,
+    mut destination: Option<std::fs::File>,
+) -> std::io::Result<Captured> {
+    use std::io::Write as _;
+    let mut length = 0;
     let mut bytes = Vec::new();
     let mut truncated = false;
     let mut buffer = [0_u8; 16 * 1024];
@@ -976,10 +1082,19 @@ fn read_bounded(mut reader: impl std::io::Read) -> std::io::Result<Captured> {
         if count == 0 {
             break;
         }
-        let remaining = MAX_COMMAND_OUTPUT_BYTES.saturating_sub(bytes.len());
+        let remaining = limit.saturating_sub(length);
         let retained = count.min(remaining);
-        bytes.extend_from_slice(buffer.get(..retained).unwrap_or_default());
-        truncated |= retained < count;
+        let chunk = buffer.get(..retained).unwrap_or_default();
+        if let Some(file) = destination.as_mut() {
+            file.write_all(chunk)?;
+        } else {
+            bytes.extend_from_slice(chunk);
+        }
+        length += retained;
+        if retained < count {
+            truncated = true;
+            break;
+        }
     }
     Ok(Captured { bytes, truncated })
 }
@@ -993,6 +1108,16 @@ mod tests {
     use std::os::unix::process::ExitStatusExt as _;
 
     use super::*;
+
+    #[test]
+    fn log_budget_is_separate_from_metadata_and_still_bounded() {
+        let bytes = vec![b'x'; 3 * 1024 * 1024];
+        let metadata = read_bounded(bytes.as_slice(), MAX_COMMAND_OUTPUT_BYTES).unwrap();
+        assert!(metadata.truncated);
+        let log = read_bounded(bytes.as_slice(), 64 * 1024 * 1024).unwrap();
+        assert!(!log.truncated);
+        assert_eq!(log.bytes, bytes);
+    }
 
     const BASE: &str = "1111111111111111111111111111111111111111";
     const HEAD: &str = "2222222222222222222222222222222222222222";
@@ -1409,5 +1534,27 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn oversized_output_stops_a_slow_producer_before_its_deadline() {
+        for (stream, script) in [
+            ("stdout", "head -c 2200000 /dev/zero; sleep 10"),
+            ("stderr", "head -c 2200000 /dev/zero >&2; sleep 10"),
+        ] {
+            let started = Instant::now();
+            let error = command_with_timeout(
+                Path::new("/tmp"),
+                "sh",
+                &[OsString::from("-c"), OsString::from(script)],
+                Duration::from_secs(2),
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, Error::CommandOutputTooLarge { stream: actual, .. } if actual == stream),
+                "expected {stream} overflow, got {error:?}",
+            );
+            assert!(started.elapsed() < Duration::from_secs(1));
+        }
     }
 }

@@ -1,6 +1,6 @@
 # herdr-plugins design constitution
 
-- Treat this directory as one Cargo workspace: `herdrkit`, contract tests, and one crate per plugin.
+- Use the repository-root Cargo workspace: shared libraries, local applications, `herdrkit`, contract tests, and one crate per plugin.
 - Load the `herdr-plugin` and `idiomatic-rust` skills for changes here; the former owns Herdr protocol semantics and the latter owns Rust design.
 - Keep protocol wire shapes, validation, environment parsing, transport, terminal UI primitives, and test fakes in `herdrkit`.
 - Plugins must use typed `herdrkit::Client` operations; do not add raw socket calls or locally duplicate protocol DTOs.

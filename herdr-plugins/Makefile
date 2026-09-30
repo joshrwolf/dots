@@ -7,7 +7,7 @@ build: $(PLUGIN_BUILD_TARGETS) tool-build-issue
 $(PLUGIN_BUILD_TARGETS): plugin-build-%:
 	@test -f "$*/herdr-plugin.toml" || { echo "plugin-build-$*: missing manifest" >&2; exit 1; }
 	cargo build --release --package herdr-$*
-	@built="target/release/herdr-$*"; \
+	@built="../target/release/herdr-$*"; \
 		destination="$*/bin/herdr-$*"; \
 		[ -x "$$built" ] || { echo "plugin-build-$*: missing executable $$built" >&2; exit 1; }; \
 		mkdir -p "$*/bin"; \
@@ -27,8 +27,11 @@ link:
 
 check:
 	$(MAKE) -n $(PLUGIN_BUILD_TARGETS) tool-build-issue >/dev/null
+	$(MAKE) -C .. -n cli-build >/dev/null
 	cargo fmt --all --check
 	cargo clippy --workspace --all-features --all-targets -- -D warnings
+	cargo build --package dots-cli
+	python3 ../scripts/cli-skills.py check ../target/debug/dots
 	cargo nextest run --workspace --all-features --all-targets
 	# nextest deliberately does not run rustdoc tests.
 	cargo test --workspace --all-features --doc
@@ -39,7 +42,7 @@ check:
 # Standalone handoff command, installed by the optional Herdr Stow package.
 tool-build-issue:
 	cargo build --release --package herdr-issue
-	@built="target/release/herdr-issue"; \
+	@built="../target/release/herdr-issue"; \
 		destination="../herdr/.local/bin/herdr-issue"; \
 		mkdir -p "$$(dirname "$$destination")"; \
 		temporary="$$destination.tmp.$$$$"; \

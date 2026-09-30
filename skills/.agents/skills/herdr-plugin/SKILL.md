@@ -5,7 +5,7 @@ description: Build or change the Rust plugins, shared herdrkit crate, manifests,
 
 # Herdr plugin development
 
-Extend Herdr through the unified Rust workspace in `herdr-plugins/`. The local
+Extend Herdr through the repository-root Rust workspace with plugins in `herdr-plugins/`. The local
 `herdr-plugins/AGENTS.md` in the target repository is the design
 constitution; read it before editing. Treat the current workspace source and
 `herdr api schema --json` as authoritative when this skill and the code differ.
@@ -30,7 +30,7 @@ plugin's domain policy in its crate.
 
 ## Architecture
 
-The workspace contains `contracts`, `crates/herdrkit`, and plugin and domain crates declared in the workspace Cargo manifest. A plugin is normally one
+The workspace includes `apps/`, shared `crates/`, and the Herdr packages under `herdr-plugins/`, as declared in the root Cargo manifest. A plugin is normally one
 `herdr-<name>` Rust binary plus `herdr-plugin.toml`. Keep `main.rs` thin and put
 testable domain logic in the library.
 

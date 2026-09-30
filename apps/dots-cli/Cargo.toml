@@ -1,0 +1,25 @@
+[package]
+name = "dots-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+autobins = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "dots"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+anyhow.workspace = true
+github-ci.workspace = true
+serde_json.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true
