@@ -6,10 +6,13 @@ This file is a detailed reference loaded from `skills/pi-subagents/SKILL.md`.
 
 - **Explicit forking requires a persisted parent session.** If the current session
   does not have a persisted session file or current leaf, explicit `context: "fork"`
-  fails. An agent-level `defaultContext: fork` is a preference: packaged `worker`,
-  `oracle`, and `advisor` fall back to `fresh` when those fork preconditions are not
+  fails. An agent-level `defaultContext: fork` is a preference: packaged `oracle`
+  and `advisor` fall back to `fresh` when those fork preconditions are not
   met yet. Use `context: "fresh"` when you do not want a fork even after the parent
   session exists.
+- **Packaged workers start fresh.** `worker` defaults to fresh context so its brief,
+  not the parent's unfinished agenda, controls the implementation. Pass explicit
+  `context: "fork"` when inherited conversation history is required.
 - **Forked runs inherit parent history.** They are branched threads, not fresh
   filtered contexts. Use fresh context for adversarial reviewers unless the user explicitly asks for forked context.
 - **Default subagent nesting depth is 2.** Deeper recursive delegation is blocked
@@ -31,8 +34,8 @@ For durable evidence, copy only the final summary to session memory, a PR body/c
 
 ## Best Practices
 
-- Run subagents asynchronously by default; direct one-child execution is enough for one bounded task, while `workflowScript` is the composition surface for JavaScript control flow and data-dependent branching. Use `async: false` only when the parent must block. See `references/execution-controls.md` → Async/background for wait semantics.
-- For a predeclared broad plan split into visible narrow stages, use `runs.lanes([...])` inside `workflowScript`; use raw `runs.run(...)`/`runs.all(...)` for conditional or rolling flows. See [`execution-controls.md`](execution-controls.md#parallel-sequential-lanes).
+- Run subagents asynchronously by default; direct one-child execution is enough for one bounded task, while a workflow script (a ```` ```js workflow ```` block plus `subagent({ workflow: true })`) is the composition surface for JavaScript control flow and data-dependent branching. Use `async: false` only when the parent must block. See `references/execution-controls.md` → Async/background for wait semantics.
+- For a predeclared broad plan split into visible narrow stages, use `runs.lanes([...])` inside a workflow script; use raw `runs.run(...)`/`runs.all(...)` for conditional or rolling flows. See [`execution-controls.md`](execution-controls.md#parallel-sequential-lanes).
 - Keep one writer per cwd/worktree. Parallelize reading, review, and validation; concurrent writers need isolated worktrees. Give every child a cold-start packet with its goal, target/ref, authority, context, success criteria, validation, output, and stop rules.
 - Keep tasks narrow and standalone; do not rely on issue numbers, broad globs, or supervisor round-trips to supply missing context.
 - Keep authority with the parent. Escalate unapproved product, scope, architecture, merge, credential, or release decisions; checks, receipts, and review bots are evidence, not authority.
@@ -61,7 +64,7 @@ its overhead. Recipes select a shape; they do not authorize delegation:
 
 ## Error Handling
 
-- **Unknown agent:** run `subagent({ action: "list" })`; check scope/precedence and author new orchestration with `workflowScript`, not legacy chains.
+- **Unknown agent:** run `subagent({ action: "list" })`; check scope/precedence and author new orchestration as a workflow script, not legacy chains.
 - **Setup, discovery, or intercom confusion:** run `subagent({ action: "doctor" })`.
 - **Max subagent depth exceeded:** flatten the workflow or raise `maxSubagentDepth` in config.
 - **Missing session file for a fork:** persist the parent session before using `context: "fork"`.

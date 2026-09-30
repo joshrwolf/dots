@@ -62,7 +62,7 @@ import { deriveChildSessionName } from "../../shared/child-session-name.ts";
 import { assertAgentAllowedByCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, intersectThinkingCeilings } from "../../shared/thinking-ceiling.ts";
-import { MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR } from "../shared/structured-output.ts";
+import { formatStructuredOutputRejectionError, MISSING_STRUCTURED_ACCEPTANCE_REPORT_ERROR, MISSING_STRUCTURED_OUTPUT_CALL_ERROR } from "../shared/structured-output.ts";
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { formatChildModelResolutionDiagnostic, isChildModelResolutionFailure } from "../shared/model-resolution-diagnostic.ts";
@@ -284,6 +284,7 @@ interface StructuredDelegationProgressState {
 	model?: string;
 	toolCount: number;
 	tokens: number;
+	turnCount?: number;
 }
 
 function captureStructuredDelegationProgressState(progress: AgentProgress, result: SingleResult): StructuredDelegationProgressState {
@@ -296,6 +297,7 @@ function captureStructuredDelegationProgressState(progress: AgentProgress, resul
 		model: progress.model ?? result.model,
 		toolCount: progress.toolCount,
 		tokens: progress.tokens,
+		turnCount: progress.turnCount,
 	};
 }
 
@@ -310,6 +312,7 @@ function structuredDelegationProgressChanged(
 		|| previous.model !== (progress.model ?? result.model)
 		|| previous.toolCount !== progress.toolCount
 		|| previous.tokens !== progress.tokens
+		|| previous.turnCount !== progress.turnCount
 		|| previous.recentOutput.length !== progress.recentOutput.length) return true;
 	for (let index = 0; index < progress.recentOutput.length; index++) {
 		if (previous.recentOutput[index] !== progress.recentOutput[index]) return true;
@@ -324,6 +327,9 @@ function structuredDelegationProgressChanged(
 	return false;
 }
 
+function isCompleteUsageCounter(value: unknown): value is number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
 
 const STOPPED_BEFORE_COMPLETION_ERROR = "Subagent stopped before completion.";
 const AFTER_COMPACTION_SETTLEMENT = Symbol("afterCompactionSettlement");
@@ -402,6 +408,7 @@ async function runSingleAttempt(
 		mcpDirectTools: agent.mcpDirectTools,
 		cwd: options.cwd ?? runtimeCwd,
 		intercomSessionName: options.intercomSessionName,
+		projectTrusted: options.projectTrusted,
 		sessionName: childSessionName,
 		orchestratorIntercomTarget: options.orchestratorIntercomTarget,
 		runId: options.runId,
@@ -486,6 +493,10 @@ async function runSingleAttempt(
 		pendingControlEvents.push(event);
 		options.onControlEvent?.(event);
 	};
+	let inputUsageComplete = true;
+	let outputUsageComplete = true;
+	let cacheReadUsageComplete = true;
+	let cacheWriteUsageComplete = true;
 
 	const progress: AgentProgress = {
 		index: options.index ?? 0,
@@ -500,12 +511,20 @@ async function runSingleAttempt(
 		tokens: 0,
 		...(modelArg ? { model: modelArg } : {}),
 		...(resolvedThinking ? { thinking: resolvedThinking } : {}),
-		inputTokens: 0,
-		outputTokens: 0,
 		durationMs: 0,
 		lastActivityAt: startTime,
 	};
 	result.progress = progress;
+	const projectCompleteUsage = () => {
+		if (inputUsageComplete) progress.inputTokens = result.usage.input;
+		else delete progress.inputTokens;
+		if (outputUsageComplete) progress.outputTokens = result.usage.output;
+		else delete progress.outputTokens;
+		if (cacheReadUsageComplete) progress.cacheRead = result.usage.cacheRead;
+		else delete progress.cacheRead;
+		if (cacheWriteUsageComplete) progress.cacheWrite = result.usage.cacheWrite;
+		else delete progress.cacheWrite;
+	};
 	const attemptTimeout = resolveAttemptTimeout(options);
 	if (attemptTimeout?.remainingMs === 0) {
 		result.exitCode = 1;
@@ -949,7 +968,10 @@ async function runSingleAttempt(
 			jsonlWriter.writeLine(JSON.stringify(projectChildSessionEventForJson(evt)));
 			shared.transcriptWriter?.writeChildEvent(evt);
 			shared.orcaProgressTab?.event(evt);
-			if (evt.type === "compaction_start") compactionStartedReceived = true;
+			if (evt.type === "compaction_start") {
+				compactionStartedReceived = true;
+				if (agentSettledReceived) afterCompactionSettlement = true;
+			}
 			if (evt.type === "compaction_end" && evt.willRetry === true) {
 				compactionStartedReceived = false;
 				afterCompactionSettlement = false;
@@ -1060,6 +1082,10 @@ async function runSingleAttempt(
 					const hasToolCall = toolCalls.length > 0;
 					const terminalAssistantStop = (evt.message as { stopReason?: string }).stopReason === "stop" && !hasToolCall;
 					const u = evt.message.usage;
+					inputUsageComplete &&= isCompleteUsageCounter(u?.input);
+					outputUsageComplete &&= isCompleteUsageCounter(u?.output);
+					cacheReadUsageComplete &&= isCompleteUsageCounter(u?.cacheRead);
+					cacheWriteUsageComplete &&= isCompleteUsageCounter(u?.cacheWrite);
 					if (u) {
 						const window = (u.input || 0) + (u.cacheRead || 0);
 						result.usage.input += u.input || 0;
@@ -1068,11 +1094,10 @@ async function runSingleAttempt(
 						result.usage.cacheWrite += u.cacheWrite || 0;
 						result.usage.cost += u.cost?.total || 0;
 						progress.tokens = result.usage.input + result.usage.output;
-						progress.inputTokens = result.usage.input;
-						progress.outputTokens = result.usage.output;
 						progress.window = window;
 						progress.windowPeak = Math.max(progress.windowPeak ?? 0, window);
 					}
+					projectCompleteUsage();
 					if (evt.message.model) {
 						progress.model = evt.message.model;
 						if (!result.model) result.model = evt.message.model;
@@ -1291,6 +1316,8 @@ async function runSingleAttempt(
 			if (!closeError && (abortedBySignal || session?.shutDown) && !result.interrupted && !result.timedOut) {
 				closeError = session?.shutDown ? "Subagent stopped because the parent session shut down." : STOPPED_BEFORE_COMPLETION_ERROR;
 			}
+			// A workflow child ended by the workflow's abort signal was stopped, not failed.
+			if (options.abortedAsStopped && abortedBySignal && !session?.shutDown && !result.interrupted && !result.timedOut) result.stopped = true;
 			if (!closeError && forced && !forcedDrainAfterFinalSuccess) {
 				closeError = "Subagent session did not settle after it was aborted.";
 			}
@@ -1299,8 +1326,7 @@ async function runSingleAttempt(
 			if (session && messageBaseline !== undefined) {
 				result.usage = reconcileAttemptUsage(result.usage, session.messages, messageBaseline);
 				progress.tokens = result.usage.input + result.usage.output;
-				progress.inputTokens = result.usage.input;
-				progress.outputTokens = result.usage.output;
+				projectCompleteUsage();
 				progress.turnCount = result.usage.turns;
 			}
 			finish(finalCode);
@@ -1426,15 +1452,11 @@ async function runSingleAttempt(
 		result.exitCode = 1;
 	}
 	let validatedStructuredOutput = false;
-	if (options.structuredOutput && result.exitCode === 0 && !result.error) {
+	if (options.structuredOutput) {
 		result.structuredOutputSchemaPath = options.structuredOutput.schemaPath;
 		result.structuredOutputPath = options.structuredOutput.outputPath;
 		const structured = capture.structuredOutput();
-		if (!structuredOutputToolInvoked || !structured.called) {
-			result.exitCode = 1;
-			result.error = MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
-			result.structuredOutputFailed = true;
-		} else {
+		if (structuredOutputToolInvoked && structured.called) {
 			result.structuredOutput = structured.value;
 			const acceptanceMode = options.structuredOutput.acceptanceReportPath
 				? options.structuredOutput.acceptanceReportRequired ? "required" : "optional"
@@ -1446,6 +1468,12 @@ async function runSingleAttempt(
 			(result as SingleResult & { structuredAcceptanceReport?: unknown; structuredAcceptanceReportError?: string }).structuredAcceptanceReportError = acceptanceReportError;
 			writeStructuredOutputArtifacts(options.structuredOutput, structured.value, acceptanceMode ? structured.acceptanceReport : undefined);
 			validatedStructuredOutput = true;
+		} else if (result.exitCode === 0 && !result.error) {
+			result.exitCode = 1;
+			result.error = structuredOutputToolInvoked
+				? formatStructuredOutputRejectionError(result.messages ?? [])
+				: MISSING_STRUCTURED_OUTPUT_CALL_ERROR;
+			result.structuredOutputFailed = true;
 		}
 	}
 	if (result.exitCode === 0 && !result.error) {

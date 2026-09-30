@@ -3,6 +3,7 @@
  */
 
 import { Type } from "typebox";
+import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
 
 function keepTopLevelParameterDescriptions<T>(schema: T): T {
 	return pruneNestedDescriptions(schema, []) as T;
@@ -83,7 +84,7 @@ const AcceptanceOverride = Type.Unsafe({
 		},
 		{
 			type: "string",
-			pattern: "^\\s*\\{",
+			pattern: "^\\s*\\{[\\s\\S]*$",
 		},
 		{ type: "boolean" },
 		{ type: "object", additionalProperties: true },
@@ -120,7 +121,7 @@ const ToolBudgetOverride = Type.Object({
 	soft: Type.Optional(Type.Integer({ minimum: 1 })),
 	hard: Type.Integer({ minimum: 1 }),
 	block: Type.Optional(ToolBudgetBlock),
-}, { additionalProperties: false, description: "soft nudges; after hard, block tools (default read/grep/find/ls, '*' for all) so child can finalize." });
+}, { additionalProperties: false, description: "soft <= hard; after hard block read/grep/find/ls or '*' for all." });
 
 const UsageBudgetLimitOverride = Type.Object({
 	soft: Type.Optional(Type.Number({ exclusiveMinimum: 0 })),
@@ -130,7 +131,7 @@ const UsageBudgetLimitOverride = Type.Object({
 const UsageBudgetOverride = Type.Object({
 	tokens: Type.Optional(UsageBudgetLimitOverride),
 	costUsd: Type.Optional(UsageBudgetLimitOverride),
-}, { additionalProperties: false, description: "Root-only reported usage; hard prevents later launches. Running children are not stopped." });
+}, { additionalProperties: false, minProperties: 1, description: "tokens or costUsd; soft <= hard. Root-only reported usage; blocks launches. Running children are not stopped." });
 
 const WorkflowPreflightLane = Type.Object({
 	key: Type.String({ minLength: 1, maxLength: 128 }),
@@ -145,7 +146,7 @@ const WorkflowPreflightOverride = Type.Object({
 	version: Type.Integer({ minimum: 1, maximum: 1 }),
 	coverage: Type.Optional(Type.String({ enum: ["complete", "partial"] })),
 	lanes: Type.Array(WorkflowPreflightLane, { maxItems: 64 }),
-}, { additionalProperties: false, description: "Display-only lane hints; coverage mismatches warn, never change authority/execution." });
+}, { additionalProperties: false, description: "workflow: true or a script path only; display-only hints; coverage warns." });
 
 // Parallel task item (within a parallel step)
 export const ParallelTaskSchema = Type.Object({
@@ -279,10 +280,10 @@ const ControlOverrides = Type.Object({
 const SubagentParamProperties = {
 	agent: Type.Optional(Type.String({ description: "One-child agent or management target." })),
 	task: Type.Optional(Type.String({ description: "One-child task; requires agent." })),
-	extensionBindings: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Child-only bounded JSON; namespaces package.name/1." })),
+	extensionBindings: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Child-only plain JSON; package.name/1; depth 16, 256 props, 16 KiB." })),
 	// Management action (when present, tool operates in management mode)
 	action: Type.Optional(Type.String({ minLength: 1,
-		description: "Management/control only; omit for execution. validate accepts either script input. Discover actions with guide topic tool-reference."
+		description: "Management/control only; omit for execution. validate accepts workflow: true or a script path. Discover actions with guide topic tool-reference."
 	})),
 	capabilities: Type.Optional(Type.Boolean({ description: "list: compact capability rows/details without system prompts." })),
 	name: Type.Optional(Type.String({ description: "schedule.create name." })),
@@ -341,10 +342,11 @@ const SubagentParamProperties = {
 		],
 		description: "create/update agent config; object or JSON string."
 	})),
-	workflow: Type.Optional(Type.String({ minLength: 1, description: "Extension-owned workflow resource." })),
-	args: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Bounded plain-JSON args for named, inline, or file-backed workflows; raw-script args are exposed deeply frozen and persisted, so do not include secrets." })),
-	workflowScript: Type.Optional(Type.String({ minLength: 1, description: "Inline JavaScript statement body; raw/unknown provenance, no runs.host. Use explicit return and top-level await; see tool guidance/guide workflows." })),
-	workflowScriptPath: Type.Optional(Type.String({ minLength: 1, description: "Raw script file; host reads from request cwd before sandbox. Mutually exclusive with workflowScript and workflow." })),
+	workflow: Type.Optional(Type.Unsafe<string | true>({
+		anyOf: [{ type: "boolean" }, { type: "string", minLength: 1 }],
+		description: "true: run the one ```js workflow block written in this same reply (false invalid). String with '/': script file read from request cwd. Other string: named workflow resource. Raw scripts (true or path) have no runs.host.",
+	})),
+	args: Type.Optional(Type.Unsafe({ type: "object", maxProperties: 16, additionalProperties: true, description: "Bounded plain-JSON args for workflow; raw-script args are exposed deeply frozen and persisted, so do not include secrets." })),
 	globalConcurrencyLimit: Type.Optional(Type.Integer({ minimum: 1 })),
 	maxSubagentSpawnsPerRun: Type.Optional(Type.Integer({ minimum: 1 })),
 	preflight: Type.Optional(WorkflowPreflightOverride),
@@ -358,7 +360,7 @@ const SubagentParamProperties = {
 		description: "fresh/fork overrides every child; profile requires agent's declared defaultContext, ignoring config. Omitted: defaultSubagentContext wins over each agent defaultContext; implicit fork needs persisted parent + leaf, else fresh. forkContext may prune forks before spawn.",
 	})),
 	async: Type.Optional(Type.Boolean({ description: "Background; default asyncByDefault. false only to block parent." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout. Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline. Alias maxRuntimeMs." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Foreground and single async runs use config timeoutMs, else 30m; async composites have no default parent deadline. Alias maxRuntimeMs; must agree." })),
 	maxRuntimeMs: Type.Optional(Type.Integer({ minimum: 1, description: "Alias timeoutMs (same defaults)." })),
 	checkpointBeforeDeadlineMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_147_483_647, description: "Async single-agent runs only: the runner requests that the child checkpoint and stop this many ms before the run deadline (best-effort; the deadline kill still applies)." })),
 	toolTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Per-tool deadline (ms); fast builtins default 5m." })),
@@ -402,8 +404,11 @@ const SubagentParamsSchema = Type.Object(SubagentParamProperties);
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
 
-export function createSubagentParamsSchema(): typeof SubagentParams {
-	return SubagentParams;
+export function createSubagentParamsSchema(disabled?: DisabledFeatureSurface): typeof SubagentParams {
+	if (!disabled || disabled.params.size === 0) return SubagentParams;
+	const enabledProperties = Object.fromEntries(Object.entries(SubagentParamProperties).filter(([name]) => !disabled.params.has(name)));
+	// SAFETY: only optional properties are dropped; the executor rejects disabled options at runtime.
+	return keepTopLevelParameterDescriptions(Type.Object(enabledProperties)) as typeof SubagentParams;
 }
 
 const SubagentWaitParamsSchema = Type.Object({

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -6,7 +6,10 @@ import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { AsyncStatus } from "../../shared/types.ts";
-import { MISSION_BINDING_FILE } from "../../missions/lifecycle.ts";
+import { readMissionBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
+import { MissionNotFoundError, readMission } from "../../missions/store.ts";
+import type { MissionStatus } from "../../missions/types.ts";
+import { REVIVAL_ORIGIN_FILE } from "../../workflows/workflow-revival.ts";
 import { ACTIVE_RUN_INDEX_DIR } from "./active-run-index.ts";
 import { encodeIndexSegment } from "./index-segment.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
@@ -26,6 +29,8 @@ const RUN_TOMBSTONE_MARKERS_DIR = "async-retention-run-tombstones";
 const LOCK_STALE_MS = 24 * 60 * 60 * 1000;
 const RUN_MODES = new Set<AsyncStatus["mode"]>(["single", "parallel", "chain", "workflow"]);
 const TERMINAL_STATES = new Set<AsyncStatus["state"]>(["complete", "failed", "stopped", "rejected"]);
+// Mirrors TERMINAL_MISSION_STATUSES in src/missions/store.ts, which keeps it private.
+const TERMINAL_MISSION_STATUSES = new Set<MissionStatus>(["completed", "failed", "cancelled"]);
 const RESULT_TIMESTAMP_FIELDS = ["endedAt", "completedAt", "createdAt", "writtenAt", "expiresAt", "timestamp"] as const;
 
 interface RetentionCursor {
@@ -93,7 +98,7 @@ export interface AsyncRetentionOptions {
 	hostname?: string;
 	processStartIdentity?: string;
 	isProcessAlive?: (pid: number) => boolean | undefined;
-	getProcessStartIdentity?: (pid: number) => string | undefined;
+	getProcessStartIdentity?: (pid: number) => Promise<string | undefined>;
 	lstatSync?: typeof fs.lstatSync;
 	signal?: AbortSignal;
 	discoveryWorkerUrl?: URL;
@@ -210,6 +215,25 @@ function missionObserverIndexExists(resultsDir: string, runId: string): boolean 
 	return fs.existsSync(path.join(resultsDir, "result-index", "observers", "mission", `${encodeIndexSegment(runId)}.json`));
 }
 
+// The retention window doubles as a terminal mission's grace period. Unreadable references and
+// pending syncs are kept because the watcher needs the run's binding to retry.
+function missionReferenceBlocksReclaim(runDir: string, resultsDir: string, runId: string): boolean {
+	if (missionObserverIndexExists(resultsDir, runId)) return true;
+	let binding: MissionLaunchBinding | undefined;
+	try {
+		binding = readMissionBinding(runDir);
+	} catch {
+		return true;
+	}
+	if (!binding) return false;
+	try {
+		const mission = readMission(binding.location, binding.missionId);
+		return !TERMINAL_MISSION_STATUSES.has(mission.status);
+	} catch (error) {
+		return !(error instanceof MissionNotFoundError);
+	}
+}
+
 function runTombstoneMarkerPath(maintenanceRoot: string, runId: string): string {
 	return path.join(maintenanceRoot, RUN_TOMBSTONE_MARKERS_DIR, `${encodeIndexSegment(runId)}.json`);
 }
@@ -294,8 +318,10 @@ function runSkipReason(input: {
 	if (activeMarkerExists(input.asyncDirRoot, status.runId)) return "active-index";
 	if (!TERMINAL_STATES.has(status.state)) return "non-terminal";
 	if (status.mode === "workflow" || status.parentWorkflowRunId || status.workflowKey) return "workflow-reference";
+	// A revived workflow child is a link in its key's revival chain; deleting it would cut off later revivals.
+	if (fs.existsSync(path.join(runDir, REVIVAL_ORIGIN_FILE))) return "workflow-reference";
 	if (hasNestedReferences(status)) return "nested-reference";
-	if (fs.existsSync(path.join(runDir, MISSION_BINDING_FILE)) || missionObserverIndexExists(input.resultsDir, status.runId)) return "mission-reference";
+	if (missionReferenceBlocksReclaim(runDir, input.resultsDir, status.runId)) return "mission-reference";
 	if (hasUnresolvedRunHandoff(runDir, status)) return "handoff-reference";
 	if (hasResumableContract(runDir, status)) return "resumable";
 	const timestamp = statusTimestamp(status, runDir);
@@ -320,16 +346,16 @@ function readCursor(root: string): RetentionCursor {
 	return value?.version === 1 ? value as unknown as RetentionCursor : { version: 1 };
 }
 
-let currentProcessStartIdentity: string | undefined | null = null;
+let currentProcessStartIdentity: Promise<string | undefined> | undefined;
 
-function processStartIdentity(pid: number): string | undefined {
+function processStartIdentity(pid: number): Promise<string | undefined> {
 	// Foreign PIDs can be reused while this process lives, so resolve them afresh.
 	if (pid !== process.pid) return computeProcessStartIdentity(pid);
-	if (currentProcessStartIdentity === null) currentProcessStartIdentity = computeProcessStartIdentity(pid);
+	currentProcessStartIdentity ??= computeProcessStartIdentity(pid);
 	return currentProcessStartIdentity;
 }
 
-function computeProcessStartIdentity(pid: number): string | undefined {
+async function computeProcessStartIdentity(pid: number): Promise<string | undefined> {
 	if (process.platform === "linux") {
 		try {
 			const stat = fs.readFileSync(`/proc/${pid}/stat`).toString("utf8");
@@ -342,8 +368,12 @@ function computeProcessStartIdentity(pid: number): string | undefined {
 		}
 	}
 	if (process.platform === "win32") {
-		const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate`], { encoding: "utf-8", windowsHide: true });
-		const started = result.status === 0 ? result.stdout.trim() : "";
+		// PowerShell takes ~0.5 s to start; a synchronous spawn would freeze the TUI.
+		const started = await new Promise<string>((resolve) => {
+			execFile("powershell.exe", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate`], { encoding: "utf-8", windowsHide: true, timeout: 5_000 }, (error, stdout) => {
+				resolve(error ? "" : stdout.trim());
+			});
+		});
 		return started ? `win:${started}` : undefined;
 	}
 	return undefined;
@@ -375,7 +405,7 @@ function parseLockOwner(lockDir: string): RetentionLockOwner | undefined {
 	return owner as unknown as RetentionLockOwner;
 }
 
-function staleLock(lockDir: string, now: number, options: Required<Pick<AsyncRetentionOptions, "hostname" | "isProcessAlive" | "getProcessStartIdentity">>): { stale: boolean; token?: string } {
+async function staleLock(lockDir: string, now: number, options: Required<Pick<AsyncRetentionOptions, "hostname" | "isProcessAlive" | "getProcessStartIdentity">>): Promise<{ stale: boolean; token?: string }> {
 	const owner = parseLockOwner(lockDir);
 	if (!owner) {
 		try {
@@ -388,7 +418,7 @@ function staleLock(lockDir: string, now: number, options: Required<Pick<AsyncRet
 	const alive = options.isProcessAlive(owner.pid);
 	if (alive === false) return { stale: true, token: owner.token };
 	if (alive === true && owner.processStartIdentity) {
-		const currentIdentity = options.getProcessStartIdentity(owner.pid);
+		const currentIdentity = await options.getProcessStartIdentity(owner.pid);
 		if (currentIdentity !== undefined && currentIdentity !== owner.processStartIdentity) return { stale: true, token: owner.token };
 	}
 	return { stale: now - owner.startedAt >= LOCK_STALE_MS, token: owner.token };
@@ -410,10 +440,10 @@ function createLockDirectory(lockDir: string, owner: RetentionLockOwner): boolea
 	}
 }
 
-function acquireRetentionLock(lockDir: string, owner: RetentionLockOwner, options: Required<Pick<AsyncRetentionOptions, "hostname" | "isProcessAlive" | "getProcessStartIdentity">>): boolean {
+async function acquireRetentionLock(lockDir: string, owner: RetentionLockOwner, options: Required<Pick<AsyncRetentionOptions, "hostname" | "isProcessAlive" | "getProcessStartIdentity">>): Promise<boolean> {
 	for (let attempt = 0; attempt < 4; attempt += 1) {
 		if (createLockDirectory(lockDir, owner)) return true;
-		const stale = staleLock(lockDir, owner.startedAt, options);
+		const stale = await staleLock(lockDir, owner.startedAt, options);
 		if (!stale.stale) return false;
 		const staleKey = (stale.token ?? owner.token).replace(/[^A-Za-z0-9._-]/g, "-");
 		const tombstone = `${lockDir}.stale-${staleKey}`;
@@ -661,7 +691,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 	const pid = options.pid ?? process.pid;
 	const hostname = options.hostname ?? os.hostname();
 	const getProcessStartIdentity = options.getProcessStartIdentity ?? processStartIdentity;
-	const currentProcessStartIdentity = options.processStartIdentity ?? getProcessStartIdentity(pid) ?? (pid === process.pid ? `runtime:${Math.round(Date.now() - process.uptime() * 1000)}` : undefined);
+	const currentProcessStartIdentity = options.processStartIdentity ?? await getProcessStartIdentity(pid) ?? (pid === process.pid ? `runtime:${Math.round(Date.now() - process.uptime() * 1000)}` : undefined);
 	const lockOwner: RetentionLockOwner = { version: 1, token: lockToken, pid, hostname, startedAt: currentTime, ...(currentProcessStartIdentity ? { processStartIdentity: currentProcessStartIdentity } : {}) };
 	const lockOptions = { hostname, isProcessAlive: options.isProcessAlive ?? processIsAlive, getProcessStartIdentity };
 	const result: AsyncRetentionResult = {
@@ -698,7 +728,7 @@ export async function cleanupAsyncRetention(options: AsyncRetentionOptions): Pro
 		return true;
 	};
 	fs.mkdirSync(maintenanceRoot, { recursive: true });
-	if (!acquireRetentionLock(lockDir, lockOwner, lockOptions)) {
+	if (!await acquireRetentionLock(lockDir, lockOwner, lockOptions)) {
 		increment(result.skipped, "lock-busy");
 		return finish();
 	}

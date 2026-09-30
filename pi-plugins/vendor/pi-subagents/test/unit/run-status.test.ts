@@ -5,11 +5,12 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { EXTERNAL_JOB_PROVIDER_REGISTRY_KEY, registerExternalJobProvider } from "../../src/api/external-job-provider.ts";
 import { updateActiveRunIndex } from "../../src/runs/background/active-run-index.ts";
-import { formatAsyncResultTranscript } from "../../src/runs/background/fleet-view.ts";
+import { summarizeAsyncStatus } from "../../src/runs/background/async-status.ts";
+import { formatAsyncResultTranscript, formatAsyncRunTranscript } from "../../src/runs/background/fleet-view.ts";
 import { inspectSubagentStatus } from "../../src/runs/background/run-status.ts";
 import { createNestedRoute, writeNestedEvent } from "../../src/runs/shared/nested-events.ts";
 import { claimRunFanoutBatch, createRunFanoutBudget, writeRunFanoutBudgetDescriptor } from "../../src/runs/shared/run-fanout-budget.ts";
-import { TEMP_ROOT_DIR, type SubagentState } from "../../src/shared/types.ts";
+import { TEMP_ROOT_DIR, type AsyncStatus, type SubagentState } from "../../src/shared/types.ts";
 import { getArtifactPaths, getArtifactsDir } from "../../src/shared/artifacts.ts";
 
 function errno(code: string): NodeJS.ErrnoException {
@@ -834,7 +835,7 @@ describe("async run status inspection", () => {
 				chainStepCount: 1,
 				parallelGroups: [{ start: 0, count: 2, stepIndex: 0 }],
 				steps: [
-					{ agent: "worker", sessionName: "  worker: Inspect fleet  ", label: "Fleet check", status: "running", startedAt: 100 },
+					{ agent: "worker", sessionName: "  worker: Inspect fleet  ", label: "Fleet check", status: "running", startedAt: 100, runner: { type: "external-cli" }, externalProcess: { startedAt: 100, stdoutPath: path.join(asyncDir, "external-0.stdout.log"), stderrPath: path.join(asyncDir, "external-0.stderr.log") } },
 					{ agent: "reviewer", status: "pending" },
 				],
 			}, null, 2), "utf-8");
@@ -868,9 +869,81 @@ describe("async run status inspection", () => {
 			assert.doesNotMatch(text, /fg-run \| running \| scout/);
 			assert.match(text, /Async runs:/);
 			assert.match(text, /0\. worker: Inspect fleet \| running/);
+			assert.match(text, /external-cli · 150ms/);
 			assert.match(text, /run-fleet \| running .*\| parallel \| 1 agent running · 0\/2 done/);
 			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", view: "transcript" \}\)/);
 			assert.match(text, /transcript: subagent\(\{ action: "status", id: "run-fleet", index: 0, view: "transcript" \}\)/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("selects bounded external-cli evidence by lifecycle and preserves it in summaries", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-external-logs-"));
+		try {
+			const stdoutPath = path.join(root, "external-0.stdout.log");
+			const stderrPath = path.join(root, "external-0.stderr.log");
+			const outputPath = path.join(root, "output-0.log");
+			const finalOutputPath = path.join(root, "external-0.final.log");
+			const runner = { type: "external-cli", command: "example", args: [] } as never;
+			fs.writeFileSync(stdoutPath, "STDOUT_SENTINEL", "utf-8");
+			fs.writeFileSync(stderrPath, "STDERR_SENTINEL", "utf-8");
+			const status: AsyncStatus = {
+				runId: "external-logs", mode: "single", state: "running", startedAt: 100, currentStep: 0,
+				steps: [{
+					agent: "worker", status: "running", runner,
+					externalProcess: { startedAt: 100, stdoutPath, stderrPath, finalOutputPath },
+				}],
+			};
+
+			let text = formatAsyncRunTranscript(status, root, { index: 0 });
+			assert.match(text, /External stderr tail/);
+			assert.match(text, /STDERR_SENTINEL/);
+			assert.doesNotMatch(text, /STDOUT_SENTINEL/);
+			fs.writeFileSync(stderrPath, "", "utf-8");
+			text = formatAsyncRunTranscript(status, root, { index: 0 });
+			assert.match(text, /External stdout tail/);
+			assert.match(text, /STDOUT_SENTINEL/);
+
+			fs.writeFileSync(stderrPath, "RAW_FAILURE", "utf-8");
+			fs.writeFileSync(outputPath, "SYNTHESIZED_OUTPUT", "utf-8");
+			fs.writeFileSync(finalOutputPath, "FINAL_OUTPUT", "utf-8");
+			status.state = "failed";
+			status.steps![0]!.status = "failed";
+			text = formatAsyncRunTranscript(status, root, { index: 0 });
+			assert.match(text, /Transcript tail.*external-0\.final\.log/);
+			assert.match(text, /FINAL_OUTPUT/);
+			assert.doesNotMatch(text, /SYNTHESIZED_OUTPUT/);
+			assert.doesNotMatch(text, /RAW_FAILURE/);
+
+			fs.rmSync(outputPath);
+			for (const whitespace of ["\n", "   \n"]) {
+				fs.writeFileSync(finalOutputPath, whitespace, "utf-8");
+				text = formatAsyncRunTranscript(status, root, { index: 0 });
+				assert.match(text, /External stderr tail/);
+				assert.match(text, /RAW_FAILURE/);
+			}
+
+			assert.deepEqual(summarizeAsyncStatus(root, status).steps[0]?.externalProcess, status.steps![0]!.externalProcess);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("refuses external-cli log paths that escape the async directory", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-external-escape-"));
+		try {
+			const asyncDir = path.join(root, "run");
+			fs.mkdirSync(asyncDir);
+			const outside = path.join(root, "outside.log");
+			fs.writeFileSync(outside, "OUTSIDE_SENTINEL", "utf-8");
+			const status: AsyncStatus = {
+				runId: "external-escape", mode: "single", state: "running", startedAt: 100,
+				steps: [{ agent: "worker", status: "running", runner: { type: "external-cli", command: "example", args: [] } as never, externalProcess: { startedAt: 100, stdoutPath: outside, stderrPath: outside } }],
+			};
+			const text = formatAsyncRunTranscript(status, asyncDir, { index: 0 });
+			assert.match(text, /Refusing to read output transcript path outside trusted roots/);
+			assert.doesNotMatch(text, /OUTSIDE_SENTINEL/);
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}
@@ -1416,6 +1489,42 @@ describe("async run status inspection", () => {
 			assert.match(text, /Revive workflow child 'review': subagent\(\{ action: "resume", id: "child-review", message: "\.\.\." \}\)/);
 			assert.match(text, /Revive workflow child 'write': subagent\(\{ action: "resume", id: "child-write", message: "\.\.\." \}\)/);
 			assert.doesNotMatch(text, /id: "workflow-parent", index:/);
+		} finally {
+			fs.rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns a workflow terminal proof after every async child exits", () => {
+		const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-run-status-workflow-terminal-"));
+		try {
+			const asyncRoot = path.join(root, "runs");
+			const asyncDir = path.join(asyncRoot, "workflow-parent");
+			const childDir = path.join(asyncRoot, "child-run");
+			fs.mkdirSync(asyncDir, { recursive: true });
+			fs.mkdirSync(childDir);
+			const childProof = {
+				version: 1, state: "observed", runId: "child-run", runnerProcessInstanceId: "runner-1", observedAt: 300,
+				instances: [{ kind: "runner", processInstanceId: "runner-1", closeObservedAt: 300, exitCode: 0, signal: null }],
+			};
+			fs.writeFileSync(path.join(childDir, "process-terminal.json"), JSON.stringify(childProof));
+			fs.writeFileSync(path.join(childDir, "status.json"), JSON.stringify({
+				runId: "child-run", mode: "single", state: "complete", startedAt: 100, lastUpdate: 300,
+				processTerminal: { version: 1, state: "pending", runId: "child-run", runnerProcessInstanceId: "runner-1" },
+			}));
+			fs.writeFileSync(path.join(asyncDir, "status.json"), JSON.stringify({
+				runId: "workflow-parent", mode: "workflow", state: "complete", startedAt: 100, lastUpdate: 200, endedAt: 250,
+				steps: [{ agent: "worker", workflowKey: "main", runId: "child-run", async: true, status: "completed" }],
+				workflowChildren: {
+					version: 1, parentToolCallId: "tool-call", workflowRunId: "workflow-parent", inventoryComplete: true,
+					workflowState: "completed", children: [{ childId: "main", runId: "child-run", state: "completed" }],
+				},
+			}, null, 2), "utf-8");
+
+			const result = inspectSubagentStatus({ id: "workflow-parent" }, { asyncDirRoot: asyncRoot, resultsDir: path.join(root, "results") });
+			assert.deepEqual(result.details.workflowTerminalProof, {
+				version: 1, kind: "workflow", runId: "workflow-parent", state: "observed", dispatchClosed: true,
+				observedAt: 300, children: [childProof],
+			});
 		} finally {
 			fs.rmSync(root, { recursive: true, force: true });
 		}

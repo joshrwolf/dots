@@ -216,6 +216,74 @@ describe("in-process foreground child", () => {
 		assert.deepEqual(JSON.parse(fs.readFileSync(structured.outputPath, "utf-8")), { ok: true });
 	});
 
+	it("preserves captured structured evidence when a later provider error fails the run", async () => {
+		const structured = createStructuredOutputRuntime(
+			{ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } },
+			tempDir,
+			{ acceptanceReport: "optional" },
+		);
+		const acceptanceReport = { criteriaSatisfied: [{ id: "criterion-1", status: "satisfied", evidence: "captured" }] };
+		mockPi.onCall({
+			structuredOutputCapture: { ok: true },
+			structuredOutputAcceptanceReport: acceptanceReport,
+			jsonl: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true }, acceptanceReport } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+				{ type: "message_end", message: { role: "assistant", content: [], model: "mock/test-model", stopReason: "error", errorMessage: "later provider failure", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+			],
+		});
+
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "structured-then-error", acceptance: false, structuredOutput: structured });
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /later provider failure/);
+		assert.equal(result.progress?.status, "failed");
+		assert.deepEqual(result.structuredOutput, { ok: true });
+		assert.deepEqual((result as SingleResult & { structuredAcceptanceReport?: unknown }).structuredAcceptanceReport, acceptanceReport);
+		assert.deepEqual(JSON.parse(fs.readFileSync(structured.outputPath, "utf-8")), { ok: true });
+		assert.deepEqual(JSON.parse(fs.readFileSync(structured.acceptanceReportPath!, "utf-8")), acceptanceReport);
+	});
+
+	it("preserves captured structured evidence when the run is explicitly aborted", async () => {
+		const structured = createStructuredOutputRuntime({ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, tempDir);
+		const controller = new AbortController();
+		mockPi.onCall({
+			structuredOutputCapture: { ok: true },
+			jsonl: [
+				{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: true } } },
+				{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output captured." }] } },
+				{ type: "tool_execution_end", toolName: "structured_output" },
+			],
+			hangUntilAbort: true,
+		});
+
+		const run = runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "structured-then-abort", acceptance: false, structuredOutput: structured, signal: controller.signal });
+		await waitFor(() => mockPi.sessions[0]?.scriptedFinalEmitted === true);
+		controller.abort();
+		const result = await run;
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /stopped before completion/i);
+		assert.equal(result.progress?.status, "failed");
+		assert.deepEqual(result.structuredOutput, { ok: true });
+		assert.deepEqual(JSON.parse(fs.readFileSync(structured.outputPath, "utf-8")), { ok: true });
+	});
+
+	it("keeps a rejected structured invocation absent and failed", async () => {
+		const structured = createStructuredOutputRuntime({ type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, tempDir);
+		mockPi.onCall({ jsonl: [
+			{ type: "tool_execution_start", toolName: "structured_output", args: { value: { ok: "invalid" } } },
+			{ type: "tool_result_end", message: { role: "toolResult", toolName: "structured_output", content: [{ type: "text", text: "Structured output validation failed." }], isError: true } },
+			{ type: "tool_execution_end", toolName: "structured_output", isError: true },
+		] });
+
+		const result = await runSync(tempDir, makeAgentConfigs(["echo"]), "echo", "Task", { runId: "structured-invalid", acceptance: false, structuredOutput: structured });
+		assert.equal(result.exitCode, 1);
+		assert.match(result.error ?? "", /Structured output validation failed/);
+		assert.equal(result.structuredOutputFailed, true);
+		assert.equal(result.structuredOutput, undefined);
+		assert.equal(fs.existsSync(structured.outputPath), false);
+	});
+
 	it("fails when the child never calls structured_output", async () => {
 		const structured = createStructuredOutputRuntime({ type: "object" }, tempDir);
 		mockPi.onCall({ output: "prose only" });
@@ -223,6 +291,7 @@ describe("in-process foreground child", () => {
 		assert.equal(result.exitCode, 1);
 		assert.match(result.error ?? "", /Missing structured_output call/);
 		assert.equal(result.structuredOutputFailed, true);
+		assert.equal(result.structuredOutput, undefined);
 	});
 
 	it("keeps a detached child running in-process and delivers its terminal result", async () => {
@@ -301,6 +370,40 @@ describe("default child session factory", () => {
 		await factory.create(stubLaunch);
 		await factory.create(stubLaunch);
 		assert.deepEqual(flags, [true, true]);
+	});
+
+	it("registers the host codemode provider only for children allowed to select it", async () => {
+		const registrations: string[] = [];
+		const loaded: Array<{ names: string[]; ambient: boolean; paths: string[] }> = [];
+		const pi = Object.assign(stubPi(), {
+			createCodemodeExtension: () => (api: { registerTool: (tool: { name: string }) => void }) => api.registerTool({ name: "codemode" }),
+		});
+		pi.DefaultResourceLoader = class {
+			private options: ConstructorParameters<PiCodingAgentModule["DefaultResourceLoader"]>[0];
+			constructor(options: ConstructorParameters<PiCodingAgentModule["DefaultResourceLoader"]>[0]) { this.options = options; }
+			async reload() {
+				const factories = this.options.extensionFactories ?? [];
+				const codemode = factories.find((entry) => typeof entry !== "function" && entry.name === "codemode");
+				loaded.push({ names: factories.map((entry) => typeof entry === "function" ? "anonymous" : entry.name), ambient: !this.options.noExtensions, paths: this.options.additionalExtensionPaths ?? [] });
+				if (codemode && typeof codemode !== "function") await codemode.factory({ registerTool: (tool: { name: string }) => registrations.push(tool.name) } as never);
+			}
+		} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi });
+		const hooks = [{ name: "existing-child-hook", factory() {} }];
+		const requested = { ...stubLaunch, hooks, tools: ["codemode", "read"], extensionPaths: ["/provided.ts"], ambientExtensions: true };
+		await factory.create(requested);
+		await factory.create({ ...requested, tools: ["read"] });
+		await factory.create({ ...requested, runtime: { ...requested.runtime, capabilityCeiling: { version: 1, denyExtensions: true, sources: ["test"] } } });
+		await factory.create({ ...stubLaunch, excludeTools: ["codemode"] });
+		assert.deepEqual(registrations, ["codemode"]);
+		assert.deepEqual(loaded, [
+			{ names: ["existing-child-hook", "codemode"], ambient: true, paths: ["/provided.ts"] },
+			{ names: ["existing-child-hook"], ambient: true, paths: ["/provided.ts"] },
+			{ names: ["existing-child-hook"], ambient: true, paths: ["/provided.ts"] },
+			{ names: [], ambient: false, paths: [] },
+		]);
+		// The supported older SDK has no codemode export. Do not require it for ordinary children.
+		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() }).create({ ...stubLaunch, tools: ["read"] });
 	});
 
 	it("runs the child prompt rewrite before ambient prompt capture without reordering ambient extensions", async () => {
@@ -411,6 +514,14 @@ describe("default child session factory", () => {
 		assert.deepEqual(pendingRuntime?.pendingNativeProviderRegistrations, []);
 	});
 
+	it("reports the context window an extension raised while the child session started", async () => {
+		const session = { model: { provider: "openai-codex", id: "gpt-6-sol", contextWindow: 272_000 }, async bindExtensions() { this.model = { ...this.model, contextWindow: 1_050_000 }; } };
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi(session) });
+		const child = await factory.create(stubLaunch);
+
+		assert.equal(child.contextWindow, 1_050_000);
+	});
+
 	it("resolves queued providers when the loader has no native provider queue", async () => {
 		const registeredProviders: string[] = [];
 		let refreshed = false;
@@ -445,6 +556,49 @@ describe("default child session factory", () => {
 		await factory.create({ ...stubLaunch, onExtensionError: (error) => errors.push(error.extensionPath) });
 		await factory.create({ ...stubLaunch, extensionPaths: ["/tmp/ext.ts"], onExtensionError: (error) => errors.push(error.extensionPath) });
 		assert.deepEqual(errors, ["<loader>"]);
+	});
+
+	it("drops skills that extensions add to a child when inheritSkills is false", async () => {
+		const host = await import("@earendil-works/pi-coding-agent");
+		const skillDir = createTempDir("pi-subagents-ext-skill-");
+		fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: ext-skill\ndescription: Contributed by an extension.\n---\nBody\n");
+		try {
+			for (const noSkills of [true, false]) {
+				let loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]> | undefined;
+				const pi = stubPi();
+				pi.SettingsManager = { create: () => host.SettingsManager.inMemory() } as unknown as PiCodingAgentModule["SettingsManager"];
+				pi.DefaultResourceLoader = class extends host.DefaultResourceLoader {
+					constructor(options: ConstructorParameters<PiCodingAgentModule["DefaultResourceLoader"]>[0]) { super(options); loader = this; }
+				};
+				await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi }).create({ ...stubLaunch, noSkills });
+				// The same call Pi's session makes with an extension's resources_discover skillPaths.
+				loader!.extendResources({ skillPaths: [{ path: skillDir, metadata: { source: "ext", scope: "temporary", origin: "top-level" } }] });
+				assert.deepEqual(loader!.getSkills().skills.map((skill) => skill.name), noSkills ? [] : ["ext-skill"]);
+			}
+		} finally {
+			removeTempDir(skillDir);
+		}
+	});
+
+	it("reads project resources only when the launching session trusts the project", async () => {
+		const host = await import("@earendil-works/pi-coding-agent");
+		const projectDir = createTempDir("pi-subagents-project-trust-");
+		fs.mkdirSync(path.join(projectDir, ".pi"));
+		fs.writeFileSync(path.join(projectDir, ".pi", "SYSTEM.md"), "project system prompt");
+		try {
+			for (const projectTrusted of [true, false]) {
+				let loader: InstanceType<PiCodingAgentModule["DefaultResourceLoader"]> | undefined;
+				const pi = stubPi();
+				pi.SettingsManager = host.SettingsManager;
+				pi.DefaultResourceLoader = class extends host.DefaultResourceLoader {
+					constructor(options: ConstructorParameters<PiCodingAgentModule["DefaultResourceLoader"]>[0]) { super(options); loader = this; }
+				};
+				await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => pi }).create({ ...stubLaunch, cwd: projectDir, projectTrusted });
+				assert.equal(loader!.getSystemPrompt() === "project system prompt", projectTrusted);
+			}
+		} finally {
+			removeTempDir(projectDir);
+		}
 	});
 
 	it("preserves an initialized parent theme when creating a child session", async () => {
@@ -510,5 +664,89 @@ describe("default child session factory", () => {
 		const factory = createDefaultChildSessionFactory({ shutdownTimeoutMs: 50, loadPiCodingAgent: async () => stubPi({ extensionRunner: { hasHandlers: () => true, emit: () => new Promise(() => {}) } }) });
 		(await factory.create(stubLaunch)).dispose();
 		await factory.dispose();
+	});
+});
+
+/** Pi 0.99's built-in MCP seam: MCP registers `mcp__srv__*` as `codemode` after the session starts, `builtin:` entries load only when their path is requested, and `tools` declares allowlisted direct tools. */
+function builtinMcpPi(tools = [["mcp__srv__echo", "srv/echo"], ["mcp__srv__add", "srv/add"]]) {
+	const registry = new Map<string, string>();
+	const loaded: Array<{ name: string; replaceable?: boolean }> = [];
+	const lifecycle: string[] = [];
+	let allowlist: string[] = [];
+	const pi = stubPi({ extensionRunner: { hasHandlers: () => true, emit: async () => { lifecycle.push("session_shutdown"); } }, dispose: () => { lifecycle.push("dispose"); }, getAllTools: () => [...registry].map(([name, exposure]) => ({ name, exposure })).filter(({ name }) => allowlist.includes(name)), getActiveToolNames: () => [...registry].filter(([name, exposure]) => exposure === "direct" && allowlist.includes(name)).map(([name]) => name) });
+	Object.assign(pi, { createMcpExtension: () => (api: { registerTool(tool: { name: string; label: string; exposure: string }): void }) => {
+		setTimeout(() => { for (const [name, label] of tools) api.registerTool({ name: name!, label: label!, exposure: "codemode" }); }, 20);
+	} });
+	type Entry = { name: string; factory: (api: unknown) => unknown; builtin?: boolean; replaceable?: boolean };
+	pi.DefaultResourceLoader = class {
+		private readonly options: { additionalExtensionPaths: string[]; extensionFactories: Entry[] };
+		constructor(options: typeof this.options) { this.options = options; }
+		async reload() {
+			for (const entry of this.options.extensionFactories) {
+				if (!entry.builtin || !this.options.additionalExtensionPaths.includes(`builtin:${entry.name}`)) continue;
+				loaded.push({ name: entry.name, replaceable: entry.replaceable });
+				await entry.factory({ registerTool: (tool: { name: string; exposure: string }) => { registry.set(tool.name, tool.exposure); } });
+			}
+		}
+	} as unknown as PiCodingAgentModule["DefaultResourceLoader"];
+	const createSession = pi.createAgentSession;
+	pi.createAgentSession = ((options: { tools?: string[] }) => { allowlist = options.tools ?? []; return createSession(options); }) as PiCodingAgentModule["createAgentSession"];
+	return { pi, registry, loaded, lifecycle };
+}
+
+describe("selected built-in MCP tools in a child session", () => {
+	const mcpLaunch: ChildSessionLaunch = { ...stubLaunch, tools: ["read", "mcp__srv__echo"], builtinMcpTools: [{ name: "mcp__srv__echo", selector: "srv/echo" }] };
+
+	it("declares exactly the selected tools as direct and hides the other MCP tools", async () => {
+		const mcp = builtinMcpPi();
+		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create(mcpLaunch);
+		assert.deepEqual(mcp.loaded, [{ name: "mcp", replaceable: true }]);
+		assert.deepEqual([...mcp.registry], [["mcp__srv__echo", "direct"], ["mcp__srv__add", "hidden"]]);
+	});
+
+	it("fails the launch and shuts the session down when a selected tool never registers", async () => {
+		const mcp = builtinMcpPi();
+		const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 30, loadPiCodingAgent: async () => mcp.pi });
+		await assert.rejects(factory.create({ ...mcpLaunch, tools: [...mcpLaunch.tools!, "mcp__gone__x"], builtinMcpTools: [...mcpLaunch.builtinMcpTools!, { name: "mcp__gone__x", selector: "gone" }] }), /did not register in the child session: mcp__gone__x\. The MCP server may have failed to connect/);
+		assert.deepEqual(mcp.lifecycle, ["session_shutdown", "dispose"]);
+	});
+
+	it("does not expose a tool whose name Pi gave to a different raw tool than the selector names", async () => {
+		const mcp = builtinMcpPi([["mcp__srv__a_b", "srv/a_b"]]);
+		const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 50, loadPiCodingAgent: async () => mcp.pi });
+		await assert.rejects(factory.create({ ...stubLaunch, tools: ["mcp__srv__a_b"], builtinMcpTools: [{ name: "mcp__srv__a_b", selector: "srv/a.b" }] }), /did not register in the child session: mcp__srv__a_b\./);
+		assert.deepEqual([...mcp.registry], [["mcp__srv__a_b", "hidden"]]);
+	});
+
+	it("does not hold other child launches while it waits for MCP tools", async () => {
+		const mcp = builtinMcpPi();
+		let waitEnded = false;
+		const waiting = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 500, loadPiCodingAgent: async () => mcp.pi })
+			.create({ ...mcpLaunch, builtinMcpTools: [{ name: "mcp__gone__x", selector: "gone" }] }).finally(() => { waitEnded = true; });
+		while (mcp.loaded.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() }).create(stubLaunch);
+		assert.equal(waitEnded, false);
+		await assert.rejects(waiting, /mcp__gone__x/);
+	});
+
+	it("shuts down a child still waiting for MCP tools when the factory is disposed", async () => {
+		const mcp = builtinMcpPi();
+		const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 5_000, loadPiCodingAgent: async () => mcp.pi });
+		const creating = factory.create({ ...mcpLaunch, builtinMcpTools: [{ name: "mcp__gone__x", selector: "gone" }] });
+		while (mcp.loaded.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		await factory.dispose();
+		assert.deepEqual(mcp.lifecycle, ["session_shutdown", "dispose"]);
+		await assert.rejects(creating, /disposed while the child waited for its MCP tools/);
+	});
+
+	it("loads no built-in MCP when no tools are selected", async () => {
+		const mcp = builtinMcpPi();
+		await createDefaultChildSessionFactory({ loadPiCodingAgent: async () => mcp.pi }).create({ ...stubLaunch, builtinMcpTools: [] });
+		assert.deepEqual(mcp.loaded, []);
+	});
+
+	it("rejects selected tools when the host Pi has no built-in MCP", async () => {
+		await assert.rejects(createDefaultChildSessionFactory({ loadPiCodingAgent: async () => stubPi() }).create(mcpLaunch), /mcp__srv__echo\) need a Pi version with built-in MCP/);
 	});
 });

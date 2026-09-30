@@ -21,7 +21,7 @@ export function formatChildToolDiagnostic(diagnostic: ChildToolDiagnostic, optio
 			...(diagnostic.missingMcpDirectTools?.length
 				? [`MCP direct tools missing from the child registry: ${diagnostic.missingMcpDirectTools.join(", ")}.`]
 				: []),
-			"Agents that need MCP tools (`mcpDirectTools`, or MCP tools from an ambient adapter such as pi-mcp-adapter) or models from a provider extension must run as background children (`async: true`), which load the ambient extensions.",
+			"MCP tools require background children (`async: true`) because only they load ambient extensions.",
 			"For extension tools a foreground child can load, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.",
 		].join("\n");
 	}
@@ -29,7 +29,7 @@ export function formatChildToolDiagnostic(diagnostic: ChildToolDiagnostic, optio
 		`${subject} requested unavailable child tools: ${diagnostic.missing.join(", ")}.`,
 		"The `tools` field is a strict allowlist; it does not load extension code.",
 		...(diagnostic.missingMcpDirectTools?.length
-			? [`Resolved MCP direct tools missing from the child registry: ${diagnostic.missingMcpDirectTools.join(", ")}. This indicates a host/pi-mcp-adapter registration problem, not a tool-call failure.`]
+			? [`Resolved MCP direct tools missing from the child registry: ${diagnostic.missingMcpDirectTools.join(", ")}. Resolved names must match what the host or pi-mcp-adapter registers; check the MCP direct-tool registration before treating this as a tool-call failure.`]
 			: []),
 		"For extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.",
 		"For MCP tools, verify the MCP adapter configuration and selected tool names. For builtin tools, verify the name against the installed Pi version.",

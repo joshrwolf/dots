@@ -22,7 +22,9 @@ import {
 import { sanitizeDisplayText, truncateDisplayText } from "../shared/display-text.ts";
 import { readStatus } from "../shared/utils.ts";
 import { SubagentParams } from "./schemas.ts";
+import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
 import { normalizePublicSubagentExecution } from "./public-execution.ts";
+import { collectSubagentCost, SUBAGENT_COST_REPORT_VERSION } from "../slash/subagent-cost.ts";
 import { ASYNC_STATUS_SNAPSHOT_KIND, ASYNC_STATUS_SNAPSHOT_VERSION, buildAsyncStatusSnapshotForState } from "../runs/background/async-status-snapshot.ts";
 import { isStoppableAsyncStatusStep, resolveAsyncStatusChild, stopStoppableAsyncStatusChildren, type ResolvedAsyncStatusChild } from "../runs/shared/child-identity.ts";
 
@@ -31,7 +33,7 @@ export const SUBAGENT_RPC_REQUEST_EVENT = "subagents:rpc:v1:request";
 export const SUBAGENT_RPC_READY_EVENT = "subagents:rpc:v1:ready";
 export const SUBAGENT_RPC_REPLY_EVENT_PREFIX = "subagents:rpc:v1:reply:";
 
-export const SUBAGENT_RPC_METHODS = ["ping", "status", "manage", "spawn", "steer", "interrupt", "stop", "resume"] as const;
+export const SUBAGENT_RPC_METHODS = ["ping", "status", "manage", "spawn", "steer", "interrupt", "stop", "resume", "cost"] as const;
 export type SubagentRpcMethod = typeof SUBAGENT_RPC_METHODS[number];
 
 export interface SubagentRpcRequestEnvelope {
@@ -317,6 +319,11 @@ interface RegisterSubagentRpcBridgeOptions {
 	now?: () => number;
 	/** Native live state, projected into the optional public fleet-status capability. */
 	state?: SubagentState;
+	disabledFeatures?: DisabledFeatureSurface;
+}
+
+function enabledManagementActions(options: RegisterSubagentRpcBridgeOptions): string[] {
+	return SUBAGENT_RPC_MANAGEMENT_ACTIONS.filter((action) => !options.disabledFeatures?.actions.has(action));
 }
 
 class SubagentRpcError extends Error {
@@ -437,14 +444,14 @@ function sessionData(ctx: ExtensionContext | null): { cwd?: string; sessionId?: 
 	};
 }
 
-function pingData(ctx: ExtensionContext | null) {
+function pingData(ctx: ExtensionContext | null, options: RegisterSubagentRpcBridgeOptions) {
 	return {
 		version: SUBAGENT_RPC_PROTOCOL_VERSION,
 		methods: [...SUBAGENT_RPC_METHODS],
 		capabilities: {
 			status: true,
 			statusProjection: { version: 1, untargeted: "in-memory-when-ready", targeted: "executor" },
-			managementActions: [...SUBAGENT_RPC_MANAGEMENT_ACTIONS],
+			managementActions: enabledManagementActions(options),
 			fleetStatus: { version: 1 },
 			asyncStatusSnapshot: { kind: ASYNC_STATUS_SNAPSHOT_KIND, version: ASYNC_STATUS_SNAPSHOT_VERSION },
 			asyncSpawn: true,
@@ -456,6 +463,7 @@ function pingData(ctx: ExtensionContext | null) {
 			launchResolvedExtensions: { version: 1, source: "launch-resolved" },
 			runtimeAcknowledgedExtensions: { version: 1, source: "child-runtime", event: "subagent:acknowledge-extension" },
 			processTerminalProof: { version: 1, lifecycleArtifactVersion: SUBAGENT_LIFECYCLE_ARTIFACT_VERSION },
+			cost: { version: SUBAGENT_COST_REPORT_VERSION },
 		},
 		events: {
 			ready: SUBAGENT_RPC_READY_EVENT,
@@ -483,12 +491,13 @@ async function executeChecked(
 	return dataFromToolResult(result);
 }
 
-function manageParams(params: unknown): SubagentParamsLike {
+function manageParams(params: unknown, options: RegisterSubagentRpcBridgeOptions): SubagentParamsLike {
 	const input = assertRecordParams(params, "manage");
 	if (typeof input.action !== "string" || !(SUBAGENT_RPC_MANAGEMENT_ACTIONS as readonly string[]).includes(input.action)) {
+		const enabled = enabledManagementActions(options);
 		throw new SubagentRpcError(
 			"invalid_params",
-			`RPC manage action must be one of: ${SUBAGENT_RPC_MANAGEMENT_ACTIONS.join(", ")}.`,
+			enabled.length > 0 ? `RPC manage action must be one of: ${enabled.join(", ")}.` : "RPC manage actions are all disabled by config.",
 		);
 	}
 	if (input.id !== undefined && (typeof input.id !== "string" || !input.id.trim())) {
@@ -512,7 +521,16 @@ function manageParams(params: unknown): SubagentParamsLike {
 }
 
 function spawnParams(params: unknown): SubagentParamsLike {
-	const input = assertRecordParams(params, "spawn");
+	const { script, ...input } = assertRecordParams(params, "spawn");
+	if (Object.hasOwn(input, "workflowScript")) throw new SubagentRpcError("invalid_params", "RPC spawn workflowScript was removed; pass inline script text as script.");
+	if (Object.hasOwn(input, "workflowScriptPath")) throw new SubagentRpcError("invalid_params", "RPC spawn workflowScriptPath was removed; pass the file as workflow: \"./path/to/script.js\".");
+	if (input.workflow === true) throw new SubagentRpcError("invalid_params", "RPC spawn has no reply block for workflow: true; pass inline script text as script or a file as workflow: \"./path/to/script.js\".");
+	if (script !== undefined) {
+		if (typeof script !== "string" || !script.trim()) throw new SubagentRpcError("invalid_params", "RPC spawn script must be a non-empty string.");
+		if (input.workflow !== undefined) throw new SubagentRpcError("invalid_params", "RPC spawn script cannot be combined with workflow.");
+		// The executor's internal carrier; the model-facing tool cannot set it.
+		input.workflowScript = script;
+	}
 	const normalized = normalizePublicSubagentExecution(input);
 	if (!normalized.ok) throw new SubagentRpcError("invalid_params", normalized.error);
 	if (normalized.params.action !== undefined) {
@@ -706,11 +724,11 @@ async function handleRequest(
 	fleetKeys: FleetKeyState,
 ): Promise<unknown> {
 	const ctx = options.getContext();
-	if (request.method === "ping") return pingData(ctx);
+	if (request.method === "ping") return pingData(ctx, options);
 	if (!ctx) throw new SubagentRpcError("no_active_session", "No active extension context for subagent RPC.");
 
 	if (request.method === "manage") {
-		return executeChecked(options, ctx, request.requestId, request.method, manageParams(request.params));
+		return executeChecked(options, ctx, request.requestId, request.method, manageParams(request.params, options));
 	}
 	if (request.method === "spawn") {
 		return executeChecked(options, ctx, request.requestId, request.method, spawnParams(request.params));
@@ -764,6 +782,13 @@ async function handleRequest(
 	}
 	if (request.method === "resume") {
 		return executeChecked(options, ctx, request.requestId, request.method, resumeParams(request.params));
+	}
+	if (request.method === "cost") {
+		// The same parent-plus-child accounting `/subagent-cost` renders, as data.
+		// Read-only: it walks the current session branch and existing artifacts,
+		// so callers should request it on their own turn boundaries, not on a timer.
+		if (request.params !== undefined && !isRecord(request.params)) throw new SubagentRpcError("invalid_params", "RPC cost params must be an object when provided.");
+		return collectSubagentCost(ctx, options.state ?? { baseCwd: ctx.cwd });
 	}
 	throw new SubagentRpcError("unsupported_method", `Unsupported subagent RPC method: ${String(request.method)}`);
 }
@@ -839,7 +864,7 @@ export function registerSubagentRpcBridge(options: RegisterSubagentRpcBridgeOpti
 
 	return {
 		emitReady: (ctx) => {
-			options.events.emit(SUBAGENT_RPC_READY_EVENT, pingData(ctx ?? options.getContext()));
+			options.events.emit(SUBAGENT_RPC_READY_EVENT, pingData(ctx ?? options.getContext(), options));
 		},
 		dispose: () => {
 			if (typeof unsubscribe === "function") unsubscribe();

@@ -6,21 +6,38 @@ on:
   pull_request:
     branches: [main]
 
+# A new push to a PR branch supersedes its running checks. Other runs get a unique group,
+# because a shared group would queue main runs and drop all but the newest pending one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: test (${{ matrix.label }})
     strategy:
       matrix:
+        # Windows keeps two files at a time per runner (#2207); shards add parallelism across runners instead.
         include:
           - os: ubuntu-latest
-            label: ubuntu
-            testArgs: ""
+            label: ubuntu-1
+            testArgs: --test-shard=1/2
+            typecheck: true
+          - os: ubuntu-latest
+            label: ubuntu-2
+            testArgs: --test-shard=2/2
           - os: windows-latest
             label: windows-1
-            testArgs: --test-concurrency=2 --test-shard=1/2
+            testArgs: --test-concurrency=2 --test-shard=1/4
           - os: windows-latest
             label: windows-2
-            testArgs: --test-concurrency=2 --test-shard=2/2
+            testArgs: --test-concurrency=2 --test-shard=2/4
+          - os: windows-latest
+            label: windows-3
+            testArgs: --test-concurrency=2 --test-shard=3/4
+          - os: windows-latest
+            label: windows-4
+            testArgs: --test-concurrency=2 --test-shard=4/4
       fail-fast: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -32,7 +49,11 @@ jobs:
       - name: Install devDependencies
         run: npm ci --ignore-scripts
       - name: Typecheck
+        if: matrix.typecheck
         run: npm run typecheck
+      - name: Native tool activation schema budgets
+        if: matrix.typecheck
+        run: npm run test:smoke:tool-activation
       - name: Unit tests
         run: node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test ${{ matrix.testArgs }} test/unit/*.test.ts
       - name: Integration tests

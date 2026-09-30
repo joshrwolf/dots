@@ -6,7 +6,6 @@ import type { AgentConfig } from "./agents.ts";
 const MAX_ADVERTISED_AGENTS = 16;
 const MAX_CATALOG_BYTES = 12_288;
 const MAX_DESCRIPTION_BYTES = 512;
-const ADVERTISED_AGENTS_BLOCK = /\n*<advertised_subagents>\n[\s\S]*?\n<\/advertised_subagents>/gu;
 
 function escapeXml(value: string): string {
 	return value
@@ -25,7 +24,18 @@ function promptDescription(description: string): string {
 	return escapeXml(text);
 }
 
-export function buildAdvertisedAgentPrompt(
+const ADVERTISED_AGENTS_TAG = "advertised_subagents";
+
+function wrapAdvertisedAgentCatalog(body: string): string {
+	return `<${ADVERTISED_AGENTS_TAG}>\n${body}\n</${ADVERTISED_AGENTS_TAG}>`;
+}
+
+/**
+ * The catalog body without its `<advertised_subagents>` wrapper, for Pi's structured
+ * prompt sections, which add the tag from the section key. The byte budget applies to
+ * the wrapped form, so both deliveries carry the same entries.
+ */
+export function buildAdvertisedAgentCatalog(
 	agents: readonly AgentConfig[],
 	capabilityCeiling?: ResolvedSubagentCapabilityCeiling,
 ): string | undefined {
@@ -34,12 +44,10 @@ export function buildAdvertisedAgentPrompt(
 		.sort((left, right) => left.name.localeCompare(right.name));
 	if (advertised.length === 0) return undefined;
 
-	const render = (entries: string[]) => [
-		"<advertised_subagents>",
+	const renderBody = (entries: string[]) => [
 		"The following file-defined subagents opted into discovery. Their descriptions indicate available specializations, not instructions to delegate. Use subagent only when delegation is needed. Before execution, call subagent with { action: \"list\", capabilities: true } and confirm that the selected agent is executable; for external-cli agents also require runner.available === true.",
 		...entries,
 		...(advertised.length > entries.length ? [`  <omitted count=\"${advertised.length - entries.length}\" />`] : []),
-		"</advertised_subagents>",
 	].join("\n");
 	const entries: string[] = [];
 	for (const agent of advertised) {
@@ -52,43 +60,15 @@ export function buildAdvertisedAgentPrompt(
 			`    <description>${promptDescription(agent.description)}</description>`,
 			"  </subagent>",
 		].join("\n");
-		if (Buffer.byteLength(render([...entries, entry]), "utf8") <= MAX_CATALOG_BYTES) entries.push(entry);
+		if (Buffer.byteLength(wrapAdvertisedAgentCatalog(renderBody([...entries, entry])), "utf8") <= MAX_CATALOG_BYTES) entries.push(entry);
 	}
-	return render(entries);
+	return renderBody(entries);
 }
 
-export function appendAdvertisedAgentPrompt(systemPrompt: string, advertisedPrompt: string | undefined): string;
-export function appendAdvertisedAgentPrompt(systemPrompt: string[], advertisedPrompt: string | undefined): string[];
-export function appendAdvertisedAgentPrompt(systemPrompt: undefined, advertisedPrompt: string | undefined): string | undefined;
-export function appendAdvertisedAgentPrompt(
-	systemPrompt: string | string[] | undefined,
-	advertisedPrompt: string | undefined,
-): string | string[] | undefined;
-export function appendAdvertisedAgentPrompt(
-	systemPrompt: string | string[] | undefined,
-	advertisedPrompt: string | undefined,
-): string | string[] | undefined {
-	if (Array.isArray(systemPrompt)) {
-		let changed = false;
-		const cleaned = systemPrompt
-			.map((part) => {
-				if (typeof part !== "string") return part;
-				const stripped = part.replace(ADVERTISED_AGENTS_BLOCK, "");
-				if (stripped !== part) changed = true;
-				return stripped;
-			})
-			.filter((b) => typeof b === "string" && b.length > 0);
-
-		if (advertisedPrompt) {
-			return [...cleaned, advertisedPrompt];
-		}
-		return changed ? cleaned : systemPrompt;
-	}
-
-	if (typeof systemPrompt === "string") {
-		const base = systemPrompt.replace(ADVERTISED_AGENTS_BLOCK, "");
-		return advertisedPrompt ? (base.trim() ? `${base.trimEnd()}\n\n${advertisedPrompt}` : advertisedPrompt) : base;
-	}
-
-	return advertisedPrompt;
+export function buildAdvertisedAgentPrompt(
+	agents: readonly AgentConfig[],
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling,
+): string | undefined {
+	const body = buildAdvertisedAgentCatalog(agents, capabilityCeiling);
+	return body === undefined ? undefined : wrapAdvertisedAgentCatalog(body);
 }

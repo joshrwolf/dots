@@ -306,6 +306,18 @@ Package skill content.
 		assert.deepEqual(loadConfig(), {});
 	});
 
+	it("fails config load for invalid disabled features instead of falling back to defaults", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ disabledFeatures: ["watchdogs"] }));
+		assert.throws(() => loadConfig(), /config\.disabledFeatures entry "watchdogs" is not one of:/);
+	});
+
+	it("fails config load for invalid scheduledRuns because it controls the tool schema", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		writeFile(configPath, JSON.stringify({ scheduledRuns: { enabled: "false" } }));
+		assert.throws(() => loadConfig(), /config\.scheduledRuns\.enabled must be a boolean/);
+	});
+
 	it("loads exact model response aliases and preserves them during config updates", () => {
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		const modelResponseAliases = {

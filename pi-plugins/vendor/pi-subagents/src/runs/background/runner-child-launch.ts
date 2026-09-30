@@ -18,6 +18,7 @@ export interface RunnerChildLaunchContext {
 	runFanoutBudget?: BuildInProcessChildLaunchInput["runFanoutBudget"];
 	capabilityCeiling?: BuildInProcessChildLaunchInput["capabilityCeiling"];
 	inheritedChildRuntime?: InheritedChildRuntime;
+	projectTrusted?: boolean;
 }
 
 export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChildLaunchContext, attempt: {
@@ -58,10 +59,12 @@ export function buildRunnerChildLaunch(step: RunnerSubagentStep, ctx: RunnerChil
 		systemPrompt: acceptancePrompt ? `${step.systemPrompt ?? ""}\n${acceptancePrompt}` : step.systemPrompt ?? "",
 		systemPromptMode: step.systemPromptMode,
 		mcpDirectTools: step.mcpDirectTools,
+		builtinMcpTools: step.builtinMcpTools,
 		extensionBindings: normalizeExtensionBindings(step.extensionBindings)?.value,
 		capabilityCeiling: step.capabilityCeiling ?? ctx.capabilityCeiling,
 		cwd: step.cwd ?? ctx.cwd,
 		intercomSessionName: ctx.childIntercomTarget,
+		projectTrusted: ctx.projectTrusted,
 		sessionName: attempt.sessionName,
 		orchestratorIntercomTarget: ctx.orchestratorIntercomTarget,
 		runId: ctx.id,

@@ -48,6 +48,20 @@ export interface SubagentDelegationStarted {
 	nodeId: string;
 }
 
+/**
+ * Cumulative usage for one attempt at one observation time. This snapshot is
+ * emitted only when every counter is known, finite, and non-negative. It does
+ * not combine retries or replace authoritative terminal usage; absence means
+ * unavailable, not zero. UPDATE `tokens` keeps its input-plus-output meaning.
+ */
+export interface SubagentDelegationUpdateUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	turns: number;
+}
+
 export interface SubagentDelegationUpdate extends SubagentDelegationStarted {
 	runId?: string;
 	currentTool?: string;
@@ -59,6 +73,7 @@ export interface SubagentDelegationUpdate extends SubagentDelegationStarted {
 	toolCount?: number;
 	durationMs?: number;
 	tokens?: number;
+	usage?: SubagentDelegationUpdateUsage;
 }
 
 export type SubagentDelegationStatus =

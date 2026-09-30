@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { findConfiguredProjectRoot } from "../../agents/agents.ts";
 import { getAgentDir, getConfigDirName, getProjectConfigDir } from "../../shared/utils.ts";
+import type { McpToolPrefix } from "./mcp-direct-tool-grant.ts";
 
 const PACKAGE_CONFIG_ROOT = "npm";
 const PACKAGE_GIT_ROOT = "git";
@@ -32,11 +33,14 @@ export interface McpServerDefinition {
 	exposeResources?: boolean;
 	includeTools?: string[];
 	excludeTools?: string[];
+	/** Per-server override of the global `settings.toolPrefix`, matching the adapter. */
+	toolPrefix?: McpToolPrefix;
 	protocolVersion?: string;
 	directTools?: boolean | string[];
 	httpTransport?: string;
 	pluginDataDir?: string;
 	literalEnv?: boolean;
+	inheritEnv?: boolean;
 }
 
 export function isMcpServerDefinition(value: unknown): value is McpServerDefinition {
@@ -50,7 +54,7 @@ export function isMcpServerDefinition(value: unknown): value is McpServerDefinit
 	for (const field of ["env", "headers"] as const) {
 		if (value[field] !== undefined && !isStringRecord(value[field])) return false;
 	}
-	for (const field of ["exposeResources", "literalEnv"] as const) {
+	for (const field of ["exposeResources", "literalEnv", "inheritEnv"] as const) {
 		if (value[field] !== undefined && typeof value[field] !== "boolean") return false;
 	}
 	if (value.requestHeadersCommand !== undefined && !isRequestHeadersCommand(value.requestHeadersCommand)) return false;

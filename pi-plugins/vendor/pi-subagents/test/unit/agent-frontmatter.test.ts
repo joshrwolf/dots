@@ -684,16 +684,14 @@ Do work
 		assert.equal(worker?.defaultContext, "fork");
 	});
 
-	it("loads packaged worker and oracle with fork defaultContext and advisor alias", () => {
+	it("loads packaged worker fresh and oracle forked with advisor alias", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-default-context-"));
 		tempDirs.push(dir);
 		const agents = discoverAgentsAll(dir).builtin;
 
-		for (const name of ["worker", "oracle"]) {
-			const agent = agents.find((candidate) => candidate.name === name);
-			assert.equal(agent?.defaultContext, "fork", `${name} should default to fork context`);
-		}
+		assert.equal(agents.find((candidate) => candidate.name === "worker")?.defaultContext, "fresh");
 		const oracle = agents.find((candidate) => candidate.name === "oracle");
+		assert.equal(oracle?.defaultContext, "fork");
 		assert.deepEqual(oracle?.aliases, ["advisor"]);
 		assert.doesNotMatch(oracle?.tools?.join(",") ?? "", /contact_supervisor/);
 		for (const name of ["scout", "researcher", "oracle", "reviewer"]) {
@@ -1271,6 +1269,8 @@ Agent prompt
 				},
 			},
 		});
+		// Mark this fixture as the project root, even when /tmp is a project.
+		fs.mkdirSync(path.join(dir, ".pi"));
 		writeAgent(path.join(dir, "root-agent.md"), `---
 name: root-agent
 description: Root package agent
@@ -1766,7 +1766,7 @@ Do work
 		assert.equal(worker?.extraFields?.fast, undefined);
 	});
 
-	it("adds the fast extension only for allowlisted native models", () => {
+	it("adds the fast extension only for native OpenAI-Codex models", () => {
 		const launch = {
 			host: "parent" as const,
 			cwd: process.cwd(),
@@ -1778,11 +1778,12 @@ Do work
 			childIndex: 0,
 			fast: true,
 		};
-		const allowed = buildInProcessChildLaunch({ ...launch, model: "openai-codex/gpt-5.6-luna:low" });
+		const allowed = buildInProcessChildLaunch({ ...launch, model: "openai-codex/gpt-6-sol:low" });
 
 		assert.ok(allowed.toolPlan.runtimeExtensions.some((extensionPath) => extensionPath.endsWith("fast-mode-extension.ts")));
 		assert.deepEqual(allowed.session.hooks.map((hook) => hook.name), ["pi-subagents:prompt-runtime", "pi-subagents:fast-mode"]);
 		assert.throws(() => buildInProcessChildLaunch({ ...launch, model: "anthropic/claude-sonnet-4" }), /fast mode supports only/);
+		assert.throws(() => buildInProcessChildLaunch({ ...launch, model: "openai/gpt-6-sol" }), /fast mode supports only/);
 	});
 });
 
