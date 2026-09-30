@@ -12,8 +12,9 @@ my-tool/
 └── go.mod
 ```
 
-A root main package is sufficient for a small command. Split files or extract
-packages when that improves cohesion, reuse, or testing; no fixed file count applies.
+A root main package is sufficient for a small command. Extend existing files that
+own the behavior. Split files or extract packages for distinct responsibilities or
+technical constraints; file size and file count alone do not establish a problem.
 
 ## Multiple commands
 

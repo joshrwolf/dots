@@ -63,6 +63,13 @@ Package names conventionally use concise lowercase words; they need not be singu
 
 Preserve existing layout unless restructuring is requested. A small command can have a root `main` package; use `cmd/<name>` when separating binaries is useful. Keep entrypoints focused and extract substantial reusable or testable logic as needed. Prefer `internal/` for implementation packages not intended for external import. Public packages need no `pkg/` wrapper.
 
+Within a package, extend the file that already owns the behavior. Keep related
+types and operations together. A new file needs a distinct logical responsibility
+or a technical reason, such as build constraints or generated code boundaries.
+File size alone is not a smell, and adding a feature, helper, or type does not by
+itself justify another file. Follow established boundaries instead of creating
+small parallel files merely to avoid editing existing code.
+
 See [directory layout examples](references/directory-layouts.md) for universal, small project, and library layouts, plus common mistakes.
 
 ## Essential Configuration Files
@@ -77,7 +84,7 @@ For application configuration with Cobra + Viper, see [config reference](referen
 
 ## Tests, Benchmarks, and Examples
 
-Co-locate `_test.go` files with the code they test. Use `testdata/` for fixtures. See [testing layout](references/testing-layout.md) for file naming, placement, and organization details.
+Co-locate tests with the code they test and extend the corresponding existing `_test.go` file. `golang-testing` owns test-file naming and justified separation; a large file alone does not justify a split. Use `testdata/` for fixtures. See [testing layout](references/testing-layout.md) for placement and test-package choices.
 
 ## Go Workspaces
 

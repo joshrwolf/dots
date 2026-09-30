@@ -566,5 +566,30 @@
         "text": "Does not change visibility, field names, or ownership merely to enforce a default style rule."
       }
     ]
+  },
+  {
+    "id": 25,
+    "name": "cohesive-operation-and-useful-helper",
+    "description": "Distinguishes extraction that hides complexity behind a contract from extraction that only relocates sequential logic.",
+    "prompt": "Review this proposed refactor in a Go package. Import reads a manifest, validates its entries, collects duplicate names, creates records, and reports the result in one 90-line method with early returns. A patch moves each stage into a single-use helper, passing the same local maps and buffers through all five; understanding ordering and error behavior still requires reading every helper. The patch also extracts a separate 25-line checksum algorithm into verifyChecksum(data []byte, expected string) error, used once. Recommend which changes to keep and explain why.",
+    "trap": "Approves every extraction because the caller becomes short, or rejects every single-use helper indiscriminately.",
+    "assertions": [
+      {
+        "id": "25.1",
+        "text": "Keeps the cohesive import sequence together when its helper chain merely relocates logic and requires reading every body."
+      },
+      {
+        "id": "25.2",
+        "text": "Allows the checksum helper when its contract encapsulates the algorithm and error semantics independently of its caller."
+      },
+      {
+        "id": "25.3",
+        "text": "Does not use a function-length or parameter-count threshold as sufficient justification for extraction."
+      },
+      {
+        "id": "25.4",
+        "text": "Applies the same reasoning to free functions and receiver methods instead of proposing a method chain as the solution."
+      }
+    ]
   }
 ]

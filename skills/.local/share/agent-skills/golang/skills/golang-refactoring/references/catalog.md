@@ -22,8 +22,8 @@ Each entry below follows the same structure: **Motivation** (why the refactoring
 
 ## Extract Function / Extract Method
 
-- **Motivation:** A function doing more than one job is harder to name, test, and reuse than two functions each doing one job — splitting it restores a name for the piece that was previously anonymous.
-- **Smell trigger:** Long Function — a function whose body mixes several levels of abstraction, or where a comment introduces a block that could instead be the function's name.
+- **Motivation:** Extract a step when its contract lets callers understand it without reading its implementation. Reuse, encapsulated complexity, or a separate resource lifetime can justify extraction even with one caller. Follow `golang-code-style` for the target shape.
+- **Smell trigger:** A distinct operation is obscured inside its caller and has a meaningful boundary. Function length or a comment introducing a step is not sufficient; keep a cohesive sequence together when extraction would only relocate the logic into a chain of helpers or methods.
 - **Go mechanics:** Select the statements to extract; the tool infers the parameter list from free variables and the return list from variables used after the extracted block. For a method, it additionally infers the receiver.
 - **Tool:**
 
@@ -113,7 +113,7 @@ eg -t template.go -w ./...   # staged migration for adding/generalizing a parame
 - **Go mechanics:**
   - No one-shot gopls action moves a symbol across package boundaries yet.
   - Move the declaration, update affected imports and callers, remove the old declaration, and verify the affected packages. Do not add aliases or forwarding wrappers unless an actual compatibility contract requires them.
-  - Splitting a large file into a new file _within the same package_ is a distinct, one-shot gopls action.
+  - Moving declarations into a new file _within the same package_ is a distinct, one-shot gopls action. Use it for a justified logical or technical boundary, not merely because the source file is large.
 - **Tool:**
 
 ```
@@ -160,8 +160,8 @@ gopls codeaction -exec -w -kind=refactor.rewrite.invertIf file.go:#offset
 
 ## Introduce Parameter Object
 
-- **Motivation:** When the same group of parameters keeps showing up together across several functions, the group itself is a concept that deserves a name and a single place to add validation or a new field.
-- **Smell trigger:** Data Clumps — the same cluster of parameters (or fields) recurring together — or a Long Parameter List where several parameters are conceptually one unit.
+- **Motivation:** A related group of inputs may form a meaningful value with its own contract or validation. Repeated parameters are a clue to inspect that relationship, not sufficient justification for a struct.
+- **Smell trigger:** Several inputs form one concept whose meaning becomes clearer as a value. If a type instead owns an operation's state and behavior, use `golang-structs-interfaces` to decide its fields and methods. Keep temporary calculations local rather than turning them into fields to shorten signatures.
 - **Go mechanics:** Define a struct that holds the recurring parameter group, then change each affected function's signature to take the struct instead of the individual values. gopls has a planned "Extract parameter struct" action tracked as golang/go#65552; as of this writing it is not yet generally available. Until it lands, treat this as an Extract-Variable-style manual step (define the struct, construct it at each call site) followed by a signature change at each call site — the same staged approach as Change Function Declaration above.
 - **Tool:** No dedicated gopls action yet (golang/go#65552 tracks it). Combine manual struct extraction with the signature-change tooling above.
 - **Risk:** Medium.
@@ -171,7 +171,7 @@ gopls codeaction -exec -w -kind=refactor.rewrite.invertIf file.go:#offset
 ## Replace Conditional with Polymorphism
 
 - **Motivation:** A `switch` on a type or state constant that shows up in more than one place forces every new case to be added in lock-step at every one of those places; an interface with one implementation per case collects each case's behavior in one place instead.
-- **Smell trigger:** Repeated Switches — the same `switch` on a type tag or state value recurs at multiple call sites, and adding a new case means finding and updating every one of them.
+- **Smell trigger:** The same `switch` recurs at multiple call sites and the cases implement a meaningful shared behavioral contract. First consider whether uniform cases differ only in data, or whether explicit control flow is clearer for divergent cases; repetition alone does not require polymorphism. See `golang-design-patterns`.
 - **Go mechanics:** Define an interface with one method per behavior that currently varies by case, then give each case its own implementing type. Callers that used to switch on the tag now just call the interface method, and dispatch happens through Go's interface mechanism instead of a repeated `switch`.
 - **Tool:** Manual — no mechanical tool performs this transform; use Extract Function/Interface steps to carve out each case's behavior into its own type, then Rename/Inline to clean up the seams.
 - **Risk:** Medium.
@@ -188,37 +188,37 @@ gopls codeaction -exec -w -kind=refactor.rewrite.invertIf file.go:#offset
 
 ## Sprout Method / Wrap Method
 
-- **Motivation:** Feathers's core insight: code with no tests is code you can't safely edit in place, because there's no way to notice if you broke it. Both techniques add new behavior without touching the untested code directly, so the new behavior can be tested even when the old code still can't be.
-- **Smell trigger:** A need to add new behavior to a function or method that currently has little or no test coverage.
+- **Motivation:** These techniques can isolate a new behavior when existing dependency constraints make it difficult to test through the caller. Prefer focused tests and an in-place change when those suffice; missing coverage alone does not justify another helper or wrapper.
+- **Smell trigger:** A specific testability obstacle and a new behavior with an independently useful contract. Keep the new code with the implementation that owns it and its tests in the appropriate existing test file.
 - **Go mechanics:**
   - **Sprout Method** — write the new behavior as a brand-new, fully-tested function or method, and call it from the one call site that needs it, leaving the original code otherwise untouched.
   - **Wrap Method** — rename the original method (e.g. `Save` → `saveInternal`), then add a new method with the old name (`Save`) that calls the renamed original and adds the new behavior around it; this is a manual decorator, since Go has no built-in method-wrapping mechanism.
 - **Tool:** `gopls rename` for the rename step in Wrap Method; the new code itself is hand-written and tested like any other new function.
-- **Risk:** Low — by design, this is how Feathers's approach avoids touching untested code directly.
+- **Risk:** Depends on the integration: test the affected caller as well as the extracted behavior, including ordering, cleanup, and error propagation.
 
-→ See [safety-net.md](safety-net.md) for when low/zero coverage should push you toward this pattern instead of editing in place.
+→ See [safety-net.md](safety-net.md) for characterization tests and dependency seams.
 
 ## Replace Temp with Query
 
-- **Motivation:** A local variable computed once and reused several times hides the fact that it's a derived value — reading the variable's name doesn't tell you it's a computation, only that it's a value, which obscures where the real logic lives.
-- **Smell trigger:** A local variable assigned once from an expression and then read multiple times later in the function, where the variable's name doesn't make clear it's derived rather than an input.
+- **Motivation:** A query can expose a meaningful derived property used by several operations. A local variable often expresses a computed value more clearly and preserves when it was evaluated; keep it when it serves that purpose.
+- **Smell trigger:** The computation has an independently useful contract beyond its current caller. Reading a local value several times or wanting a shorter method does not justify extraction.
 - **Go mechanics:** Replace the variable with a call to a small unexported function or method that recomputes the same expression, then remove the variable and each of its reads becomes a call instead. Preserve evaluation count, ordering, and observed state: recomputation is unsafe for side effects, clock reads, mutable data, or expensive queries unless the changed behavior is intentional. Function-call overhead is only one part of the cost.
-- **Tool:** Manual. If the resulting function is only ever called once, gopls's inline action can fold it back at any point without losing the readability gain that motivated extracting it.
+- **Tool:** Manual. Evaluate whether the query reduces what callers must understand; inline an existing helper if it only adds navigation overhead.
 - **Risk:** Low.
 
 ## Smell → Refactoring Quick Reference
 
 | Smell | Go-specific fix |
 | --- | --- |
-| Long Function | Extract Function/Method |
-| Large/God Package | Split Package |
-| Long Parameter List | Introduce Parameter Object, or an options struct |
-| Data Clumps | Extract a struct for the recurring group |
+| Distinct operation obscured in its caller | Extract Function/Method if it has an independently useful contract |
+| Package with unrelated responsibilities | Split along meaningful boundaries; size alone is not a reason |
+| Related inputs form a meaningful value | Consider a parameter or options struct |
+| Recurring state and operations have a common owner | Consider a cohesive type; keep incidental temporaries local |
 | Primitive Obsession | Introduce a named type instead of a bare `string`/`int` |
 | Divergent Change (one package, many unrelated reasons to change) | Split Package |
 | Shotgun Surgery (one conceptual change touches many packages) | Move Function/Field to consolidate the concept into one package |
 | Feature Envy | Move Function to the package whose data it actually uses |
-| Repeated Switches | Replace Conditional with Polymorphism |
+| Repeated Switches | Consider a data table for uniform cases, explicit branches for divergent behavior, or polymorphism for a shared behavioral contract |
 | Message Chains | Hide Delegate |
 | Middle Man | Remove Middle Man |
 

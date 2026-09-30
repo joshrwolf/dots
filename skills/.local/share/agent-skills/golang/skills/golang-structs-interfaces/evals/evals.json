@@ -149,5 +149,30 @@
       {"id": "11.3", "text": "Allows intentional combinations such as value String/Marshal methods and pointer Unmarshal methods."},
       {"id": "11.4", "text": "Explains different method sets for T and *T and the effects on interface satisfaction."}
     ]
+  },
+  {
+    "id": 12,
+    "name": "operation-state-versus-temporaries",
+    "description": "Uses a short-lived concrete type for coherent parsing state without turning incidental locals into fields.",
+    "prompt": "Design the internal implementation of a Go decoder. Each Decode call has its own input, cursor, and decoding options. Object, array, and string parsing all advance that cursor, with the invariant that it always identifies the next unread byte. String parsing alone needs a temporary escape count and a scratch buffer. The current implementation passes all these values through several free functions. Show the type and method signatures you would use and explain where state belongs. The decoder is discarded after each Decode call; no cross-call buffer reuse is required.",
+    "trap": "Rejects an operation-scoped type because it is used once, or stores every temporary on the receiver to shorten signatures.",
+    "assertions": [
+      {
+        "id": "12.1",
+        "text": "Recognizes the shared input, cursor, options, and cursor invariant as a coherent owner for a concrete parsing type, even for a single Decode call."
+      },
+      {
+        "id": "12.2",
+        "text": "Keeps the string-only escape count and scratch buffer local or explicit parameters instead of promoting them to shared fields merely for convenience."
+      },
+      {
+        "id": "12.3",
+        "text": "Chooses methods for meaningful parsing operations rather than converting every procedural step into a method."
+      },
+      {
+        "id": "12.4",
+        "text": "Does not introduce a struct solely because several parameters recur or invent a longer lifetime to justify it."
+      }
+    ]
   }
 ]

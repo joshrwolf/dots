@@ -399,5 +399,30 @@
       {"id": "15.5", "text": "Considers shared mutable state between tests as a potential cause"},
       {"id": "15.6", "text": "Does NOT suggest retry logic or skipping the test as a solution"}
     ]
+  },
+  {
+    "id": 16,
+    "name": "test-file-ownership-and-real-boundaries",
+    "description": "Extends existing test files regardless of size while respecting technical separation requirements.",
+    "prompt": "A Go package has parser.go and a 2200-line parser_test.go in package parser. Add coverage for a newly fixed empty-input bug through the existing Parse API. There are no build constraints. A teammate suggests parser_empty_test.go to keep the diff separate and avoid growing the test file. Separately, the package needs a public-API test in package parser_test; all existing tests are in package parser. State where each test belongs and why.",
+    "trap": "Creates a new file for a regression because the existing file is large, or insists that different package declarations must occupy the same file.",
+    "assertions": [
+      {
+        "id": "16.1",
+        "text": "Places the empty-input regression in the corresponding existing parser_test.go, potentially extending a relevant existing test table."
+      },
+      {
+        "id": "16.2",
+        "text": "Does not treat file length, a new regression, or avoiding edits to an existing file as sufficient reasons for separation."
+      },
+      {
+        "id": "16.3",
+        "text": "Uses a separate appropriately named test file for the external parser_test package because a Go file has one package declaration."
+      },
+      {
+        "id": "16.4",
+        "text": "Recognizes distinct logical responsibilities and technical constraints as valid boundaries without imposing a maximum file size."
+      }
+    ]
   }
 ]

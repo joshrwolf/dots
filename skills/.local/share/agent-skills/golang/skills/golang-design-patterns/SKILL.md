@@ -52,6 +52,18 @@ Idiomatic Go patterns for production-ready code. For error handling details see 
 20. **A little recode > a big dependency** — each dep adds attack surface and maintenance burden
 21. **Design for testability** — accept interfaces, inject dependencies
 
+## Represent Uniform Behavior as Data
+
+When cases perform the same operations and differ mainly in values, prefer a
+table of concrete records and straightforward processing over repeated branches.
+Keep explicit control flow when the cases have different behavior. A growing set
+of callbacks, mode flags, or exceptions in the table is a reason to reconsider
+whether the cases belong in one abstraction.
+
+Choose the representation to make the operation easier to understand. See
+`golang-structs-interfaces` for types that own coherent state and invariants, and
+`golang-code-style` for keeping cohesive operations together.
+
 ## Constructor Patterns: Functional Options vs Builder
 
 ### Functional Options (Preferred)

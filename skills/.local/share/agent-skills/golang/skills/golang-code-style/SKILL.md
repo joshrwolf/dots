@@ -173,8 +173,9 @@ default:
 
 ## Function Design
 
-- Functions SHOULD be **short and focused** — one function, one job.
-- Functions SHOULD have **≤4 parameters**. Beyond that, use an options struct (see `samber/cc-skills-golang@golang-design-patterns` skill).
+- Keep a cohesive operation readable in one place. Length alone does not justify splitting a function or method.
+- Extract a helper or method when it has a meaningful contract that lets callers understand the step without reading its implementation. Reuse, encapsulated complexity, or a resource lifetime can justify a single-use helper; merely shortening its caller or naming a sequence of steps does not. Apply the same standard to receiver methods and free functions.
+- Choose parameters for the operation's actual inputs. Group related values when they form a meaningful concept, not to satisfy a parameter-count limit. See `golang-structs-interfaces` for types that own state and behavior, and `golang-design-patterns` for constructor configuration.
 - **Parameter order**: `context.Context` first, then inputs, then output destinations.
 - Naked returns help in very short functions (1-3 lines) where return values are obvious, but become confusing when readers must scroll to find what's returned — name returns explicitly in longer functions.
 
@@ -199,9 +200,8 @@ Pass small types (`string`, `int`, `bool`, `time.Time`) by value. Use pointers w
 
 ## Code Organization Within Files
 
-- **Group related declarations**: type, constructor, methods together
-- **Order**: package doc, imports, constants, types, constructors, methods, helpers
-- **One primary type per file** when it has significant methods
+- **Group related declarations**: keep a type, its constructor, methods, and closely related supporting types together so readers can follow the implementation locally.
+- **File placement**: extend the existing file that owns the behavior. A new type or helper does not automatically need a new file. Split only for a distinct logical responsibility or a technical constraint; file size alone is not a smell. See `golang-project-layout` for file boundaries and `golang-testing` for test placement.
 - **Blank imports** (`_ "pkg"`) register side effects (init functions). Restricting them to `main` and test packages makes side effects visible at the application root, not hidden in library code
 - **Dot imports** pollute the namespace and make it impossible to tell where a name comes from — never use in library code
 - **Unexport aggressively** — you can always export later; unexporting is a breaking change. → See `samber/cc-skills-golang@golang-gopls` skill to unexport safely — semantic rename checks resolved references and visible interface conversions; review dynamic assertions, reflection, and external consumers before changing visibility.

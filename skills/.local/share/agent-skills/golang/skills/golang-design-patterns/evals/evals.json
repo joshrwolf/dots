@@ -484,5 +484,30 @@
         "text": "Constructor validates input (e.g. currency is required)"
       }
     ]
+  },
+  {
+    "id": 19,
+    "name": "uniform-data-versus-divergent-behavior",
+    "description": "Chooses data tables for uniform cases while retaining direct control flow for divergent workflows.",
+    "prompt": "Review two Go implementations. First, five file categories are validated with identical logic; only extension, maximum byte count, and whether empty content is permitted differ. Second, three import modes do different work: preview produces diagnostics without writes, replace writes a new file and atomically renames it, and append locks and updates an existing file. A teammate proposes one generic rule engine for both, with callbacks and mode flags. Suggest a representation for each and explain the boundaries.",
+    "trap": "Builds a callback framework for all cases, or misses the straightforward table for cases that differ only in values.",
+    "assertions": [
+      {
+        "id": "19.1",
+        "text": "Uses concrete rule records and straightforward processing for the uniform category validations."
+      },
+      {
+        "id": "19.2",
+        "text": "Keeps divergent import workflows explicit rather than forcing them into one table with callbacks and exceptions."
+      },
+      {
+        "id": "19.3",
+        "text": "Preserves the distinct write, lock, rename, and diagnostic semantics of the import modes."
+      },
+      {
+        "id": "19.4",
+        "text": "Does not introduce a generic rule engine or interface hierarchy solely to make the implementations look uniform."
+      }
+    ]
   }
 ]

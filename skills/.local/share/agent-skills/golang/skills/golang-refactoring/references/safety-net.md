@@ -56,7 +56,7 @@ report := NewReport(func(ctx context.Context, query string, args ...any) rowScan
 // A test supplies its own rowScanner implementation through queryRow.
 ```
 
-→ See `samber/cc-skills-golang@golang-design-patterns` skill for constructor and dependency-injection patterns this move builds on, and [catalog.md](catalog.md) in this skill for the Sprout/Wrap mechanics that typically pair with a freshly introduced seam.
+→ See `samber/cc-skills-golang@golang-design-patterns` for constructor and dependency-injection patterns. [catalog.md](catalog.md) describes optional Sprout/Wrap techniques when a specific testability obstacle justifies them; adding a seam does not itself require another helper or wrapper.
 
 ## Verification Command Reference
 

@@ -23,6 +23,24 @@ paths:
 
 # Go Structs & Interfaces
 
+## Cohesive State and Behavior
+
+Use a concrete type when it gives related state, dependencies, and operations a
+clear owner and preserves meaningful invariants. It may represent a single
+operation, such as a parser invocation, or a longer-lived component. Its lifetime
+alone neither requires nor rules out a struct.
+
+Fields should represent the type's coherent state and dependencies. Keep temporary
+calculations local or pass them explicitly unless they belong to shared state
+across its operations. For example, a parser can own its input and cursor while a
+count or buffer used by one parsing step remains local. Grouping repeated
+parameters or moving helper functions onto a receiver is not sufficient
+justification for a type.
+
+Methods should expose meaningful operations over that state. Use the extraction
+guidance in `golang-code-style`: a chain of single-use methods can impose the same
+navigation cost as a chain of free functions.
+
 ## Interface Design Principles
 
 ### Keep Interfaces Small

@@ -18,7 +18,7 @@
     "name": "cmd-directory-minimal-logic",
     "description": "Tests whether the model keeps cmd/ main.go minimal with no business logic",
     "prompt": "I'm organizing a Go project with an HTTP server. Here's my cmd/server/main.go that has 200 lines including request parsing, database queries, and response formatting. Is this OK?",
-    "trap": "Without the skill, the model may accept the large main.go or only suggest minor improvements. Substantial reusable logic can move into focused internal packages; cmd packages may contain multiple files and tests.",
+    "trap": "Treats 200 lines alone as a reason to split. Evaluate whether application logic has a distinct responsibility from startup wiring; cmd packages may contain multiple files and tests.",
     "assertions": [
       {"id": "2.1", "text": "Says business logic does NOT belong in cmd/server/main.go"},
       {"id": "2.2", "text": "Says cmd/ should contain minimal logic: parse flags, wire dependencies, call Run()"},

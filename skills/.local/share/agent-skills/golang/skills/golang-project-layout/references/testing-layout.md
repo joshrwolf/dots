@@ -51,6 +51,9 @@ pkg/
 - Tests live in the same directory, in either the package or its external `_test` package
 - Test files are in the **same directory** as the code they test
 - Use `_test.go` suffix for all test files
+- Extend the corresponding existing test file. Follow `golang-testing` for naming
+  and separation: new files need a distinct logical responsibility or technical
+  constraint; file size or a new regression test alone is not sufficient.
 
 ## Test Package Options
 

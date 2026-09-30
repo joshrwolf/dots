@@ -38,7 +38,7 @@ This skill guides the creation of production-ready tests for Go applications. Fo
 9. Keep ordinary test runs independent of unavailable external services
 10. Run tests with race detection in CI
 11. Include examples as executable documentation
-12. Test files MUST be named after the source file under test, not after the function or method being tested
+12. Extend the corresponding source file's `_test.go` file; separate tests only for a distinct logical responsibility or technical constraint, not file size or a newly added test
 13. Test functions SHOULD appear in the same order as the functions/methods they test in the source file
 
 ## Test Structure and Organization
@@ -63,7 +63,13 @@ helloworld.go       -> helloworld_test.go   // contains TestHelloWorld, TestAbcd
 helloworld.go       -> abcd_test.go         // wrong: should be helloworld_test.go
 ```
 
-Exception: very large source files MAY be split into multiple `_test.go` files by concern (e.g. `foo_test.go` + `foo_edgecases_test.go`), but each split file's name MUST still be derived from the source file name, never from an individual function name. Prefer keeping a single `_test.go` file per source file even when it grows large — splitting adds navigation overhead and is rarely worth it; reach for the exception only when a single file becomes genuinely unwieldy to browse or review.
+Add tests to the corresponding existing test file. A new regression or edge case
+for `foo.go` belongs in `foo_test.go`; do not create `foo_regression_test.go` or a
+file for one test merely to avoid editing it. File size alone does not justify
+separation. Use separate files only for a distinct logical responsibility or a
+technical constraint, such as different build tags or same-package versus external
+test-package declarations. Follow established suite boundaries and name any
+justified separate file for its responsibility, not the change that introduced it.
 
 Within a test file, order test functions to match the order their tested functions/methods appear in the source file. A reader (human or agent) scrolling `foo.go` alongside `foo_test.go` can then find the matching test by position instead of searching; drift between the two orderings compounds every time either file grows.
 

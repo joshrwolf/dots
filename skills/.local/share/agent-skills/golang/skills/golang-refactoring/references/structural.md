@@ -100,7 +100,7 @@ order/
 
 ### Splitting a god package
 
-- Before reaching for a full package split, gopls's `refactor.extract.toNewFile` code action handles the lighter-weight case: moving a top-level declaration to a new file in the _same_ package, which is often enough to make a bloated package navigable without touching its import graph at all.
+- When a distinct responsibility or technical constraint justifies a file boundary without a package boundary, gopls's `refactor.extract.toNewFile` can move top-level declarations within the same package. Keep related declarations together; file or package size alone does not justify splitting them.
 - gopls also has an experimental `source.splitPackage` code action that opens a browser visualization of package components and their dependencies. It does not rewrite files; use the graph to plan boundaries and then perform the moves explicitly. See the [official web features reference](https://go.dev/gopls/features/web#sourcesplitpackage-split-package-into-components).
 
 ## Moving Types Across Packages
