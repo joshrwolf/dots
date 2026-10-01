@@ -6,9 +6,13 @@ import {
 	type WorkflowResourcePermit,
 } from "../shared/workflow-child-permit.ts";
 import type { WorkflowResourceProvenance } from "../shared/types.ts";
+import { buildStructuredWorkflowScript, isPlainRecord } from "./structured-workflow-scripts.ts";
 
 const RESOURCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const MAX_ARGS_BYTES = 16 * 1024;
+export const MAX_ARGS_BYTES = 16 * 1024;
+export const MAX_ARGS_FIELDS = 16;
+export const MAX_ARGS_ITEMS = 64;
+export const MAX_ARGS_DEPTH = 8;
 const MAX_STRING_BYTES = 16 * 1024;
 
 export interface ResolvedWorkflowResource {
@@ -65,7 +69,7 @@ export function registerWorkflowResource(input: RegisterWorkflowResourceInput): 
 	if (typeof name !== "string" || !RESOURCE_NAME_PATTERN.test(name)) throw new Error("Workflow definition requires a safe resource name.");
 	if (!Number.isSafeInteger(version) || version < 1) throw new Error("Workflow definition version must be a positive safe integer.");
 	if (typeof resolve !== "function") throw new Error("Workflow definition requires a synchronous resolve function.");
-	if (findWorkflowResource(name)) throw new Error(`Workflow resource '${name}' is a protected builtin.`);
+	if (findWorkflowResource(name) || STRUCTURED_WORKFLOW_RESOURCE_NAMES.includes(name)) throw new Error(`Workflow resource '${name}' is a protected builtin.`);
 	const current = registry();
 	const bucket = current.bySession.get(sessionId) ?? new Map<string, WorkflowResourceDefinition>();
 	if (!(bucket instanceof Map)) throw new Error("Malformed workflow resource session registry.");
@@ -84,12 +88,6 @@ export function registerWorkflowResource(input: RegisterWorkflowResourceInput): 
 	};
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-	const prototype = Object.getPrototypeOf(value);
-	return prototype === Object.prototype || prototype === null;
-}
-
 function jsonByteLength(value: unknown): number {
 	try {
 		const encoded = JSON.stringify(value);
@@ -101,7 +99,7 @@ function jsonByteLength(value: unknown): number {
 }
 
 function validatePlainJson(value: unknown, path: string, depth = 0): void {
-	if (depth > 8) throw new Error(`${path} is too deeply nested.`);
+	if (depth > MAX_ARGS_DEPTH) throw new Error(`${path} is too deeply nested.`);
 	if (value === null || typeof value === "boolean") return;
 	if (typeof value === "string") {
 		if (!value.trim()) throw new Error(`${path} must not be empty.`);
@@ -113,12 +111,12 @@ function validatePlainJson(value: unknown, path: string, depth = 0): void {
 		return;
 	}
 	if (Array.isArray(value)) {
-		if (value.length > 64) throw new Error(`${path} contains too many items.`);
+		if (value.length > MAX_ARGS_ITEMS) throw new Error(`${path} contains too many items.`);
 		for (const [index, entry] of value.entries()) validatePlainJson(entry, `${path}[${index}]`, depth + 1);
 		return;
 	}
 	if (!isPlainRecord(value)) throw new Error(`${path} must contain plain JSON data.`);
-	if (Object.keys(value).length > 16) throw new Error(`${path} contains too many fields.`);
+	if (Object.keys(value).length > MAX_ARGS_FIELDS) throw new Error(`${path} contains too many fields.`);
 	for (const [key, entry] of Object.entries(value)) {
 		if (!key.trim()) throw new Error(`${path} contains an empty field name.`);
 		validatePlainJson(entry, `${path}.${key}`, depth + 1);
@@ -186,6 +184,32 @@ function listWorkflowResourceNames(): string[] {
 	return WORKFLOW_RESOURCES.map((resource) => resource.name);
 }
 
+/** Internal resources for the data-only tasks/chain inputs: reserved against registration, never resolvable or listed by name. */
+const STRUCTURED_WORKFLOW_RESOURCE_NAMES: readonly string[] = ["tasks", "chain"];
+const STRUCTURED_WORKFLOW_RESOURCE_VERSION = 1;
+
+/**
+ * Expand data-only `tasks` or `chain` input into a package-owned workflow script with a one-use permit.
+ * Only the executor calls this, after its own feature and input checks; public named lookup cannot reach it.
+ */
+export function resolveStructuredWorkflowResource(input: { kind: "tasks" | "chain"; steps: unknown; task?: unknown }): WorkflowResourceResolution {
+	try {
+		if (!isPlainRecord(input) || (input.kind !== "tasks" && input.kind !== "chain")) return { ok: false, error: "Structured workflow kind must be 'tasks' or 'chain'." };
+		const { kind, steps, task } = input;
+		if (!Array.isArray(steps) || steps.length === 0) return { ok: false, error: `${kind} must be a non-empty array.` };
+		validatePlainJson(steps, kind);
+		if (task !== undefined) {
+			if (typeof task !== "string" || !task.trim()) return { ok: false, error: "task must be a non-empty string when provided." };
+			validatePlainJson(task, "task");
+		}
+		if (jsonByteLength({ [kind]: steps, task }) > MAX_ARGS_BYTES) return { ok: false, error: `${kind} input exceeds ${MAX_ARGS_BYTES} bytes.` };
+		const script = buildStructuredWorkflowScript(kind, JSON.parse(JSON.stringify(steps)), task);
+		return { ok: true, resource: issueWorkflowResource(kind, STRUCTURED_WORKFLOW_RESOURCE_VERSION, script) };
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error.message.slice(0, 4096) : "Structured workflow resolution failed." };
+	}
+}
+
 /** Resolve only extension-owned resources so policy can distinguish them from raw scripts; caller-provided script text is never consulted. */
 export function resolveWorkflowResource(nameValue: unknown, argsValue?: unknown, sessionId?: string): WorkflowResourceResolution {
 	try {
@@ -216,21 +240,25 @@ function resolveResource(nameValue: unknown, argsValue?: unknown, sessionId?: st
 	}
 	const { script, hostCommands } = resolved;
 	if (Object.keys(resolved).some((key) => key !== "script" && key !== "hostCommands") || typeof script !== "string" || !script.trim()) throw new Error("Workflow resource returned an invalid expansion.");
+	return { ok: true, resource: issueWorkflowResource(resource.name, resource.version, script, hostCommands) };
+}
+
+function issueWorkflowResource(name: string, version: number, script: string, hostCommands?: readonly WorkflowResourceHostAuthority[]): ResolvedWorkflowResource {
 	const resourceId = randomUUID();
 	const permit = createWorkflowResourcePermit({
-		resourceName: resource.name,
-		resourceVersion: resource.version,
+		resourceName: name,
+		resourceVersion: version,
 		resourceId,
 		scriptDigest: stableJsonDigest(script),
 		authority: { host: hostCommands },
 	});
 	const provenance: WorkflowResourceProvenance = Object.freeze({
 		kind: "workflow",
-		name: resource.name,
-		version: resource.version,
+		name,
+		version,
 		invocation: "named",
 		expansion: "resolved",
 		id: resourceId,
 	});
-	return { ok: true, resource: { script, permit, provenance } };
+	return { script, permit, provenance };
 }

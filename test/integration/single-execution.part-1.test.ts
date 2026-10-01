@@ -112,20 +112,25 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 		assert.doesNotMatch(text, /Provide exactly one mode/);
 	});
 
-	it("reports foreground workflow siblings stopped by a failed script as stopped", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ matchArgIncludes: "Slow sibling", hangUntilAbort: true });
-		mockPi.onCall({ matchArgIncludes: "Fails at launch", createError: "launch failed" });
-		const sent: Array<{ customType?: string; content?: string }> = [];
-		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, (message: unknown) => sent.push(message as { customType?: string; content?: string }));
-		const launch = await executor.execute("workflow-foreground-sibling-stop", {
-			async: true,
-			workflowScript: `await Promise.all([runs.run("a", { agent: "echo", task: "Slow sibling" }), runs.run("b", { agent: "echo", task: "Fails at launch" })]);`,
-		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
-		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
-		const notice = () => sent.find((message) => message.customType === "subagent-incremental-child-notify" && message.content?.includes("**a**"));
-		for (let attempt = 0; attempt < 250 && !notice(); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
-		assert.match(notice()?.content ?? "", /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Subagent stopped before completion\.\nStatus: workflow finished$/);
-	});
+	for (const { name, asyncByDefault, id, reason } of [
+		{ name: "foreground", asyncByDefault: false, id: "workflow-foreground-sibling-stop", reason: /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Subagent stopped before completion\.\nStatus: workflow finished$/ },
+		{ name: "async", asyncByDefault: true, id: "workflow-sibling-stop", reason: /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Workflow stopped before async child completed\.\nStatus: workflow finished$/ },
+	]) {
+		it(`reports ${name} workflow siblings stopped by a failed script as stopped`, { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+			mockPi.onCall({ matchArgIncludes: "Slow sibling", hangUntilAbort: true });
+			mockPi.onCall({ matchArgIncludes: "Fails at launch", createError: "launch failed" });
+			const sent: Array<{ customType?: string; content?: string }> = [];
+			const executor = makeExecutor([makeAgent("echo")], {}, asyncByDefault, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, (message: unknown) => sent.push(message as { customType?: string; content?: string }));
+			const launch = await executor.execute(id, {
+				async: true,
+				workflowScript: `await Promise.all([runs.run("a", { agent: "echo", task: "Slow sibling" }), runs.run("b", { agent: "echo", task: "Fails at launch" })]);`,
+			}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
+			const notice = () => sent.find((message) => message.customType === "subagent-incremental-child-notify" && message.content?.includes("**a**"));
+			for (let attempt = 0; attempt < 250 && !notice(); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+			assert.match(notice()?.content ?? "", reason);
+		});
+	}
 
 	it("emits successful async workflow child settlements without provider turns", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		mockPi.onCall({ matchArgIncludes: "Child A", output: "A done" });
@@ -153,21 +158,6 @@ describe("single sync execution", { skip: !available ? "pi packages not availabl
 			["Workflow child completed: **a**", "Workflow child completed: **b**"],
 		);
 		assert.ok(childMessages().every(({ options }) => options?.triggerTurn === false));
-	});
-
-	it("reports async workflow siblings stopped by a failed script as stopped", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
-		mockPi.onCall({ matchArgIncludes: "Slow sibling", hangUntilAbort: true });
-		mockPi.onCall({ matchArgIncludes: "Fails at launch", createError: "launch failed" });
-		const sent: Array<{ customType?: string; content?: string }> = [];
-		const executor = makeExecutor([makeAgent("echo")], {}, true, undefined, true, new Map(), undefined, undefined, createEventBus(), undefined, undefined, (message: unknown) => sent.push(message as { customType?: string; content?: string }));
-		const launch = await executor.execute("workflow-sibling-stop", {
-			async: true,
-			workflowScript: `await Promise.all([runs.run("a", { agent: "echo", task: "Slow sibling" }), runs.run("b", { agent: "echo", task: "Fails at launch" })]);`,
-		}, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
-		assert.equal(launch.isError, undefined, launch.content[0]?.text ?? "workflow launch failed");
-		const notice = () => sent.find((message) => message.customType === "subagent-incremental-child-notify" && message.content?.includes("**a**"));
-		for (let attempt = 0; attempt < 250 && !notice(); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
-		assert.match(notice()?.content ?? "", /^Workflow child stopped: \*\*a\*\*\n[\s\S]*\nError: Workflow stopped before async child completed\.\nStatus: workflow finished$/);
 	});
 
 	it("spawns agent and captures output", async () => {
@@ -1507,6 +1497,24 @@ Answer only from the supplied synthetic text.
 		assert.equal(mockPi.callCount(), 0);
 	});
 
+	it("validate reports workflow args errors beside script errors without launching (#2608)", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		const executor = makeExecutor([makeAgent("echo")]);
+		const workflowScript = `return runs.run("bad key", { agent: "echo" });`;
+		const tooManyFields = Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`field${index}`, "x"]));
+		const oversize = { a: "x".repeat(9000), b: "y".repeat(9000) };
+		const scriptError = { message: "runs.run key must be 1-128 characters using letters, numbers, '.', '_' or '-', and start with a letter or number.", line: 1, column: 17 };
+
+		for (const [args, argsError] of [[tooManyFields, "workflow args contains too many fields."], [oversize, "workflow args exceed 16384 bytes."]] as const) {
+			const result = await executor.executePublic("args-validation", { action: "validate", workflowScript, args }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+			assert.equal(result.isError, true);
+			assert.equal(result.details.mode, "management");
+			assert.deepEqual(JSON.parse(result.content[0]?.text ?? "null"), { ok: false, errors: [scriptError, { message: argsError }] });
+		}
+		const argsOnly = await executor.executePublic("args-only-validation", { action: "validate", workflowScript: "return 1;", args: oversize }, new AbortController().signal, undefined, makeMinimalCtx(tempDir));
+		assert.deepEqual(JSON.parse(argsOnly.content[0]?.text ?? "null"), { ok: false, errors: [{ message: "workflow args exceed 16384 bytes." }] });
+		assert.equal(mockPi.callCount(), 0);
+	});
+
 	it("reports missing and empty workflow script files before validation", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
 		fs.writeFileSync(path.join(tempDir, "empty.js"), " \n");
 		const executor = makeExecutor([makeAgent("echo")], {}, false, undefined, true, new Map(), undefined, undefined, createEventBus(), () => {
@@ -1567,6 +1575,51 @@ Answer only from the supplied synthetic text.
 		assert.equal(result.isError, undefined, result.content[0]?.text ?? "reply workflow failed");
 		assert.deepEqual(result.details.workflow?.value, { task: "from reply", child: "reply workflow" });
 		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("treats workflow: \"true\" from MCP clients as the reply block, not a resource named 'true' (#2600)", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "reply workflow" });
+		const ctx = makeMinimalCtx(tempDir);
+		const reply = {
+			type: "message",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "text", text: "```js workflow\nconst child = await runs.run(\"main\", { agent: \"echo\", task: args.task });\nreturn child.output;\n```" },
+					{ type: "toolCall", id: "call-string-true", name: "subagent", arguments: { workflow: "true" } },
+				],
+			},
+		};
+		const replyCtx = { ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => [reply] } };
+		const executor = makeExecutor([makeAgent("echo")]);
+
+		const validation = await executor.executePublic("call-string-true", { action: "validate", workflow: "true", args: { task: "from reply" } }, new AbortController().signal, undefined, replyCtx);
+		assert.equal(validation.isError, undefined, validation.content[0]?.text ?? "reply workflow validation failed");
+
+		const result = await executor.executePublic("call-string-true", { workflow: "true", args: { task: "from reply" }, async: false }, new AbortController().signal, undefined, replyCtx);
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "reply workflow failed");
+		assert.equal(result.details.workflow?.value, "reply workflow");
+		assert.equal(mockPi.callCount(), 1);
+	});
+
+	it("tags each foreground workflow result with its child run id", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {
+		mockPi.onCall({ output: "first" });
+		mockPi.onCall({ output: "second" });
+		const result = await makeExecutor([makeAgent("echo")]).execute(
+			"workflow-result-run-ids",
+			{
+				async: false,
+				workflowScript: `const a = await runs.run("a", { agent: "echo", task: "A" }); const b = await runs.run("b", { agent: "echo", task: "B" }); return { a: a.runId, b: b.runId };`,
+			},
+			new AbortController().signal,
+			undefined,
+			makeMinimalCtx(tempDir),
+		);
+
+		assert.equal(result.isError, undefined, result.content[0]?.text ?? "workflow failed");
+		const value = result.details.workflow?.value as { a?: string; b?: string };
+		assert.ok(value.a && value.b && value.a !== value.b);
+		assert.deepEqual(result.details.results.map((entry) => ({ key: entry.workflowKey, runId: entry.runId })), [{ key: "a", runId: value.a }, { key: "b", runId: value.b }]);
 	});
 
 	it("executes a workflow loaded from a script path", { skip: !createSubagentExecutor ? "executor not importable" : undefined }, async () => {

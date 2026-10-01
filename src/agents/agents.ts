@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AcceptanceInput, AcceptanceRole, AgentRunnerConfig, JsonSchemaObject, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
 import { CODE_OWNED_EXTERNAL_CLI_ADAPTER_LABEL, isCodeOwnedExternalCliAdapterId, parseExternalCliCapabilityNarrowing, validateCodeOwnedProfileRunner } from "../runs/shared/external-cli-contract.ts";
+import { isClaudeCodeAdapterId } from "../runs/shared/claude-code-adapter.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import { expandHomePath } from "../shared/settings.ts";
 import { KNOWN_FIELDS } from "./agent-serializer.ts";
@@ -979,7 +980,7 @@ function parseToolsOverride(
 	throw new Error(`Builtin override '${meta.name}' in '${meta.filePath}' has invalid 'tools'; expected an array of strings, "inherit", or false.`);
 }
 
-function validateOptionalMachine(value: unknown, label: string): string | undefined {
+export function validateOptionalMachine(value: unknown, label: string): string | undefined {
 	if (value === undefined || value === false) return undefined;
 	if (typeof value !== "string" || !value.trim()) throw new Error(label + " must be a non-empty string or false.");
 	const machine = value.trim();
@@ -2033,8 +2034,11 @@ function parseAgentRunnerFrontmatter(raw: string | undefined, agentName: string)
 
 function validateExternalRunnerProfile(frontmatter: Record<string, string>, agentName: string, runner: AgentRunnerConfig | undefined): void {
 	if (runner?.type !== "external-cli" && runner?.type !== "external-job") return;
+	// The code-owned Claude Code adapters accept an explicit model and thinking level:
+	// both are translated into their own argv rather than into a Pi child model.
+	const adapterAcceptsOverrides = runner.type === "external-cli" && isClaudeCodeAdapterId(runner.adapter);
 	const unsupported = ["tools", "excludeTools", "allowNestedSubagents", "allowedAgents", "model", "thinking", "extensions", "subagentOnlyExtensions", "mutationTools", "maxSubagentDepth", "skills", "skill", "skillPath", "toolBudget", "permission", "permissions"]
-		.filter((field) => frontmatter[field] !== undefined);
+		.filter((field) => frontmatter[field] !== undefined && !(adapterAcceptsOverrides && (field === "model" || field === "thinking")));
 	if (unsupported.length > 0) {
 		throw new Error(`Agent '${agentName}' uses runner.type='${runner.type}' and declares unsupported Pi-only fields: ${unsupported.join(", ")}.`);
 	}

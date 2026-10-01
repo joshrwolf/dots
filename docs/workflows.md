@@ -51,9 +51,9 @@ Use direct `{ agent, task }` for one bounded child. Use a workflow script when t
 
 The `workflow` field selects the script source:
 
-- `workflow: true` runs the one ```` ```js workflow ```` fenced block written in the same assistant reply as the `subagent` call. The script is plain text in the reply, so it needs no JSON string escaping. A reply can carry exactly one such block and one `workflow: true` call; zero or several blocks fail. A line that starts with ```` ``` ```` ends the block, so keep Markdown fences inside quoted strings.
+- `workflow: true` runs the one ```` ```js workflow ```` fenced block written in the same assistant reply as the `subagent` call. The script is plain text in the reply, so it needs no JSON string escaping. A reply can carry exactly one such block and one `workflow: true` call; zero or several blocks fail. A line containing only ```` ``` ```` (three or more backticks, optionally followed by spaces or tabs) ends the block, so keep Markdown fences inside quoted strings.
 - A string containing `/` (or `\` in a Windows path), such as `workflow: "./workflows/review.js"`, is a script file.
-- Any other string, such as `workflow: "review"`, is a [named workflow resource](#named-workflow-resources-for-permission-extensions).
+- Any other string, such as `workflow: "review"`, is a [named workflow resource](#named-workflow-resources-for-permission-extensions). The string `"true"` is read as `workflow: true`, because some MCP clients send the boolean as a string.
 
 `workflow: true` works only from a model tool call. Slash commands, RPC, and schedules pass scripts through their own inputs. Examples below that show only a ```` ```js workflow ```` block run with `subagent({ workflow: true })` in the same reply.
 
@@ -357,9 +357,9 @@ return runs.run("fix", { agent: "worker", task: "Implement these findings:\n" + 
 
 ### Migrating old chain shapes
 
-Legacy top-level `chain`, `tasks`, `parallel`, `chainDir`, `/chain`, `/parallel`, `/run-chain`, and durable `.chain.md` execution are no longer the public workflow API. Rewrite them as JavaScript:
+Legacy top-level `chain`, `tasks`, `parallel`, `chainDir`, `/chain`, `/parallel`, `/run-chain`, and durable `.chain.md` execution are no longer the public workflow API. Rewrite them as JavaScript. The exception is `disabledFeatures: ["workflow-scripts"]`, which replaces workflow scripts with top-level `chain` and `tasks` (see [configuration](configuration.md#chain-and-tasks-without-workflow-scripts)).
 
-```js
+```js workflow
 // Old shape, no longer supported:
 // { chain: [{ agent: "scout", task: "Scan" }, { agent: "worker", task: "Fix from {previous}" }] }
 
@@ -368,7 +368,7 @@ const scan = await runs.run("scan", { agent: "scout", task: "Scan" });
 return runs.run("fix", { agent: "worker", task: "Fix from: " + scan.output });
 ```
 
-```js
+```js workflow
 // Old shape, no longer supported:
 // { tasks: [{ agent: "reviewer", task: "Review API" }, { agent: "reviewer", task: "Review UI" }] }
 
@@ -379,7 +379,7 @@ return runs.all([
 ]);
 ```
 
-For long task text with Markdown fences or shell blocks, use quoted lines instead of a raw template literal. In a reply block, a line that starts with ```` ``` ```` would end the block:
+For long task text with Markdown fences or shell blocks, use quoted lines instead of a raw template literal. In a reply block, a line containing only ```` ``` ```` would end the block:
 
 ````js
 const task = [
@@ -395,7 +395,7 @@ A plain workflow creates one enclosing mission by default. Its children do not c
 
 ### Repeatable workflows
 
-Use stable child keys and keep process logic in ordinary JavaScript. `runs.run` launches one child, `runs.all` launches independent children together, and later steps can use each completed child's `output`. Put long task text in arrays joined with `"\n"` so Markdown fences do not conflict with the script string.
+Use stable child keys and keep process logic in ordinary JavaScript. `runs.run` launches one child, `runs.all` launches independent children together, and later steps can use each completed child's `output`. Put long task text in arrays joined with `"\n"` so Markdown fences do not conflict with the script string. Pass long child briefs as files and put only their paths in task text, not the briefs themselves in `args`, which is limited to 16 KiB.
 
 For a process you run often, save the task as a prompt template under `.pi/prompts/` or `~/.pi/agent/prompts/` and launch it with `/prompt-workflow`. The adapter compiles prompt steps into a workflow script, so templates describe the work instead of embedding raw `subagent` tool calls. You can ask the parent agent to create or update these prompt files from a process described in natural language.
 

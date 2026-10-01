@@ -76,13 +76,29 @@ For a native Pi `model_verification_failed` where your proxy accepts `claude-hai
 
 Replace `YOUR_PROVIDER` with the resolved Pi provider ID. Keep the outgoing model alias unchanged. This native remedy already exists in v0.65.1; it does not infer equivalence from provider prefixes or dates. The built-in external `claude-code` adapter does not invoke this verifier or use this setting. If an external run shows this diagnostic, identify the installed version, resolved runner kind/adapter, and error location before applying a native remedy. Thanks to [sixtus](https://github.com/sixtus) for the concrete request-ID/response-ID example in [#1922](https://github.com/nicobailon/pi-subagents/issues/1922).
 
+A local Pi child whose selected model is a virtual model (`pi.registerVirtualModel()`, such as a router) needs no alias. Its assistant messages name whichever physical model the router picked, so verification compares the child's selected virtual `provider/id` with the launch model instead, exactly. A different virtual selection fails, and `modelResponseAliases` does not override it.
+
 ## Tool activation lifecycle
 
-On Pi 0.86.1 or newer, a fresh unrestricted parent starts with `subagents_enable`, `bg_wait`, and `subagent_supervisor` active while `subagent` stays registered but inactive. Calling `subagents_enable({})` preserves unrelated active tools and exposes `subagent` on the next model request. It does not launch a child or infer authority from prompt keywords.
+On Pi 0.86.1 or newer, when the model can take a new tool mid-conversation (see [`toolActivation`](#toolactivation)), a fresh unrestricted parent starts with `subagents_enable`, `bg_wait`, and `subagent_supervisor` active while `subagent` stays registered but inactive. Calling `subagents_enable({})` preserves unrelated active tools and exposes `subagent` on the next model request. It does not launch a child or infer authority from prompt keywords. With other models, a fresh parent starts with `subagent`, `bg_wait`, and `subagent_supervisor` active and no `subagents_enable`.
 
-The recorded native `subagent` selection is restored on resume, reload, and tree navigation, so an activated session stays activated and a cold session stays cold. Older history without tool-selection records keeps eager `subagent` availability. If Pi's allowlist or exclusions remove the loader, the extension does not hide `subagent`; if they remove `subagent`, the loader reports it unavailable. Hosts whose extension API lacks `getAllTools`, `getActiveTools`, or `setActiveTools` keep eager behavior and log one compatibility warning. The host version is not read from disk, so in-process hosts such as pi-web activate the same way as the Pi CLI.
+The recorded native `subagent` selection is restored on resume, reload, and tree navigation, so an activated session stays activated and a cold session stays cold. With the default `toolActivation`, the recorded `subagents_enable` selection is restored too, so a session that started without the loader never gets it later. Older history without tool-selection records keeps eager `subagent` availability. If Pi's allowlist or exclusions remove the loader, the extension does not hide `subagent`; if they remove `subagent`, the loader reports it unavailable. Hosts whose extension API lacks `getAllTools`, `getActiveTools`, or `setActiveTools` keep eager behavior and log one compatibility warning. The host version is not read from disk, so in-process hosts such as pi-web activate the same way as the Pi CLI.
 
 Some providers fix the tool list for a whole prompt, for example bridges that hand Pi's tools to another agent SDK. There `subagent` appears only on the next user prompt, not the next model request. Start Pi with `--exclude-tools subagents_enable` to keep `subagent` active from the start.
+
+## `toolActivation`
+
+```json
+{ "toolActivation": "eager" }
+```
+
+Controls how a new parent session offers the `subagent` tool. The default is `"auto"`.
+
+- `"auto"`: a new session starts with the `subagents_enable` loader only when its model can take a new tool mid-conversation. Otherwise it starts with `subagent` active and no loader, because calling the loader on such a model makes Pi resend the conversation in a form the provider may not have cached. A model qualifies when its Pi `compat` settings set `supportsMidConvoSystemMessages: true` and, for its API, `supportsMidConvoToolChanges: true` (`anthropic-messages`), `supportsMidConvoToolAdditions: true` (`openai-completions`), or `supportsAdditionalTools: true` or `supportsToolSearch: true` (`openai-responses`, `openai-codex-responses`, `azure-openai-responses`). Other APIs, missing settings, and no model do not qualify.
+- `"dynamic"`: every new session starts with the loader, whatever the model. This was the behavior before `toolActivation` existed.
+- `"eager"`: the loader is not registered, so `subagent` is active from the first request, as with `--exclude-tools subagents_enable`. A resumed session that recorded the loader changes its tool list once on the next request.
+
+The choice is made at session start or tree navigation, and only for a session with no messages. Resumed sessions keep the tools they recorded, and switching models mid-session does not change them. `"auto"` avoids only the loader's cache miss; other tool-list or provider changes can still miss the cache. An active `subagent` sends its full schema on every request. An invalid value is a config error, not a fallback to the default. Restart Pi after changing it.
 
 ## `toolDescriptionMode`
 
@@ -118,8 +134,24 @@ Removes feature groups you do not use from the `subagent` tool. Each listed feat
 | `control-overrides` | `control` | |
 | `extension-bindings` | `extensionBindings` | |
 | `external-machines` | `machine` | |
+| `workflow-scripts` | `workflow`, `args`, `preflight`, `globalConcurrencyLimit`, `maxSubagentSpawnsPerRun` | `validate` |
 
-Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, the watchdog still follows its own settings, missions still attach automatically when [`missions`](#missions) enables them, and agents with a `machine` in their definition still run there. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged. With every feature and [`scheduledRuns.enabled`](#scheduledruns) disabled, the default `subagent` tool declaration (name, description, and parameter schema as JSON) shrinks from 18,319 to 11,570 characters (82 to 45 parameters). Restart Pi after changing this setting.
+Disabling a per-call option removes only the per-call override. Configured defaults such as `toolBudget`, `usageBudget`, and `control` in this file still apply, the watchdog still follows its own settings, missions still attach automatically when [`missions`](#missions) enables them, and agents with a `machine` in their definition still run there. Operator screens that do not go through the `subagent` executor, such as `/subagents-admin`, are unchanged. With every feature and [`scheduledRuns.enabled`](#scheduledruns) disabled, the default `subagent` tool declaration (name, description, and parameter schema as JSON) shrinks from 18,239 to 10,263 characters (80 to 41 parameters). Restart Pi after changing this setting.
+
+### Chain and tasks without workflow scripts
+
+`workflow-scripts` removes workflow scripts and named workflow resources from every entry point. The model can no longer write a script, and a script that still arrives from RPC `spawn` (`script` or `workflow`), `/prompt-workflow`, a saved schedule, or a delegated launch fails with an error that names the setting. Schedule inspection, pause, and delete still work, but `schedule.create` cannot succeed because it needs a script. `/run` still works: it launches its one child directly. The built-in tool description and prompt snippet drop the script guidance and describe two small inputs instead:
+
+- `tasks: [{ agent, task }, ...]` runs the children in parallel and returns their results in order.
+- `chain: [step, ...]` runs steps in order. A step is `{ agent, task?, as? }` or a parallel group `{ parallel: [{ agent, task }, ...] }`. A group waits for all of its children.
+
+A top-level `task` is the original request. Tasks can use three placeholders:
+
+- `{task}` is the top-level `task`. Using it without a top-level `task` is an error.
+- `{previous}` is the output of the previous chain step. For a parallel group, the outputs are joined in input order with a blank line between them. A chain step without `task` uses `{previous}`. The first step has no previous output, so it needs a `task` and cannot use `{previous}`.
+- `{outputs.name}` is the output of an earlier sequential step that set `as: "name"`. Names are identifiers, and each name can be used once.
+
+`tasks` items can only use `{task}`. Placeholders are replaced in one pass, so placeholder text inside an output is not replaced again. Other brace text stays as written. `chain` and `tasks` exclude each other, `agent`, and `action`. Steps accept only the fields above, and inputs are limited to 64 items and 16 KiB. Top-level child options such as `model`, `skill`, `output`, and `worktree` apply to every child. If a child fails, the run fails: a chain stops after the failed step or group, `tasks` fails once every child has settled, and the error names each failed child. The results of the children that already finished are still returned. Without this setting, `chain` and `tasks` are rejected as removed legacy inputs.
 
 ## `inlineToolDisplay`
 
@@ -263,6 +295,14 @@ Prompt modes keep their fixed keys. For example, `Esc` still cancels steer text 
 ```
 
 Controls the under-editor widget for active background runs. It defaults to `true`, including when FleetView is enabled, so active work remains visible after reload. Set it to `false` to hide this widget while keeping FleetView available.
+
+## `asyncWidgetCollapsed`
+
+```json
+{ "asyncWidgetCollapsed": true }
+```
+
+Starts each newly mounted under-editor async widget in its one-line folded state. It defaults to `false`. A header click still toggles the widget, and the folded state still resets when the widget is removed or Pi reloads.
 
 ## `waitTool`
 

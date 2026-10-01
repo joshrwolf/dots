@@ -144,7 +144,7 @@ import {
 	type WorkflowResourceAuthority,
 	type WorkflowResourcePermit,
 } from "../../shared/workflow-child-permit.ts";
-import { deepFreezeWorkflowArgs, normalizeWorkflowArgs, resolveWorkflowResource } from "../../workflows/workflow-resources.ts";
+import { deepFreezeWorkflowArgs, normalizeWorkflowArgs, resolveStructuredWorkflowResource, resolveWorkflowResource } from "../../workflows/workflow-resources.ts";
 import { stableJsonDigest } from "../../shared/launch-contract.ts";
 import {
 	cleanupWorktrees,
@@ -2312,16 +2312,11 @@ async function resumeAsyncRun(input: {
 		const asyncDir = result.details.asyncDir;
 		const resultPath = workflowAwaitedAsyncResultPath(asyncDir);
 		const stopListener = stopAwaitedAsyncChildOnAbort(input.signal, input.deps.state, revivedId, asyncDir, input.deps.kill);
-		let completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>;
-		try {
-			completed = await waitForImportedAsyncRoot({ runId: revivedId, asyncDir, resultPath, index: 0 }, {
-				shouldAbort: () => input.signal?.aborted === true,
-				timeoutMessage: "Workflow stopped before async child completed.",
-				abortedAsStopped: true,
-			});
-		} finally {
-			stopListener.remove();
-		}
+		const completed = await waitForImportedAsyncRoot({ runId: revivedId, asyncDir, resultPath, index: 0 }, {
+			shouldAbort: () => input.signal?.aborted === true,
+			timeoutMessage: "Workflow stopped before async child completed.",
+			abortedAsStopped: true,
+		}).finally(stopListener.remove);
 		const details: Details = { ...result.details };
 		if (target.launchContractDigest) details.sourceLaunchContractDigest = target.launchContractDigest;
 		return importWorkflowAwaitedChildResult(completed, { runId: revivedId, asyncDir, resultPath, task: effectiveFollowUp, parentWorkflowRunId: input.params.workflowParentRunId, details, emptyOutputText: `Revived ${target.source} subagent ${revivedId} completed without output.`, state: input.deps.state, pi: input.deps.pi });
@@ -3445,16 +3440,11 @@ async function waitForWorkflowAsyncSingleResult(
 	const asyncDir = launchResult.details.asyncDir;
 	const resultPath = workflowAwaitedAsyncResultPath(asyncDir);
 	const stopListener = stopAwaitedAsyncChildOnAbort(options.signal, options.state, options.runId, asyncDir, options.kill);
-	let completed: Awaited<ReturnType<typeof waitForImportedAsyncRoot>>;
-	try {
-		completed = await waitForImportedAsyncRoot({ runId: options.runId, asyncDir, resultPath, index: 0 }, omitUndefinedProperties({
-			shouldAbort: () => options.signal?.aborted === true,
-			timeoutMessage: "Workflow stopped before async child completed.",
-			abortedAsStopped: true,
-		}));
-	} finally {
-		stopListener.remove();
-	}
+	const completed = await waitForImportedAsyncRoot({ runId: options.runId, asyncDir, resultPath, index: 0 }, omitUndefinedProperties({
+		shouldAbort: () => options.signal?.aborted === true,
+		timeoutMessage: "Workflow stopped before async child completed.",
+		abortedAsStopped: true,
+	})).finally(stopListener.remove);
 	return importWorkflowAwaitedChildResult(completed, { runId: options.runId, asyncDir, resultPath, task: options.task, parentWorkflowRunId: params.workflowParentRunId, details: launchResult.details, state: options.state, pi: options.pi });
 }
 
@@ -4696,7 +4686,11 @@ function workflowOutputPathMappingSummary(children: WorkflowScriptChildResult[])
 }
 
 function workflowDetailsResults(children: WorkflowScriptChildResult[]): SingleResult[] {
-	return children.flatMap((child) => (child.results ?? []).map((result) => result.workflowKey ? result : { ...result, workflowKey: child.key }));
+	return children.flatMap((child) => (child.results ?? []).map((result) => ({
+		...result,
+		workflowKey: result.workflowKey ?? child.key,
+		...(child.runId && !result.runId ? { runId: child.runId } : {}),
+	})));
 }
 
 function workflowSteerReceipt(key: string, result: AgentToolResult<Details>): WorkflowSteerResult {
@@ -5319,6 +5313,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					? currentParentModel
 					: rememberParentModel(deps.state, resolveCurrentSessionId(ctx.sessionManager), currentParentModel)) ?? null;
 			})();
+		// validate checks args with the same normalization launch uses, reported beside script errors.
+		const validateWorkflowRequest = () => {
+			const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd, () => resolveWorkflowParentModel()?.provider));
+			const normalizedArgs = normalizeWorkflowArgs(requestParams.args);
+			return "error" in normalizedArgs ? { ...validation, ok: false, errors: [...validation.errors, { message: normalizedArgs.error }] } : validation;
+		};
 		try {
 			if (requestParams.preflight !== undefined && requestParams.workflowScript === undefined) {
 				throw new Error("preflight requires workflow: true or a workflow script path.");
@@ -5328,7 +5328,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			if (requestParams.action?.trim() === "validate") {
-				const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd, () => resolveWorkflowParentModel()?.provider));
+				const validation = validateWorkflowRequest();
 				const invalidValidation = { ...validation, ok: false, errors: [...validation.errors, { message }] };
 				return {
 					content: [{ type: "text", text: JSON.stringify(invalidValidation) }],
@@ -5339,8 +5339,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			return buildRequestedModeError(requestParams, message);
 		}
 		if (requestParams.action?.trim() === "validate") {
-			const validation = validateWorkflowScript(requestParams.workflowScript ?? "", workflowValidationOptions(deps, requestParams, ctx.cwd, () => resolveWorkflowParentModel()?.provider));
-			return buildWorkflowValidationResult(validation, "management", workflowPreflight);
+			return buildWorkflowValidationResult(validateWorkflowRequest(), "management", workflowPreflight);
 		}
 		const normalizedAction = typeof requestParams.action === "string" ? requestParams.action.trim() : requestParams.action;
 		if (normalizedAction === "resume" && requestParams.extensionBindings !== undefined) return buildRequestedModeError(requestParams, "extensionBindings is not supported with action='resume'; resume uses the original retained child binding.");
@@ -5362,7 +5361,11 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			if (launchBlockingErrors.length > 0) {
 				return buildRequestedModeError(requestParams, `Workflow '${_id}' validation failed before child launch; no children launched. ${launchBlockingErrors.map((error) => error.message).join(" ")}`);
 			}
-			for (const warning of workflowValidation.warnings ?? []) console.warn(`[pi-subagents] ${warning.message}`);
+			// A package chain's per-step stop check defeats static launch counting; runtime fan-out enforcement still applies.
+			const structuredResource = workflowResource?.provenance.name === "chain" || workflowResource?.provenance.name === "tasks";
+			for (const warning of workflowValidation.warnings ?? []) {
+				if (!(structuredResource && warning.kind === "dynamic-spawn-count")) console.warn(`[pi-subagents] ${warning.message}`);
+			}
 			const acceptanceErrors = validateAcceptanceInput(requestParams.acceptance);
 			if (acceptanceErrors.length > 0) return buildRequestedModeError(requestParams, acceptanceErrors.join(" "));
 			const foregroundWorkflowRunId = encodeIndexSegment(_id);
@@ -7877,7 +7880,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	): Promise<AgentToolResult<Details>> => {
 		const disabledFeatureError = disabledFeatureResult(params);
 		if (disabledFeatureError) return Promise.resolve(disabledFeatureError);
-		const normalized = normalizePublicSubagentExecution(params);
+		const normalized = normalizePublicSubagentExecution(params, { structuredWorkflows: disabledFeatures.features.has("workflow-scripts") });
 		if (!normalized.ok) {
 			return Promise.resolve({ content: [{ type: "text", text: normalized.error }], isError: true, details: { mode: normalized.mode, results: [] } });
 		}
@@ -7886,7 +7889,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const errorResult = (text: string): Promise<AgentToolResult<Details>> => Promise.resolve({ content: [{ type: "text", text }], isError: true, details: { mode: publicParams.action ? "management" : "workflow", results: [] } });
 		// Models tend to put script text in the workflow string; say how to pass it instead.
 		const scriptTextHint = " A workflow string is a named workflow resource or a script file path. To run script text, write it in one ```js workflow block in the same reply and call subagent({ workflow: true }).";
-		if (typeof workflow === "string" && !isWorkflowScriptPath(workflow)) {
+		if (publicParams.tasks !== undefined || publicParams.chain !== undefined) {
+			// Normalization admits chain/tasks only with workflow scripts disabled; the original input was checked above.
+			const kind = publicParams.tasks !== undefined ? "tasks" : "chain";
+			const resolved = resolveStructuredWorkflowResource({ kind, steps: publicParams[kind], task: publicParams.task });
+			if (!resolved.ok) return errorResult(resolved.error);
+			const { tasks: _tasks, chain: _chain, task: _task, ...withoutStructuredInput } = publicParams;
+			publicParams = { ...withoutStructuredInput, workflowScript: resolved.resource.script };
+			workflowResourcePermits.set(publicParams, resolved.resource.permit);
+		} else if (typeof workflow === "string" && !isWorkflowScriptPath(workflow)) {
 			const resolved = resolveWorkflowResource(workflow, publicParams.args, ctx.sessionManager.getSessionId() ?? undefined);
 			if (!resolved.ok) return Promise.resolve({ content: [{ type: "text", text: resolved.error + scriptTextHint }], isError: true, details: { mode: "workflow", results: [] } });
 			const { workflow: _workflow, args: _args, ...withoutResourceInput } = publicParams;
@@ -7894,7 +7905,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			workflowResourcePermits.set(publicParams, resolved.resource.permit);
 		} else if (workflow !== undefined || publicParams.workflowScript !== undefined) {
 			const normalizedArgs = normalizeWorkflowArgs(publicParams.args);
-			if ("error" in normalizedArgs) return errorResult(normalizedArgs.error);
+			// validate reports args errors with its script errors; launch rejects them here.
+			const validateOnly = publicParams.action === "validate";
+			if ("error" in normalizedArgs && !validateOnly) return errorResult(normalizedArgs.error);
 			let workflowScript = publicParams.workflowScript;
 			if (workflow !== undefined) {
 				const source = workflow === true ? readReplyWorkflowScript(ctx.sessionManager, id) : readWorkflowScriptFile(workflow, publicParams.cwd, ctx.cwd);
@@ -7902,7 +7915,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				workflowScript = source.script;
 			}
 			const { workflow: _workflow, ...withoutWorkflowSource } = publicParams;
-			publicParams = { ...withoutWorkflowSource, workflowScript, args: deepFreezeWorkflowArgs(normalizedArgs.args) };
+			publicParams = { ...withoutWorkflowSource, workflowScript, args: "error" in normalizedArgs ? publicParams.args : deepFreezeWorkflowArgs(normalizedArgs.args) };
 		}
 		publicExecutions.add(publicParams);
 		return executeWithSingleDispatchGuard(id, publicParams, signal, onUpdate, ctx);

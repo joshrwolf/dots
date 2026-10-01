@@ -10,7 +10,7 @@ Call `{ action: "guide", topic: "tool-reference" }` for this reference or `topic
 
 Chaining is code-driven through a workflow script. Write the script as one ```` ```js workflow ```` fenced block in the reply, then call `subagent({ workflow: true, ... })` in the same reply. A `workflow` string containing `/` is a script file, and any other string is a named resource. `workflowScript` and `workflowScriptPath` were removed; use these forms instead.
 
-Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported. Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. For permission-sensitive host calls, use an extension-owned named resource such as `{ workflow: "run-ci", args: { command: "npm test" } }`; raw scripts (`workflow: true` or a script path) have unknown resource provenance and cannot call `runs.host`. A resolved resource may internally use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })` within its authority ceiling; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({...})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
+Use `await runs.run(...)` for sequential steps and `await runs.all([{ key, agent, task }, ...])` for ordinary parallel fanout. `runs.all` resolves to an ordered array, not a key map, so use indexes, destructuring, or `.map(...)`, not `results.<key>`. Do not read `.output` from an unawaited `runs.run` launch. Stored `runs.run` promises are only for the advanced rolling fanout pattern under [Workflow steering](#workflow-steering), where every promise is later observed with direct `await`, `Promise.race`, or `Promise.all`. Legacy top-level `chain`, `tasks`, and `parallel` inputs are not supported, except that `disabledFeatures: ["workflow-scripts"]` replaces workflow scripts with top-level `chain` and `tasks` (see [configuration](configuration.md#chain-and-tasks-without-workflow-scripts)). Helper functions must be plain functions or explicit Promise chains. Nested `async function` helpers, async arrows, and async methods are rejected so child-launch tracking stays portable across Node and Bun. For permission-sensitive host calls, use an extension-owned named resource such as `{ workflow: "run-ci", args: { command: "npm test" } }`; raw scripts (`workflow: true` or a script path) have unknown resource provenance and cannot call `runs.host`. A resolved resource may internally use `runs.host(key, { kind: "command", command, timeoutMs, output?, role?, provider? })` within its authority ceiling; there is no per-step `cwd`, and commands and relative output paths use the workflow `cwd`. Set `cwd` on the outer `subagent({...})` request instead, or put a trusted directory change in the command (for example, `cd /path/to/worktree && npm test`).
 
 Use `{ action: "validate", workflow: true }` (or a script path) to check statically decidable syntax and structure without launching children. It returns `{ ok, errors }` and fails the tool call when `ok` is false. Literal child `baseRef` values are checked against the runtime ref policy. Dynamic keys and values remain subject to runtime checks; static validation does not guess them.
 
@@ -59,32 +59,7 @@ return results.map(result => result.output);
 
 Use `runs.lanes(lanes)` inside a workflow script when several independent lanes each have ordered stages. This helper composes the existing workflow child runner; it does not add a top-level `lanes` parameter or a second persistence/cleanup system.
 
-```js workflow
-const board = await runs.lanes([
-  { key: "api", stages: [
-    { key: "writer", agent: "worker", task: "Implement the API change" },
-    { key: "challenge", resume: "previous", task: "Challenge the implementation" },
-    { key: "review", agent: "reviewer", task: "Review the API lane" }
-  ] },
-  { key: "ui", stages: [
-    { key: "writer", agent: "worker", task: "Implement the UI change" },
-    { key: "review", agent: "reviewer", task: "Review the UI lane" }
-  ] }
-]);
-return board.map((lane) => ({
-  key: lane.key,
-  state: lane.state,
-  failedStage: lane.failedStage,
-  stages: lane.stages.map((stage) => ({
-    key: stage.key,
-    state: stage.state,
-    ok: stage.ok,
-    runId: stage.runId,
-    outputReference: stage.outputReference,
-    verdict: stage.verdict
-  }))
-}));
-```
+See the [staged-lane example](workflows.md#parallel-sequential-lanes) (guide topic `workflows`).
 
 The first stage of each lane is launched by one existing `runs.all(...)` batch. Later stages run in lane order. Set `resume: "previous"` on a later stage to continue the preceding retained child; the helper requires that child’s returned `runId` and delegates to the existing resume checks. Stage keys are local to the lane, and generated child keys are `<lane>.<stage>`.
 
@@ -100,8 +75,8 @@ The complete plain-JSON inventory is validated before the first launch (maximum 
 | `topic` | `overview \| workflows \| agents \| missions \| observability \| tool-reference \| configuration \| models \| watchdog \| extension-api \| council` | `overview` | Packaged guide topic for `action: "guide"`. |
 | `config` | object/string | - | Agent config for management create/update. |
 | `context` | `fresh \| fork \| profile` | global or per-agent default, else `fresh` | Explicit `fresh` or `fork` overrides every workflow child. `profile` requires the selected agent's declared `defaultContext` and ignores config `defaultSubagentContext`; missing agent defaults fail. When omitted, [`defaultSubagentContext`](configuration.md#defaultsubagentcontext) wins over each agent's `defaultContext`; implicit fork falls back to fresh without a persisted parent session and leaf. Explicit fork is strict. Packaged `worker` defaults to `fresh`; packaged `oracle` and `advisor` default to `fork`. |
-| `model` | string | agent default | Call `{action:"models"}` first and copy an exact `provider/id`; bare ids resolve only if unique, and agent names are not model ids. A suffix such as `provider/id:high` (`off/minimal/low/medium/high/xhigh/max`) overrides agent thinking. The `thinking` field is only for `watchdog.configure`, ignored on dispatch. |
-| `missionId` | string | - | Attach a workflow to an existing project mission instead of creating its default enclosing mission. |
+| `model` | string | agent default | Call `{action:"models"}` first and copy an exact `provider/id`; bare ids resolve only if unique, and agent names are not model ids. A suffix such as `provider/id:high` (`off/minimal/low/medium/high/xhigh/max`) overrides agent thinking. The `thinking` field is only for `watchdog.configure`, ignored on dispatch. On the `claude-code` and `claude-code-writer` adapters the model is Claude Code's own alias or id, and the same suffix becomes its `--effort`, bounded by `subagents.maxThinking` and by an enforced `subagents.modelScope`. |
+| `missionId` | string | - | Attach a workflow, including each fire of `schedule.create`, to an existing project mission. Scheduled attachment uses ordinary lifecycle and retention rules. |
 | `mission` | object/false | auto-create | Override the default enclosing mission with `{ title \| summary, objective?, goal?, budget?, labels? }`. Set exactly one non-empty `title` or `summary`; `objective` and `labels` are optional. `goal` may only be `true`, requires `budget.tokens`, and enables continuation notices. Pass `false` for an intentionally ephemeral workflow with no mission for it or its children and no `state` global. Explicit mission persistence failures are strict. |
 | `handoffPath` | string | - | Aggregate handoff manifest for `action: "worktree.discard"` or lane evidence actions, or optional explicit metadata for `action: "worktree.cleanup"`. |
 | `repo` | string | runtime cwd | Repository path for `action: "worktree.cleanup"`; plan mode only. The configured worktree base filters candidates by their per-project folder under it but never discovers them. |
@@ -271,7 +246,7 @@ Rules:
 
 ### Schedule controls
 
-Use `schedule.create` with `workflow: true` or a script path, not a direct child. `at` accepts a delay like `+10m` or an ISO timestamp with timezone; `every` accepts fixed intervals. `sessionOnly:true` binds restoration/execution to the creating session file; omitted/false is project-wide. Recurring `quiet:true` keeps successful automatic fires visible without a parent turn; failed, stopped or paused runs still wake the parent. One-shot `at` and manual `schedule.run` stay noisy unless that launch passes `quiet:true`. See [missions and schedules](missions.md#schedules) for examples and list/show/history/pause/resume/run/run-due/delete. Calendar selectors (`on`, `timezone`) and schedule mission attachment are deferred. `baseRef` resolves only at worktree allocation and still requires a clean source checkout.
+Use `schedule.create` with `workflow: true` or a script path, not a direct child. `at` accepts a delay like `+10m` or an ISO timestamp with timezone; `every` accepts fixed intervals. `sessionOnly:true` binds restoration/execution to the creating session file; omitted/false is project-wide. Recurring `quiet:true` keeps successful automatic fires visible without a parent turn; failed, stopped or paused runs still wake the parent. One-shot `at` and manual `schedule.run` stay noisy unless that launch passes `quiet:true`. An optional `missionId` attaches an existing mission on every fire and exposes its workflow state, using ordinary mission lifecycle and retention rules; `mission.close` does not pause the schedule. See [missions and schedules](missions.md#schedules) for examples and list/show/history/pause/resume/run/run-due/delete. Calendar selectors (`on`, `timezone`) are deferred. `baseRef` resolves only at worktree allocation and still requires a clean source checkout.
 
 ## Lane merge evidence and cleanup eligibility
 
