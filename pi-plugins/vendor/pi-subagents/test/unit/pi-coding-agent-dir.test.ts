@@ -287,6 +287,11 @@ Package skill content.
 		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "fresh" }));
 		assert.equal(loadConfig().defaultSubagentContext, "fresh");
 
+		writeFile(configPath, JSON.stringify({ asyncWidgetCollapsed: true }));
+		assert.equal(loadConfig().asyncWidgetCollapsed, true);
+		writeFile(configPath, JSON.stringify({ asyncWidgetCollapsed: "true" }));
+		assert.deepEqual(loadConfig(), {});
+
 		writeFile(configPath, JSON.stringify({ defaultSubagentContext: "other" }));
 		assert.throws(() => updateConfig((config) => config), /config\.defaultSubagentContext must be "fresh" or "fork"/);
 	});
@@ -356,6 +361,14 @@ Package skill content.
 		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
 		writeFile(configPath, JSON.stringify({ modelExclusions: { defaultTtlMs: 300_000 }, asyncByDefault: false }));
 		assert.throws(() => loadConfig(), /config\.modelExclusions was removed/);
+	});
+
+	it("fails closed instead of dropping restrictions when another config value is invalid", () => {
+		const configPath = path.join(agentDir, "extensions", "subagent", "config.json");
+		for (const restriction of [{ authorityPolicy: { stopRun: "forbid" } }, { permissions: { rules: { write: "deny" } } }, { toolBudget: { hard: 5 } }]) {
+			writeFile(configPath, JSON.stringify({ resultScanLogging: "bogus", ...restriction }));
+			assert.throws(() => loadConfig(), /config\.resultScanLogging must be/);
+		}
 	});
 
 	it("rejects invalid artifactDir config values", () => {

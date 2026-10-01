@@ -1275,6 +1275,8 @@ export interface SingleResult {
 	index: number;
 	/** Workflow child key that owns this result when returned from workflow details. */
 	workflowKey?: string;
+	/** Workflow child run id that produced this result; resumed rounds share a session file but not a run id. */
+	runId?: string;
 	agent: string;
 	task: string;
 	/** Human-readable display name for the child's own session (agent + task
@@ -2592,6 +2594,7 @@ export interface ProactiveSkillSubagentsConfig {
 }
 
 export type ToolDescriptionMode = "full" | "compact" | "custom";
+export type ToolActivationMode = "auto" | "dynamic" | "eager";
 export type InlineToolDisplay = "rich" | "summary";
 
 export interface ScheduledRunsConfig {
@@ -2663,10 +2666,14 @@ export interface ExtensionConfig {
 	fleetKeybindings?: FleetKeybindingsConfig;
 	/** Show the under-editor async runs widget. Defaults to true, including when FleetView is enabled. */
 	asyncWidget?: boolean;
+	/** Start the under-editor async runs widget folded. Defaults to false. */
+	asyncWidgetCollapsed?: boolean;
 	/** Exact provider/model candidates mapped to operator-declared equivalent response IDs. Empty arrays add no accepted IDs. */
 	modelResponseAliases?: Record<string, string[]>;
 	/** Tool description variant registered for the parent-facing subagent tool. Defaults to split metadata. */
 	toolDescriptionMode?: ToolDescriptionMode;
+	/** How a new parent session offers the subagent tool. Defaults to auto. */
+	toolActivation?: ToolActivationMode;
 	/** Opt-in feature groups removed from the subagent tool schema and rejected at every execution boundary. */
 	disabledFeatures?: SubagentFeature[];
 	/** Inline chat rendering for the subagent tool. Defaults to rich. */

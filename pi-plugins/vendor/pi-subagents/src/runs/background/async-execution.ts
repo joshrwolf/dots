@@ -17,6 +17,7 @@ import { currentCompletionOwnerId } from "../../shared/completion-owner.ts";
 import { planChildLaunch, projectChainOutputSchemas, resolveStepBehavior, suppressProgressForReadOnlyTask, type ResolvedStepBehavior } from "../shared/child-launch-plan.ts";
 import { formatHerdrMachineRunnerUnsupported, resolveHerdrMachinePlacement } from "../shared/herdr-machine.ts";
 import { applyThinkingSuffix, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/child-tool-plan.ts";
+import { assertClaudeCodeModelScope, isClaudeCodeAdapterId, resolveClaudeCodeOverride, type ClaudeCodeOverride } from "../shared/claude-code-adapter.ts";
 import { injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { applyWatchdogLaunchRules, sendRuleViolationWarning } from "../../watchdog/rules.ts";
 import { buildChainInstructions, isDynamicParallelStep, isParallelStep, resolveExistingReadInstructionPaths, resolveExistingReadPaths, writeInitialProgressFile, type ChainStep, type SequentialStep, type StepOverrides } from "../../shared/settings.ts";
@@ -874,6 +875,28 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 	}
 }
 
+/** `model: false` / `thinking: false` clear a value; only real strings reach a launch. */
+function requestString(value: unknown): string | undefined {
+	return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * An explicit `thinking: false` clears the level, so only `undefined` falls
+ * through to the agent's own value. Treating `false` as absent would silently
+ * apply the agent default the caller just cleared.
+ */
+export function resolveClaudeCodeThinking(source: string | false | undefined, fallback: string | false | undefined): string | undefined {
+	const value = source === undefined ? fallback : source;
+	return typeof value === "string" ? value : undefined;
+}
+
+/** A pinned Claude Code model cannot survive pane-native saved-machine placement, which
+ * owns the remote model registry, so the combination fails instead of losing both flags. */
+export function assertClaudeCodeOverrideIsLocal(agent: string, machine: string | undefined, override: ClaudeCodeOverride | undefined): void {
+	if (!machine || !override) return;
+	throw new Error(`Agent '${agent}' requested machine '${machine}', but a Claude Code model or thinking level cannot be honored on a saved machine. Remove the model or thinking request, or run the agent locally.`);
+}
+
 function formatAsyncStartError(mode: SubagentRunMode, message: string): AsyncExecutionResult {
 	return {
 		content: [{ type: "text", text: message }],
@@ -990,9 +1013,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
 			}
 		}
+		// A code-owned Claude Code adapter owns its argv, but it does accept an explicit
+		// model/thinking request; those become --model/--effort on the launch below.
+		const claudeCodeAdapter = a.runner?.type === "external-cli" && isClaudeCodeAdapterId(a.runner.adapter);
 		if (externalRunner) {
 			const unsupported: string[] = [];
-			if (s.model !== undefined) unsupported.push("model override");
+			if (s.model !== undefined && !claudeCodeAdapter) unsupported.push("model override");
 			if (effectiveBehavior.outputSchema !== undefined) unsupported.push("structured output");
 			if (s.acceptance !== undefined || params.agentContract !== undefined || s.agentContract !== undefined) unsupported.push("acceptance/agent contract");
 			if (s.toolBudget !== undefined || params.toolBudget !== undefined || a.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
@@ -1067,6 +1093,23 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			{ scope: modelScopes, source: modelOrigin === "explicit" ? "explicit" : "inherited" },
 		);
 		const thinkingOverride = flatIndex === undefined ? undefined : thinkingOverridesByFlatIndex?.[flatIndex];
+		let claudeCodeOverride: ClaudeCodeOverride | undefined;
+		if (claudeCodeAdapter) {
+			try {
+				claudeCodeOverride = resolveClaudeCodeOverride({
+					model: requestString(s.model),
+					agent: a,
+					thinking: resolveClaudeCodeThinking(thinkingOverride, a.thinking),
+					thinkingCeiling: intersectThinkingCeilings(params.thinkingCeiling, a.maxThinking, ctx.childRuntime?.thinkingCeiling),
+					agentName: a.name,
+					runId: id,
+				});
+				assertClaudeCodeModelScope({ scopes: modelScopes, model: claudeCodeOverride?.model, agent: a.name, runId: id });
+				assertClaudeCodeOverrideIsLocal(a.name, machine ? requestedMachine : undefined, claudeCodeOverride);
+			} catch (error) {
+				throw new AsyncStartValidationError(error instanceof Error ? error.message : String(error));
+			}
+		}
 		const effectiveThinking = externalRunner ? undefined : thinkingOverride ?? a.thinking;
 		const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, thinkingOverride !== undefined);
 		const contextLimit = model ? findModelInfo(model, availableModels, a.modelProvider ?? ctx.currentModelProvider)?.contextWindow : undefined;
@@ -1135,6 +1178,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			agent: s.agent,
 			task,
 			...(a.runner ? { runner: a.runner } : {}),
+			...(claudeCodeOverride ? { claudeCodeOverrideArgs: claudeCodeOverride.args } : {}),
 			...(machine ? { machine } : {}),
 			...(machineEnv ? { machineEnv } : {}),
 			...(params.contextForAgent ? { context: params.contextForAgent(s.agent) } : {}),
@@ -1725,11 +1769,14 @@ export function executeAsyncSingle(
 	const externalRunner = agentConfig.runner?.type === "external-cli" || agentConfig.runner?.type === "external-job";
 	const externalRunnerType = agentConfig.runner?.type;
 	const permissionRules = resolvePermissionRules(ctx.permissions, agentConfig.permissions);
+	// See the chain path: the Claude Code adapter accepts an explicit model/thinking
+	// request even though no other external runner does.
+	const claudeCodeAdapter = agentConfig.runner?.type === "external-cli" && isClaudeCodeAdapterId(agentConfig.runner.adapter);
 	if (externalRunner) {
 		const unsupported: string[] = [];
-		if (params.modelOverride !== undefined) unsupported.push("model override");
+		if (params.modelOverride !== undefined && !claudeCodeAdapter) unsupported.push("model override");
 		if ((params.fast ?? agentConfig.fast) === true) unsupported.push("fast mode");
-		if (params.thinkingOverride !== undefined) unsupported.push("thinking override");
+		if (params.thinkingOverride !== undefined && !claudeCodeAdapter) unsupported.push("thinking override");
 		if (params.structuredOutputSchema !== undefined) unsupported.push("structured output");
 		if (params.acceptance !== undefined || params.agentContract !== undefined) unsupported.push("acceptance/agent contract");
 		if (params.toolBudget !== undefined || agentConfig.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
@@ -1849,6 +1896,23 @@ export function executeAsyncSingle(
 			);
 	} catch (error) {
 		return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+	}
+	let singleClaudeCodeOverride: ClaudeCodeOverride | undefined;
+	if (claudeCodeAdapter) {
+		try {
+			singleClaudeCodeOverride = resolveClaudeCodeOverride({
+				model: requestString(params.modelOverride),
+				agent: agentConfig,
+				thinking: resolveClaudeCodeThinking(params.thinkingOverride, agentConfig.thinking),
+				thinkingCeiling: intersectThinkingCeilings(params.thinkingCeiling, agentConfig.maxThinking, ctx.childRuntime?.thinkingCeiling),
+				agentName: agentConfig.name,
+				runId: id,
+			});
+			assertClaudeCodeModelScope({ scopes: modelScopes, model: singleClaudeCodeOverride?.model, agent: agentConfig.name, runId: id });
+			assertClaudeCodeOverrideIsLocal(agentConfig.name, machine ? requestedMachine : undefined, singleClaudeCodeOverride);
+		} catch (error) {
+			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
+		}
 	}
 	const effectiveThinking = externalRunner ? undefined : params.thinkingOverride ?? agentConfig.thinking;
 	const model = externalRunner ? undefined : applyThinkingSuffix(primaryModel, effectiveThinking, params.thinkingOverride !== undefined);
@@ -2028,6 +2092,7 @@ export function executeAsyncSingle(
 						agent,
 						task: taskText,
 						...(agentConfig.runner ? { runner: agentConfig.runner } : {}),
+						...(singleClaudeCodeOverride ? { claudeCodeOverrideArgs: singleClaudeCodeOverride.args } : {}),
 						...(machine ? { machine } : {}),
 						...(!externalRunner && machine && params.reads !== undefined ? { remoteReads: params.reads } : {}),
 						...(machineEnv ? { machineEnv } : {}),

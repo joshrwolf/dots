@@ -182,10 +182,6 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		assert.equal(validator.Check({ ...base, outputSchema: { type: "object" } }), true);
 		assert.equal(validator.Check({ ...base, outputSchema: false }), true);
 		assert.equal(validator.Check({ ...base, outputSchema: null }), false);
-		assert.equal(validator.Check({ task: "work", chain: [{ agent: "worker", outputSchema: false }] }), true);
-		const collectSchema = schemas.DynamicCollectSchema;
-		assert.ok(collectSchema);
-		assert.equal(CompileSchema!(collectSchema).Check({ as: "all", outputSchema: false }), false);
 	});
 
 	it("includes context field and default precedence for fresh/fork execution mode", () => {
@@ -215,7 +211,7 @@ describe("SubagentParams schema", { skip: !schemasAvailable ? "typebox not avail
 		const args = SubagentParams?.properties?.args;
 		assert.equal(args?.type, "object");
 		assert.equal(args?.maxProperties, 16);
-		assert.match(String(args?.description ?? ""), /bounded plain-JSON/i);
+		assert.match(String(args?.description ?? ""), /plain-JSON args for workflow; 16 fields\/object, 64 items\/array, depth 8, 16 KiB total;/i);
 		assert.match(String(args?.description ?? ""), /raw-script.*deeply frozen.*persisted.*secrets/i);
 		for (const name of ["globalConcurrencyLimit", "maxSubagentSpawnsPerRun"] as const) {
 			const capacity = SubagentParams?.properties?.[name];

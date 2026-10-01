@@ -911,7 +911,7 @@ export async function runSingleStepInner(
 		const adapterLaunch = step.runner.adapter === "codex-exec" || step.runner.adapter === "codex-exec-writer"
 			? resolveCodexExecLaunch({ adapter: step.runner.adapter, command: step.runner.command, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 			: step.runner.adapter === "claude-code" || step.runner.adapter === "claude-code-writer"
-				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command })
+				? resolveClaudeCodeLaunch({ adapter: step.runner.adapter, command: step.runner.command, overrideArgs: step.claudeCodeOverrideArgs })
 				: step.runner.adapter === "cursor-agent" || step.runner.adapter === "cursor-agent-writer"
 					? resolveCursorAgentLaunch({ adapter: step.runner.adapter, command: step.runner.command, cwd: externalCwd, asyncDir: path.dirname(ctx.outputFile), stepIndex: ctx.flatIndex })
 				: undefined;
@@ -2632,7 +2632,7 @@ export async function runSubagent(
 	const activeLongRunningSteps = new Set<number>();
 	const mutatingFailureStates = initialStatusSteps.map(() => createMutatingFailureState());
 	const pendingToolResults: Array<{ tool: string; path?: string; mutates: boolean; startedAt?: number } | undefined> = initialStatusSteps.map(() => undefined);
-	type ActiveToolCall = { key: string; tool: string; args: string; startedAt: number; path?: string; blocksSupervisor: boolean };
+	type ActiveToolCall = { attentionEmitted?: boolean; key: string; tool: string; args: string; startedAt: number; path?: string; blocksSupervisor: boolean };
 	const activeToolCalls = initialStatusSteps.map(() => new Map<string, ActiveToolCall>());
 	const activeToolKeysByName = initialStatusSteps.map(() => new Map<string, string[]>());
 	const activeToolSequences = initialStatusSteps.map(() => 0);
@@ -2696,7 +2696,7 @@ export async function runSubagent(
 		return key ? removeActiveToolCallKey(flatIndex, key) : undefined;
 	};
 	const openToolAttentionTarget = (flatIndex: number, now: number): ActiveToolCall | undefined => [...(activeToolCalls[flatIndex]?.values() ?? [])]
-		.filter((active) => shouldEmitOpenToolAttention({ config: controlConfig, currentTool: active.tool, currentToolStartedAt: active.startedAt, now }))
+		.filter((active) => !active.attentionEmitted && shouldEmitOpenToolAttention({ config: controlConfig, currentTool: active.tool, currentToolStartedAt: active.startedAt, now }))
 		.sort((left, right) => left.startedAt - right.startedAt)[0];
 	const supervisorAttentionSteps = new Map<number, ActivityState | undefined>();
 	const mutatingFailureWindowMs = 5 * 60_000;
@@ -2748,9 +2748,12 @@ export async function runSubagent(
 	};
 	const maybeEmitOpenToolAttention = (flatIndex: number, now: number): boolean => {
 		const step = statusPayload.steps[flatIndex];
-		if (!step || step.status !== "running" || step.activityState === "needs_attention") return false;
+		if (!step || step.status !== "running") return false;
 		const target = openToolAttentionTarget(flatIndex, now);
 		if (!target) return false;
+		target.attentionEmitted = true;
+		// Keep this attention when a concurrent supervisor request ends and restores its saved state.
+		if (supervisorAttentionSteps.has(flatIndex)) supervisorAttentionSteps.set(flatIndex, "needs_attention");
 		const previous = step.activityState;
 		step.activityState = "needs_attention";
 		statusPayload.activityState = "needs_attention";
@@ -2769,6 +2772,7 @@ export async function runSubagent(
 			tokens: step.tokens?.total,
 			toolCount: step.toolCount,
 			currentTool: target.tool,
+			toolCallId: target.key.startsWith("id:") ? target.key.slice(3) : undefined,
 			currentToolDurationMs: toolDurationMs,
 			currentPath: target.path,
 		})));
@@ -3600,6 +3604,7 @@ export async function runSubagent(
 				return omitUndefinedProperties({
 					agent: task.agent,
 					...(task.sessionName ? { sessionName: task.sessionName } : {}),
+					...(externalRunnerStatus(task.runner) ? { runner: externalRunnerStatus(task.runner) } : {}),
 					...(statusStepDescription(task.task) ? { description: statusStepDescription(task.task) } : {}),
 					...(task.context ? { context: task.context } : {}),
 					...(task.phase ?? step.phase ? { phase: task.phase ?? step.phase } : {}),

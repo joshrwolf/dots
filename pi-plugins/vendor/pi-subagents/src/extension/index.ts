@@ -111,6 +111,8 @@ import { showUpgradeNotice } from "./upgrade-notice.ts";
 export { loadConfig, resolveAsyncByDefault } from "./config.ts";
 
 const SLOW_RELOAD_PHASE_MS = 250;
+// Long enough for Pi to finish starting; loading the executor blocks the event loop for tens of ms.
+const MODULE_PRELOAD_DELAY_MS = 1_000;
 const RUNTIME_REGISTRY_STORE_KEY = "__piSubagentRuntimeRegistry";
 
 type SubagentExecutorModule = typeof import("../runs/foreground/subagent-executor.ts");
@@ -326,6 +328,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const fleetViewEnabled = config.fleetView !== false;
 	const fleetViewPlacement = resolveFleetViewPlacement(config.fleetViewPlacement);
 	const asyncWidgetEnabled = config.asyncWidget !== false;
+	const asyncWidgetCollapsed = config.asyncWidgetCollapsed === true;
 	const summaryInlineToolDisplay = config.inlineToolDisplay === "summary";
 	const tempArtifactsDir = getArtifactsDir(null);
 	const artifactCleanupDays = config.artifactConfig?.cleanupDays ?? DEFAULT_ARTIFACT_CONFIG.cleanupDays;
@@ -480,6 +483,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs, dispose: disposeAsyncJobTracker } = createAsyncJobTracker(pi, state, DIRS.async, {
 		widgetEnabled: asyncWidgetEnabled,
+		widgetCollapsed: asyncWidgetCollapsed,
 		onJobTerminal: () => refreshResultDelivery(),
 		supervisorRequestState: supervisorChannel.getSupervisorRequestState,
 	});
@@ -564,12 +568,28 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	let executor: SubagentExecutor | undefined;
 	let executorPromise: Promise<SubagentExecutor> | undefined;
+	let executorModulePromise: Promise<SubagentExecutorModule> | undefined;
+	const loadExecutorModule = () => executorModulePromise ??= import("../runs/foreground/subagent-executor.ts");
 	const getExecutor = (): Promise<SubagentExecutor> => {
-		executorPromise ??= import("../runs/foreground/subagent-executor.ts").then(({ createSubagentExecutor }) => {
+		executorPromise ??= loadExecutorModule().then(({ createSubagentExecutor }) => {
 			executor = createSubagentExecutor(executorDeps);
 			return executor;
 		});
 		return executorPromise;
+	};
+	// Loading these on first use could happen days after startup, when pi-subagents may have
+	// changed on disk and the new files would import stale cached copies of modules loaded at
+	// startup. Load them shortly after a session starts instead, off Pi's startup path; child
+	// runtimes return before registration and never schedule this.
+	let modulePreloadTimer: ReturnType<typeof setTimeout> | undefined;
+	const scheduleModulePreload = () => {
+		if (executorModulePromise || modulePreloadTimer) return;
+		modulePreloadTimer = setTimeout(() => {
+			// Errors surface from the first call that needs the module.
+			loadExecutorModule().catch(() => {});
+			if (fleetViewEnabled) import("../tui/fleet.ts").catch(() => {});
+		}, MODULE_PRELOAD_DELAY_MS);
+		modulePreloadTimer.unref?.();
 	};
 
 	pi.registerMessageRenderer<SupervisorRequestMessageDetails>(SUPERVISOR_REQUEST_MESSAGE_TYPE, renderSupervisorRequest);
@@ -700,7 +720,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		...MODEL_ONLY_TOOL,
 		label: "Subagent",
 		description: buildSubagentToolDescription(config, { disabledFeatures }),
-		...buildSubagentToolPromptMetadata(config),
+		...buildSubagentToolPromptMetadata(config, disabledFeatures),
 		parameters,
 
 		async execute(id, params, signal, onUpdate, ctx) {
@@ -721,7 +741,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			}
 			if (args.workflow !== undefined)
 				return new Text(
-					`${title}${gap}${theme.fg("accent", args.workflow === true ? "workflow (reply block)" : `workflow ${String(args.workflow)}`)}${args.async === true ? `${gap}${theme.fg("warning", "[async]")}` : ""}${args.preflight !== undefined ? `${gap}${theme.fg("dim", formatWorkflowPreflightCall(args.preflight))}` : ""}`,
+					`${title}${gap}${theme.fg("accent", args.workflow === true || args.workflow === "true" ? "workflow (reply block)" : `workflow ${String(args.workflow)}`)}${args.async === true ? `${gap}${theme.fg("warning", "[async]")}` : ""}${args.preflight !== undefined ? `${gap}${theme.fg("dim", formatWorkflowPreflightCall(args.preflight))}` : ""}`,
 					0,
 					0,
 				);
@@ -759,29 +779,35 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	registerWaitTool(pi, state, waitToolConfig.enabled, waitSubscriptionManager, waitToolConfig.defaultTimeoutMs, undefined, supervisorChannel.hasPendingRequests);
 
 	pi.on("agent_end", async (_event, ctx) => {
-		if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events, hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests });
-		const ownerSessionId = state.currentSessionId;
-		if (!ownerSessionId) return;
-		goalTurnId += 1;
 		try {
-			const location = resolveMissionStoreLocation({ projectRoot: state.baseCwd, ...(config.missions ? { config: config.missions } : {}) });
-			const retainedChildren = listRetainedChildren(DIRS.async, ownerSessionId);
-			for (const notice of collectGoalContinuationNotices({ location, ownerSessionId, retainedChildren, turnId: goalTurnId })) {
-				handleSubagentControlNotice({
-					pi,
-					state,
-					visibleControlNotices: new Set(),
-					details: { source: "goal", event: notice.event, noticeText: notice.message },
-				});
+			if (!ctx.hasUI) await drainOutstandingWork({ state, events: pi.events, hasPendingSupervisorRequest: supervisorChannel.hasPendingRequests });
+		} finally {
+			// Deliver notices after a failed drain without suppressing its rejection.
+			const ownerSessionId = state.currentSessionId;
+			if (ownerSessionId) {
+				goalTurnId += 1;
+				try {
+					const location = resolveMissionStoreLocation({ projectRoot: state.baseCwd, ...(config.missions ? { config: config.missions } : {}) });
+					const retainedChildren = listRetainedChildren(DIRS.async, ownerSessionId);
+					for (const notice of collectGoalContinuationNotices({ location, ownerSessionId, retainedChildren, turnId: goalTurnId })) {
+						handleSubagentControlNotice({
+							pi,
+							state,
+							visibleControlNotices: new Set(),
+							details: { source: "goal", event: notice.event, noticeText: notice.message },
+						});
+					}
+				} catch (error) {
+					console.error("Failed to evaluate goal missions:", error);
+				}
 			}
-		} catch (error) {
-			console.error("Failed to evaluate goal missions:", error);
 		}
 	});
 
 	const disposeSlashCommands = registerSlashCommands(pi, state, {
 		fleetKeybindings: config.fleetKeybindings,
 		foregroundDetachShortcut: config.foregroundDetachShortcut,
+		workflowScriptsDisabled: disabledFeatures.features.has("workflow-scripts"),
 	});
 
 	let visibleControlNotices = new Set<string>();
@@ -973,6 +999,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 			resultIndexCleanupTimer = undefined;
 			if (asyncRetentionTimer) clearTimeout(asyncRetentionTimer);
 			asyncRetentionTimer = undefined;
+			if (modulePreloadTimer) clearTimeout(modulePreloadTimer);
+			modulePreloadTimer = undefined;
 			asyncRetentionAbort.abort();
 			stopResultWatcher();
 			resultDeliveryOwnership.clear();
@@ -1079,6 +1107,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (event, ctx) => {
 		installRuntime(ctx);
 		startSessionMaintenance();
+		scheduleModulePreload();
 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
 		resetSessionState(ctx, recovering, event.previousSessionFile);
 		releaseHostSessionLiveness();
@@ -1120,6 +1149,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => beginAdvertisement(ctx));
 
 	registerSubagentToolActivation(pi, {
+		mode: config.toolActivation,
 		advertisedPrompt: async () => {
 			await waitForAdvertisement();
 			return buildAdvertisedAgentPrompt(advertisedAgents, resolveCurrentSubagentCapabilityCeiling(state.currentSessionId ?? undefined));

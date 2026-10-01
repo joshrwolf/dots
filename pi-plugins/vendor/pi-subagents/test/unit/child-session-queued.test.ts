@@ -62,6 +62,58 @@ describe("default factory queued-message probe", () => {
 		assert.equal(modelResolved, false);
 	});
 
+	it("registers queued virtual models before requested-model resolution", async () => {
+		const events: string[] = [];
+		const definition = { provider: "router", id: "auto", name: "Auto", route: async () => ({}) };
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
+			ModelRuntime: { create: async () => ({ registerVirtualModel: (received: unknown) => { events.push(`virtual:${JSON.stringify(received)}`); }, registerProvider: () => { events.push("provider"); }, refresh: async () => { events.push("refresh"); } }) },
+			SettingsManager: { create: () => ({}) },
+			DefaultResourceLoader: class { async reload() {} getExtensions() { return { extensions: [], errors: [], runtime: { pendingProviderRegistrations: [], pendingNativeProviderRegistrations: [], pendingVirtualModelRegistrations: [{ definition, extensionPath: "/tmp/router.ts" }] } }; } },
+			SessionManager: { inMemory: () => ({}) },
+			resolveCliModel: () => { events.push("resolve"); return {}; },
+			createAgentSession: async () => ({
+				session: {
+					bindExtensions: async () => {},
+					dispose() {},
+					extensionRunner: { hasHandlers: () => false },
+					subscribe: () => () => {},
+					prompt: async () => {},
+					abort: async () => {},
+					steer: async () => {},
+					followUp: async () => {},
+					messages: [],
+					sessionId: "virtual-model-child",
+				},
+			}),
+		}) as unknown as PiCodingAgentModule });
+		const child = await factory.create({
+			cwd: process.cwd(),
+			storage: { kind: "memory" },
+			model: "router/auto",
+			extensionPaths: ["/tmp/router.ts"],
+			ambientExtensions: false,
+			hooks: [],
+			noSkills: true,
+			noContextFiles: true,
+			runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+		});
+		assert.ok(child);
+		assert.deepEqual(events, [`virtual:${JSON.stringify(definition)}`, "refresh", "resolve"]);
+	});
+
+	it("rejects a required virtual-model registration failure before requested-model resolution", async () => {
+		let modelResolved = false;
+		const requiredPath = "/tmp/required-router.mjs";
+		const factory = createDefaultChildSessionFactory({ loadPiCodingAgent: async () => ({
+			ModelRuntime: { create: async () => ({ registerVirtualModel() { throw new Error("bad virtual model"); }, refresh: async () => {} }) },
+			SettingsManager: { create: () => ({}) },
+			DefaultResourceLoader: class { async reload() {} getExtensions() { return { extensions: [], errors: [], runtime: { pendingProviderRegistrations: [], pendingNativeProviderRegistrations: [], pendingVirtualModelRegistrations: [{ definition: {}, extensionPath: requiredPath }] } }; } },
+			resolveCliModel: () => { modelResolved = true; return {}; },
+		} as unknown as PiCodingAgentModule) });
+		await assert.rejects(() => factory.create({ cwd: process.cwd(), storage: { kind: "memory" }, model: "router/auto", extensionPaths: [requiredPath], requiredExtensions: [{ id: "router", path: requiredPath }], ambientExtensions: false, hooks: [], noSkills: true, noContextFiles: true, runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"] }), /virtual model registration failed.*bad virtual model/);
+		assert.equal(modelResolved, false);
+	});
+
 	it("reports no queued messages for an agent-less wrapped session", async () => {
 		const factory = createDefaultChildSessionFactory({
 			loadPiCodingAgent: async () => ({
@@ -137,5 +189,43 @@ describe("default factory queued-message probe", () => {
 		});
 		assert.equal(child.hasQueuedMessages?.(), true);
 		assert.equal(childSessionHasQueuedMessages(child), true);
+	});
+});
+
+describe("default factory virtual model selection", () => {
+	it("reports the live selection only when Pi marks it virtual", async () => {
+		const session = {
+			model: { provider: "router", id: "auto", api: "openai-responses" } as { provider: string; id: string; api: string },
+			bindExtensions: async () => {},
+			dispose() {},
+			extensionRunner: { hasHandlers: () => false },
+			subscribe: () => () => {},
+			messages: [],
+			sessionId: "virtual",
+		};
+		const factory = createDefaultChildSessionFactory({
+			loadPiCodingAgent: async () => ({
+				ModelRuntime: { create: async () => ({}) },
+				SettingsManager: { create: () => ({}) },
+				DefaultResourceLoader: class { async reload() {} },
+				SessionManager: { inMemory: () => ({}) },
+				resolveCliModel: () => ({}),
+				createAgentSession: async () => ({ session }),
+			} as unknown as PiCodingAgentModule),
+		});
+		const child = await factory.create({
+			cwd: process.cwd(),
+			storage: { kind: "memory" },
+			extensionPaths: [],
+			ambientExtensions: false,
+			hooks: [],
+			noSkills: true,
+			noContextFiles: true,
+			runtime: { fanoutChild: false, depth: 1, waitTool: { enabled: false }, fast: false } as ChildSessionLaunch["runtime"],
+		});
+		assert.equal(child.virtualModelId, undefined);
+		session.model = { provider: "router", id: "auto", api: "pi-virtual" };
+		assert.equal(child.virtualModelId, "router/auto");
+		assert.equal(child.modelId, "router/auto");
 	});
 });

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -25,10 +27,81 @@ function errno(code: string): NodeJS.ErrnoException {
 
 describe("async stale-run reconciliation", () => {
 	it("classifies pid liveness without treating EPERM as dead", () => {
-		assert.equal(checkPidLiveness(123, () => true), "alive");
+		assert.equal(checkPidLiveness(process.pid), "alive");
+		assert.equal(checkPidLiveness(2_147_483_647, () => true), "alive");
 		assert.equal(checkPidLiveness(123, () => { throw errno("ESRCH"); }), "dead");
 		assert.equal(checkPidLiveness(123, () => { throw errno("EPERM"); }), "unknown");
 		assert.equal(checkPidLiveness(123, () => { throw new Error("boom"); }), "unknown");
+	});
+
+	it("repairs a recent Linux zombie only with a verified PID namespace", { skip: process.platform !== "linux", timeout: 10_000 }, async () => {
+		const root = tempRoot("pi-stale-run-zombie-");
+		const script = String.raw`
+			const { spawn } = require("node:child_process");
+			const fs = require("node:fs");
+			const child = spawn(process.execPath, ["-e", 'process.title = "pi) zombie"; process.exit(0);'], { stdio: "ignore" });
+			process.stdout.write(String(child.pid) + "\n");
+			// Keep libuv from reaping the child until the test releases stdin.
+			fs.readSync(0, Buffer.alloc(1), 0, 1, null);
+		`;
+		const parent = spawn(process.execPath, ["--eval", script], { stdio: ["pipe", "pipe", "pipe"] });
+		const closed = once(parent, "close");
+		parent.stdin.on("error", () => {});
+		try {
+			const [output] = await once(parent.stdout, "data", { signal: AbortSignal.timeout(5_000) });
+			const pid = Number(String(output).trim());
+			assert.ok(Number.isSafeInteger(pid) && pid > 0);
+			let stat = "";
+			const deadline = Date.now() + 5_000;
+			while (Date.now() < deadline) {
+				stat = fs.readFileSync(`/proc/${pid}/stat`, "utf-8");
+				if (stat[stat.lastIndexOf(") ") + 2] === "Z") break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			assert.match(stat, /\(pi\) zombie\) Z /);
+			assert.equal(process.kill(pid, 0), true);
+			assert.equal(checkPidLiveness(pid, process.kill, true), "dead");
+			const scope = fs.readlinkSync("/proc/self/ns/pid", "utf-8").trim();
+			const now = Date.now();
+			const resultsDir = path.join(root, "results");
+			for (const scenario of [
+				{ name: "matching", recorded: scope, observed: scope, immediate: true },
+				{ name: "missing-recorded", recorded: undefined, observed: scope, immediate: false },
+				{ name: "different", recorded: "pid:[other]", observed: scope, immediate: false },
+				{ name: "missing-observed", recorded: scope, observed: undefined, immediate: false },
+				{ name: "both-missing", recorded: undefined, observed: undefined, immediate: false },
+			]) {
+				const runId = `run-zombie-${scenario.name}`;
+				const asyncDir = path.join(root, runId);
+				writeStatus(asyncDir, {
+					runId, sessionId: "zombie-session", mode: "single", state: "running", pid,
+					...(scenario.recorded !== undefined ? { pidNamespaceScope: scenario.recorded } : {}),
+					startedAt: now - 100, lastUpdate: now - 100,
+					steps: [{ agent: "worker", status: "running", startedAt: now - 100 }],
+				});
+				const options = { resultsDir, pidNamespaceScope: () => scenario.observed, now: () => now };
+				const repaired = reconcileAsyncRun(asyncDir, options);
+				assert.equal(repaired.repaired, scenario.immediate, scenario.name);
+				assert.equal(repaired.status?.state, scenario.immediate ? "failed" : "running", scenario.name);
+				const resultPath = path.join(resultsDir, `${runId}.json`);
+				assert.equal(fs.existsSync(resultPath), scenario.immediate, scenario.name);
+				if (!scenario.immediate) {
+					const stale = reconcileAsyncRun(asyncDir, { ...options, staleAlivePidMs: 1000, now: () => now + 2000 });
+					assert.equal(stale.repaired, true, scenario.name);
+					assert.equal(stale.status?.state, "failed", scenario.name);
+					assert.match(stale.message ?? "", /status has not updated for 2100ms.*PID ownership is unverified/);
+				}
+				const receipt = fs.readFileSync(resultPath, "utf-8");
+				assert.equal(JSON.parse(receipt).state, "failed");
+				assert.equal(reconcileAsyncRun(asyncDir, options).repaired, false);
+				assert.equal(fs.readFileSync(resultPath, "utf-8"), receipt);
+			}
+			assert.equal(checkPidLiveness(pid), "alive", "unscoped callers retain signal-only probing");
+		} finally {
+			parent.stdin.end("reap");
+			await closed;
+			fs.rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("repairs a run whose PID belongs to another namespace only after status goes stale", () => {
