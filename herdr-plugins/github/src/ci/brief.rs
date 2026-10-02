@@ -29,11 +29,11 @@ pub(crate) fn build_for_state(dir: &Path, state: &CiState) -> Result<String> {
     let mut failing: Vec<_> = state
         .checks
         .iter()
-        .filter(|check| matches!(check.bucket, CheckBucket::Fail | CheckBucket::Cancel))
+        .filter(|check| check.bucket == CheckBucket::Fail)
         .collect();
     failing.sort_by_key(|check| !state.is_required(&check.name));
     if failing.is_empty() {
-        out.push_str("No checks are failed or cancelled. Nothing to fix.\n");
+        out.push_str("No checks have failed. Cancelled checks may need rerunning; cancellation alone is not evidence of a code failure.\n");
         return Ok(out);
     }
 

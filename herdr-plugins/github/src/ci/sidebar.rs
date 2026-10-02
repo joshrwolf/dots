@@ -98,6 +98,12 @@ impl Cached {
             if let Some(pending) = &preview.pending {
                 parts.push(format!("{pending} checks"));
             }
+            if let Some(cancelled) = &preview.cancelled {
+                parts.push(format!("{cancelled} cancelled"));
+            }
+            if let Some(unknown) = &preview.unknown {
+                parts.push(format!("{unknown} unknown"));
+            }
             if parts.is_empty() {
                 parts.push(preview.checks.unwrap_or("— No checks").to_owned());
             }
@@ -105,7 +111,10 @@ impl Cached {
                 text: parts.join(" · "),
                 tone: if preview.failed.is_some() {
                     Tone::Failure
-                } else if preview.pending.is_some() {
+                } else if preview.pending.is_some()
+                    || preview.cancelled.is_some()
+                    || preview.unknown.is_some()
+                {
                     Tone::Warning
                 } else if preview.checks == Some("✓ CI") {
                     Tone::Success
@@ -907,5 +916,52 @@ mod tests {
         assert_eq!(detail.text, "◷ 2 checks");
         assert_eq!(detail.tone, Tone::Warning);
         assert!(merged.resource.detail.is_none());
+    }
+    #[test]
+    fn check_details_distinguish_failures_cancellations_and_unknowns() {
+        use CheckBucket::{Cancel, Fail, Pass, Pending, Skipping, Unknown};
+        for (buckets, expected, tone) in [
+            (
+                vec![Cancel, Cancel, Pending, Pending],
+                "◷ 2 checks · 2 cancelled",
+                Tone::Warning,
+            ),
+            (vec![Cancel], "1 cancelled", Tone::Warning),
+            (vec![Pass, Cancel], "1 cancelled", Tone::Warning),
+            (vec![Unknown], "? 1 unknown", Tone::Warning),
+            (vec![Pass, Unknown], "? 1 unknown", Tone::Warning),
+            (
+                vec![Fail, Pending, Cancel, Unknown],
+                "✗ 1 failed · ◷ 1 checks · 1 cancelled · ? 1 unknown",
+                Tone::Failure,
+            ),
+            (vec![Pass, Skipping], "✓ CI", Tone::Success),
+            (vec![Skipping], "— Skipped", Tone::Muted),
+            (vec![], "— No checks", Tone::Muted),
+        ] {
+            let state = SidebarSnapshot {
+                pull_request: github::PullRequest {
+                    number: 42,
+                    draft: false,
+                    state: PullRequestState::Open,
+                    review: github::ReviewStatus::Approved,
+                    head_oid: "abc".into(),
+                },
+                checks: buckets
+                    .into_iter()
+                    .map(|bucket| github::Check {
+                        bucket,
+                        name: String::new(),
+                        link: String::new(),
+                        workflow: String::new(),
+                    })
+                    .collect(),
+            };
+            let resource = Cached::from_snapshot(&state, 100).resource;
+            let detail = resource.detail.unwrap();
+            assert_eq!(detail.text, expected);
+            assert_eq!(detail.tone, tone);
+            assert_eq!(resource.status, "✓ Approved");
+        }
     }
 }

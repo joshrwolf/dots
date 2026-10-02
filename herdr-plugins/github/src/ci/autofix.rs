@@ -96,6 +96,12 @@ pub fn arm(
                 println!("PR #{} is green", state.number);
                 return Ok(());
             }
+            CiVerdict::Cancelled => {
+                bail!(
+                    "PR #{} has cancelled CI checks; rerun or inspect them before autofix",
+                    state.number
+                );
+            }
             CiVerdict::Pending => {
                 std::thread::sleep(config.watch_interval);
             }
@@ -1052,5 +1058,23 @@ mod tests {
             0
         );
         fs::remove_dir_all(state_dir).unwrap();
+    }
+    #[test]
+    fn cancelled_checks_cannot_launch_a_fixer() {
+        let mut cancelled = state();
+        cancelled.verdict = CiVerdict::Cancelled;
+        cancelled.checks = vec![crate::github::Check {
+            bucket: crate::github::CheckBucket::Cancel,
+            name: "test".into(),
+            link: String::new(),
+            workflow: String::new(),
+        }];
+        let source = FakeCiSource::new(vec![cancelled.clone()]);
+        assert!(actionable(&source, Path::new(CHECKOUT)).unwrap().is_none());
+        assert!(validate_current(&state(), &cancelled).is_err());
+        assert_eq!(cancelled.failed_checks(), 0);
+        let brief = brief::build_for_state(Path::new("/unused"), &cancelled).unwrap();
+        assert!(brief.contains("No checks have failed."));
+        assert!(!brief.contains("## test"));
     }
 }

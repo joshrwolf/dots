@@ -8,6 +8,8 @@ pub struct Preview {
     pub checks: Option<&'static str>,
     pub failed: Option<String>,
     pub pending: Option<String>,
+    pub cancelled: Option<String>,
+    pub unknown: Option<String>,
 }
 
 impl Preview {
@@ -36,11 +38,19 @@ impl Preview {
     ) -> Self {
         let failed = checks
             .iter()
-            .filter(|check| matches!(check.bucket, CheckBucket::Fail | CheckBucket::Cancel))
+            .filter(|check| check.bucket == CheckBucket::Fail)
             .count();
         let pending = checks
             .iter()
             .filter(|check| check.bucket == CheckBucket::Pending)
+            .count();
+        let cancelled = checks
+            .iter()
+            .filter(|check| check.bucket == CheckBucket::Cancel)
+            .count();
+        let unknown = checks
+            .iter()
+            .filter(|check| check.bucket == CheckBucket::Unknown)
             .count();
         Self {
             pull_request: format!("#{number}"),
@@ -60,7 +70,14 @@ impl Preview {
             },
             failed: (failed > 0).then(|| format!("✗ {failed}")),
             pending: (pending > 0).then(|| format!("◷ {pending}")),
-            checks: if failed > 0 || pending > 0 || *state != PullRequestState::Open {
+            cancelled: (cancelled > 0).then(|| format!("{cancelled}")),
+            unknown: (unknown > 0).then(|| format!("? {unknown}")),
+            checks: if failed > 0
+                || pending > 0
+                || cancelled > 0
+                || unknown > 0
+                || *state != PullRequestState::Open
+            {
                 None
             } else if checks.is_empty() {
                 Some("— No checks")
@@ -122,6 +139,8 @@ mod tests {
                 checks: None,
                 failed: Some("✗ 2".to_owned()),
                 pending: Some("◷ 3".to_owned()),
+                cancelled: None,
+                unknown: None,
             }
         );
     }

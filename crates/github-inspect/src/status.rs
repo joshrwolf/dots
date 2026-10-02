@@ -117,6 +117,7 @@ pub enum CiVerdict {
     Green,
     Failed,
     Pending,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,7 +144,7 @@ impl CiState {
     pub fn failed_checks(&self) -> usize {
         self.checks
             .iter()
-            .filter(|check| matches!(check.bucket, CheckBucket::Fail | CheckBucket::Cancel))
+            .filter(|check| check.bucket == CheckBucket::Fail)
             .count()
     }
 
@@ -441,10 +442,7 @@ pub fn run_log(dir: &Path, owner_repo: &str, run: &str) -> Result<String> {
 
 fn verdict(checks: &[Check]) -> Result<CiVerdict> {
     validate_buckets(checks)?;
-    if checks
-        .iter()
-        .any(|check| matches!(check.bucket, CheckBucket::Fail | CheckBucket::Cancel))
-    {
+    if checks.iter().any(|check| check.bucket == CheckBucket::Fail) {
         return Ok(CiVerdict::Failed);
     }
     if checks
@@ -452,6 +450,12 @@ fn verdict(checks: &[Check]) -> Result<CiVerdict> {
         .any(|check| check.bucket == CheckBucket::Pending)
     {
         return Ok(CiVerdict::Pending);
+    }
+    if checks
+        .iter()
+        .any(|check| check.bucket == CheckBucket::Cancel)
+    {
+        return Ok(CiVerdict::Cancelled);
     }
     Ok(CiVerdict::Green)
 }
@@ -682,7 +686,7 @@ mod tests {
     #[test]
     fn required_failures_win_over_pending_checks() {
         assert_eq!(
-            verdict(&[check(CheckBucket::Pending), check(CheckBucket::Cancel)]).unwrap(),
+            verdict(&[check(CheckBucket::Pending), check(CheckBucket::Fail)]).unwrap(),
             CiVerdict::Failed
         );
     }
@@ -803,5 +807,19 @@ mod tests {
         assert_eq!(review("null", "[{}]"), ReviewStatus::Requested);
         assert_eq!(review("null", "[]"), ReviewStatus::NotReviewed);
         assert_eq!(review(r#""FUTURE_STATE""#, "[]"), ReviewStatus::Unknown);
+    }
+    #[test]
+    fn cancellation_is_neither_failure_nor_success() {
+        use CheckBucket::{Cancel, Fail, Pass, Pending};
+        for (buckets, expected) in [
+            (vec![Cancel], CiVerdict::Cancelled),
+            (vec![Pass, Cancel], CiVerdict::Cancelled),
+            (vec![Pending, Cancel], CiVerdict::Pending),
+            (vec![Fail, Cancel, Pending], CiVerdict::Failed),
+        ] {
+            let checks: Vec<_> = buckets.into_iter().map(check).collect();
+            assert_eq!(gating_verdict(&checks, &[]).unwrap(), expected);
+            assert_eq!(gating_verdict(&[], &checks).unwrap(), expected);
+        }
     }
 }
