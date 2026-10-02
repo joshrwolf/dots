@@ -23,7 +23,7 @@ index f5810a3..28cb5d7 100644
  unicode-segmentation = "1.13.1"
  schemars = { version = "1.2.1", features = ["derive"] }
 diff --git a/docs/next/api/herdr-api.schema.json b/docs/next/api/herdr-api.schema.json
-index e2553f7..157792e 100644
+index e2553f7..e8d7b1d 100644
 --- a/docs/next/api/herdr-api.schema.json
 +++ b/docs/next/api/herdr-api.schema.json
 @@ -1085,6 +1085,13 @@
@@ -77,7 +77,7 @@ index e2553f7..157792e 100644
          "LayoutApplyParams": {
            "properties": {
              "focus": {
-@@ -3856,6 +3893,83 @@
+@@ -3856,6 +3893,108 @@
            ],
            "type": "object"
          },
@@ -131,6 +131,16 @@ index e2553f7..157792e 100644
 +              "default": false,
 +              "type": "boolean"
 +            },
++            "detail": {
++              "anyOf": [
++                {
++                  "$ref": "#/schemas/request/$defs/ResourceDetail"
++                },
++                {
++                  "type": "null"
++                }
++              ]
++            },
 +            "id": {
 +              "type": "string"
 +            },
@@ -158,10 +168,25 @@ index e2553f7..157792e 100644
 +          ],
 +          "type": "object"
 +        },
++        "ResourceDetail": {
++          "properties": {
++            "text": {
++              "type": "string"
++            },
++            "tone": {
++              "$ref": "#/schemas/request/$defs/Tone"
++            }
++          },
++          "required": [
++            "text",
++            "tone"
++          ],
++          "type": "object"
++        },
          "ServerLiveHandoffParams": {
            "properties": {
              "expected_protocol": {
-@@ -4366,6 +4480,16 @@
+@@ -4366,6 +4505,16 @@
            ],
            "type": "string"
          },
@@ -178,7 +203,7 @@ index e2553f7..157792e 100644
          "WorkspaceCloseParams": {
            "properties": {
              "close_group": {
-@@ -5049,6 +5173,54 @@
+@@ -5049,6 +5198,54 @@
            ],
            "type": "object"
          },
@@ -233,7 +258,7 @@ index e2553f7..157792e 100644
          {
            "properties": {
              "method": {
-@@ -6784,6 +6956,26 @@
+@@ -6784,6 +6981,26 @@
            ],
            "type": "string"
          },
@@ -260,7 +285,7 @@ index e2553f7..157792e 100644
          "ConfigReloadStatus": {
            "enum": [
              "applied",
-@@ -9165,8 +9357,78 @@
+@@ -9165,8 +9382,103 @@
            ],
            "type": "string"
          },
@@ -274,6 +299,16 @@ index e2553f7..157792e 100644
 +            "completed": {
 +              "default": false,
 +              "type": "boolean"
++            },
++            "detail": {
++              "anyOf": [
++                {
++                  "$ref": "#/schemas/success_response/$defs/ResourceDetail"
++                },
++                {
++                  "type": "null"
++                }
++              ]
 +            },
 +            "id": {
 +              "type": "string"
@@ -299,6 +334,21 @@ index e2553f7..157792e 100644
 +            "status",
 +            "action",
 +            "reference"
++          ],
++          "type": "object"
++        },
++        "ResourceDetail": {
++          "properties": {
++            "text": {
++              "type": "string"
++            },
++            "tone": {
++              "$ref": "#/schemas/success_response/$defs/Tone"
++            }
++          },
++          "required": [
++            "text",
++            "tone"
 +          ],
 +          "type": "object"
 +        },
@@ -339,7 +389,7 @@ index e2553f7..157792e 100644
              {
                "properties": {
                  "capabilities": {
-@@ -10573,6 +10835,16 @@
+@@ -10573,6 +10885,16 @@
            ],
            "type": "object"
          },
@@ -356,7 +406,7 @@ index e2553f7..157792e 100644
          "WorkspaceInfo": {
            "properties": {
              "active_tab_id": {
-@@ -10584,6 +10856,13 @@
+@@ -10584,6 +10906,13 @@
              "focused": {
                "type": "boolean"
              },
@@ -370,7 +420,7 @@ index e2553f7..157792e 100644
              "label": {
                "type": "string"
              },
-@@ -10638,6 +10917,28 @@
+@@ -10638,6 +10967,28 @@
            ],
            "type": "object"
          },
@@ -562,7 +612,7 @@ index 8aee1c3..d5ebfdf 100644
          ws_idx: usize,
          correlation_id: &str,
 diff --git a/src/app/api/plugins/mod.rs b/src/app/api/plugins/mod.rs
-index c9b37bf..5cb38cb 100644
+index c9b37bf..cc3807b 100644
 --- a/src/app/api/plugins/mod.rs
 +++ b/src/app/api/plugins/mod.rs
 @@ -36,7 +36,7 @@ impl App {
@@ -605,7 +655,7 @@ index c9b37bf..5cb38cb 100644
          }
          if enabled {
              encode_success(id, ResponseResult::PluginEnabled { plugin })
-@@ -1467,6 +1475,68 @@ platforms = ["linux", "macos"]
+@@ -1467,6 +1475,69 @@ platforms = ["linux", "macos"]
          assert_eq!(output, "abc\n[herdr truncated plugin output after 3 bytes]");
      }
  
@@ -629,6 +679,7 @@ index c9b37bf..5cb38cb 100644
 +                id: "pr-1".into(),
 +                label: "#1".into(),
 +                status: "Pending".into(),
++                detail: None,
 +                tone: Tone::Normal,
 +                completed: false,
 +                action: "bootstrap".into(),
@@ -1494,10 +1545,10 @@ index 248216c..7b7cdd2 100644
          hits.tab_scroll_left = Rect::default();
 diff --git a/src/client/shell/resource_tree.rs b/src/client/shell/resource_tree.rs
 new file mode 100644
-index 0000000..ce98d7c
+index 0000000..d2ff1ac
 --- /dev/null
 +++ b/src/client/shell/resource_tree.rs
-@@ -0,0 +1,499 @@
+@@ -0,0 +1,603 @@
 +//! A flat navigable projection of workspace resources, with one scroll unit per line.
 +use super::render::put_text;
 +use super::*;
@@ -1724,6 +1775,7 @@ index 0000000..ce98d7c
 +                .max(1),
 +            )
 +            .unwrap_or(u16::MAX),
++            Row::Resource { item, .. } if item.detail.is_some() => 2,
 +            _ => 1,
 +        })
 +        .collect();
@@ -1859,13 +1911,14 @@ index 0000000..ce98d7c
 +                target,
 +                indent,
 +            } => {
-+                let fg = match item.tone {
++                let tone_color = |tone| match tone {
 +                    Tone::Normal => palette.text,
 +                    Tone::Success => palette.green,
 +                    Tone::Warning => palette.yellow,
 +                    Tone::Failure => palette.red,
 +                    Tone::Muted => palette.overlay0,
 +                };
++                let fg = tone_color(item.tone);
 +                let selected = state.selected_workspace_id.is_some_and(|selected| {
 +                    selected.endpoint_id == endpoint.endpoint_id
 +                        && selected.resource.as_ref() == Some(target)
@@ -1878,13 +1931,16 @@ index 0000000..ce98d7c
 +                    Style::default().fg(fg)
 +                };
 +                buffer.set_style(rect, style);
-+                put_text(
++                render_item(
 +                    buffer,
-+                    rect.x.saturating_add(*indent),
-+                    rect.y,
-+                    rect.width.saturating_sub(*indent),
-+                    &format!("{}  {}", item.label, item.status),
++                    rect,
++                    *indent,
++                    item,
 +                    style,
++                    palette.text,
++                    item.detail
++                        .as_ref()
++                        .map_or(palette.text, |detail| tone_color(detail.tone)),
 +                );
 +                hits.resources.push(ResourceHit {
 +                    rect,
@@ -1995,6 +2051,105 @@ index 0000000..ce98d7c
 +            }
 +        }
 +        outcome.repaint = true;
++    }
++}
++
++fn render_item(
++    buffer: &mut Buffer,
++    rect: Rect,
++    indent: u16,
++    item: &Resource,
++    style: Style,
++    label_color: ratatui::style::Color,
++    detail_color: ratatui::style::Color,
++) {
++    let x = rect.x.saturating_add(indent);
++    let width = rect.width.saturating_sub(indent);
++    let label_width = render::display_width(&item.label)
++        .saturating_add(2)
++        .min(width);
++    put_text(buffer, x, rect.y, width, &item.label, style.fg(label_color));
++    put_text(
++        buffer,
++        x.saturating_add(label_width),
++        rect.y,
++        width.saturating_sub(label_width),
++        &item.status,
++        style,
++    );
++    if let Some(detail) = &item.detail {
++        if rect.height > 1 {
++            put_text(
++                buffer,
++                x.saturating_add(label_width),
++                rect.y + 1,
++                width.saturating_sub(label_width),
++                &detail.text,
++                style.fg(detail_color),
++            );
++        }
++    }
++}
++
++#[cfg(test)]
++mod layout_tests {
++    use super::*;
++    use crate::workspace_resources::ResourceDetail;
++    use ratatui::style::Color;
++
++    #[test]
++    fn compact_pr_keeps_approval_and_checks_separate_at_narrow_widths() {
++        let item = Resource {
++            id: "pr".into(),
++            label: "#12345".into(),
++            status: "✓ Approved".into(),
++            tone: Tone::Success,
++            completed: false,
++            action: "open".into(),
++            reference: "pr".into(),
++            detail: Some(ResourceDetail {
++                text: "◷ 2 checks".into(),
++                tone: Tone::Warning,
++            }),
++        };
++        for width in [26, 28, 32, 40] {
++            let rect = Rect::new(0, 0, width, 2);
++            let mut buffer = Buffer::empty(rect);
++            render_item(
++                &mut buffer,
++                rect,
++                8,
++                &item,
++                Style::default().fg(Color::Green),
++                Color::White,
++                Color::Yellow,
++            );
++            let line = |y| {
++                (0..width)
++                    .map(|x| buffer[(x, y)].symbol())
++                    .collect::<String>()
++            };
++            assert!(line(0).contains("#12345  ✓ Approved"));
++            assert!(line(1).contains("◷ 2 checks"));
++            assert_eq!(buffer[(8, 0)].fg, Color::White);
++            assert_eq!(buffer[(16, 0)].fg, Color::Green);
++            assert_eq!(buffer[(16, 1)].fg, Color::Yellow);
++        }
++        let mut unicode = item;
++        unicode.label = "cafe\u{301} 👨‍👩‍👧".into();
++        for width in 0..32 {
++            let rect = Rect::new(0, 0, width, 2);
++            let mut buffer = Buffer::empty(rect);
++            render_item(
++                &mut buffer,
++                rect,
++                8,
++                &unicode,
++                Style::default(),
++                Color::White,
++                Color::Yellow,
++            );
++        }
 +    }
 +}
 diff --git a/src/client/shell/sidebar.rs b/src/client/shell/sidebar.rs
@@ -2306,10 +2461,10 @@ index 9c69fbe..7ef4f31 100644
      pub(super) workspaces: Vec<WorkspaceHit>,
      pub(super) workspace_body: Rect,
 diff --git a/src/client/shell/tests/workspace_navigation.rs b/src/client/shell/tests/workspace_navigation.rs
-index c117a31..4565a2c 100644
+index c117a31..084c14c 100644
 --- a/src/client/shell/tests/workspace_navigation.rs
 +++ b/src/client/shell/tests/workspace_navigation.rs
-@@ -968,3 +968,100 @@ fn navigation_highlight_ends_for_noop_focus_and_focused_creation() {
+@@ -968,3 +968,136 @@ fn navigation_highlight_ends_for_noop_focus_and_focused_creation() {
          }
      }
  }
@@ -2334,6 +2489,10 @@ index c117a31..4565a2c 100644
 +                            id: format!("pr-{index}"),
 +                            label: format!("#{index} cafe\u{301} 👨‍👩‍👧"),
 +                            status: "CI running".into(),
++                            detail: Some(ResourceDetail {
++                                text: "◷ 2 checks".into(),
++                                tone: Tone::Warning,
++                            }),
 +                            tone: Tone::Warning,
 +                            completed: index == count - 1,
 +                            action: "open".into(),
@@ -2383,6 +2542,7 @@ index c117a31..4565a2c 100644
 +            .iter()
 +            .any(|hit| &hit.target == selected));
 +    }
++    assert!(state.hits.resources.iter().any(|hit| hit.rect.height == 2));
 +    let selected = state.navigate_workspace_id.clone();
 +    snapshot.revision += 1;
 +    state.set_workspace_resources(
@@ -2409,6 +2569,37 @@ index c117a31..4565a2c 100644
 +    preview_key(&mut state, b"\x1b[B");
 +    state.compose(100, 28).unwrap();
 +    assert!(state.hits.resources.iter().any(|hit| matches!(&hit.target, super::super::super::resource_tree::ResourceTarget::Invoke(request) if request.resource_id == "pr-44")));
++}
++
++#[test]
++fn both_resource_lines_click_the_same_pr() {
++    for line in 0..2 {
++        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
++        let snapshot = workspaces(1);
++        state.set_endpoint_snapshot_for_generation(
++            &ClientEndpointId::Local,
++            1,
++            Box::new(snapshot.clone()),
++        );
++        state.set_workspace_resources(
++            &ClientEndpointId::Local,
++            1,
++            resource_projection(&snapshot, 2),
++        );
++        state.set_pane_surface(surface());
++        state.compose(100, 28).unwrap();
++        let hit = state.hits.resources.first().unwrap().clone();
++        assert_eq!(hit.rect.height, 2);
++        let outcome = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
++            kind: MouseEventKind::Down(MouseButton::Left),
++            column: hit.rect.x + 10,
++            row: hit.rect.y + line,
++            modifiers: KeyModifiers::empty(),
++        })]);
++        assert!(outcome.actions.iter().any(|action| matches!(action,
++            ClientShellAction::Endpoint { request, .. } if matches!(&request.method,
++                crate::api::schema::Method::WorkspaceResourcesInvoke(request) if request.resource_id == "pr-0"))));
++    }
 +}
 diff --git a/src/client/shell/workspace_navigation.rs b/src/client/shell/workspace_navigation.rs
 index 19fa1a3..0a98071 100644
@@ -2657,6 +2848,125 @@ index 3518ef4..e4584b9 100644
                  id: Some("test-ws".to_string()),
                  custom_name: Some("fallback test".to_string()),
                  identity_cwd: PathBuf::from("/tmp"),
+diff --git a/src/server/client_commands.rs b/src/server/client_commands.rs
+index 87824c8..f1c6a2e 100644
+--- a/src/server/client_commands.rs
++++ b/src/server/client_commands.rs
+@@ -49,6 +49,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
+     "workspace.move",
+     "workspace.move_block",
+     "workspace.rename",
++    "workspace.resources.invoke",
+     "worktree.create",
+     "worktree.list",
+     "worktree.open",
+@@ -298,6 +299,11 @@ mod tests {
+             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
+         );
+ 
++        assert_eq!(
++            actual.remove("workspace.resources.invoke").as_deref(),
++            Some("03ca9e704eaf19bb223affbe57816a4a2786c5fd9fab4b961780045077846e99")
++        );
++
+         assert_eq!(
+             actual, expected,
+             "an existing endpoint method changed shape; add load-bearing behavior as a new advertised method or explicitly gate new fields"
+diff --git a/src/server/client_transport.rs b/src/server/client_transport.rs
+index 88daf25..d584bfa 100644
+--- a/src/server/client_transport.rs
++++ b/src/server/client_transport.rs
+@@ -1860,6 +1860,49 @@ mod tests {
+         .is_some());
+     }
+ 
++    #[test]
++    fn workspace_resource_click_crosses_endpoint_transport_without_publication_access() {
++        let invocation = crate::workspace_resources::Invoke {
++            workspace_id: "w1".into(),
++            identity: "11111111-1111-4111-8111-111111111111".into(),
++            plugin_id: "example".into(),
++            resource_id: "pr-7".into(),
++            revision: 3,
++        };
++        let wire = serde_json::to_string(&crate::api::schema::Request {
++            id: "resource-click".into(),
++            method: crate::api::schema::Method::WorkspaceResourcesInvoke(invocation.clone()),
++        })
++        .unwrap();
++        let DecodedEndpointRequest::Dispatch(request) = decode_endpoint_request(&wire).unwrap()
++        else {
++            panic!("resource click was rejected before reaching its validated handler");
++        };
++        assert_eq!(request.id, "resource-click");
++        assert!(matches!(&request.method,
++            crate::api::schema::Method::WorkspaceResourcesInvoke(actual) if actual == &invocation));
++        assert!(crate::server::client_commands::supports_client_shell_method(&request.method));
++        for method in ["workspace.resources.replace", "workspace.resources.get"] {
++            let wire =
++                serde_json::json!({"id":"producer-only","method":method,"params":{}}).to_string();
++            assert!(matches!(
++                decode_endpoint_request(&wire).unwrap(),
++                DecodedEndpointRequest::Error {
++                    code: "unsupported_method",
++                    ..
++                }
++            ));
++        }
++        let malformed = r#"{"id":"malformed","method":"workspace.resources.invoke","params":{}}"#;
++        assert!(matches!(
++            decode_endpoint_request(malformed).unwrap(),
++            DecodedEndpointRequest::Error {
++                code: "invalid_request",
++                ..
++            }
++        ));
++    }
++
+     #[test]
+     fn unknown_endpoint_method_returns_correlated_error() {
+         let decoded = decode_endpoint_request(
+@@ -2048,6 +2091,40 @@ mod tests {
+         assert!(server_event_rx.try_recv().is_err());
+     }
+ 
++    #[test]
++    fn client_read_loop_dispatches_workspace_resource_click() {
++        let (mut client_stream, server_stream, _path) = local_stream_pair("resource-click");
++        let (tx, mut rx) = mpsc::channel(4);
++        let handle = std::thread::spawn(move || {
++            client_read_loop(server_stream, 7, &tx, &Arc::new(AtomicBool::new(false)))
++        });
++        let request = serde_json::json!({
++            "id":"resource-click", "method":"workspace.resources.invoke",
++            "params":{"workspace_id":"w1", "identity":"11111111-1111-4111-8111-111111111111",
++                "plugin_id":"example", "resource_id":"pr-7", "revision":3}
++        })
++        .to_string();
++        protocol::write_message(
++            &mut client_stream,
++            &ClientMessage::ClientShellEndpointRequest {
++                boot_id: "test-boot".into(),
++                request,
++            },
++        )
++        .unwrap();
++        protocol::write_message(&mut client_stream, &ClientMessage::Detach).unwrap();
++        assert!(matches!(recv_server_event(&mut rx, "resource dispatch"),
++            ServerEvent::ClientShellEndpointRequest { client_id: 7, boot_id, request }
++                if boot_id == "test-boot" && request.id == "resource-click"
++                && matches!(&request.method, crate::api::schema::Method::WorkspaceResourcesInvoke(item)
++                    if item.workspace_id == "w1" && item.resource_id == "pr-7" && item.revision == 3)));
++        assert!(matches!(
++            recv_server_event(&mut rx, "detach"),
++            ServerEvent::ClientDetach { client_id: 7 }
++        ));
++        handle.join().unwrap().unwrap();
++    }
++
+     #[test]
+     fn client_read_loop_stops_after_detach() {
+         let (mut client_stream, server_stream, _path) = local_stream_pair("client-read-detach");
 diff --git a/src/server/clients.rs b/src/server/clients.rs
 index 65e875b..eb17fd6 100644
 --- a/src/server/clients.rs
@@ -2786,17 +3096,19 @@ index 27f3bff..355b9a0 100644
      assert_eq!(completions.revision, snapshot.revision);
      (snapshot, completions)
 diff --git a/src/server/render_scale_benchmark.rs b/src/server/render_scale_benchmark.rs
-index 754c9db..ecbc346 100644
+index 754c9db..f718409 100644
 --- a/src/server/render_scale_benchmark.rs
 +++ b/src/server/render_scale_benchmark.rs
-@@ -590,6 +590,69 @@ async fn render_scale_profile() {
+@@ -590,6 +590,75 @@ async fn render_scale_profile() {
      print_surface_damage_profiles();
  }
  
 +#[tokio::test(flavor = "current_thread")]
 +#[ignore = "manual workspace resource scaling profile"]
 +async fn render_scale_profile_resources() {
-+    use crate::workspace_resources::{Collection, Projection, Resource, Tone, WorkspaceResources};
++    use crate::workspace_resources::{
++        Collection, Projection, Resource, ResourceDetail, Tone, WorkspaceResources,
++    };
 +    for count in [1, 15, 50] {
 +        let mut pipeline = RenderPipeline::new(workspaces(count));
 +        let snapshot = super::client_shell::snapshot(&pipeline.app, "bench-boot", 1, None, None);
@@ -2816,7 +3128,11 @@ index 754c9db..ecbc346 100644
 +                            .map(|index| Resource {
 +                                id: format!("pr-{index}"),
 +                                label: format!("#{index}"),
-+                                status: "CI running · review requested".into(),
++                                status: "✓ Approved".into(),
++                                detail: Some(ResourceDetail {
++                                    text: "◷ 2 checks".into(),
++                                    tone: Tone::Warning,
++                                }),
 +                                tone: Tone::Normal,
 +                                completed: false,
 +                                action: "open".into(),
@@ -2902,10 +3218,10 @@ index 8944b88..50810a3 100644
              cached_identity_cwd: identity_cwd.clone(),
 diff --git a/src/workspace_resources.rs b/src/workspace_resources.rs
 new file mode 100644
-index 0000000..d1abe89
+index 0000000..abf44e3
 --- /dev/null
 +++ b/src/workspace_resources.rs
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,278 @@
 +//! Plugin-owned resource collections. Runtime facts, independent of any client layout.
 +use std::collections::{BTreeMap, HashSet};
 +use std::time::{Duration, Instant};
@@ -2918,6 +3234,8 @@ index 0000000..d1abe89
 +    pub id: String,
 +    pub label: String,
 +    pub status: String,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub detail: Option<ResourceDetail>,
 +    #[serde(default)]
 +    pub tone: Tone,
 +    #[serde(default)]
@@ -2926,6 +3244,12 @@ index 0000000..d1abe89
 +    pub action: String,
 +    /// Opaque resource reference passed as clicked_url to the declared action.
 +    pub reference: String,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct ResourceDetail {
++    pub text: String,
++    pub tone: Tone,
 +}
 +
 +#[derive(
@@ -3086,6 +3410,10 @@ index 0000000..d1abe89
 +        if !text(&item.id, 256)
 +            || !text(&item.label, 512)
 +            || !text(&item.status, 512)
++            || item
++                .detail
++                .as_ref()
++                .is_some_and(|detail| !text(&detail.text, 512))
 +            || !text(&item.action, 128)
 +            || !text(&item.reference, 2048)
 +            || !ids.insert(&item.id)
@@ -3110,6 +3438,7 @@ index 0000000..d1abe89
 +                id: "one".into(),
 +                label: "cafe\u{301} 👨‍👩‍👧".into(),
 +                status: "Pending".into(),
++                detail: None,
 +                tone: Tone::Normal,
 +                completed: false,
 +                action: "open".into(),

@@ -28,7 +28,8 @@ An upstream host update will require reapplying or replacing this patch.
   accepts `workspace_id`, `identity`, `plugin_id`, `expected_revision`, `ttl_ms`
   and `resources`. Revision checks prevent stale writes.
 - Resources carry `id`, `label`, `status`, `tone`, `completed`, `action` and
-  `reference`. Actions belong to the enabled producer; the reference is passed as
+  `reference`, plus optional `detail: {text, tone}` for a second line. Both lines
+  share one selection and click target. Actions belong to the enabled producer; the reference is passed as
   `clicked_url`. Invocation checks identity, revision and expiry.
 - Collections expire and are rebuilt by their producer after restart. Bounds are
   512 items per producer, 32 producers per workspace and a 24-hour maximum TTL.

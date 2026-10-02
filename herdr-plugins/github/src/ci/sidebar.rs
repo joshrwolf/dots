@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use herdr_prs::{Associations, Registry, Scope};
 use herdrkit::events::{Events, Subscription};
-use herdrkit::resources::{Replace, Resource, Tone};
+use herdrkit::resources::{Replace, Resource, ResourceDetail, Tone};
 use herdrkit::service::{Handler, Service};
 use herdrkit::{Client, Invocation, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension as _, params};
@@ -79,28 +79,48 @@ impl Cached {
     fn from_snapshot(state: &SidebarSnapshot, now: u64) -> Self {
         let preview = status::Preview::from_snapshot(state);
         let completed = state.pull_request.state != PullRequestState::Open;
-        let mut parts = vec![preview.state.to_owned()];
-        if !completed {
-            parts.extend(preview.failed.iter().cloned());
-            parts.extend(preview.pending.iter().cloned());
-            parts.extend(preview.checks.map(str::to_owned));
-            parts.extend(preview.review.map(str::to_owned));
-        }
-        let tone = if completed {
-            Tone::Muted
-        } else if preview.failed.is_some() {
-            Tone::Failure
-        } else if preview.pending.is_some() {
-            Tone::Warning
+        let (review, tone) = if completed {
+            (preview.state, Tone::Muted)
         } else {
-            Tone::Normal
+            match state.pull_request.review {
+                github::ReviewStatus::Approved => ("✓ Approved", Tone::Success),
+                github::ReviewStatus::ChangesRequested => ("! Changes", Tone::Failure),
+                _ if state.pull_request.draft => ("Draft", Tone::Muted),
+                github::ReviewStatus::Unknown => ("? Review", Tone::Muted),
+                _ => ("◷ Review", Tone::Muted),
+            }
         };
+        let detail = (!completed).then(|| {
+            let mut parts = Vec::new();
+            if let Some(failed) = &preview.failed {
+                parts.push(format!("{failed} failed"));
+            }
+            if let Some(pending) = &preview.pending {
+                parts.push(format!("{pending} checks"));
+            }
+            if parts.is_empty() {
+                parts.push(preview.checks.unwrap_or("— No checks").to_owned());
+            }
+            ResourceDetail {
+                text: parts.join(" · "),
+                tone: if preview.failed.is_some() {
+                    Tone::Failure
+                } else if preview.pending.is_some() {
+                    Tone::Warning
+                } else if preview.checks == Some("✓ CI") {
+                    Tone::Success
+                } else {
+                    Tone::Muted
+                },
+            }
+        });
         Self {
             resource: Resource {
                 id: String::new(),
                 reference: String::new(),
                 label: preview.pull_request,
-                status: parts.join(" · "),
+                status: review.into(),
+                detail,
                 tone,
                 completed,
                 action: "open-link".into(),
@@ -641,7 +661,11 @@ fn resource(url: &str, pull: Option<&PullRequest>, now: u64) -> Resource {
             id: url.into(),
             reference: url.into(),
             label: format!("#{}", url.rsplit('/').next().unwrap_or("?")),
-            status: "Unverified · waiting for GitHub".into(),
+            status: "Unverified".into(),
+            detail: Some(ResourceDetail {
+                text: "Waiting for GitHub".into(),
+                tone: Tone::Muted,
+            }),
             tone: Tone::Muted,
             completed: false,
             action: "open-link".into(),
@@ -653,15 +677,24 @@ fn resource(url: &str, pull: Option<&PullRequest>, now: u64) -> Resource {
     if let Some(pull) = pull {
         if let Some(cache) = &pull.cached {
             if pull.error.is_some() || now.saturating_sub(cache.fetched) > cache.interval * 2 {
+                let detail = resource.detail.get_or_insert_with(|| ResourceDetail {
+                    text: String::new(),
+                    tone: Tone::Warning,
+                });
+                detail.text.clear();
                 let _ = write!(
-                    resource.status,
-                    " · delayed (checked {}s ago)",
+                    detail.text,
+                    "◷ Delayed {}s",
                     now.saturating_sub(cache.fetched)
                 );
-                resource.tone = Tone::Warning;
+                detail.tone = Tone::Warning;
             }
         } else if pull.error.is_some() {
-            resource.status = "Unavailable · retrying".into();
+            resource.status = "Unavailable".into();
+            resource.detail = Some(ResourceDetail {
+                text: "Retrying GitHub".into(),
+                tone: Tone::Warning,
+            });
             resource.tone = Tone::Warning;
         }
     }
@@ -812,7 +845,7 @@ mod tests {
             .unwrap();
         let projected = resource(url, scheduler.pulls.get(url), 150);
         assert!(projected.status.contains("✓ CI"));
-        assert!(projected.status.contains("50s ago"));
+        assert_eq!(projected.detail.as_ref().unwrap().text, "◷ Delayed 50s");
         scheduler.schedule_network(151);
         assert!(scheduler.workers.is_empty());
         assert_eq!(scheduler.workspaces.len(), 1);
@@ -848,6 +881,31 @@ mod tests {
         state.pull_request.state = PullRequestState::Open;
         let reopened = Cached::from_snapshot(&state, 200);
         assert!(!reopened.resource.completed);
-        assert!(reopened.resource.status.contains("No checks"));
+        assert_eq!(reopened.resource.status, "✓ Approved");
+        assert_eq!(reopened.resource.tone, Tone::Success);
+        assert!(
+            reopened
+                .resource
+                .detail
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("No checks")
+        );
+        state.checks = (0..2)
+            .map(|_| github::Check {
+                bucket: CheckBucket::Pending,
+                name: String::new(),
+                link: String::new(),
+                workflow: String::new(),
+            })
+            .collect();
+        let pending = Cached::from_snapshot(&state, 300);
+        assert_eq!(pending.resource.status, "✓ Approved");
+        assert_eq!(pending.resource.tone, Tone::Success);
+        let detail = pending.resource.detail.unwrap();
+        assert_eq!(detail.text, "◷ 2 checks");
+        assert_eq!(detail.tone, Tone::Warning);
+        assert!(merged.resource.detail.is_none());
     }
 }

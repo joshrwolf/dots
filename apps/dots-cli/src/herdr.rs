@@ -60,7 +60,7 @@ pub(crate) fn run(command: HerdrCommand, json: bool) -> Result<String> {
     };
     let observations: Vec<_> = associations.pulls.iter().map(|pull| {
         let resource = observed.iter().find(|resource| resource.id == pull.url.as_str());
-        serde_json::json!({"url": pull.url, "status": resource.map_or("Awaiting watcher projection", |resource| resource.status.as_str()), "projection": resource})
+        serde_json::json!({"url": pull.url, "status": resource.map_or_else(|| "Awaiting watcher projection".to_owned(), status_text), "projection": resource})
     }).collect();
     if json {
         Ok(crate::json::render(
@@ -77,7 +77,7 @@ pub(crate) fn run(command: HerdrCommand, json: bool) -> Result<String> {
                 .find(|resource| resource.id == pull.url.as_str())
             {
                 output.push_str("  ");
-                output.push_str(&resource.status);
+                output.push_str(&status_text(resource));
             } else {
                 output.push_str("  Awaiting watcher projection");
             }
@@ -90,6 +90,13 @@ pub(crate) fn run(command: HerdrCommand, json: bool) -> Result<String> {
         }
         Ok(output)
     }
+}
+
+fn status_text(resource: &herdrkit::resources::Resource) -> String {
+    resource.detail.as_ref().map_or_else(
+        || resource.status.clone(),
+        |detail| format!("{} · {}", resource.status, detail.text),
+    )
 }
 
 #[cfg(test)]

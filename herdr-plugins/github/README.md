@@ -1,8 +1,9 @@
 # PRs in spaces
 
 Agents register every PR they work on; the plugin watches GitHub and displays
-individual PR rows under the existing workspace. Completed PRs collapse into a
-group. Click or Enter opens the selected PR.
+two-line PR items under the existing workspace: number and review status above,
+CI below, with separate colors. Completed PRs collapse into a group. Clicking
+either line or pressing Enter opens the PR in your browser.
 
 ```sh
 dots herdr prs register https://github.com/example/project/pull/42 --workspace <verified-id> --json
