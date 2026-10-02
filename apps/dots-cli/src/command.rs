@@ -25,6 +25,11 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
+    /// Register and inspect PR associations in Herdr workspaces
+    Herdr {
+        #[command(subcommand)]
+        command: HerdrCommand,
+    },
     /// Inspect GitHub CI evidence and PR review threads
     Github {
         #[command(subcommand)]
@@ -35,6 +40,31 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: SkillCommand,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum HerdrCommand {
+    /// Explicit workspace PR associations; local writes, no GitHub mutations
+    #[command(
+        long_about = "Register every PR created or worked on in this Herdr workspace. Associations survive branch changes and agent completion. Requires a host with persistent workspace identities. No GitHub publication, CI fixes, or merges. Use a full PR URL; never substitute the focused workspace. Registration is safe to repeat after shipping or resuming work. An explicit --workspace is required. Verify it against the task and live workspace inventory; inherited pane/workspace IDs, current directory, and UI focus are not reliable ownership evidence."
+    )]
+    Prs {
+        /// Verified workspace handle; required, never inferred from environment or focus
+        #[arg(long, global = true)]
+        workspace: Option<String>,
+        #[command(subcommand)]
+        command: PrAssociationCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum PrAssociationCommand {
+    /// Attach a PR to this workspace; repeat calls are harmless
+    Register { url: String },
+    /// List every PR registered in this workspace
+    List,
+    /// Remove this workspace's association without changing the PR
+    Unregister { url: String },
 }
 
 #[derive(Debug, Subcommand)]

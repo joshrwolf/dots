@@ -15,6 +15,7 @@ name = "herdr-review"
 path = "src/main.rs"
 
 [dependencies]
+herdr-prs.workspace = true
 anyhow.workspace = true
 github-client.workspace = true
 herdrkit.workspace = true

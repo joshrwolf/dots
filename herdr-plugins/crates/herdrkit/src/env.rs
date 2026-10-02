@@ -34,6 +34,14 @@ pub(crate) fn socket_path() -> Result<PathBuf> {
     path("HERDR_SOCKET_PATH")
 }
 
+/// Machine-local application state root, shared by frontends and plugin workers.
+pub fn user_state_directory() -> Result<PathBuf> {
+    if let Some(directory) = optional_path("XDG_STATE_HOME").filter(|path| path.is_absolute()) {
+        return Ok(directory);
+    }
+    Ok(path("HOME")?.join(".local/state"))
+}
+
 pub(crate) fn effective_target_dir<'a>(
     checkout: Option<&'a Path>,
     pane_cwd: Option<&'a Path>,

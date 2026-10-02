@@ -22,6 +22,35 @@ const MAX_COMMAND_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const PULL_REQUEST_FIELDS: &str = "number,title,url,baseRefName,headRefName,headRefOid";
 const REPOSITORY_FIELDS: &str = "url";
 
+/// Validated canonical identity of a PR, requiring no GitHub request.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct PullRequestUrl(String);
+
+impl PullRequestUrl {
+    pub fn parse(value: &str) -> Result<Self> {
+        if value.len() > 256 {
+            return Err(Error::InvalidUrl { url: value.into() });
+        }
+        let identity = parse_pull_request_url(value)?;
+        if identity.scheme != "https" || identity.host != "github.com" {
+            return Err(Error::InvalidUrl { url: value.into() });
+        }
+        Ok(Self(format!(
+            "{}://{}/{}/{}/pull/{}",
+            identity.scheme,
+            identity.host,
+            identity.owner.to_ascii_lowercase(),
+            identity.repository.to_ascii_lowercase(),
+            identity.number
+        )))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// An explicit pull request, or the pull request associated with the current branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
@@ -1108,6 +1137,25 @@ mod tests {
     use std::os::unix::process::ExitStatusExt as _;
 
     use super::*;
+
+    #[test]
+    fn registered_pr_identity_is_canonical_and_supported() {
+        let canonical =
+            PullRequestUrl::parse("https://GitHub.com/Example/Project/pull/007/files#diff")
+                .unwrap();
+        assert_eq!(
+            canonical.as_str(),
+            "https://github.com/example/project/pull/7"
+        );
+        for invalid in [
+            "7",
+            "http://github.com/example/project/pull/7",
+            "https://forge.example/example/project/pull/7",
+            "https://github.com/example/project/pull/0",
+        ] {
+            assert!(PullRequestUrl::parse(invalid).is_err(), "{invalid}");
+        }
+    }
 
     #[test]
     fn log_budget_is_separate_from_metadata_and_still_bounded() {

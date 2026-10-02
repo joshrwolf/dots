@@ -1,12 +1,5 @@
 use crate::github::{Check, CheckBucket, CiState, PullRequestState, ReviewStatus, SidebarSnapshot};
 
-pub const PR_TOKEN: &str = "gh_pr";
-pub const STATE_TOKEN: &str = "gh_state";
-pub const REVIEW_TOKEN: &str = "gh_review";
-pub const CHECKS_TOKEN: &str = "gh_checks";
-pub const FAILED_TOKEN: &str = "gh_failed";
-pub const PENDING_TOKEN: &str = "gh_pending";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preview {
     pub pull_request: String,

@@ -79,8 +79,11 @@ pub(crate) fn build_for_state(dir: &Path, state: &CiState) -> Result<String> {
     Ok(out)
 }
 
-pub fn show(dir: &Path) -> Result<()> {
-    let brief = build(dir)?;
+pub fn show(dir: &Path, target: &github_client::PullRequestUrl) -> Result<()> {
+    let Lookup::Found(state) = github::lookup_target(dir, target)? else {
+        bail!("registered PR is unavailable")
+    };
+    let brief = build_for_state(dir, &state)?;
     let mut child = Command::new("less")
         .arg("-R")
         .stdin(Stdio::piped())

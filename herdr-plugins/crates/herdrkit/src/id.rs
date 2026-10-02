@@ -63,6 +63,7 @@ macro_rules! id {
 id!(WorkspaceId, "workspace");
 id!(TabId, "tab");
 id!(PaneId, "pane");
+id!(TerminalId, "terminal");
 
 #[cfg(test)]
 mod tests {

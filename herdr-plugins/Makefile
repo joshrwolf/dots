@@ -25,7 +25,13 @@ link:
 		herdr plugin link "$(CURDIR)/$$plugin" >/dev/null || { echo "link: LINK FAILED for $$plugin" >&2; rc=1; }; \
 	done; exit $$rc
 
+test-deps:
+	python3 nvim/tests/deps.py install
+
+.PHONY: test-deps
+
 check:
+	python3 nvim/tests/deps.py check
 	$(MAKE) -n $(PLUGIN_BUILD_TARGETS) tool-build-issue >/dev/null
 	$(MAKE) -C .. -n cli-build >/dev/null
 	cargo fmt --all --check

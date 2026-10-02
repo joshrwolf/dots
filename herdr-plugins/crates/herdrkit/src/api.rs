@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::id::{PaneId, TabId, WorkspaceId};
+use crate::id::{PaneId, TabId, TerminalId, WorkspaceId};
 use crate::socket::{Query, Request};
 use crate::tokens::Tokens;
 use crate::{Client, Result};
@@ -126,6 +126,9 @@ pub struct WorkspaceWorktree {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Workspace {
     pub workspace_id: WorkspaceId,
+    /// Lifetime identity, absent on hosts without persistent workspace identities.
+    #[serde(default)]
+    pub identity: Option<String>,
     pub label: String,
     pub focused: bool,
     pub agent_status: AgentStatus,
@@ -140,6 +143,10 @@ pub struct Pane {
     pub tab_id: TabId,
     #[serde(default)]
     pub cwd: Option<PathBuf>,
+    /// Display metadata, not proof that the publishing process is still alive.
+    /// Herdr normalizes and truncates values; use short identifiers, not paths.
+    #[serde(default)]
+    pub tokens: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -202,6 +209,29 @@ pub struct Snapshot {
     pub focused_tab_id: Option<TabId>,
     #[serde(default)]
     pub focused_pane_id: Option<PaneId>,
+}
+
+/// Focus and stable terminal identities from one coherent session snapshot.
+/// Unlike pane IDs, terminal IDs survive moves across workspaces.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NavigationSnapshot {
+    pub version: String,
+    pub workspaces: Vec<NavigationWorkspace>,
+    pub panes: Vec<NavigationPane>,
+    pub focused_workspace_id: Option<WorkspaceId>,
+    pub focused_pane_id: Option<PaneId>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NavigationWorkspace {
+    pub workspace_id: WorkspaceId,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NavigationPane {
+    pub pane_id: PaneId,
+    pub terminal_id: TerminalId,
+    pub workspace_id: WorkspaceId,
 }
 
 impl Snapshot {
@@ -405,6 +435,15 @@ request!(Ping, "ping", "pong" => Pong);
 struct SessionSnapshot {}
 request!(SessionSnapshot, "session.snapshot", "session_snapshot" => SnapshotReply);
 
+#[derive(Debug, Default, Serialize)]
+struct NavigationRead {}
+request!(NavigationRead, "session.snapshot", "session_snapshot" => NavigationReply);
+
+#[derive(Debug, Deserialize)]
+struct NavigationReply {
+    snapshot: NavigationSnapshot,
+}
+
 #[derive(Debug, Serialize)]
 struct WorktreeList<'a> {
     pub cwd: &'a str,
@@ -606,13 +645,19 @@ struct PaneList {}
 request!(PaneList, "pane.list", "pane_list" => Panes);
 
 #[derive(Debug, Serialize)]
+struct PaneGet<'a> {
+    pane_id: &'a PaneId,
+}
+request!(PaneGet<'_>, "pane.get", "pane_info" => PaneInfo);
+
+#[derive(Debug, Serialize)]
 struct PaneFocus<'a> {
     pane_id: &'a PaneId,
 }
-request!(PaneFocus<'_>, "pane.focus", "pane_info" => FocusedPane);
+request!(PaneFocus<'_>, "pane.focus", "pane_info" => PaneInfo);
 
 #[derive(Debug, Deserialize)]
-struct FocusedPane {
+struct PaneInfo {
     pane: Pane,
 }
 
@@ -1011,6 +1056,10 @@ impl Client {
         self.call(&SessionSnapshot {}).map(|r| r.snapshot)
     }
 
+    pub fn navigation_snapshot(&self) -> Result<NavigationSnapshot> {
+        self.call(&NavigationRead {}).map(|r| r.snapshot)
+    }
+
     pub fn worktree_list(&self, cwd: &Path) -> Result<Worktrees> {
         self.call(&WorktreeList {
             cwd: path_parameter("worktree.list cwd", cwd)?,
@@ -1197,6 +1246,11 @@ impl Client {
         self.call(&PaneList {}).map(|r| r.panes)
     }
 
+    /// Read the current identity and metadata before acting on a discovery result.
+    pub fn pane_get(&self, pane_id: &PaneId) -> Result<Pane> {
+        self.call(&PaneGet { pane_id }).map(|r| r.pane)
+    }
+
     pub fn pane_process_info(&self, pane_id: &PaneId) -> Result<ProcessInfo> {
         self.call(&PaneProcessInfo { pane_id })
             .map(|r| r.process_info)
@@ -1339,6 +1393,7 @@ mod tests {
                 workspace_id: WorkspaceId::new("w1"),
                 tab_id: TabId::new("w1:t1"),
                 cwd: Some(PathBuf::new()),
+                tokens: BTreeMap::new(),
             },
         );
         assert_eq!(
@@ -1502,6 +1557,48 @@ mod tests {
                     },
                 }),
             }]
+        );
+    }
+
+    #[test]
+    fn pane_metadata_is_optional_and_get_revalidates_the_exact_pane() {
+        use crate::testing::{RecordedRequest, Server, Step};
+        let server = Server::start(vec![
+            Step::reply(
+                r#"{"id":"{id}","result":{"type":"pane_list","panes":[{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t1"}]}}"#,
+            ),
+            Step::reply(
+                r#"{"id":"{id}","result":{"type":"pane_info","pane":{"pane_id":"w1:p1","workspace_id":"w1","tab_id":"w1:t2","tokens":{"example":"short-id"},"future_field":true}}}"#,
+            ),
+        ]);
+        let client = server.client();
+        assert!(
+            client
+                .pane_list()
+                .unwrap()
+                .first()
+                .unwrap()
+                .tokens
+                .is_empty()
+        );
+        let pane = client.pane_get(&PaneId::new("w1:p1")).unwrap();
+        assert_eq!(pane.tab_id, TabId::new("w1:t2"));
+        assert_eq!(
+            pane.tokens.get("example").map(String::as_str),
+            Some("short-id")
+        );
+        assert_eq!(
+            server.requests(),
+            [
+                RecordedRequest {
+                    method: "pane.list".into(),
+                    params: serde_json::json!({})
+                },
+                RecordedRequest {
+                    method: "pane.get".into(),
+                    params: serde_json::json!({"pane_id":"w1:p1"})
+                },
+            ]
         );
     }
 

@@ -25,19 +25,30 @@ fn run() -> Result<()> {
         PluginCommand::Refresh => sidebar::invoke(&invocation, true),
         PluginCommand::Ensure => sidebar::invoke(&invocation, false),
         PluginCommand::Status => sidebar::show_status(&invocation),
-        PluginCommand::Fix => herdr_github::ci::autofix::fix_now(
-            client,
-            invocation.require_target_dir()?,
-            invocation.state_dir(),
-            Config::from_env()?,
-        ),
-        PluginCommand::Arm => herdr_github::ci::autofix::arm(
-            client,
-            invocation.require_target_dir()?,
-            invocation.state_dir(),
-            Config::from_env()?,
-        ),
-        PluginCommand::Brief => herdr_github::ci::brief::show(invocation.require_target_dir()?),
+        action @ (PluginCommand::Fix | PluginCommand::Arm | PluginCommand::Brief) => {
+            let Some(target) =
+                herdr_github::targets::select(&invocation, action != PluginCommand::Fix)?
+            else {
+                return Ok(());
+            };
+            match action {
+                PluginCommand::Fix => herdr_github::ci::autofix::fix_now(
+                    client,
+                    invocation.require_target_dir()?,
+                    invocation.state_dir(),
+                    Config::from_env()?,
+                    &target,
+                ),
+                PluginCommand::Arm => herdr_github::ci::autofix::arm(
+                    client,
+                    invocation.require_target_dir()?,
+                    invocation.state_dir(),
+                    Config::from_env()?,
+                    &target,
+                ),
+                _ => herdr_github::ci::brief::show(invocation.require_target_dir()?, &target),
+            }
+        }
         PluginCommand::OpenLink => herdr_github::open::open_url(
             invocation
                 .clicked_url()

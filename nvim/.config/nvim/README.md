@@ -7,6 +7,12 @@ Neovim version; upgrades are manual.
 - `lua/config/options.lua` contains intentional changes to editor defaults.
 - `lua/config/plugins.lua` declares native packages and configures them explicitly.
 - `lua/config/keymaps.lua` contains personal mappings.
+- `lua/dots/herdr.lua` registers this editor for Herdr file navigation; see the
+  [editor connection contract](../../../herdr-plugins/nvim/README.md).
+- `lua/dots/review/` connects normally opened editors to saved review discussions.
+  `:ReviewThreads` / `<leader>fR` opens the thread list; reply, resolve and refresh
+  work in its discussion split. See [review integration](../../../herdr-plugins/review/NEOVIM.md).
+  `<leader>fr` remains recent files; setup does not launch a bridge.
 
 Run `make nvim` from the dotfiles root to link this configuration.
 

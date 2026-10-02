@@ -83,6 +83,12 @@ cli-check:
 
 .PHONY: cli cli-build cli-check cli-skills rust-check
 
+# Explicit, pinned test-only dependencies; herdr-check never downloads them.
+herdr-test-deps:
+	$(MAKE) -C $(HERDR_PLUGINS) test-deps
+
+.PHONY: herdr-test-deps
+
 herdr-issue-build:
 	$(MAKE) -C $(HERDR_PLUGINS) tool-build-issue
 

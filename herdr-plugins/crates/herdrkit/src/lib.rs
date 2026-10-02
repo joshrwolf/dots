@@ -20,8 +20,10 @@ pub mod apps;
 pub mod connection;
 pub mod events;
 pub mod picker;
+pub mod process;
 pub mod runtime;
 pub mod service;
+pub mod state_file;
 pub mod worktree;
 
 mod columns;
@@ -37,10 +39,14 @@ mod tokens;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-pub use env::{ExecutionContext, Invocation, InvocationContext, InvocationKind};
+pub use env::{
+    ExecutionContext, Invocation, InvocationContext, InvocationKind, user_state_directory,
+};
 pub use error::{Error, Result};
-pub use id::{PaneId, TabId, WorkspaceId};
+pub use id::{PaneId, TabId, TerminalId, WorkspaceId};
 pub use metadata::MetadataReporter;
 pub use socket::Client;
 pub use theme::{Indicators, Theme};
 pub use tokens::{TokenError, Tokens};
+
+pub mod resources;

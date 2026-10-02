@@ -87,10 +87,27 @@ For an existing PR, review the entire current diff and update its title and
 description to reflect the current scope. Replace stale explanations instead
 of appending a history of the conversation or abandoned approaches.
 
-Append `Generated with assistance from <model>` to the PR description, replacing `<model>` with
-the actual model name. When using `gh` for multiline descriptions, write the
+Prefix AI-generated PR descriptions and any explicitly authorized comments or
+replies with `:robot:`. When using `gh` for multiline descriptions, write the
 exact Markdown to a temporary file and pass it with `--body-file`.
 
 After publication, verify the PR's target repository, base, source branch, and
 published description. Return the PR link with a brief statement of what was
 created or updated.
+
+## Register every shipped PR in Herdr
+
+When the invoking environment supplies Herdr workspace/pane context, discover
+`dots herdr prs register --help` and register the verified full PR URL after
+creation or update: `dots herdr prs register <url> --workspace <verified-id> --json`.
+Verify the workspace against the task and `herdr api snapshot`. Never copy inherited
+Herdr IDs or use UI focus or checkout similarity as ownership evidence: shared
+agent daemons can carry another pane's context. If ambiguous, ask for the target;
+report publication as successful and registration as pending. Do this for every PR,
+including an already-open PR and each PR in a sequence. Registration is local,
+idempotent, and does not replace earlier workspace associations.
+
+Outside Herdr, skip registration. Within Herdr, report a registration failure
+separately from successful publication and retry only the local registration;
+never recreate a PR to repair the association. The background plugin watches
+status. Stop after publication and registration; do not monitor CI or merge.

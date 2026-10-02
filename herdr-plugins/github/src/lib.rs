@@ -3,3 +3,5 @@ pub mod github;
 pub mod open;
 
 mod lock;
+
+pub mod targets;

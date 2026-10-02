@@ -184,7 +184,7 @@ impl Client {
 
     /// One request, one response, one connection — the `result` object with its
     /// tag intact.
-    fn exchange<P: Serialize>(
+    pub(crate) fn exchange<P: Serialize>(
         &self,
         method: &'static str,
         params: &P,

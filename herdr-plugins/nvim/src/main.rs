@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context as _, Result, bail};
-use herdr_nvim::{Listings, Target, groups, open};
+use herdr_nvim::{Editors, Listings, Target, groups};
 use herdrkit::picker::Picker;
 use herdrkit::runtime::{self, FailureSurface};
 use herdrkit::{Invocation, InvocationKind};
@@ -71,7 +71,7 @@ fn open_target(invocation: &Invocation) -> Result<()> {
 }
 
 fn hand_over(invocation: &Invocation, target: &Target) -> Result<()> {
-    let pane = open(
+    let pane = Editors::from_env().open(
         invocation.client(),
         invocation.require_tab_id()?,
         invocation.pane_id(),

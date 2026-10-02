@@ -24,6 +24,29 @@ use std::time::Duration;
 
 use crate::Client;
 
+/// Exercise a stock server operation outside the production API subset.
+/// Keeps integration tests on the same bounded, request-ID-checked transport.
+pub fn request(
+    client: &Client,
+    method: &'static str,
+    params: &serde_json::Value,
+    expected: &'static str,
+) -> crate::Result<serde_json::Value> {
+    let result = client.exchange(method, params, Some(Duration::from_secs(3)))?;
+    let actual = result
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if actual != expected {
+        return Err(crate::Error::WrongResult {
+            method: method.into(),
+            expected,
+            actual: actual.into(),
+        });
+    }
+    Ok(result)
+}
+
 /// One action in a server's script.
 #[derive(Debug, Clone)]
 pub enum Step {

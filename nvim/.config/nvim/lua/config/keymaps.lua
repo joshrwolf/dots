@@ -1,6 +1,10 @@
 vim.keymap.set("n", "<Esc>", "<cmd>nohlsearch<CR>", { desc = "Clear search highlighting" })
 vim.keymap.set("n", "<C-d>", "<C-d>zz", { desc = "Half-page down and center" })
 vim.keymap.set("n", "<C-u>", "<C-u>zz", { desc = "Half-page up and center" })
+vim.keymap.set("n", "]t", "<cmd>tabnext<CR>", { desc = "Next tab" })
+vim.keymap.set("n", "[t", "<cmd>tabprevious<CR>", { desc = "Previous tab" })
+vim.keymap.set("x", "<", "<gv", { desc = "Indent left and keep selection" })
+vim.keymap.set("x", ">", ">gv", { desc = "Indent right and keep selection" })
 
 -- Herdr forwards these keys to Neovim. Move locally first, then hand focus
 -- back to Herdr at a split edge. Outside Herdr, they just navigate Vim splits.
@@ -30,6 +34,9 @@ for key, direction in pairs({ h = "left", j = "down", k = "up", l = "right" }) d
 end
 
 vim.keymap.set("n", "-", "<cmd>Oil<CR>", { desc = "Open parent directory" })
+vim.keymap.set("n", "<leader>m", function()
+  require("render-markdown").toggle()
+end, { desc = "Toggle Markdown rendering" })
 vim.keymap.set({ "n", "x" }, "<leader>cf", function()
   require("conform").format({ async = true, lsp_format = "never" })
 end, { desc = "Format buffer or selection" })
@@ -57,6 +64,16 @@ end, { desc = "Delete buffer (keep splits)" })
 vim.keymap.set({ "n", "x" }, "<leader>gb", function()
   Snacks.gitbrowse({ what = "file" })
 end, { desc = "Browse file or selection on Git remote" })
+vim.keymap.set({ "n", "x" }, "<leader>gY", function()
+  Snacks.gitbrowse({
+    what = "file",
+    open = function(url)
+      vim.fn.setreg("+", url)
+      vim.notify("Copied Git link to clipboard")
+    end,
+    notify = false,
+  })
+end, { desc = "Copy Git link for file or selection" })
 vim.keymap.set("n", "<leader>fd", function()
   Snacks.picker.diagnostics()
 end, { desc = "Find diagnostics" })

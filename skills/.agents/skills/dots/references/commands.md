@@ -12,6 +12,7 @@ Help and skill generation work offline. Commands document their own effects and 
 Usage: dots [OPTIONS] [COMMAND]
 
 Commands:
+  herdr   Register and inspect PR associations in Herdr workspaces
   github  Inspect GitHub CI evidence and PR review threads
   skills  Export agent discovery documentation from this command tree
 
@@ -33,6 +34,154 @@ Options:
 
   -V, --version
           Print version
+```
+
+## dots herdr
+
+```text
+Register and inspect PR associations in Herdr workspaces
+
+Usage: dots herdr [OPTIONS] <COMMAND>
+
+Commands:
+  prs  Explicit workspace PR associations; local writes, no GitHub mutations
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots herdr prs
+
+```text
+Register every PR created or worked on in this Herdr workspace. Associations survive branch changes and agent completion. Requires a host with persistent workspace identities. No GitHub publication, CI fixes, or merges. Use a full PR URL; never substitute the focused workspace. Registration is safe to repeat after shipping or resuming work. An explicit --workspace is required. Verify it against the task and live workspace inventory; inherited pane/workspace IDs, current directory, and UI focus are not reliable ownership evidence.
+
+Usage: dots herdr prs [OPTIONS] <COMMAND>
+
+Commands:
+  register    Attach a PR to this workspace; repeat calls are harmless
+  list        List every PR registered in this workspace
+  unregister  Remove this workspace's association without changing the PR
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --workspace <WORKSPACE>
+          Verified workspace handle; required, never inferred from environment or focus
+
+      --json
+          Return JSON instead of readable output
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots herdr prs register
+
+```text
+Attach a PR to this workspace; repeat calls are harmless
+
+Usage: dots herdr prs register [OPTIONS] <URL>
+
+Arguments:
+  <URL>
+
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --workspace <WORKSPACE>
+          Verified workspace handle; required, never inferred from environment or focus
+
+      --json
+          Return JSON instead of readable output
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots herdr prs list
+
+```text
+List every PR registered in this workspace
+
+Usage: dots herdr prs list [OPTIONS]
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --workspace <WORKSPACE>
+          Verified workspace handle; required, never inferred from environment or focus
+
+      --json
+          Return JSON instead of readable output
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots herdr prs unregister
+
+```text
+Remove this workspace's association without changing the PR
+
+Usage: dots herdr prs unregister [OPTIONS] <URL>
+
+Arguments:
+  <URL>
+
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --workspace <WORKSPACE>
+          Verified workspace handle; required, never inferred from environment or focus
+
+      --json
+          Return JSON instead of readable output
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
 ```
 
 ## dots github

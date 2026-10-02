@@ -1,0 +1,3173 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 8739be0..535f4db 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -811,6 +811,7 @@ dependencies = [
+  "tracing-subscriber",
+  "unicode-segmentation",
+  "unicode-width",
++ "uuid",
+  "widestring",
+  "windows",
+  "windows-sys",
+diff --git a/Cargo.toml b/Cargo.toml
+index f5810a3..28cb5d7 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -49,6 +49,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
+ toml = "0.8"
+ tracing = "0.1.44"
+ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
++uuid = { version = "1", features = ["v4", "serde"] }
+ unicode-width = "0.2"
+ unicode-segmentation = "1.13.1"
+ schemars = { version = "1.2.1", features = ["derive"] }
+diff --git a/docs/next/api/herdr-api.schema.json b/docs/next/api/herdr-api.schema.json
+index e2553f7..157792e 100644
+--- a/docs/next/api/herdr-api.schema.json
++++ b/docs/next/api/herdr-api.schema.json
+@@ -1085,6 +1085,13 @@
+             "focused": {
+               "type": "boolean"
+             },
++            "identity": {
++              "description": "Persistent lifetime identity; absent on older servers.",
++              "type": [
++                "string",
++                "null"
++              ]
++            },
+             "label": {
+               "type": "string"
+             },
+@@ -2195,6 +2202,36 @@
+           ],
+           "type": "object"
+         },
++        "Invoke": {
++          "additionalProperties": false,
++          "properties": {
++            "identity": {
++              "type": "string"
++            },
++            "plugin_id": {
++              "type": "string"
++            },
++            "resource_id": {
++              "type": "string"
++            },
++            "revision": {
++              "format": "uint64",
++              "minimum": 0,
++              "type": "integer"
++            },
++            "workspace_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "workspace_id",
++            "identity",
++            "plugin_id",
++            "resource_id",
++            "revision"
++          ],
++          "type": "object"
++        },
+         "LayoutApplyParams": {
+           "properties": {
+             "focus": {
+@@ -3856,6 +3893,83 @@
+           ],
+           "type": "object"
+         },
++        "Replace": {
++          "additionalProperties": false,
++          "properties": {
++            "expected_revision": {
++              "format": "uint64",
++              "minimum": 0,
++              "type": "integer"
++            },
++            "identity": {
++              "type": "string"
++            },
++            "plugin_id": {
++              "type": "string"
++            },
++            "resources": {
++              "items": {
++                "$ref": "#/schemas/request/$defs/Resource"
++              },
++              "type": "array"
++            },
++            "ttl_ms": {
++              "format": "uint64",
++              "minimum": 0,
++              "type": "integer"
++            },
++            "workspace_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "workspace_id",
++            "identity",
++            "plugin_id",
++            "expected_revision",
++            "ttl_ms",
++            "resources"
++          ],
++          "type": "object"
++        },
++        "Resource": {
++          "additionalProperties": false,
++          "properties": {
++            "action": {
++              "description": "Action declared by the collection's installed plugin.",
++              "type": "string"
++            },
++            "completed": {
++              "default": false,
++              "type": "boolean"
++            },
++            "id": {
++              "type": "string"
++            },
++            "label": {
++              "type": "string"
++            },
++            "reference": {
++              "description": "Opaque resource reference passed as clicked_url to the declared action.",
++              "type": "string"
++            },
++            "status": {
++              "type": "string"
++            },
++            "tone": {
++              "$ref": "#/schemas/request/$defs/Tone",
++              "default": "normal"
++            }
++          },
++          "required": [
++            "id",
++            "label",
++            "status",
++            "action",
++            "reference"
++          ],
++          "type": "object"
++        },
+         "ServerLiveHandoffParams": {
+           "properties": {
+             "expected_protocol": {
+@@ -4366,6 +4480,16 @@
+           ],
+           "type": "string"
+         },
++        "Tone": {
++          "enum": [
++            "normal",
++            "success",
++            "warning",
++            "failure",
++            "muted"
++          ],
++          "type": "string"
++        },
+         "WorkspaceCloseParams": {
+           "properties": {
+             "close_group": {
+@@ -5049,6 +5173,54 @@
+           ],
+           "type": "object"
+         },
++        {
++          "properties": {
++            "method": {
++              "const": "workspace.resources.get",
++              "type": "string"
++            },
++            "params": {
++              "$ref": "#/schemas/request/$defs/WorkspaceTarget"
++            }
++          },
++          "required": [
++            "method",
++            "params"
++          ],
++          "type": "object"
++        },
++        {
++          "properties": {
++            "method": {
++              "const": "workspace.resources.replace",
++              "type": "string"
++            },
++            "params": {
++              "$ref": "#/schemas/request/$defs/Replace"
++            }
++          },
++          "required": [
++            "method",
++            "params"
++          ],
++          "type": "object"
++        },
++        {
++          "properties": {
++            "method": {
++              "const": "workspace.resources.invoke",
++              "type": "string"
++            },
++            "params": {
++              "$ref": "#/schemas/request/$defs/Invoke"
++            }
++          },
++          "required": [
++            "method",
++            "params"
++          ],
++          "type": "object"
++        },
+         {
+           "properties": {
+             "method": {
+@@ -6784,6 +6956,26 @@
+           ],
+           "type": "string"
+         },
++        "Collection": {
++          "properties": {
++            "resources": {
++              "items": {
++                "$ref": "#/schemas/success_response/$defs/Resource"
++              },
++              "type": "array"
++            },
++            "revision": {
++              "format": "uint64",
++              "minimum": 0,
++              "type": "integer"
++            }
++          },
++          "required": [
++            "revision",
++            "resources"
++          ],
++          "type": "object"
++        },
+         "ConfigReloadStatus": {
+           "enum": [
+             "applied",
+@@ -9165,8 +9357,78 @@
+           ],
+           "type": "string"
+         },
++        "Resource": {
++          "additionalProperties": false,
++          "properties": {
++            "action": {
++              "description": "Action declared by the collection's installed plugin.",
++              "type": "string"
++            },
++            "completed": {
++              "default": false,
++              "type": "boolean"
++            },
++            "id": {
++              "type": "string"
++            },
++            "label": {
++              "type": "string"
++            },
++            "reference": {
++              "description": "Opaque resource reference passed as clicked_url to the declared action.",
++              "type": "string"
++            },
++            "status": {
++              "type": "string"
++            },
++            "tone": {
++              "$ref": "#/schemas/success_response/$defs/Tone",
++              "default": "normal"
++            }
++          },
++          "required": [
++            "id",
++            "label",
++            "status",
++            "action",
++            "reference"
++          ],
++          "type": "object"
++        },
+         "ResponseResult": {
+           "oneOf": [
++            {
++              "properties": {
++                "resources": {
++                  "$ref": "#/schemas/success_response/$defs/WorkspaceResources"
++                },
++                "type": {
++                  "const": "workspace_resources",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type",
++                "resources"
++              ],
++              "type": "object"
++            },
++            {
++              "properties": {
++                "collection": {
++                  "$ref": "#/schemas/success_response/$defs/Collection"
++                },
++                "type": {
++                  "const": "workspace_resources_replaced",
++                  "type": "string"
++                }
++              },
++              "required": [
++                "type",
++                "collection"
++              ],
++              "type": "object"
++            },
+             {
+               "properties": {
+                 "capabilities": {
+@@ -10573,6 +10835,16 @@
+           ],
+           "type": "object"
+         },
++        "Tone": {
++          "enum": [
++            "normal",
++            "success",
++            "warning",
++            "failure",
++            "muted"
++          ],
++          "type": "string"
++        },
+         "WorkspaceInfo": {
+           "properties": {
+             "active_tab_id": {
+@@ -10584,6 +10856,13 @@
+             "focused": {
+               "type": "boolean"
+             },
++            "identity": {
++              "description": "Persistent lifetime identity; absent on older servers.",
++              "type": [
++                "string",
++                "null"
++              ]
++            },
+             "label": {
+               "type": "string"
+             },
+@@ -10638,6 +10917,28 @@
+           ],
+           "type": "object"
+         },
++        "WorkspaceResources": {
++          "properties": {
++            "collections": {
++              "additionalProperties": {
++                "$ref": "#/schemas/success_response/$defs/Collection"
++              },
++              "type": "object"
++            },
++            "identity": {
++              "type": "string"
++            },
++            "workspace_id": {
++              "type": "string"
++            }
++          },
++          "required": [
++            "workspace_id",
++            "identity",
++            "collections"
++          ],
++          "type": "object"
++        },
+         "WorkspaceWorktreeInfo": {
+           "properties": {
+             "checkout_path": {
+diff --git a/src/api/mod.rs b/src/api/mod.rs
+index 86f90da..7848ca9 100644
+--- a/src/api/mod.rs
++++ b/src/api/mod.rs
+@@ -34,6 +34,8 @@ pub(crate) fn request_changes_ui(request: &Request) -> bool {
+             | Method::WorkspaceMove(_)
+             | Method::WorkspaceMoveBlock(_)
+             | Method::WorkspaceReportMetadata(_)
++            | Method::WorkspaceResourcesReplace(_)
++            | Method::WorkspaceResourcesInvoke(_)
+             | Method::WorkspaceClose(_)
+             | Method::WorktreeCreate(_)
+             | Method::WorktreeOpen(_)
+diff --git a/src/api/schema.rs b/src/api/schema.rs
+index 439ed33..5108106 100644
+--- a/src/api/schema.rs
++++ b/src/api/schema.rs
+@@ -91,6 +91,12 @@ pub enum Method {
+     WorkspaceMoveBlock(WorkspaceMoveBlockParams),
+     #[serde(rename = "workspace.report_metadata")]
+     WorkspaceReportMetadata(WorkspaceReportMetadataParams),
++    #[serde(rename = "workspace.resources.get")]
++    WorkspaceResourcesGet(WorkspaceTarget),
++    #[serde(rename = "workspace.resources.replace")]
++    WorkspaceResourcesReplace(crate::workspace_resources::Replace),
++    #[serde(rename = "workspace.resources.invoke")]
++    WorkspaceResourcesInvoke(crate::workspace_resources::Invoke),
+     #[serde(rename = "workspace.close")]
+     WorkspaceClose(WorkspaceCloseParams),
+     #[serde(rename = "worktree.list")]
+diff --git a/src/api/schema/response.rs b/src/api/schema/response.rs
+index e92e495..3d0dbad 100644
+--- a/src/api/schema/response.rs
++++ b/src/api/schema/response.rs
+@@ -42,6 +42,12 @@ pub struct ErrorBody {
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+ #[serde(tag = "type", rename_all = "snake_case")]
+ pub enum ResponseResult {
++    WorkspaceResources {
++        resources: crate::workspace_resources::WorkspaceResources,
++    },
++    WorkspaceResourcesReplaced {
++        collection: crate::workspace_resources::Collection,
++    },
+     Pong {
+         version: String,
+         protocol: u32,
+diff --git a/src/api/schema/tests.rs b/src/api/schema/tests.rs
+index 3b43133..0e0e901 100644
+--- a/src/api/schema/tests.rs
++++ b/src/api/schema/tests.rs
+@@ -792,6 +792,7 @@ fn worktree_request_and_response_round_trip() {
+         id: "req_worktree".into(),
+         result: ResponseResult::WorktreeCreated {
+             workspace: WorkspaceInfo {
++                identity: None,
+                 workspace_id: "w_1".into(),
+                 number: 2,
+                 label: "herdr".into(),
+@@ -879,6 +880,7 @@ fn worktree_lifecycle_events_round_trip() {
+     assert_eq!(restored, subscription);
+ 
+     let workspace = WorkspaceInfo {
++        identity: None,
+         workspace_id: "w_2".into(),
+         number: 2,
+         label: "herdr".into(),
+diff --git a/src/api/schema/workspaces.rs b/src/api/schema/workspaces.rs
+index 1b7132c..0ea1725 100644
+--- a/src/api/schema/workspaces.rs
++++ b/src/api/schema/workspaces.rs
+@@ -60,6 +60,9 @@ pub struct WorkspaceReportMetadataParams {
+ 
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+ pub struct WorkspaceInfo {
++    /// Persistent lifetime identity; absent on older servers.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub identity: Option<String>,
+     pub workspace_id: String,
+     pub number: usize,
+     pub label: String,
+diff --git a/src/api/server.rs b/src/api/server.rs
+index dbd7d3b..489ee7e 100644
+--- a/src/api/server.rs
++++ b/src/api/server.rs
+@@ -587,6 +587,9 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
+         Method::WorkspaceMove(_) => "workspace.move",
+         Method::WorkspaceMoveBlock(_) => "workspace.move_block",
+         Method::WorkspaceReportMetadata(_) => "workspace.report_metadata",
++        Method::WorkspaceResourcesGet(_) => "workspace.resources.get",
++        Method::WorkspaceResourcesReplace(_) => "workspace.resources.replace",
++        Method::WorkspaceResourcesInvoke(_) => "workspace.resources.invoke",
+         Method::WorkspaceClose(_) => "workspace.close",
+         Method::WorktreeList(_) => "worktree.list",
+         Method::WorktreeCreate(_) => "worktree.create",
+diff --git a/src/app/actions.rs b/src/app/actions.rs
+index bd3570d..86d6d29 100644
+--- a/src/app/actions.rs
++++ b/src/app/actions.rs
+@@ -273,6 +273,11 @@ impl AppState {
+                     .iter()
+                     .filter_map(|workspace| workspace.metadata_tokens.next_expiry()),
+             )
++            .chain(
++                self.workspaces
++                    .iter()
++                    .filter_map(|workspace| workspace.resources.next_expiry()),
++            )
+             .min()
+     }
+ 
+@@ -366,7 +371,8 @@ impl AppState {
+             .iter_mut()
+             .enumerate()
+             .filter_map(|(ws_idx, workspace)| {
+-                workspace.metadata_tokens.expire_at(now).then_some(ws_idx)
++                (workspace.metadata_tokens.expire_at(now) | workspace.resources.expire(now))
++                    .then_some(ws_idx)
+             })
+             .collect();
+         (changed_panes, changed_workspaces)
+diff --git a/src/app/api.rs b/src/app/api.rs
+index 20ca9d0..b3b9826 100644
+--- a/src/app/api.rs
++++ b/src/app/api.rs
+@@ -7,6 +7,7 @@ mod integrations;
+ mod layouts;
+ mod panes;
+ pub(crate) mod plugins;
++mod resources;
+ pub(super) mod responses;
+ mod session;
+ mod tabs;
+@@ -1042,6 +1043,15 @@ impl App {
+             Method::WorkspaceMoveBlock(params) => {
+                 return self.handle_workspace_move_block(request.id, params);
+             }
++            Method::WorkspaceResourcesGet(params) => {
++                return self.handle_resources_get(request.id, params)
++            }
++            Method::WorkspaceResourcesReplace(params) => {
++                return self.handle_resources_replace(request.id, params)
++            }
++            Method::WorkspaceResourcesInvoke(params) => {
++                return self.handle_resources_invoke(request.id, params)
++            }
+             Method::WorkspaceReportMetadata(params) => {
+                 return self.handle_workspace_report_metadata(request.id, params);
+             }
+diff --git a/src/app/api/plugins/context.rs b/src/app/api/plugins/context.rs
+index 8aee1c3..d5ebfdf 100644
+--- a/src/app/api/plugins/context.rs
++++ b/src/app/api/plugins/context.rs
+@@ -295,7 +295,7 @@ impl App {
+             })
+     }
+ 
+-    pub(super) fn plugin_context_for_workspace(
++    pub(in crate::app::api) fn plugin_context_for_workspace(
+         &self,
+         ws_idx: usize,
+         correlation_id: &str,
+diff --git a/src/app/api/plugins/mod.rs b/src/app/api/plugins/mod.rs
+index c9b37bf..5cb38cb 100644
+--- a/src/app/api/plugins/mod.rs
++++ b/src/app/api/plugins/mod.rs
+@@ -36,7 +36,7 @@ impl App {
+             .collect();
+     }
+ 
+-    fn refresh_installed_plugins(&mut self) -> std::io::Result<()> {
++    pub(in crate::app::api) fn refresh_installed_plugins(&mut self) -> std::io::Result<()> {
+         if !self.policy.persist_plugin_registry {
+             return Ok(());
+         }
+@@ -131,6 +131,10 @@ impl App {
+                 .plugin_panes
+                 .retain(|_, record| record.plugin_id != plugin_id);
+             self.clear_agent_view_for_source(&format!("plugin:{plugin_id}"));
++            for workspace in &mut self.state.workspaces {
++                workspace.resources.clear_source(&plugin_id);
++            }
++            self.sync_agent_metadata_deadline();
+         }
+         encode_success(id, ResponseResult::PluginUnlinked { plugin_id, removed })
+     }
+@@ -600,7 +604,7 @@ impl App {
+         encode_success(id, ResponseResult::PluginPaneClosed { pane_id })
+     }
+ 
+-    fn find_plugin_action(
++    pub(in crate::app::api) fn find_plugin_action(
+         &self,
+         plugin_id: Option<&str>,
+         action_id: &str,
+@@ -735,6 +739,10 @@ impl App {
+         };
+         if !enabled {
+             self.clear_agent_view_for_source(&format!("plugin:{plugin_id}"));
++            for workspace in &mut self.state.workspaces {
++                workspace.resources.clear_source(&plugin_id);
++            }
++            self.sync_agent_metadata_deadline();
+         }
+         if enabled {
+             encode_success(id, ResponseResult::PluginEnabled { plugin })
+@@ -1467,6 +1475,68 @@ platforms = ["linux", "macos"]
+         assert_eq!(output, "abc\n[herdr truncated plugin output after 3 bytes]");
+     }
+ 
++    #[test]
++    fn workspace_resources_reject_reused_ids_and_disable_clears_rows() {
++        use crate::workspace_resources::{Replace, Resource, Tone};
++        use std::time::Instant;
++        let mut app = test_app();
++        let root = unique_temp_path("workspace-resources");
++        write_manifest(&root);
++        link_manifest(&mut app, &root);
++        app.state.workspaces = vec![crate::workspace::Workspace::test_new("resources")];
++        let workspace = &app.state.workspaces[0];
++        let request = Replace {
++            workspace_id: workspace.id.clone(),
++            identity: workspace.identity.to_string(),
++            plugin_id: "example.worktree-bootstrap".into(),
++            expected_revision: 0,
++            ttl_ms: 120000,
++            resources: vec![Resource {
++                id: "pr-1".into(),
++                label: "#1".into(),
++                status: "Pending".into(),
++                tone: Tone::Normal,
++                completed: false,
++                action: "bootstrap".into(),
++                reference: "https://example.invalid/pr/1".into(),
++            }],
++        };
++        let invoke = |app: &mut App, request| {
++            app.handle_api_request(Request {
++                id: "replace".into(),
++                method: Method::WorkspaceResourcesReplace(request),
++            })
++        };
++        assert!(matches!(
++            response_result(&invoke(&mut app, request.clone())),
++            ResponseResult::WorkspaceResourcesReplaced { .. }
++        ));
++        let mut stale = request.clone();
++        stale.expected_revision = 1;
++        stale.identity = uuid::Uuid::new_v4().to_string();
++        assert!(invoke(&mut app, stale).contains("workspace_identity_mismatch"));
++        let mut invalid = request.clone();
++        invalid.expected_revision = 1;
++        invalid.resources[0].action = "undeclared".into();
++        assert!(invoke(&mut app, invalid).contains("invalid_resource_action"));
++        app.handle_api_request(Request {
++            id: "disable".into(),
++            method: Method::PluginDisable(PluginSetEnabledParams {
++                plugin_id: request.plugin_id.clone(),
++            }),
++        });
++        assert!(
++            app.state.workspaces[0].resources.values(Instant::now())[&request.plugin_id]
++                .resources
++                .is_empty()
++        );
++        let mut late = request;
++        late.expected_revision = 1;
++        late.resources.clear();
++        assert!(invoke(&mut app, late).contains("invalid_resource_producer"));
++        let _ = std::fs::remove_dir_all(root);
++    }
++
+     #[test]
+     fn plugin_enable_disable_updates_registry_state() {
+         let mut app = test_app();
+diff --git a/src/app/api/resources.rs b/src/app/api/resources.rs
+new file mode 100644
+index 0000000..9a9c1bd
+--- /dev/null
++++ b/src/app/api/resources.rs
+@@ -0,0 +1,129 @@
++use super::responses::{encode_error, encode_success};
++use crate::api::schema::{PluginActionInvokeParams, ResponseResult, WorkspaceTarget};
++use crate::app::App;
++use crate::workspace_resources::{Invoke, Replace, WorkspaceResources};
++use std::time::Instant;
++
++impl App {
++    pub(super) fn handle_resources_get(&mut self, id: String, target: WorkspaceTarget) -> String {
++        let Some(index) = self.parse_workspace_id(&target.workspace_id) else {
++            return encode_error(id, "workspace_not_found", "workspace not found");
++        };
++        let Some(workspace) = self.state.workspaces.get(index) else {
++            return encode_error(id, "workspace_not_found", "workspace not found");
++        };
++        encode_success(
++            id,
++            ResponseResult::WorkspaceResources {
++                resources: WorkspaceResources {
++                    workspace_id: workspace.id.clone(),
++                    identity: workspace.identity.to_string(),
++                    collections: workspace.resources.values(Instant::now()),
++                },
++            },
++        )
++    }
++
++    pub(super) fn handle_resources_replace(&mut self, id: String, request: Replace) -> String {
++        let Some(index) = self.parse_workspace_id(&request.workspace_id) else {
++            return encode_error(id, "workspace_not_found", "workspace not found");
++        };
++        if self
++            .state
++            .workspaces
++            .get(index)
++            .is_none_or(|workspace| workspace.identity.to_string() != request.identity)
++        {
++            return encode_error(
++                id,
++                "workspace_identity_mismatch",
++                "workspace lifetime changed",
++            );
++        }
++        if let Err(error) = self.refresh_installed_plugins() {
++            return encode_error(id, "plugin_registry_load_failed", error.to_string());
++        }
++        if !self
++            .state
++            .installed_plugins
++            .get(&request.plugin_id)
++            .is_some_and(|plugin| plugin.enabled)
++        {
++            return encode_error(
++                id,
++                "invalid_resource_producer",
++                "resource producer must be an enabled installed plugin",
++            );
++        }
++        for resource in &request.resources {
++            match self.find_plugin_action(Some(&request.plugin_id), &resource.action) {
++                Ok((plugin, _)) if plugin.enabled => {}
++                _ => {
++                    return encode_error(
++                        id,
++                        "invalid_resource_action",
++                        "resource action must belong to an enabled installed plugin",
++                    )
++                }
++            }
++        }
++        let Some(workspace) = self.state.workspaces.get_mut(index) else {
++            return encode_error(id, "workspace_not_found", "workspace not found");
++        };
++        match workspace.resources.replace(request, Instant::now()) {
++            Ok(collection) => {
++                self.sync_agent_metadata_deadline();
++                encode_success(
++                    id,
++                    ResponseResult::WorkspaceResourcesReplaced { collection },
++                )
++            }
++            Err(error) => encode_error(id, "resource_replace_failed", error),
++        }
++    }
++
++    pub(super) fn handle_resources_invoke(&mut self, id: String, request: Invoke) -> String {
++        let Some(index) = self.parse_workspace_id(&request.workspace_id) else {
++            return encode_error(id, "workspace_not_found", "workspace not found");
++        };
++        let Some(workspace) = self
++            .state
++            .workspaces
++            .get(index)
++            .filter(|workspace| workspace.identity.to_string() == request.identity)
++        else {
++            return encode_error(
++                id,
++                "workspace_identity_mismatch",
++                "workspace lifetime changed",
++            );
++        };
++        let Some(resource) = workspace
++            .resources
++            .get(
++                &request.plugin_id,
++                request.revision,
++                &request.resource_id,
++                Instant::now(),
++            )
++            .cloned()
++        else {
++            return encode_error(
++                id,
++                "resource_changed",
++                "resource changed or expired; refresh before invoking",
++            );
++        };
++        let mut context = self.plugin_context_for_workspace(index, &id);
++        context.clicked_url = Some(resource.reference);
++        context.invocation_source = Some("workspace_resource".into());
++        self.handle_plugin_action_invoke(
++            id,
++            PluginActionInvokeParams {
++                plugin_id: Some(request.plugin_id),
++                action_id: resource.action,
++                context: Some(context),
++            },
++        )
++    }
++}
+diff --git a/src/app/creation.rs b/src/app/creation.rs
+index 05736fe..5df4eb1 100644
+--- a/src/app/creation.rs
++++ b/src/app/creation.rs
+@@ -380,6 +380,7 @@ impl App {
+         let ws = &self.state.workspaces[index];
+         let (agg_state, seen) = ws.aggregate_state(&self.state.terminals);
+         crate::api::schema::WorkspaceInfo {
++            identity: Some(ws.identity.to_string()),
+             workspace_id: self.public_workspace_id(index),
+             number: index + 1,
+             label: ws.display_name_from(&self.state.terminals, &self.terminal_runtimes),
+diff --git a/src/client/endpoint/activation_tests.rs b/src/client/endpoint/activation_tests.rs
+index 532342e..7436a19 100644
+--- a/src/client/endpoint/activation_tests.rs
++++ b/src/client/endpoint/activation_tests.rs
+@@ -138,6 +138,7 @@ fn workspace_focus_success(id: &str, workspace_id: &str) -> Vec<u8> {
+         id: id.into(),
+         result: crate::api::schema::ResponseResult::WorkspaceInfo {
+             workspace: crate::api::schema::WorkspaceInfo {
++                identity: None,
+                 workspace_id: workspace_id.into(),
+                 number: 1,
+                 label: workspace_id.into(),
+diff --git a/src/client/endpoint/control.rs b/src/client/endpoint/control.rs
+index f2fe1b7..abae52d 100644
+--- a/src/client/endpoint/control.rs
++++ b/src/client/endpoint/control.rs
+@@ -8,6 +8,7 @@ pub(crate) struct DecodedAgentViewProjection {
+ 
+ pub(crate) enum EndpointControlMessage {
+     HealthPong,
++    WorkspaceResources(crate::workspace_resources::Projection),
+     AgentViewProjection(DecodedAgentViewProjection),
+     AgentCompletions(crate::protocol::endpoint::EndpointAgentCompletions),
+     Snapshot(Box<crate::protocol::ClientShellSnapshot>),
+@@ -18,6 +19,11 @@ pub(crate) fn decode_endpoint_control(
+     kind: &str,
+     data: &str,
+ ) -> Result<EndpointControlMessage, String> {
++    if kind == crate::workspace_resources::PROJECTION_KIND {
++        return Ok(serde_json::from_str(data)
++            .map(EndpointControlMessage::WorkspaceResources)
++            .unwrap_or(EndpointControlMessage::Ignored));
++    }
+     if kind == crate::protocol::endpoint::HEALTH_PONG_KIND {
+         return Ok(EndpointControlMessage::HealthPong);
+     }
+diff --git a/src/client/mod.rs b/src/client/mod.rs
+index 2668fd4..4f52c4d 100644
+--- a/src/client/mod.rs
++++ b/src/client/mod.rs
+@@ -2046,6 +2046,18 @@ async fn run_client_loop(
+                         }
+                         let snapshot = match endpoint::decode_endpoint_control(&kind, &data) {
+                             Ok(endpoint::EndpointControlMessage::HealthPong) => continue,
++                            Ok(endpoint::EndpointControlMessage::WorkspaceResources(
++                                projection,
++                            )) => {
++                                if let Some(shell) = state.shell.as_mut() {
++                                    shell.set_workspace_resources(
++                                        &endpoint_id,
++                                        generation,
++                                        projection,
++                                    );
++                                }
++                                continue;
++                            }
+                             Ok(endpoint::EndpointControlMessage::AgentViewProjection(
+                                 projection,
+                             )) => {
+diff --git a/src/client/shell.rs b/src/client/shell.rs
+index 2d18044..e4b3ef3 100644
+--- a/src/client/shell.rs
++++ b/src/client/shell.rs
+@@ -29,6 +29,7 @@ mod notifications;
+ mod overlay_input;
+ mod preferences;
+ mod render;
++mod resource_tree;
+ mod scroll;
+ mod settings;
+ mod state;
+diff --git a/src/client/shell/endpoint_sidebar.rs b/src/client/shell/endpoint_sidebar.rs
+index 9698248..8845112 100644
+--- a/src/client/shell/endpoint_sidebar.rs
++++ b/src/client/shell/endpoint_sidebar.rs
+@@ -301,221 +301,230 @@ pub(super) fn render_expanded(
+             .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
+     );
+     hits.workspace_body = body;
+-    let row_heights = rows
+-        .iter()
+-        .map(|row| match row {
+-            Row::Endpoint(_) => 1,
+-            Row::Workspace { endpoint, entry } => {
+-                let endpoint = &state.endpoints[*endpoint];
+-                let collapsed_groups = collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
+-                    .unwrap_or(&empty_collapsed_groups);
+-                endpoint
+-                    .snapshot
+-                    .as_deref()
+-                    .and_then(|snapshot| {
+-                        let workspace = snapshot.workspaces.get(entry.index)?;
+-                        Some(
+-                            super::sidebar::workspace_rows(
+-                                workspace,
+-                                super::sidebar::displayed_workspace_status(
+-                                    snapshot,
++    if super::resource_tree::available(state) {
++        super::resource_tree::render_body(buffer, body, config, state, hits);
++    } else {
++        let row_heights = rows
++            .iter()
++            .map(|row| match row {
++                Row::Endpoint(_) => 1,
++                Row::Workspace { endpoint, entry } => {
++                    let endpoint = &state.endpoints[*endpoint];
++                    let collapsed_groups =
++                        collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
++                            .unwrap_or(&empty_collapsed_groups);
++                    endpoint
++                        .snapshot
++                        .as_deref()
++                        .and_then(|snapshot| {
++                            let workspace = snapshot.workspaces.get(entry.index)?;
++                            Some(
++                                super::sidebar::workspace_rows(
+                                     workspace,
+-                                    collapsed_groups,
+-                                ),
+-                                entry.indented,
+-                                &config.spaces,
++                                    super::sidebar::displayed_workspace_status(
++                                        snapshot,
++                                        workspace,
++                                        collapsed_groups,
++                                    ),
++                                    entry.indented,
++                                    &config.spaces,
++                                )
++                                .len()
++                                .max(1)
++                                .min(u16::MAX as usize) as u16,
+                             )
+-                            .len()
+-                            .max(1)
+-                            .min(u16::MAX as usize) as u16,
+-                        )
+-                    })
+-                    .unwrap_or(1)
+-            }
+-        })
+-        .collect::<Vec<_>>();
+-    let gaps = rows
+-        .iter()
+-        .enumerate()
+-        .map(|(index, row)| match (row, rows.get(index + 1)) {
+-            (
+-                Row::Workspace { endpoint, .. },
+-                Some(Row::Workspace {
+-                    endpoint: next_endpoint,
+-                    entry,
+-                }),
+-            ) if endpoint == next_endpoint => u16::from(!entry.indented) * config.spaces.row_gap,
+-            _ => 0,
+-        })
+-        .collect::<Vec<_>>();
+-    let reveal_navigation = !body.is_empty() && std::mem::take(state.reveal_navigation_workspace);
+-    let reveal_focus = !body.is_empty() && std::mem::take(state.reveal_focused_workspace);
+-    if reveal_navigation || reveal_focus {
+-        let selected_row = rows.iter().position(|row| match row {
+-            Row::Workspace { endpoint, entry } => {
+-                let endpoint = &state.endpoints[*endpoint];
+-                endpoint
+-                    .snapshot
+-                    .as_deref()
+-                    .and_then(|snapshot| snapshot.workspaces.get(entry.index))
+-                    .is_some_and(|workspace| {
+-                        if reveal_navigation {
+-                            state.selected_workspace_id.is_some_and(|target| {
+-                                target.matches(&endpoint.endpoint_id, &workspace.workspace_id)
+-                            })
+-                        } else {
+-                            &endpoint.endpoint_id == state.active_endpoint_id
+-                                && active_snapshot.is_some_and(|snapshot| {
+-                                    snapshot.focused_workspace_id.as_deref()
+-                                        == Some(workspace.workspace_id.as_str())
++                        })
++                        .unwrap_or(1)
++                }
++            })
++            .collect::<Vec<_>>();
++        let gaps = rows
++            .iter()
++            .enumerate()
++            .map(|(index, row)| match (row, rows.get(index + 1)) {
++                (
++                    Row::Workspace { endpoint, .. },
++                    Some(Row::Workspace {
++                        endpoint: next_endpoint,
++                        entry,
++                    }),
++                ) if endpoint == next_endpoint => {
++                    u16::from(!entry.indented) * config.spaces.row_gap
++                }
++                _ => 0,
++            })
++            .collect::<Vec<_>>();
++        let reveal_navigation =
++            !body.is_empty() && std::mem::take(state.reveal_navigation_workspace);
++        let reveal_focus = !body.is_empty() && std::mem::take(state.reveal_focused_workspace);
++        if reveal_navigation || reveal_focus {
++            let selected_row = rows.iter().position(|row| match row {
++                Row::Workspace { endpoint, entry } => {
++                    let endpoint = &state.endpoints[*endpoint];
++                    endpoint
++                        .snapshot
++                        .as_deref()
++                        .and_then(|snapshot| snapshot.workspaces.get(entry.index))
++                        .is_some_and(|workspace| {
++                            if reveal_navigation {
++                                state.selected_workspace_id.is_some_and(|target| {
++                                    target.matches(&endpoint.endpoint_id, &workspace.workspace_id)
+                                 })
+-                        }
+-                    })
+-            }
+-            Row::Endpoint(_) => false,
+-        });
+-        if let Some(selected_row) = selected_row {
+-            *state.workspace_scroll = super::scroll::list_scroll_start_to_reveal(
+-                &row_heights,
+-                &gaps,
+-                body.height,
+-                *state.workspace_scroll,
+-                selected_row,
+-            );
+-        }
+-    }
+-    let metrics = super::scroll::list_scroll_metrics(
+-        &row_heights,
+-        &gaps,
+-        body.height,
+-        *state.workspace_scroll,
+-    );
+-    hits.workspace_max_scroll = metrics.max_offset_from_bottom;
+-    hits.workspace_scroll_metrics = Some(metrics);
+-    *state.workspace_scroll = metrics
+-        .max_offset_from_bottom
+-        .saturating_sub(metrics.offset_from_bottom);
+-    let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
+-    let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
+-    let mut y = body.y;
+-    for (row_index, row) in rows.iter().enumerate().skip(*state.workspace_scroll) {
+-        match row {
+-            Row::Endpoint(index) => {
+-                if y >= body.bottom() {
+-                    break;
++                            } else {
++                                &endpoint.endpoint_id == state.active_endpoint_id
++                                    && active_snapshot.is_some_and(|snapshot| {
++                                        snapshot.focused_workspace_id.as_deref()
++                                            == Some(workspace.workspace_id.as_str())
++                                    })
++                            }
++                        })
+                 }
+-                let endpoint = &state.endpoints[*index];
+-                let rect = Rect::new(body.x, y, content_width, 1);
+-                let collapsed = state.collapsed_endpoints.contains(&endpoint.endpoint_id);
+-                let marker = if collapsed { "▸" } else { "▾" };
+-                let status_badge = render_endpoint_row(
+-                    buffer,
+-                    rect,
+-                    marker,
+-                    endpoint,
+-                    collapsed && &endpoint.endpoint_id == state.active_endpoint_id,
+-                    state.machine_diagnostics,
+-                    palette,
++                Row::Endpoint(_) => false,
++            });
++            if let Some(selected_row) = selected_row {
++                *state.workspace_scroll = super::scroll::list_scroll_start_to_reveal(
++                    &row_heights,
++                    &gaps,
++                    body.height,
++                    *state.workspace_scroll,
++                    selected_row,
+                 );
+-                hits.machines.push(MachineHit {
+-                    rect,
+-                    status_badge,
+-                    collapse_toggle: Rect::new(
+-                        rect.x.saturating_add(1),
+-                        rect.y,
+-                        u16::from(rect.width > 1),
+-                        1,
+-                    ),
+-                    endpoint_id: endpoint.endpoint_id.clone(),
+-                });
+-                y = y
+-                    .saturating_add(1)
+-                    .saturating_add(gaps.get(row_index).copied().unwrap_or(0));
+             }
+-            Row::Workspace { endpoint, entry } => {
+-                let endpoint = &state.endpoints[*endpoint];
+-                let Some(snapshot) = endpoint.snapshot.as_deref() else {
+-                    continue;
+-                };
+-                let Some(workspace) = snapshot.workspaces.get(entry.index) else {
+-                    continue;
+-                };
+-                let collapsed_groups = collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
+-                    .unwrap_or(&empty_collapsed_groups);
+-                let status = super::sidebar::displayed_workspace_status(
+-                    snapshot,
+-                    workspace,
+-                    collapsed_groups,
+-                );
+-                let tokens = super::sidebar::workspace_rows(
+-                    workspace,
+-                    status,
+-                    entry.indented,
+-                    &config.spaces,
+-                );
+-                let height = (tokens.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
+-                if y.saturating_add(height) > body.bottom() {
+-                    break;
++        }
++        let metrics = super::scroll::list_scroll_metrics(
++            &row_heights,
++            &gaps,
++            body.height,
++            *state.workspace_scroll,
++        );
++        hits.workspace_max_scroll = metrics.max_offset_from_bottom;
++        hits.workspace_scroll_metrics = Some(metrics);
++        *state.workspace_scroll = metrics
++            .max_offset_from_bottom
++            .saturating_sub(metrics.offset_from_bottom);
++        let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
++        let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
++        let mut y = body.y;
++        for (row_index, row) in rows.iter().enumerate().skip(*state.workspace_scroll) {
++            match row {
++                Row::Endpoint(index) => {
++                    if y >= body.bottom() {
++                        break;
++                    }
++                    let endpoint = &state.endpoints[*index];
++                    let rect = Rect::new(body.x, y, content_width, 1);
++                    let collapsed = state.collapsed_endpoints.contains(&endpoint.endpoint_id);
++                    let marker = if collapsed { "▸" } else { "▾" };
++                    let status_badge = render_endpoint_row(
++                        buffer,
++                        rect,
++                        marker,
++                        endpoint,
++                        collapsed && &endpoint.endpoint_id == state.active_endpoint_id,
++                        state.machine_diagnostics,
++                        palette,
++                    );
++                    hits.machines.push(MachineHit {
++                        rect,
++                        status_badge,
++                        collapse_toggle: Rect::new(
++                            rect.x.saturating_add(1),
++                            rect.y,
++                            u16::from(rect.width > 1),
++                            1,
++                        ),
++                        endpoint_id: endpoint.endpoint_id.clone(),
++                    });
++                    y = y
++                        .saturating_add(1)
++                        .saturating_add(gaps.get(row_index).copied().unwrap_or(0));
+                 }
+-                let rect = Rect::new(body.x, y, content_width, height);
+-                let nested = Rect::new(
+-                    rect.x.saturating_add(2),
+-                    rect.y,
+-                    rect.width.saturating_sub(2),
+-                    rect.height,
+-                );
+-                let endpoint_active = &endpoint.endpoint_id == state.active_endpoint_id;
+-                let selected = state.selected_workspace_id.is_some_and(|target| {
+-                    target.matches(&endpoint.endpoint_id, &workspace.workspace_id)
+-                });
+-                super::sidebar::render_workspace_rows(
+-                    buffer,
+-                    nested,
+-                    status,
+-                    config.status_indicators,
+-                    entry,
+-                    tokens,
+-                    endpoint_active && workspace.focused,
+-                    selected,
+-                    state.selected_workspace_id.is_some(),
+-                    false,
+-                    palette,
+-                );
+-                if endpoint.status != ClientEndpointStatus::Online {
+-                    buffer.set_style(
++                Row::Workspace { endpoint, entry } => {
++                    let endpoint = &state.endpoints[*endpoint];
++                    let Some(snapshot) = endpoint.snapshot.as_deref() else {
++                        continue;
++                    };
++                    let Some(workspace) = snapshot.workspaces.get(entry.index) else {
++                        continue;
++                    };
++                    let collapsed_groups =
++                        collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
++                            .unwrap_or(&empty_collapsed_groups);
++                    let status = super::sidebar::displayed_workspace_status(
++                        snapshot,
++                        workspace,
++                        collapsed_groups,
++                    );
++                    let tokens = super::sidebar::workspace_rows(
++                        workspace,
++                        status,
++                        entry.indented,
++                        &config.spaces,
++                    );
++                    let height =
++                        (tokens.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
++                    if y.saturating_add(height) > body.bottom() {
++                        break;
++                    }
++                    let rect = Rect::new(body.x, y, content_width, height);
++                    let nested = Rect::new(
++                        rect.x.saturating_add(2),
++                        rect.y,
++                        rect.width.saturating_sub(2),
++                        rect.height,
++                    );
++                    let endpoint_active = &endpoint.endpoint_id == state.active_endpoint_id;
++                    let selected = state.selected_workspace_id.is_some_and(|target| {
++                        target.matches(&endpoint.endpoint_id, &workspace.workspace_id)
++                    });
++                    super::sidebar::render_workspace_rows(
++                        buffer,
++                        nested,
++                        status,
++                        config.status_indicators,
++                        entry,
++                        tokens,
++                        endpoint_active && workspace.focused,
++                        selected,
++                        state.selected_workspace_id.is_some(),
++                        false,
++                        palette,
++                    );
++                    if endpoint.status != ClientEndpointStatus::Online {
++                        buffer.set_style(
++                            rect,
++                            Style::default()
++                                .fg(palette.overlay0)
++                                .add_modifier(Modifier::DIM),
++                        );
++                    }
++                    let group_toggle = super::sidebar::render_parent_group_toggle(
++                        buffer,
+                         rect,
+-                        Style::default()
+-                            .fg(palette.overlay0)
+-                            .add_modifier(Modifier::DIM),
++                        snapshot,
++                        entry.index,
++                        collapsed_groups,
++                        palette,
+                     );
++                    hits.workspaces.push(WorkspaceHit {
++                        rect,
++                        endpoint_id: endpoint.endpoint_id.clone(),
++                        workspace_id: workspace.workspace_id.clone(),
++                        indented: entry.indented,
++                        group_toggle,
++                    });
++                    y = y
++                        .saturating_add(height)
++                        .saturating_add(gaps.get(row_index).copied().unwrap_or(0));
+                 }
+-                let group_toggle = super::sidebar::render_parent_group_toggle(
+-                    buffer,
+-                    rect,
+-                    snapshot,
+-                    entry.index,
+-                    collapsed_groups,
+-                    palette,
+-                );
+-                hits.workspaces.push(WorkspaceHit {
+-                    rect,
+-                    endpoint_id: endpoint.endpoint_id.clone(),
+-                    workspace_id: workspace.workspace_id.clone(),
+-                    indented: entry.indented,
+-                    group_toggle,
+-                });
+-                y = y
+-                    .saturating_add(height)
+-                    .saturating_add(gaps.get(row_index).copied().unwrap_or(0));
+             }
+         }
++        if show_scrollbar {
++            let track = Rect::new(body.right().saturating_sub(1), body.y, 1, body.height);
++            hits.workspace_scrollbar = track;
++            super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
++        }
+     }
+-    if show_scrollbar {
+-        let track = Rect::new(body.right().saturating_sub(1), body.y, 1, body.height);
+-        hits.workspace_scrollbar = track;
+-        super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
+-    }
+-
+     let footer_y = workspace_area.bottom().saturating_sub(1);
+     if config.mouse_capture {
+         let label = format!(" new · {}", active_endpoint_label(state));
+@@ -587,7 +596,7 @@ fn active_endpoint_label<'a>(state: &'a ShellRenderState<'_>) -> &'a str {
+         .map_or("Local", |endpoint| endpoint.label.as_str())
+ }
+ 
+-fn render_endpoint_row(
++pub(super) fn render_endpoint_row(
+     buffer: &mut Buffer,
+     rect: Rect,
+     marker: &str,
+diff --git a/src/client/shell/endpoints.rs b/src/client/shell/endpoints.rs
+index 9e71d00..30b6381 100644
+--- a/src/client/shell/endpoints.rs
++++ b/src/client/shell/endpoints.rs
+@@ -18,6 +18,8 @@ pub(crate) struct ClientShellEndpoint {
+     pub(crate) snapshot_generation: Option<u64>,
+     pub(crate) agent_recency: HashMap<String, u64>,
+     pub(super) agent_presentation: super::endpoint_agent_state::EndpointAgentPresentation,
++    pub(crate) resources: Option<(u64, crate::workspace_resources::Projection)>,
++    pending_resources: Option<(u64, crate::workspace_resources::Projection)>,
+     pub(crate) agent_view_projection: Option<ClientEndpointAgentViewProjection>,
+     pending_agent_view_projection: Option<ClientEndpointAgentViewProjection>,
+     pub(crate) agent_view_projection_supported: bool,
+@@ -81,6 +83,8 @@ impl ClientShellState {
+                 agent_presentation: previous
+                     .map(|endpoint| endpoint.agent_presentation.clone())
+                     .unwrap_or_default(),
++                resources: previous.and_then(|endpoint| endpoint.resources.clone()),
++                pending_resources: previous.and_then(|endpoint| endpoint.pending_resources.clone()),
+                 agent_view_projection: previous
+                     .and_then(|endpoint| endpoint.agent_view_projection.clone()),
+                 pending_agent_view_projection: previous
+@@ -130,6 +134,8 @@ impl ClientShellState {
+             endpoint.methods = None;
+             endpoint.agent_recency.clear();
+             endpoint.agent_presentation = Default::default();
++            endpoint.resources = None;
++            endpoint.pending_resources = None;
+             endpoint.agent_view_projection = None;
+             endpoint.pending_agent_view_projection = None;
+             endpoint.agent_view_projection_supported = false;
+@@ -621,6 +627,17 @@ impl ClientShellState {
+         let endpoint = &mut self.endpoints[index];
+         endpoint.agent_recency = recency;
+         endpoint.snapshot_generation = generation;
++        if endpoint
++            .pending_resources
++            .as_ref()
++            .is_some_and(|(generation, projection)| {
++                endpoint.snapshot_generation == Some(*generation)
++                    && projection.boot_id == snapshot.boot_id
++                    && projection.revision == snapshot.revision
++            })
++        {
++            endpoint.resources = endpoint.pending_resources.take();
++        }
+         endpoint.snapshot = Some(snapshot);
+         let pending_matches =
+             endpoint
+@@ -739,8 +756,71 @@ pub(super) fn local_endpoint() -> ClientShellEndpoint {
+         agent_recency: HashMap::new(),
+         agent_presentation: Default::default(),
+         agent_view_projection: None,
++        resources: None,
++        pending_resources: None,
+         pending_agent_view_projection: None,
+         agent_view_projection_supported: false,
+         methods: None,
+     }
+ }
++
++impl ClientShellState {
++    pub(crate) fn set_workspace_resources(
++        &mut self,
++        id: &ClientEndpointId,
++        generation: u64,
++        projection: crate::workspace_resources::Projection,
++    ) {
++        let Some(endpoint) = self
++            .endpoints
++            .iter_mut()
++            .find(|endpoint| &endpoint.endpoint_id == id)
++        else {
++            return;
++        };
++        if endpoint
++            .snapshot_generation
++            .is_some_and(|current| current > generation)
++        {
++            return;
++        }
++        if endpoint
++            .resources
++            .iter()
++            .chain(endpoint.pending_resources.iter())
++            .any(|(current, previous)| {
++                *current > generation
++                    || (*current == generation
++                        && previous.boot_id == projection.boot_id
++                        && previous.revision > projection.revision)
++            })
++        {
++            return;
++        }
++        if endpoint.snapshot_generation == Some(generation)
++            && endpoint.snapshot.as_ref().is_some_and(|snapshot| {
++                snapshot.boot_id == projection.boot_id && snapshot.revision == projection.revision
++            })
++        {
++            endpoint.resources = Some((generation, projection));
++        } else {
++            endpoint.pending_resources = Some((generation, projection));
++        }
++    }
++}
++
++impl ClientShellEndpoint {
++    pub(super) fn workspace_resources(&self) -> &[crate::workspace_resources::WorkspaceResources] {
++        let Some((generation, projection)) = self.resources.as_ref() else {
++            return &[];
++        };
++        if self.snapshot_generation != Some(*generation)
++            || !self.snapshot.as_deref().is_some_and(|snapshot| {
++                snapshot.boot_id == projection.boot_id && snapshot.revision == projection.revision
++            })
++        {
++            return &[];
++        }
++        &projection.workspaces
++    }
++}
+diff --git a/src/client/shell/mouse.rs b/src/client/shell/mouse.rs
+index b2d7d91..54f3508 100644
+--- a/src/client/shell/mouse.rs
++++ b/src/client/shell/mouse.rs
+@@ -2084,6 +2084,16 @@ impl ClientShellState {
+                     self.persist_chrome_preferences(outcome);
+                     return;
+                 }
++                if let Some(hit) = self
++                    .hits
++                    .resources
++                    .iter()
++                    .find(|hit| super::contains(hit.rect, point))
++                    .cloned()
++                {
++                    self.activate_resource(hit.endpoint, hit.target, outcome);
++                    return;
++                }
+                 let group_toggle = self.hits.workspaces.iter().find_map(|hit| {
+                     let (rect, key) = hit.group_toggle.as_ref()?;
+                     super::contains(*rect, point).then(|| (hit.endpoint_id.clone(), key.clone()))
+diff --git a/src/client/shell/render.rs b/src/client/shell/render.rs
+index 248216c..7b7cdd2 100644
+--- a/src/client/shell/render.rs
++++ b/src/client/shell/render.rs
+@@ -330,6 +330,7 @@ pub(super) fn render_shell(
+         hits.new_workspace = Rect::default();
+         hits.machines.clear();
+         hits.workspaces.clear();
++        hits.resources.clear();
+         hits.agents.clear();
+         hits.endpoint_agents.clear();
+         hits.tab_scroll_left = Rect::default();
+diff --git a/src/client/shell/resource_tree.rs b/src/client/shell/resource_tree.rs
+new file mode 100644
+index 0000000..ce98d7c
+--- /dev/null
++++ b/src/client/shell/resource_tree.rs
+@@ -0,0 +1,499 @@
++//! A flat navigable projection of workspace resources, with one scroll unit per line.
++use super::render::put_text;
++use super::*;
++use crate::workspace_resources::{Invoke, Resource, Tone};
++
++#[derive(Clone, Debug)]
++pub(super) enum ResourceTarget {
++    Invoke(Invoke),
++    Group { workspace_id: String, key: String },
++}
++
++impl PartialEq for ResourceTarget {
++    fn eq(&self, other: &Self) -> bool {
++        match (self, other) {
++            (Self::Invoke(a), Self::Invoke(b)) => {
++                a.workspace_id == b.workspace_id
++                    && a.identity == b.identity
++                    && a.plugin_id == b.plugin_id
++                    && a.resource_id == b.resource_id
++            }
++            (
++                Self::Group {
++                    workspace_id: a,
++                    key: ak,
++                },
++                Self::Group {
++                    workspace_id: b,
++                    key: bk,
++                },
++            ) => a == b && ak == bk,
++            _ => false,
++        }
++    }
++}
++impl Eq for ResourceTarget {}
++
++pub(super) fn children(
++    endpoint: &ClientShellEndpoint,
++    workspace_id: &str,
++    collapsed: &HashSet<String>,
++) -> Vec<ResourceTarget> {
++    let Some(resources) = endpoint
++        .workspace_resources()
++        .iter()
++        .find(|resources| resources.workspace_id == workspace_id)
++    else {
++        return Vec::new();
++    };
++    let key = format!("resources-expanded:{}", resources.identity);
++    let mut open = Vec::new();
++    let mut completed = Vec::new();
++    for (plugin_id, collection) in &resources.collections {
++        for item in &collection.resources {
++            let target = ResourceTarget::Invoke(Invoke {
++                workspace_id: workspace_id.into(),
++                identity: resources.identity.clone(),
++                plugin_id: plugin_id.clone(),
++                resource_id: item.id.clone(),
++                revision: collection.revision,
++            });
++            if item.completed {
++                completed.push(target)
++            } else {
++                open.push(target)
++            }
++        }
++    }
++    if !completed.is_empty() {
++        open.push(ResourceTarget::Group {
++            workspace_id: workspace_id.into(),
++            key: key.clone(),
++        });
++        if collapsed.contains(&key) {
++            open.extend(completed);
++        }
++    }
++    open
++}
++
++#[derive(Clone)]
++pub(super) struct ResourceHit {
++    pub rect: Rect,
++    pub endpoint: ClientEndpointId,
++    pub target: ResourceTarget,
++}
++
++enum Row<'a> {
++    Endpoint(&'a ClientShellEndpoint),
++    Workspace {
++        endpoint: &'a ClientShellEndpoint,
++        workspace: &'a ClientShellWorkspace,
++        entry: WorkspaceEntry,
++    },
++    Resource {
++        endpoint: &'a ClientShellEndpoint,
++        target: ResourceTarget,
++        item: &'a Resource,
++        indent: u16,
++    },
++    Completed {
++        endpoint: &'a ClientShellEndpoint,
++        target: ResourceTarget,
++        count: usize,
++        expanded: bool,
++        indent: u16,
++    },
++}
++
++fn rows<'a>(state: &'a render::ShellRenderState<'_>) -> Vec<Row<'a>> {
++    let mut rows = Vec::new();
++    for endpoint in state.endpoints {
++        if state.endpoints.len() > 1 {
++            rows.push(Row::Endpoint(endpoint));
++        }
++        if state.collapsed_endpoints.contains(&endpoint.endpoint_id) {
++            continue;
++        }
++        let Some(snapshot) = endpoint.snapshot.as_deref() else {
++            continue;
++        };
++        let empty = HashSet::new();
++        let collapsed = if &endpoint.endpoint_id == state.active_endpoint_id {
++            state.collapsed_groups
++        } else {
++            state
++                .remote_collapsed_groups
++                .get(&endpoint.endpoint_id)
++                .unwrap_or(&empty)
++        };
++        for entry in sidebar::workspace_entries(snapshot, collapsed) {
++            let Some(workspace) = snapshot.workspaces.get(entry.index) else {
++                continue;
++            };
++            let indent = if entry.indented { 8 } else { 3 };
++            rows.push(Row::Workspace {
++                endpoint,
++                workspace,
++                entry,
++            });
++            let Some(resources) = endpoint
++                .workspace_resources()
++                .iter()
++                .find(|resource| resource.workspace_id == workspace.workspace_id)
++            else {
++                continue;
++            };
++            let mut completed = Vec::new();
++            for (plugin_id, collection) in &resources.collections {
++                for item in &collection.resources {
++                    let row = Row::Resource {
++                        endpoint,
++                        item,
++                        indent,
++                        target: ResourceTarget::Invoke(Invoke {
++                            workspace_id: workspace.workspace_id.clone(),
++                            identity: resources.identity.clone(),
++                            plugin_id: plugin_id.clone(),
++                            resource_id: item.id.clone(),
++                            revision: collection.revision,
++                        }),
++                    };
++                    if item.completed {
++                        completed.push(row);
++                    } else {
++                        rows.push(row);
++                    }
++                }
++            }
++            if !completed.is_empty() {
++                let key = format!("resources-expanded:{}", resources.identity);
++                let expanded = collapsed.contains(&key);
++                rows.push(Row::Completed {
++                    endpoint,
++                    target: ResourceTarget::Group {
++                        workspace_id: workspace.workspace_id.clone(),
++                        key,
++                    },
++                    count: completed.len(),
++                    expanded,
++                    indent,
++                });
++                if expanded {
++                    rows.extend(completed);
++                }
++            }
++        }
++    }
++    rows
++}
++
++pub(super) fn available(state: &render::ShellRenderState<'_>) -> bool {
++    state.endpoints.iter().any(|endpoint| {
++        endpoint.workspace_resources().iter().any(|workspace| {
++            workspace
++                .collections
++                .values()
++                .any(|collection| !collection.resources.is_empty())
++        })
++    })
++}
++
++pub(super) fn render_body(
++    buffer: &mut Buffer,
++    body: Rect,
++    config: &ClientShellConfig,
++    state: &mut render::ShellRenderState<'_>,
++    hits: &mut ShellHitMap,
++) {
++    let rows = rows(state);
++    let palette = &config.palette;
++    let heights: Vec<u16> = rows
++        .iter()
++        .map(|row| match row {
++            Row::Workspace {
++                workspace, entry, ..
++            } => u16::try_from(
++                sidebar::workspace_rows(
++                    workspace,
++                    workspace.agent_status,
++                    entry.indented,
++                    &config.spaces,
++                )
++                .len()
++                .max(1),
++            )
++            .unwrap_or(u16::MAX),
++            _ => 1,
++        })
++        .collect();
++    let gaps = vec![0; rows.len()];
++    let mut offset = *state.workspace_scroll;
++    if *state.reveal_navigation_workspace || *state.reveal_focused_workspace {
++        if let Some(index) = rows.iter().position(|row| match row {
++            Row::Workspace {
++                endpoint,
++                workspace,
++                ..
++            } => state.selected_workspace_id.map_or(
++                workspace.focused && &endpoint.endpoint_id == state.active_endpoint_id,
++                |target| target.matches(&endpoint.endpoint_id, &workspace.workspace_id),
++            ),
++            Row::Resource {
++                endpoint, target, ..
++            }
++            | Row::Completed {
++                endpoint, target, ..
++            } => state.selected_workspace_id.is_some_and(|selected| {
++                selected.endpoint_id == endpoint.endpoint_id
++                    && selected.resource.as_ref() == Some(target)
++            }),
++            Row::Endpoint(_) => false,
++        }) {
++            offset =
++                scroll::list_scroll_start_to_reveal(&heights, &gaps, body.height, offset, index);
++        }
++    }
++    let metrics = scroll::list_scroll_metrics(&heights, &gaps, body.height, offset);
++    offset = metrics
++        .max_offset_from_bottom
++        .saturating_sub(metrics.offset_from_bottom);
++    let width = body
++        .width
++        .saturating_sub(u16::from(metrics.max_offset_from_bottom > 0));
++    let mut y = body.y;
++    for (row, height) in rows.iter().zip(&heights).skip(offset) {
++        let height = (*height).min(body.height);
++        if y.saturating_add(height) > body.bottom() {
++            break;
++        }
++        let rect = Rect::new(body.x, y, width, height);
++        y = y.saturating_add(height);
++        match row {
++            Row::Endpoint(endpoint) => {
++                let marker = if state.collapsed_endpoints.contains(&endpoint.endpoint_id) {
++                    "▸"
++                } else {
++                    "▾"
++                };
++                let status_badge = super::endpoint_sidebar::render_endpoint_row(
++                    buffer,
++                    rect,
++                    marker,
++                    endpoint,
++                    state.collapsed_endpoints.contains(&endpoint.endpoint_id)
++                        && &endpoint.endpoint_id == state.active_endpoint_id,
++                    state.machine_diagnostics,
++                    palette,
++                );
++                hits.machines.push(MachineHit {
++                    rect,
++                    status_badge,
++                    collapse_toggle: Rect::new(
++                        rect.x.saturating_add(1),
++                        rect.y,
++                        u16::from(rect.width > 1),
++                        1,
++                    ),
++                    endpoint_id: endpoint.endpoint_id.clone(),
++                });
++            }
++            Row::Workspace {
++                endpoint,
++                workspace,
++                entry,
++            } => {
++                let selected = state.selected_workspace_id.is_some_and(|target| {
++                    target.matches(&endpoint.endpoint_id, &workspace.workspace_id)
++                });
++                let dragged = &endpoint.endpoint_id == state.active_endpoint_id
++                    && state.dragged_workspace_id == Some(workspace.workspace_id.as_str());
++                sidebar::render_workspace_rows(
++                    buffer,
++                    rect,
++                    workspace.agent_status,
++                    config.status_indicators,
++                    entry,
++                    sidebar::workspace_rows(
++                        workspace,
++                        workspace.agent_status,
++                        entry.indented,
++                        &config.spaces,
++                    ),
++                    workspace.focused,
++                    selected,
++                    state.selected_workspace_id.is_some(),
++                    dragged,
++                    palette,
++                );
++                let group_toggle = endpoint.snapshot.as_deref().and_then(|snapshot| {
++                    let empty = HashSet::new();
++                    let collapsed = if &endpoint.endpoint_id == state.active_endpoint_id {
++                        state.collapsed_groups
++                    } else {
++                        state
++                            .remote_collapsed_groups
++                            .get(&endpoint.endpoint_id)
++                            .unwrap_or(&empty)
++                    };
++                    sidebar::render_parent_group_toggle(
++                        buffer,
++                        rect,
++                        snapshot,
++                        entry.index,
++                        collapsed,
++                        palette,
++                    )
++                });
++                hits.workspaces.push(WorkspaceHit {
++                    rect,
++                    endpoint_id: endpoint.endpoint_id.clone(),
++                    workspace_id: workspace.workspace_id.clone(),
++                    indented: entry.indented,
++                    group_toggle,
++                });
++            }
++            Row::Resource {
++                endpoint,
++                item,
++                target,
++                indent,
++            } => {
++                let fg = match item.tone {
++                    Tone::Normal => palette.text,
++                    Tone::Success => palette.green,
++                    Tone::Warning => palette.yellow,
++                    Tone::Failure => palette.red,
++                    Tone::Muted => palette.overlay0,
++                };
++                let selected = state.selected_workspace_id.is_some_and(|selected| {
++                    selected.endpoint_id == endpoint.endpoint_id
++                        && selected.resource.as_ref() == Some(target)
++                });
++                let style = if selected {
++                    Style::default()
++                        .fg(fg)
++                        .bg(sidebar::workspace_selection_background(palette))
++                } else {
++                    Style::default().fg(fg)
++                };
++                buffer.set_style(rect, style);
++                put_text(
++                    buffer,
++                    rect.x.saturating_add(*indent),
++                    rect.y,
++                    rect.width.saturating_sub(*indent),
++                    &format!("{}  {}", item.label, item.status),
++                    style,
++                );
++                hits.resources.push(ResourceHit {
++                    rect,
++                    endpoint: endpoint.endpoint_id.clone(),
++                    target: target.clone(),
++                });
++            }
++            Row::Completed {
++                endpoint,
++                target,
++                count,
++                expanded,
++                indent,
++            } => {
++                if state.selected_workspace_id.is_some_and(|selected| {
++                    selected.endpoint_id == endpoint.endpoint_id
++                        && selected.resource.as_ref() == Some(target)
++                }) {
++                    buffer.set_style(
++                        rect,
++                        Style::default().bg(sidebar::workspace_selection_background(palette)),
++                    );
++                }
++                put_text(
++                    buffer,
++                    rect.x.saturating_add(*indent),
++                    rect.y,
++                    rect.width.saturating_sub(*indent),
++                    &format!("{} {count} completed", if *expanded { "▾" } else { "▸" }),
++                    Style::default().fg(palette.overlay0),
++                );
++                hits.resources.push(ResourceHit {
++                    rect,
++                    endpoint: endpoint.endpoint_id.clone(),
++                    target: target.clone(),
++                });
++            }
++        }
++    }
++    drop(rows);
++    *state.workspace_scroll = offset;
++    *state.reveal_navigation_workspace = false;
++    *state.reveal_focused_workspace = false;
++    hits.workspace_max_scroll = metrics.max_offset_from_bottom;
++    hits.workspace_scroll_metrics = Some(metrics);
++    if metrics.max_offset_from_bottom > 0 && body.width > 1 {
++        hits.workspace_scrollbar =
++            Rect::new(body.right().saturating_sub(1), body.y, 1, body.height);
++        scroll::render_list_scrollbar(buffer, hits.workspace_scrollbar, metrics, palette);
++    }
++}
++
++impl ClientShellState {
++    pub(super) fn activate_resource(
++        &mut self,
++        endpoint: ClientEndpointId,
++        target: ResourceTarget,
++        outcome: &mut ClientShellInput,
++    ) {
++        match target {
++            ResourceTarget::Group { key, .. } => self.toggle_collapsed_group(&endpoint, key),
++            ResourceTarget::Invoke(request) => {
++                let Some(source) = self.endpoints.iter().find(|source| {
++                    source.endpoint_id == endpoint && source.status == ClientEndpointStatus::Online
++                }) else {
++                    return;
++                };
++                let Some(snapshot) = source.snapshot.as_deref() else {
++                    return;
++                };
++                let Some(collection) = source
++                    .workspace_resources()
++                    .iter()
++                    .find(|items| {
++                        items.identity == request.identity
++                            && items.workspace_id == request.workspace_id
++                    })
++                    .and_then(|items| items.collections.get(&request.plugin_id))
++                else {
++                    return;
++                };
++                if !collection
++                    .resources
++                    .iter()
++                    .any(|item| item.id == request.resource_id)
++                {
++                    return;
++                }
++                let mut request = request;
++                request.revision = collection.revision;
++                let method = crate::api::schema::Method::WorkspaceResourcesInvoke(request);
++                let id = format!("client-shell:{}", self.next_request_id);
++                self.next_request_id = self.next_request_id.saturating_add(1);
++                self.pending_requests.insert(
++                    id.clone(),
++                    PendingEndpointRequest {
++                        boot_id: snapshot.boot_id.clone(),
++                        method_name: "workspace.resources.invoke".into(),
++                        confirmation_workspace_id: None,
++                        kind: PendingEndpointKind::Generic,
++                    },
++                );
++                outcome.actions.push(ClientShellAction::Endpoint {
++                    endpoint_id: endpoint,
++                    boot_id: snapshot.boot_id.clone(),
++                    request: Box::new(crate::api::schema::Request { id, method }),
++                });
++            }
++        }
++        outcome.repaint = true;
++    }
++}
+diff --git a/src/client/shell/sidebar.rs b/src/client/shell/sidebar.rs
+index 46c3a1a..1745573 100644
+--- a/src/client/shell/sidebar.rs
++++ b/src/client/shell/sidebar.rs
+@@ -4,7 +4,9 @@ use ratatui::{
+     widgets::{Paragraph, Widget},
+ };
+ 
+-fn workspace_selection_background(palette: &Palette) -> ratatui::style::Color {
++pub(in crate::client::shell) fn workspace_selection_background(
++    palette: &Palette,
++) -> ratatui::style::Color {
+     if palette.selection_bg == ratatui::style::Color::Reset {
+         palette.active_row_bg
+     } else {
+@@ -236,145 +238,148 @@ pub(crate) fn render_sidebar(
+             .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
+     );
+     hits.workspace_body = body;
+-    let row_heights = entries
+-        .iter()
+-        .map(|entry| {
+-            snapshot
+-                .workspaces
+-                .get(entry.index)
+-                .map(|workspace| {
+-                    workspace_rows(
+-                        workspace,
+-                        displayed_workspace_status(snapshot, workspace, state.collapsed_groups),
+-                        entry.indented,
+-                        &config.spaces,
+-                    )
+-                    .len()
+-                    .max(1)
+-                    .min(u16::MAX as usize) as u16
+-                })
+-                .unwrap_or(1)
+-        })
+-        .collect::<Vec<_>>();
+-    let gaps = entries
+-        .iter()
+-        .enumerate()
+-        .map(|(index, _)| {
+-            entries
+-                .get(index + 1)
+-                .map_or(0, |next| u16::from(!next.indented) * config.spaces.row_gap)
+-        })
+-        .collect::<Vec<_>>();
+-    let mut metrics = super::scroll::list_scroll_metrics(
+-        &row_heights,
+-        &gaps,
+-        body.height,
+-        *state.workspace_scroll,
+-    );
+-    if !body.is_empty() && std::mem::take(state.reveal_focused_workspace) {
+-        if let Some(target) = entries
++    if super::resource_tree::available(state) {
++        super::resource_tree::render_body(buffer, body, config, state, hits);
++    } else {
++        let row_heights = entries
+             .iter()
+-            .position(|entry| snapshot.workspaces[entry.index].focused)
+-        {
+-            *state.workspace_scroll = super::scroll::list_scroll_start_to_reveal(
+-                &row_heights,
+-                &gaps,
+-                body.height,
+-                *state.workspace_scroll,
+-                target,
++            .map(|entry| {
++                snapshot
++                    .workspaces
++                    .get(entry.index)
++                    .map(|workspace| {
++                        workspace_rows(
++                            workspace,
++                            displayed_workspace_status(snapshot, workspace, state.collapsed_groups),
++                            entry.indented,
++                            &config.spaces,
++                        )
++                        .len()
++                        .max(1)
++                        .min(u16::MAX as usize) as u16
++                    })
++                    .unwrap_or(1)
++            })
++            .collect::<Vec<_>>();
++        let gaps = entries
++            .iter()
++            .enumerate()
++            .map(|(index, _)| {
++                entries
++                    .get(index + 1)
++                    .map_or(0, |next| u16::from(!next.indented) * config.spaces.row_gap)
++            })
++            .collect::<Vec<_>>();
++        let mut metrics = super::scroll::list_scroll_metrics(
++            &row_heights,
++            &gaps,
++            body.height,
++            *state.workspace_scroll,
++        );
++        if !body.is_empty() && std::mem::take(state.reveal_focused_workspace) {
++            if let Some(target) = entries
++                .iter()
++                .position(|entry| snapshot.workspaces[entry.index].focused)
++            {
++                *state.workspace_scroll = super::scroll::list_scroll_start_to_reveal(
++                    &row_heights,
++                    &gaps,
++                    body.height,
++                    *state.workspace_scroll,
++                    target,
++                );
++                metrics = super::scroll::list_scroll_metrics(
++                    &row_heights,
++                    &gaps,
++                    body.height,
++                    *state.workspace_scroll,
++                );
++            }
++        }
++        hits.workspace_max_scroll = metrics.max_offset_from_bottom;
++        hits.workspace_scroll_metrics = Some(metrics);
++        *state.workspace_scroll = metrics
++            .max_offset_from_bottom
++            .saturating_sub(metrics.offset_from_bottom);
++        let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
++        let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
++        let mut y = body.y;
++        for (entry_position, entry) in entries.iter().enumerate().skip(*state.workspace_scroll) {
++            let Some(workspace) = snapshot.workspaces.get(entry.index) else {
++                continue;
++            };
++            let status = displayed_workspace_status(snapshot, workspace, state.collapsed_groups);
++            let rows = workspace_rows(workspace, status, entry.indented, &config.spaces);
++            let row_height = (rows.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
++            if y.saturating_add(row_height) > body.bottom() {
++                break;
++            }
++            let rect = Rect::new(body.x, y, content_width, row_height);
++            let selected = state.selected_workspace_id.is_some_and(|target| {
++                target.matches(state.active_endpoint_id, &workspace.workspace_id)
++            });
++            let dragged = state.dragged_workspace_id == Some(workspace.workspace_id.as_str());
++            if selected {
++                buffer.set_style(rect, Style::default().bg(palette.selection_bg));
++            } else if dragged {
++                buffer.set_style(rect, Style::default().bg(palette.surface1));
++            } else if workspace.focused {
++                buffer.set_style(rect, Style::default().bg(palette.active_row_bg));
++            }
++            render_workspace_rows(
++                buffer,
++                rect,
++                status,
++                config.status_indicators,
++                entry,
++                rows,
++                workspace.focused,
++                selected,
++                state.selected_workspace_id.is_some(),
++                dragged,
++                palette,
+             );
+-            metrics = super::scroll::list_scroll_metrics(
+-                &row_heights,
+-                &gaps,
+-                body.height,
+-                *state.workspace_scroll,
++            let group_toggle = render_parent_group_toggle(
++                buffer,
++                rect,
++                snapshot,
++                entry.index,
++                state.collapsed_groups,
++                palette,
+             );
++            hits.workspaces.push(WorkspaceHit {
++                rect,
++                endpoint_id: ClientEndpointId::Local,
++                workspace_id: workspace.workspace_id.clone(),
++                indented: entry.indented,
++                group_toggle,
++            });
++            let gap = entries
++                .get(entry_position + 1)
++                .map_or(0, |next| u16::from(!next.indented) * config.spaces.row_gap);
++            y = y.saturating_add(row_height + gap);
+         }
+-    }
+-    hits.workspace_max_scroll = metrics.max_offset_from_bottom;
+-    hits.workspace_scroll_metrics = Some(metrics);
+-    *state.workspace_scroll = metrics
+-        .max_offset_from_bottom
+-        .saturating_sub(metrics.offset_from_bottom);
+-    let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
+-    let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
+-    let mut y = body.y;
+-    for (entry_position, entry) in entries.iter().enumerate().skip(*state.workspace_scroll) {
+-        let Some(workspace) = snapshot.workspaces.get(entry.index) else {
+-            continue;
+-        };
+-        let status = displayed_workspace_status(snapshot, workspace, state.collapsed_groups);
+-        let rows = workspace_rows(workspace, status, entry.indented, &config.spaces);
+-        let row_height = (rows.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
+-        if y.saturating_add(row_height) > body.bottom() {
+-            break;
+-        }
+-        let rect = Rect::new(body.x, y, content_width, row_height);
+-        let selected = state.selected_workspace_id.is_some_and(|target| {
+-            target.matches(state.active_endpoint_id, &workspace.workspace_id)
+-        });
+-        let dragged = state.dragged_workspace_id == Some(workspace.workspace_id.as_str());
+-        if selected {
+-            buffer.set_style(rect, Style::default().bg(palette.selection_bg));
+-        } else if dragged {
+-            buffer.set_style(rect, Style::default().bg(palette.surface1));
+-        } else if workspace.focused {
+-            buffer.set_style(rect, Style::default().bg(palette.active_row_bg));
+-        }
+-        render_workspace_rows(
+-            buffer,
+-            rect,
+-            status,
+-            config.status_indicators,
+-            entry,
+-            rows,
+-            workspace.focused,
+-            selected,
+-            state.selected_workspace_id.is_some(),
+-            dragged,
+-            palette,
+-        );
+-        let group_toggle = render_parent_group_toggle(
+-            buffer,
+-            rect,
+-            snapshot,
+-            entry.index,
+-            state.collapsed_groups,
+-            palette,
+-        );
+-        hits.workspaces.push(WorkspaceHit {
+-            rect,
+-            endpoint_id: ClientEndpointId::Local,
+-            workspace_id: workspace.workspace_id.clone(),
+-            indented: entry.indented,
+-            group_toggle,
+-        });
+-        let gap = entries
+-            .get(entry_position + 1)
+-            .map_or(0, |next| u16::from(!next.indented) * config.spaces.row_gap);
+-        y = y.saturating_add(row_height + gap);
+-    }
+ 
+-    if show_scrollbar {
+-        let track = Rect::new(body.right().saturating_sub(1), body.y, 1, body.height);
+-        hits.workspace_scrollbar = track;
+-        super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
+-    }
++        if show_scrollbar {
++            let track = Rect::new(body.right().saturating_sub(1), body.y, 1, body.height);
++            hits.workspace_scrollbar = track;
++            super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
++        }
+ 
+-    if let Some(row) = state.workspace_drop_indicator_row.filter(|row| {
+-        *row >= workspace_area.y.saturating_add(1)
+-            && *row < workspace_area.bottom().saturating_sub(1)
+-    }) {
+-        put_text(
+-            buffer,
+-            body.x,
+-            row,
+-            body.width,
+-            &"─".repeat(body.width as usize),
+-            Style::default().fg(palette.accent),
+-        );
++        if let Some(row) = state.workspace_drop_indicator_row.filter(|row| {
++            *row >= workspace_area.y.saturating_add(1)
++                && *row < workspace_area.bottom().saturating_sub(1)
++        }) {
++            put_text(
++                buffer,
++                body.x,
++                row,
++                body.width,
++                &"─".repeat(body.width as usize),
++                Style::default().fg(palette.accent),
++            );
++        }
+     }
+-
+     let footer_y = workspace_area.bottom().saturating_sub(1);
+     if config.mouse_capture {
+         hits.new_workspace = Rect::new(
+diff --git a/src/client/shell/state.rs b/src/client/shell/state.rs
+index 9c69fbe..7ef4f31 100644
+--- a/src/client/shell/state.rs
++++ b/src/client/shell/state.rs
+@@ -83,6 +83,7 @@ pub(super) enum ClientMobileTarget {
+ 
+ #[derive(Default)]
+ pub(super) struct ShellHitMap {
++    pub(super) resources: Vec<super::resource_tree::ResourceHit>,
+     pub(super) machines: Vec<MachineHit>,
+     pub(super) workspaces: Vec<WorkspaceHit>,
+     pub(super) workspace_body: Rect,
+diff --git a/src/client/shell/tests/workspace_navigation.rs b/src/client/shell/tests/workspace_navigation.rs
+index c117a31..4565a2c 100644
+--- a/src/client/shell/tests/workspace_navigation.rs
++++ b/src/client/shell/tests/workspace_navigation.rs
+@@ -968,3 +968,100 @@ fn navigation_highlight_ends_for_noop_focus_and_focused_creation() {
+         }
+     }
+ }
++
++fn resource_projection(
++    snapshot: &ClientShellSnapshot,
++    count: usize,
++) -> crate::workspace_resources::Projection {
++    use crate::workspace_resources::*;
++    Projection {
++        boot_id: snapshot.boot_id.clone(),
++        revision: snapshot.revision,
++        workspaces: vec![WorkspaceResources {
++            workspace_id: "ws_1".into(),
++            identity: "bd2f97a9-bcc5-432c-8f39-7b44692bac2e".into(),
++            collections: std::collections::BTreeMap::from([(
++                "example".into(),
++                Collection {
++                    revision: snapshot.revision,
++                    resources: (0..count)
++                        .map(|index| Resource {
++                            id: format!("pr-{index}"),
++                            label: format!("#{index} cafe\u{301} 👨‍👩‍👧"),
++                            status: "CI running".into(),
++                            tone: Tone::Warning,
++                            completed: index == count - 1,
++                            action: "open".into(),
++                            reference: format!("https://example.invalid/pr/{index}"),
++                        })
++                        .collect(),
++                },
++            )]),
++        }],
++    }
++}
++
++#[test]
++fn resource_navigation_scrolls_every_item_and_keeps_selection_across_updates() {
++    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
++    let mut snapshot = workspaces(1);
++    state.set_endpoint_snapshot_for_generation(
++        &ClientEndpointId::Local,
++        1,
++        Box::new(snapshot.clone()),
++    );
++    state.set_workspace_resources(
++        &ClientEndpointId::Local,
++        1,
++        resource_projection(&snapshot, 45),
++    );
++    state.set_pane_surface(surface());
++    state.compose(100, 28).unwrap();
++    enter_navigation(&mut state);
++    for index in 0..44 {
++        preview_key(&mut state, b"\x1b[B");
++        state.compose(100, 28).unwrap();
++        let selected = state
++            .navigate_workspace_id
++            .as_ref()
++            .unwrap()
++            .resource
++            .as_ref()
++            .unwrap();
++        let super::super::super::resource_tree::ResourceTarget::Invoke(request) = selected else {
++            panic!("expected PR")
++        };
++        assert_eq!(request.resource_id, format!("pr-{index}"));
++        assert!(state
++            .hits
++            .resources
++            .iter()
++            .any(|hit| &hit.target == selected));
++    }
++    let selected = state.navigate_workspace_id.clone();
++    snapshot.revision += 1;
++    state.set_workspace_resources(
++        &ClientEndpointId::Local,
++        1,
++        resource_projection(&snapshot, 45),
++    );
++    // Companion arrives before its snapshot: retain the last coherent rows.
++    assert_eq!(state.endpoints[0].workspace_resources().len(), 1);
++    let mut frame = surface();
++    frame.projection_revision = snapshot.revision;
++    state.set_endpoint_snapshot_for_generation(&ClientEndpointId::Local, 1, Box::new(snapshot));
++    state.set_pane_surface(frame);
++    assert_eq!(state.navigate_workspace_id, selected);
++    let mut outcome = ClientShellInput::default();
++    state.accept_navigate_workspace(&mut outcome);
++    assert!(
++        matches!(outcome.actions.first(), Some(ClientShellAction::Endpoint {request, ..}) if matches!(&request.method, crate::api::schema::Method::WorkspaceResourcesInvoke(request) if request.resource_id == "pr-43"))
++    );
++    preview_key(&mut state, b"\x1b[B");
++    let mut outcome = ClientShellInput::default();
++    state.accept_navigate_workspace(&mut outcome); // expand completed group
++    assert!(outcome.actions.is_empty());
++    preview_key(&mut state, b"\x1b[B");
++    state.compose(100, 28).unwrap();
++    assert!(state.hits.resources.iter().any(|hit| matches!(&hit.target, super::super::super::resource_tree::ResourceTarget::Invoke(request) if request.resource_id == "pr-44")));
++}
+diff --git a/src/client/shell/workspace_navigation.rs b/src/client/shell/workspace_navigation.rs
+index 19fa1a3..0a98071 100644
+--- a/src/client/shell/workspace_navigation.rs
++++ b/src/client/shell/workspace_navigation.rs
+@@ -5,6 +5,7 @@ use super::*;
+ pub(super) struct WorkspaceNavigationTarget {
+     pub(super) endpoint_id: ClientEndpointId,
+     pub(super) workspace_id: String,
++    pub(super) resource: Option<super::resource_tree::ResourceTarget>,
+     boot_id: String,
+     generation: Option<u64>,
+ }
+@@ -18,7 +19,9 @@ pub(super) struct PendingWorkspaceHighlight {
+ 
+ impl WorkspaceNavigationTarget {
+     pub(super) fn matches(&self, endpoint_id: &ClientEndpointId, workspace_id: &str) -> bool {
+-        &self.endpoint_id == endpoint_id && self.workspace_id == workspace_id
++        &self.endpoint_id == endpoint_id
++            && self.workspace_id == workspace_id
++            && self.resource.is_none()
+     }
+ }
+ 
+@@ -65,6 +68,7 @@ impl ClientShellState {
+         Some(WorkspaceNavigationTarget {
+             endpoint_id: endpoint_id.clone(),
+             workspace_id: workspace_id.to_owned(),
++            resource: None,
+             boot_id: snapshot.boot_id.clone(),
+             generation: endpoint.snapshot_generation,
+         })
+@@ -92,7 +96,9 @@ impl ClientShellState {
+ 
+     pub(super) fn workspace_preview_action_blocked(&self) -> bool {
+         self.navigate_workspace_id.as_ref().is_some_and(|target| {
+-            target.endpoint_id != self.active_endpoint_id || !self.navigation_target_valid(target)
++            target.resource.is_some()
++                || target.endpoint_id != self.active_endpoint_id
++                || !self.navigation_target_valid(target)
+         })
+     }
+ 
+@@ -132,9 +138,28 @@ impl ClientShellState {
+                 targets.push(WorkspaceNavigationTarget {
+                     endpoint_id: endpoint.endpoint_id.clone(),
+                     workspace_id: snapshot.workspaces[entry.index].workspace_id.clone(),
++                    resource: None,
+                     boot_id: snapshot.boot_id.clone(),
+                     generation: endpoint.snapshot_generation,
+                 });
++                if !mobile && !self.sidebar_collapsed {
++                    let collapsed = self
++                        .collapsed_groups_for_endpoint(&endpoint.endpoint_id)
++                        .unwrap_or(&empty_collapsed_groups);
++                    for resource in super::resource_tree::children(
++                        endpoint,
++                        &snapshot.workspaces[entry.index].workspace_id,
++                        collapsed,
++                    ) {
++                        targets.push(WorkspaceNavigationTarget {
++                            endpoint_id: endpoint.endpoint_id.clone(),
++                            workspace_id: snapshot.workspaces[entry.index].workspace_id.clone(),
++                            resource: Some(resource),
++                            boot_id: snapshot.boot_id.clone(),
++                            generation: endpoint.snapshot_generation,
++                        });
++                    }
++                }
+             }
+         }
+         if targets.is_empty() {
+@@ -176,6 +201,10 @@ impl ClientShellState {
+             outcome.repaint = true;
+             return;
+         }
++        if let Some(resource) = target.resource.clone() {
++            self.activate_resource(target.endpoint_id, resource, outcome);
++            return;
++        }
+         let action_index = outcome.actions.len();
+         if self.focus_or_activate(
+             target.endpoint_id.clone(),
+diff --git a/src/main.rs b/src/main.rs
+index b5c92ec..8e2aa98 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -60,6 +60,7 @@ mod terminal_theme;
+ mod ui;
+ mod update;
+ mod workspace;
++mod workspace_resources;
+ mod worktree;
+ 
+ const DEFAULT_CONFIG: &str = r##"# herdr configuration
+diff --git a/src/persist/restore.rs b/src/persist/restore.rs
+index 4914a05..d162aca 100644
+--- a/src/persist/restore.rs
++++ b/src/persist/restore.rs
+@@ -281,6 +281,7 @@ fn restore_with_imports_and_failures(
+     let mut terminal_runtimes = HashMap::new();
+     let mut resumed_agent_sessions = HashSet::new();
+     let mut failed_imports = 0;
++    let mut identities = HashSet::new();
+     for (idx, ws_snap) in snapshot.workspaces.iter().enumerate() {
+         let runtime_context = RestoreRuntimeContext {
+             scrollback_limit_bytes,
+@@ -300,7 +301,12 @@ fn restore_with_imports_and_failures(
+             imported_panes,
+         );
+         failed_imports += workspace_failed_imports;
+-        if let Some((workspace, restored_terminals, restored_runtimes)) = restored {
++        if let Some((mut workspace, restored_terminals, restored_runtimes)) = restored {
++            if !identities.insert(workspace.identity) {
++                tracing::warn!(workspace_id = %workspace.id, "duplicate persisted workspace identity; allocating new identity");
++                workspace.identity = uuid::Uuid::new_v4();
++                identities.insert(workspace.identity);
++            }
+             for terminal in restored_terminals {
+                 terminals.insert(terminal.id.clone(), terminal);
+             }
+@@ -418,6 +424,11 @@ fn restore_workspace(
+     (
+         Some(Workspace {
+             id: workspace_id,
++            identity: snap
++                .identity
++                .filter(|identity| !identity.is_nil())
++                .unwrap_or_else(uuid::Uuid::new_v4),
++            resources: crate::workspace_resources::Collections::default(),
+             custom_name: snap.custom_name.clone(),
+             identity_cwd: snap.identity_cwd.clone(),
+             cached_identity_cwd: snap.identity_cwd.clone(),
+@@ -1443,6 +1454,10 @@ mod tests {
+                     }
+                 }
+             }
++            // Legacy snapshots acquire fresh lifetime IDs; newer snapshots retain them.
++            let saved_identity = uuid::Uuid::new_v4();
++            snapshot.workspaces[0].identity = Some(saved_identity);
++            snapshot.workspaces[1].identity = None;
+             let membership = crate::workspace::WorktreeSpaceMembership {
+                 key: "saved-repo-key".into(),
+                 label: "saved-repo".into(),
+@@ -1485,6 +1500,10 @@ mod tests {
+                 2,
+                 "a launch failure must not delete a workspace"
+             );
++            assert_eq!(captured.workspaces[0].identity, Some(saved_identity));
++            assert!(captured.workspaces[1]
++                .identity
++                .is_some_and(|identity| !identity.is_nil() && identity != saved_identity));
+             assert_eq!(captured.workspaces[0].tabs.len(), 2);
+             assert_eq!(
+                 captured.workspaces[0].worktree_space,
+@@ -1530,6 +1549,7 @@ mod tests {
+         let snapshot = SessionSnapshot {
+             version: super::super::snapshot::SNAPSHOT_VERSION,
+             workspaces: vec![WorkspaceSnapshot {
++                identity: None,
+                 id: Some("workspace".into()),
+                 custom_name: None,
+                 identity_cwd: cwd.clone(),
+@@ -1611,6 +1631,7 @@ mod tests {
+         let snapshot = SessionSnapshot {
+             version: super::super::snapshot::SNAPSHOT_VERSION,
+             workspaces: vec![WorkspaceSnapshot {
++                identity: None,
+                 id: Some("w1".into()),
+                 custom_name: None,
+                 identity_cwd: cwd.clone(),
+@@ -1724,6 +1745,7 @@ mod tests {
+         let snapshot = SessionSnapshot {
+             version: super::super::snapshot::SNAPSHOT_VERSION,
+             workspaces: vec![WorkspaceSnapshot {
++                identity: None,
+                 id: Some("w1".into()),
+                 custom_name: None,
+                 identity_cwd: cwd.clone(),
+@@ -1807,6 +1829,7 @@ mod tests {
+     fn legacy_restore_precomputes_missing_public_pane_numbers() {
+         let cwd = std::env::current_dir().unwrap();
+         let snapshot = WorkspaceSnapshot {
++            identity: None,
+             id: Some("w1".into()),
+             custom_name: None,
+             identity_cwd: cwd,
+@@ -1846,6 +1869,7 @@ mod tests {
+         let snapshot = SessionSnapshot {
+             version: super::super::snapshot::SNAPSHOT_VERSION,
+             workspaces: vec![WorkspaceSnapshot {
++                identity: None,
+                 id: Some("workspace".into()),
+                 custom_name: None,
+                 identity_cwd: cwd.clone(),
+@@ -2202,6 +2226,7 @@ mod tests {
+         let snapshot = SessionSnapshot {
+             version: super::super::snapshot::SNAPSHOT_VERSION,
+             workspaces: vec![WorkspaceSnapshot {
++                identity: None,
+                 id: Some("workspace".into()),
+                 custom_name: None,
+                 identity_cwd: cwd,
+diff --git a/src/persist/snapshot.rs b/src/persist/snapshot.rs
+index 3518ef4..e4584b9 100644
+--- a/src/persist/snapshot.rs
++++ b/src/persist/snapshot.rs
+@@ -50,6 +50,8 @@ pub struct TabHistorySnapshot {
+ 
+ #[derive(Serialize, Deserialize)]
+ pub struct WorkspaceSnapshot {
++    #[serde(default)]
++    pub identity: Option<uuid::Uuid>,
+     #[serde(default)]
+     pub id: Option<String>,
+     #[serde(default)]
+@@ -165,6 +167,7 @@ impl From<LegacyWorkspaceSnapshot> for WorkspaceSnapshot {
+         };
+ 
+         Self {
++            identity: None,
+             id: None,
+             custom_name: snap.custom_name,
+             identity_cwd,
+@@ -303,6 +306,7 @@ fn capture_workspace(
+         .map(|pane| pane.cwd.clone())
+         .unwrap_or_else(|| ws.identity_cwd.clone());
+     WorkspaceSnapshot {
++        identity: Some(ws.identity),
+         id: Some(ws.id.clone()),
+         custom_name: ws.custom_name.clone(),
+         identity_cwd,
+@@ -724,6 +728,7 @@ mod tests {
+ 
+         let snap = SessionSnapshot {
+             workspaces: vec![WorkspaceSnapshot {
++                identity: None,
+                 id: Some("wproj".to_string()),
+                 custom_name: Some("pi-mono".to_string()),
+                 identity_cwd: PathBuf::from("/home/can/Projects/herdr"),
+@@ -1425,6 +1430,7 @@ mod tests {
+         let snap = SessionSnapshot {
+             version: SNAPSHOT_VERSION,
+             workspaces: vec![WorkspaceSnapshot {
++                identity: None,
+                 id: Some("test-ws".to_string()),
+                 custom_name: Some("fallback test".to_string()),
+                 identity_cwd: PathBuf::from("/tmp"),
+diff --git a/src/server/clients.rs b/src/server/clients.rs
+index 65e875b..eb17fd6 100644
+--- a/src/server/clients.rs
++++ b/src/server/clients.rs
+@@ -179,6 +179,7 @@ pub(crate) struct ClientConnection {
+     pub(crate) shell_snapshot: Option<crate::protocol::ClientShellSnapshot>,
+     pub(crate) shell_agent_completions: Option<crate::protocol::endpoint::EndpointAgentCompletions>,
+     /// View policy paired with the last coherent shell replacement.
++    pub(crate) shell_resources: Vec<crate::workspace_resources::WorkspaceResources>,
+     pub(crate) shell_agent_view: Option<crate::api::schema::AgentViewSetParams>,
+     /// Monotonic shell replacement revision for this connection.
+     pub(crate) shell_projection_revision: u64,
+@@ -249,6 +250,7 @@ impl ClientConnection {
+             shell_snapshot: None,
+             shell_agent_completions: None,
+             shell_agent_view: None,
++            shell_resources: Vec::new(),
+             shell_projection_revision: 0,
+             shell_endpoint_command_in_flight: false,
+             shell_endpoint_command_surface_revision: None,
+diff --git a/src/server/headless.rs b/src/server/headless.rs
+index 18869e0..2794e0b 100644
+--- a/src/server/headless.rs
++++ b/src/server/headless.rs
+@@ -1959,6 +1959,19 @@ impl HeadlessServer {
+                         return false;
+                     }
+                 };
++                let resources = crate::workspace_resources::project(&self.app.state);
++                let resources_message = match crate::workspace_resources::message(
++                    &seed_snapshot.boot_id,
++                    seed_snapshot.revision,
++                    resources.clone(),
++                ) {
++                    Ok(message) => message,
++                    Err(error) => {
++                        warn!(client_id, %error, "failed to encode workspace resources");
++                        return false;
++                    }
++                };
++                connection.shell_resources = resources;
+                 connection.shell_location = Some(location);
+                 connection.shell_snapshot = Some(seed_snapshot);
+                 connection.shell_agent_completions = Some(completion_projection);
+@@ -1970,6 +1983,7 @@ impl HeadlessServer {
+                 if let Some(message) = projection_message {
+                     self.send_to_client(client_id, message);
+                 }
++                self.send_to_client(client_id, resources_message);
+                 self.send_to_client(client_id, completion_message);
+                 self.send_to_client(client_id, snapshot_message);
+                 if surface_active {
+diff --git a/src/server/headless/render.rs b/src/server/headless/render.rs
+index 5bc17c1..ae0c16e 100644
+--- a/src/server/headless/render.rs
++++ b/src/server/headless/render.rs
+@@ -487,6 +487,7 @@ impl HeadlessServer {
+             }
+         }
+ 
++        let resources = crate::workspace_resources::project(&self.app.state);
+         let mut broken_clients: Vec<u64> = Vec::new();
+         for (client_id, (cols, rows), cell_size, _is_foreground, mode) in render_targets {
+             #[cfg(unix)]
+@@ -578,11 +579,28 @@ impl HeadlessServer {
+                 if client.shell_snapshot.as_ref() != Some(&candidate)
+                     || client.shell_agent_completions.as_ref() != Some(&completions)
+                     || client.shell_agent_view != agent_view
++                    || client.shell_resources != resources
+                 {
+                     client.shell_projection_revision =
+                         client.shell_projection_revision.saturating_add(1);
+                     candidate.revision = client.shell_projection_revision;
+                     completions.revision = candidate.revision;
++                    let resources_framed = match crate::workspace_resources::message(
++                        &candidate.boot_id,
++                        candidate.revision,
++                        resources.clone(),
++                    )
++                    .map_err(std::io::Error::other)
++                    .and_then(|message| {
++                        Self::frame_server_message(&message).map_err(std::io::Error::other)
++                    }) {
++                        Ok(message) => message,
++                        Err(error) => {
++                            warn!(client_id, %error, "failed to frame workspace resources");
++                            broken_clients.push(client_id);
++                            continue;
++                        }
++                    };
+                     let completion_framed =
+                         match crate::protocol::endpoint::agent_completions_message(&completions)
+                             .map_err(std::io::Error::other)
+@@ -648,6 +666,7 @@ impl HeadlessServer {
+                         continue;
+                     };
+                     if projection_framed.is_some_and(|framed| writer.control.send(framed).is_err())
++                        || writer.control.send(resources_framed).is_err()
+                         || writer.control.send(completion_framed).is_err()
+                         || writer.control.send(snapshot_framed).is_err()
+                     {
+@@ -657,6 +676,7 @@ impl HeadlessServer {
+                     client.shell_snapshot = Some(candidate);
+                     client.shell_agent_completions = Some(completions);
+                     client.shell_agent_view = agent_view;
++                    client.shell_resources = resources.clone();
+                 }
+                 shell_projection_revision = client.shell_projection_revision;
+                 if !client.shell_surface_active {
+diff --git a/src/server/headless/tests/mod.rs b/src/server/headless/tests/mod.rs
+index 27f3bff..355b9a0 100644
+--- a/src/server/headless/tests/mod.rs
++++ b/src/server/headless/tests/mod.rs
+@@ -30,10 +30,14 @@ fn client_shell_projection(
+         assert_eq!(kind, expected);
+         data
+     };
++    let resources: crate::workspace_resources::Projection =
++        serde_json::from_str(&read_control(crate::workspace_resources::PROJECTION_KIND)).unwrap();
+     let completions: protocol::endpoint::EndpointAgentCompletions =
+         serde_json::from_str(&read_control(protocol::endpoint::AGENT_COMPLETIONS_KIND)).unwrap();
+     let snapshot: Box<protocol::ClientShellSnapshot> =
+         serde_json::from_str(&read_control(protocol::endpoint::ENDPOINT_SNAPSHOT_KIND)).unwrap();
++    assert_eq!(resources.boot_id, snapshot.boot_id);
++    assert_eq!(resources.revision, snapshot.revision);
+     assert_eq!(completions.boot_id, snapshot.boot_id);
+     assert_eq!(completions.revision, snapshot.revision);
+     (snapshot, completions)
+diff --git a/src/server/render_scale_benchmark.rs b/src/server/render_scale_benchmark.rs
+index 754c9db..ecbc346 100644
+--- a/src/server/render_scale_benchmark.rs
++++ b/src/server/render_scale_benchmark.rs
+@@ -590,6 +590,69 @@ async fn render_scale_profile() {
+     print_surface_damage_profiles();
+ }
+ 
++#[tokio::test(flavor = "current_thread")]
++#[ignore = "manual workspace resource scaling profile"]
++async fn render_scale_profile_resources() {
++    use crate::workspace_resources::{Collection, Projection, Resource, Tone, WorkspaceResources};
++    for count in [1, 15, 50] {
++        let mut pipeline = RenderPipeline::new(workspaces(count));
++        let snapshot = super::client_shell::snapshot(&pipeline.app, "bench-boot", 1, None, None);
++        let resources = pipeline
++            .app
++            .state
++            .workspaces
++            .iter()
++            .map(|workspace| WorkspaceResources {
++                workspace_id: workspace.id.clone(),
++                identity: workspace.identity.to_string(),
++                collections: std::collections::BTreeMap::from([(
++                    "example".into(),
++                    Collection {
++                        revision: 1,
++                        resources: (0..15)
++                            .map(|index| Resource {
++                                id: format!("pr-{index}"),
++                                label: format!("#{index}"),
++                                status: "CI running · review requested".into(),
++                                tone: Tone::Normal,
++                                completed: false,
++                                action: "open".into(),
++                                reference: format!("https://example.invalid/pr/{index}"),
++                            })
++                            .collect(),
++                    },
++                )]),
++            })
++            .collect();
++        pipeline.client.set_endpoint_snapshot_for_generation(
++            &crate::client::endpoint::ClientEndpointId::Local,
++            1,
++            Box::new(snapshot),
++        );
++        pipeline.client.set_workspace_resources(
++            &crate::client::endpoint::ClientEndpointId::Local,
++            1,
++            Projection {
++                boot_id: "bench-boot".into(),
++                revision: 1,
++                workspaces: resources,
++            },
++        );
++        let mut samples = Vec::new();
++        for index in 0..SAMPLE_COUNT + WARMUP_COUNT {
++            let (_, elapsed) = pipeline.render_once();
++            if index >= WARMUP_COUNT {
++                samples.push(elapsed);
++            }
++        }
++        let stats = summarize(samples);
++        println!(
++            "resources: {count} workspaces x 15 PRs, client median {}us p95 {}us",
++            stats.median_us, stats.p95_us
++        );
++    }
++}
++
+ /// Dirty-row collection while output scrolls a large pane, the host's hot path
+ /// for streaming agents and build logs.
+ #[tokio::test(flavor = "current_thread")]
+diff --git a/src/workspace.rs b/src/workspace.rs
+index 8944b88..50810a3 100644
+--- a/src/workspace.rs
++++ b/src/workspace.rs
+@@ -176,6 +176,9 @@ pub(crate) fn reserve_workspace_ids(workspaces: &[Workspace]) {
+ pub struct Workspace {
+     /// Stable public workspace identity, independent of display order.
+     pub id: String,
++    /// Lifetime identity persisted across restore, independent of reusable public handles.
++    pub identity: uuid::Uuid,
++    pub(crate) resources: crate::workspace_resources::Collections,
+     /// User-provided override. If set, auto-derived identity stops updating.
+     pub custom_name: Option<String>,
+     /// Fallback workspace identity source for tests, old snapshots, or missing runtimes.
+@@ -251,6 +254,8 @@ impl Workspace {
+             discover_workspace_git_identity(&identity_cwd);
+         Self {
+             id,
++            identity: uuid::Uuid::new_v4(),
++            resources: crate::workspace_resources::Collections::default(),
+             custom_name: label,
+             identity_cwd: identity_cwd.clone(),
+             cached_identity_cwd: identity_cwd.clone(),
+@@ -403,6 +408,8 @@ impl Workspace {
+         Ok((
+             Self {
+                 id,
++                identity: uuid::Uuid::new_v4(),
++                resources: crate::workspace_resources::Collections::default(),
+                 custom_name: None,
+                 identity_cwd: initial_cwd.clone(),
+                 cached_identity_cwd: initial_cwd.clone(),
+@@ -1192,6 +1199,8 @@ impl Workspace {
+         public_pane_numbers.insert(tab.root_pane, 1);
+         Self {
+             id: generate_workspace_id(),
++            identity: uuid::Uuid::new_v4(),
++            resources: crate::workspace_resources::Collections::default(),
+             custom_name: Some(name.to_string()),
+             identity_cwd: identity_cwd.clone(),
+             cached_identity_cwd: identity_cwd.clone(),
+diff --git a/src/workspace_resources.rs b/src/workspace_resources.rs
+new file mode 100644
+index 0000000..d1abe89
+--- /dev/null
++++ b/src/workspace_resources.rs
+@@ -0,0 +1,265 @@
++//! Plugin-owned resource collections. Runtime facts, independent of any client layout.
++use std::collections::{BTreeMap, HashSet};
++use std::time::{Duration, Instant};
++
++use serde::{Deserialize, Serialize};
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct Resource {
++    pub id: String,
++    pub label: String,
++    pub status: String,
++    #[serde(default)]
++    pub tone: Tone,
++    #[serde(default)]
++    pub completed: bool,
++    /// Action declared by the collection's installed plugin.
++    pub action: String,
++    /// Opaque resource reference passed as clicked_url to the declared action.
++    pub reference: String,
++}
++
++#[derive(
++    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
++)]
++#[serde(rename_all = "snake_case")]
++pub enum Tone {
++    #[default]
++    Normal,
++    Success,
++    Warning,
++    Failure,
++    Muted,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct Replace {
++    pub workspace_id: String,
++    pub identity: String,
++    pub plugin_id: String,
++    pub expected_revision: u64,
++    pub ttl_ms: u64,
++    pub resources: Vec<Resource>,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub struct Invoke {
++    pub workspace_id: String,
++    pub identity: String,
++    pub plugin_id: String,
++    pub resource_id: String,
++    pub revision: u64,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct Collection {
++    pub revision: u64,
++    pub resources: Vec<Resource>,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
++pub struct WorkspaceResources {
++    pub workspace_id: String,
++    pub identity: String,
++    pub collections: BTreeMap<String, Collection>,
++}
++
++#[derive(Debug, Default)]
++pub(crate) struct Collections {
++    entries: BTreeMap<String, Entry>,
++}
++
++#[derive(Debug)]
++struct Entry {
++    collection: Collection,
++    expires: Instant,
++}
++
++impl Collections {
++    pub(crate) fn clear_source(&mut self, source: &str) {
++        if let Some(entry) = self.entries.get_mut(source) {
++            entry.collection.resources.clear();
++        }
++    }
++
++    pub(crate) fn replace(&mut self, request: Replace, now: Instant) -> Result<Collection, String> {
++        validate(&request)?;
++        let revision = self
++            .entries
++            .get(&request.plugin_id)
++            .map_or(0, |entry| entry.collection.revision);
++        if request.expected_revision != revision {
++            return Err("resource collection revision changed".into());
++        }
++        if self.entries.len() >= 32 && !self.entries.contains_key(&request.plugin_id) {
++            return Err("too many resource producers".into());
++        }
++        let collection = Collection {
++            revision: revision
++                .checked_add(1)
++                .ok_or("resource revision exhausted")?,
++            resources: request.resources,
++        };
++        let expires = now
++            .checked_add(Duration::from_millis(request.ttl_ms))
++            .ok_or("resource expiry overflow")?;
++        self.entries.insert(
++            request.plugin_id,
++            Entry {
++                collection: collection.clone(),
++                expires,
++            },
++        );
++        Ok(collection)
++    }
++
++    pub(crate) fn values(&self, now: Instant) -> BTreeMap<String, Collection> {
++        self.entries
++            .iter()
++            .map(|(source, entry)| {
++                let mut collection = entry.collection.clone();
++                if now >= entry.expires {
++                    collection.resources.clear();
++                }
++                (source.clone(), collection)
++            })
++            .collect()
++    }
++
++    pub(crate) fn get(
++        &self,
++        source: &str,
++        revision: u64,
++        id: &str,
++        now: Instant,
++    ) -> Option<&Resource> {
++        let entry = self.entries.get(source)?;
++        (entry.expires > now && entry.collection.revision == revision)
++            .then(|| entry.collection.resources.iter().find(|item| item.id == id))
++            .flatten()
++    }
++
++    pub(crate) fn expire(&mut self, now: Instant) -> bool {
++        let mut changed = false;
++        for entry in self.entries.values_mut() {
++            if entry.expires <= now && !entry.collection.resources.is_empty() {
++                entry.collection.resources.clear();
++                changed = true;
++            }
++        }
++        changed
++    }
++
++    pub(crate) fn next_expiry(&self) -> Option<Instant> {
++        self.entries
++            .values()
++            .filter(|entry| !entry.collection.resources.is_empty())
++            .map(|entry| entry.expires)
++            .min()
++    }
++}
++
++fn text(value: &str, max: usize) -> bool {
++    !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
++}
++
++pub(crate) fn validate(request: &Replace) -> Result<(), String> {
++    if !text(&request.plugin_id, 128)
++        || request.resources.len() > 512
++        || !(1..=86_400_000).contains(&request.ttl_ms)
++    {
++        return Err("invalid resource producer, item count, or TTL".into());
++    }
++    let mut ids = HashSet::new();
++    for item in &request.resources {
++        if !text(&item.id, 256)
++            || !text(&item.label, 512)
++            || !text(&item.status, 512)
++            || !text(&item.action, 128)
++            || !text(&item.reference, 2048)
++            || !ids.insert(&item.id)
++        {
++            return Err("invalid or duplicate resource".into());
++        }
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn replacement(revision: u64) -> Replace {
++        Replace {
++            workspace_id: "w1".into(),
++            identity: "identity".into(),
++            plugin_id: "example".into(),
++            expected_revision: revision,
++            ttl_ms: 1000,
++            resources: vec![Resource {
++                id: "one".into(),
++                label: "cafe\u{301} 👨‍👩‍👧".into(),
++                status: "Pending".into(),
++                tone: Tone::Normal,
++                completed: false,
++                action: "open".into(),
++                reference: "https://example.invalid/item/1".into(),
++            }],
++        }
++    }
++    #[test]
++    fn atomic_replacement_fences_stale_updates_and_expired_actions() {
++        let now = Instant::now();
++        let mut store = Collections::default();
++        store.replace(replacement(0), now).unwrap();
++        assert!(store.replace(replacement(0), now).is_err());
++        let mut invalid = replacement(1);
++        invalid.resources.push(invalid.resources[0].clone());
++        assert!(store.replace(invalid, now).is_err());
++        assert!(store.get("example", 1, "one", now).is_some());
++        assert!(store
++            .get("example", 1, "one", now + Duration::from_secs(2))
++            .is_none());
++        assert!(store.expire(now + Duration::from_secs(2)));
++        assert_eq!(store.values(now)["example"].revision, 1);
++        assert!(store.replace(replacement(1), now).is_ok());
++    }
++}
++
++pub(crate) const PROJECTION_KIND: &str = "endpoint.workspace-resources.v1";
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++pub(crate) struct Projection {
++    pub boot_id: String,
++    pub revision: u64,
++    pub workspaces: Vec<WorkspaceResources>,
++}
++
++pub(crate) fn project(state: &crate::app::AppState) -> Vec<WorkspaceResources> {
++    let now = Instant::now();
++    state
++        .workspaces
++        .iter()
++        .map(|workspace| WorkspaceResources {
++            workspace_id: workspace.id.clone(),
++            identity: workspace.identity.to_string(),
++            collections: workspace.resources.values(now),
++        })
++        .collect()
++}
++
++pub(crate) fn message(
++    boot_id: &str,
++    revision: u64,
++    workspaces: Vec<WorkspaceResources>,
++) -> Result<crate::protocol::ServerMessage, serde_json::Error> {
++    Ok(crate::protocol::ServerMessage::EndpointControl {
++        kind: PROJECTION_KIND.into(),
++        data: serde_json::to_string(&Projection {
++            boot_id: boot_id.into(),
++            revision,
++            workspaces,
++        })?,
++    })
++}

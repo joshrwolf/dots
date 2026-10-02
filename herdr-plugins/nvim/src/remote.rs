@@ -1,253 +1,266 @@
-//! Handing a file to the nvim already running in a tab.
-//!
-//! nvim needs no configuration for this: every instance already listens on a
-//! socket under `$TMPDIR/nvim.$USER`, named after its process id.
+//! Herdr owns routing; an editor owns its registration, server association and
+//! process identity. Navigation is one expiring RPC, with no probing/fallback.
 
-use std::ffi::OsStr;
+use std::ffi::OsString;
+use std::fs;
+use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context as _, Result, bail};
-use herdrkit::api::Direction;
+use anyhow::{Context as _, Result, bail, ensure};
+use herdrkit::api::Pane;
 use herdrkit::{Client, PaneId, TabId};
 
-use herdrkit::apps::is_nvim;
+use crate::protocol::{self, Context, Location, Operation, Reply, Request};
+use crate::{Target, transport};
 
-use crate::Target;
+const TOKEN: &str = "nvim_editor";
+// Leave a second of transport slack beyond the editor's mutation deadline.
+const OPEN_TTL_MS: u64 = 2_000;
 
-/// Opens `target` in whichever pane of `tab` is running nvim, and moves focus
-/// there from `from` when they are different panes.
-pub fn open(
-    client: &Client,
-    tab: &TabId,
-    from: Option<&PaneId>,
-    target: &Target,
-) -> Result<PaneId> {
-    let panes = client.pane_list().context("listing panes")?;
-    let candidates: Vec<&PaneId> = panes
-        .iter()
-        .filter(|pane| pane.tab_id == *tab)
-        .map(|pane| &pane.pane_id)
-        .collect();
-    if candidates.is_empty() {
-        bail!("tab {tab} has no panes");
-    }
-
-    let Some((pane, socket)) = candidates
-        .iter()
-        .find_map(|pane| socket_for_pane(client, pane).map(|socket| (*pane, socket)))
-    else {
-        // The failure that most looks like this one is a socket error while
-        // asking what runs in each pane, and `socket_for_pane` has already
-        // reported any of those on stderr, so the two are told apart in the
-        // plugin log.
-        // A sandboxed nvim cannot create its socket at all, and then it is
-        // running but unreachable, so the message names both possibilities.
-        bail!("no nvim in this tab is listening on a socket");
-    };
-
-    send(&socket, target)?;
-    // Focus is best effort: the file is open either way, and failing here
-    // would report an open that succeeded as a failure.
-    if let Some(from) = from.filter(|from| *from != pane) {
-        focus(client, from, pane);
-    }
-    Ok(pane.clone())
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RoutingError {
+    #[error("no registered editor in this tab; use :HerdrEditorRegister")]
+    NoEditor,
+    #[error("multiple registered editors; invoke from the intended editor pane")]
+    Ambiguous,
+    #[error("editor moved or registration changed; retry from the intended tab")]
+    Changed,
 }
 
-/// herdr reports a pane's foreground process, which is nvim's TUI, while the
-/// socket is named after the `--embed` server nvim spawns as its child. So the
-/// mapping runs pane -> TUI pid -> child pid -> socket file. Asking each nvim
-/// who it belongs to instead would mean starting an nvim per candidate socket.
-fn socket_for_pane(client: &Client, pane: &PaneId) -> Option<PathBuf> {
-    let info = match client.pane_process_info(pane) {
-        Ok(info) => info,
-        Err(error) => {
-            eprintln!("nvim: could not read what is running in {pane}: {error:#}");
-            return None;
+/// Connection configuration, also usable by an isolated editor owner. Tests
+/// supply their own private directory; discovery never creates directories.
+#[derive(Debug)]
+pub struct Editors {
+    executable: OsString,
+    directory: PathBuf,
+}
+
+impl Editors {
+    pub fn new(executable: impl Into<OsString>, directory: impl Into<PathBuf>) -> Self {
+        Self {
+            executable: executable.into(),
+            directory: directory.into(),
         }
-    };
-    let tui = info.find(is_nvim)?.pid;
-
-    let root = run_root();
-    // The TUI pid is tried first because nvim served the socket from that
-    // process before it split the server out.
-    std::iter::once(tui)
-        .chain(children_of(tui))
-        .find_map(|pid| socket_named(&root, pid))
-}
-
-fn run_root() -> PathBuf {
-    let tmp = std::env::var_os("TMPDIR").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
-    let user = std::env::var("USER").unwrap_or_else(|_| "nobody".to_owned());
-    tmp.join(format!("nvim.{user}"))
-}
-
-fn children_of(pid: u32) -> Vec<u32> {
-    let Ok(output) = Command::new("pgrep")
-        .arg("-P")
-        .arg(pid.to_string())
-        .output()
-    else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .filter_map(|field| field.parse().ok())
-        .collect()
-}
-
-/// nvim puts its socket in a randomly named directory under the run root,
-/// so the leaf name is known but its parent is not and has to be scanned.
-fn socket_named(root: &Path, pid: u32) -> Option<PathBuf> {
-    let name = format!("nvim.{pid}.0");
-    let entries = std::fs::read_dir(root).ok()?;
-    entries
-        .flatten()
-        .map(|entry| entry.path().join(&name))
-        .find(|path| is_socket(path))
-}
-
-fn is_socket(path: &Path) -> bool {
-    use std::os::unix::fs::FileTypeExt as _;
-    std::fs::metadata(path).is_ok_and(|meta| meta.file_type().is_socket())
-}
-
-fn send(socket: &Path, target: &Target) -> Result<()> {
-    let nvim = std::env::var_os("HERDR_NVIM_BIN").unwrap_or_else(|| "nvim".into());
-    send_with(&nvim, socket, target)
-}
-
-fn send_with(nvim: &OsStr, socket: &Path, target: &Target) -> Result<()> {
-    // The path goes over as an argv element, so nothing about it needs
-    // escaping. stdin must not be a terminal: given a tty, nvim ignores the
-    // --remote arguments and starts a UI instead, which in a popup returns a
-    // screenful of escape sequences and leaves the file unopened.
-    let opened = Command::new(nvim)
-        .arg("--server")
-        .arg(socket)
-        .arg("--remote-silent")
-        .arg(&target.path)
-        .stdin(Stdio::null())
-        .status()
-        .with_context(|| format!("running {}", Path::new(nvim).display()))?;
-    if !opened.success() {
-        bail!("nvim refused to open {}", target.path.display());
     }
 
-    // --remote takes no +cmd, so the cursor is a second call. A positioning
-    // failure is reported as a partial success: claiming `path:line` opened
-    // would be false, while claiming the file did not open would also be
-    // false.
-    if target.line > 1 || target.column > 1 {
-        let positioned = Command::new(nvim)
-            .arg("--server")
-            .arg(socket)
-            .arg("--remote-expr")
-            .arg(format!("cursor({}, {})", target.line, target.column))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .output()
-            .with_context(|| {
-                format!(
-                    "opened {} but could not run nvim to position the cursor at {}:{}",
-                    target.path.display(),
-                    target.line,
-                    target.column
-                )
-            })?;
-        if !positioned.status.success() {
-            let stderr = String::from_utf8_lossy(&positioned.stderr);
-            bail!(
-                "opened {} but nvim could not position the cursor at {}:{} ({}): {}",
-                target.path.display(),
-                target.line,
-                target.column,
-                positioned.status,
-                stderr.trim()
+    pub fn from_env() -> Self {
+        Self::new(
+            std::env::var_os("HERDR_NVIM_BIN").unwrap_or_else(|| OsString::from("nvim")),
+            PathBuf::from(format!("/tmp/dots-nvim-{}", nix::unistd::geteuid())),
+        )
+    }
+
+    /// Select an explicit caller, otherwise require exactly one registered pane.
+    /// Ambiguity is not resolved by slowly probing editors or guessing which
+    /// stale marker to ignore. There is never a fallback after selecting a pane.
+    pub fn open(
+        &self,
+        client: &Client,
+        tab: &TabId,
+        from: Option<&PaneId>,
+        target: &Target,
+    ) -> Result<PaneId> {
+        ensure!(
+            target.path.is_absolute() && target.line > 0 && target.column > 0,
+            "file target must be absolute with one-based coordinates"
+        );
+        let location = Location {
+            path: fs::canonicalize(&target.path).context("resolving target file")?,
+            line: target.line,
+            column: target.column,
+        };
+        let pane = select(
+            client.pane_list().context("listing editor registrations")?,
+            tab,
+            from,
+        )?;
+        let registration = Registration::parse(
+            pane.tokens
+                .get(TOKEN)
+                .context("missing editor registration")?,
+        )?;
+        let socket = registration.socket(&self.directory)?;
+        let fresh = client
+            .pane_get(&pane.pane_id)
+            .context("revalidating editor pane")?;
+        if fresh.pane_id != pane.pane_id
+            || fresh.tab_id != *tab
+            || fresh.workspace_id != pane.workspace_id
+            || fresh.tokens.get(TOKEN) != Some(&registration.0)
+        {
+            return Err(RoutingError::Changed.into());
+        }
+        let context = Context {
+            registration: registration.0,
+            server: client.endpoint().to_owned(),
+        };
+        let not_after_ms =
+            u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?
+                .checked_add(OPEN_TTL_MS)
+                .context("editor deadline overflow")?;
+        let reply = transport::call(
+            &self.executable,
+            &socket,
+            &Request {
+                protocol: protocol::VERSION,
+                context: context.clone(),
+                operation: Operation::Open {
+                    target: location.clone(),
+                    not_after_ms,
+                    lease: None,
+                },
+            },
+        )?;
+        match reply {
+            Reply::Opened {
+                identity,
+                target: actual,
+            } => {
+                ensure!(
+                    identity.protocol == protocol::VERSION
+                        && identity.context == context
+                        && identity.pid > 0,
+                    "editor identity mismatch; inspect editor before retrying"
+                );
+                ensure!(
+                    fs::canonicalize(&actual.path).ok().as_ref() == Some(&location.path)
+                        && actual.line == location.line
+                        && actual.column == location.column,
+                    "editor's observed buffer/cursor do not match the target; inspect editor before retrying"
+                );
+            }
+            Reply::Partial { error } => bail!(
+                "editor partially opened target ({:?}): {}; inspect it before retrying",
+                error.code,
+                error.message
+            ),
+            Reply::Rejected { error } => bail!(
+                "editor rejected target ({:?}): {}",
+                error.code,
+                error.message
+            ),
+            Reply::Ready { .. } | Reply::Ownership { .. } => {
+                bail!("editor returned a control reply instead of an open acknowledgement")
+            }
+        }
+        if from != Some(&fresh.pane_id)
+            && let Err(error) = client.pane_focus(&fresh.pane_id)
+        {
+            eprintln!(
+                "nvim: file opened in {}, but focus failed: {error:#}",
+                fresh.pane_id
             );
         }
+        Ok(fresh.pane_id)
     }
-    Ok(())
 }
 
-/// Right and left before down and up: a file picker is nearly always opened
-/// beside its editor rather than above it, so this finds the pane in one call.
-fn focus(client: &Client, from: &PaneId, to: &PaneId) {
-    for direction in [
-        Direction::Right,
-        Direction::Left,
-        Direction::Down,
-        Direction::Up,
-    ] {
-        let neighbor = match client.pane_neighbor(from, direction) {
-            Ok(neighbor) => neighbor,
-            Err(error) => {
-                eprintln!("nvim: could not look {direction:?} from {from}: {error:#}");
-                continue;
-            }
-        };
-        if neighbor.as_ref() == Some(to) {
-            if let Err(error) = client.pane_focus_direction(from, direction) {
-                eprintln!("nvim: opened in {to} but could not focus it: {error:#}");
-            }
-            return;
-        }
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Registration(String);
+
+impl Registration {
+    fn parse(value: &str) -> Result<Self> {
+        ensure!(
+            value.len() == 32
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "invalid editor registration token"
+        );
+        Ok(Self(value.to_owned()))
     }
-    eprintln!("nvim: opened in {to}, which is not adjacent to {from}, so focus stayed");
+
+    #[expect(
+        clippy::verbose_bit_mask,
+        reason = "Unix permissions are clearest as an octal mask"
+    )]
+    fn socket(&self, directory: &Path) -> Result<PathBuf> {
+        let uid = nix::unistd::geteuid().as_raw();
+        let metadata =
+            fs::symlink_metadata(directory).context("reading editor socket directory")?;
+        ensure!(
+            directory.is_absolute()
+                && metadata.is_dir()
+                && metadata.uid() == uid
+                && metadata.mode() & 0o077 == 0,
+            "editor socket directory is not a private absolute directory owned by this user"
+        );
+        let socket = directory.join(format!("{}.sock", self.0));
+        let metadata = fs::symlink_metadata(&socket).context("reading registered editor socket")?;
+        ensure!(
+            metadata.file_type().is_socket() && metadata.uid() == uid,
+            "registered editor endpoint is not an owned socket"
+        );
+        Ok(socket)
+    }
+}
+
+fn select(panes: Vec<Pane>, tab: &TabId, from: Option<&PaneId>) -> Result<Pane> {
+    let mut candidates: Vec<_> = panes
+        .into_iter()
+        .filter(|p| p.tab_id == *tab && p.tokens.contains_key(TOKEN))
+        .collect();
+    if let Some(index) = candidates
+        .iter()
+        .position(|pane| Some(&pane.pane_id) == from)
+    {
+        return Ok(candidates.swap_remove(index));
+    }
+    match candidates.len() {
+        0 => Err(RoutingError::NoEditor.into()),
+        1 => candidates.pop().context("registered editor disappeared"),
+        _ => Err(RoutingError::Ambiguous.into()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
-
-    static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
-
-    fn command_that_rejects_cursor() -> PathBuf {
-        let sequence = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "herdr-nvim-remote-test-{}-{sequence}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&dir).unwrap();
-        let script = dir.join("nvim");
-        fs::write(
-            &script,
-            "#!/bin/sh\ncase \"$*\" in\n  *--remote-expr*) echo cursor-rejected >&2; exit 9;;\n  *) exit 0;;\nesac\n",
-        )
-        .unwrap();
-        let mut permissions = fs::metadata(&script).unwrap().permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(&script, permissions).unwrap();
-        script
-    }
-
-    #[test]
-    fn cursor_failure_is_reported_as_a_partial_open() {
-        let nvim = command_that_rejects_cursor();
-        let target = Target {
-            path: PathBuf::from("/tmp/example.rs"),
-            line: 42,
-            column: 7,
-        };
-
-        let error = send_with(nvim.as_os_str(), Path::new("/tmp/nvim.sock"), &target).unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("opened /tmp/example.rs"), "{message}");
-        assert!(message.contains("42:7"), "{message}");
-        assert!(message.contains("cursor-rejected"), "{message}");
-        if let Some(dir) = nvim.parent() {
-            let _ = fs::remove_dir_all(dir);
+    fn pane(id: &str) -> Pane {
+        Pane {
+            pane_id: PaneId::new(id),
+            workspace_id: herdrkit::WorkspaceId::new("w1"),
+            tab_id: TabId::new("w1:t1"),
+            cwd: None,
+            tokens: [(
+                TOKEN.to_owned(),
+                "0123456789abcdef0123456789abcdef".to_owned(),
+            )]
+            .into(),
         }
     }
-
     #[test]
-    fn no_cursor_call_is_needed_for_the_top_of_a_file() {
-        let target = Target::at(PathBuf::from("/tmp/example.rs"));
-        assert!(send_with(OsStr::new("/usr/bin/true"), Path::new("ignored"), &target).is_ok());
+    fn tokens_cannot_escape_the_private_socket_directory() {
+        for bad in [
+            "",
+            "../socket",
+            "ABCDEF0123456789ABCDEF0123456789AB",
+            "0123456789abcdef0123456789abcdef ",
+        ] {
+            assert!(Registration::parse(bad).is_err());
+        }
+        assert!(Registration::parse("0123456789abcdef0123456789abcdef").is_ok());
+    }
+    #[test]
+    fn ambiguity_never_selects_an_arbitrary_editor() {
+        let tab = TabId::new("w1:t1");
+        assert_eq!(
+            select(vec![], &tab, None).unwrap_err().downcast_ref(),
+            Some(&RoutingError::NoEditor)
+        );
+        assert_eq!(
+            select(vec![pane("w1:p1"), pane("w1:p2")], &tab, None)
+                .unwrap_err()
+                .downcast_ref(),
+            Some(&RoutingError::Ambiguous)
+        );
+        let chosen = select(
+            vec![pane("w1:p1"), pane("w1:p2")],
+            &tab,
+            Some(&PaneId::new("w1:p2")),
+        )
+        .unwrap();
+        assert_eq!(chosen.pane_id, PaneId::new("w1:p2"));
     }
 }

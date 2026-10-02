@@ -29,29 +29,9 @@ tab_bar_position = "bottom"
 pane_outer_borders = false
 pane_gaps = false
 
-# The GitHub plugin publishes these workspace tokens. Missing values and
-# empty rows disappear, so workspaces without a PR keep the compact layout.
+# PR child rows are supplied dynamically by herdr-github.
 [ui.sidebar.spaces]
-rows = [
-  ["state_icon", "workspace"],
-  ["branch", "git_status"],
-  [
-    { token = "$gh_pr", fg = "#0969da", dim = false },
-    { token = "$gh_state", fg = "#1a7f37", dim = false, rules = [
-      { equals = "○ Draft", fg = "#57606a" },
-      { equals = "◆ Merged", fg = "#8250df" },
-      { equals = "× Closed", fg = "#cf222e" },
-    ] },
-  ],
-  [
-    { token = "$gh_failed", fg = "#cf222e", bold = true, dim = false },
-    { token = "$gh_pending", fg = "#9a6700", dim = false },
-    { token = "$gh_checks", fg = "#57606a", dim = false, rules = [
-      { equals = "✓ CI", fg = "#1a7f37" },
-    ] },
-    { token = "$gh_health", fg = "#9a6700", dim = false },
-  ],
-]
+rows = [["state_icon", "workspace"], ["branch", "git_status"]]
 
 [ui.toast]
 delivery = "herdr"
@@ -63,8 +43,8 @@ request_path = "sounds/something-need-doing.mp3"
 
 [keys]
 prefix = "ctrl+s"
-# Global back-and-forth, including panes in other spaces; Ghostty sends Cmd+O here.
-last_pane = "prefix+shift+o"
+# Pane history is owned by herdr-nav; bindings are below.
+last_pane = []
 
 # Tabs use h/j/k/l so Cmd+H/J/K/L can map cleanly through Ghostty.
 new_tab = ["prefix+t", "prefix+c"]
@@ -125,3 +105,23 @@ key = "prefix+ctrl+l"
 type = "shell"
 command = "\"$HERDR_BIN_PATH\" pane send-keys \"$HERDR_PANE_ID\" ctrl+l"
 description = "send literal ctrl+l"
+
+# Ghostty translates Cmd+O / Cmd+I to these prefix chords.
+
+[[keys.command]]
+key = "prefix+shift+o"
+type = "plugin_action"
+command = "herdr-nav.previous-workspace"
+description = "switch to previous workspace"
+
+[[keys.command]]
+key = "prefix+o"
+type = "plugin_action"
+command = "herdr-nav.back"
+description = "jumplist back"
+
+[[keys.command]]
+key = "prefix+shift+i"
+type = "plugin_action"
+command = "herdr-nav.forward"
+description = "jumplist forward"

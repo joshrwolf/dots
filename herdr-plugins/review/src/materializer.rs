@@ -49,6 +49,14 @@ pub(crate) fn focus_live(
         if !binding_is_live(source_repository, snapshot, &herdr_server_id, binding)? {
             continue;
         }
+        let repository = Repository::discover(Path::new(&binding.checkout_root))?;
+        let store = Store::open(&repository)?;
+        register_pr_references(
+            invocation,
+            &store,
+            &binding.context_id,
+            &binding.workspace_id,
+        )?;
         focus_binding(invocation, binding)?;
         return Ok(true);
     }
@@ -177,6 +185,14 @@ fn focus_matching_live(
         if comparison_matches(&observation.comparison, comparison)
             && binding_is_live(source_repository, snapshot, herdr_server_id, binding)?
         {
+            let repository = Repository::discover(Path::new(&binding.checkout_root))?;
+            let store = Store::open(&repository)?;
+            register_pr_references(
+                invocation,
+                &store,
+                &binding.context_id,
+                &binding.workspace_id,
+            )?;
             focus_binding(invocation, binding)?;
             return Ok(true);
         }
@@ -511,7 +527,51 @@ fn bind_runtime(
             runtime.kind,
         )
         .context("binding the review runtime")?;
+    register_pr_references(invocation, store, context, &runtime.workspace)
+        .context("review workspace was created; registering its PR associations failed")?;
     focus_binding(invocation, &binding)
+}
+
+fn register_pr_references(
+    invocation: &Invocation,
+    store: &Store,
+    context: &ReviewContextId,
+    workspace_id: &herdrkit::WorkspaceId,
+) -> Result<()> {
+    let references = store.context(context)?.references;
+    let urls = references
+        .iter()
+        .filter(|reference| reference.kind == "github.pull_request")
+        .map(|reference| herdr_prs::PullRequestUrl::parse(&reference.locator))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if urls.is_empty() {
+        return Ok(());
+    }
+    let snapshot = invocation.client().snapshot()?;
+    let identity = snapshot
+        .workspace(workspace_id)
+        .and_then(|workspace| workspace.identity.clone())
+        .context("Herdr persistent workspace identity required")?;
+    let scope = herdr_prs::Scope::new(
+        invocation
+            .client()
+            .endpoint()
+            .to_string_lossy()
+            .into_owned(),
+        identity,
+    )?;
+    let path = herdrkit::user_state_directory()?.join(herdr_prs::REGISTRY_PATH);
+    std::fs::create_dir_all(path.parent().context("PR registry path has no parent")?)?;
+    let mut registry = herdr_prs::Registry::open(&path)?;
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs(),
+    )?;
+    for url in urls {
+        registry.register(&scope, &url, herdr_prs::Source::Review, now)?;
+    }
+    Ok(())
 }
 
 fn focus_binding(invocation: &Invocation, binding: &RuntimeBinding) -> Result<()> {

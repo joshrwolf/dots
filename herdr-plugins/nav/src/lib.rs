@@ -1,4 +1,4 @@
-//! `ctrl+hjkl` shared between herdr panes, vim splits, and fzf.
+//! Vim-style pane history and `ctrl+hjkl` shared with vim splits and fzf.
 //!
 //! The chord means "move left" to herdr and "go to the split on the left" to
 //! vim, and the user should not have to know which one has the pane. So the
@@ -7,6 +7,13 @@
 
 use herdrkit::api::{Direction, ProcessInfo};
 use herdrkit::apps::{accepts_vim_navigation, is_fzf};
+
+mod engine;
+mod history;
+mod worker;
+mod workspaces;
+
+pub use worker::run;
 
 /// The chord the user pressed for `direction`, in herdr's syntax.
 pub fn chord(direction: Direction) -> &'static str {

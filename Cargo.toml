@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/herdr-prs",
     "apps/dots-cli",
     "crates/github-inspect",
     "herdr-plugins/contracts",
@@ -22,6 +23,7 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+herdr-prs = { path = "crates/herdr-prs" }
 clap = { version = "4", features = ["derive"] }
 github-inspect = { path = "crates/github-inspect" }
 github-client = { path = "crates/github-client" }

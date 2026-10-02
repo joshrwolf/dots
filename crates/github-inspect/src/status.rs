@@ -182,6 +182,30 @@ pub fn lookup(dir: &Path) -> Result<Lookup> {
     lookup_with(&SystemCommandRunner, dir)
 }
 
+/// Inspect the specified PR while retaining local checkout guards for CI fixes.
+pub fn lookup_target(dir: &Path, target: &github_client::PullRequestUrl) -> Result<Lookup> {
+    lookup_with(&ExplicitTarget(target), dir)
+}
+pub fn pull_request_target(
+    dir: &Path,
+    target: &github_client::PullRequestUrl,
+) -> Result<Option<PullRequest>> {
+    pull_request_with(&ExplicitTarget(target), dir)
+}
+struct ExplicitTarget<'a>(&'a github_client::PullRequestUrl);
+impl CommandRunner for ExplicitTarget<'_> {
+    fn output(&self, dir: &Path, program: &str, args: &[&str]) -> Result<Output> {
+        let mut args = args.to_vec();
+        if program == "gh"
+            && args.first() == Some(&"pr")
+            && matches!(args.get(1), Some(&"view" | &"checks"))
+        {
+            args.insert(2, self.0.as_str());
+        }
+        SystemCommandRunner.output(dir, program, &args)
+    }
+}
+
 pub fn local_identity(dir: &Path) -> Result<String> {
     local_identity_with(&SystemCommandRunner, dir)
 }

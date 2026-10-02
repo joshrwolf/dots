@@ -1,5 +1,6 @@
 //! Agent-facing command parsing and presentation over shared domain operations.
 mod command;
+mod herdr;
 mod json;
 mod render;
 mod reviews;
@@ -31,6 +32,13 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
         return Ok(Cli::command().render_long_help().to_string());
     };
     match command {
+        Command::Herdr { command } => {
+            anyhow::ensure!(
+                cli.repo.is_none() && cli.directory.is_none() && !cli.no_cache,
+                "Herdr associations use --workspace and the invoking server; --repo, --directory and --no-cache do not apply"
+            );
+            herdr::run(command, cli.json)
+        }
         Command::Skills {
             command: SkillCommand::Render { reference },
         } => Ok(if reference {

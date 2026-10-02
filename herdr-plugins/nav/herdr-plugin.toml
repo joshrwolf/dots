@@ -1,8 +1,8 @@
 id = "herdr-nav"
 name = "nav"
-version = "0.3.0"
-min_herdr_version = "0.9.0"
-description = "ctrl+hjkl navigation shared between herdr panes, vim splits, and fzf"
+version = "0.5.0"
+min_herdr_version = "0.9.1"
+description = "Previous workspace toggle, pane jumplist and application-aware navigation"
 platforms = ["macos", "linux"]
 
 # Build and atomically stage only this plugin.
@@ -33,4 +33,59 @@ command = ["./bin/herdr-nav"]
 id = "right"
 title = "Navigate right"
 contexts = ["workspace"]
+command = ["./bin/herdr-nav"]
+
+[[actions]]
+id = "previous-workspace"
+title = "Switch to previous workspace"
+contexts = ["global", "workspace"]
+command = ["./bin/herdr-nav"]
+
+[[actions]]
+id = "back"
+title = "Jump to older pane"
+contexts = ["global", "workspace"]
+command = ["./bin/herdr-nav"]
+
+[[actions]]
+id = "forward"
+title = "Jump to newer pane"
+contexts = ["global", "workspace"]
+command = ["./bin/herdr-nav"]
+
+[[actions]]
+id = "status"
+title = "Jumplist service status"
+contexts = ["global", "workspace"]
+command = ["./bin/herdr-nav"]
+
+[[startup]]
+command = ["./bin/herdr-nav"]
+
+[[events]]
+on = "workspace.focused"
+command = ["./bin/herdr-nav"]
+
+[[events]]
+on = "pane.focused"
+command = ["./bin/herdr-nav"]
+
+[[events]]
+on = "pane.created"
+command = ["./bin/herdr-nav"]
+
+[[events]]
+on = "pane.closed"
+command = ["./bin/herdr-nav"]
+
+[[events]]
+on = "pane.moved"
+command = ["./bin/herdr-nav"]
+
+[[events]]
+on = "tab.closed"
+command = ["./bin/herdr-nav"]
+
+[[events]]
+on = "workspace.closed"
 command = ["./bin/herdr-nav"]

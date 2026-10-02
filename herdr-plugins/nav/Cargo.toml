@@ -1,6 +1,6 @@
 [package]
 name = "herdr-nav"
-version = "0.3.0"
+version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,10 +17,13 @@ path = "src/main.rs"
 [dependencies]
 herdrkit.workspace = true
 anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 herdrkit = { workspace = true, features = ["testing"] }
-serde_json.workspace = true
+nix = { workspace = true, features = ["term", "fs"] }
+rustix = { version = "1", features = ["process"] }
 
 [lints]
 workspace = true

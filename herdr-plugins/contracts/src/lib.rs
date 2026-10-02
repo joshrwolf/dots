@@ -172,10 +172,36 @@ mod tests {
 
         let nav = manifest("nav")?;
         ensure!(
-            ids(&nav.actions) == BTreeSet::from(["down", "left", "right", "up"]),
+            ids(&nav.actions)
+                == BTreeSet::from([
+                    "previous-workspace",
+                    "back",
+                    "forward",
+                    "status",
+                    "down",
+                    "left",
+                    "right",
+                    "up"
+                ]),
             "nav action dispatch drifted"
         );
         ensure!(ids(&nav.panes).is_empty(), "nav declares panes");
+        ensure!(
+            nav.events
+                .iter()
+                .map(|event| event.on.as_str())
+                .collect::<BTreeSet<_>>()
+                == BTreeSet::from([
+                    "workspace.focused",
+                    "pane.focused",
+                    "pane.created",
+                    "pane.closed",
+                    "pane.moved",
+                    "tab.closed",
+                    "workspace.closed"
+                ]),
+            "nav event dispatch drifted"
+        );
 
         let nvim = manifest("nvim")?;
         ensure!(
@@ -222,7 +248,11 @@ mod tests {
             manifest("github")?.startup.len() == 1,
             "GitHub must ensure its status service at startup"
         );
-        for plugin in ["find", "nav", "nvim", "review"] {
+        ensure!(
+            manifest("nav")?.startup.len() == 1,
+            "nav must bootstrap its jumplist"
+        );
+        for plugin in ["find", "nvim", "review"] {
             ensure!(
                 manifest(plugin)?.startup.is_empty(),
                 "{plugin} declares an unsupported resident startup command"

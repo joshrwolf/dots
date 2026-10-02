@@ -445,6 +445,8 @@ dependencies = [
  "anyhow",
  "clap",
  "github-inspect",
+ "herdr-prs",
+ "herdrkit",
  "serde_json",
  "time",
 ]
@@ -671,12 +673,11 @@ dependencies = [
  "anyhow",
  "github-client",
  "github-inspect",
+ "herdr-prs",
  "herdrkit",
- "review-core",
  "rusqlite",
  "serde",
  "serde_json",
- "time",
 ]
 
 [[package]]
@@ -693,10 +694,13 @@ dependencies = [
 
 [[package]]
 name = "herdr-nav"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "herdrkit",
+ "nix",
+ "rustix",
+ "serde",
  "serde_json",
 ]
 
@@ -706,8 +710,10 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "herdrkit",
+ "nix",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -720,11 +726,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "herdr-prs"
+version = "0.1.0"
+dependencies = [
+ "github-client",
+ "rusqlite",
+ "serde",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "herdr-review"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "github-client",
+ "herdr-prs",
  "herdrkit",
  "review-core",
  "rusqlite",

@@ -15,15 +15,14 @@ name = "herdr-github"
 path = "src/main.rs"
 
 [dependencies]
+herdr-prs.workspace = true
 github-inspect.workspace = true
 anyhow.workspace = true
 github-client.workspace = true
-review-core.workspace = true
 herdrkit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
-time.workspace = true
 
 [dev-dependencies]
 herdrkit = { workspace = true, features = ["testing"] }

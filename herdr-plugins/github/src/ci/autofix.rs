@@ -31,14 +31,20 @@ impl Config {
     }
 }
 
-pub fn fix_now(client: &Client, dir: &Path, state_dir: &Path, config: Config) -> Result<()> {
-    let Some(initial) = actionable(&ProductionCiSource, dir)? else {
+pub fn fix_now(
+    client: &Client,
+    dir: &Path,
+    state_dir: &Path,
+    config: Config,
+    target: &github_client::PullRequestUrl,
+) -> Result<()> {
+    let Some(initial) = actionable(&ProductionCiSource(target), dir)? else {
         println!("checks are not failed; nothing to fix");
         return Ok(());
     };
     let started = start(
         client,
-        &ProductionCiSource,
+        &ProductionCiSource(target),
         dir,
         state_dir,
         &initial,
@@ -58,9 +64,15 @@ pub fn fix_now(client: &Client, dir: &Path, state_dir: &Path, config: Config) ->
     Ok(())
 }
 
-pub fn arm(client: &Client, dir: &Path, state_dir: &Path, config: Config) -> Result<()> {
+pub fn arm(
+    client: &Client,
+    dir: &Path,
+    state_dir: &Path,
+    config: Config,
+    target: &github_client::PullRequestUrl,
+) -> Result<()> {
     loop {
-        let lookup = github::lookup(dir)?;
+        let lookup = github::lookup_target(dir, target)?;
         let Lookup::Found(state) = lookup else {
             println!("no pull request for this branch; nothing to watch");
             return Ok(());
@@ -85,19 +97,19 @@ pub fn arm(client: &Client, dir: &Path, state_dir: &Path, config: Config) -> Res
                 return Ok(());
             }
             CiVerdict::Pending => {
-                github::wait_for_checks(dir, config.watch_interval, state.has_required_checks())?;
+                std::thread::sleep(config.watch_interval);
             }
             CiVerdict::Failed => {
                 let started = start(
                     client,
-                    &ProductionCiSource,
+                    &ProductionCiSource(target),
                     dir,
                     state_dir,
                     &state,
                     config,
                     LaunchMode::WaitForSettlement,
                 )?;
-                let after = github::pull_request(dir)?
+                let after = github::pull_request_target(dir, target)?
                     .context("the pull request disappeared while its fixer was running")?;
                 if after.number != state.number {
                     bail!(
@@ -126,11 +138,11 @@ trait CiSource {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ProductionCiSource;
+struct ProductionCiSource<'a>(&'a github_client::PullRequestUrl);
 
-impl CiSource for ProductionCiSource {
+impl CiSource for ProductionCiSource<'_> {
     fn lookup(&self, dir: &Path) -> Result<Lookup> {
-        github::lookup(dir)
+        github::lookup_target(dir, self.0)
     }
 
     fn build_brief(&self, dir: &Path, state: &CiState) -> Result<String> {

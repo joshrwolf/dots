@@ -167,6 +167,12 @@ a state or stage of the local conversation.
 
 ## Neovim surface
 
+The current configuration provides saved-thread discovery, discussion, replies,
+and resolution in normally opened editors; see [NEOVIM.md](NEOVIM.md). Persistent
+headless editors are not required. The richer CodeDiff interface described below
+exists in the previous configuration backup and is being adapted, not currently
+enabled wholesale.
+
 Neovim is an adapter over the repository registry. It starts a private
 `herdr-review --stdio <checkout>` child and uses newline-framed JSON only as
 process IPC. `:ReviewOpen` explicitly opens the saved comparison in CodeDiff;

@@ -3,6 +3,7 @@
 //! one owner. This service is read-only with respect to GitHub and agents.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -13,9 +14,11 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use herdr_prs::{Associations, Registry, Scope};
 use herdrkit::events::{Events, Subscription};
+use herdrkit::resources::{Replace, Resource, Tone};
 use herdrkit::service::{Handler, Service};
-use herdrkit::{Client, Invocation, MetadataReporter, Tokens, WorkspaceId};
+use herdrkit::{Client, Invocation, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension as _, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -26,10 +29,10 @@ use crate::github::{self, CheckBucket, PullRequestState, SidebarSnapshot};
 const SOURCE: &str = "herdr-github";
 const NETWORK_SPACING: u64 = 10;
 const INVENTORY_INTERVAL: u64 = 15;
-const NEGATIVE_INTERVAL: u64 = 300;
-const METADATA_TTL: Duration = Duration::from_secs(120);
-const METADATA_RENEWAL: u64 = 30;
-const SCHEMA: &str = "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS snapshots(url TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS bindings(server TEXT NOT NULL, workspace TEXT NOT NULL, checkout TEXT NOT NULL, identity TEXT NOT NULL, url TEXT, PRIMARY KEY(server,workspace));";
+
+const RESOURCE_TTL_MS: u64 = 120_000;
+const RESOURCE_RENEWAL: u64 = 30;
+const SCHEMA: &str = "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS resource_snapshots(url TEXT PRIMARY KEY, body TEXT NOT NULL);";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -67,7 +70,7 @@ pub fn show_status(invocation: &Invocation) -> Result<()> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Cached {
-    values: BTreeMap<String, Option<String>>,
+    resource: Resource,
     fetched: u64,
     interval: u64,
 }
@@ -75,19 +78,33 @@ struct Cached {
 impl Cached {
     fn from_snapshot(state: &SidebarSnapshot, now: u64) -> Self {
         let preview = status::Preview::from_snapshot(state);
-        let values = [
-            (status::PR_TOKEN, Some(preview.pull_request)),
-            (status::STATE_TOKEN, Some(preview.state.into())),
-            (status::REVIEW_TOKEN, preview.review.map(str::to_owned)),
-            (status::CHECKS_TOKEN, preview.checks.map(str::to_owned)),
-            (status::FAILED_TOKEN, preview.failed),
-            (status::PENDING_TOKEN, preview.pending),
-        ]
-        .into_iter()
-        .map(|(key, value)| (key.into(), value))
-        .collect();
+        let completed = state.pull_request.state != PullRequestState::Open;
+        let mut parts = vec![preview.state.to_owned()];
+        if !completed {
+            parts.extend(preview.failed.iter().cloned());
+            parts.extend(preview.pending.iter().cloned());
+            parts.extend(preview.checks.map(str::to_owned));
+            parts.extend(preview.review.map(str::to_owned));
+        }
+        let tone = if completed {
+            Tone::Muted
+        } else if preview.failed.is_some() {
+            Tone::Failure
+        } else if preview.pending.is_some() {
+            Tone::Warning
+        } else {
+            Tone::Normal
+        };
         Self {
-            values,
+            resource: Resource {
+                id: String::new(),
+                reference: String::new(),
+                label: preview.pull_request,
+                status: parts.join(" · "),
+                tone,
+                completed,
+                action: "open-link".into(),
+            },
             fetched: now,
             interval: cadence(state),
         }
@@ -116,11 +133,8 @@ fn retry_delay(failures: u32) -> u64 {
 struct Workspace {
     checkout: PathBuf,
     identity: String,
-    url: Option<String>,
-    discover_at: u64,
-    discovering: bool,
+    associations: Associations,
     published: Option<(String, u64)>,
-    error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -135,11 +149,6 @@ struct PullRequest {
 #[derive(Debug)]
 enum Completion {
     Inventory(Result<Vec<InventoryRow>, String>),
-    Discovered {
-        workspace: WorkspaceId,
-        identity: String,
-        result: Result<Option<String>, String>,
-    },
     Fetched {
         url: String,
         result: Result<Cached, String>,
@@ -147,7 +156,7 @@ enum Completion {
     Published(Vec<PublicationResult>),
 }
 
-type InventoryRow = (WorkspaceId, PathBuf, Result<String, String>);
+type InventoryRow = (WorkspaceId, PathBuf, String, Associations);
 type PublicationResult = (WorkspaceId, String, String, Result<(), String>);
 
 #[derive(Debug)]
@@ -155,6 +164,7 @@ struct Scheduler {
     client: Client,
     server_id: String,
     database: Connection,
+    registry_path: PathBuf,
     workspaces: BTreeMap<WorkspaceId, Workspace>,
     pulls: BTreeMap<String, PullRequest>,
     manual: BTreeSet<WorkspaceId>,
@@ -214,7 +224,13 @@ impl Scheduler {
                 }
             })
         };
+        let registry_path = herdrkit::user_state_directory()?.join(herdr_prs::REGISTRY_PATH);
+        if let Some(parent) = registry_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Registry::open(&registry_path)?;
         Ok(Self {
+            registry_path,
             client,
             server_id,
             database,
@@ -243,9 +259,11 @@ impl Scheduler {
         }
         let cached = self
             .database
-            .query_row("SELECT body FROM snapshots WHERE url=?1", [url], |row| {
-                row.get::<_, String>(0)
-            })
+            .query_row(
+                "SELECT body FROM resource_snapshots WHERE url=?1",
+                [url],
+                |row| row.get::<_, String>(0),
+            )
             .optional()?
             .map(|value| serde_json::from_str::<Cached>(&value))
             .transpose()?;
@@ -281,60 +299,42 @@ impl Scheduler {
                 return Ok(());
             }
         };
-        let present: BTreeSet<_> = rows.iter().map(|(id, _, _)| id.clone()).collect();
+        let present: BTreeSet<_> = rows.iter().map(|(id, _, _, _)| id.clone()).collect();
         self.workspaces.retain(|id, _| present.contains(id));
         self.manual.retain(|id| present.contains(id));
-        for (id, checkout, identity) in rows {
-            let identity = match identity {
-                Ok(value) => value,
-                Err(error) => {
-                    self.workspaces.remove(&id);
-                    MetadataReporter::new(&self.client, SOURCE, METADATA_TTL)?
-                        .report_workspace(&id, &clear()?)?;
-                    self.last_error = Some(error);
-                    continue;
-                }
-            };
-            if self
-                .workspaces
-                .get(&id)
-                .is_some_and(|w| w.checkout == checkout && w.identity == identity)
-            {
-                continue;
+        for (id, checkout, identity, associations) in rows {
+            for association in &associations.pulls {
+                self.load_pull(association.url.as_str(), now)?;
             }
-            let persisted = self
-                .database
-                .query_row(
-                    "SELECT url FROM bindings WHERE server=?1 AND workspace=?2 AND checkout=?3 AND identity=?4",
-                    params![self.server_id, id.as_str(), checkout.to_string_lossy(), identity],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .optional()?
-                .flatten();
-            if let Some(url) = &persisted {
-                self.load_pull(url, now)?;
+            if let Some(current) = self.workspaces.get_mut(&id).filter(|current| {
+                current.identity == identity
+                    && current.associations.revision == associations.revision
+            }) {
+                current.checkout = checkout;
+            } else {
+                self.workspaces.insert(
+                    id,
+                    Workspace {
+                        checkout,
+                        identity,
+                        associations,
+                        published: None,
+                    },
+                );
             }
-            self.workspaces.insert(
-                id,
-                Workspace {
-                    checkout,
-                    identity,
-                    url: persisted,
-                    discover_at: now,
-                    discovering: false,
-                    published: None,
-                    error: None,
-                },
-            );
         }
+        let subscribed: BTreeSet<_> = self
+            .workspaces
+            .values()
+            .flat_map(|w| w.associations.pulls.iter().map(|p| p.url.as_str()))
+            .collect();
+        self.pulls
+            .retain(|url, pull| pull.fetching || subscribed.contains(url.as_str()));
         Ok(())
     }
 
     fn complete(&mut self, completion: Completion, now: u64) -> Result<()> {
-        if matches!(
-            &completion,
-            Completion::Fetched { .. } | Completion::Discovered { .. }
-        ) {
+        if matches!(&completion, Completion::Fetched { .. }) {
             self.network_active = self.network_active.saturating_sub(1);
         }
         match completion {
@@ -349,48 +349,13 @@ impl Scheduler {
                     {
                         match result {
                             Ok(()) => {
-                                workspace.published = Some((signature, now + METADATA_RENEWAL));
+                                workspace.published = Some((signature, now + RESOURCE_RENEWAL));
                             }
                             Err(error) => {
                                 self.last_error = Some(error);
                                 self.dirty.store(true, Ordering::Relaxed);
                             }
                         }
-                    }
-                }
-            }
-            Completion::Discovered {
-                workspace,
-                identity,
-                result,
-            } => {
-                let Some(current) = self
-                    .workspaces
-                    .get_mut(&workspace)
-                    .filter(|w| w.identity == identity)
-                else {
-                    return Ok(());
-                };
-                current.discovering = false;
-                current.discover_at = now + NEGATIVE_INTERVAL;
-                match result {
-                    Ok(url) => {
-                        if url.is_some() {
-                            current.discover_at = now + 1800;
-                        }
-                        current.error = None;
-                        current.url.clone_from(&url);
-                        self.database.execute("INSERT INTO bindings VALUES(?1,?2,?3,?4,?5) ON CONFLICT(server,workspace) DO UPDATE SET checkout=excluded.checkout, identity=excluded.identity, url=excluded.url", params![self.server_id, workspace.as_str(), current.checkout.to_string_lossy(), identity, url])?;
-                        if let Some(url) = url {
-                            self.load_pull(&url, now)?;
-                        }
-                    }
-                    Err(error) => {
-                        if rate_limited(&error) {
-                            self.network_at = now + 1800;
-                        }
-                        current.error = Some(error.clone());
-                        self.last_error = Some(error);
                     }
                 }
             }
@@ -401,7 +366,7 @@ impl Scheduler {
                 pull.fetching = false;
                 match result {
                     Ok(cache) => {
-                        self.database.execute("INSERT INTO snapshots VALUES(?1,?2) ON CONFLICT(url) DO UPDATE SET body=excluded.body", params![url, serde_json::to_string(&cache)?])?;
+                        self.database.execute("INSERT INTO resource_snapshots VALUES(?1,?2) ON CONFLICT(url) DO UPDATE SET body=excluded.body", params![url, serde_json::to_string(&cache)?])?;
                         pull.due = now + cache.interval;
                         pull.cached = Some(cache);
                         pull.failures = 0;
@@ -447,45 +412,34 @@ impl Scheduler {
             self.inventory_running = true;
             self.inventory_at = now + INVENTORY_INTERVAL;
             let client = self.client.clone();
-            let server_id = self.server_id.clone();
+            let registry_path = self.registry_path.clone();
             let sender = self.sender.clone();
             self.workers.push(thread::spawn(move || {
-                let result = client
-                    .snapshot()
-                    .map(|snapshot| {
-                        snapshot
-                            .workspaces
-                            .iter()
-                            .filter_map(|workspace| {
-                                snapshot
-                                    .effective_workspace_dir(&workspace.workspace_id)
-                                    .map(|directory| {
-                                        (
-                                            workspace.workspace_id.clone(),
-                                            directory.to_path_buf(),
-                                            github::checkout_identity(
-                                                directory,
-                                                &server_id,
-                                                &workspace.workspace_id,
-                                            )
-                                            .map_err(|e| format!("{e:#}")),
-                                        )
-                                    })
-                            })
-                            .collect()
-                    })
-                    .map_err(|e| e.to_string());
+                let result = (|| -> Result<Vec<InventoryRow>> {
+                    let snapshot = client.snapshot()?;
+                    let endpoint = client.endpoint().to_str().ok_or_else(|| anyhow::anyhow!("non-Unicode endpoint"))?;
+                    let mut registry = Registry::open(&registry_path)?;
+                    snapshot.workspaces.iter().map(|workspace| {
+                        let identity = workspace.identity.clone().ok_or_else(|| anyhow::anyhow!("Herdr needs persistent workspace identities and workspace.resources support"))?;
+                        let scope = Scope::new(endpoint.into(), identity.clone())?;
+                        // gh can inspect an explicit URL without a git checkout.
+                        let directory = snapshot.effective_workspace_dir(&workspace.workspace_id).unwrap_or(Path::new("/"));
+                        Ok((workspace.workspace_id.clone(), directory.to_path_buf(), identity, registry.list(&scope)?))
+                    }).collect()
+                })().map_err(|error| format!("{error:#}"));
                 let _ = sender.send(Completion::Inventory(result));
             }));
         }
         for workspace in std::mem::take(&mut self.manual) {
-            if let Some(current) = self.workspaces.get_mut(&workspace) {
-                if let Some(pull) = current.url.as_ref().and_then(|url| self.pulls.get_mut(url)) {
-                    if !pull.fetching {
+            if let Some(current) = self.workspaces.get(&workspace) {
+                for association in &current.associations.pulls {
+                    if let Some(pull) = self
+                        .pulls
+                        .get_mut(association.url.as_str())
+                        .filter(|pull| !pull.fetching)
+                    {
                         pull.due = now;
                     }
-                } else {
-                    current.discover_at = now;
                 }
             } else {
                 self.manual.insert(workspace);
@@ -500,83 +454,43 @@ impl Scheduler {
     }
 
     fn schedule_network(&mut self, now: u64) {
-        // At most two network workers, at least ten seconds between launches.
-        // A sidebar job makes at most two gh calls; manual requests share this budget.
-        if self.network_active < 2 && now >= self.network_at {
-            let discovery_due = self
-                .workspaces
-                .values()
-                .filter(|w| !w.discovering)
-                .map(|w| w.discover_at)
-                .min()
-                .unwrap_or(u64::MAX);
-            if let Some((url, pull)) = self
-                .pulls
-                .iter_mut()
-                .filter(|(url, p)| {
-                    !p.fetching
-                        && p.due <= now
-                        && p.due <= discovery_due
-                        && self
-                            .workspaces
-                            .values()
-                            .any(|w| w.url.as_ref() == Some(*url))
-                })
-                .min_by_key(|(_, p)| p.due)
-            {
-                if let Some(checkout) = self
-                    .workspaces
-                    .values()
-                    .find(|w| w.url.as_ref() == Some(url))
-                    .map(|w| w.checkout.clone())
-                {
-                    pull.fetching = true;
-                    self.network_active += 1;
-                    let url = url.clone();
-                    let sender = self.sender.clone();
-                    self.workers.push(thread::spawn(move || {
-                        let result = github::sidebar(&checkout, &url)
-                            .map(|state| Cached::from_snapshot(&state, unix_now()))
-                            .map_err(|e| format!("{e:#}"));
-                        let _ = sender.send(Completion::Fetched { url, result });
-                    }));
-                    self.network_at = now + NETWORK_SPACING;
-                }
-            } else if let Some((id, current)) = self
-                .workspaces
-                .iter_mut()
-                .filter(|(_, w)| !w.discovering && w.discover_at <= now)
-                .min_by_key(|(_, w)| w.discover_at)
-            {
-                current.discovering = true;
-                self.network_active += 1;
-                let (workspace, identity, checkout) = (
-                    id.clone(),
-                    current.identity.clone(),
-                    current.checkout.clone(),
-                );
-                let sender = self.sender.clone();
-                let server_id = self.server_id.clone();
-                self.workers.push(thread::spawn(move || {
-                    let result = github::discover(&checkout, &server_id, &workspace)
-                        .and_then(|url| {
-                            anyhow::ensure!(
-                                github::checkout_identity(&checkout, &server_id, &workspace)?
-                                    == identity,
-                                "checkout changed during PR discovery"
-                            );
-                            Ok(url)
-                        })
-                        .map_err(|e| format!("{e:#}"));
-                    let _ = sender.send(Completion::Discovered {
-                        workspace,
-                        identity,
-                        result,
-                    });
-                }));
-                self.network_at = now + NETWORK_SPACING;
-            }
+        if self.network_active >= 2 || now < self.network_at {
+            return;
         }
+        let Some((url, pull)) = self
+            .pulls
+            .iter_mut()
+            .filter(|(url, pull)| {
+                !pull.fetching
+                    && pull.due <= now
+                    && self
+                        .workspaces
+                        .values()
+                        .any(|w| w.associations.pulls.iter().any(|p| p.url.as_str() == *url))
+            })
+            .min_by_key(|(_, pull)| pull.due)
+        else {
+            return;
+        };
+        let Some(checkout) = self
+            .workspaces
+            .values()
+            .find(|w| w.associations.pulls.iter().any(|p| p.url.as_str() == url))
+            .map(|w| w.checkout.clone())
+        else {
+            return;
+        };
+        pull.fetching = true;
+        self.network_active += 1;
+        let url = url.clone();
+        let sender = self.sender.clone();
+        self.workers.push(thread::spawn(move || {
+            let result = github::sidebar(&checkout, &url)
+                .map(|state| Cached::from_snapshot(&state, unix_now()))
+                .map_err(|error| format!("{error:#}"));
+            let _ = sender.send(Completion::Fetched { url, result });
+        }));
+        self.network_at = now + NETWORK_SPACING;
     }
 
     fn publish(&mut self, now: u64) -> Result<()> {
@@ -585,39 +499,19 @@ impl Scheduler {
         }
         let mut batch = Vec::new();
         for (id, workspace) in &mut self.workspaces {
-            let mut tokens = clear()?;
-            if let Some(pull) = workspace.url.as_ref().and_then(|url| self.pulls.get(url)) {
-                if let Some(cache) = &pull.cached {
-                    for (key, value) in &cache.values {
-                        tokens = match value {
-                            Some(value) => tokens.set(key, value)?,
-                            None => tokens.clear(key)?,
-                        };
-                    }
-                    let checked =
-                        time::OffsetDateTime::from_unix_timestamp(i64::try_from(cache.fetched)?)?;
-                    tokens = tokens.set(
-                        "gh_updated",
-                        format!(
-                            "↻ {:02}-{:02} {:02}:{:02}Z",
-                            u8::from(checked.month()),
-                            checked.day(),
-                            checked.hour(),
-                            checked.minute()
-                        ),
-                    )?;
-                    if now.saturating_sub(cache.fetched) > cache.interval * 2 {
-                        tokens = tokens.set("gh_health", "! Delayed")?;
-                    }
-                }
-                if pull.error.is_some() {
-                    tokens = tokens.set("gh_health", "! Retry")?;
-                }
-            }
-            if workspace.error.is_some() {
-                tokens = tokens.set("gh_health", "! Lookup")?;
-            }
-            let encoded = serde_json::to_string(&tokens)?;
+            let resources: Vec<_> = workspace
+                .associations
+                .pulls
+                .iter()
+                .map(|association| {
+                    resource(
+                        association.url.as_str(),
+                        self.pulls.get(association.url.as_str()),
+                        now,
+                    )
+                })
+                .collect();
+            let encoded = serde_json::to_string(&resources)?;
             if workspace
                 .published
                 .as_ref()
@@ -627,10 +521,10 @@ impl Scheduler {
             }
             batch.push((
                 id.clone(),
-                workspace.checkout.clone(),
                 workspace.identity.clone(),
+                workspace.associations.revision,
                 encoded,
-                tokens,
+                resources,
             ));
         }
         if batch.is_empty() {
@@ -640,25 +534,47 @@ impl Scheduler {
         let client = self.client.clone();
         let server_id = self.server_id.clone();
         let sender = self.sender.clone();
+        let registry_path = self.registry_path.clone();
         self.workers.push(thread::spawn(move || {
-
-            let results = batch.into_iter().map(|(id, checkout, identity, signature, tokens)| {
+            let results = batch
+                .into_iter()
+                .map(|(id, identity, revision, signature, resources)| {
                     let result = (|| -> Result<()> {
-                        let reporter = MetadataReporter::new(&client, SOURCE, METADATA_TTL)?;
-                        anyhow::ensure!(client.server_id()? == server_id, "Herdr server was replaced before publication");
-                        let snapshot = client.snapshot()?;
-                        anyhow::ensure!(snapshot.effective_workspace_dir(&id) == Some(checkout.as_path()), "workspace checkout changed before publication");
-                    match github::checkout_identity(&checkout, &server_id, &id) {
-                        Ok(actual) if actual == identity => reporter.report_workspace(&id, &tokens)?,
-                        other => {
-                            reporter.report_workspace(&id, &clear()?)?;
-                            anyhow::bail!("checkout changed or became unavailable before publication: {other:?}");
-                        }
-                    }
-                    Ok(())
-                })().map_err(|error| format!("{error:#}"));
-                (id, identity, signature, result)
-            }).collect();
+                        anyhow::ensure!(
+                            client.server_id()? == server_id,
+                            "Herdr server replaced before publication"
+                        );
+                        let scope = Scope::new(
+                            client.endpoint().to_string_lossy().into_owned(),
+                            identity.clone(),
+                        )?;
+                        let mut registry = Registry::open(&registry_path)?;
+                        let current = client.workspace_resources(&id)?;
+                        anyhow::ensure!(current.identity == identity, "workspace lifetime changed");
+                        registry
+                            .while_current(&scope, revision, || {
+                                client.replace_workspace_resources(&Replace {
+                                    workspace_id: &id,
+                                    identity: &identity,
+                                    plugin_id: SOURCE,
+                                    expected_revision: current
+                                        .collections
+                                        .get(SOURCE)
+                                        .map_or(0, |collection| collection.revision),
+                                    ttl_ms: RESOURCE_TTL_MS,
+                                    resources: &resources,
+                                })?;
+                                Ok::<_, anyhow::Error>(())
+                            })?
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("PR associations changed before publication")
+                            })??;
+                        Ok(())
+                    })()
+                    .map_err(|error| format!("{error:#}"));
+                    (id, identity, signature, result)
+                })
+                .collect();
             let _ = sender.send(Completion::Published(results));
         }));
         Ok(())
@@ -672,13 +588,17 @@ impl Handler for Scheduler {
                 self.dirty.store(true, Ordering::Relaxed);
             }
             Request::Refresh { workspace } => {
-                let in_flight = self
-                    .workspaces
-                    .get(&workspace)
-                    .and_then(|current| current.url.as_ref())
-                    .and_then(|url| self.pulls.get(url))
-                    .is_some_and(|pull| pull.fetching);
-                if !in_flight {
+                if let Some(current) = self.workspaces.get(&workspace) {
+                    for association in &current.associations.pulls {
+                        if let Some(pull) = self
+                            .pulls
+                            .get_mut(association.url.as_str())
+                            .filter(|pull| !pull.fetching)
+                        {
+                            pull.due = 0;
+                        }
+                    }
+                } else {
                     self.manual.insert(workspace);
                 }
                 self.dirty.store(true, Ordering::Relaxed);
@@ -715,26 +635,43 @@ fn rate_limited(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     error.contains("rate limit") || error.contains("http 429")
 }
-fn clear() -> Result<Tokens> {
-    let mut tokens = Tokens::new();
-    for key in [
-        status::PR_TOKEN,
-        status::STATE_TOKEN,
-        status::REVIEW_TOKEN,
-        status::CHECKS_TOKEN,
-        status::FAILED_TOKEN,
-        status::PENDING_TOKEN,
-        "gh_health",
-        "gh_updated",
-    ] {
-        tokens = tokens.clear(key)?;
+fn resource(url: &str, pull: Option<&PullRequest>, now: u64) -> Resource {
+    let mut resource = pull.and_then(|pull| pull.cached.as_ref()).map_or_else(
+        || Resource {
+            id: url.into(),
+            reference: url.into(),
+            label: format!("#{}", url.rsplit('/').next().unwrap_or("?")),
+            status: "Unverified · waiting for GitHub".into(),
+            tone: Tone::Muted,
+            completed: false,
+            action: "open-link".into(),
+        },
+        |cache| cache.resource.clone(),
+    );
+    resource.id = url.into();
+    resource.reference = url.into();
+    if let Some(pull) = pull {
+        if let Some(cache) = &pull.cached {
+            if pull.error.is_some() || now.saturating_sub(cache.fetched) > cache.interval * 2 {
+                let _ = write!(
+                    resource.status,
+                    " · delayed (checked {}s ago)",
+                    now.saturating_sub(cache.fetched)
+                );
+                resource.tone = Tone::Warning;
+            }
+        } else if pull.error.is_some() {
+            resource.status = "Unavailable · retrying".into();
+            resource.tone = Tone::Warning;
+        }
     }
-    Ok(tokens)
+    resource
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use herdr_prs::{Association, PullRequestUrl};
 
     fn scheduler() -> Scheduler {
         let database = Connection::open_in_memory().unwrap();
@@ -742,8 +679,9 @@ mod tests {
         let (sender, receiver) = mpsc::channel();
         Scheduler {
             client: Client::new("/unused"),
-            server_id: "test-server".into(),
+            server_id: "test".into(),
             database,
+            registry_path: "/unused".into(),
             workspaces: BTreeMap::new(),
             pulls: BTreeMap::new(),
             manual: BTreeSet::new(),
@@ -762,233 +700,103 @@ mod tests {
             publishing: false,
         }
     }
-
-    fn workspace(identity: &str) -> Workspace {
-        Workspace {
-            checkout: "/checkout".into(),
-            identity: identity.into(),
-            url: None,
-            discover_at: 0,
-            discovering: false,
-            published: None,
-            error: None,
+    fn associations(numbers: &[u64], revision: i64) -> Associations {
+        Associations {
+            revision,
+            pulls: numbers
+                .iter()
+                .map(|number| Association {
+                    url: PullRequestUrl::parse(&format!(
+                        "https://github.com/example/project/pull/{number}"
+                    ))
+                    .unwrap(),
+                    registered_at: 100,
+                    source: "agent".into(),
+                })
+                .collect(),
         }
     }
-
-    struct Checkout(PathBuf);
-
-    impl Drop for Checkout {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
+    fn inventory(id: &str, numbers: &[u64], revision: i64) -> InventoryRow {
+        (
+            WorkspaceId::new(id),
+            "/checkout".into(),
+            format!("lifetime-{id}"),
+            associations(numbers, revision),
+        )
     }
-
-    impl Checkout {
-        fn new() -> Self {
-            let checkout =
-                Self(std::env::temp_dir().join(format!("ci-review-{}", std::process::id())));
-            let _ = std::fs::remove_dir_all(&checkout.0);
-            std::fs::create_dir_all(&checkout.0).unwrap();
-            let git = |args: &[&str]| {
-                let output = github_client::Client.git(&checkout.0, args).unwrap();
-                assert!(
-                    output.status.success(),
-                    "{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            };
-            git(&["init", "--initial-branch=review-pr-7-local"]);
-            git(&[
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.invalid",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "base",
-            ]);
-            checkout
-        }
-
-        fn bind_review(&self, server: &str, id: &WorkspaceId, url: &str) {
-            use review_core::{CheckoutKind, ExternalReference, Repository, Store};
-            let repository = Repository::discover(&self.0).unwrap();
-            let mut store = Store::open(&repository).unwrap();
-            std::fs::write(self.0.join("change"), "review change\n").unwrap();
-            let (context, observation) = store
-                .create_context_with_observation(
-                    "Review",
-                    &[ExternalReference::new("github.pull_request", url).unwrap()],
-                    &repository.working_tree_comparison().unwrap(),
-                )
-                .unwrap();
-            store
-                .bind_runtime(
-                    &context.id,
-                    &observation.id,
-                    server,
-                    id,
-                    None,
-                    CheckoutKind::ManagedWorktree,
-                )
-                .unwrap();
-        }
-    }
-
     #[test]
-    fn managed_review_discovery_and_publication_renew_without_fetching_again() {
-        use herdrkit::testing::{Server, Step};
-        const OK: &str = r#"{"id":"{id}","result":{"type":"ok"}}"#;
-        let checkout = Checkout::new();
-        let snapshot = json!({"id":"{id}","result":{"type":"session_snapshot","snapshot":{
-            "version":"test", "protocol":22,
-            "workspaces":[{"workspace_id":"w1","label":"Review","focused":true,"agent_status":"idle"}],
-            "tabs":[],"agents":[],"panes":[{"pane_id":"p1","workspace_id":"w1","tab_id":"t1","cwd":checkout.0}]
-        }}}).to_string();
-        let server = Server::start(vec![
-            Step::reply(snapshot.clone()),
-            Step::reply(OK),
-            Step::reply(snapshot),
-            Step::reply(OK),
-        ]);
+    fn subscriptions_share_fetches_and_late_results_cannot_restore_registration() {
         let mut scheduler = scheduler();
-        scheduler.client = server.client();
-        scheduler.server_id = scheduler.client.server_id().unwrap();
-        let id = WorkspaceId::new("w1");
-        let before = github::checkout_identity(&checkout.0, &scheduler.server_id, &id).unwrap();
-        let url = "https://github.com/example/project/pull/7";
-        checkout.bind_review(&scheduler.server_id, &id, url);
-        let identity = github::checkout_identity(&checkout.0, &scheduler.server_id, &id).unwrap();
-        assert_ne!(before, identity);
         scheduler
             .reconcile_inventory(
-                Ok(vec![(id.clone(), checkout.0.clone(), Ok(identity))]),
+                Ok(vec![inventory("w1", &[1, 2], 2), inventory("w2", &[1], 1)]),
                 100,
             )
             .unwrap();
-        scheduler.schedule_network(100);
-        let completion = scheduler
-            .receiver
-            .recv_timeout(Duration::from_secs(10))
+        assert_eq!(scheduler.pulls.len(), 2);
+        let url = "https://github.com/example/project/pull/2";
+        scheduler.pulls.get_mut(url).unwrap().fetching = true;
+        scheduler.network_active = 1;
+        scheduler
+            .reconcile_inventory(
+                Ok(vec![inventory("w1", &[1], 3), inventory("w2", &[1], 1)]),
+                110,
+            )
             .unwrap();
-        scheduler.complete(completion, 100).unwrap();
-        assert_eq!(
-            scheduler.workspaces.get(&id).unwrap().url.as_deref(),
-            Some(url)
-        );
         scheduler
             .complete(
                 Completion::Fetched {
                     url: url.into(),
                     result: Ok(Cached {
-                        values: BTreeMap::from([("gh_pr".into(), Some("#7".into()))]),
+                        resource: resource(url, None, 100),
                         fetched: 100,
-                        interval: 180,
+                        interval: 45,
                     }),
                 },
-                100,
+                120,
             )
             .unwrap();
-        scheduler.publish(100).unwrap();
-        let completion = scheduler
-            .receiver
-            .recv_timeout(Duration::from_secs(10))
-            .unwrap();
-        scheduler.complete(completion, 100).unwrap();
-        assert!(scheduler.last_error.is_none(), "{:?}", scheduler.last_error);
-        scheduler.publish(129).unwrap();
-        assert!(!scheduler.publishing);
-        scheduler.publish(130).unwrap();
-        assert!(scheduler.publishing);
-        let completion = scheduler
-            .receiver
-            .recv_timeout(Duration::from_secs(10))
-            .unwrap();
-        scheduler.complete(completion, 130).unwrap();
-        let reports: Vec<_> = server
-            .requests()
-            .into_iter()
-            .filter(|r| r.method == "workspace.report_metadata")
-            .collect();
-        assert_eq!(reports.len(), 2);
-        for report in reports {
-            assert_eq!(report.params.get("ttl_ms"), Some(&json!(120_000)));
-            assert_eq!(report.params.pointer("/tokens/gh_pr"), Some(&json!("#7")));
-        }
-        assert_eq!(
-            scheduler
+        assert_eq!(scheduler.network_active, 0);
+        assert!(scheduler.workspaces.values().all(|workspace| {
+            workspace
+                .associations
                 .pulls
-                .get(url)
-                .unwrap()
-                .cached
-                .as_ref()
-                .unwrap()
-                .fetched,
-            100
-        );
-    }
-
-    #[test]
-    fn subscriptions_share_one_cache_and_old_branch_results_cannot_rebind() {
-        let mut scheduler = scheduler();
-        let url = "https://github.com/example/project/pull/7";
-        for id in ["w1", "w2"] {
-            scheduler
-                .workspaces
-                .insert(WorkspaceId::new(id), workspace("main"));
-            scheduler
-                .complete(
-                    Completion::Discovered {
-                        workspace: WorkspaceId::new(id),
-                        identity: "main".into(),
-                        result: Ok(Some(url.into())),
-                    },
-                    100,
-                )
-                .unwrap();
-        }
-        assert_eq!(scheduler.pulls.len(), 1);
-        scheduler
-            .workspaces
-            .insert(WorkspaceId::new("w1"), workspace("other"));
-        scheduler
-            .complete(
-                Completion::Discovered {
-                    workspace: WorkspaceId::new("w1"),
-                    identity: "main".into(),
-                    result: Ok(Some(url.into())),
-                },
-                110,
-            )
-            .unwrap();
+                .iter()
+                .all(|pull| pull.url.as_str() != url)
+        }));
+        // A fresh lifetime at the same short ID cannot inherit associations or publication state.
+        let mut row = inventory("w1", &[], 0);
+        row.2 = "new-lifetime".into();
+        scheduler.reconcile_inventory(Ok(vec![row]), 130).unwrap();
+        assert!(scheduler.pulls.is_empty());
         assert!(
             scheduler
                 .workspaces
                 .get(&WorkspaceId::new("w1"))
                 .unwrap()
-                .url
-                .is_none()
+                .associations
+                .pulls
+                .is_empty()
         );
     }
-
     #[test]
-    fn failed_fetch_retains_cache_and_rate_limit_blocks_all_launches() {
+    fn outage_keeps_last_observation_and_blocks_rate_limited_launches() {
         let mut scheduler = scheduler();
-        let url = "https://github.com/example/project/pull/7";
-        scheduler.load_pull(url, 100).unwrap();
-        let cached = Cached {
-            values: BTreeMap::from([("gh_pr".into(), Some("#7".into()))]),
-            fetched: 100,
-            interval: 45,
-        };
+        let url = "https://github.com/example/project/pull/1";
+        scheduler
+            .reconcile_inventory(Ok(vec![inventory("w1", &[1], 1)]), 100)
+            .unwrap();
+        let mut item = resource(url, None, 100);
+        item.status = "Open · ✓ CI".into();
         scheduler
             .complete(
                 Completion::Fetched {
                     url: url.into(),
-                    result: Ok(cached),
+                    result: Ok(Cached {
+                        resource: item,
+                        fetched: 100,
+                        interval: 45,
+                    }),
                 },
                 100,
             )
@@ -1002,15 +810,12 @@ mod tests {
                 150,
             )
             .unwrap();
-        let pull = scheduler.pulls.get(url).unwrap();
-        assert_eq!(pull.cached.as_ref().unwrap().fetched, 100);
-        assert!(pull.due > 150 && scheduler.network_at > 150);
-        scheduler
-            .workspaces
-            .insert(WorkspaceId::new("w1"), workspace("main"));
+        let projected = resource(url, scheduler.pulls.get(url), 150);
+        assert!(projected.status.contains("✓ CI"));
+        assert!(projected.status.contains("50s ago"));
         scheduler.schedule_network(151);
-        assert_eq!(scheduler.network_active, 0);
         assert!(scheduler.workers.is_empty());
+        assert_eq!(scheduler.workspaces.len(), 1);
         scheduler.pulls.clear();
         scheduler.load_pull(url, 160).unwrap();
         assert_eq!(
@@ -1025,65 +830,24 @@ mod tests {
             100
         );
     }
-
     #[test]
-    fn removed_subscribers_do_not_release_an_inflight_network_slot() {
-        let mut scheduler = scheduler();
-        scheduler.network_active = 2;
-        scheduler
-            .workspaces
-            .insert(WorkspaceId::new("w1"), workspace("main"));
-        scheduler.schedule_network(100);
-        assert_eq!(scheduler.network_active, 2);
-        assert!(scheduler.workers.is_empty());
-        scheduler
-            .complete(
-                Completion::Discovered {
-                    workspace: WorkspaceId::new("gone"),
-                    identity: "main".into(),
-                    result: Ok(None),
-                },
-                110,
-            )
-            .unwrap();
-        assert_eq!(scheduler.network_active, 1);
-    }
-
-    #[test]
-    fn manual_refresh_joins_fetch_even_if_it_completes_before_next_tick() {
-        let mut scheduler = scheduler();
-        let url = "https://github.com/example/project/pull/7";
-        scheduler.load_pull(url, 100).unwrap();
-        scheduler.pulls.get_mut(url).unwrap().fetching = true;
-        let mut current = workspace("main");
-        current.url = Some(url.into());
-        scheduler.workspaces.insert(WorkspaceId::new("w1"), current);
-        scheduler
-            .request(json!({"kind":"refresh", "workspace":"w1"}))
-            .unwrap();
-        assert!(scheduler.manual.is_empty());
-        scheduler
-            .complete(
-                Completion::Fetched {
-                    url: url.into(),
-                    result: Ok(Cached {
-                        values: BTreeMap::new(),
-                        fetched: 110,
-                        interval: 45,
-                    }),
-                },
-                110,
-            )
-            .unwrap();
-        assert_eq!(scheduler.pulls.get(url).unwrap().due, 155);
-    }
-
-    #[test]
-    fn backoff_is_bounded_and_clear_removes_all_projection_fields() {
-        assert!(retry_delay(2) > retry_delay(1));
-        assert_eq!(retry_delay(100), 1800);
-        let fields = serde_json::to_value(clear().unwrap()).unwrap();
-        assert_eq!(fields.as_object().unwrap().len(), 8);
-        assert!(fields.as_object().unwrap().values().all(Value::is_null));
+    fn terminal_prs_are_still_polled_and_reopening_restores_open_row() {
+        let mut state = SidebarSnapshot {
+            pull_request: github::PullRequest {
+                number: 1,
+                draft: false,
+                state: PullRequestState::Merged,
+                review: github::ReviewStatus::Approved,
+                head_oid: "abc".into(),
+            },
+            checks: Vec::new(),
+        };
+        let merged = Cached::from_snapshot(&state, 100);
+        assert!(merged.resource.completed);
+        assert_eq!(merged.interval, 1800);
+        state.pull_request.state = PullRequestState::Open;
+        let reopened = Cached::from_snapshot(&state, 200);
+        assert!(!reopened.resource.completed);
+        assert!(reopened.resource.status.contains("No checks"));
     }
 }

@@ -20,6 +20,7 @@ vim.pack.add({
   "https://github.com/stevearc/conform.nvim",
   "https://github.com/lewis6991/gitsigns.nvim",
   "https://github.com/esmuellert/codediff.nvim",
+  "https://github.com/MeanderingProgrammer/render-markdown.nvim",
   { src = "https://github.com/saghen/blink.cmp", version = "v1.10.2" },
   { src = "https://github.com/nvim-treesitter/nvim-treesitter", version = "main" },
 })
@@ -107,6 +108,9 @@ require("blink.cmp").setup({
 })
 
 require("config.treesitter")
+
+-- Render Markdown in place; the cursor line and insert mode expose the source.
+require("render-markdown").setup({})
 
 -- Conform owns formatting, so saves never run both an external and LSP formatter.
 -- Tools come from Homebrew, except rustfmt, which follows the project's rustup toolchain.
