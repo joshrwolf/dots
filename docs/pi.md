@@ -61,7 +61,11 @@ result in a fresh Pi session.
 For ChatGPT subscriptions, `/login openai` supersedes the legacy OpenAI Codex
 provider. Test an entitled model before saving it with Ctrl+S in `/model`.
 
-## Compact UI
+## Presentation
+
+Tool rows put the subject on the left and outcomes on the right. Paths inside
+the working directory are relative; narrow rows preserve filename tails.
+Expanded details share a quiet margin and show the complete recorded path.
 
 Direct `edit` and `write` calls show compact summaries. Ctrl+O expands edits
 into old/new columns in wide panes (at least 120 content columns), or a unified
@@ -74,7 +78,8 @@ Both use Shiki's GitHub light/dark syntax palettes, following Pi's appearance.
 Highlighting loads on expansion and is cached; oversized previews have explicit
 display limits. Tool execution and calls nested inside codemode are unchanged.
 Run `make pi-deps` after dependency updates, then reload or restart Pi.
-The displays and footer share `extensions/ui/index.ts`; disable that resource in
+The displays, footer, editor, and `/ui` menu share `extensions/ui/index.ts`;
+disable that resource in
 `pi config` to restore the native UI.
 
 Direct `bash` and `read` calls also collapse to compact summaries. Ctrl+O shows
@@ -87,14 +92,19 @@ The footer shows project/branch, model, thinking level when space allows, and
 context usage. Other extensions retain their status line when present. Use
 `/session` and `/context` for details.
 
-Optional preferences live in `~/.pi/agent/dots-ui.json`. Omitted `tools` and
-`footer` fields use the defaults below. An empty tool list leaves all tool
-renderers native; `"footer": "native"` leaves footer ownership to Pi or another
-extension. Reload after editing; invalid preferences report an extension error
+The editor retains Pi's editing, shortcuts, autocomplete, and working status,
+with softened borders that preserve thinking/bash-mode colors. An existing
+custom editor is left alone.
+
+Use `/ui` to select individual tool displays, footer, and editor, or switch all
+to native. Nothing changes until **Apply and reload**; Cancel discards edits.
+Preferences live in `~/.pi/agent/dots-ui.json`. Omitted fields use these defaults;
+an empty tool list and `"native"` footer/editor leave those surfaces to Pi or
+other extensions. Reload after manual edits. Invalid preferences report an error
 rather than silently replacing them.
 
 ```json
-{ "version": 1, "tools": ["read", "write", "edit", "bash"], "footer": "compact" }
+{ "version": 1, "tools": ["read", "write", "edit", "bash"], "footer": "compact", "editor": "soft" }
 ```
 
 The reusable library is exposed as `@joshrwolf/pi-dots/ui` within the companion
@@ -144,6 +154,26 @@ Web search for research workers comes from `pi-web-access`: keyless Exa and
 existing Pi ChatGPT authentication work without configuration. Optional provider
 settings belong in machine-local `~/.pi/agent/web-search.json`. Browser cookie
 access and hosted page-fetch fallbacks remain opt-in.
+
+## Wakes
+
+`wake` lets a session schedule its own future turn: once (`in: "20m"`,
+`at: <ISO>`) or on an interval (`every: "10m"`), with a note to self. The fire
+arrives as a transcript message that starts a turn when the session is idle or
+follows the current one. With `check`, a shell command runs at each tick in the
+session's cwd and the session wakes only per `on` (`change` in output, default;
+`failure`; `success`; `always`), so polling CI or a long job costs no model
+tokens until something happens; the command's output rides along in the fire.
+
+Wakes are owned by the creating session (workers can set their own), persisted
+in the session file, and re-armed on reload: a wake missed while the session was
+away fires once, marked late, and a recurring one continues from now rather than
+replaying missed slots. Intervals advance from the planned time, a fire is
+skipped rather than stacked while the previous one is still unconsumed, every
+recurring wake stops after `limit` fires (default 50), intervals are at least one
+minute, and a session holds at most 20 active wakes. `wake_list`, `wake_cancel`,
+and `wake_run` (fire now, ignoring the gate) manage them; `/wakes` lists them.
+Nothing fires while Pi is closed.
 
 ## Project memory
 

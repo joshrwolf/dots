@@ -14,7 +14,8 @@
     "extensions": [
       "extensions/context/index.ts",
       "extensions/memory/index.ts",
-      "extensions/workers/index.ts"
+      "extensions/workers/index.ts",
+      "extensions/wake/index.ts"
     ],
     "skills": [],
     "prompts": [],
