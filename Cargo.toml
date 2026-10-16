@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/herdr-prs",
+    "crates/dots-tasks",
     "apps/dots-cli",
     "crates/github-inspect",
     "herdr-plugins/contracts",
@@ -27,6 +28,7 @@ herdr-prs = { path = "crates/herdr-prs" }
 clap = { version = "4", features = ["derive"] }
 github-inspect = { path = "crates/github-inspect" }
 github-client = { path = "crates/github-client" }
+dots-tasks = { path = "crates/dots-tasks" }
 tokio = { version = "1", features = ["rt", "sync", "time", "net", "io-util", "macros", "fs", "process"] }
 herdrkit = { path = "herdr-plugins/crates/herdrkit" }
 herdr-review = { path = "herdr-plugins/review" }

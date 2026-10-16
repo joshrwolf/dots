@@ -220,7 +220,7 @@ fn invalid_checkpoint_is_not_reset_or_used() {
         drop(file);
         let server = Server::start(vec![]);
         assert!(Engine::open(server.client(), &root.path()).is_err());
-        assert!(server.requests().is_empty());
+        assert_eq!(server.requests().len(), 0);
     }
 }
 
@@ -232,7 +232,7 @@ fn replaced_server_is_not_queried_or_focused_with_old_history() {
     let replacement = Server::start(vec![]);
     engine.client = replacement.client();
     assert!(engine.travel(Travel::Back).is_err());
-    assert!(replacement.requests().is_empty());
+    assert_eq!(replacement.requests().len(), 0);
 }
 
 #[test]

@@ -5,6 +5,7 @@ mod json;
 mod render;
 mod reviews;
 mod skills;
+mod tasks;
 
 use std::ffi::OsString;
 
@@ -38,6 +39,27 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
                 "Herdr associations use --workspace and the invoking server; --repo, --directory and --no-cache do not apply"
             );
             herdr::run(command, cli.json)
+        }
+        Command::Task {
+            project,
+            owner,
+            command,
+        } => {
+            anyhow::ensure!(
+                cli.repo.is_none() && !cli.no_cache,
+                "tasks are local to the project checkout; --repo and --no-cache do not apply"
+            );
+            let directory = cli
+                .directory
+                .map_or_else(std::env::current_dir, Ok)
+                .context("resolve working directory")?;
+            tasks::run(tasks::Request {
+                command,
+                project,
+                owner: owner.as_deref(),
+                directory: &directory,
+                json: cli.json,
+            })
         }
         Command::Skills {
             command: SkillCommand::Render { reference },

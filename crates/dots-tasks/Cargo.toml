@@ -1,0 +1,15 @@
+[package]
+name = "dots-tasks"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+rusqlite.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

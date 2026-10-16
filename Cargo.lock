@@ -444,11 +444,22 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dots-tasks",
  "github-inspect",
  "herdr-prs",
  "herdrkit",
+ "serde",
  "serde_json",
  "time",
+]
+
+[[package]]
+name = "dots-tasks"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -35,10 +35,197 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: GitHubCommand,
     },
+    /// Track shared, claimable work for a project across concurrent sessions
+    #[command(
+        long_about = "Local SQLite work list shared by every session and worktree of one project. Records intent and coordination: open slices, dependencies, atomic claims with leases, and the PR each slice produced. Git and GitHub remain the truth about code; reconcile against them when resuming.\nThe project defaults to the main checkout of the Git repository at --directory, so linked worktrees share one list; --project selects an explicit key.\nParent sessions create, claim, update and close tasks. Delegated workers report results; they do not edit the list. Claims expire so an abandoned session cannot hold work forever; renew by claiming again with the same owner. No network access."
+    )]
+    Task {
+        /// Explicit project key instead of the main Git checkout path
+        #[arg(long, global = true, value_name = "KEY")]
+        project: Option<String>,
+        /// Session or agent name recorded on claims and events
+        #[arg(long, global = true, value_name = "NAME")]
+        owner: Option<String>,
+        #[command(subcommand)]
+        command: TaskCommand,
+    },
     /// Export agent discovery documentation from this command tree
     Skills {
         #[command(subcommand)]
         command: SkillCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum TaskCommand {
+    #[command(flatten)]
+    Query(TaskQuery),
+    #[command(flatten)]
+    Mutation(TaskMutation),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum TaskQuery {
+    /// List tasks; open and held by default, highest priority then oldest first
+    List {
+        /// Only tasks anywhere below this one
+        #[arg(long, value_name = "ID", conflicts_with = "roots")]
+        parent: Option<String>,
+        /// Only tasks whose recorded owner is NAME, live lease or not
+        #[arg(long, value_name = "NAME")]
+        claimed_by: Option<String>,
+        /// Only top-level tasks
+        #[arg(long)]
+        roots: bool,
+        /// Exactly one status: open, held, done or dropped
+        #[arg(long, conflicts_with = "all")]
+        status: Option<String>,
+        /// Include done and dropped tasks
+        #[arg(long)]
+        all: bool,
+    },
+    /// Fresh leaf work: open, unblocked, childless, no PR recorded, not under a live lease
+    Ready {
+        /// Only tasks anywhere below this one
+        #[arg(long, value_name = "ID")]
+        parent: Option<String>,
+    },
+    /// Show one task with blockers, children count, and recent events
+    Show { id: String },
+    /// Project history after an event seq, oldest first; use the last seen seq as a cursor
+    Events {
+        /// Only events with seq greater than this (default 0)
+        #[arg(long, default_value_t = 0)]
+        since: i64,
+        /// Maximum events to return
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=1000))]
+        limit: u16,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum TaskMutation {
+    /// Create an open task; --parent groups slices under a larger effort
+    Add {
+        title: String,
+        /// Longer description, pattern reference, or acceptance notes
+        #[arg(long)]
+        body: Option<String>,
+        /// Parent task ID
+        #[arg(long, value_name = "ID")]
+        parent: Option<String>,
+        /// Higher runs first among ready tasks (default 0)
+        #[arg(long, default_value_t = 0, allow_hyphen_values = true)]
+        priority: i64,
+        /// Prerequisite task IDs; repeatable
+        #[arg(long, value_name = "ID")]
+        blocked_by: Vec<String>,
+    },
+    /// Atomically claim a task (or the next ready one) for --owner with a lease
+    #[command(
+        long_about = "Atomically claim a task for --owner. Fails if another owner holds a live lease, the task is blocked, it has open children, or it is not open. Claiming again with the same owner renews the lease; an expired lease can be taken over. --next claims the highest-priority ready task that has no children, optionally under --parent, and fails with exit 1 when nothing is ready. Claim before delegating a slice; release or close when the work stops."
+    )]
+    Claim {
+        /// Task ID; omit with --next
+        #[arg(required_unless_present = "next", conflicts_with = "next")]
+        id: Option<String>,
+        /// Claim the highest-priority ready task instead of a specific ID
+        #[arg(long)]
+        next: bool,
+        /// With --next, only consider tasks anywhere below this one
+        #[arg(long, value_name = "ID", requires = "next")]
+        parent: Option<String>,
+        /// Lease length in minutes, 1 to 10080 (default 120)
+        #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u32).range(1..=10080))]
+        lease: u32,
+    },
+    /// Release --owner's claim without changing status
+    Release { id: String },
+    /// Edit fields or append a note; recording the PR URL is the usual update
+    #[command(
+        long_about = "Edit fields or append a note. Field edits on a task under another owner's live lease are refused unless --force; a --note is always allowed. Once a PR is recorded the slice leaves the ready pool: claim --next skips it even after the lease expires, and picking it up again means claiming it by id."
+    )]
+    Update {
+        id: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        body: Option<String>,
+        /// Full pull/merge request URL produced for this task
+        #[arg(long, value_name = "URL")]
+        pr: Option<String>,
+        /// Branch carrying the work, so another session can find it
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        priority: Option<i64>,
+        /// New parent task ID; an empty string detaches
+        #[arg(long, value_name = "ID")]
+        parent: Option<String>,
+        /// Append a dated note to the task history
+        #[arg(long)]
+        note: Option<String>,
+        /// Edit fields despite another owner's live lease
+        #[arg(long)]
+        force: bool,
+    },
+    /// Mark done; refuses while blocked, with open children, or leased to another owner unless --force
+    Done {
+        id: String,
+        /// Outcome, e.g. the merge or verification evidence
+        #[arg(long)]
+        note: Option<String>,
+        /// Close anyway: ignore blockers, open children, and another owner's live lease
+        #[arg(long)]
+        force: bool,
+    },
+    /// Pause this task with a reason; it is never ready, its claim is cleared; descendants stay claimable (warned)
+    Hold {
+        id: String,
+        #[arg(long)]
+        reason: String,
+        /// Override another owner's live lease
+        #[arg(long)]
+        force: bool,
+    },
+    /// Close a task as not going to happen; dependents are unblocked; same --force rules as done
+    Drop {
+        id: String,
+        #[arg(long)]
+        reason: String,
+        /// Close anyway: ignore blockers, open children, and another owner's live lease
+        #[arg(long)]
+        force: bool,
+    },
+    /// Return a held, done or dropped task to open; fails if it is already open
+    Reopen {
+        id: String,
+        #[arg(long)]
+        note: Option<String>,
+        /// Override another owner's live lease
+        #[arg(long)]
+        force: bool,
+    },
+    /// Manage prerequisites between tasks
+    Dep {
+        #[command(subcommand)]
+        command: DepCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum DepCommand {
+    /// Make ID wait for --blocked-by; duplicates, cycles and parent/child pairs are rejected
+    Add {
+        id: String,
+        #[arg(long, value_name = "ID")]
+        blocked_by: String,
+    },
+    /// Remove a prerequisite
+    Remove {
+        id: String,
+        #[arg(long, value_name = "ID")]
+        blocked_by: String,
     },
 }
 

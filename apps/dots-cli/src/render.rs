@@ -375,7 +375,7 @@ fn strip_sgr(text: &str) -> String {
     out
 }
 
-fn observed_time(seconds: u64) -> String {
+pub(crate) fn observed_time(seconds: u64) -> String {
     i64::try_from(seconds)
         .ok()
         .and_then(|seconds| time::OffsetDateTime::from_unix_timestamp(seconds).ok())

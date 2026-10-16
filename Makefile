@@ -2,6 +2,7 @@ STOW_PACKAGES := aerospace brew codex ghostty pi skills theme zsh
 HERDR_STOW_PACKAGES := herdr nvim
 HERDR_PLUGINS := herdr-plugins
 PI_PLUGINS := pi-plugins
+CLAUDE_MODS := claude-mods
 
 all: stow
 
@@ -14,11 +15,40 @@ unstow:
 nvim:
 	stow --verbose --target="$(HOME)" --restow nvim
 
+# Optional machine-local Slack credentials.
+slack:
+	stow --verbose --target="$(HOME)" --restow slack
+
+.PHONY: slack
+
+# Optional routing of external links to browser profiles.
+finicky:
+	test "$$(uname -s)" = Darwin
+	test -x /Applications/Finicky.app/Contents/MacOS/Finicky
+	stow --verbose --target="$(HOME)" --restow finicky
+
+.PHONY: finicky
+
+# Optional macOS signing cache. Repository signer selection stays explicit.
+gitsign:
+	test "$$(uname -s)" = Darwin
+	test -x /opt/homebrew/bin/gitsign
+	test -x /opt/homebrew/bin/gitsign-credential-cache
+	test -x /opt/homebrew/bin/python3
+	stow --verbose --target="$(HOME)" --restow gitsign
+	launchctl enable "gui/$$(id -u)/dev.joshrwolf.gitsign-credential-cache"
+	@launchctl print "gui/$$(id -u)/dev.joshrwolf.gitsign-credential-cache" >/dev/null 2>&1 || \
+		launchctl bootstrap "gui/$$(id -u)" "$(HOME)/Library/LaunchAgents/dev.joshrwolf.gitsign-credential-cache.plist"
+
 skills: skills-links
 	stow --verbose --target="$(HOME)" --restow skills
 
 skills-links:
 	python3 scripts/skill-sources.py links
+
+# Claude mods install through committed skills links; checks stay explicit.
+mods-check:
+	$(MAKE) -C $(CLAUDE_MODS) $(patsubst mods-%,%,$@)
 
 # Deliberate network update; Git requires a clean working tree and creates a merge commit.
 skills-update:
@@ -27,13 +57,16 @@ skills-update:
 skills-import:
 	python3 scripts/skill-sources.py import "$(SOURCE)"
 
+# Pi uses its official managed installer; no Homebrew or system npm dependency.
+pi-cli-install:
+	curl -fsSL https://pi.dev/install.sh | sh
+
+pi-cli-update:
+	pi update --self
+
 # Explicit Pi package operations; plain make never installs dependencies or packages.
 pi-install pi-deps pi-check:
 	$(MAKE) -C $(PI_PLUGINS) $(patsubst pi-%,%,$@)
-
-# Deliberate subtree operations; require a clean tree and create commits.
-pi-import pi-update:
-	$(MAKE) -C $(PI_PLUGINS) $(patsubst pi-%,%,$@) SOURCE="$(SOURCE)"
 
 # Preserve the required setup order: binaries, config, then registration.
 herdr: herdr-build
@@ -75,11 +108,11 @@ cli-skills:
 
 cli-check:
 	cargo fmt --all --check
-	cargo clippy -p dots-cli -p github-inspect -p github-client --all-targets -- -D warnings
+	cargo clippy -p dots-cli -p dots-tasks -p github-inspect -p github-client --all-targets -- -D warnings
 	cargo build --package dots-cli
 	python3 scripts/cli-skills.py check target/debug/dots
-	cargo nextest run -p dots-cli -p github-inspect -p github-client --all-targets
-	cargo test -p dots-cli -p github-inspect -p github-client --doc
+	cargo nextest run -p dots-cli -p dots-tasks -p github-inspect -p github-client --all-targets
+	cargo test -p dots-cli -p dots-tasks -p github-inspect -p github-client --doc
 
 .PHONY: cli cli-build cli-check cli-skills rust-check
 
@@ -96,4 +129,5 @@ herdr-issue-build:
 plugin-build-%:
 	$(MAKE) -C $(HERDR_PLUGINS) $@
 
-.PHONY: all stow unstow nvim skills skills-links skills-update skills-import pi-install pi-deps pi-check pi-import pi-update herdr herdr-build herdr-link herdr-check herdr-issue-build
+.PHONY: all stow unstow nvim skills skills-links mods-check skills-update skills-import pi-cli-install pi-cli-update pi-install pi-deps pi-check herdr herdr-build herdr-link herdr-check herdr-issue-build
+.PHONY: gitsign

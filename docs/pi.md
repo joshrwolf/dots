@@ -1,203 +1,177 @@
-# Pi packages in dots
+# Pi
 
-Pi's Stow package (`pi/`) owns personal instructions and the theme discovery
-link. `pi-plugins/` owns executable extension source, dependencies, and tests,
-like `herdr-plugins/` does for Herdr. Plain `make` remains a Stow operation:
-no npm installs, package registration, upstream fetches, or live reloads.
+Pi uses its official managed installer. Dotfiles provide personal instructions
+and a theme. `pi-web-access` provides web research tools; our local companion
+package provides `/context`, project memory, background workers, compact tool
+displays, and a one-line footer.
 
-## Layout and ownership
+## Setup
 
-- `pi-sources.toml`: upstream HTTPS URLs, exact full Git commit SHAs, and npm
-  check scripts for third-party packages.
-- `pi-plugins/vendor/<source>`: editable squashed Git subtrees. Source content
-  and our patches are fixed by the dots commit; retain upstream licenses.
-- `pi-plugins/dots`: our private companion package, with explicit Pi resource
-  entrypoints in `package.json`. It starts empty; no placeholder extension runs.
-- `pi-plugins/Makefile`: package setup and checks, delegated to by root targets.
-- `scripts/pi-packages.py`: source validation, subtree operations, locked
-  dependency installation, and local registration through Pi's own CLI.
-
-Keep general-purpose child execution changes in pi-subagents. Keep personal
-placement, navigation, and workflow policy in our companion package. Herdr-side
-Rust features still belong in `herdr-plugins/` and use `herdrkit`.
-
-The initial registry selects pi-subagents v0.70.1 at
-`1ac7b5e2652e9571164847ac2905ab4aded92791`. That subtree is included in dots;
-fresh clones can proceed directly to dependency setup and checks.
-
-## Importing a new source (maintainers only)
-
-Add the source to `pi-sources.toml`, commit it, and finish any unrelated
-working-tree changes. Import and update refuse dirty trees, including untracked
-files; they never stash or commit unrelated work for you. For a new source:
+Requires GNU Make, Python 3.11+, npm/Node 24+, and GNU Stow.
+Package targets prefer Homebrew's Node, separate from Pi's private runtime;
+set `NODE_PREFIX` to use another installation.
 
 ```sh
-make pi-import SOURCE=<name>
+make pi-cli-install  # install Pi and its managed runtime
+make                 # stow dotfiles
+make pi-install      # install pinned upstream packages and the local companion
 ```
 
-Do not repeat the import for pi-subagents; use `pi-update` for an existing subtree.
+Settings, credentials, models, and sessions stay machine-local under
+`~/.pi/agent`. Do not register additional copies of the managed packages.
+Use `pi list` to inspect registrations and `pi config` to choose package resources.
 
-This uses `git subtree add --squash` against the registered exact SHA. Review
-the imported source and license before executing it. Audit it for the public
-repo's privacy requirements. Where necessary, normalize imported instruction
-scopes to canonical `AGENTS.md` plus `CLAUDE.md -> AGENTS.md` in a separate
-customization commit. Do not discard upstream instructions or attribution.
-
-After the import is committed, fresh clones contain the source and need no
-submodule initialization or repeat import. A GitHub fork is not required.
-
-## Dependencies, checks, and installation
-
-Prerequisites: GNU Make, Git with subtree support, Python 3.11+, npm/Node, and
-Pi. Use the Node requirements of the pinned upstream package when changing its
-revision. npm lifecycle scripts are disabled during dependency installation;
-review any dependency that requires enabling one rather than removing the
-protection globally.
+## Updates
 
 ```sh
-make pi-deps       # npm ci --ignore-scripts in each package; includes dev deps
-make pi-check     # manager tests, upstream typecheck/test:all, companion checks
-make pi-install   # npm ci --ignore-scripts, then register local paths with Pi
+make pi-cli-update   # update the CLI
+make pi-deps         # restore locked package dependencies
+make pi-check       # typechecks and tests
 ```
 
-`pi-check` neither downloads dependencies nor registers packages. If a registered
-source has not been imported, `pi-deps`, the full `pi-check`, and `pi-install`
-fail with an import instruction before package setup side effects. Manager and
-companion checks can also run independently:
+**Restart after a CLI update.** Run `pi -c` from the same project to resume.
+`/reload` reloads package resources, not the running SDK. Keep the companion
+package's exact development SDK version and lockfile aligned with the installed
+CLI; `pi-deps` restores pins, it does not upgrade them.
 
-```sh
-make -C pi-plugins check-manager
-npm --prefix pi-plugins/dots run check
+Third-party packages use exact npm versions in `pi-packages.json`; there is no
+local fork. To upgrade, edit the pin, remove the old registration with
+`pi remove npm:<package>@<old-version>`, then run `make pi-install pi-check`
+and restart Pi. Preserve any package resource filters when replacing the entry.
+Pinned versions do not advance with `pi update --extensions`.
+
+`pi-deps` and `pi-check` cover the local companion and package-manager tests,
+not upstream's test suite. After an upgrade, also spawn one worker and read its
+result in a fresh Pi session.
+
+## Everyday use
+
+- `/login` — authenticate a provider.
+- `/model` — select a model; Ctrl+S saves the default for new sessions.
+- `/scoped-models` — choose models for cycling.
+- `/settings` — choose a theme; `system` follows the terminal palette and `dots`
+  is our custom light theme.
+- `/context` — show reported context usage and estimated contributions from
+  instructions, skills, tools, and conversation. Tool estimates are omitted when
+  codemode rewrites declarations; estimates are not exact billing.
+- Codemode — enable with `"defaultTools": ["+codemode"]` in personal settings to
+  orchestrate tools with JavaScript while keeping direct calls available.
+- Fullscreen is the default; set `"tuiMode": "regular"` for terminal scrollback.
+
+For ChatGPT subscriptions, `/login openai` supersedes the legacy OpenAI Codex
+provider. Test an entitled model before saving it with Ctrl+S in `/model`.
+
+## Compact UI
+
+Direct `edit` and `write` calls show compact summaries. Ctrl+O expands edits
+into old/new columns in wide panes (at least 120 content columns), or a unified
+diff when narrow or wrap-heavy. Changed lines have subtle backgrounds; paired
+replacements emphasize changed words. Writes show numbered source, not a
+before/after diff. While write arguments stream, a live character count shows
+progress; `writing…` marks execution. Errors stay visible when collapsed.
+
+Both use Shiki's GitHub light/dark syntax palettes, following Pi's appearance.
+Highlighting loads on expansion and is cached; oversized previews have explicit
+display limits. Tool execution and calls nested inside codemode are unchanged.
+Run `make pi-deps` after dependency updates, then reload or restart Pi.
+The displays and footer share `extensions/ui/index.ts`; disable that resource in
+`pi config` to restore the native UI.
+
+Direct `bash` and `read` calls also collapse to compact summaries. Ctrl+O shows
+the full shell command and recorded output, or highlighted source with original
+file line numbers. Errors, truncation notices, continuation offsets, and full-output
+paths remain visible. Pi still owns image previews; `!` commands and specialized
+tool UIs are unchanged.
+
+The footer shows project/branch, model, thinking level when space allows, and
+context usage. Other extensions retain their status line when present. Use
+`/session` and `/context` for details.
+
+Optional preferences live in `~/.pi/agent/dots-ui.json`. Omitted `tools` and
+`footer` fields use the defaults below. An empty tool list leaves all tool
+renderers native; `"footer": "native"` leaves footer ownership to Pi or another
+extension. Reload after editing; invalid preferences report an extension error
+rather than silently replacing them.
+
+```json
+{ "version": 1, "tools": ["read", "write", "edit", "bash"], "footer": "compact" }
 ```
 
-Installation registers absolute paths for the imported packages and the
-companion package using `pi install --no-approve <path>`. It does not copy source
-or create extension symlinks. It changes only Pi-managed registration through
-Pi's CLI, not a Stow-managed settings file. Existing local registrations and
-resource filters are preserved. Dependency failure prevents new registrations;
-if a later Pi registration fails, rerun installation to finish it.
+The reusable library is exposed as `@joshrwolf/pi-dots/ui` within the companion
+package. See the [architecture](pi-ui-design.md) for boundaries and extension
+points. Theme selection and startup settings remain Pi-owned.
 
-Model preferences, credentials, sessions, trust, package caches, and other
-runtime bookkeeping remain machine-local. The helper honors
-`PI_CODING_AGENT_DIR` for the settings location. Moving the dots checkout requires
-removing its old local registrations and rerunning installation.
+## Workers
 
-Use `/reload` or restart Pi when ready to activate changes. Setup never reloads
-an active session. It also does not install Herdr's agent integration or modify
-a live Herdr session.
+A worker is a background `pi --mode rpc` child with its own context, working
+directory (usually a worktree), model, tool allowlist, and session file. The
+runtime has five primitives: `worker_spawn`, `message`, `worker_wait`,
+`worker_status`, `worker_stop`. There are no roles or workflows: a spawn carries
+a self-contained brief, and a fixed child contract is appended (the final
+message is the result; questions go to the parent; stay inside the brief's
+surface).
 
-### Avoid duplicate installations
+`message { to, text, wait? }` is the one communication primitive and is not
+directional: a session sends to a worker it owns (by id or label), to a sibling
+(by id; the owner relays it and records the relay), or to `parent` when it is a
+worker. Delivery adapts to the target: it answers a worker blocked on a
+question, steers a running one between tool calls, or continues a finished or
+paused one in its own session. `wait: true` blocks until the target replies or
+settles; that is how a worker asks its parent.
 
-Do not also install npm/Git copies of the same packages or symlink their
-entrypoints into `~/.pi/agent/extensions`. The installer rejects ordinary
-same-name npm, Git, and alternate local-package registrations before dependency
-installation. This is a guard, not exhaustive alias/extension discovery: inspect
-`pi list` and `pi config` when migrating another setup, including project-local
-registrations and manually configured extensions.
+Return is the event: a worker's completion, failure, question, or message
+arrives as a transcript message that starts the owner's next turn, or is steered
+into the current turn when the owner is busy, so nothing polls. `worker_wait`
+blocks for the next such event when a session has nothing else to do. A live
+`workers (n)` line below the editor lists running and asking workers with
+elapsed time, tokens, and the current tool; `/workers` lists every worker and
+`/workers <id>` shows what one has been doing. Children stop when the parent
+exits and come back as `paused`; `message` continues one in its own session with
+its model, tools, and contract re-applied, as does `pi --session <file>` by
+hand. Sessions live under `~/.pi/agent/dots/workers/`.
 
-Use `pi remove <old-source>` for the obsolete registration, then rerun
-`make pi-install`. The helper never removes an existing package automatically.
-Use `pi config` to disable unwanted package prompts/skills; those resource
-filters remain local and are preserved on repeated installation.
+Model choice is per spawn: a `provider/model[:thinking]` id, or `@name`
+resolved through machine-local `~/.pi/agent/dots/workers.json`:
 
-## Pins and compatibility
-
-There are three independent version concerns:
-
-1. The source registry selects a full upstream commit, not a moving branch or
-   tag. The subtree's checked-in content also contains our local patches.
-2. Each package's committed `package-lock.json` fixes dependency resolution.
-   Installation uses `npm ci`; it does not regenerate lockfiles or update source.
-3. Pi itself supplies the extension runtime. Homebrew currently installs Pi
-   without an exact version pin. A dependency lockfile is **not** a host Pi pin.
-
-The selected pi-subagents revision's development dependencies target Pi 0.86.1.
-A no-model RPC startup check on installed Pi 0.85.1 verified extension loading
-and registration of the doctor/fleet commands. This is not an end-to-end child
-execution test; passing upstream tests against its own development dependencies
-also does not establish full host compatibility. Repeat the host smoke test
-when updating either side. Local Herdr-native subagent execution is a future
-implementation, not provided by this package setup.
-
-### Local upstream customizations
-
-The imported revision has small test-portability patches, separate from the
-subtree import commit:
-
-- On macOS, test temporary roots use canonical `/private/tmp` to avoid Unix
-  socket path-length limits and `/var` versus `/private/var` alias mismatches.
-- npm test scripts limit file concurrency to two, as upstream's unit CI does,
-  to avoid starving short-deadline fixtures under load.
-- Agent exclusion assertions check the actual excluded fixture directories,
-  not any absolute path containing `plugins` (such as this repository's layout).
-- A relative `CLAUDE.md -> AGENTS.md` link follows dots' instruction convention.
-
-These changes do not alter subagent runtime behavior.
-
-Never develop inside `~/.pi/agent/git/` or `npm/`: Pi can reset/clean managed Git
-clones during reconciliation. Pi updates do not manage these local source paths.
-
-## Updating upstream while keeping our changes
-
-1. Finish and commit local work.
-2. Review the desired upstream revision; replace `ref` in `pi-sources.toml`
-   with its full SHA and commit that registry change.
-3. Run the explicit merge:
-
-   ```sh
-   make pi-update SOURCE=pi-subagents
-   ```
-
-4. Review the resulting subtree merge, refresh dependencies with `make pi-deps`,
-   and run `make pi-check` plus a host Pi smoke test before reloading.
-
-This uses `git subtree pull --squash`. Nonconflicting committed customizations
-survive. Overlapping changes require normal Git conflict resolution. Finish the
-merge with `git commit` after resolving conflicts, or cancel with
-`git merge --abort`. Preserve Git's subtree trailers in generated commits.
-
-The registry is the desired import pin. Between committing a new pin and
-successfully merging it, it can intentionally differ from the currently
-imported revision; do not ship that intermediate state. If abandoning an
-update, revert the registry change too. Never reset the entire dots working
-tree as an update or rollback procedure.
-
-Keep upstream imports and local patches in separate commits where practical.
-`pi-update` never installs, reloads, pushes, or publishes anything.
-
-## Our own extensions
-
-Add an actual extension under `pi-plugins/dots/extensions/<name>/index.ts` and
-list its exact entrypoint in the package's `pi.extensions` array. Helpers and
-tests should not be automatically discovered as extensions. Add tests and, when
-TypeScript source is introduced, a typecheck script to the package's `check` gate.
-
-Declare imported Pi host libraries as peer dependencies; use exact matching
-development versions for typechecking and tests. Put other runtime dependencies
-in `dependencies`, and commit lockfile changes. Do not bundle a second Pi runtime.
-The current empty companion package deliberately has no unused SDK dependencies.
-
-Prefer pi-subagents' public event/API contracts over imports from its internals.
-Two separately registered Pi packages are not automatically Node dependencies;
-using an event contract avoids accidentally installing a second subagent owner.
-If a direct runtime import becomes necessary, explicitly design its dependency
-resolution rather than relying on a sibling package being installed.
-
-Shared personal skills remain in the existing `~/.agents/skills` setup. Do not
-copy them into this package just to make Pi discover them.
-
-## Contributions and removal
-
-To extract our dependency changes for a separately authorized contribution:
-
-```sh
-git subtree split --prefix=pi-plugins/vendor/pi-subagents -b pi-subagents-export
+```json
+{ "modelRoles": { "worker": "anthropic/claude-sonnet-5-5", "review": "anthropic/claude-opus-5-5:high" } }
 ```
 
-Review that branch before pushing it to a fork. Subtree operations themselves
-never contact other people or open PRs.
+Omitting `model` inherits the parent's. Workers load the companion package, so
+they see project memory; they are told not to edit tasks or memory.
 
-To remove a source, remove its Pi registration with `pi remove <absolute-path>`,
-remove the registry entry and subtree with ordinary Git operations, and review
-the removal. Removing a source must be explicit; no synchronization target
-silently deletes imported code or local runtime state.
+Web search for research workers comes from `pi-web-access`: keyless Exa and
+existing Pi ChatGPT authentication work without configuration. Optional provider
+settings belong in machine-local `~/.pi/agent/web-search.json`. Browser cookie
+access and hosted page-fetch fallbacks remain opt-in.
+
+## Project memory
+
+Memory is learned, agent-maintained context, kept apart from the stable
+instructions in `AGENTS.md`. The companion loads two indexes from
+`~/.local/share/dots/memory/`: `_global/MEMORY.md` for every repository, then
+`<main-checkout-key>/MEMORY.md` for the current one, so notes made in one
+worktree are visible in every other worktree of the same repository and never
+appear in a diff. A project line wins over a global one. The key is the main
+checkout path (`git rev-parse --git-common-dir`, parent directory) with the
+leading slash dropped and every run of characters other than letters, digits,
+`.`, `_`, and `-` replaced by `-`. Both layers load as one block with today's
+date and the conventions stated once; a layer without an index yet shows its
+path instead, so the first "remember this" writes to the right place.
+Concurrent sessions should edit the index with anchored edits; there is no
+locking. Each index is capped at 150 lines or 24 KiB, with a notice naming how
+much was cut; put detail in topic files beside it and reference them from the
+index. `/memory` prints both locations and their current indexes. Nothing is
+written automatically; the agent edits the files at checkpoints
+under the conventions in `pi/.pi/agent/AGENTS.md`.
+
+## Files
+
+| Path | Purpose |
+|---|---|
+| `pi/.pi/agent/AGENTS.md` | Personal Pi instructions |
+| `pi/.pi/agent/themes/` | Theme discovery |
+| `pi-plugins/dots/` | Our extensions |
+| `pi-packages.json` | Exact upstream npm versions |
+
+Package development instructions: [`pi-plugins/AGENTS.md`](../pi-plugins/AGENTS.md).

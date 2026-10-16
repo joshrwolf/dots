@@ -28,7 +28,8 @@ stages the executable and regenerates its skill without installing anything.
 GitHub CI diagnosis is the first workflow. It accepts PRs, remote refs, commits,
 workflow runs/attempts, and direct job/check URLs. See [CI usage](../../docs/github-ci.md).
 Review-thread inspection lists unresolved feedback and reads exact conversations.
-See [review usage](../../docs/github-reviews.md).
+See [review usage](../../docs/github-reviews.md). Shared project tasks coordinate
+multi-PR work across sessions. See [task usage](../../docs/tasks.md).
 Future commands belong under their integration or domain; only implemented
 capabilities appear in help and skill discovery.
 

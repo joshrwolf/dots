@@ -695,7 +695,7 @@ fn literal_search_finds_early_evidence_and_quotes_next_match_safely() {
             .unwrap()
             .contains("--start 112")
     );
-    assert!(page.lines.is_empty());
+    assert_eq!(page.lines.len(), 0);
     assert!(page.match_index.iter().any(|hit| hit.preview == needle));
     assert!(page.next_match_command.unwrap().contains("'\"'\"'"));
     assert_eq!(page.shortened_lines, 0);
@@ -739,7 +739,7 @@ fn search_absence_and_exhausted_search_do_not_fall_back_to_tail() {
         .unwrap()
         .log
         .unwrap();
-        assert!(page.lines.is_empty());
+        assert_eq!(page.lines.len(), 0);
         assert!(page.next_match_command.is_none());
         provider.done();
     }
@@ -899,7 +899,7 @@ fn check_output_reports_changed_head_and_search_commands_are_supported() {
             .any(|warning| warning.contains("PR head changed"))
     );
     let log = result.output.unwrap();
-    assert!(log.lines.is_empty());
+    assert_eq!(log.lines.len(), 0);
     let hit = log.match_index.first().unwrap();
     assert!(hit.command.contains("ci output check:"));
     assert!(hit.test_output_command.is_none());

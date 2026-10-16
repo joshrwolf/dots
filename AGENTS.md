@@ -50,20 +50,21 @@ to it.
   are canonical. Herdr-specific libraries remain under `herdr-plugins/crates`.
 - `apps/dots-cli` owns the `dots` frontend; `crates/` owns provider/domain code
   shared across local commands and host adapters. See `apps/dots-cli/README.md`.
+- `crates/dots-tasks` owns the shared task store. Readiness is derived, claims
+  are single transactions, and callers pass the project key and time explicitly.
 - Use `make cli-build`, `make cli-check`, and `make cli` to stage, check, and
   explicitly install local commands. Plain `make` does not install the CLI.
 - `make rust-check` is the complete Rust gate; `make herdr-check` delegates to it.
 
 ## Pi packages
 
-- Third-party Pi packages are editable squashed subtrees under
-  `pi-plugins/vendor/<source>`, pinned to full Git SHAs in `pi-sources.toml`.
+- Third-party Pi packages use stock npm releases pinned in `pi-packages.json`.
   Our companion package lives in `pi-plugins/dots`. See `docs/pi.md`.
 - Use root `make pi-deps`, `make pi-check`, and `make pi-install`. Installation
-  registers local source paths through Pi; settings and runtime state remain
-  machine-local. Do not also install these packages from npm or Git.
-- `make pi-import SOURCE=<name>` and `make pi-update SOURCE=<name>` are explicit
-  clean-tree operations that create subtree commits. Plain `make` does neither.
+  uses Pi's package manager; settings and runtime state remain machine-local.
+  Do not register additional local/Git copies of upstream packages.
+- Keep personal features in the companion package and consume public APIs.
+  Do not patch Pi's managed package cache or vendor upstream packages.
 
 ## This repo is public
 

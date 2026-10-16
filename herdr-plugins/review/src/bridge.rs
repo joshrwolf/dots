@@ -1590,12 +1590,13 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(failure.code, ErrorCode::DispatchUnavailable);
-        assert!(
+        assert_eq!(
             store
                 .binding_state(&state.binding.id)
                 .unwrap()
                 .agent_requests
-                .is_empty()
+                .len(),
+            0
         );
     }
 

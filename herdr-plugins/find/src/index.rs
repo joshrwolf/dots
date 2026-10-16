@@ -852,7 +852,7 @@ mod tests {
         assert!(
             format!("{error:#}").contains("running /definitely/not/a/herdr-zoxide-binary query -l")
         );
-        assert!(optional_zoxide_dirs(missing).is_empty());
+        assert_eq!(optional_zoxide_dirs(missing).len(), 0);
     }
 
     #[test]

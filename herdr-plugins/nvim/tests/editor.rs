@@ -370,7 +370,7 @@ impl<'de> serde::Deserializer<'de> for EnumNames<'_> {
 fn all_error_codes_match_between_rust_and_lua() {
     let mut rust = Vec::new();
     ErrorCode::deserialize(EnumNames(&mut rust)).unwrap_err();
-    assert!(!rust.is_empty());
+    assert_ne!(rust.len(), 0);
     let fixture = Fixture::start();
     let mut lua: Vec<String> = serde_json::from_str(
         &fixture.lua("vim.json.encode(require('dots.herdr.protocol').codes)", ""),

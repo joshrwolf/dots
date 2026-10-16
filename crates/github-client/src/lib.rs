@@ -1532,7 +1532,7 @@ mod tests {
             )
             .is_err()
         );
-        assert!(runner.calls().is_empty());
+        assert_eq!(runner.calls().len(), 0);
     }
 
     #[test]

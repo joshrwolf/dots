@@ -746,7 +746,7 @@ mod tests {
         let page = view(&text, Query::Search("needle"), Some(2), 100);
         assert_eq!(page.matches, 3);
         assert_eq!(page.eligible_matches, 2);
-        assert!(page.lines.is_empty());
+        assert_eq!(page.lines.len(), 0);
         assert!(page.next_command.is_none());
         assert!(page.previous_command.is_none());
         let hit = page.match_index.first().unwrap();
@@ -804,8 +804,8 @@ mod tests {
             None,
             40,
         );
-        assert!(page.lines.is_empty());
-        assert!(page.line_numbers.is_empty());
+        assert_eq!(page.lines.len(), 0);
+        assert_eq!(page.line_numbers.len(), 0);
         assert!(page.next_command.is_none());
     }
 

@@ -610,7 +610,7 @@ esac
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(output.stderr.is_empty());
+        assert_eq!(output.stderr.len(), 0);
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert!(value.get("schema_version").is_none());
         assert_eq!(
@@ -732,7 +732,7 @@ esac
         ] {
             let output = fixture.run(&args);
             assert!(!output.status.success());
-            assert!(output.stdout.is_empty());
+            assert_eq!(output.stdout.len(), 0);
             assert!(!String::from_utf8_lossy(&output.stderr).contains("unexpected gh query"));
         }
     }

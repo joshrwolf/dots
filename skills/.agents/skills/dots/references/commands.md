@@ -14,6 +14,7 @@ Usage: dots [OPTIONS] [COMMAND]
 Commands:
   herdr   Register and inspect PR associations in Herdr workspaces
   github  Inspect GitHub CI evidence and PR review threads
+  task    Track shared, claimable work for a project across concurrent sessions
   skills  Export agent discovery documentation from this command tree
 
 Options:
@@ -530,6 +531,658 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+```
+
+## dots task
+
+```text
+Local SQLite work list shared by every session and worktree of one project. Records intent and coordination: open slices, dependencies, atomic claims with leases, and the PR each slice produced. Git and GitHub remain the truth about code; reconcile against them when resuming.
+The project defaults to the main checkout of the Git repository at --directory, so linked worktrees share one list; --project selects an explicit key.
+Parent sessions create, claim, update and close tasks. Delegated workers report results; they do not edit the list. Claims expire so an abandoned session cannot hold work forever; renew by claiming again with the same owner. No network access.
+
+Usage: dots task [OPTIONS] <COMMAND>
+
+Commands:
+  list     List tasks; open and held by default, highest priority then oldest first
+  ready    Fresh leaf work: open, unblocked, childless, no PR recorded, not under a live lease
+  show     Show one task with blockers, children count, and recent events
+  events   Project history after an event seq, oldest first; use the last seen seq as a cursor
+  add      Create an open task; --parent groups slices under a larger effort
+  claim    Atomically claim a task (or the next ready one) for --owner with a lease
+  release  Release --owner's claim without changing status
+  update   Edit fields or append a note; recording the PR URL is the usual update
+  done     Mark done; refuses while blocked, with open children, or leased to another owner unless --force
+  hold     Pause this task with a reason; it is never ready, its claim is cleared; descendants stay claimable (warned)
+  drop     Close a task as not going to happen; dependents are unblocked; same --force rules as done
+  reopen   Return a held, done or dropped task to open; fails if it is already open
+  dep      Manage prerequisites between tasks
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots task list
+
+```text
+List tasks; open and held by default, highest priority then oldest first
+
+Usage: dots task list [OPTIONS]
+
+Options:
+      --parent <ID>
+          Only tasks anywhere below this one
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --claimed-by <NAME>
+          Only tasks whose recorded owner is NAME, live lease or not
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --roots
+          Only top-level tasks
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --status <STATUS>
+          Exactly one status: open, held, done or dropped
+
+      --all
+          Include done and dropped tasks
+
+  -h, --help
+          Print help
+```
+
+## dots task ready
+
+```text
+Fresh leaf work: open, unblocked, childless, no PR recorded, not under a live lease
+
+Usage: dots task ready [OPTIONS]
+
+Options:
+      --parent <ID>
+          Only tasks anywhere below this one
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task show
+
+```text
+Show one task with blockers, children count, and recent events
+
+Usage: dots task show [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task events
+
+```text
+Project history after an event seq, oldest first; use the last seen seq as a cursor
+
+Usage: dots task events [OPTIONS]
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --since <SINCE>
+          Only events with seq greater than this (default 0)
+
+          [default: 0]
+
+      --json
+          Return JSON instead of readable output
+
+      --limit <LIMIT>
+          Maximum events to return
+
+          [default: 100]
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task add
+
+```text
+Create an open task; --parent groups slices under a larger effort
+
+Usage: dots task add [OPTIONS] <TITLE>
+
+Arguments:
+  <TITLE>
+
+
+Options:
+      --body <BODY>
+          Longer description, pattern reference, or acceptance notes
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --parent <ID>
+          Parent task ID
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --priority <PRIORITY>
+          Higher runs first among ready tasks (default 0)
+
+          [default: 0]
+
+      --blocked-by <ID>
+          Prerequisite task IDs; repeatable
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task claim
+
+```text
+Atomically claim a task for --owner. Fails if another owner holds a live lease, the task is blocked, it has open children, or it is not open. Claiming again with the same owner renews the lease; an expired lease can be taken over. --next claims the highest-priority ready task that has no children, optionally under --parent, and fails with exit 1 when nothing is ready. Claim before delegating a slice; release or close when the work stops.
+
+Usage: dots task claim [OPTIONS] [ID]
+
+Arguments:
+  [ID]
+          Task ID; omit with --next
+
+Options:
+      --next
+          Claim the highest-priority ready task instead of a specific ID
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --parent <ID>
+          With --next, only consider tasks anywhere below this one
+
+      --lease <LEASE>
+          Lease length in minutes, 1 to 10080 (default 120)
+
+          [default: 120]
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots task release
+
+```text
+Release --owner's claim without changing status
+
+Usage: dots task release [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task update
+
+```text
+Edit fields or append a note. Field edits on a task under another owner's live lease are refused unless --force; a --note is always allowed. Once a PR is recorded the slice leaves the ready pool: claim --next skips it even after the lease expires, and picking it up again means claiming it by id.
+
+Usage: dots task update [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --title <TITLE>
+
+
+      --body <BODY>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --pr <URL>
+          Full pull/merge request URL produced for this task
+
+      --branch <BRANCH>
+          Branch carrying the work, so another session can find it
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --priority <PRIORITY>
+
+
+      --parent <ID>
+          New parent task ID; an empty string detaches
+
+      --note <NOTE>
+          Append a dated note to the task history
+
+      --force
+          Edit fields despite another owner's live lease
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots task done
+
+```text
+Mark done; refuses while blocked, with open children, or leased to another owner unless --force
+
+Usage: dots task done [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --note <NOTE>
+          Outcome, e.g. the merge or verification evidence
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --force
+          Close anyway: ignore blockers, open children, and another owner's live lease
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task hold
+
+```text
+Pause this task with a reason; it is never ready, its claim is cleared; descendants stay claimable (warned)
+
+Usage: dots task hold [OPTIONS] --reason <REASON> <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --reason <REASON>
+
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --force
+          Override another owner's live lease
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task drop
+
+```text
+Close a task as not going to happen; dependents are unblocked; same --force rules as done
+
+Usage: dots task drop [OPTIONS] --reason <REASON> <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --reason <REASON>
+
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --force
+          Close anyway: ignore blockers, open children, and another owner's live lease
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task reopen
+
+```text
+Return a held, done or dropped task to open; fails if it is already open
+
+Usage: dots task reopen [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --note <NOTE>
+
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --force
+          Override another owner's live lease
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task dep
+
+```text
+Manage prerequisites between tasks
+
+Usage: dots task dep [OPTIONS] <COMMAND>
+
+Commands:
+  add     Make ID wait for --blocked-by; duplicates, cycles and parent/child pairs are rejected
+  remove  Remove a prerequisite
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task dep add
+
+```text
+Make ID wait for --blocked-by; duplicates, cycles and parent/child pairs are rejected
+
+Usage: dots task dep add [OPTIONS] --blocked-by <ID> <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --blocked-by <ID>
+
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task dep remove
+
+```text
+Remove a prerequisite
+
+Usage: dots task dep remove [OPTIONS] --blocked-by <ID> <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --blocked-by <ID>
+
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
 ```
 
 ## dots skills
