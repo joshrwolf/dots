@@ -366,18 +366,23 @@ mod tests {
         });
     }
 
-    #[test]
-    fn discovery_deadline_kills_and_reaps_the_process() {
-        runtime().block_on(async {
-            let mut command = tokio::process::Command::new("/bin/sleep");
-            command.arg("30");
-            let start = std::time::Instant::now();
-            assert!(matches!(
-                discover(&mut command).await,
-                Err(Error::SessionDiscoveryTimeout)
-            ));
-            assert!(start.elapsed() < Duration::from_secs(6));
-        });
+    /// Process lifecycle: the verify tier selects `acceptance` modules.
+    mod acceptance {
+        use super::*;
+
+        #[test]
+        fn discovery_deadline_kills_and_reaps_the_process() {
+            runtime().block_on(async {
+                let mut command = tokio::process::Command::new("/bin/sleep");
+                command.arg("30");
+                let start = std::time::Instant::now();
+                assert!(matches!(
+                    discover(&mut command).await,
+                    Err(Error::SessionDiscoveryTimeout)
+                ));
+                assert!(start.elapsed() < Duration::from_secs(6));
+            });
+        }
     }
 
     #[test]

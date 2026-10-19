@@ -3,3 +3,8 @@ extends = "rust-check"
 vars = { package = "herdrkit" }
 depends = ["^check"]
 cache = { enabled = false }
+
+[tasks.verify]
+extends = "rust-verify"
+vars = { package = "herdrkit" }
+depends = [":check"]

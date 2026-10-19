@@ -396,48 +396,57 @@ mod tests {
         assert_eq!(fs::read_to_string(other).unwrap(), "\"untouched\"");
     }
 
-    /// Names the slot for [`lock_probe`] when this test binary is re-executed.
-    const PROBE: &str = "HERDRKIT_STATE_FILE_PROBE";
+    /// Cross-process lifecycle: the verify tier selects `acceptance` modules.
+    mod acceptance {
+        use super::*;
 
-    /// A no-op in normal runs. Re-executed with [`PROBE`], it is another process
-    /// that tries the slot lock and exits abruptly without running destructors.
-    #[test]
-    fn lock_probe() {
-        let Some(path) = std::env::var_os(PROBE) else {
-            return;
-        };
-        let code = match StateFile::lock(Path::new(&path)) {
-            Ok(slot) => {
-                std::mem::forget(slot);
-                0
-            }
-            Err(Error::Busy) => 3,
-            Err(_) => 4,
-        };
-        std::process::exit(code);
-    }
+        /// Names the slot for [`lock_probe`] when this test binary is re-executed.
+        const PROBE: &str = "HERDRKIT_STATE_FILE_PROBE";
 
-    #[test]
-    fn locks_exclude_other_processes_and_survive_abrupt_holder_exit() {
-        let root = Scratch::new();
-        let path = root.0.join("slot");
-        let slot = StateFile::lock(&path).unwrap();
-        let probe = || {
-            std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "state_file::tests::lock_probe", "--nocapture"])
-                .env(PROBE, &path)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .status()
-                .unwrap()
-                .code()
-        };
-        assert_eq!(probe(), Some(3));
-        drop(slot);
-        // The probe exits while holding the lock. Kernel release, rather than
-        // a destructor or a saved PID, allows the next acquisition.
-        assert_eq!(probe(), Some(0));
-        StateFile::lock(&path).unwrap();
+        /// A no-op in normal runs. Re-executed with [`PROBE`], it is another process
+        /// that tries the slot lock and exits abruptly without running destructors.
+        #[test]
+        fn lock_probe() {
+            let Some(path) = std::env::var_os(PROBE) else {
+                return;
+            };
+            let code = match StateFile::lock(Path::new(&path)) {
+                Ok(slot) => {
+                    std::mem::forget(slot);
+                    0
+                }
+                Err(Error::Busy) => 3,
+                Err(_) => 4,
+            };
+            std::process::exit(code);
+        }
+
+        #[test]
+        fn locks_exclude_other_processes_and_survive_abrupt_holder_exit() {
+            let root = Scratch::new();
+            let path = root.0.join("slot");
+            let slot = StateFile::lock(&path).unwrap();
+            let probe = || {
+                std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "state_file::tests::acceptance::lock_probe",
+                        "--nocapture",
+                    ])
+                    .env(PROBE, &path)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .status()
+                    .unwrap()
+                    .code()
+            };
+            assert_eq!(probe(), Some(3));
+            drop(slot);
+            // The probe exits while holding the lock. Kernel release, rather than
+            // a destructor or a saved PID, allows the next acquisition.
+            assert_eq!(probe(), Some(0));
+            StateFile::lock(&path).unwrap();
+        }
     }
 
     #[test]

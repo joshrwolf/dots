@@ -11,10 +11,10 @@ import { Type } from "typebox";
 import { Check } from "typebox/value";
 import type { AssistantMessage, TranscriptContext, ToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { CompletionDelivery, registerDeliveryHooks } from "../extensions/jobs/delivery.ts";
-import { ENTRY_TYPE, RECORD_TYPE, WAKE_TYPE, emptyFacts, type Job } from "../extensions/jobs/protocol.ts";
-import jobsExtension from "../extensions/jobs/index.ts";
-import { JobSchema, JobsSchema } from "../extensions/jobs/results.ts";
+import { CompletionDelivery, registerDeliveryHooks } from "../../extensions/jobs/delivery.ts";
+import { ENTRY_TYPE, RECORD_TYPE, WAKE_TYPE, emptyFacts, type Job } from "../../extensions/jobs/protocol.ts";
+import jobsExtension from "../../extensions/jobs/index.ts";
+import { JobSchema, JobsSchema } from "../../extensions/jobs/results.ts";
 
 const installation = join(homedir(), ".pi", "agent", "install");
 const versionFile = join(installation, "current-version");

@@ -6,7 +6,7 @@ import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 import {test} from "node:test";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
+const root = fileURLToPath(new URL("../../", import.meta.url));
 const available = spawnSync("stow", ["--version"]).status === 0;
 
 test("native Stow tasks preserve runtime state and reject unmanaged files", {skip: !available}, () => {

@@ -3,8 +3,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import register from "../extensions/workers/index.ts";
-import { Registry, openRegistry } from "../extensions/workers/registry.ts";
+import register from "../../extensions/workers/index.ts";
+import { Registry, openRegistry } from "../../extensions/workers/registry.ts";
 
 // The extension's lifecycle against a scripted `pi`: spawn -> event -> wake,
 // message in every direction, late settles as updates, wait, reload -> paused

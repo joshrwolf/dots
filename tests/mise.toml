@@ -9,10 +9,10 @@ run = "node --test graph.test.mjs"
 cache = { enabled = false }
 
 [tasks."home-check"]
-run = "node --test stow.test.mjs skills.test.mjs checkout.test.mjs"
+run = "node --test skills.test.mjs checkout.test.mjs"
 cache = { enabled = false }
 
 [tasks.verify]
 depends = ["//:rust-build"]
-run = "node --test install.test.mjs"
+run = "node --test acceptance/*.test.mjs"
 cache = { enabled = false }

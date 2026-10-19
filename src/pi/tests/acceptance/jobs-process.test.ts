@@ -7,10 +7,10 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { Writable } from "node:stream";
-import { Capture } from "../extensions/jobs/capture.ts";
-import { CHUNK_BYTES, PENDING_BYTES, PREFIX_BYTES, TAIL_BYTES, emptyFacts, type OwnerMessage, type SupervisorFacts, type SupervisorMessage } from "../extensions/jobs/protocol.ts";
+import { Capture } from "../../extensions/jobs/capture.ts";
+import { CHUNK_BYTES, PENDING_BYTES, PREFIX_BYTES, TAIL_BYTES, emptyFacts, type OwnerMessage, type SupervisorFacts, type SupervisorMessage } from "../../extensions/jobs/protocol.ts";
 
-const supervisor = fileURLToPath(new URL("../extensions/jobs/supervisor.ts", import.meta.url));
+const supervisor = fileURLToPath(new URL("../../extensions/jobs/supervisor.ts", import.meta.url));
 const fixture = fileURLToPath(new URL("./jobs-fixture.mjs", import.meta.url));
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const mac = { skip: process.platform !== "darwin", timeout: 15_000 };

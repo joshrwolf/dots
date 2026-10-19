@@ -51,8 +51,9 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
 - Each artifact has one build path: build once into `dist/`, then install or
   link from there.
 - `check` is fast and side-effect free (format, lint, unit tests, typecheck)
-  and is what agents run. `verify` holds process-lifecycle, PTY, installation,
-  and bootstrap acceptance.
+  and is what agents run. `verify` holds process-lifecycle, PTY, host,
+  installation, and bootstrap acceptance. Place tests by the structural
+  markers in [build and activation](docs/build.md#check-and-verify).
 - Delete tests that serve no purpose, such as tests of mise's own graph or of
   task-file shape, rather than porting them.
 
@@ -74,7 +75,7 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
 
 - Root Cargo workspace, lockfile, toolchain, and lint policy govern Rust under
   `src/` and repository contracts in `tests/`. Use `mise run rust-check` for the
-  complete gate; leaf checks include upstream dependencies. Libraries need no
+  complete fast gate and `mise run rust-verify` for Rust acceptance; leaf checks include upstream dependencies. Libraries need no
   artificial build tasks.
 - Keep shared operations with their named owners. The task store derives
   readiness, claims transactionally, and accepts project key and time explicitly.

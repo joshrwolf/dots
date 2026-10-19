@@ -63,5 +63,5 @@ An opt-in integration test uses a disposable stock server and PTY client:
 ```sh
 HERDR_NAV_TEST_BINARY=/path/to/stock/herdr \
   cargo test --manifest-path Cargo.toml -p herdr-nav \
-  --test stock stock_server_jumplist -- --ignored --nocapture
+  --test acceptance stock_server_jumplist -- --ignored --nocapture
 ```

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { runCheck, checkDigest } from "../extensions/wake/check.ts";
+import { runCheck, checkDigest } from "../../extensions/wake/check.ts";
 
 test("check capture is bounded but compares complete stdout and stderr", async () => {
   const command = (suffix) => `${JSON.stringify(process.execPath)} -e 'process.stdout.write("x".repeat(100000) + "${suffix}"); process.stderr.write("diagnostic")'`;

@@ -20,10 +20,33 @@ The SDK lock supports macOS arm64. Checks need the installed Claude host; full
 acceptance also needs Stow, Herdr, and a Pi host matching the companion's exact
 development SDK. Host applications keep their own installers and runtime state.
 
-`check` validates source. `build` stages artifacts in `dist/`. `verify` also
-exercises installation and hosts in disposable homes and checkouts. None
-activates against your real home; provider-free tests do not prove live-model
-compatibility.
+`build` stages artifacts in `dist/`. Check, build, and verify never activate
+against your real home; provider-free tests do not prove live-model compatibility.
+
+## Check and verify
+
+`check` is fast and side-effect free: formatting, lints, typechecks, unit tests,
+and tests that spawn only short-lived real dependencies such as Git in a
+temporary repository. Agents run it routinely.
+
+`verify` runs `check` and `build`, then acceptance: process lifecycle (deadlines,
+kills, detached or cross-process children), PTYs, host applications, and
+installation in disposable homes and checkouts. Use it at integration
+checkpoints.
+
+Place each test by structure, not by a list of names:
+
+- Rust: acceptance lives in a crate's `tests/acceptance.rs` integration binary,
+  or in a `#[cfg(test)] mod acceptance` when it needs private items.
+  [`.config/nextest.toml`](../.config/nextest.toml) excludes both from the
+  default profile and selects only them in the `acceptance` profile.
+  `rust-check`/`:check` use the default profile; `rust-verify`/`:verify` use
+  `acceptance`.
+- Node: acceptance lives in `tests/acceptance/` of the Pi package or the
+  repository, which only the owning `verify` task runs.
+
+Tests that need a host not pinned by mise, such as the stock Herdr navigation
+test, stay `#[ignore]`d inside the acceptance binary and document how to run them.
 
 ## Development
 
@@ -34,13 +57,14 @@ mise run //src/dots:check
 mise run //src/herdr/nav:check
 mise run //src/pi:check
 mise run rust-check
+mise run //src/process:verify
 mise run --affected --affected-json '//...:check'
 mise tasks graph --explain
 ```
 
 Rust leaf checks include upstream dependencies. The root Rust gate checks the
 workspace in one pass. Root/configuration changes conservatively affect all
-projects. Use `verify` at integration checkpoints.
+projects.
 
 Code lives under named owners in `src/`, Stow payloads in `home/`, canonical
 skills in `skills/`, and repository contracts in `tests/`.

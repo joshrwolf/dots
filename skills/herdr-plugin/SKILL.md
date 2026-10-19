@@ -149,8 +149,10 @@ mise run rust-check
 ```
 
 It checks per-plugin build contracts, formatting, strict all-feature/all-target
-Clippy, the full workspace through `cargo nextest`, doctests, and rustdoc with
-warnings denied.
+Clippy, the workspace's fast tests through `cargo nextest`, doctests, and
+rustdoc with warnings denied. Process-lifecycle, PTY, and host tests go in a
+crate's `tests/acceptance.rs` or a `mod acceptance`; `mise run rust-verify`
+runs them.
 
 Do not link, install, or reload a live Herdr session merely to validate an
 edit. `mise run rust-build` stages all release binaries; `mise run //src/herdr:install` builds,

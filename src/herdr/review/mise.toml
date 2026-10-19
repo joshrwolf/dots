@@ -23,3 +23,8 @@ cache = { enabled = false }
 description = "Explicit Herdr source-install callback"
 run = "cargo install --frozen --path . --root . --force"
 cache = { enabled = false }
+
+[tasks.verify]
+extends = "rust-verify"
+vars = { package = "herdr-review" }
+depends = [":check"]

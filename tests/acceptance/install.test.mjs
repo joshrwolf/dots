@@ -6,9 +6,9 @@ import {join} from "node:path";
 import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 import {test} from "node:test";
-import {copyCheckout} from "./support/checkout.mjs";
+import {copyCheckout} from "../support/checkout.mjs";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
+const root = fileURLToPath(new URL("../../", import.meta.url));
 const staging = () => Object.fromEntries([
     "home/cli/.local/bin/dots", "home/herdr/.local/bin/herdr-issue", "home/herdr/.local/bin/herdr-review",
 ].map(path => [path, existsSync(join(root, path)) ? {

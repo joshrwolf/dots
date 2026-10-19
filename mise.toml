@@ -81,6 +81,10 @@ run = [
 env = { RUSTDOCFLAGS = "-D warnings" }
 cache = { enabled = false }
 
+[task_templates.rust-verify]
+run = "cargo nextest run --locked -p {{ vars.package }} --all-features --all-targets --profile acceptance"
+cache = { enabled = false }
+
 [tasks.build]
 description = "Build all native deliverables; never activate them"
 depends = ["rust-build", "//src/pi:package"]
@@ -101,7 +105,7 @@ cache = { enabled = false }
 
 [tasks.verify]
 description = "Complete checks, builds, and isolated host/installation acceptance"
-depends = ["check", "build", "//src/pi:verify", "//tests:verify"]
+depends = ["check", "build", "rust-verify", "//src/pi:verify", "//tests:verify"]
 cache = { enabled = false }
 
 [tasks.deps]
@@ -124,6 +128,12 @@ run = [
   "cargo doc --locked --workspace --all-features --no-deps",
 ]
 env = { RUSTDOCFLAGS = "-D warnings" }
+cache = { enabled = false }
+
+[tasks."rust-verify"]
+description = "Rust process-lifecycle and host acceptance tier"
+depends = ["rust-check"]
+run = "cargo nextest run --locked --workspace --all-features --all-targets --profile acceptance"
 cache = { enabled = false }
 
 

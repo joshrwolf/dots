@@ -3,3 +3,8 @@ extends = "rust-check"
 vars = { package = "dots-process" }
 depends = ["^check"]
 cache = { enabled = false }
+
+[tasks.verify]
+extends = "rust-verify"
+vars = { package = "dots-process" }
+depends = [":check"]

@@ -13,7 +13,8 @@ do not replace source or discovery links with copies.
 
 ```sh
 mise run //skills:check       # canonical definitions and generated CLI docs
-mise run //home:check         # discovery links and isolated Stow behavior
+mise run //home:check         # discovery links
+mise run //tests:verify       # isolated Stow and installation behavior
 mise run //skills:install
 ```
 

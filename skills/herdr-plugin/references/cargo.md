@@ -104,7 +104,8 @@ This is intentionally one gate:
 1. `cargo fmt --all --check`;
 2. `cargo clippy --locked --workspace --all-features --all-targets -- -D warnings`;
 3. `cargo nextest run --locked --workspace --all-features --all-targets`, including
-   pinned Neovim dependencies and manifest contracts;
+   pinned Neovim dependencies and manifest contracts; the default nextest
+   profile excludes acceptance tests, which `mise run rust-verify` runs;
 4. `cargo test --locked --workspace --all-features --doc`, because nextest does
    not run doctests;
 5. `cargo doc --locked --workspace --all-features --no-deps` with

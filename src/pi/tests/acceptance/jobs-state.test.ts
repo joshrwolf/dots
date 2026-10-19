@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { JobsRuntime } from "../extensions/jobs/runtime.ts";
-import { emptyFacts, restore, type Job } from "../extensions/jobs/protocol.ts";
+import { JobsRuntime } from "../../extensions/jobs/runtime.ts";
+import { emptyFacts, restore, type Job } from "../../extensions/jobs/protocol.ts";
 
 export function exampleJob(): Job {
   return { version: 1, id: "j-00000000-0000-0000-0000-000000000001", command: "exit 0", cwd: "/tmp", directory: "/tmp/neutral-job", timeoutMs: 1000, startedAt: 1, finishedAt: 2, state: "finished", stopIntent: null, facts: emptyFacts(), supervisorExit: { code: null, signal: "SIGKILL" }, observationLoss: null, artifactsEvicted: false };
