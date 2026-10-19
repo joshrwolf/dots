@@ -1,0 +1,26 @@
+min_version = "2026.10.14"
+
+# Machine setup never declares the enclosing checkout's development SDKs.
+[vars]
+packages = ""
+# A never-matching regex leaves the complete package intact.
+stow_ignore = '(?!)'
+macos_only = false
+stow = 'stow --dir="{{ config_root }}/../home" --target="$HOME" --no-folding --ignore="(^|/)\.crates(2\.json|\.toml)$"'
+
+[tasks.preview]
+description = "Check selected Stow links and conflicts without changing the home directory"
+skip_if = 'test -z "{{ vars.packages }}"'
+run = [
+  '''case "$(uname -s)/$(uname -m)" in Darwin/arm64|Linux/x86_64|Linux/aarch64) ;; *) echo "Unsupported machine platform" >&2; exit 1 ;; esac
+{% if vars.macos_only %}test "$(uname -s)" = Darwin || { echo "The desktop selection requires macOS" >&2; exit 1; }{% endif %}''',
+  '{{ vars.stow }} --ignore="{{ vars.stow_ignore }}" --simulate --restow {{ vars.packages }}',
+]
+cache = { enabled = false }
+
+[tasks.bootstrap]
+description = "Apply explicitly selected configuration with Stow; install no tools or host packages"
+depends = ["preview"]
+skip_if = 'test -z "{{ vars.packages }}"'
+run = '{{ vars.stow }} --ignore="{{ vars.stow_ignore }}" --restow {{ vars.packages }}'
+cache = { enabled = false }

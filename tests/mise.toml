@@ -1,7 +1,7 @@
 [tasks.check]
 extends = "rust-check"
 vars = { package = "dots-repository-tests" }
-depends = [":graph-check", ":home-check"]
+depends = [":graph-check", ":home-check", ":bootstrap-check"]
 cache = { enabled = false }
 
 [tasks."graph-check"]
@@ -10,6 +10,10 @@ cache = { enabled = false }
 
 [tasks."home-check"]
 run = "node --test stow.test.mjs skills.test.mjs checkout.test.mjs"
+cache = { enabled = false }
+
+[tasks."bootstrap-check"]
+run = "node --test bootstrap.test.mjs remote-bootstrap.test.mjs"
 cache = { enabled = false }
 
 [tasks.verify]

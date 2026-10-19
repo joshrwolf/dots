@@ -1,0 +1,2 @@
+# This transferable project must not inherit machine profiles or build SDKs.
+ceiling_paths = ["{{ config_root | dirname }}"]

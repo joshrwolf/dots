@@ -4,7 +4,7 @@ Mise selects tools and orders tasks; Cargo and npm own their dependency graphs.
 
 ## Setup
 
-Use mise 2026.10.12 or newer with Homebrew and Apple Command Line Tools:
+Use mise 2026.10.14 or newer with Homebrew and Apple Command Line Tools:
 
 ```sh
 mise trust
@@ -52,6 +52,17 @@ install, and verify. Cargo's MSRV is a separate compatibility requirement.
 Only the Pi tarball uses mise's local artifact cache; Cargo caches compilation.
 Checks, dependency installs, acceptance, updates, and activation are uncached.
 The repository disables remote task caching.
+
+## Machine setup
+
+The [machine-setup entry point](../bootstrap/README.md) separates host setup from
+this checkout's development SDKs. Select portable agent configuration or the
+existing macOS desktop configuration without installing host packages. The root
+activation tasks below remain available. Machine-setup checks use disposable homes:
+
+```sh
+mise run //tests:bootstrap-check
+```
 
 ## Activation
 

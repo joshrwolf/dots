@@ -36,6 +36,9 @@ __pycache__/
 /pi-plugins
 /scripts/
 
+# Optional independent private source checkout; never add it to public history.
+/private/
+
 # Private skills and their discovery links stay machine-local.
 /skills/local-*
 /home/skills/.agents/skills/local-*

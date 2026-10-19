@@ -1,0 +1,5 @@
+[vars]
+packages = "codex pi skills"
+# Keep only coding skills and instructions. Leave the host's Pi theme alone.
+# Keep ancestor directories traversable; never install ignored local skills.
+stow_ignore = '(^|/)(?:\.agents|\.claude)/skills/(?!(?:golang-[^/]+|idiomatic-rust)(?:/|$)).*|(^|/)\.pi/agent/themes(?:/.*)?'

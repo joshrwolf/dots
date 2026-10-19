@@ -1,0 +1,46 @@
+min_version = "2026.10.14"
+
+[vars]
+checkout = "{{ env.HOME }}/.local/share/dots/checkouts/dots"
+public_url = "https://github.com/joshrwolf/dots.git"
+public_ref = { required = true }
+public_profile = "agents"
+with_private = false
+
+[bootstrap.repos]
+"{{ vars.checkout }}" = { url = "{{ vars.public_url }}", ref = "{{ vars.public_ref }}" }
+
+[bootstrap.hooks.pre-repos]
+run = '''
+command -v git >/dev/null || { echo "Install Git before bootstrap" >&2; exit 1; }
+command -v stow >/dev/null || { echo "Install GNU Stow before bootstrap" >&2; exit 1; }
+printf '%s\n' '{{ vars.public_ref }}' | grep -Eq '^[0-9a-f]{40}$' || { echo "public_ref must be a full commit SHA" >&2; exit 1; }
+{% if vars.with_private %}
+printf '%s\n' '{{ vars.private_ref }}' | grep -Eq '^[0-9a-f]{40}$' || { echo "private_ref must be a full commit SHA" >&2; exit 1; }
+{% endif %}
+'''
+
+[tasks.bootstrap]
+description = "Apply pinned checkouts from persistent paths, never from transfer staging"
+run = '''
+set -eu
+test "$(git -C "{{ vars.checkout }}" rev-parse HEAD)" = "{{ vars.public_ref }}"
+cd "{{ vars.checkout }}/bootstrap"
+"{{ mise_bin }}" trust mise.toml
+test -f "mise.{{ vars.public_profile }}.toml"
+"{{ mise_bin }}" -E "{{ vars.public_profile }}" run preview
+{% if vars.with_private %}
+test "$(git -C "{{ vars.checkout }}/private" rev-parse HEAD)" = "{{ vars.private_ref }}"
+cd "{{ vars.checkout }}/private/bootstrap"
+"{{ mise_bin }}" trust mise.toml
+test -f "mise.{{ vars.private_profile }}.toml"
+"{{ mise_bin }}" -E "{{ vars.private_profile }}" run preview
+{% endif %}
+cd "{{ vars.checkout }}/bootstrap"
+"{{ mise_bin }}" -E "{{ vars.public_profile }}" bootstrap
+{% if vars.with_private %}
+cd "{{ vars.checkout }}/private/bootstrap"
+"{{ mise_bin }}" -E "{{ vars.private_profile }}" bootstrap
+{% endif %}
+'''
+cache = { enabled = false }

@@ -1,0 +1,8 @@
+[vars]
+with_private = true
+private_url = { required = true }
+private_ref = { required = true }
+private_profile = "skills"
+
+[bootstrap.repos]
+"{{ vars.checkout }}/private" = { url = "{{ vars.private_url }}", ref = "{{ vars.private_ref }}" }
