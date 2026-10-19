@@ -137,8 +137,10 @@ Follow several goals at once; selecting another never pauses or closes earlier
 work. `/goal` chooses which followed goal to inspect, with `1` slices, `2` brief,
 and `3` record details. `/goal show ID` selects directly; `/goal history ID`
 includes closed details. In slices, `[`/`]` select a group; left/right fold and
-unfold it (Space toggles). In fullscreen mode, clicking the dashboard opens the
-selected goal's inspector; group arrows in the dashboard remain read-only.
+unfold it (Space toggles). Inspection opens in a bounded overlay; Escape closes
+it without replacing the editor. Finished goals include closed slices in inspection,
+not in ordinary agent context. In fullscreen mode, clicking the dashboard opens
+the selected goal's inspector; dashboard group arrows remain read-only.
 Selection affects display, not which goals get context.
 
 `/goal list` lists shared open/held goals and marks this session's follows;
@@ -150,7 +152,8 @@ other sessions. Unfollowing removes future injected context, not prior messages.
 
 The followed set and display selection survive branch reload/resume; older
 single-focus sessions restore as a one-goal set. Fresh sessions follow nothing.
-The dashboard shows recorded progress and a short slice list, not live execution.
+The dashboard sits below the editor, above the status line. It shows recorded
+progress and a short slice list, not live execution.
 Claimed and held slices get priority under their parent groups; `/goal` opens
 nested inspection. Group fractions include all recorded leaves, even closed ones;
 closed leaf details stay behind history, while group summaries preserve ancestry.

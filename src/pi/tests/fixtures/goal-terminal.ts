@@ -18,7 +18,18 @@ export default function (pi: ExtensionAPI): void {
   const observed: ExtensionAPI = { ...pi, registerCommand(name, definition) {
     pi.registerCommand(name, { ...definition, async handler(args, ctx) {
       const ui: typeof ctx.ui = { ...ctx.ui, async custom(factory, options) {
-        try { return await ctx.ui.custom(factory, options); } finally { mark("inspector-closed"); }
+        try {
+          return await ctx.ui.custom(async (...parameters) => {
+            const view = await factory(...parameters);
+            const render = view.render.bind(view);
+            view.render = (width) => {
+              const lines = render(width);
+              mark(`inspector-render:${width}:${lines.length}`);
+              return lines;
+            };
+            return view;
+          }, options);
+        } finally { mark(`editor:${ctx.ui.getEditorText()}`); mark("inspector-closed"); }
       } };
       try { await definition.handler(args, { ...ctx, ui }); } finally { mark(`command-end:${args}`); }
     } });
@@ -34,10 +45,12 @@ export default function (pi: ExtensionAPI): void {
           overview: { ...nested.overview, goal: { ...nested.overview.goal, root: { ...nested.overview.goal.root, id, title: "Nested fixture goal" } } },
         }, history);
       }
-      return { ...snapshot, overview: { ...snapshot.overview,
-        goal: { ...snapshot.overview.goal, root: { ...root, id, title: id === root.id ? root.title : "Second fixture goal" } },
-        tasks: snapshot.overview.tasks.map((task) => ({ ...task, parent: id })),
-      } };
+      const finished = id === "t-fedcba";
+      return withHierarchy({ ...snapshot, overview: { ...snapshot.overview,
+        goal: { ...snapshot.overview.goal, root: { ...root, id, status: finished ? "done" : "open", title: finished ? "Completed fixture goal" : id === root.id ? root.title : "Second fixture goal" } },
+        tasks: snapshot.overview.tasks.map((task) => ({ ...task, parent: id, status: finished ? "done" : "open", title: finished ? "Completed fixture slice" : task.title })),
+        progress: finished ? { ...snapshot.overview.progress, done: 1, open: 0, ready: 0 } : snapshot.overview.progress,
+      } }, history);
     },
     async brief() { return { text: "# Fixture brief\n" + Array.from({ length: 100 }, (_, i) => `Pattern line ${i}: shared ownership, café 👩‍💻`).join("\n") + "\nEND_OF_GOAL_BRIEF" }; },
   });

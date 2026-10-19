@@ -4,6 +4,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { getThemeByName } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import goal, { FOCUS_ENTRY, restoreFocus, restoreGoals } from "../extensions/goal/index.ts";
 import { source, snapshot } from "./goal-fixture.mjs";
+import { withHierarchy } from "../extensions/goal/source.ts";
 
 const entry = (focus) => ({ type: "custom", customType: FOCUS_ENTRY, data: { version: 1, focus } });
 const focused = () => ({ id: "t-123abc", project: "/example/project" });
@@ -392,7 +393,10 @@ test("dashboard uses native press/click handling and cannot revive stale widgets
   assert.equal(h.backend.calls.length, before, "press does not open inspection");
   let inspector;
   const opened = gate(), closed = gate();
-  h.ctx.ui.custom = async (factory) => {
+  h.ctx.ui.custom = async (factory, options) => {
+    assert.equal(options.overlay, true);
+    assert.equal(options.overlayOptions.anchor, "center");
+    assert.equal(options.overlayOptions.maxHeight, "80%");
     inspector = factory(tui, theme, { matches: (data, action) => data === "\r" && action === "tui.select.confirm" }, () => {
       inspector.dispose(); closed.resolve();
     });
@@ -415,10 +419,41 @@ test("dashboard uses native press/click handling and cannot revive stale widgets
   assert.equal(replacement.handleMouse(event), undefined);
 });
 
+test("finished goal inspection shows closed slices without expanding ordinary agent context", async () => {
+  initTheme("dark", false);
+  const theme = getThemeByName("dark");
+  for (const mode of ["tui", "json"]) {
+    const backend = source();
+    backend.show = async (_cwd, id, _signal, history = false) => {
+      const full = snapshot(id);
+      full.overview.goal.root.status = "done";
+      full.overview.tasks[0].status = "done";
+      Object.assign(full.overview.progress, { open: 0, ready: 0, done: 1 });
+      return withHierarchy(full, history);
+    };
+    const h = harness(backend, [entry(focused())], mode);
+    let output;
+    h.ctx.ui.custom = async (factory, options) => {
+      assert.equal(options.overlay, true);
+      const view = factory({ requestRender() {}, terminal: { rows: 40 } }, theme, { matches: () => false }, () => {});
+      output = view.render(100).join("\n");
+      view.dispose();
+    };
+    await h.event("session_start");
+    await h.command("show");
+    if (mode === "tui") { assert.match(output, /Reference slice/); assert.match(output, /history/); }
+    else assert.doesNotMatch(h.messages.at(-1).message.content, /Reference slice/);
+    const context = (await h.context())[0].content;
+    assert.doesNotMatch(context, /Reference slice/);
+    assert.match(context, /1 closed task details hidden/);
+  }
+});
+
 test("branch changes remove only the goal widget and headless inspection never wakes", async () => {
   const h = harness(source(), [entry(focused())], "tui");
   await h.event("session_start");
   assert.equal(h.widgets[0][0], "dots.goal");
+  assert.deepEqual(h.widgets[0][2], { placement: "belowEditor" });
   h.entries.push(entry(null));
   await h.event("session_tree");
   assert.deepEqual(h.widgets.at(-1), ["dots.goal", undefined]);

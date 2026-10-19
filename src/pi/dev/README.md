@@ -36,7 +36,7 @@ unavailable data, and brief warnings. In its
 inspector, **[**/**]** select groups and **←**/**→** fold/unfold them; Space remains
 the workbench state switch.
 **E** switches between the persistent panel and slice inspection; the frame
-scenario also shows the goal panel beside the native editor. Expand and scroll to compare summaries with recorded evidence. Wake scenarios show
+scenario also shows the goal panel below the native editor. Expand and scroll to compare summaries with recorded evidence. Wake scenarios show
 scheduled follow-ups and failed checks. Input outside commands is ignored, not sent to a model.
 
 `mise run //src/pi:verify-terminal` exercises real-host interaction in regular

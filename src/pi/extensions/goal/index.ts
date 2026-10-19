@@ -4,7 +4,7 @@ import { MouseRegion } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { labelText, sourceText } from "../../src/index.ts";
 import { FollowedWidget, GoalInspector, inspection, orientation, compactSummary, type Focus, type GoalView } from "./present.ts";
-import { dotsSource, type GoalSource } from "./source.ts";
+import { dotsSource, withHierarchy, type GoalSource } from "./source.ts";
 
 export const FOCUS_ENTRY = "dots.goal.focus";
 const WIDGET = "dots.goal";
@@ -83,7 +83,7 @@ export default function goalExtension(pi: ExtensionAPI, source: GoalSource = dot
         return Object.assign(region, {
           dispose: () => { if (widget === owned) { widget = undefined; mounted = false; } },
         });
-      });
+      }, { placement: "belowEditor" });
     }
     if (widget) { widget.view.update([...followed.values()], focus?.id, widget.theme); widget.redraw(); }
   };
@@ -201,9 +201,11 @@ export default function goalExtension(pi: ExtensionAPI, source: GoalSource = dot
       let observed = await refresh(ctx);
       if (!current()) return;
       if (!observed) { notify(ctx, "No focused goal. Use /goal focus ID or /goal list."); return; }
-      if (history && !observed.error) {
+      const finished = observed.snapshot?.overview.goal.root.status === "done" || observed.snapshot?.overview.goal.root.status === "dropped";
+      if ((history || (finished && ctx.mode === "tui" && ctx.hasUI)) && !observed.error) {
         try {
-          const snapshot = await source.show(ctx.cwd, observed.focus.id, controller.signal, true);
+          const snapshot = observed.snapshot?.allTasks ? withHierarchy(observed.snapshot, true)
+            : await source.show(ctx.cwd, observed.focus.id, controller.signal, true);
           if (!current()) return;
           if (snapshot.project !== observed.focus.project || snapshot.overview.goal.root.id !== observed.focus.id) throw new Error("Goal history identity changed");
           const brief = await source.brief(snapshot.overview.goal.brief);
@@ -223,10 +225,10 @@ export default function goalExtension(pi: ExtensionAPI, source: GoalSource = dot
         if (!current()) { done(); return { render: () => [], invalidate() {} }; }
         const close = () => done();
         closeInspector = close;
-        const view = new GoalInspector(bindings, close, () => tui.requestRender(), () => Math.max(1, Math.min(24, tui.terminal.rows - 10)));
+        const view = new GoalInspector(bindings, close, () => tui.requestRender(), () => Math.max(1, Math.min(24, Math.floor(tui.terminal.rows * 0.8) - 2)));
         view.setGoal(document, theme, () => tui.requestRender());
         return Object.assign(view, { dispose: () => { if (closeInspector === close) closeInspector = undefined; } });
-      });
+      }, { overlay: true, overlayOptions: { anchor: "center", width: "80%", minWidth: 60, maxHeight: "80%", margin: 1 } });
     } finally { if (dialog === controller) dialog = undefined; }
   };
 

@@ -141,7 +141,7 @@ export const scenarios: readonly Scenario[] = [
       inspector.setContent({ title: "Application frame", detail: "real components · fixture conversation", body: new VStack([
         createHeader(theme), new Spacer(1), new UserMessageComponent("Check the renderer and report any failures.", undefined, 0),
         thinkingComponent(0, false), new Spacer(1), new Text(theme.fg("text", "I’ll run the focused checks, then review the result."), 0, 0), new Spacer(1), ...transcript(context, phase, expanded, job),
-        new Spacer(1), ...(activity ? [activity, new Spacer(1)] : []), goals, new Spacer(1), ...(context.createEditor ? [context.createEditor(theme)] : []), footer,
+        new Spacer(1), ...(activity ? [activity, new Spacer(1)] : []), ...(context.createEditor ? [context.createEditor(theme), new Spacer(1)] : []), goals, footer,
       ]) }, theme);
     } };
   } },
