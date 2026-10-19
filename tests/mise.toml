@@ -13,6 +13,6 @@ run = "node --test skills.test.mjs checkout.test.mjs"
 cache = { enabled = false }
 
 [tasks.verify]
-depends = ["//:rust-build"]
+depends = ["//:build"]
 run = "node --test acceptance/*.test.mjs"
 cache = { enabled = false }

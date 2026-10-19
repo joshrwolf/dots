@@ -60,10 +60,6 @@ depends = ["custom:skills", "custom:codex-agent", "cargo:herdr-review", "custom:
 [monorepo.projects."cargo:dots-repository-tests"]
 depends_add = ["custom:home"]
 
-[monorepo.projects."custom:herdr-deploy"]
-root = "src/herdr/deploy"
-depends = ["cargo:herdr-find", "cargo:herdr-github", "cargo:herdr-nav", "cargo:herdr-review"]
-
 [monorepo.projects."custom:aerospace"]
 root = "src/aerospace"
 
@@ -84,20 +80,7 @@ cache = { enabled = false }
 
 [tasks.build]
 description = "Build all native deliverables; never activate them"
-depends = ["rust-build", "//src/pi:package"]
-cache = { enabled = false }
-
-[tasks."rust-build"]
-# Cargo owns artifact placement and replacement, including custom target dirs.
-# This installation root is build output, never the user's executable directory.
-run = [
-  "cargo install --frozen --path src/dots --root dist --force",
-  "cargo install --frozen --path src/herdr/find --root dist --force",
-  "cargo install --frozen --path src/herdr/github --root dist --force",
-  "cargo install --frozen --path src/herdr/nav --root dist --force",
-  "cargo install --frozen --path src/herdr/review --root dist --force",
-  "cargo install --frozen --path src/herdr/issue --root dist --force",
-]
+depends = ["//src/...:build"]
 cache = { enabled = false }
 
 [tasks.verify]
@@ -113,7 +96,7 @@ cache = { enabled = false }
 
 [tasks.check]
 description = "Complete repository gate, without installation or cloud CI"
-depends = ["rust-check", "//src/pi:check", "//src/claude/codex-agent:check", "//skills:check", "//src/herdr/deploy:check", "//src/aerospace:check", "//home:check", "//tests:graph-check"]
+depends = ["rust-check", "//src/pi:check", "//src/claude/codex-agent:check", "//skills:check", "//src/aerospace:check", "//home:check", "//tests:graph-check"]
 cache = { enabled = false }
 
 [tasks."rust-check"]

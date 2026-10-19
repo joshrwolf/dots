@@ -18,9 +18,9 @@
 - Revalidate every mutable external invariant immediately before mutations; lock ownership alone does not make cached state current.
 - Persist reservations before external side effects and make retry recovery explicit and identity-based.
 - Give spawned commands a wall-clock deadline and always drain, kill, and reap them; only explicitly interactive watchers may be unbounded.
-- Manifests invoke only `./bin/herdr-<plugin>`. Their source-install callback is `mise run :prepare` in the plugin directory.
+- Manifests invoke only `./bin/herdr-<plugin>` and declare no `[[build]]` callback: `herdr plugin link` never runs one. The plugin's `:build` stages `bin/`; `:install` builds, then links the plugin directory.
 - Background features use `herdrkit::service`: startup/event hooks ensure a pane-less service and exit. Require a server-scoped OS lock, readiness handshake, bounded control messages, launch backoff, and owner/disable checks. Recovery is event-driven, not Herdr supervision. Keep provider scheduling and durable state in the plugin.
-- Cargo owns compilation and binary staging through `cargo install --frozen --root dist`. Keep its installation tracking/locking enabled. Normal builds never change installed binaries. Source-install callbacks use the plugin directory as their explicit Cargo install root; live activation remains separate.
+- Cargo owns compilation and staging through `cargo install`: a plugin uses `--locked --root .`; other executables use `--frozen --root dist`. Keep installation tracking/locking enabled. Linked plugins run from the checkout, so builds there are live: link only from the primary checkout, never from an agent worktree. See [activation](../../docs/build.md#activation).
 - Run a feature's `:check` task for scoped validation, or root `mise run rust-check` for the complete fast Rust gate: formatting, strict Clippy, nextest, doctests and warnings-as-errors rustdoc. Process-lifecycle and host tests belong to the `acceptance` tier (`mise run rust-verify`); see [check and verify](../../docs/build.md#check-and-verify).
 - Keep manifest-to-dispatch and build contracts executable in `tests`; a manifest change requires updating its contract expectation.
 - Use `herdrkit::testing::Server` and owned `Step::reply`/`Step::bytes` fixtures; never leak allocations to manufacture static test data.

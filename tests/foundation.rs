@@ -133,8 +133,19 @@ mod tests {
             }
             if let Some(build) = tasks.get("build") {
                 let command = build.get("run").and_then(Value::as_str).unwrap();
-                assert!(command.starts_with("cargo install --frozen --path . "));
-                assert!(command.contains("$MISE_MONOREPO_ROOT/dist"));
+                // A Herdr plugin stages into its own directory, which
+                // `herdr plugin link` registers in place.
+                let plugin = Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join(&member)
+                    .join("herdr-plugin.toml")
+                    .is_file();
+                if plugin {
+                    assert_eq!(command, "cargo install --locked --path . --root . --force");
+                } else {
+                    assert!(command.starts_with("cargo install --frozen --path . "));
+                    assert!(command.contains("$MISE_MONOREPO_ROOT/dist"));
+                }
                 assert!(!command.contains("--no-track"));
             }
         }

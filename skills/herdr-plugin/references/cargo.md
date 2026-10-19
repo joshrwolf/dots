@@ -60,36 +60,28 @@ becomes stale loudly if the lint stops applying.
 
 ## Per-plugin build primitive
 
-Every plugin manifest must have exactly one build command:
+Each plugin's only build task, `build`, runs
+`cargo install --locked --path . --root . --force` from the plugin directory,
+staging `bin/` beside the manifest. Its `install` task builds, then runs
+`herdr plugin link .`. Manifests declare no `[[build]]` callback, because
+`herdr plugin link` never runs one. Cargo owns compilation, executable
+placement, and installation tracking/locking; do not disable tracking or add
+another copy/staging dispatcher.
 
-```toml
-[[build]]
-command = ["mise", "run", ":prepare"]
-```
-
-Each plugin owns a `prepare` task that runs
-`cargo install --frozen --path . --root . --force` from that plugin's directory.
-It is an explicit host installation callback, distinct from ordinary builds.
-Cargo owns compilation, executable placement, and installation tracking/locking;
-do not disable tracking or add another copy/staging dispatcher.
-
-Normal `build` tasks use `--root dist`, not active plugin directories. Each executable package has its own task;
-Cargo shares compilation work through the root workspace. Run `mise run deps` to
-fetch locked dependencies before an offline build.
+Other executables build into `--root dist`. Cargo shares compilation work
+through the root workspace.
 
 Useful targets from the repository root:
 
 ```sh
-mise run //src/herdr/find:build   # stage one plugin through Cargo
-mise run rust-build              # all native executables
-mise run //src/herdr:link          # link every manifest-backed plugin
-mise run //src/herdr:install                 # build, restow, then link plugins last
+mise run //src/herdr/find:build    # stage one plugin in its directory
+mise run build                     # every deliverable
+mise run //src/herdr/find:install  # build, then link the plugin directory
 ```
 
-`[[build]]` runs during plugin installation, not local `plugin link`, so linking
-must follow successful staging. The `link` task prepares immutable release directories and treats any link
-failure or missing Herdr executable as fatal. Registration is not a transaction
-across all plugins: preceding links may have succeeded, so retry explicitly.
+A linked plugin runs from the checkout, so later builds there are live. Link
+only from the primary checkout, never from an agent worktree. Relinking is
+harmless; each plugin link is independent, so retry a failed one.
 
 ## Complete validation gate
 

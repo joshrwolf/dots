@@ -53,8 +53,9 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
   other logic lives in Rust: `cargo xtask` (in-repo, never installed, created
   only on demonstrated need) for repository build, install, and contracts;
   `dots` only for user commands.
-- Each artifact has one build path: build once into `dist/`, then install or
-  link from there.
+- Each artifact has one build path: build once into `dist/` (a Herdr plugin
+  into its own directory, Herdr's native layout), then install or link from
+  there.
 - `check` is fast and side-effect free (format, lint, unit tests, typecheck)
   and is what agents run. `verify` holds process-lifecycle, PTY, host,
   installation, and bootstrap acceptance. Place tests by the structural

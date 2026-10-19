@@ -38,9 +38,9 @@ test("mise selects the actual affected deliverables", async t => {
         const home = ["custom:home", "cargo:herdr-plugin-contracts", "cargo:dots-repository-tests"];
         const skills = ["custom:skills", ...home];
         for (const [file, expected] of [
-            ["src/github/client/src/probe.rs", ["cargo:github-client", "cargo:github-inspect", "cargo:herdr-prs", "cargo:dots-cli", "cargo:herdr-github", "cargo:herdr-review", "cargo:herdr-find", "custom:herdr-deploy", ...skills]],
-            ["src/herdr/nav/src/probe.rs", ["cargo:herdr-nav", "cargo:herdr-plugin-contracts", "custom:herdr-deploy"]],
-            ["src/herdr/review/core/src/probe.rs", ["cargo:review-core", "cargo:herdr-review", "cargo:herdr-find", "custom:herdr-deploy", ...home]],
+            ["src/github/client/src/probe.rs", ["cargo:github-client", "cargo:github-inspect", "cargo:herdr-prs", "cargo:dots-cli", "cargo:herdr-github", "cargo:herdr-review", "cargo:herdr-find", ...skills]],
+            ["src/herdr/nav/src/probe.rs", ["cargo:herdr-nav", "cargo:herdr-plugin-contracts"]],
+            ["src/herdr/review/core/src/probe.rs", ["cargo:review-core", "cargo:herdr-review", "cargo:herdr-find", ...home]],
             ["src/tasks/src/probe.rs", ["cargo:dots-tasks", "cargo:dots-cli", ...skills]],
             ["src/herdr/tests/src/probe.rs", ["cargo:herdr-plugin-contracts"]],
             ["src/pi/extensions/probe.ts", ["custom:pi"]],
@@ -48,9 +48,8 @@ test("mise selects the actual affected deliverables", async t => {
             ["home/zsh/.zshrc-probe", home],
             ["skills/herdr-plugin/probe.md", skills],
             ["skills/.local/share/agent-skills/golang/skills/probe.md", skills],
-            ["src/herdr/review/editor/lua/probe.lua", ["cargo:herdr-review", "cargo:herdr-find", "custom:herdr-deploy", ...home]],
+            ["src/herdr/review/editor/lua/probe.lua", ["cargo:herdr-review", "cargo:herdr-find", ...home]],
             ["src/aerospace/probe.py", ["custom:aerospace", ...home]],
-            ["src/herdr/deploy/probe.py", ["custom:herdr-deploy"]],
             ["tests/shared-probe.mjs", ["cargo:dots-repository-tests"]],
             ["build-policy.txt", all], ["Cargo.lock", all],
         ]) {

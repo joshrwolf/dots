@@ -79,6 +79,7 @@ home/herdr/.local/bin/herdr-review.tmp.*
 # Runtime data must never be captured through a folded Stow directory.
 /home/herdr/.config/herdr/plugins.json
 /home/herdr/.config/herdr/.plugins.lock
+/home/herdr/.config/herdr/plugins/
 /home/skills/.local/share/dots/
 
 # Shared Rust workspace and prepared artifacts (never live registration).

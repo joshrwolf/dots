@@ -10,18 +10,14 @@ depends = ["^check"]
 cache = { enabled = false }
 
 [tasks.build]
-run = 'cargo install --frozen --path . --root "$MISE_MONOREPO_ROOT/dist" --force'
+description = "Stage bin/ in this plugin directory"
+run = "cargo install --locked --path . --root . --force"
 cache = { enabled = false }
 
 [tasks.install]
-description = "Register this plugin from a verified immutable release"
+description = "Build, then link this plugin directory into Herdr"
 depends = [":build"]
-run = 'python3 "$MISE_MONOREPO_ROOT/src/herdr/deploy/main.py" review'
-cache = { enabled = false }
-
-[tasks.prepare]
-description = "Explicit Herdr source-install callback"
-run = "cargo install --frozen --path . --root . --force"
+run = "herdr plugin link ."
 cache = { enabled = false }
 
 [tasks.verify]
