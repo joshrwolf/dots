@@ -591,6 +591,7 @@ impl Store {
                 "UPDATE tasks SET parent=?2 WHERE id=?1",
                 params![id, parent],
             )?;
+            validate_subtree_dependencies(&tx, id)?;
             changes.push(format!(
                 "parent {} -> {}",
                 before.parent.as_deref().unwrap_or("none"),
@@ -695,12 +696,7 @@ impl Store {
                 through: blocked_by.into(),
             });
         }
-        if descends_from(&tx, id, blocked_by)? || descends_from(&tx, blocked_by, id)? {
-            return Err(Error::Hierarchy {
-                id: id.into(),
-                other: blocked_by.into(),
-            });
-        }
+        validate_dependency_hierarchy(&tx, id, blocked_by)?;
         if tx.execute(
             "INSERT INTO deps VALUES(?1,?2) ON CONFLICT DO NOTHING",
             params![id, blocked_by],
@@ -873,6 +869,7 @@ fn insert_task(
         params![id, project.0, task.parent, task.title.trim(), task.body, task.priority, actor.now],
     )?;
     for blocker in &task.blocked_by {
+        validate_dependency_hierarchy(tx, &id, blocker)?;
         tx.execute(
             "INSERT INTO deps VALUES(?1,?2) ON CONFLICT DO NOTHING",
             params![id, blocker],
@@ -924,7 +921,38 @@ fn reaches(tx: &Transaction<'_>, from: &str, target: &str) -> Result<bool, Error
     Ok(found)
 }
 
-/// Whether `candidate` is `target` or sits below it in the parent chain.
+fn validate_dependency_hierarchy(
+    tx: &Transaction<'_>,
+    id: &str,
+    blocked_by: &str,
+) -> Result<(), Error> {
+    if descends_from(tx, id, blocked_by)? || descends_from(tx, blocked_by, id)? {
+        return Err(Error::Hierarchy {
+            id: id.into(),
+            other: blocked_by.into(),
+        });
+    }
+    Ok(())
+}
+
+/// Check both incoming and outgoing edges after a move, within its transaction.
+/// Descendants move too; checking just the moved root would miss their edges.
+fn validate_subtree_dependencies(tx: &Transaction<'_>, id: &str) -> Result<(), Error> {
+    let mut statement = tx.prepare(
+        "WITH RECURSIVE subtree(id) AS (SELECT ?1 UNION SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent=subtree.id)
+         SELECT task,blocked_by FROM deps WHERE task IN (SELECT id FROM subtree) OR blocked_by IN (SELECT id FROM subtree)",
+    )?;
+    let dependencies = statement.query_map(params![id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for dependency in dependencies {
+        let (task, blocker) = dependency?;
+        validate_dependency_hierarchy(tx, &task, &blocker)?;
+    }
+    Ok(())
+}
+
+/// Whether `candidate` sits below `target` in the parent chain.
 fn descends_from(tx: &Transaction<'_>, candidate: &str, target: &str) -> Result<bool, Error> {
     let found: bool = tx.query_row(
         "WITH RECURSIVE chain(id) AS (SELECT parent FROM tasks WHERE id=?1 UNION SELECT tasks.parent FROM tasks JOIN chain ON tasks.id=chain.id)
@@ -1093,6 +1121,135 @@ mod tests {
                 actor(1),
             )
             .unwrap()
+    }
+
+    fn counts(store: &Store) -> (i64, i64, i64) {
+        store.connection.query_row(
+            "SELECT (SELECT count(*) FROM tasks), (SELECT count(*) FROM deps), (SELECT count(*) FROM events)",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap()
+    }
+
+    #[test]
+    fn insertion_rejects_parent_and_indirect_ancestor_dependencies_atomically() {
+        let mut store = store();
+        let root = add(&mut store, "root");
+        let parent = store
+            .add(
+                &project(),
+                &NewTask {
+                    title: "parent".into(),
+                    parent: Some(root.id.clone()),
+                    ..NewTask::default()
+                },
+                actor(2),
+            )
+            .unwrap();
+        let unrelated = add(&mut store, "unrelated");
+        for blocker in [&parent.id, &root.id] {
+            let before = counts(&store);
+            assert!(matches!(
+                store.add(
+                    &project(),
+                    &NewTask {
+                        title: "child".into(),
+                        parent: Some(parent.id.clone()),
+                        blocked_by: vec![unrelated.id.clone(), blocker.clone()],
+                        ..NewTask::default()
+                    },
+                    actor(3)
+                ),
+                Err(Error::Hierarchy { .. })
+            ));
+            assert_eq!(
+                counts(&store),
+                before,
+                "task, first dependency, and events roll back"
+            );
+        }
+        store
+            .add(
+                &project(),
+                &NewTask {
+                    title: "valid child".into(),
+                    parent: Some(parent.id),
+                    blocked_by: vec![unrelated.id],
+                    ..NewTask::default()
+                },
+                actor(4),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn reparenting_checks_edges_in_both_directions_for_the_whole_subtree() {
+        for nested in [false, true] {
+            for incoming in [false, true] {
+                let mut store = store();
+                let moving = add(&mut store, "moving");
+                let target = add(&mut store, "target");
+                let descendant = store
+                    .add(
+                        &project(),
+                        &NewTask {
+                            title: "descendant".into(),
+                            parent: Some(moving.id.clone()),
+                            ..NewTask::default()
+                        },
+                        actor(2),
+                    )
+                    .unwrap();
+                let endpoint = if nested { &descendant.id } else { &moving.id };
+                let (dependent, blocker) = if incoming {
+                    (&target.id, endpoint)
+                } else {
+                    (endpoint, &target.id)
+                };
+                store
+                    .add_dependency(&project(), dependent, blocker, actor(3))
+                    .unwrap();
+                let before = counts(&store);
+                assert!(matches!(
+                    store.update(
+                        &project(),
+                        &moving.id,
+                        &Update {
+                            parent: Some(Some(target.id.clone())),
+                            title: Some("must roll back".into()),
+                            ..Update::default()
+                        },
+                        actor(4),
+                        false
+                    ),
+                    Err(Error::Hierarchy { .. })
+                ));
+                assert_eq!(counts(&store), before);
+                let restored = store.get(&project(), &moving.id).unwrap();
+                assert_eq!(restored.parent, None);
+                assert_eq!(restored.title, "moving");
+                assert_eq!(
+                    store
+                        .get(&project(), &descendant.id)
+                        .unwrap()
+                        .parent
+                        .as_deref(),
+                    Some(moving.id.as_str())
+                );
+                let unrelated = add(&mut store, "unrelated");
+                store
+                    .update(
+                        &project(),
+                        &moving.id,
+                        &Update {
+                            parent: Some(Some(unrelated.id)),
+                            ..Update::default()
+                        },
+                        actor(5),
+                        false,
+                    )
+                    .unwrap();
+            }
+        }
     }
 
     #[test]

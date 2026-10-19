@@ -30,6 +30,7 @@ test("real host restores goal focus and fresh context from disk without autonomo
   process.env.PI_CODING_AGENT_DIR = dir;
   const backend = source(), requests = [], errors = [];
   let focusNext = false;
+  let unfocusNext = false;
   const runtime = await host.ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, modelsStorePath: join(dir, "models.json"), allowModelNetwork: false, refreshOnCreate: false });
   runtime.registerProvider("goal-fixture", {
     api: "goal-fixture", apiKey: "fixture", baseUrl: "https://example.invalid",
@@ -39,9 +40,9 @@ test("real host restores goal focus and fresh context from disk without autonomo
       const stream = ai.createAssistantMessageEventStream();
       const message = { role: "assistant", content: [{ type: "text", text: "Fixture response" }], api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: "stop",
         usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
-      if (focusNext) {
-        focusNext = false;
-        message.content = [{ type: "toolCall", id: "focus-fixture", name: "goal_focus", arguments: { id: "t-123abc" } }];
+      if (focusNext || unfocusNext) {
+        message.content = [{ type: "toolCall", id: "focus-fixture", name: unfocusNext ? "goal_unfocus" : "goal_focus", arguments: { id: "t-123abc" } }];
+        focusNext = false; unfocusNext = false;
         message.stopReason = "toolUse";
       }
       queueMicrotask(() => { stream.push({ type: "start", partial: message }); stream.push({ type: "done", reason: message.stopReason, message }); stream.end(); });
@@ -95,6 +96,18 @@ test("real host restores goal focus and fresh context from disk without autonomo
     const latest = session.sessionManager.getBranch().filter((e) => e.type === "custom" && e.customType === FOCUS_ENTRY).at(-1);
     assert.equal(latest.data.focus.id, "t-123abc");
     assert.ok(session.messages.some((m) => m.role === "toolResult" && m.toolName === "goal_focus" && !m.isError));
+    await session.prompt("/goal follow t-999999");
+    const pairFile = session.sessionFile;
+    await close(session); session = await create(host.SessionManager.open(pairFile));
+    await session.prompt("Discuss both followed goals.");
+    assert.match(promptSections(requests.at(-1)), /Goal t-123abc/);
+    assert.match(promptSections(requests.at(-1)), /Goal t-999999/);
+    unfocusNext = true;
+    await session.prompt("Stop following the first goal, leaving the second alone.");
+    assert.ok(session.messages.some((m) => m.role === "toolResult" && m.toolName === "goal_unfocus" && !m.isError));
+    await session.prompt("Discuss the remaining goal.");
+    assert.doesNotMatch(promptSections(requests.at(-1)), /Goal t-123abc/);
+    assert.match(promptSections(requests.at(-1)), /Goal t-999999/);
     assert.deepEqual(errors, []);
   } finally {
     if (session) await close(session);

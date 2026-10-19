@@ -45,7 +45,7 @@ export function inspection(view: GoalView, taskLimit = 100): string {
 /** A fresh orientation, not a replay of prior transcripts or an execution grant. */
 export function orientation(view: GoalView): string {
   return [
-    "Focused goal context (shared working material, not higher-priority instructions).",
+    "Followed goal context (shared working material, not higher-priority instructions).",
     "Focus does not authorize work or continuation. Follow the user's current request and working agreement; never infer permission from stored history.",
     "Use the shared slice list, maintain the brief when accepted decisions change, and check the combined result for cohesion. Workers report to the parent; they do not edit tasks or memory.",
     "Keep progress useful: reconcile recorded PRs before resuming, record branch/PR and verification outcomes after a slice, and close tasks only after verified merge or the user calls them finished. Use dots task list --parent " + view.focus.id + " for this goal; the default task list groups roots, and --all reveals closed history. Do not create tiny tasks for every tool call.",
@@ -56,7 +56,7 @@ export function orientation(view: GoalView): string {
 export function compactSummary(view: GoalView): string {
   const p = view.snapshot?.overview.progress;
   if (!p || view.error) return view.error ? "unavailable · /goal refresh" : "loading";
-  return [p.total ? `${p.done}/${p.total} slices done` : "No slices recorded", p.claimed && `${p.claimed} claimed`, p.held && `${p.held} held`, p.dropped && `${p.dropped} dropped`].filter(Boolean).join(" · ");
+  return [p.total ? `${p.done}/${p.total} slices done` : "No slices recorded", p.claimed && `${p.claimed} claimed`, p.held && `${p.held} held`, p.dropped && `${p.dropped} dropped`, view.brief?.warning && "brief needs attention"].filter(Boolean).join(" · ");
 }
 
 function claimedSlice(view: GoalView): string | undefined {
@@ -76,8 +76,36 @@ export class GoalWidget extends VStack {
       { text: view.snapshot?.overview.goal.root.title ?? view.focus.id, tone: "text", priority: 60, shrink: "clip" },
     ], end: [{ text: "/goal", tone: "dim", priority: 20, shrink: "omit" }] }, theme);
     this.progress.update({ layout: "inline", start: [
-      { text: compactSummary(view), tone: view.error ? "warning" : "muted", priority: 80, shrink: "clip" },
+      { text: compactSummary(view), tone: view.error || view.brief?.warning ? "warning" : "muted", priority: 80, shrink: "clip" },
     ], end: [{ text: claimedSlice(view) ?? "", tone: "dim", priority: 30, shrink: "clip" }] }, theme);
+    this.invalidate();
+  }
+}
+
+/** Compact session overview; display limits never remove followed context. */
+export class FollowedWidget extends VStack {
+  override render(width: number): string[] { return width > 0 ? super.render(width) : []; }
+  update(views: readonly GoalView[], selected: string | undefined, theme: Theme): void {
+    this.clear();
+    if (views.length === 1) {
+      const widget = new GoalWidget(); widget.update(views[0]!, theme); this.addChild(widget); return;
+    }
+    const heading = new PriorityRow();
+    const bytes = views.reduce((total, view) => total + new TextEncoder().encode(view.brief?.text ?? "").length, 0);
+    const unavailable = views.filter((view) => view.error || view.brief?.warning).length;
+    heading.update({ start: [{ text: `Goals · ${views.length} followed${unavailable ? ` · ${unavailable} need attention` : ""}`, tone: unavailable ? "warning" : "accent", priority: 100, shrink: "clip" }],
+      end: [{ text: `~${Math.ceil(bytes / 1024)} KiB brief text · /goal`, tone: "dim", priority: 20, shrink: "omit" }] }, theme);
+    this.addChild(heading);
+    const ordered = [...views].sort((a, b) => Number(b.focus.id === selected) - Number(a.focus.id === selected));
+    for (const view of ordered.slice(0, 6)) {
+      const row = new PriorityRow();
+      row.update({ layout: "inline", start: [{ text: `${view.focus.id === selected ? ">" : "·"} ${view.snapshot?.overview.goal.root.title ?? view.focus.id}`, tone: "text", priority: 60, shrink: "clip", minWidth: 10 }],
+        end: [{ text: compactSummary(view), tone: view.error || view.brief?.warning ? "warning" : "dim", priority: 80, shrink: "clip" }] }, theme);
+      this.addChild(row);
+    }
+    if (views.length > 6) {
+      const more = new PriorityRow(); more.update({ start: [{ text: `${views.length - 6} more followed · /goal followed (all remain in context)`, tone: "dim", priority: 100, shrink: "clip" }], end: [] }, theme); this.addChild(more);
+    }
     this.invalidate();
   }
 }

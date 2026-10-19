@@ -5,7 +5,7 @@ or a fixed agent pipeline. It combines a durable brief, the existing task list,
 and a plain-language working agreement. Models choose the strategy; tools keep
 context and coordination reliable.
 
-## Direction
+## Responsibilities
 
 - A goal adopts an existing root task. Its identity and slices stay in the
   shared task store; there is no parallel progress database.
@@ -31,8 +31,12 @@ context and coordination reliable.
 
 Shared goal operations belong with the task foundation and are exposed through
 `dots`. Pi consumes that interface rather than writing its database directly.
-Pi owns session focus, presentation, and context restoration. Existing workers
-and wakes remain available to agents without a goal-specific execution layer.
+Pi owns each session's followed set, display selection, and context restoration.
+Following is additive: every followed goal contributes fresh, bounded context.
+Selecting details does not remove other goals; unfollowing changes only this
+session, not shared goal/task state or other sessions. Agents choose how to divide
+attention; no scheduler or execution policy is implied. Existing workers and
+wakes remain available without a goal-specific execution layer.
 Durable goal state stays independent of live runtimes.
 
 Presentation uses the existing Pi UI foundation: readonly observations, shared
@@ -40,9 +44,4 @@ components, and host-owned lifecycles. Rendering neither edits tasks nor starts
 execution. Initial autonomous work requires a live Pi session; a durable runner,
 workflow DSL, generic plugin framework, and automatic merging are out of scope.
 
-## First proving ground
-
-Capture a brief, associate slices, inspect progress, execute one slice, record
-its result, and resume from another session. Express the desired involvement in
-the brief or conversation and let the agent proceed accordingly. Use a real goal
-to discover gaps before considering additional execution machinery.
+See [goal usage](pi.md#goals) for commands and session behavior.

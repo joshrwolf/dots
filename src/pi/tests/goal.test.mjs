@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import goal, { FOCUS_ENTRY, restoreFocus } from "../extensions/goal/index.ts";
+import goal, { FOCUS_ENTRY, restoreFocus, restoreGoals } from "../extensions/goal/index.ts";
 import { source, snapshot } from "./goal-fixture.mjs";
 
 const entry = (focus) => ({ type: "custom", customType: FOCUS_ENTRY, data: { version: 1, focus } });
@@ -21,6 +21,8 @@ function harness(backend = source(), saved = [], mode = "rpc") {
   };
   return { backend, entries, notices, messages, userMessages, widgets, ctx,
     tool: (id, signal) => tools.get("goal_focus").execute("fixture", { id }, signal, undefined, ctx),
+    unfollow: (args, signal) => tools.get("goal_unfocus").execute("fixture", args, signal, undefined, ctx),
+    list: () => tools.get("goal_list").execute("fixture", {}, undefined, undefined, ctx),
     event: (name, data = {}) => handlers.get(name)?.(data, ctx),
     command: (args) => commands.get("goal").handler(args, ctx),
     async context() { const event = { systemPromptOptions: { contextFiles: [] } }; await handlers.get("before_agent_start")(event, ctx); return event.systemPromptOptions.contextFiles; },
@@ -85,7 +87,8 @@ test("unfocused sessions do not query dots; focus persists identity without exec
   assert.deepEqual(await h.context(), []);
   assert.equal(h.backend.calls.length, 0);
   await h.command("focus t-123abc");
-  assert.deepEqual(h.entries, [entry(focused())]);
+  assert.equal(h.entries.length, 1);
+  assert.deepEqual(restoreGoals(h.entries), { focus: focused(), followed: [focused()] });
   const files = await h.context();
   assert.equal(files.length, 1);
   assert.match(files[0].content, /Use one shared export interface/);
@@ -187,13 +190,14 @@ test("background reads cannot cancel an explicit focus change", async () => {
   assert.ok(h.notices.some(([message]) => message.includes("Focused t-999999")));
 });
 
-test("pre-run observers follow superseding focus and receive failures instead of stale context", async () => {
+test("pre-run observers follow additions and refresh existing goals after a rejected addition", async () => {
   for (const fail of [false, true]) {
     const backend = source(), h = harness(backend, [entry(focused())]);
     await h.event("session_start");
     const pending = gate();
     let oldSignal;
     backend.show = (_cwd, id, signal) => {
+      if (id === "t-123abc" && oldSignal) return Promise.resolve(snapshot(id, "Fresh original goal"));
       if (id === "t-123abc") {
         oldSignal = signal;
         return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
@@ -208,8 +212,8 @@ test("pre-run observers follow superseding focus and receive failures instead of
     await focusing;
     assert.doesNotMatch(files[0].content, /Consistent exports/);
     if (fail) {
-      assert.match(files[0].content, /Selection unavailable/);
-      assert.doesNotMatch(files[0].content, /Use one shared export interface/);
+      assert.match(files[0].content, /Fresh original goal/);
+      assert.doesNotMatch(files[0].content, /Selection unavailable|Replacement goal/);
       assert.equal(h.entries.at(-1).data.focus.id, "t-123abc");
       assert.ok(!h.notices.some(([message]) => message.includes("Focused t-999999")));
     } else {
@@ -269,6 +273,105 @@ test("cancelled picker and failed focus preserve prior focus; malformed history 
   assert.throws(() => restoreFocus([invalid]), /Unsupported/);
   assert.deepEqual(restoreFocus([invalid, entry(focused())]), focused());
   assert.equal(restoreFocus([invalid, entry(null)]), undefined);
+});
+
+test("multiple goals survive selection, cold resume and per-goal failures; unfollow is session-only", async () => {
+  const backend = source();
+  let failFirst = false;
+  backend.show = async (_cwd, id) => {
+    if (id === "t-123abc" && failFirst) throw new Error("First unavailable");
+    const value = snapshot(id, id === "t-123abc" ? "First goal" : "Second goal");
+    value.overview.goal.brief = `/example/${id}.md`;
+    return value;
+  };
+  backend.brief = async (path) => ({ text: `Accepted contract: ${path}` });
+  const h = harness(backend);
+  await h.event("session_start");
+  await h.tool("t-123abc"); await h.tool("t-999999"); await h.tool("t-123abc");
+  assert.equal(restoreGoals(h.entries).followed.length, 2, "following is additive and idempotent");
+  assert.equal((await h.list()).details.followed.length, 2);
+  const context = (await h.context())[0].content;
+  assert.match(context, /First goal/); assert.match(context, /Second goal/);
+  assert.match(context, /t-123abc.md/); assert.match(context, /t-999999.md/);
+  await h.command("show t-999999");
+  assert.equal(restoreGoals(h.entries).focus.id, "t-999999");
+  assert.equal(restoreGoals(h.entries).followed.length, 2);
+  const resumed = harness(backend, h.entries);
+  await resumed.event("session_start");
+  assert.match((await resumed.context())[0].content, /First goal[\s\S]*Second goal/);
+  failFirst = true;
+  const partial = (await h.context())[0].content;
+  assert.match(partial, /First unavailable/); assert.match(partial, /Second goal/);
+  assert.doesNotMatch(partial, /Accepted contract: \/example\/t-123abc.md/);
+  await h.unfollow({ id: "t-123abc" });
+  assert.equal(restoreGoals(h.entries).followed.length, 1);
+  assert.equal((await resumed.list()).details.followed.length, 2, "other sessions keep their own set");
+  assert.doesNotMatch((await h.context())[0].content, /t-123abc/);
+  await h.unfollow({ all: true }); await h.unfollow({ all: true });
+  assert.deepEqual(await h.context(), []);
+  assert.deepEqual(restoreGoals(h.entries), { followed: [] });
+  assert.equal(h.userMessages.length, 0);
+});
+
+test("refresh reports whole-set health, including unselected errors and brief warnings", async () => {
+  const backend = source(), h = harness(backend);
+  await h.event("session_start");
+  await h.tool("t-123abc"); await h.tool("t-999999");
+  backend.show = async (_cwd, id) => {
+    if (id === "t-123abc") throw new Error("First goal unavailable");
+    return snapshot(id);
+  };
+  await h.command("refresh");
+  assert.match(h.notices.at(-1)[0], /2 followed goal\(s\) refreshed.*1 need attention/);
+  assert.match(h.notices.at(-1)[0], /t-123abc: Error: First goal unavailable/);
+  assert.equal(h.notices.at(-1)[1], "error");
+  await h.unfollow({ id: "t-123abc" });
+  for (const warning of ["Brief unavailable: removed", "Brief truncated; read the reference"]) {
+    backend.brief = async () => ({ text: "", warning });
+    await h.command("refresh");
+    assert.match(h.notices.at(-1)[0], /1 need attention/);
+    assert.ok(h.notices.at(-1)[0].includes(warning));
+  }
+  backend.brief = async () => ({ text: "Healthy brief" });
+  await h.command("refresh");
+  assert.doesNotMatch(h.notices.at(-1)[0], /need attention/);
+});
+
+test("unfollow cancels pending additions, retains other context, and validates explicit intent", async () => {
+  const h = harness(); await h.event("session_start");
+  await h.tool("t-123abc"); await h.tool("t-999999");
+  await assert.rejects(h.unfollow({}), /Specify/);
+  await assert.rejects(h.unfollow({ id: "t-123abc", all: true }), /Specify/);
+  const cancelled = new AbortController(); cancelled.abort();
+  await assert.rejects(h.unfollow({ all: true }, cancelled.signal), /cancelled/);
+  assert.equal((await h.list()).details.followed.length, 2);
+  const pending = gate(); let initial = true;
+  h.backend.show = async (_cwd, id) => { if (initial) { initial = false; await pending.promise; } return snapshot(id); };
+  const context = h.context();
+  await h.unfollow({ id: "t-123abc" }); pending.resolve();
+  assert.doesNotMatch((await context)[0].content, /t-123abc/);
+  assert.match((await h.context())[0].content, /t-999999/);
+  const addition = gate(); h.backend.show = async (_cwd, id) => { await addition.promise; return snapshot(id); };
+  const adding = h.tool("t-aaaaaa");
+  await h.unfollow({ all: true }); addition.resolve();
+  await assert.rejects(adding, /interrupted/);
+  assert.deepEqual(restoreGoals(h.entries), { followed: [] });
+});
+
+test("saved sets reject duplicates and inconsistent selection; legacy state migrates without writes", async () => {
+  const first = focused(), second = { ...focused(), id: "t-999999" };
+  const saved = (focus, followed) => ({ type: "custom", customType: FOCUS_ENTRY, data: { version: 2, focus, followed } });
+  assert.throws(() => restoreGoals([saved(first, [first, first])]), /Invalid/);
+  assert.throws(() => restoreGoals([saved(second, [first])]), /Invalid/);
+  assert.throws(() => restoreGoals([saved(null, [first])]), /Invalid/);
+  const h = harness(source(), [entry(first)]); await h.event("session_start");
+  assert.equal(h.entries.length, 1);
+  assert.deepEqual(restoreGoals(h.entries), { focus: first, followed: [first] });
+  await h.tool(second.id);
+  h.entries.push(entry(null)); await h.event("session_tree");
+  assert.deepEqual((await h.list()).details.followed, []);
+  h.entries.pop(); await h.event("session_tree");
+  assert.equal((await h.list()).details.followed.length, 2);
 });
 
 test("branch changes remove only the goal widget and headless inspection never wakes", async () => {

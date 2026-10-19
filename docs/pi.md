@@ -118,7 +118,7 @@ fetch fallbacks remain opt-in.
 ## Goals
 
 Use `/goal new IDEA` to start a planning conversation. The agent can write the
-brief, create initial slices, and focus the result with `goal_focus`; this does
+brief, create initial slices, and follow the result with `goal_focus`; this does
 not request implementation. Your desired involvement stays in the conversation
 or brief, not a separate execution policy.
 
@@ -127,12 +127,23 @@ attaches an existing Markdown brief together. Use
 `dots task goal attach ID --brief PATH` to adopt an existing root. These require a
 `dots` build with the `task goal` commands; Pi never installs it automatically.
 
-`/goal focus ID` (or `/goal focus` to choose) focuses a goal without starting work.
-`/goal` opens a slice-first overview: `1` slices, `2` brief, `3` record details.
-The quiet strip shows recorded progress and claims, not live execution.
-`/goal history` includes closed details. `/goal list`, `/goal refresh`, and `/goal unfocus`
-provide explicit controls. Focus follows the session branch across reload/resume.
-A fresh session starts unfocused.
+`/goal follow ID` adds a goal to this session (`focus` remains an alias).
+Follow several goals at once; selecting another never pauses or closes earlier
+work. `/goal` chooses which followed goal to inspect, with `1` slices, `2` brief,
+and `3` record details. `/goal show ID` selects directly; `/goal history ID`
+includes closed details. Selection affects display, not which goals get context.
+
+`/goal list` lists shared open/held goals and marks this session's follows;
+`/goal followed` lists the session set. `/goal unfollow ID` removes one;
+`/goal clear` removes all (`unfocus` without an ID remains a clear-all alias).
+Agents use `goal_focus {id}`, `goal_list {}`, and `goal_unfocus {id}` or
+`goal_unfocus {all: true}`. These change no shared tasks, claims, workers, or
+other sessions. Unfollowing removes future injected context, not prior messages.
+
+The followed set and display selection survive branch reload/resume; older
+single-focus sessions restore as a one-goal set. Fresh sessions follow nothing.
+The compact widget shows recorded progress, not live execution; `/goal refresh`
+refreshes the whole set without polling.
 
 Tasks are project-scoped, shared across linked worktrees. `dots task list` shows
 open/held roots, not every slice. Use `--parent ID` to drill down, `--flat` for all
@@ -140,9 +151,11 @@ levels, and `--all` to include closed history. Goal lists also hide done/dropped
 roots by default. Records are retained, not automatically deleted; close finished
 work and drop abandoned work to keep the active view useful.
 
-Pi refreshes local task records and the brief before each new agent run and
-refreshes the widget afterward; it does not poll. Brief context is bounded to
-24 KiB, with a reference for the rest. Missing briefs or CLI failures stay
+Pi refreshes every followed goal's local tasks and brief before each new agent
+run and refreshes the widget afterward. Brief context is bounded to 24 KiB per
+goal, with a reference for the rest; total context grows with the followed set.
+The multi-goal widget reports approximate brief-text size. Display limits never
+silently remove goals from context. Missing briefs or CLI failures stay
 visible rather than reusing stale context. Counts are recorded task state—not
 verified PR or worker status. Focusing, inspecting, or restoring never authorizes
 execution or automatic continuation. See the [goal-mode direction](goal-mode.md).

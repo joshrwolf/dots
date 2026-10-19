@@ -92,8 +92,20 @@ class GoalTerminalTests(unittest.TestCase):
             until = time.monotonic() + .3
             while time.monotonic() < until:
                 pump()
+            send(b"/goal follow t-999999\r")
+            wait(lambda: b"2 followed" in capture and b"Second fixture goal" in capture, "two followed goals")
+            send(b"/goal\r")
+            wait(lambda: b"Inspect a followed goal" in capture, "goal selection")
+            send(b"\r")
+            wait(lambda: b"1 slices" in capture, "selected inspection")
+            send(b"\r")
+            until = time.monotonic() + .3
+            while time.monotonic() < until:
+                pump()
             send(b"/reload\r")
-            wait(lambda: events().count("start") >= 2 and b"slices done" in capture, "reload focus")
+            wait(lambda: events().count("start") >= 2 and b"2 followed" in capture, "reload followed set")
+            send(b"/goal unfollow t-999999\r")
+            wait(lambda: b"Unfollowed t-999999" in capture and b"Unified fixture exports" in capture, "remove one follow")
             send(b"/goal unfocus\r")
             wait(lambda: b"Goal unfocused" in capture, "unfocus")
             send(b"/goal show\r")

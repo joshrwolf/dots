@@ -16,10 +16,10 @@ resume are useful. Three stores, three jobs, no overlap:
   work, memory is the index of the knowledge.
 - Git and GitHub: the truth about code. Reconcile against them before acting.
 
-You are the parent session: you plan, claim, delegate, record, and verify.
-Workers change code and report; they do not edit tasks or memory.
-
-Each section is a rule with a correct and a wrong example.
+The coordinating session plans, claims, records, and verifies. It can implement
+slices itself. Delegate only when the user asks or the agreed scope explicitly
+includes delegation; the number of requested slices does not imply workers.
+When used, workers change code and report; they do not edit tasks or memory.
 
 ## Plan, state it, then write it down once
 
@@ -36,20 +36,21 @@ dots task add "<slice>" --parent <effort> --priority <n> [--blocked-by <id>] --j
 For goal mode, write the agreed Markdown brief and use
 `dots task goal create "<goal>" --brief <path> --json` instead of adding an ordinary
 parent, or `dots task goal attach <parent> --brief <path> --json` to adopt one.
-In Pi, `goal_focus { id: "<parent>" }` focuses the result without starting work.
+In Pi, `goal_focus { id: "<parent>" }` adds the goal to this session's followed
+set without starting work or removing other goals.
 Keep the working agreement in the brief or conversation; no separate execution
 protocol is needed. Goal overviews show active slices and complete totals;
 `dots task goal show <parent> --all --json` includes closed details.
 
-Before the pattern exists in the repository, keep it in a project-memory topic
-file and point at its absolute path; make "promote the pattern into the repo"
-a slice. Date the memory line; keep it to the decision and the pointer.
+Keep the working pattern in the goal brief or a design document until it belongs
+in the repository. Use the memory skill for reusable, source-backed lessons;
+keep work-specific plans and progress in the brief and task store.
 
-Correct: five slices, priorities reflecting what proves the pattern first, one memory line `2026-10-16: default-deny + explicit egress; pattern in netpol.md`.
+Correct: five slices, priorities reflecting what proves the pattern first, with the agreed default-deny and explicit-egress design in `netpol.md`.
 
 Wrong: a 40-item plan before the first slice has shown whether the pattern holds; or `2026-10-16: effort t-560e07, slices t-aa64..t-4690` in memory.
 
-## Claim before you delegate
+## Claim before implementation or delegation
 
 ```sh
 dots task claim --next --parent <effort> --owner <session> --json
@@ -64,17 +65,17 @@ lease; when the user directs a change on such a slice, use `hold --force` (or
 `done`/`drop --force`) on it and say so, then `reopen` and `claim` if the work
 should continue under the new owner.
 
-Correct: claim, then launch the worker with the claimed ID in its brief.
+Correct: claim, then implement the slice or launch an authorized worker with the claimed ID in its brief.
 
 Wrong: launching two workers and claiming afterwards; reusing an old session's owner name to dodge a lease.
 
-## Give the worker a bounded brief
+## When delegating, give the worker a bounded brief
 
 In Pi, spawn with `worker_spawn`, `cwd` set to the slice's worktree, and a brief that
 contains: the slice title and ID; the pattern reference (a path, not prose); the
 allowed change surface; the checks to run; the exact branch and PR title when
-the repository has no convention; and the stopping point (open a PR, do not
-merge, report the URL and anything that did not fit the pattern). The child
+the repository has no convention; and the stopping point (implement and verify, or open a PR only when authorized;
+do not merge; report results and anything that did not fit the pattern). The child
 contract already forbids editing tasks or memory. One writer per worktree;
 parallel slices get parallel worktrees. Name the check to run; when the
 repository has none, say so and name a substitute rather than "run the tests".
@@ -89,13 +90,14 @@ event that starts your next turn, and you answer questions with
 `message { to: <id>, text }`.
 If you are yourself a worker or a script with nothing else to do, block with
 `worker_wait` instead of sleeping and polling `worker_status`. "Do the next
-two" means two `claim --next` calls, then two spawns.
+two" requests two slices, not two workers: execute sequentially in the parent
+when appropriate, or delegate within the authorized working agreement.
 
-Correct: `worker_spawn { label: "netpol-api", cwd: "../wt-api", task: "Slice t-4d5e6f: add a NetworkPolicy for api/ following /…/memory/…/netpol.md. Touch only api/. Run make test once at the end. Branch netpol/api, PR title 'api: add default-deny NetworkPolicy'. Open the PR and stop; do not merge. Report the URL and any service that needs an exception." }`
+Correct, when delegation and PR creation are authorized: `worker_spawn { label: "netpol-api", cwd: "../wt-api", task: "Slice t-4d5e6f: add a NetworkPolicy for api/ following /…/memory/…/netpol.md. Touch only api/. Run make test once at the end. Branch netpol/api, PR title 'api: add default-deny NetworkPolicy'. Open the PR and stop; do not merge. Report the URL and any service that needs an exception." }`
 
 Wrong: "Do the network policies."
 
-## Record what the worker produced
+## Record results
 
 ```sh
 dots task update <id> --branch <branch> --pr <url> --owner <session> --json
@@ -106,11 +108,12 @@ Field edits need the lease holder (or `--force`); notes never do. A worker that
 reports a blocker or an open PR with red CI keeps its session: `message` in Pi
 (the native resume control elsewhere) continues it with the fix instead of
 spawning a new one. A result that
-changes the pattern is a decision: bring it to the user, then supersede the
-memory line in place with `(supersedes YYYY-MM-DD)` and update the topic file.
-Later slices read the new pattern because the brief points at it.
+changes the pattern is a decision: bring it to the user, then update the
+authoritative brief or design document. Later slices read the new pattern
+because the brief points at it. Use the memory skill separately when the
+result yields a reusable lesson; do not assume a memory entry already exists.
 
-Correct: worker reports "`worker/` uses host networking"; you ask the user, record the exemption in memory, note it on the task.
+Correct: worker reports "`worker/` uses host networking"; you ask the user, record the accepted exemption in the design document, and note it on the task.
 
 Wrong: the worker decides host-network services are exempt and moves on.
 
@@ -135,7 +138,7 @@ Wrong: `done` because the worker's turn completed.
 
 ```sh
 dots task list --roots --json                 # find the effort
-dots task list --parent <effort> --json       # every slice, with ready/not_ready_because/pr/branch/last_event
+dots task list --parent <effort> --json       # active slices; add --all for closed history
 dots task events --since <seq> --json         # history after a cursor; 0 when cold
 ```
 

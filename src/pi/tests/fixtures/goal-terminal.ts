@@ -16,7 +16,13 @@ export default function (pi: ExtensionAPI): void {
   };
   goal(pi, {
     async list() { return { project: snapshot.project, goals: [snapshot.overview.goal] }; },
-    async show() { mark("read"); return snapshot; },
+    async show(_cwd, id) {
+      mark("read");
+      return { ...snapshot, overview: { ...snapshot.overview,
+        goal: { ...snapshot.overview.goal, root: { ...root, id, title: id === root.id ? root.title : "Second fixture goal" } },
+        tasks: snapshot.overview.tasks.map((task) => ({ ...task, parent: id })),
+      } };
+    },
     async brief() { return { text: "# Fixture brief\n" + Array.from({ length: 100 }, (_, i) => `Pattern line ${i}: shared ownership, café 👩‍💻`).join("\n") + "\nEND_OF_GOAL_BRIEF" }; },
   });
   pi.on("session_start", () => mark("start"));

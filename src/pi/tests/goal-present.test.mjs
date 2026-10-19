@@ -4,7 +4,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { getThemeByName } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { Inspector } from "../src/index.ts";
-import { GoalWidget, GoalInspector, compactSummary, overview, inspection, orientation, setInspection } from "../extensions/goal/present.ts";
+import { GoalWidget, FollowedWidget, GoalInspector, compactSummary, overview, inspection, orientation, setInspection } from "../extensions/goal/present.ts";
 import { snapshot, task } from "./goal-fixture.mjs";
 initTheme("dark", false);
 const plain = (lines) => stripTerminalSequences(lines.join("\n"));
@@ -66,6 +66,37 @@ test("goal overview distinguishes claims, dependencies, held work and history wi
   inspector.handleInput("1");
   assert.match(plain(inspector.render(120)), /Waiting +Consumer/);
   assert.equal(redraws, 3);
+});
+
+test("followed overview keeps selection visible and reports display omissions without hiding context", () => {
+  const views = Array.from({ length: 8 }, (_, n) => {
+    const value = snapshot(`t-${n.toString(16)}`, `Goal ${n}`);
+    return { focus: { id: value.overview.goal.root.id, project: value.project }, snapshot: value, brief: { text: "日本語 👩‍💻" } };
+  });
+  views[0] = { focus: views[0].focus, error: "Unavailable" };
+  for (const name of ["dark", "light"]) {
+    const widget = new FollowedWidget(); widget.update(views, "t-7", getThemeByName(name));
+    const output = plain(widget.render(160));
+    assert.match(output, /8 followed · 1 need attention/);
+    assert.match(output, /> Goal 7/);
+    assert.match(output, /2 more followed/);
+    assert.match(output, /KiB brief text/);
+    for (const width of [0, 1, 2, 12, 45, 80]) assert.ok(widget.render(width).every((line) => visibleWidth(line) <= width));
+  }
+});
+
+test("singleton brief warnings remain visible after another goal is removed", () => {
+  const value = snapshot();
+  const healthy = { focus: { id: "t-999999", project: value.project }, snapshot: snapshot("t-999999") };
+  for (const warning of ["Brief unavailable: removed", "Brief truncated; read the reference"]) {
+    const view = { focus: { id: "t-123abc", project: value.project }, snapshot: value, brief: { text: "", warning } };
+    const widget = new FollowedWidget(), theme = getThemeByName("dark");
+    widget.update([view, healthy], healthy.focus.id, theme);
+    assert.match(plain(widget.render(160)), /1 need attention/);
+    widget.update([view], view.focus.id, theme);
+    assert.match(plain(widget.render(160)), /brief needs attention/);
+    assert.ok(overview(view).includes(warning));
+  }
 });
 
 test("orientation limits task detail, retains the brief and reports omissions and unknowns", () => {
