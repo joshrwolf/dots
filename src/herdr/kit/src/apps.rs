@@ -1,12 +1,7 @@
 //! Recognising the program running in a pane.
 //!
-//! Which application has the foreground decides where a key should go and
-//! which pane can be asked to open a file, so more than one plugin needs the
-//! same answer. Keeping the name lists here means they cannot drift apart.
-//!
-//! Neovim remote control and Vim-style terminal navigation deliberately use
-//! different predicates. A Vim pane accepts navigation keys, but only Neovim
-//! exposes the RPC interface used to open a file in an existing process.
+//! The foreground application determines whether navigation keys should be
+//! forwarded to the application or handled by Herdr.
 //!
 //! Pair these with [`crate::api::ProcessInfo::find`], which strips any
 //! leading directory from the command name.
@@ -38,15 +33,6 @@ pub fn accepts_vim_navigation(command: &str) -> bool {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
     })
-}
-
-/// Whether `command` is a Neovim process that exposes Neovim RPC.
-pub fn is_nvim(command: &str) -> bool {
-    let lower = command.to_ascii_lowercase();
-    matches!(
-        lower.strip_suffix(".exe").unwrap_or(&lower),
-        "nvim" | "nvimdiff"
-    )
 }
 
 /// Whether `command` is fzf itself rather than a wrapper such as `fzf-tmux`.
@@ -93,16 +79,6 @@ mod tests {
                 !accepts_vim_navigation(name),
                 "{name} should not accept Vim navigation"
             );
-        }
-    }
-
-    #[test]
-    fn only_neovim_invocations_are_nvim() {
-        for name in ["nvim", "NVIM", "nvimdiff", "nvim.exe", "NVIMDIFF.EXE"] {
-            assert!(is_nvim(name), "{name} should be Neovim");
-        }
-        for name in ["vim", "vimdiff", "view", "nvimpager", ""] {
-            assert!(!is_nvim(name), "{name} should not be Neovim");
         }
     }
 

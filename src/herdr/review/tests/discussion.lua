@@ -4,7 +4,7 @@
 vim.opt.runtimepath:prepend(assert(vim.env.REVIEW_CONFIG))
 vim.g.herdr_review_binary = assert(vim.env.REVIEW_BINARY)
 local workspace = "w1"
-package.loaded["dots.herdr.host"] = {
+package.loaded["dots.review.host"] = {
   new = function()
     return {
       current = function()

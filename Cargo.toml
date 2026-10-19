@@ -14,7 +14,6 @@ members = [
     "src/herdr/find",
     "src/herdr/github",
     "src/herdr/nav",
-    "src/herdr/nvim",
     "src/herdr/review",
 ]
 

@@ -40,7 +40,7 @@ See the upstream [cache documentation](https://github.com/sigstore/gitsign/blob/
 
 ```sh
 mise run --dry-run gitsign:install
-stow --simulate --verbose --target="$HOME" --restow gitsign
+stow --dir=home --no-folding --simulate --verbose --target="$HOME" --restow gitsign
 plutil -lint home/gitsign/Library/LaunchAgents/dev.joshrwolf.gitsign-credential-cache.plist
 python3 -c 'import ast, pathlib; ast.parse(pathlib.Path("home/gitsign/.local/bin/gitsign-cached").read_text())'
 sh -n home/gitsign/.local/libexec/gitsign-cache-service

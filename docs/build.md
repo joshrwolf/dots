@@ -25,7 +25,9 @@ not hermetic. Add and verify other platforms explicitly before claiming support.
 
 Checks require the installed Claude host. Full acceptance also requires Stow,
 Herdr, and a Pi host matching the companion's exact development SDK. Hosts retain
-their own installers, credentials and runtime state.
+their own installers, credentials and runtime state. Aggregate Herdr activation
+also requires the [patched client and server](../src/herdr/host/README.md) for
+GitHub workspace resources; a version number alone does not establish support.
 
 To change SDKs, edit `mise.toml`, update the Rust mirror in `rust-toolchain.toml`
 when applicable, run `MISE_LOCKED=false mise lock --platform macos-arm64`, review
@@ -86,6 +88,11 @@ MISE_TASK_CACHE=local-only mise run verify
 ```
 
 ## Explicit activation
+
+For stock Herdr, install only supported features with their scoped tasks (for
+example, `mise run //src/herdr/nav:install`), then configure their bindings as
+[documented](../src/herdr/nav/README.md). The aggregate below includes the
+patch-dependent GitHub plugin and the complete home configuration.
 
 ```sh
 mise run install                     # base Stow packages only

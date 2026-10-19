@@ -42,8 +42,24 @@ process.stdin.on("data", (chunk) => {
 });
 process.stdin.on("end", () => process.exit(0));
 process.stderr.write("fake pi started\\n");
+process.stdout.write(JSON.stringify({ type: "fixture_ready" }) + "\\n");
 process.stdout.write('null\\n[]\\n42\\n{}\\n');
 `;
+
+function nextRecord(child, type) {
+  return new Promise((resolve, reject) => {
+    const unsubscribe = child.onRecord((record) => {
+      if (record.type !== type) return;
+      clearTimeout(watchdog);
+      unsubscribe();
+      resolve(record);
+    });
+    const watchdog = setTimeout(() => {
+      unsubscribe();
+      reject(new Error(`fixture did not emit ${type}`));
+    }, 10_000);
+  });
+}
 
 function fakePi() {
   const dir = mkdtempSync(path.join(tmpdir(), "dots-workers-"));
@@ -58,14 +74,15 @@ test("protocol: correlation, LF-only framing, ui request/response, settle, order
   try {
     const records = [];
     child.onRecord((record) => records.push(record));
+    const question = nextRecord(child, "extension_ui_request");
     const prompt = await child.call({ type: "prompt", message: "go" });
     assert.equal(prompt.disposition, "started");
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const ask = records.find((record) => record.type === "extension_ui_request");
+    const ask = await question;
     assert.equal(ask.id, "ui-1");
     assert.ok(records.some((record) => record.type === "message_update" && record.assistantMessageEvent.delta === "para\u2028graph"));
+    const settled = nextRecord(child, "agent_settled");
     child.respondUi("ui-1", { value: "main" });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await settled;
     assert.ok(records.some((record) => record.type === "agent_settled"));
     const text = await child.call({ type: "get_last_assistant_text" });
     assert.equal(text.text, "done with main");
@@ -76,16 +93,21 @@ test("protocol: correlation, LF-only framing, ui request/response, settle, order
     assert.equal(child.alive, false);
     await assert.rejects(child.call({ type: "get_state" }), /not running/);
   } finally {
+    await child.close(100);
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("RPC acknowledgement deadlines clean up and close preempts pending commands", async () => {
+test("RPC acknowledgement deadlines clean up and close preempts pending commands", async (t) => {
   const { dir, cli } = fakePi();
   const child = new PiProcess({ cwd: dir, args: [], command: [process.execPath, cli], requestTimeoutMs: 250 });
   try {
+    await nextRecord(child, "fixture_ready");
+    t.mock.timers.enable({ apis: ["setTimeout"] });
     await child.call({ type: "get_state" });
-    await assert.rejects(child.call({ type: "ignore" }), /acknowledgement timed out/);
+    const expired = assert.rejects(child.call({ type: "ignore" }), /acknowledgement timed out/);
+    t.mock.timers.tick(250);
+    await expired;
     assert.ok((await child.call({ type: "get_state" })).sessionFile);
     const circular = { type: "bad" };
     circular.self = circular;

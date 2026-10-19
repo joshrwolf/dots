@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn every_plugin_uses_its_own_mise_build_primitive() -> Result<()> {
-        for plugin in ["find", "github", "nav", "nvim", "review"] {
+        for plugin in ["find", "github", "nav", "review"] {
             let manifest = manifest(plugin)?;
             ensure!(
                 manifest.id == format!("herdr-{plugin}"),
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn herdr_identity_is_not_duplicated_in_plugin_argv() -> Result<()> {
-        for plugin in ["find", "github", "nav", "nvim", "review"] {
+        for plugin in ["find", "github", "nav", "review"] {
             let manifest = manifest(plugin)?;
             let binary = format!("./bin/herdr-{plugin}");
             for entry in manifest.actions.iter().chain(&manifest.panes) {
@@ -199,16 +199,6 @@ mod tests {
             "nav event dispatch drifted"
         );
 
-        let nvim = manifest("nvim")?;
-        ensure!(
-            ids(&nvim.actions) == BTreeSet::from(["open"]),
-            "nvim action dispatch drifted"
-        );
-        ensure!(
-            ids(&nvim.panes) == BTreeSet::from(["picker"]),
-            "nvim pane dispatch drifted"
-        );
-
         let github = manifest("github")?;
         ensure!(
             ids(&github.actions)
@@ -248,7 +238,7 @@ mod tests {
             manifest("nav")?.startup.len() == 1,
             "nav must bootstrap its jumplist"
         );
-        for plugin in ["find", "nvim", "review"] {
+        for plugin in ["find", "review"] {
             ensure!(
                 manifest(plugin)?.startup.is_empty(),
                 "{plugin} declares an unsupported resident startup command"
@@ -259,7 +249,7 @@ mod tests {
 
     #[test]
     fn herdr_keybindings_reference_declared_plugin_entrypoints() -> Result<()> {
-        let manifests = ["find", "github", "nav", "nvim", "review"]
+        let manifests = ["find", "github", "nav", "review"]
             .into_iter()
             .map(manifest)
             .collect::<Result<Vec<_>>>()?;

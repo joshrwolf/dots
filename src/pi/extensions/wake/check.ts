@@ -17,12 +17,12 @@ export function checkDigest(stdout: string, stderr: string): string {
   return `${hash().update(stdout).digest("hex")}:${hash().update(stderr).digest("hex")}:`;
 }
 
-/** Bounded capture; timeout/abort stops the shell's process group, not just bash. */
-export function runCheck(command: string, cwd: string, signal?: AbortSignal, timeoutMs = 120_000): Promise<CheckResult> {
+/** Bounded capture; timeout/abort signals the still-owned shell group; pipe draining is bounded. */
+export function runCheck(command: string, cwd: string, signal?: AbortSignal, timeoutMs = 120_000, launch: typeof spawn = spawn): Promise<CheckResult> {
   if (signal?.aborted) return Promise.resolve({ stdout: "", stderr: "check cancelled", code: -1 });
   return new Promise((resolve) => {
     const grouped = process.platform !== "win32";
-    const child = spawn("bash", ["-lc", command], { cwd, detached: grouped, stdio: ["ignore", "pipe", "pipe"] });
+    const child = launch("bash", ["-lc", command], { cwd, detached: grouped, stdio: ["ignore", "pipe", "pipe"] });
     const stdoutHash = hash();
     const stderrHash = hash();
     let stdout: Buffer = Buffer.alloc(0);
@@ -30,9 +30,14 @@ export function runCheck(command: string, cwd: string, signal?: AbortSignal, tim
     let truncated = false;
     let termination = "";
     let finished = false;
+    let exited = false;
+    child.once("exit", () => { exited = true; });
     let hardKill: ReturnType<typeof setTimeout> | undefined;
     let drain: ReturnType<typeof setTimeout> | undefined;
     const kill = (signal: NodeJS.Signals) => {
+      // Node reaps before reporting exit. Its numeric PID/group can then be
+      // reused: never signal it again, even if descendants still hold pipes.
+      if (exited || child.exitCode !== null || child.signalCode !== null) return;
       try {
         if (grouped && child.pid) process.kill(-child.pid, signal);
         else child.kill(signal);
@@ -67,7 +72,6 @@ export function runCheck(command: string, cwd: string, signal?: AbortSignal, tim
     const finish = (code: number | null, error?: string) => {
       if (finished) return;
       finished = true;
-      if (termination) kill("SIGKILL"); // the shell may exit before its descendants
       clearTimeout(deadline);
       if (hardKill) clearTimeout(hardKill);
       if (drain) clearTimeout(drain);

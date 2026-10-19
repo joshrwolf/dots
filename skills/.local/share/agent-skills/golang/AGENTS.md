@@ -43,8 +43,9 @@ those skills. Preserve meaningful failure diagnostics and resource cleanup.
 - Check changed frontmatter, relative links, examples, and evaluation fixtures.
 - Compile or run self-contained Go examples when changing their behavior; identify
   illustrative fragments that require application types or external services.
-- Check catalog entries and routing when adding or removing a skill. Run
-  `make skills-links` from dots, review discovery links, then `make skills`.
+- Check catalog entries and routing when adding or removing a skill. Author
+  discovery links as described in root `docs/skills.md`, then run
+  `mise run //skills:check` and `mise run //home:check` from dots.
 - Upstream evaluation reports and size tables describe upstream results, not
   evidence for local edits. Do not invent updated scores or benchmark results.
 - Local edits do not require marketplace releases, synchronized plugin versions,

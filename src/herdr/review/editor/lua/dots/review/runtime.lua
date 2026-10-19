@@ -8,7 +8,7 @@ function M.current()
     return nil, { code = "runtime_unavailable", message = "review commands require Herdr" }
   end
   local ok, pane = pcall(function()
-    return require("dots.herdr.host").new(server).current()
+    return require("dots.review.host").new(server).current()
   end)
   if not ok then
     return nil, { code = "runtime_unavailable", message = type(pane) == "table" and pane.message or tostring(pane) }

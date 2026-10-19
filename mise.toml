@@ -41,7 +41,7 @@ codex-agent = "src/claude/codex-agent"
 
 # Cross-plugin manifest tests consume these files, not their build artifacts.
 [monorepo.projects."cargo:herdr-plugin-contracts"]
-depends_add = ["cargo:herdr-find", "cargo:herdr-github", "cargo:herdr-nav", "cargo:herdr-nvim", "cargo:herdr-review", "custom:home"]
+depends_add = ["cargo:herdr-find", "cargo:herdr-github", "cargo:herdr-nav", "cargo:herdr-review", "custom:home"]
 
 [monorepo.projects."custom:pi"]
 root = "src/pi"
@@ -55,14 +55,14 @@ depends = ["cargo:dots-cli"]
 
 [monorepo.projects."custom:home"]
 root = "home"
-depends = ["custom:skills", "custom:codex-agent", "cargo:herdr-nvim", "cargo:herdr-review", "custom:aerospace", "custom:gitsign"]
+depends = ["custom:skills", "custom:codex-agent", "cargo:herdr-review", "custom:aerospace", "custom:gitsign"]
 
 [monorepo.projects."cargo:dots-repository-tests"]
 depends_add = ["custom:home"]
 
 [monorepo.projects."custom:herdr-deploy"]
 root = "src/herdr/deploy"
-depends = ["cargo:herdr-find", "cargo:herdr-github", "cargo:herdr-nav", "cargo:herdr-nvim", "cargo:herdr-review"]
+depends = ["cargo:herdr-find", "cargo:herdr-github", "cargo:herdr-nav", "cargo:herdr-review"]
 
 [monorepo.projects."custom:aerospace"]
 root = "src/aerospace"
@@ -94,7 +94,6 @@ run = [
   "cargo install --frozen --path src/herdr/find --root dist --force",
   "cargo install --frozen --path src/herdr/github --root dist --force",
   "cargo install --frozen --path src/herdr/nav --root dist --force",
-  "cargo install --frozen --path src/herdr/nvim --root dist --force",
   "cargo install --frozen --path src/herdr/review --root dist --force",
   "cargo install --frozen --path src/herdr/issue --root dist --force",
 ]

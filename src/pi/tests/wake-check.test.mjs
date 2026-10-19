@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { runCheck, checkDigest } from "../extensions/wake/check.ts";
 
 test("check capture is bounded but compares complete stdout and stderr", async () => {
@@ -15,16 +17,36 @@ test("check capture is bounded but compares complete stdout and stderr", async (
   assert.equal(a.digest, checkDigest("x".repeat(100000) + "a", "diagnostic"));
 });
 
-test("escaped descendants retaining pipes cannot hold check completion indefinitely", { timeout: 5000, skip: process.platform === "win32" }, async () => {
-  const script = 'const {spawn}=require("node:child_process"); const c=spawn(process.execPath,["-e","setTimeout(()=>process.exit(),4000)"],{detached:true,stdio:["ignore","inherit","inherit"]}); console.log(c.pid); c.unref();';
-  const result = await runCheck(`${JSON.stringify(process.execPath)} -e '${script}'`, process.cwd(), undefined, 500);
-  const pid = Number(result.stdout.trim());
-  try {
-    assert.ok(Number.isInteger(pid) && pid > 1, "fixture published its escaped child pid");
+for (const exitedBeforeDeadline of [true, false]) {
+  test(`retained pipes are bounded without signaling a reaped leader (exited first: ${exitedBeforeDeadline})`, { skip: process.platform === "win32" }, async (t) => {
+    // Node reports leader exit before close when a descendant retains pipes.
+    // Drive that lifecycle explicitly; no real orphan, startup race, or PID signal.
+    const child = Object.assign(new EventEmitter(), {
+      pid: 12345, exitCode: null, signalCode: null,
+      stdout: new PassThrough(), stderr: new PassThrough(),
+    });
+    const signals = [];
+    t.mock.method(process, "kill", (pid, signal) => { signals.push([pid, signal]); return true; });
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const pending = runCheck("fixture", process.cwd(), undefined, 100, () => child);
+    child.stdout.write("ready");
+    const exit = () => { child.exitCode = 0; child.emit("exit", 0, null); };
+    if (exitedBeforeDeadline) exit();
+    t.mock.timers.tick(100);
+    if (!exitedBeforeDeadline) exit();
+    t.mock.timers.tick(1000);
+    t.mock.timers.tick(250);
+    const result = await pending;
+    assert.equal(result.stdout, "ready");
     assert.equal(result.code, -1);
     assert.match(result.stderr, /output drain incomplete/);
-  } finally { if (Number.isInteger(pid) && pid > 1) { try { process.kill(-pid, "SIGKILL"); } catch {} } }
-});
+    assert.equal(child.stdout.destroyed && child.stderr.destroyed, true);
+    assert.deepEqual(signals, exitedBeforeDeadline ? [] : [[-12345, "SIGTERM"]]);
+    child.emit("close", 0, null);
+    t.mock.timers.tick(10_000);
+    assert.deepEqual(signals, exitedBeforeDeadline ? [] : [[-12345, "SIGTERM"]]);
+  });
+}
 
 test("timeout, signal termination, cancellation, and spawn errors never count as success", { timeout: 5000 }, async () => {
   const timed = await runCheck("sleep 10", process.cwd(), undefined, 30);

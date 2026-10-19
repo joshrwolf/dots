@@ -3,13 +3,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
-use std::time::{Duration, Instant};
-
-#[cfg(unix)]
-use nix::sys::signal::{Signal, killpg};
-#[cfg(unix)]
-use nix::unistd::Pid;
+use std::time::Duration;
 
 use crate::{
     AnchorLocation, CapturedComparison, CapturedEndpoint, ComparisonSpec, DiffEndpoint, DiffSide,
@@ -127,12 +121,12 @@ impl Repository {
 
     pub(crate) fn retained_observations(&self) -> Result<Vec<ObservationId>> {
         const PREFIX: &str = "refs/herdr-review/observations/";
-        let mut command = self.git_command(&[
+        let command = self.git_command(&[
             "for-each-ref",
             "--format=%(refname)",
             "refs/herdr-review/observations",
         ]);
-        let output = output_with_timeout(&mut command, GIT_TIMEOUT, &self.checkout_root)?;
+        let output = output_with_timeout(command, GIT_TIMEOUT, &self.checkout_root)?;
         if !output.status.success() {
             return Err(self.git_failure(&output));
         }
@@ -160,12 +154,12 @@ impl Repository {
 
     pub(crate) fn delete_observation_refs(&self, observation: &ObservationId) -> Result<()> {
         for side in ["base", "target"] {
-            let mut command = self.git_command(&[
+            let command = self.git_command(&[
                 "update-ref",
                 "-d",
                 &format!("refs/herdr-review/observations/{observation}/{side}"),
             ]);
-            self.success(&mut command)?;
+            self.success(command)?;
         }
         Ok(())
     }
@@ -176,8 +170,8 @@ impl Repository {
                 self.git_text(&["rev-parse", "--verify", &format!("{oid}^{{commit}}")])?
             }
             DiffEndpoint::Index => {
-                let mut write_tree = self.git_command(&["write-tree"]);
-                let tree = self.command_text_with_timeout(&mut write_tree, GIT_CAPTURE_TIMEOUT)?;
+                let write_tree = self.git_command(&["write-tree"]);
+                let tree = self.command_text_with_timeout(write_tree, GIT_CAPTURE_TIMEOUT)?;
                 self.snapshot_commit(&tree)?
             }
             DiffEndpoint::WorkingTree => self.capture_working_tree()?,
@@ -211,14 +205,14 @@ impl Repository {
             } else {
                 let mut read_tree = self.git_command(&["read-tree", "--empty"]);
                 read_tree.env("GIT_INDEX_FILE", &index);
-                self.success_with_timeout(&mut read_tree, GIT_CAPTURE_TIMEOUT)?;
+                self.success_with_timeout(read_tree, GIT_CAPTURE_TIMEOUT)?;
             }
             let mut add = self.git_command(&["add", "-A", "--"]);
             add.env("GIT_INDEX_FILE", &index);
-            self.success_with_timeout(&mut add, GIT_CAPTURE_TIMEOUT)?;
+            self.success_with_timeout(add, GIT_CAPTURE_TIMEOUT)?;
             let mut write_tree = self.git_command(&["write-tree"]);
             write_tree.env("GIT_INDEX_FILE", &index);
-            let tree = self.command_text_with_timeout(&mut write_tree, GIT_CAPTURE_TIMEOUT)?;
+            let tree = self.command_text_with_timeout(write_tree, GIT_CAPTURE_TIMEOUT)?;
             self.snapshot_commit(&tree)
         })();
         let _ = std::fs::remove_file(&index);
@@ -234,7 +228,7 @@ impl Repository {
             .env("GIT_COMMITTER_NAME", "Herdr Review")
             .env("GIT_COMMITTER_EMAIL", "review@herdr.invalid")
             .env("GIT_COMMITTER_DATE", "1970-01-01T00:00:00Z");
-        self.command_text_with_timeout(&mut command, GIT_CAPTURE_TIMEOUT)
+        self.command_text_with_timeout(command, GIT_CAPTURE_TIMEOUT)
     }
 
     fn retain_snapshot(
@@ -247,12 +241,12 @@ impl Repository {
             DiffSide::Base => "base",
             DiffSide::Target => "target",
         };
-        let mut command = self.git_command(&[
+        let command = self.git_command(&[
             "update-ref",
             &format!("refs/herdr-review/observations/{observation}/{side}"),
             oid,
         ]);
-        self.success(&mut command)
+        self.success(command)
     }
 
     pub fn anchor_source(
@@ -296,8 +290,8 @@ impl Repository {
     }
 
     fn read_git_object(&self, spec: &str, path: &str) -> Result<Option<String>> {
-        let mut command = self.git_command(&["show", "--no-textconv", spec]);
-        let output = output_with_timeout(&mut command, GIT_TIMEOUT, &self.checkout_root)?;
+        let command = self.git_command(&["show", "--no-textconv", spec]);
+        let output = output_with_timeout(command, GIT_TIMEOUT, &self.checkout_root)?;
         if !output.status.success() {
             return Ok(None);
         }
@@ -313,7 +307,7 @@ impl Repository {
         if side == DiffSide::Base {
             return Ok(None);
         }
-        let mut command = self.git_command(&[
+        let command = self.git_command(&[
             "diff",
             "--name-status",
             "-z",
@@ -322,7 +316,7 @@ impl Repository {
             &comparison.target.oid,
             "--",
         ]);
-        let output = output_with_timeout(&mut command, GIT_TIMEOUT, &self.checkout_root)?;
+        let output = output_with_timeout(command, GIT_TIMEOUT, &self.checkout_root)?;
         if !output.status.success() {
             return Err(self.git_failure(&output));
         }
@@ -343,9 +337,8 @@ impl Repository {
 
     /// Porcelain status of the actual checkout, independent of captured review commits.
     pub fn checkout_status(&self) -> Result<String> {
-        let mut command =
-            self.git_command(&["status", "--porcelain=v1", "--untracked-files=normal"]);
-        let output = output_with_timeout(&mut command, GIT_TIMEOUT, &self.checkout_root)?;
+        let command = self.git_command(&["status", "--porcelain=v1", "--untracked-files=normal"]);
+        let output = output_with_timeout(command, GIT_TIMEOUT, &self.checkout_root)?;
         if !output.status.success() {
             return Err(self.git_failure(&output));
         }
@@ -355,19 +348,15 @@ impl Repository {
     }
 
     fn git_text(&self, args: &[&str]) -> Result<String> {
-        let mut command = self.git_command(args);
-        self.command_text(&mut command)
+        let command = self.git_command(args);
+        self.command_text(command)
     }
 
-    fn command_text(&self, command: &mut Command) -> Result<String> {
+    fn command_text(&self, command: Command) -> Result<String> {
         self.command_text_with_timeout(command, GIT_TIMEOUT)
     }
 
-    fn command_text_with_timeout(
-        &self,
-        command: &mut Command,
-        timeout: Duration,
-    ) -> Result<String> {
+    fn command_text_with_timeout(&self, command: Command, timeout: Duration) -> Result<String> {
         let output = output_with_timeout(command, timeout, &self.checkout_root)?;
         if !output.status.success() {
             return Err(self.git_failure(&output));
@@ -386,11 +375,11 @@ impl Repository {
         Ok(value.to_owned())
     }
 
-    fn success(&self, command: &mut Command) -> Result<()> {
+    fn success(&self, command: Command) -> Result<()> {
         self.success_with_timeout(command, GIT_TIMEOUT)
     }
 
-    fn success_with_timeout(&self, command: &mut Command, timeout: Duration) -> Result<()> {
+    fn success_with_timeout(&self, command: Command, timeout: Duration) -> Result<()> {
         let output = output_with_timeout(command, timeout, &self.checkout_root)?;
         if output.status.success() {
             Ok(())
@@ -483,7 +472,7 @@ fn git_path(checkout: &Path, field: &'static str, args: &[&str]) -> Result<PathB
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = output_with_timeout(&mut command, GIT_TIMEOUT, checkout)?;
+    let output = output_with_timeout(command, GIT_TIMEOUT, checkout)?;
     if !output.status.success() {
         return Err(Error::GitFailed {
             checkout: checkout.to_path_buf(),
@@ -508,124 +497,21 @@ fn git_path(checkout: &Path, field: &'static str, args: &[&str]) -> Result<PathB
     })
 }
 
-fn output_with_timeout(
-    command: &mut Command,
-    timeout: Duration,
-    checkout: &Path,
-) -> Result<Output> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt as _;
-        command.process_group(0);
-    }
-    let mut child = command.spawn().map_err(|source| Error::RunGit {
-        checkout: checkout.to_path_buf(),
-        source,
-    })?;
-    let stdout = child.stdout.take().map(drain);
-    let stderr = child.stderr.take().map(drain);
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                kill_process_group(child.id());
-                let stdout = finish_drain(stdout, checkout)?;
-                let stderr = finish_drain(stderr, checkout)?;
-                if stdout.truncated || stderr.truncated {
-                    return Err(Error::GitOutputTooLarge {
-                        checkout: checkout.to_path_buf(),
-                        limit: MAX_GIT_OUTPUT_BYTES,
-                    });
-                }
-                return Ok(Output {
-                    status,
-                    stdout: stdout.bytes,
-                    stderr: stderr.bytes,
-                });
-            }
-            Ok(None) => {}
-            Err(source) => {
-                kill_process_group(child.id());
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(Error::RunGit {
-                    checkout: checkout.to_path_buf(),
-                    source,
-                });
-            }
-        }
-        if Instant::now() >= deadline {
-            kill_process_group(child.id());
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(Error::GitTimedOut {
-                checkout: checkout.to_path_buf(),
-            });
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-#[derive(Debug)]
-struct Captured {
-    bytes: Vec<u8>,
-    truncated: bool,
-}
-
-fn drain(mut stream: impl io::Read + Send + 'static) -> thread::JoinHandle<io::Result<Captured>> {
-    thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let mut truncated = false;
-        let mut buffer = [0_u8; 16 * 1024];
-        loop {
-            let count = stream.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            let remaining = MAX_GIT_OUTPUT_BYTES.saturating_sub(bytes.len());
-            let retained = remaining.min(count);
-            let retained_bytes = buffer
-                .get(..retained)
-                .ok_or_else(|| io::Error::other("Git output buffer accounting failed"))?;
-            bytes.extend_from_slice(retained_bytes);
-            truncated |= retained < count;
-        }
-        Ok(Captured { bytes, truncated })
+fn output_with_timeout(command: Command, timeout: Duration, checkout: &Path) -> Result<Output> {
+    herdrkit::process::output(command, timeout, MAX_GIT_OUTPUT_BYTES).map_err(|error| match error {
+        herdrkit::process::Error::Timeout(_) => Error::GitTimedOut {
+            checkout: checkout.to_path_buf(),
+        },
+        herdrkit::process::Error::OutputLimit { .. } => Error::GitOutputTooLarge {
+            checkout: checkout.to_path_buf(),
+            limit: MAX_GIT_OUTPUT_BYTES,
+        },
+        error => Error::RunGit {
+            checkout: checkout.to_path_buf(),
+            source: io::Error::other(error),
+        },
     })
 }
-
-fn finish_drain(
-    worker: Option<thread::JoinHandle<io::Result<Captured>>>,
-    checkout: &Path,
-) -> Result<Captured> {
-    worker
-        .map_or_else(
-            || {
-                Ok(Captured {
-                    bytes: Vec::new(),
-                    truncated: false,
-                })
-            },
-            |worker| {
-                worker
-                    .join()
-                    .map_err(|_| io::Error::other("Git output reader thread panicked"))?
-            },
-        )
-        .map_err(|source| Error::RunGit {
-            checkout: checkout.to_path_buf(),
-            source,
-        })
-}
-
-#[cfg(unix)]
-fn kill_process_group(id: u32) {
-    if let Ok(id) = i32::try_from(id) {
-        let _ = killpg(Pid::from_raw(id), Signal::SIGKILL);
-    }
-}
-#[cfg(not(unix))]
-fn kill_process_group(_id: u32) {}
 
 #[cfg(test)]
 mod tests {
@@ -645,6 +531,25 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    #[test]
+    fn deadline_includes_detached_pipe_holder() {
+        let mut command = Command::new("python3");
+        command
+            .args([
+                "-c",
+                "import subprocess; subprocess.Popen(['/bin/sleep', '1'], start_new_session=True)",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let started = std::time::Instant::now();
+        let result = output_with_timeout(command, Duration::from_millis(100), Path::new("/tmp"));
+        assert!(
+            matches!(result, Err(Error::GitTimedOut { .. })),
+            "{result:?}"
+        );
+        assert!(started.elapsed() < Duration::from_millis(800));
     }
 
     #[test]

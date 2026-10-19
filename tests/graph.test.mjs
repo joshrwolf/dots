@@ -48,7 +48,7 @@ test("mise selects the actual affected deliverables", async t => {
             ["home/zsh/.zshrc-probe", home],
             ["skills/herdr-plugin/probe.md", skills],
             ["skills/.local/share/agent-skills/golang/skills/probe.md", skills],
-            ["src/herdr/nvim/editor/lua/probe.lua", ["cargo:herdr-nvim", "custom:herdr-deploy", ...home]],
+            ["src/herdr/review/editor/lua/probe.lua", ["cargo:herdr-review", "cargo:herdr-find", "custom:herdr-deploy", ...home]],
             ["src/aerospace/probe.py", ["custom:aerospace", ...home]],
             ["src/gitsign/probe.py", ["custom:gitsign", ...home]],
             ["src/herdr/deploy/probe.py", ["custom:herdr-deploy"]],

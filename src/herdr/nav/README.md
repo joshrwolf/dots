@@ -28,10 +28,14 @@ needed. Version 0.5.0 adds the independent workspace toggle.
 
 With the running server on a supported version, run from the dots root:
 
-    mise run //src/herdr:install
+    mise run //src/herdr/nav:install
 
-This builds, stows and links the plugins. Reload the Herdr and Ghostty
-configuration to pick up the bindings. When upgrading from 0.4.0, disable
+This builds and registers only navigation. Configure its bindings from
+`home/herdr/.config/herdr/config.toml` and the matching Ghostty bindings, then
+reload those configurations when ready. Do not copy unrelated plugin bindings
+without installing their plugins. The aggregate `mise run //src/herdr:install`
+also stows the complete configuration and installs GitHub integration, which
+requires the [patched Herdr client and server](../host/README.md). When upgrading from 0.4.0, disable
 herdr-nav, wait for its worker to exit (at most ten seconds), then enable it
 again. This restarts only the plugin, preserving the server session and pane
 history. The workspace pair starts recording from activation. Development checks do not

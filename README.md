@@ -20,7 +20,10 @@ apply them with `brew bundle --file="$HOME/.Brewfile.local"`.
 `mise run install` only restows `aerospace`, `brew`, `codex`, `ghostty`, `pi`, `skills`,
 `theme`, and `zsh`. Run `mise run //src/herdr:install` explicitly to build the Herdr plugins, restow the
 `herdr` and `nvim` packages, and link the plugins. `mise run rust-check` runs the
-Rust and Neovim checks without installing or reloading plugins.
+Rust and Neovim checks without installing or reloading plugins. The aggregate
+Herdr installation requires the [patched client and server](src/herdr/host/README.md)
+for GitHub workspace resources; stock Herdr supports the
+[scoped navigation install](src/herdr/nav/README.md) instead.
 
 Run `mise run nvim:install` to link only the minimal Neovim configuration, independently
 of the Herdr plugins. Its setup notes live in `home/nvim/.config/nvim/README.md`.

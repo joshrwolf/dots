@@ -86,12 +86,16 @@ test("runtime artifact budget evicts only its own finalized directories", { skip
   const terminals: Job[] = [];
   const runtime = new JobsRuntime({ root: dir, persist() {}, terminal: (j) => terminals.push(j), error() {} });
   try {
+    const admitted: Job[] = [];
     for (let batch = 0; batch < 4; batch++) {
-      for (let i = 0; i < 4; i++) runtime.start("exit 0", dir);
+      for (let i = 0; i < 4; i++) admitted.push(runtime.start("exit 0", dir));
       await until(() => terminals.length === (batch + 1) * 4);
     }
-    const first = terminals[0];
+    // Eviction follows admission order, not nondeterministic completion order.
+    const first = admitted[0];
     assert.ok(first);
+    assert.equal(runtime.get(first.id).state, "finished");
+    assert.equal(runtime.get(first.id).observationLoss, null);
     assert.equal(existsSync(first.directory), true);
     runtime.start("exit 0", dir);
     assert.equal(existsSync(first.directory), false);

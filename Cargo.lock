@@ -629,6 +629,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -720,18 +721,6 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "herdr-nvim"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "herdrkit",
- "nix",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
 ]
 
 [[package]]

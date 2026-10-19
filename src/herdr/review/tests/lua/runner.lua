@@ -1,6 +1,6 @@
 -- mini.test owns collection/reporting; Cargo owns this process's deadline.
 local ok, err = pcall(function()
-  local tests = assert(vim.env.HERDR_NVIM_TESTS)
+  local tests = assert(vim.env.HERDR_REVIEW_TESTS)
   vim.opt.runtimepath:append(assert(vim.env.MINI_TEST_PATH))
   package.path = tests .. "/lua/?.lua;" .. package.path
   local test = require("mini.test")
