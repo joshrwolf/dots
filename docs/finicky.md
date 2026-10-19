@@ -1,15 +1,8 @@
-# Finicky browser routing
+# Finicky routing
 
-Finicky is an optional macOS default URL handler. The shared config routes
-HTTPS links on `oauth2.sigstore.dev` and HTTP(S) links on `github.com` (including
-subdomains) to Brave's Work profile. YouTube and Twitch
-HTTP(S) links go to Personal, including subdomains, `youtu.be` short links, and
-`youtube-nocookie.com` embeds. Other links use Brave's usual last-active-profile
-behavior. Links already inside Brave are not
-automatically rerouted; the optional upstream browser extension can forward
-them to Finicky.
+Finicky routes external links to selected Brave profiles on macOS.
 
-## Install and activate
+## Setup
 
 ```sh
 brew install --cask finicky
@@ -17,47 +10,31 @@ mise run finicky:install
 open -a Finicky
 ```
 
-Choose Finicky as the default browser when macOS prompts. If needed, select it
-under System Settings > Desktop & Dock > Default web browser. Base `mise run install`
-does not link this optional package. Finicky watches its configuration for edits.
+Select Finicky as the default browser in System Settings. Base installation does
+not enable it. Finicky watches its configuration for edits.
 
-The profile directories are configured in
-`home/finicky/.config/finicky/finicky.js`. Open `brave://version` in the intended Brave
-profile and use the final component of **Profile Path**. On this machine,
-Work uses `Default` and Personal uses `Profile 1`. Check these values when
-setting up a new machine or recreating browser profiles.
+Check profile directories in `brave://version` before using
+`home/finicky/.config/finicky/finicky.js`: the configured `Default` and
+`Profile 1` names are machine-specific, not portable profile identities.
 
-Routing matches hostnames with explicit subdomain boundaries, not arbitrary URL text. Add additional
-public domains deliberately; employer names and private domains must not be
-committed to this public repository. OAuth URLs are forwarded without removing
-query parameters or following authentication redirects in our rule.
+## Use
 
-## Implementation review
+Signing and GitHub links go to Work; video links go to Personal. Other links use
+Brave's last-active-profile behavior. The config is authoritative for host rules.
+Links already inside Brave are not automatically rerouted.
 
-The initial focused review inspected upstream stable tag
-[`v4.2.2`](https://github.com/johnste/finicky/tree/v4.2.2), commit
-`53414af0c1caba2a606e512848486366baa9c366`. This was a review of routing,
-profile launching, logging, and update behavior, not a full security audit or
-verification that the distributed binary reproduces the source build.
+To disable routing, select Brave as the default browser and quit Finicky.
+Use Homebrew for updates; built-in update checks are disabled.
 
-- Browser arguments are passed through `exec.Command`, without shell evaluation.
-- The built-in `profile` lookup can fall back to an ordinary browser launch if
-  it cannot resolve a profile. This config instead supplies `open -n --args
-  --profile-directory=...` explicitly, so a failed lookup cannot select the
-  last active profile. A removed profile directory may be recreated by Brave;
-  it does not recover the old profile's sessions.
-- Normal URL logging to disk is disabled. Finicky still keeps diagnostic URLs
-  in memory/stdout, and upstream error handling can enable file logging. Treat
-  its diagnostic output as private, especially during authentication.
-- Built-in update checks are disabled; use Homebrew to update the app.
-- Upstream also resolves known URL-shortener hosts over the network before
-  matching. The signing host above is not a URL shortener.
+## Constraints
 
-Source: [browser launcher](https://github.com/johnste/finicky/blob/v4.2.2/apps/finicky/src/browser/launcher.go),
-[logging](https://github.com/johnste/finicky/blob/v4.2.2/apps/finicky/src/logger/logger.go),
-[config runtime](https://github.com/johnste/finicky/blob/v4.2.2/apps/finicky/src/config/vm.go).
+Explicit profile-directory arguments avoid lookup falling back to the last
+active profile. Brave may recreate a missing directory, but cannot recover its
+old sessions.
 
-## Disable
+OAuth parameters are preserved. Normal disk URL logging is disabled, but
+diagnostics and upstream error handling can still expose URLs; keep authentication
+output private. Upstream may resolve known shortener hosts before routing.
 
-Select Brave again as the default web browser in System Settings, then quit
-Finicky. The routing config can remain linked for future use.
+Match hostname boundaries, not arbitrary URL text. Never commit private domains
+or employer names to this public configuration.

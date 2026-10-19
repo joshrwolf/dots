@@ -1,30 +1,26 @@
 # Neovim
 
-Small personal configuration using documented Neovim APIs. Bob selects the
-Neovim version; upgrades are manual.
+A small personal configuration using native packages and documented APIs.
 
-- `init.lua` sets leaders and loads modules explicitly, in order.
-- `lua/config/options.lua` contains intentional changes to editor defaults.
-- `lua/config/plugins.lua` declares native packages and configures them explicitly.
-- `lua/config/keymaps.lua` contains personal mappings.
-- `lua/dots/review/` connects normally opened editors to saved review discussions.
-  `:ReviewThreads` / `<leader>fR` opens the thread list; reply, resolve and refresh
-  work in its discussion split. See [review integration](../../../../src/herdr/review/NEOVIM.md).
-  `<leader>fr` remains recent files; setup does not launch a bridge.
+## Setup
 
-Run `mise run nvim:install` from the dotfiles root to link this configuration.
+Bob selects the interactive Neovim version; upgrades are manual. Mise pins the
+separate test runtime. From the dots root:
 
-Keep defaults unless there is a reason to change them. Add modules when they
-have a purpose; avoid automatic module discovery and custom setup wrappers.
-Use `after/ftplugin/<filetype>.lua` for buffer-local filetype settings, and
-respect project EditorConfig settings.
+```sh
+mise run nvim:install
+```
 
-Plugins use `vim.pack`; keep its generated `nvim-pack-lock.json` in version control.
-Missing plugins install on first launch. Updates are manual: run `:packupdate`,
-review the changes, then `:write` to apply or `:quit` to discard. Review the
-lockfile diff along with updates. Keep updates separate from Neovim upgrades.
-Prefer documented APIs already available in releases over newly experimental
-nightly features.
+Missing `vim.pack` plugins install on first launch. For updates, run
+`:packupdate`, review changes, then `:write` to apply or `:quit` to discard.
+Review the committed `nvim-pack-lock.json` diff. Keep plugin updates separate
+from editor upgrades.
 
-Keep this README as a stable overview. Put plugin-specific notes beside their
-configuration and use mapping descriptions to document shortcuts.
+## Use
+
+Mapping descriptions document shortcuts. `<leader>fR` opens
+[saved review threads](../../../../src/herdr/review/NEOVIM.md);
+`<leader>fr` remains recent files. Review setup does not launch a bridge until
+requested.
+
+Contributor guidance lives in [AGENTS.md](AGENTS.md).

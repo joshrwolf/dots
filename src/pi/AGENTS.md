@@ -29,12 +29,13 @@
 - Check fixtures must be hand-authored with neutral names. Credentials, runtime
   state, transcripts, captures, package caches, and node_modules stay untracked.
 - New instruction scopes use AGENTS.md directly; no CLAUDE.md compatibility links.
-  See ../../docs/pi.md for setup, update, conflict, and contribution workflows.
+  See [Pi setup](../../docs/pi.md) for installation and use.
 
 ## Presentation code
 
-- The public library is `@joshrwolf/pi-dots/ui`; keep its API reference in
-  `src/README.md`. Importing it must not register extensions or start resources.
+- The public library is `@joshrwolf/pi-dots/ui`; types and consumer tests own its
+  API reference. Keep lifecycle constraints in `src/README.md`. Importing it must
+  not register extensions or start resources.
 - Pi owns rendering, layout primitives, input, themes, scheduling, and persistence.
   Use public APIs; do not build a parallel UI framework or inspect private child arrays.
 - Project recorded tool data into readonly models, then present them. Rendering

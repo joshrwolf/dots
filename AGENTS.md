@@ -1,97 +1,72 @@
 # dots
 
-GNU stow-managed dotfiles. Package contents mirror `$HOME`, so a file such as
-`home/zsh/.zshrc` here becomes `~/.zshrc`. Repo-specific rules belong in this file.
+GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
 
-## Shared agent instructions and skills
+## Documentation
 
-- Keep repository instructions in `AGENTS.md`. Current Claude Code, Codex, and
-  Pi discover these natively; do not add `CLAUDE.md` compatibility links.
-  Leave third-party instruction files upstream-owned. Shared personal instructions
-  reach Claude through its native user rules directory, not a CLAUDE.md shim.
-- Keep each skill in one directory with a standard `SKILL.md` containing
-  `name` and `description` frontmatter. Use relative paths for supporting files.
-- Keep canonical personal skills at `skills/<name>`. Author relative discovery
-  links in `home/skills/.agents/skills/` and `home/skills/.claude/skills/`;
-  Stow installs them at the corresponding home paths. Add both when creating
-  a skill. See `docs/skills.md` for link targets and validation.
-- Machine-local skills live in ignored `skills/local-*/`
-  directories. Add both ignored discovery links explicitly with `ln -s`;
-  `mise run //skills:install` only restows authored files.
-  Never commit these skills or their links; reserve `local-` names for them.
-- Write shared instructions for both tools. Keep tool-specific metadata or
-  integrations optional and separate; do not assume a symlink makes
-  tool-specific commands, hooks, or permissions portable.
-- Third-party skills are editable Git subtrees under
-  `skills/.local/share/agent-skills/<source>`, with explicit mise import/update
-  tasks invoking Git directly. Edit source files in dots; do not replace discovery
-  links with copies. `mise run //skills:install` restows locally;
-  `mise run //skills:golang:update` explicitly merges upstream. See `docs/skills.md`.
+- Use plain English, present tense, and active voice. Start with purpose; add
+  Setup, Use, or Constraints sections only when useful.
+- Keep READMEs user-facing and contributor rules in the relevant `AGENTS.md`.
+  Explain decisions and limits that code does not make clear; link to CLI help,
+  types, tests, or manifests instead of copying their inventories.
+- Keep one authoritative explanation. Remove completed migration plans, research
+  reports, and unused designs; do not expand architecture docs for their own sake.
+- Leave upstream-owned docs and generated references to their owners/generators.
+  Keep skills focused on their workflows rather than applying prose-wide rewrites.
 
-## Third-party subtrees
+## Instructions and skills
 
-Stay in sync with upstream and keep local patches minimal. Check upstream before
-patching compatibility issues; prefer an upstream update, and remove superseded
-patches when updating. Keep personal features outside vendored code.
+- Use native `AGENTS.md` discovery; do not add `CLAUDE.md` compatibility links.
+  Claude personal instructions use its native user rules directory.
+- Keep canonical skills at `skills/<name>/`, with `name` and `description`
+  frontmatter in `SKILL.md` and relative supporting paths.
+- Author both discovery links in `home/skills/.agents/skills/` and
+  `home/skills/.claude/skills/`; installation only restows them.
+  See [skill setup](docs/skills.md) for targets and validation.
+- Reserve `local-*` for ignored machine-local skills and links; never commit them.
+- Keep shared guidance portable. A symlink does not make tool-specific hooks,
+  commands, metadata, or permissions portable.
+- Imported skills are editable Git subtrees under
+  `skills/.local/share/agent-skills/`. Preserve upstream instructions and licenses;
+  edit source, not copied discovery files. Updates are explicit mise/Git tasks.
+- Check upstream before compatibility patches. Prefer upstream releases, keep
+  local patches minimal, and remove superseded patches. Personal features stay
+  outside vendored code.
 
-## Stow
+## Build and activation
 
-`mise run install` restows the explicit base package list in root `mise.toml`:
-`aerospace`, `brew`, `codex`, `ghostty`, `pi`, `skills`, `theme`, and `zsh`.
-`mise run //src/herdr:install` explicitly prepares immutable plugin releases,
-restows `herdr` and `nvim`, then registers plugins. Build/check never activate.
+- Mise owns SDK pins and orchestration; native tools own dependency/compiler
+  graphs. Put ordinary native commands directly in tasks, not dispatch wrappers.
+  Remove redundant behavior before translating a wrapper into another language.
+- Keep substantial application logic and acceptance tests in their owning
+  toolchain. Keep `rust-toolchain.toml` aligned with `mise.toml`.
+- Use `mise run doctor`, `deps`, `check`, and `verify` as documented in
+  [build and activation](docs/build.md). Builds/checks never activate.
+- Base Stow packages are explicit in root `mise.toml`. Herdr, CLI, and Pi
+  activation are separate; do not install or reload merely to validate changes.
+- Only proven distributable tasks may use local artifact caching. Dependencies,
+  checks, smoke tests, updates, and activation are always uncached.
 
-Mise owns SDK pins and orchestration; native tools own dependency/compiler graphs.
-Put ordinary native commands directly in mise tasks, not Python/shell dispatchers.
-Do not translate wrappers into another language: remove redundant behavior first.
-Keep substantial application logic and acceptance tests in their owning toolchain.
-Keep `rust-toolchain.toml` aligned with `mise.toml`; run `mise run doctor`.
-Use `mise run deps`, `mise run check`, and `mise run verify`; see `docs/build.md`.
-Only proven distributable tasks may use local artifact caching. Dependency
-installation, checks, smoke tests, updates, and activation are always uncached.
+## Source ownership
 
-## Rust applications and shared libraries
+- Root Cargo workspace, lockfile, toolchain, and lint policy govern Rust under
+  `src/` and repository contracts in `tests/`. Use `mise run rust-check` for the
+  complete gate; leaf checks include upstream dependencies. Libraries need no
+  artificial build tasks.
+- Keep shared operations with their named owners. The task store derives
+  readiness, claims transactionally, and accepts project key and time explicitly.
+- Pi uses pinned stock npm releases and a companion in `src/pi/`. Consume public
+  APIs; never patch managed caches, vendor upstream packages, or register duplicate
+  copies. Settings and runtime state remain machine-local.
+- Claude mods live in `src/claude/<name>/`, not session dev-mods folders.
+  Follow [their contributor rules](src/claude/AGENTS.md).
 
-- Root `Cargo.toml` owns one workspace across the named owners in `src/` and
-  repository contracts in `tests/`. Root `Cargo.lock`, `rust-toolchain.toml`,
-  and `clippy.toml` are canonical.
-- `src/dots` owns the CLI; `src/github/{client,inspect}` owns shared GitHub code.
-  Herdr libraries live at `src/herdr/{kit,prs,review/core}` alongside their
-  feature owners. See `src/dots/README.md`.
-- `src/tasks` owns the shared task store. Readiness is derived, claims
-  are single transactions, and callers pass the project key and time explicitly.
-- Use `mise run //src/dots:build`, `mise run //src/dots:check`, and `mise run //src/dots:install` to stage, check, and
-  explicitly install local commands. Base Stow installation does not install the CLI.
-- `mise run rust-check` is the complete Rust gate. Leaf `:check` tasks check
-  their package and upstream dependencies; libraries need no artificial build tasks.
+## Public repository
 
-## Pi packages
+Never commit employer names, internal project/repository names, or internal
+hostnames/URLs, including in comments, docs, config, and fixtures.
+`joshrwolf/...` is the owner's public namespace.
 
-- Third-party Pi packages use stock npm releases pinned in `pi-packages.json`.
-  Our companion package lives in `src/pi`. See `docs/pi.md`.
-- Use root `mise run //src/pi:deps`, `mise run //src/pi:check`, and `mise run //src/pi:install`. Installation
-  uses prepared releases and Pi's public settings API; upstream packages use Pi's
-  package manager. Settings and runtime state remain machine-local.
-  Do not register additional local/Git copies of upstream packages.
-- Keep personal features in the companion package and consume public APIs.
-  Do not patch Pi's managed package cache or vendor upstream packages.
-
-## Claude mods
-
-- Claude Code mods live in `src/claude/<name>/` and install through a
-  committed `home/skills/.claude/skills/<name>` link. Write mods there, not in a
-  session's dev-mods folder. See `src/claude/AGENTS.md` and
-  `docs/claude-mods.md`.
-- Use root `mise run //src/claude/codex-agent:check`.
-
-## This repo is public
-
-Never commit an employer name, an internal repository or project name, or an
-internal hostname or URL — not in code, comments, docs, config, or test
-fixtures. (`joshrwolf/...` is my own public namespace and is fine.)
-
-The trap is captured output. Never commit a live capture of anything that
-observed this machine — an API snapshot, a process listing, a log file, shell
-history. Read the real thing to get its shape right, then hand-author the
-fixture with neutral names. That also covers the cases the live session
-happened not to contain, which a capture never does.
+Never commit captures of this machine: API snapshots, process lists, logs,
+transcripts, or shell history. Inspect real data for its shape, then hand-author
+neutral fixtures, including cases the capture did not contain.

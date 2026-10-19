@@ -9,7 +9,7 @@ Imported skills remain editable Git subtrees under
 not an installation payload. Preserve upstream licenses and instruction files;
 do not replace source or discovery links with copies.
 
-## Install and validate
+## Setup
 
 ```sh
 mise run //skills:check       # canonical definitions and generated CLI docs
@@ -72,6 +72,6 @@ git subtree split --prefix=skills/.local/share/agent-skills/golang -b go-skills-
 
 ## Generated CLI skill
 
-`mise run //dots:skills` generates the `dots` skill and reference from its Rust
+`mise run //src/dots:skills` generates the `dots` skill and reference from its Rust
 command tree. Validation uses `dots skills check`. Discovery links are authored,
 not generated. See [the CLI home](../src/dots/README.md).

@@ -17,9 +17,10 @@
   contract. Consumers list the kit under `dependencies` and never copy its
   contract. Extract a kit once a second mod needs the code, not before.
 - Load the `plugin-authoring` skill before writing a mod and read the API in the
-  types it writes. Run `mise run //codex-agent:check` for native validation and
-  tests, and `mise run //home:check` for discovery links. Skills-dir mods get no editor types; for those, run an
-  interactive `claude --plugin-dir src/claude/<name>`.
+  types it writes. Run `mise run //src/claude/codex-agent:check` for native validation
+  and tests, and `mise run //home:check` for discovery links. Skills-dir mods get
+  no editor types; run an interactive `claude --plugin-dir src/claude/<name>`
+  to generate them.
 - Tests fake the host with hooks beneath the plugin (`process.spawn`,
   `tool.call`) and hand-authored data. Never commit captured transcripts,
   process output, or tokens; keep credentials in the tools a mod drives.

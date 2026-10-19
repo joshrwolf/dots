@@ -1,54 +1,44 @@
-# Review discussions in ordinary Neovim
+# Local review in Neovim
 
-Open Neovim yourself in a Herdr workspace with an existing review binding.
-Review content stays in `review-core`'s repository-local SQLite registry, not in
-an editor process. There is no persistent-editor/controller dependency.
+Normally opened editors can read and update saved discussions in an existing
+Herdr review binding.
 
-The configured surface is deliberately small:
+## Setup
+
+Open a review from Herdr's review picker, then start Neovim yourself in that
+workspace. Install the [Neovim configuration](../../../home/nvim/.config/nvim/README.md)
+and build with `mise run rust-build`; the client finds the staged
+`herdr-review` or an executable on PATH. Set `vim.g.herdr_review_binary` to
+select one explicitly.
+
+Setup is passive. A private stdio bridge starts on the first review operation;
+review content remains in the repository's registry, not the editor process.
+
+## Use
 
 - `:ReviewThreads` / `<leader>fR`: choose a saved thread, including resolved ones.
-- `:ReviewReply` / buffer-local `<leader>rp`: add a local reviewer reply.
-- `:ReviewResolve` / buffer-local `<leader>rr`: resolve the selected thread locally.
-- `:ReviewRefresh`: reload persisted discussion state.
+- `:ReviewReply` / discussion-local `<leader>rp`: add a reviewer reply.
+- `:ReviewResolve` / discussion-local `<leader>rr`: resolve the thread locally.
+- `:ReviewRefresh`: reload saved state.
 - `q`: close the read-only discussion split.
 
-`<leader>fr` remains recent files. The existing CodeDiff mappings are unchanged.
-Reply input is currently a single prompt. An uncertain save is never retried
-automatically; its draft remains in the discussion view until it closes. Refresh
-and inspect the saved messages before deciding whether to retry.
+`<leader>fr` remains recent files. Existing CodeDiff mappings are unchanged.
 
-Setup is passive: the private `herdr-review --stdio <checkout>` process starts
-only when a review operation is requested. Build the review plugin through the
-root `mise run rust-build` target; the client finds the staged binary or one on PATH.
-`vim.g.herdr_review_binary` can explicitly select an executable.
+## Constraints
 
-The client is adapted from the previous configuration's review adapter, including
-bounded JSON frames, request IDs, capability negotiation, and revision-consistent
-pagination. Current-pane lookup supplies the bridge child's workspace/pane context;
-stale inherited coordinates are not reused after a move. A changed caller/socket
-identity retires the cached connection, and the repository bridge validates the
-requested binding's server/workspace scope. This is not an atomic transaction
-with pane movement after the final lookup.
+Replies use a single prompt. An uncertain save is never retried automatically;
+the draft remains until the view closes. Refresh and inspect saved messages
+before retrying.
 
-Discussion views show General threads, findings/evidence, messages, and saved
-anchor coordinates. They intentionally do **not** jump to those coordinates in
-the working tree: a saved comparison is not necessarily the current file.
+Views show findings, evidence, General threads, and saved anchor coordinates.
+They do not jump to working-tree coordinates: the saved comparison may differ
+from the current file. This surface does not create anchored threads, dispatch
+agent work, or publish GitHub feedback.
 
-## Next slice
+Caller discovery refreshes pane/workspace context instead of trusting inherited
+coordinates. The bridge validates binding scope, but pane movement can still
+race the final lookup.
 
-Restore/adapt the existing CodeDiff integration for opening the exact saved
-comparison, jumping to resolved anchors, and creating new anchored threads.
-Inline annotations, per-file navigation, multiline composition, and review-agent
-commands from the old adapter are not enabled in this surface yet. No command
-here dispatches agent work or publishes GitHub feedback.
-
-## Evidence
-
-`tests/neovim.rs` starts disposable ordinary Neovim instances, drives the real
-Lua client and compiled stdio bridge, saves a reply and resolution, then reopens
-Neovim and verifies the same durable discussion. It also checks that stale
-inherited coordinates are replaced and a moved workspace cannot mutate the old
-binding. Only current-pane discovery and interactive UI choices are supplied by
-the fixture; database/IPC operations are real. The editor mini.test suite covers
-passive setup, General rendering, late responses, cancelled input and uncertain
-saves. The tests do not load the user's config or contact a live Herdr server.
+`mise run //src/herdr/review:deps` restores locked Neovim test dependencies;
+`mise run //src/herdr/review:check` runs isolated bridge/editor checks without
+loading the user's configuration or contacting a live server.

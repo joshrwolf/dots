@@ -1,36 +1,50 @@
-# PRs in spaces
+# Herdr PR status
 
-Agents register every PR they work on; the plugin watches GitHub and displays
-two-line PR items under the existing workspace: number and review status above,
-CI below, with separate colors. Completed PRs collapse into a group. Clicking
-either line or pressing Enter opens the PR in your browser.
+Registered PRs appear beneath their workspace with separate review and CI status;
+selecting one opens it in the browser.
+
+## Setup
+
+Both client and server need the [workspace-resources patch](../host/README.md).
+Then install the CLI and plugins:
 
 ```sh
-dots herdr prs register https://github.com/example/project/pull/42 --workspace <verified-id> --json
-dots herdr prs list --workspace <verified-id> --json
-dots herdr prs unregister https://github.com/example/project/pull/42 --workspace <verified-id> --json
+mise run //src/dots:install
+mise run //src/herdr:install
 ```
 
-Every command requires an explicit `--workspace <id>`. Verify the target against
-the task and live workspace inventory. Environment IDs, UI focus and checkout
-similarity do not establish ownership; shared agent daemons can inherit stale IDs.
-Registration is idempotent and does not replace earlier
-PRs. Only HTTPS github.com PR URLs are supported. Ship-it and managed review
-creation/resume register PRs automatically. Existing PRs need explicit registration.
+## Use
+
+```sh
+dots herdr prs register https://github.com/example/project/pull/42 --workspace VERIFIED_ID --json
+dots herdr prs list --workspace VERIFIED_ID --json
+dots herdr prs unregister https://github.com/example/project/pull/42 --workspace VERIFIED_ID --json
+```
+
+Verify the workspace against the task and live inventory. Inherited environment
+IDs, UI focus, and matching checkout paths do not establish ownership; shared
+agent daemons can carry stale IDs.
+
+Registration is idempotent and keeps earlier associations. Only HTTPS github.com
+PR URLs are supported. Ship-it and managed review creation/resume register PRs;
+other existing PRs need explicit registration. Unregistering removes only the
+local association, not the PR.
+
+CI brief and watcher panes offer a PR picker. Direct fix requires exactly one
+registered PR. The **GitHub status service health** action reports watcher failures.
+
+## Constraints
 
 Associations live in
 `${XDG_STATE_HOME:-$HOME/.local/state}/dots/herdr-prs/registry.sqlite3`, keyed by
 endpoint and persistent workspace UUID. Closing a workspace retains its records;
-a new workspace requires fresh registration. Unregistering only removes the local
-association.
+a new workspace needs fresh registration.
 
-The watcher reconciles registrations every 15 seconds and shares fetches across
-workspaces. Pending checks refresh every 45 seconds, open PRs every three minutes,
-and completed PRs every 30 minutes. Errors retain cached status with its age.
-The **GitHub status service health** action reports watcher failures.
+One pane-less service shares fetches across workspaces. Pending CI refreshes
+more often than settled or completed PRs; rate limits and failures delay updates.
+Errors retain cached status and its age, never become a no-PR result.
+Expired sidebar projections disappear if their producer stops.
 
-CI brief and watcher panes offer a PR picker. Direct fix requires exactly one
-registered PR; with several, select through the watcher pane.
-
-Install the [patched host](../host/README.md), then run `mise run //src/dots:install` and `mise run //src/herdr:install`.
-Both client and server need the patch. Validate with `mise run rust-check`.
+Hooks wake the service rather than querying GitHub themselves. Crash recovery
+depends on the next startup/event/action hook, not Herdr supervision.
+The status watcher neither invokes an agent nor mutates GitHub.

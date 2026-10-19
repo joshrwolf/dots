@@ -1,132 +1,84 @@
 # Build and activation
 
-Mise selects SDKs and orders tasks. Cargo owns the Rust workspace and compiler
-graph; npm owns Pi dependencies. Native lockfiles remain authoritative alongside
-`mise.lock`. There is no cloud CI or remote task cache.
+Mise selects tools and orders tasks; Cargo and npm own their dependency graphs.
 
 ## Setup
 
-Use mise 2026.10.12 or newer, review the configuration, then:
+Use mise 2026.10.12 or newer with Homebrew and Apple Command Line Tools:
 
 ```sh
 mise trust
 mise install --locked
 mise run doctor
-mise run deps                 # explicit Cargo, npm and Neovim dependency installs
-mise run check                # complete checks, without activation
-mise run build                # dist/bin executables and dist/pi-package tarball
-mise run verify               # checks, builds and isolated installation/host tests
+mise run deps
+mise run check
+mise run build
+mise run verify
 ```
 
-The SDK lock supports macOS arm64. Brew supplies machine applications; Apple
-Command Line Tools supply the C compiler/SDK. Optional signing also uses Brew
-Python at runtime. Repository tests use mise's Python. Native prerequisites are
-not hermetic. Add and verify other platforms explicitly before claiming support.
+The SDK lock supports macOS arm64. Checks need the installed Claude host; full
+acceptance also needs Stow, Herdr, and a Pi host matching the companion's exact
+development SDK. Host applications keep their own installers and runtime state.
 
-Checks require the installed Claude host. Full acceptance also requires Stow,
-Herdr, and a Pi host matching the companion's exact development SDK. Hosts retain
-their own installers, credentials and runtime state. Aggregate Herdr activation
-also requires the [patched client and server](../src/herdr/host/README.md) for
-GitHub workspace resources; a version number alone does not establish support.
+`check` validates source. `build` stages artifacts in `dist/`. `verify` also
+exercises installation and hosts in disposable homes and checkouts. None
+activates against your real home; provider-free tests do not prove live-model
+compatibility.
 
-To change SDKs, edit `mise.toml`, update the Rust mirror in `rust-toolchain.toml`
-when applicable, run `MISE_LOCKED=false mise lock --platform macos-arm64`, review
-the lockfile, then install and rerun the checks. Cargo's MSRV is a separate
-compatibility requirement.
+## Development
 
-## Source and task ownership
-
-- `src/` groups code by owner: `dots`, `github`, `tasks`, `herdr`, `pi`, `claude`,
-  `aerospace` and `gitsign`. Manifests define packages, not directory categories.
-- `home/` contains Stow payloads and links to source-owned runtime code.
-- `skills/` contains canonical skills and imported subtree source.
-- `tests/` contains repository contracts and cross-component acceptance tests.
-- `dist/` and `target/` are ignored build output. Building never activates it.
-
-Use `mise tasks --all` to discover tasks. Scoped paths work from anywhere inside
-the repository:
-
-| Task | Purpose |
-| --- | --- |
-| `rust-build` / `rust-check` | All native executables / complete Rust workspace gate |
-| `//dots:build` / `//dots:check` | CLI build / CLI and upstream dependency checks |
-| `//dots:skills` | Regenerate checked-in CLI skill documentation |
-| `//src/herdr/find:build` / `//src/herdr/find:check` | One Herdr feature and its dependencies |
-| `//herdr:deps` | Restore locked Neovim test dependencies |
-| `//pi:check` | Pi typechecks and unit tests |
-| `//pi:package` / `//pi:prepare` | Native npm tarball / verified runtime in `dist/pi-runtime` |
-| `//pi:verify-host` / `//pi:verify-terminal` | Provider-free host / regular and fullscreen PTY tests |
-| `//pi:verify` | Complete companion checks and acceptance |
-| `//codex-agent:check` | Native Claude validation and tests |
-| `//skills:check` | Skill validation and generated CLI documentation consistency |
-| `//home:check` | Stow isolation and discovery-link contracts |
-
-Rust leaf checks include upstream checks through mise's `^check`; compilation
-ordering and reuse remain Cargo's responsibility. Explicit project edges cover
-non-Cargo consumers, including skill generation, home links and manifest tests.
-The root gate uses one efficient Cargo workspace pass rather than repeating every
-leaf gate. `verify` shares prerequisites in a single mise task graph.
-
-Inspect affected selection without executing tasks:
+Use `mise tasks --all` for available tasks and scoped paths for focused work:
 
 ```sh
+mise run //src/dots:check
+mise run //src/herdr/nav:check
+mise run //src/pi:check
+mise run rust-check
 mise run --affected --affected-json '//...:check'
 mise tasks graph --explain
 ```
 
-Root/configuration changes conservatively select all projects. Executable graph
-tests verify exact affected sets in a disposable Git fixture. Use focused checks
-while editing and `verify` at integration checkpoints.
+Rust leaf checks include upstream dependencies. The root Rust gate checks the
+workspace in one pass. Root/configuration changes conservatively affect all
+projects. Use `verify` at integration checkpoints.
 
-Only the Pi tarball uses mise's bounded 256 MiB local artifact cache. Cargo owns
-native compilation caching. Checks, dependency installation, acceptance,
-updates and activation are uncached. If your global mise configuration enables
-remote caching, constrain the outer runner explicitly:
+Code lives under named owners in `src/`, Stow payloads in `home/`, canonical
+skills in `skills/`, and repository contracts in `tests/`.
+
+To update SDKs, edit `mise.toml`, align `rust-toolchain.toml` when applicable,
+then run `MISE_LOCKED=false mise lock --platform macos-arm64`. Review the lock,
+install, and verify. Cargo's MSRV is a separate compatibility requirement.
+
+Only the Pi tarball uses mise's local artifact cache; Cargo caches compilation.
+Checks, dependency installs, acceptance, updates, and activation are uncached.
+The repository disables remote task caching.
+
+## Activation
+
+Run installation only when ready to change the live setup:
 
 ```sh
-MISE_TASK_CACHE=local-only mise run verify
+mise run install                    # base Stow packages
+mise run //src/dots:install         # CLI and generated discovery skill
+mise run //src/herdr/nav:install    # navigation plugin only
+mise run //src/pi:upstream-install  # pinned third-party Pi packages
+mise run //src/pi:install           # immutable companion release
 ```
 
-## Explicit activation
+Base Stow packages are listed in root `mise.toml`; `unstow` removes only those
+links. Neovim, Finicky, and gitsign have separate `<name>:install` tasks.
+Stow uses `--no-folding` to keep runtime directories out of the checkout.
 
-For stock Herdr, install only supported features with their scoped tasks (for
-example, `mise run //src/herdr/nav:install`), then configure their bindings as
-[documented](../src/herdr/nav/README.md). The aggregate below includes the
-patch-dependent GitHub plugin and the complete home configuration.
+`mise run //src/herdr:install` installs all Herdr plugins and the Herdr/Neovim
+configuration. It requires the [patched client and server](../src/herdr/host/README.md)
+for GitHub workspace resources. Stock Herdr users should install supported
+plugins individually and configure only their bindings.
 
-```sh
-mise run install                     # base Stow packages only
-mise run //dots:install              # CLI and checked generated discovery skill
-mise run //herdr:install             # Herdr binaries, home config and registration
-mise run //src/herdr/find:install    # only this plugin's immutable registration
-mise run //pi:upstream-install       # exact third-party npm pins through Pi
-mise run //pi:install                # verified immutable companion release
-```
+Herdr registers immutable copies under `~/.local/share/dots/herdr/releases/`.
+Registration is idempotent, but not transactional across plugins: inspect and
+retry a partial failure. Old releases remain available. Installing a binary
+does not upgrade a running server; never restart it as a build or test step.
 
-Optional `nvim:install`, `//skills:install`, `finicky:install` and `gitsign:install`
-retain separate scopes. `unstow` removes only base Stow links. `pi-cli:install`
-and `pi-cli:update` use Pi's official installer/updater.
-
-Stow uses `--no-folding`, keeping runtime directories out of the source tree.
-Cargo stages activated CLI binaries inside ignored Stow package paths; its
-tracking files are never linked into the home directory. Herdr source-install
-callbacks use each plugin's explicit `:prepare` task, separately from normal
-builds and managed immutable deployment.
-
-Pi registration points at an atomically replaced `current` link under its agent
-directory. Existing resource filters survive explicit source migration; conflicts
-are rejected. A failed settings write restores the prior pointer.
-`//pi:rollback` verifies and reactivates the previous release without reloading a
-session. Close Pi sessions and avoid concurrent package writers during activation:
-the SDK preserves unrelated settings, but its package list is last-writer-wins.
-See [Pi setup](pi.md) for explicit source replacement.
-
-Herdr registers immutable copies under `~/.local/share/dots/herdr/releases`.
-Registration is idempotent, not transactional across plugins: earlier links may
-succeed before a later failure. Inspect and retry explicitly; old releases remain.
-Installed hosts own their live reload/restart decisions.
-
-Acceptance tests use disposable source trees and homes for Cargo/Stow/Herdr, and
-isolated Pi agent directories. Pi acceptance covers packaged children, RPC and
-real PTYs (menu, resize, theme, reload and shutdown), not live-model requests.
-No build or verification task activates against your real home.
+[Pi activation](pi.md) also uses immutable releases. Close sessions and avoid
+concurrent package writers when installing or rolling back. Neither installer
+reloads a Pi session. Hosts retain control of their reload/restart lifecycle.
