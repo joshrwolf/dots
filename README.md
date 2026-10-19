@@ -34,7 +34,7 @@ outside this public repository.
   [issue workspaces](src/herdr/issue/README.md), and
   [local review](src/herdr/review/NEOVIM.md).
 - [Neovim](home/nvim/.config/nvim/README.md): independently installed editor config.
-- Optional [gitsign cache](docs/gitsign.md) and [Finicky routing](docs/finicky.md).
+- [Commit signing](docs/gitsign.md) and [Finicky routing](docs/finicky.md).
 
 Shared themes live in `home/theme/.config/theme/themes/`; the `current` symlink
 selects a palette. Applications consume their own adapters from that directory.

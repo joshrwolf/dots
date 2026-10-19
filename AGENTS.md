@@ -35,6 +35,10 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
 
 ## Tooling
 
+- Before porting a script, look for native capabilities of the surrounding
+  tools (host app, package manager, OS services, upstream main) that make it
+  obsolete, and question assumptions that drive outsized complexity. Porting
+  to Rust is the last resort.
 - Language follows the artifact: Rust for executables, repository and
   installation contracts, and automation logic; TypeScript/Node only inside the
   Pi and Claude packages; Lua only for Neovim. No Python. Shell appears only as
@@ -46,8 +50,9 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
 - Keep one implementation per capability (for example, `dots-process` is the
   only subprocess runner), tested once where it lives.
 - Mise selects tools and orders tasks. Plain cargo/npm/stow calls stay inline;
-  other logic lives in Rust: `cargo xtask` (in-repo, never installed) for
-  repository build, install, and contracts; `dots` only for user commands.
+  other logic lives in Rust: `cargo xtask` (in-repo, never installed, created
+  only on demonstrated need) for repository build, install, and contracts;
+  `dots` only for user commands.
 - Each artifact has one build path: build once into `dist/`, then install or
   link from there.
 - `check` is fast and side-effect free (format, lint, unit tests, typecheck)

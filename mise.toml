@@ -55,7 +55,7 @@ depends = ["cargo:dots-cli"]
 
 [monorepo.projects."custom:home"]
 root = "home"
-depends = ["custom:skills", "custom:codex-agent", "cargo:herdr-review", "custom:aerospace", "custom:gitsign"]
+depends = ["custom:skills", "custom:codex-agent", "cargo:herdr-review", "custom:aerospace"]
 
 [monorepo.projects."cargo:dots-repository-tests"]
 depends_add = ["custom:home"]
@@ -66,9 +66,6 @@ depends = ["cargo:herdr-find", "cargo:herdr-github", "cargo:herdr-nav", "cargo:h
 
 [monorepo.projects."custom:aerospace"]
 root = "src/aerospace"
-
-[monorepo.projects."custom:gitsign"]
-root = "src/gitsign"
 
 [task_templates.rust-check]
 run = [
@@ -116,7 +113,7 @@ cache = { enabled = false }
 
 [tasks.check]
 description = "Complete repository gate, without installation or cloud CI"
-depends = ["rust-check", "//src/pi:check", "//src/claude/codex-agent:check", "//skills:check", "//src/herdr/deploy:check", "//src/aerospace:check", "//src/gitsign:check", "//home:check", "//tests:graph-check"]
+depends = ["rust-check", "//src/pi:check", "//src/claude/codex-agent:check", "//skills:check", "//src/herdr/deploy:check", "//src/aerospace:check", "//home:check", "//tests:graph-check"]
 cache = { enabled = false }
 
 [tasks."rust-check"]
@@ -165,21 +162,6 @@ cache = { enabled = false }
 [tasks."finicky:install"]
 run = ['test "$(uname -s)" = Darwin', 'test -x /Applications/Finicky.app/Contents/MacOS/Finicky', '{{ vars.stow }} --target "$HOME" --simulate --restow finicky', '{{ vars.stow }} --target "$HOME" --restow finicky']
 cache = { enabled = false }
-
-[tasks."gitsign:install"]
-description = "Explicit macOS signing-service activation"
-run = [
-  'test "$(uname -s)" = Darwin',
-  'test -x /opt/homebrew/bin/gitsign && test -x /opt/homebrew/bin/gitsign-credential-cache && test -x /opt/homebrew/bin/python3',
-  '{{ vars.stow }} --target "$HOME" --simulate --restow gitsign',
-  '{{ vars.stow }} --target "$HOME" --restow gitsign',
-  'launchctl enable "gui/$(id -u)/dev.joshrwolf.gitsign-credential-cache"',
-  'launchctl print "gui/$(id -u)/dev.joshrwolf.gitsign-credential-cache" >/dev/null 2>&1 || launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/dev.joshrwolf.gitsign-credential-cache.plist"',
-]
-cache = { enabled = false }
-
-
-
 
 [tasks."pi-cli:install"]
 run = "curl -fsSL https://pi.dev/install.sh | sh"

@@ -90,7 +90,7 @@ mise run //src/pi:install           # verify and install the companion update
 ```
 
 Base Stow packages are listed in root `mise.toml`; `unstow` removes only those
-links. Neovim, Finicky, and gitsign have separate `<name>:install` tasks.
+links. Neovim and Finicky have separate `<name>:install` tasks.
 Stow uses `--no-folding` to keep runtime directories out of the checkout.
 
 `mise run //src/herdr:install` installs all Herdr plugins and the Herdr/Neovim

@@ -9,7 +9,9 @@ brew "fd"
 brew "fzf"
 brew "gh"
 brew "git"
-brew "gitsign"
+# Keychain credential cache (gitsign.credentialCacheMode=system) is unreleased;
+# drop args after the release following v0.17.1.
+brew "gitsign", args: ["HEAD"]
 brew "gnu-tar"
 brew "go"
 brew "goimports"
@@ -18,7 +20,7 @@ brew "gopls"
 brew "lua-language-server"
 brew "mise"
 brew "melange"
-# Runtime interpreter for the optional signing LaunchAgent, not the build SDK.
+# Runtime interpreter for AeroSpace scripts, not the build SDK.
 brew "python"
 brew "qemu"
 brew "ripgrep"

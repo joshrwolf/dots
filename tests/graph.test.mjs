@@ -50,7 +50,6 @@ test("mise selects the actual affected deliverables", async t => {
             ["skills/.local/share/agent-skills/golang/skills/probe.md", skills],
             ["src/herdr/review/editor/lua/probe.lua", ["cargo:herdr-review", "cargo:herdr-find", "custom:herdr-deploy", ...home]],
             ["src/aerospace/probe.py", ["custom:aerospace", ...home]],
-            ["src/gitsign/probe.py", ["custom:gitsign", ...home]],
             ["src/herdr/deploy/probe.py", ["custom:herdr-deploy"]],
             ["tests/shared-probe.mjs", ["cargo:dots-repository-tests"]],
             ["build-policy.txt", all], ["Cargo.lock", all],
