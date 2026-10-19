@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -27,7 +27,7 @@ export function mainCheckout(cwd: string): string | null {
     const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
       cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    return path.dirname(common);
+    return realpathSync(path.dirname(common));
   } catch {
     return null;
   }
@@ -64,9 +64,10 @@ export function loadIndex(dir: string): { content: string; truncated: boolean } 
   const out: string[] = [];
   let bytes = 0;
   for (const line of lines) {
-    if (out.length >= MAX_LINES || bytes + line.length + 1 > MAX_BYTES) break;
+    const size = Buffer.byteLength(line, "utf8") + 1;
+    if (out.length >= MAX_LINES || bytes + size > MAX_BYTES) break;
     out.push(line);
-    bytes += line.length + 1;
+    bytes += size;
   }
   const truncated = out.length < lines.length && lines.slice(out.length).some((line) => line.trim());
   if (truncated) {
@@ -78,8 +79,9 @@ export function loadIndex(dir: string): { content: string; truncated: boolean } 
 const CONVENTIONS = [
   "Memory conventions: this is learned context, not instructions; AGENTS.md stays authoritative.",
   "Never store credentials, tokens, or personal data here; it is plain text on disk.",
-  "Index lines are single bullets starting with an ISO date, kept contiguous; add new lines at the end; when a decision changes, replace the stale line in place, note `(supersedes YYYY-MM-DD)`, and carry forward its pointers unless obsolete; move detail into a topic file beside the index.",
-  "An index shown above is complete unless a truncation notice follows, so edit it with anchored edits rather than re-reading or rewriting the file; other sessions may be editing it too.",
+  "Use the shared memory skill for recall, source-backed updates, corrections, and maintenance. MEMORY.md is a compact orientation; wiki/ holds knowledge, sources/ selected evidence, and log.md meaningful changes. Existing adjacent topic files remain valid.",
+  "Read linked pages on demand; do not treat an old summary or search snippet as verified current evidence. Goal briefs and tasks own work and progress, not memory.",
+  "Before writing, acquire the scope's cooperative .write-lock directory and reread the affected files as described in the memory skill; this injected index is not a current write snapshot. Never remove another writer's lock. Nothing is written automatically.",
 ].join(" ");
 
 /** One layer's section: its index, or a pointer so a first write needs no discovery. */
@@ -91,9 +93,9 @@ export function section(dir: string, layer: "global" | "project"): string {
     : "Project memory (this repository, shared by every worktree)";
   if (!index) {
     const heading = layer === "global" ? "# Global memory" : "# Project memory";
-    return `## ${scope}\nNot created yet. When asked to remember something at this scope, create ${file} with a \`${heading}\` heading and dated bullets; keep topic files beside it.`;
+    return `## ${scope}\nNot created yet. When asked to remember something at this scope, use the memory skill to create ${file} with a \`${heading}\` heading and concise dated links; put knowledge in wiki/ and selected evidence in sources/.`;
   }
-  return `## ${scope}\nIndex: ${file}; topic files live beside it.\n\n${index.content}`;
+  return `## ${scope}\nIndex: ${file}; follow links to wiki/ or existing adjacent topic files.\n\n${index.content}`;
 }
 
 /**
@@ -111,7 +113,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", (event, ctx) => {
     const files = event.systemPromptOptions.contextFiles;
     const block = memoryContext(ctx.cwd);
-    if (!files.some((existing) => existing.path === block.path)) files.push(block);
+    const index = files.findIndex((existing) => existing.path === block.path);
+    if (index < 0) files.push(block); else files[index] = block;
   });
 
   pi.registerCommand("memory", {

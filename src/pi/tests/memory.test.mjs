@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -33,6 +33,10 @@ test("worktrees and subdirectories share one memory directory outside the repo",
     const main = memoryDir(repo.checkout, env);
     assert.equal(memoryDir(repo.linked, env), main);
     assert.equal(memoryDir(repo.sub, env), main);
+    const alias = path.join(repo.root, "alias");
+    symlinkSync(repo.checkout, alias);
+    assert.equal(memoryDir(alias, env), main);
+    assert.equal(main, path.join(env.XDG_DATA_HOME, "dots/memory", projectKey(realpathSync(repo.checkout))));
     assert.ok(main.startsWith(path.join(repo.root, "data", "dots/memory")));
     assert.ok(!main.startsWith(repo.checkout));
     assert.equal(memoryDir(repo.root, env), null, "outside a repository there is no project memory");
@@ -79,12 +83,48 @@ test("one block carries the date, a pointer per absent layer, each index once, a
       handlers.before_agent_start({ systemPromptOptions: { contextFiles } }, { cwd: repo.linked });
       handlers.before_agent_start({ systemPromptOptions: { contextFiles } }, { cwd: repo.linked });
       assert.equal(contextFiles.length, 1, "a single memory entry, added once");
+      writeFileSync(projectFile, "# Project memory\n\n- 2026-10-15: corrected fact; see wiki/decision.md\n");
+      handlers.before_agent_start({ systemPromptOptions: { contextFiles } }, { cwd: repo.linked });
+      assert.equal(contextFiles.length, 1);
+      assert.match(contextFiles[0].content, /corrected fact/);
+      assert.doesNotMatch(contextFiles[0].content, /2026-10-02: project fact/);
+      assert.match(contextFiles[0].content, /cooperative .write-lock/);
     } finally {
       if (previous === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = previous;
     }
   } finally {
     rmSync(repo.root, { recursive: true, force: true });
   }
+});
+
+test("only indexes load automatically; evidence and unrelated projects stay out", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "dots-memory-scope-"));
+  try {
+    const global = path.join(dir, "dots/memory/_global");
+    mkdirSync(path.join(global, "wiki"), { recursive: true });
+    mkdirSync(path.join(global, "sources"));
+    writeFileSync(path.join(global, "MEMORY.md"), "- 2026-10-15: [decision](wiki/decision.md)\n");
+    writeFileSync(path.join(global, "wiki/decision.md"), "DETAIL_ONLY");
+    writeFileSync(path.join(global, "sources/check.md"), "SOURCE_ONLY");
+    mkdirSync(path.join(dir, "dots/memory/unrelated"));
+    writeFileSync(path.join(dir, "dots/memory/unrelated/MEMORY.md"), "OTHER_PROJECT_ONLY");
+    const content = memoryContext(dir, { XDG_DATA_HOME: dir }, today).content;
+    assert.match(content, /wiki\/decision.md/);
+    assert.doesNotMatch(content, /DETAIL_ONLY|SOURCE_ONLY|OTHER_PROJECT_ONLY/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("index limit counts UTF-8 bytes rather than UTF-16 characters", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "dots-memory-unicode-"));
+  try {
+    const line = "界".repeat(300);
+    writeFileSync(path.join(dir, "MEMORY.md"), Array(40).fill(line).join("\n"));
+    const index = loadIndex(dir);
+    assert.equal(index.truncated, true);
+    const body = index.content.split("\n\n[memory index truncated:")[0];
+    assert.ok(Buffer.byteLength(body, "utf8") <= 24 * 1024);
+    assert.equal(body.split("\n").length, 27);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("index loads bounded with exact counts", () => {

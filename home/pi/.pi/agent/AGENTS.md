@@ -73,15 +73,16 @@
   decisions, patterns, and conventions for one repository in project memory.
   When a note has stabilized and should bind every session, propose promoting
   it to the relevant `AGENTS.md` instead of letting memory act as instructions.
-- Record at checkpoints, not continuously: accepted decisions with their reason
-  and date, the reference pattern for a multi-PR effort, exceptions discovered,
-  and pointers to where details live. Skip anything derivable from the code,
-  Git history, or the instruction files.
-- Keep the index short: one line per item, supersede stale lines instead of
-  appending, and move detail into a topic file. Say "remember this" and I will
-  write it; proposed memories from workers go through the parent session.
+- Use the shared `memory` skill for recall, source-backed checkpoint updates,
+  corrections, and maintenance. Keep indexes compact; follow links to knowledge
+  and evidence on demand. Existing topic files remain valid.
+- Goal briefs own outcomes and working agreements; tasks own progress. Memory
+  holds reusable understanding, not another task list or session transcript.
+- Before publishing, acquire the scope's cooperative write lock and reread the
+  affected files. Workers propose notes; the parent publishes. Never assume an
+  injected index is still current or remove another session's lock.
 - Memory is context, not authority: current code, GitHub state, and your
-  instructions win over a stale note. Trim the index when it drifts.
+  instructions win over a stale note. Nothing is written automatically.
 
 These instructions are specific to Pi and maintained independently of the
 instructions for other agents. Shared skills live in `~/.agents/skills`; use

@@ -163,7 +163,11 @@ checks, not daemons.
 Linked worktrees share the project index; project notes take precedence over
 global notes. Memory is learned context, not an instruction override.
 
-Nothing is written automatically. Agents edit indexes at checkpoints; keep them
-short and put detail in adjacent topic files. Concurrent edits have no lock:
-use anchored edits. Credentials, private captures, and transcripts do not belong
-in memory. Contributor guidance lives in [AGENTS.md](../src/pi/AGENTS.md).
+Nothing is written automatically. The shared [memory skill](../skills/memory/SKILL.md)
+provides recall, source-backed updates, correction, and maintenance. Indexes stay
+compact; linked knowledge and selected evidence load on demand. Existing adjacent
+topic files remain valid. Cooperating writers acquire a per-scope directory lock
+and reread before editing; readers do not get atomic multi-file snapshots.
+Goal briefs and tasks retain working context and progress separately.
+Credentials, private captures, and transcripts do not belong in memory.
+Contributor guidance lives in [AGENTS.md](../src/pi/AGENTS.md).
