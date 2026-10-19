@@ -33,6 +33,29 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
   local patches minimal, and remove superseded patches. Personal features stay
   outside vendored code.
 
+## Tooling
+
+- Language follows the artifact: Rust for executables, repository and
+  installation contracts, and automation logic; TypeScript/Node only inside the
+  Pi and Claude packages; Lua only for Neovim. No Python. Shell appears only as
+  one-line inline mise commands; a host-required executable shim must justify
+  itself.
+- Tests spawn only real dependencies or our own fixtures: test-binary re-exec,
+  or `[[bin]]` fixtures behind a `testing` feature. No interpreters and no
+  detached socket call-backs.
+- Keep one implementation per capability (for example, `dots-process` is the
+  only subprocess runner), tested once where it lives.
+- Mise selects tools and orders tasks. Plain cargo/npm/stow calls stay inline;
+  other logic lives in Rust: `cargo xtask` (in-repo, never installed) for
+  repository build, install, and contracts; `dots` only for user commands.
+- Each artifact has one build path: build once into `dist/`, then install or
+  link from there.
+- `check` is fast and side-effect free (format, lint, unit tests, typecheck)
+  and is what agents run. `verify` holds process-lifecycle, PTY, installation,
+  and bootstrap acceptance.
+- Delete tests that serve no purpose, such as tests of mise's own graph or of
+  task-file shape, rather than porting them.
+
 ## Build and activation
 
 - Mise owns SDK pins and orchestration; native tools own dependency/compiler

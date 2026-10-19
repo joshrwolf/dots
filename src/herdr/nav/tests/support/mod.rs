@@ -323,7 +323,7 @@ pub(crate) fn command(root: &Path, program: &Path) -> Command {
 }
 
 pub(crate) fn run(command: Command) -> Result<String> {
-    let result = herdrkit::process::output(command, Duration::from_secs(25), 64 * 1024)?;
+    let result = dots_process::output(command, Duration::from_secs(25), 64 * 1024)?;
     ensure!(
         result.status.success(),
         "action failed: {}",

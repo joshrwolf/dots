@@ -1,0 +1,27 @@
+[package]
+name = "dots-process"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+nix.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+nix = { workspace = true, features = ["fs"] }
+
+[features]
+# Builds the lifecycle fixture for this crate's own tests. Off by default.
+testing = []
+
+[[bin]]
+name = "dots-process-fixture"
+path = "tests/fixtures/roles.rs"
+required-features = ["testing"]
+
+[lints]
+workspace = true

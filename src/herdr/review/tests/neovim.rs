@@ -47,8 +47,7 @@ impl Checkout {
                 "core.hooksPath=/dev/null",
             ])
             .args(args);
-        let output =
-            herdrkit::process::output(command, Duration::from_secs(10), 64 * 1024).unwrap();
+        let output = dots_process::output(command, Duration::from_secs(10), 64 * 1024).unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -84,8 +83,7 @@ fn lua_behavior_suite() {
     ] {
         let mut command = Command::new("git");
         command.current_dir(&dependency).args(args);
-        let output =
-            herdrkit::process::output(command, Duration::from_secs(10), 16 * 1024).unwrap();
+        let output = dots_process::output(command, Duration::from_secs(10), 16 * 1024).unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -125,7 +123,7 @@ fn lua_behavior_suite() {
         .env("XDG_STATE_HOME", scratch.0.join("state"))
         .env("XDG_CACHE_HOME", scratch.0.join("cache"))
         .env("NVIM_LOG_FILE", scratch.0.join("nvim.log"));
-    let output = herdrkit::process::output(command, Duration::from_secs(90), 1024 * 1024).unwrap();
+    let output = dots_process::output(command, Duration::from_secs(90), 1024 * 1024).unwrap();
     assert!(
         output.status.success(),
         "mini.test failed:\n{}\n{}",
@@ -191,8 +189,7 @@ fn discussion_reply_and_resolution_survive_editor_restart() {
             .env("XDG_STATE_HOME", fixture.0.join("state"))
             .env("XDG_CACHE_HOME", fixture.0.join("cache"))
             .env("NVIM_LOG_FILE", fixture.0.join("nvim.log"));
-        let output =
-            herdrkit::process::output(command, Duration::from_secs(30), 64 * 1024).unwrap();
+        let output = dots_process::output(command, Duration::from_secs(30), 64 * 1024).unwrap();
         assert!(
             output.status.success(),
             "{phase}: {}\n{}",

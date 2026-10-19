@@ -396,23 +396,46 @@ mod tests {
         assert_eq!(fs::read_to_string(other).unwrap(), "\"untouched\"");
     }
 
+    /// Names the slot for [`lock_probe`] when this test binary is re-executed.
+    const PROBE: &str = "HERDRKIT_STATE_FILE_PROBE";
+
+    /// A no-op in normal runs. Re-executed with [`PROBE`], it is another process
+    /// that tries the slot lock and exits abruptly without running destructors.
+    #[test]
+    fn lock_probe() {
+        let Some(path) = std::env::var_os(PROBE) else {
+            return;
+        };
+        let code = match StateFile::lock(Path::new(&path)) {
+            Ok(slot) => {
+                std::mem::forget(slot);
+                0
+            }
+            Err(Error::Busy) => 3,
+            Err(_) => 4,
+        };
+        std::process::exit(code);
+    }
+
     #[test]
     fn locks_exclude_other_processes_and_survive_abrupt_holder_exit() {
         let root = Scratch::new();
         let path = root.0.join("slot");
         let slot = StateFile::lock(&path).unwrap();
         let probe = || {
-            let mut command = std::process::Command::new("python3");
-            command.args(["-I", "-c", "import fcntl, os, sys\nf = open(sys.argv[1], 'r+')\ntry:\n fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\nexcept BlockingIOError:\n os._exit(3)\nos._exit(0)"]).arg(path.join("record.lock"));
-            crate::process::output(command, std::time::Duration::from_secs(3), 4096)
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "state_file::tests::lock_probe", "--nocapture"])
+                .env(PROBE, &path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .status()
                 .unwrap()
-                .status
                 .code()
         };
         assert_eq!(probe(), Some(3));
         drop(slot);
-        // os._exit bypasses language finalizers. Kernel lock release, rather
-        // than a cleanup callback or a saved PID, allows the next acquisition.
+        // The probe exits while holding the lock. Kernel release, rather than
+        // a destructor or a saved PID, allows the next acquisition.
         assert_eq!(probe(), Some(0));
         StateFile::lock(&path).unwrap();
     }
@@ -421,14 +444,11 @@ mod tests {
     fn non_regular_records_are_rejected_without_waiting_for_a_writer() {
         let root = Scratch::new();
         let mut slot = StateFile::lock(&root.0.join("slot")).unwrap();
-        let mut command = std::process::Command::new("mkfifo");
-        command.args(["-m", "600"]).arg(slot.path.join(RECORD));
-        assert!(
-            crate::process::output(command, std::time::Duration::from_secs(2), 4096)
-                .unwrap()
-                .status
-                .success()
-        );
+        nix::unistd::mkfifo(
+            &slot.path.join(RECORD),
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )
+        .unwrap();
         assert!(matches!(slot.read::<Value>(), Err(Error::UnsafePath(_))));
         assert!(matches!(
             slot.write(&json!("no")),

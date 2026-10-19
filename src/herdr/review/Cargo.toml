@@ -27,6 +27,7 @@ sha2.workspace = true
 
 [dev-dependencies]
 herdrkit = { workspace = true, features = ["testing"] }
+dots-process.workspace = true
 
 [lints]
 workspace = true

@@ -115,11 +115,12 @@ Keep latency-sensitive logic in process. Do not interpose shell, `jq`, a text
 record format, or a second invocation of the same plugin between indexing and
 acting. A picker returns the typed value it was given.
 
-Use `herdrkit::process::output` for new bounded, noninteractive subprocesses.
-Supply caller-specific limits, deadlines, and diagnostic context. It drains both
-pipes before reaping and kills the still-owned process group on failure; never
-signal a process group after reaping its leader because that PID may be reused.
-This helper does not supervise detached descendants that close both pipes.
+Use `dots_process::output` (crate `dots-process`) for new bounded,
+noninteractive subprocesses. Supply caller-specific limits, deadlines, and
+diagnostic context. It drains both pipes before reaping and kills the
+still-owned process group on failure; never signal a process group after
+reaping its leader because that PID may be reused. This helper does not
+supervise detached descendants that close both pipes.
 
 Render error chains at the binary boundary and add context at meaningful
 operation boundaries. Use `runtime::finish` with the appropriate

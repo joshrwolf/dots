@@ -454,6 +454,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dots-process"
+version = "0.1.0"
+dependencies = [
+ "nix",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "dots-repository-tests"
 version = "0.1.0"
 dependencies = [
@@ -624,12 +633,11 @@ dependencies = [
 name = "github-client"
 version = "0.1.0"
 dependencies = [
- "nix",
+ "dots-process",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.20",
- "tokio",
 ]
 
 [[package]]
@@ -716,6 +724,7 @@ name = "herdr-nav"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "dots-process",
  "herdrkit",
  "nix",
  "rustix",
@@ -747,6 +756,7 @@ name = "herdr-review"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dots-process",
  "github-client",
  "herdr-prs",
  "herdrkit",
@@ -1472,6 +1482,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "review-core"
 version = "0.1.0"
 dependencies = [
+ "dots-process",
  "herdrkit",
  "nix",
  "rusqlite",
