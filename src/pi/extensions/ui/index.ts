@@ -13,6 +13,7 @@ import { installEditor } from "../../src/features/editor.ts";
 import { createFooter } from "../../src/features/footer.ts";
 import { releaseStatus, releaseDescription } from "../../src/host/release.ts";
 import { createHeader } from "../../src/features/frame.ts";
+import { hiddenThinkingLabel, thinkingMarkdown } from "../../src/features/thinking.ts";
 
 export function toolRenderers(syntax: SyntaxService): ReadonlyMap<ToolName, ToolRenderers> {
   return new Map<ToolName, ToolRenderers>([
@@ -45,6 +46,7 @@ export function registerUI(pi: ExtensionAPI, preferences: Preferences = defaultP
   // Rows can render before session_start. Syntax loading remains lazy.
   const syntax = createSyntaxService();
   pi.registerToolRenderer(rendererResolver(syntax, preferences));
+  if (preferences.thinking === "compact") pi.registerMarkdownTransformer(thinkingMarkdown);
   const interactions = new Set<AbortController>();
   const refreshRelease = (ctx: ExtensionContext) => {
     const status = releaseStatus();
@@ -57,7 +59,7 @@ export function registerUI(pi: ExtensionAPI, preferences: Preferences = defaultP
   });
   pi.on("before_agent_start", (_event, ctx) => { refreshRelease(ctx); });
   pi.registerCommand("ui", {
-    description: "Configure tool displays, footer, and editor; apply with a reload",
+    description: "Configure tools, thinking, and frame styling; apply with a reload",
     handler: async (_args, ctx) => {
       if (ctx.mode !== "tui") { ctx.ui.notify("/ui requires the interactive terminal.", "warning"); return; }
       const controller = new AbortController();
@@ -75,6 +77,7 @@ export function registerUI(pi: ExtensionAPI, preferences: Preferences = defaultP
   });
   pi.on("session_start", (_event, ctx) => {
     refreshRelease(ctx);
+    if (ctx.mode === "tui" && preferences.thinking === "compact") ctx.ui.setHiddenThinkingLabel(hiddenThinkingLabel);
     releaseEditor();
     releaseEditor = preferences.editor === "soft" ? installEditor(ctx) : () => {};
     if (ctx.mode === "tui" && preferences.header === "compact") ctx.ui.setHeader((_tui, theme) => createHeader(theme));

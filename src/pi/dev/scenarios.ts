@@ -2,6 +2,7 @@ import { UserMessageComponent, type KeybindingsManager, type Theme } from "@eare
 import { Text, Spacer, VStack, type Component, type TUI } from "@earendil-works/pi-tui";
 import { Inspector, OutputView, type SyntaxService, type ToolObservation, type ToolPresentation } from "../src/index.ts";
 import { transcript } from "./transcript.ts";
+import { thinkingComponent } from "./thinking.ts";
 import { bashPresentation } from "../src/features/tools/bash.ts";
 import { readPresentation } from "../src/features/tools/read.ts";
 import { writePresentation } from "../src/features/tools/write.ts";
@@ -82,6 +83,17 @@ export function jobFixture(phase = 1): Job {
   return job;
 }
 
+const thinkingScenario: Scenario = {
+  id: "thinking", title: "Thinking blocks", phases: ["summary", "structured detail", "streaming"],
+  create(context) {
+    const inspector = new Inspector(context.bindings, context.close, context.redraw, context.height);
+    return { component: inspector, update(phase, expanded, theme) {
+      inspector.setContent({ title: "Thinking blocks", detail: "native assistant component · E toggles thinking",
+        body: thinkingComponent(phase, !expanded) }, theme);
+    } };
+  },
+};
+
 export const scenarios: readonly Scenario[] = [
   { id: "frame", title: "Application frame", phases: ["ordinary", "context warning", "context critical", "unknown context"], create(context) {
     const inspector = new Inspector(context.bindings, context.close, context.redraw, context.height);
@@ -94,7 +106,7 @@ export const scenarios: readonly Scenario[] = [
       const activity = phase === 1 ? createWidget(() => [{ label: "review", state: "asking", depth: 0, elapsed: "1m", calls: 4, tokens: 2000, detail: "Which revision should I compare?", idleMs: 0 }], theme) : undefined;
       inspector.setContent({ title: "Application frame", detail: "real components · fixture conversation", body: new VStack([
         createHeader(theme), new Spacer(1), new UserMessageComponent("Check the renderer and report any failures.", undefined, 0),
-        new Spacer(1), new Text(theme.fg("text", "I’ll run the focused checks, then review the result."), 0, 0), new Spacer(1), ...transcript(context, phase, expanded, job),
+        thinkingComponent(0, false), new Spacer(1), new Text(theme.fg("text", "I’ll run the focused checks, then review the result."), 0, 0), new Spacer(1), ...transcript(context, phase, expanded, job),
         new Spacer(1), ...(activity ? [activity, new Spacer(1)] : []), ...(context.createEditor ? [context.createEditor(theme)] : []), footer,
       ]) }, theme);
     } };
@@ -160,4 +172,5 @@ export const scenarios: readonly Scenario[] = [
       inspector.setContent({ title: "Scheduled follow-up", body }, theme);
     } };
   } },
+  thinkingScenario,
 ];

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { prepareWorkbench } from "../dev/run.mjs";
+import { scenarios } from "../dev/scenarios.ts";
 
 test("workbench isolates home, resources and credentials without registering or installing anything", () => {
   const environment = { PATH: process.env.PATH, TERM: "xterm-256color", COLORFGBG: "0;15", HOME: "/real-home", API_KEY: "not-a-key", NODE_OPTIONS: "--require=/untrusted", PI_CODING_AGENT_DIR: "/real-agent", PI_BIN: "/example/pi" };
@@ -32,6 +33,16 @@ test("workbench isolates home, resources and credentials without registering or 
   trial.cleanup();
   assert.throws(() => prepareWorkbench({ mode: "rpc" }), /mode/);
   assert.throws(() => prepareWorkbench({ scenario: "unknown" }), /scenario/);
+});
+
+test("every registered scenario can launch directly in either terminal mode", () => {
+  for (const { id } of scenarios) for (const mode of ["regular", "fullscreen"]) {
+    const trial = prepareWorkbench({ mode, scenario: id });
+    try {
+      assert.equal(trial.env.DOTS_UI_SCENARIO, id);
+      assert.equal(trial.args[trial.args.indexOf("--tui-mode") + 1], mode);
+    } finally { trial.cleanup(); }
+  }
 });
 
 test("development resources are opt-in, not published or registered", () => {

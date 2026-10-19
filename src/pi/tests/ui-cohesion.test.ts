@@ -16,7 +16,7 @@ const plain = (lines: string[]) => stripTerminalSequences(lines.join("\n"));
 function registration(preferences = parsePreferences({ version: 1 })) {
   let resolver: ToolRendererResolver | undefined;
   let dispose = () => {};
-  registerUI({ registerCommand() {}, registerToolRenderer(value: ToolRendererResolver) { resolver = value; },
+  registerUI({ registerCommand() {}, registerMarkdownTransformer() {}, registerToolRenderer(value: ToolRendererResolver) { resolver = value; },
     on(name: string, handler: () => void) { if (name === "session_shutdown") dispose = handler; },
   } as unknown as ExtensionAPI, preferences);
   assert.ok(resolver);

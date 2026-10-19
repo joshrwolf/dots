@@ -9,6 +9,8 @@ import { createSyntaxService } from "../src/index.ts";
 import { jobFixture } from "../dev/scenarios.ts";
 import { summary } from "../extensions/jobs/protocol.ts";
 import { jobOutput } from "../extensions/jobs/results.ts";
+import { thinkingFixture } from "../dev/thinking.ts";
+import { thinkingMarkdown } from "../src/features/thinking.ts";
 // Exact-version host contract: a cold export has no live runtime or TUI row.
 import { exportSessionToHtml } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/index.js";
 import { createToolHtmlRenderer } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js";
@@ -40,4 +42,24 @@ test("cold HTML export uses registered background presentation and retains expan
     assert.match(expanded, /Output prefix: \/fixture\/jobs\/example\/output.log/);
     assert.match(expanded, /Cleanup evidence is not universal process containment/);
   } finally { syntax.dispose(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("thinking presentation leaves cold HTML exports on the native recorded-content path", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dots-thinking-export-"));
+  try {
+    const session = SessionManager.create(directory, directory);
+    const message = thinkingFixture(1);
+    session.appendMessage(message);
+    for (const block of message.content) if (block.type === "thinking") {
+      assert.match(thinkingMarkdown(block.thinking, { messageType: "assistant-thinking", isStreaming: false, availableWidth: 80 }), /Thinking/);
+    }
+    const output = await exportSessionToHtml(session, undefined, { outputPath: join(directory, "export.html") });
+    const html = await readFile(output, "utf8");
+    const encoded = /<script id="session-data" type="application\/json">([^<]+)<\/script>/.exec(html)?.[1];
+    assert.ok(encoded);
+    const payload = JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
+    const recorded = payload.entries.find((entry: { type: string }) => entry.type === "message").message;
+    assert.deepEqual(recorded.content, message.content);
+    assert.ok(html.includes('class="thinking-block"'), "host retains its own thinking disclosure");
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

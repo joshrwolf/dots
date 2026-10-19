@@ -133,10 +133,10 @@ test("dispose unsubscribes once and stops rendering stale session context", () =
 
 test("registration only installs frame surfaces in TUI mode, not RPC/print/JSON", () => {
   let start;
-  register({ registerCommand() {}, registerToolRenderer() {}, on(event, fn) { if (event === "session_start") start = fn; } });
+  register({ registerCommand() {}, registerMarkdownTransformer() {}, registerToolRenderer() {}, on(event, fn) { if (event === "session_start") start = fn; } });
   let installed = 0;
   let headers = 0;
-  const ctx = { ui: { setHeader(factory) { assert.equal(typeof factory, "function"); headers++; }, getEditorComponent() { return () => {}; }, setFooter(factory) { assert.equal(typeof factory, "function"); installed++; } } };
+  const ctx = { ui: { setHiddenThinkingLabel() {}, setHeader(factory) { assert.equal(typeof factory, "function"); headers++; }, getEditorComponent() { return () => {}; }, setFooter(factory) { assert.equal(typeof factory, "function"); installed++; } } };
   for (const mode of ["rpc", "print", "json"]) start({}, { ...ctx, mode });
   assert.equal(installed, 0);
   assert.equal(headers, 0);

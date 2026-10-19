@@ -24,11 +24,13 @@ Resize the real terminal to check layout. Reopen with `/ui-lab [scenario]`;
 use `/ui-lab-exit` to exit. Source changes load with `/reload`; launcher changes
 require relaunching the workbench. No installation is needed. For everyday Pi
 sessions, use the [install and reload workflow](../../../docs/pi.md#updates).
-Scenarios cover tools, nested codemode activity, job inspection, workers, and the
+Scenarios cover tools, nested codemode activity, job inspection, workers, thinking, and the
 application frame (the default), including its native editor. The frame uses Pi’s
 actual tool/message components through the shipping renderer resolver: calls,
 job completions, worker replies, wakes, and an otherwise unstyled tool share one
-transcript. Expand and scroll to compare summaries with recorded evidence. Wake scenarios show
+transcript. `/ui-lab thinking` previews summaries, structured detail, and unfinished
+streaming Markdown through Pi’s real assistant component; **E** toggles its native
+thinking disclosure. Expand and scroll to compare summaries with recorded evidence. Wake scenarios show
 scheduled follow-ups and failed checks. Input outside commands is ignored, not sent to a model.
 
 `mise run //src/pi:verify-terminal` exercises real-host interaction in regular

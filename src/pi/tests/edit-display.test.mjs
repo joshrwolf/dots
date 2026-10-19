@@ -63,7 +63,7 @@ test("pairing preserves unequal blocks, order, and explicit newline notes", () =
 
 test("registers only presentation; preserves other custom renderers", () => {
   let resolver;
-  register({ registerCommand() {}, on() {}, registerToolRenderer(fn) { resolver = fn; } });
+  register({ registerCommand() {}, registerMarkdownTransformer() {}, on() {}, registerToolRenderer(fn) { resolver = fn; } });
   const downstream = { renderShell: "default", renderCall() {} };
   for (const tool of ["find", "custom_edit"]) {
     assert.equal(resolver(tool, () => downstream), downstream);

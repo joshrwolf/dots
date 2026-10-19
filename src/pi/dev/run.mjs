@@ -10,7 +10,7 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
  * named presentation resources load; credentials and personal state are absent. */
 export function prepareWorkbench({ environment = process.env, mode = "fullscreen", scenario = "frame" } = {}) {
   if (!["regular", "fullscreen"].includes(mode)) throw new Error("mode must be regular or fullscreen");
-  if (!["bash", "read", "write", "edit", "codemode", "job", "workers", "wake", "frame"].includes(scenario)) throw new Error("Unknown workbench scenario");
+  if (!["bash", "read", "write", "edit", "codemode", "job", "workers", "wake", "frame", "thinking"].includes(scenario)) throw new Error("Unknown workbench scenario");
   const directory = mkdtempSync(join(tmpdir(), "dots-ui-"));
   const home = join(directory, "home");
   const cwd = join(directory, "example");

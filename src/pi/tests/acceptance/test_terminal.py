@@ -185,7 +185,7 @@ class PackagedTerminalTests(unittest.TestCase):
         send(b"\x1b")
         wait(lambda: "workbench closed" in events(), "editor focus restored")
         wait(lambda: events().count(f"frame 160 {initial_theme}") >= 2, "original palette restored")
-        for scenario, expected in (("frame", b"Application frame"), ("wake", b"Scheduled follow-up")):
+        for scenario, expected in (("frame", b"Application frame"), ("wake", b"Scheduled follow-up"), ("thinking", b"Thinking blocks")):
             closed = events().count("workbench closed")
             capture.clear()
             command(f"/ui-lab {scenario}")
@@ -208,6 +208,16 @@ class PackagedTerminalTests(unittest.TestCase):
             if scenario == "wake":
                 send(b" ")
                 wait(lambda: b"exit 1" in capture, "failed wake check")
+            if scenario == "thinking":
+                wait(lambda: b"collapsed" in capture, "native thinking disclosure")
+                send(b"E")
+                wait(lambda: b"Reviewing dependency updates" in capture, "expanded thinking summary")
+                send(b" ")
+                wait(lambda: b"Decision: run the focused checks" in capture, "structured thinking detail")
+                send(b" ")
+                wait(lambda: state("thinking", 2, True) and b"version =" in capture, "unfinished streaming Markdown")
+                send(b"E")
+                wait(lambda: b"collapsed" in capture, "thinking collapsed again")
             send(b"\x1b")
             wait(lambda: events().count("workbench closed") > closed, f"{scenario} closed")
         command("/ui-lab job")

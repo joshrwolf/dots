@@ -448,7 +448,7 @@ test("settings cancel is side-effect free; apply saves before reload", async () 
   assert.equal(saved, undefined);
   assert.deepEqual(events, []);
   await configureUI(ui, reload, store);
-  assert.deepEqual(saved, { version: 1, tools: [], otherTools: "native", header: "native", footer: "native", editor: "native" });
+  assert.deepEqual(saved, { version: 1, tools: [], otherTools: "native", thinking: "native", header: "native", footer: "native", editor: "native" });
   assert.deepEqual(events, ["save", "reload"]);
 });
 

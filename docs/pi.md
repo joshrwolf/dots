@@ -67,12 +67,17 @@ test suite; test a worker launch/result in a fresh session after upgrades.
 
 ## Presentation
 
-Use `/ui` to select tool displays, the header, footer, and editor styling. Changes take
+Use `/ui` to select tool displays, thinking, the header, footer, and editor styling. Changes take
 effect only with **Apply and reload**; Cancel leaves settings unchanged.
 **Other tools** covers background tools and tools without their own custom renderer;
 third-party custom renderers retain ownership. Preferences live in
 `~/.pi/agent/dots-ui.json`. Disabling the UI resource through
 `pi config` restores native surfaces.
+
+Compact thinking labels short summaries and groups longer Markdown under **Thinking**.
+Ctrl+T toggles native thinking visibility; fullscreen also supports clicking a block.
+This changes terminal presentation only, not recorded reasoning or HTML exports.
+Select **thinking: native** in `/ui` to restore the original presentation.
 
 Ctrl+O expands recorded tool details. Paths, failures, truncation notices, and
 full-output links remain visible; display shortening does not change tool results.

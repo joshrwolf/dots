@@ -18,7 +18,7 @@ function result(text, details, isError = false) { return { content: [{ type: "te
 
 test("selected builtins and otherwise unstyled tools share the compact shell", () => {
   let resolve;
-  register({ registerCommand() {}, on() {}, registerToolRenderer(fn) { resolve = fn; } });
+  register({ registerCommand() {}, registerMarkdownTransformer() {}, on() {}, registerToolRenderer(fn) { resolve = fn; } });
   const original = {};
   for (const name of ["grep", "subagent", "mcp__lookup", "job_start"]) assert.equal(resolve(name, () => original).renderShell, "self");
   const custom = { renderCall() {} };
