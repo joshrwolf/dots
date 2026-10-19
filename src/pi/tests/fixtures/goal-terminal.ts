@@ -17,7 +17,10 @@ export default function (pi: ExtensionAPI): void {
   };
   const observed: ExtensionAPI = { ...pi, registerCommand(name, definition) {
     pi.registerCommand(name, { ...definition, async handler(args, ctx) {
-      try { await definition.handler(args, ctx); } finally { mark(`command-end:${args}`); }
+      const ui: typeof ctx.ui = { ...ctx.ui, async custom(factory, options) {
+        try { return await ctx.ui.custom(factory, options); } finally { mark("inspector-closed"); }
+      } };
+      try { await definition.handler(args, { ...ctx, ui }); } finally { mark(`command-end:${args}`); }
     } });
   } };
   goal(observed, {

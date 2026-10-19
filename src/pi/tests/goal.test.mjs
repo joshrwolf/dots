@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+import { getThemeByName } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import goal, { FOCUS_ENTRY, restoreFocus, restoreGoals } from "../extensions/goal/index.ts";
 import { source, snapshot } from "./goal-fixture.mjs";
 
@@ -372,6 +374,45 @@ test("saved sets reject duplicates and inconsistent selection; legacy state migr
   assert.deepEqual((await h.list()).details.followed, []);
   h.entries.pop(); await h.event("session_tree");
   assert.equal((await h.list()).details.followed.length, 2);
+});
+
+test("dashboard uses native press/click handling and cannot revive stale widgets", async () => {
+  initTheme("dark", false);
+  const theme = getThemeByName("dark");
+  const h = harness(source(), [entry(focused())], "tui");
+  await h.event("session_start");
+  const tui = { requestRender() {}, terminal: { rows: 40 } };
+  const widget = h.widgets.at(-1)[1](tui, theme);
+  const event = { type: "press", button: "left", x: 2, y: 1, screenX: 2, screenY: 1, width: 120, height: 20, shift: false, alt: false, ctrl: false };
+  for (const extra of [{ type: "wheel" }, { type: "drag" }, { type: "move" }, { type: "release" }, { button: "right" }, { shift: true }, { alt: true }, { ctrl: true }]) {
+    assert.equal(widget.handleMouse({ ...event, ...extra }), undefined);
+  }
+  const before = h.backend.calls.length;
+  assert.equal(widget.handleMouse(event).handled, true);
+  assert.equal(h.backend.calls.length, before, "press does not open inspection");
+  let inspector;
+  const opened = gate(), closed = gate();
+  h.ctx.ui.custom = async (factory) => {
+    inspector = factory(tui, theme, { matches: (data, action) => data === "\r" && action === "tui.select.confirm" }, () => {
+      inspector.dispose(); closed.resolve();
+    });
+    opened.resolve();
+    await closed.promise;
+  };
+  widget.handleMouse({ ...event, type: "click" });
+  assert.equal(widget.handleMouse({ ...event, type: "click" }), undefined, "one dialog at a time");
+  await opened.promise;
+  assert.match(inspector.render(120).join("\n"), /Consistent exports/);
+  inspector.handleInput("\r");
+  await closed.promise;
+  assert.equal(h.userMessages.length, 0);
+  assert.equal(h.messages.length, 0);
+  assert.equal(h.entries.length, 1, "inspection does not change selection or follows");
+  await h.event("session_tree");
+  assert.equal(widget.handleMouse({ ...event, type: "click" }), undefined, "retired widgets cannot open dialogs");
+  const replacement = h.widgets.at(-1)[1](tui, theme);
+  await h.event("session_shutdown");
+  assert.equal(replacement.handleMouse(event), undefined);
 });
 
 test("branch changes remove only the goal widget and headless inspection never wakes", async () => {

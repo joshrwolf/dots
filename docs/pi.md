@@ -137,7 +137,9 @@ Follow several goals at once; selecting another never pauses or closes earlier
 work. `/goal` chooses which followed goal to inspect, with `1` slices, `2` brief,
 and `3` record details. `/goal show ID` selects directly; `/goal history ID`
 includes closed details. In slices, `[`/`]` select a group; left/right fold and
-unfold it (Space toggles). Selection affects display, not which goals get context.
+unfold it (Space toggles). In fullscreen mode, clicking the dashboard opens the
+selected goal's inspector; group arrows in the dashboard remain read-only.
+Selection affects display, not which goals get context.
 
 `/goal list` lists shared open/held goals and marks this session's follows;
 `/goal followed` lists the session set. `/goal unfollow ID` removes one;

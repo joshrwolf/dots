@@ -3,6 +3,7 @@ import fcntl
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import struct
@@ -83,6 +84,16 @@ class GoalTerminalTests(unittest.TestCase):
                 pump()
             send(b"/goal focus t-123abc\r")
             wait(lambda: b"slices done" in capture and b"Unified fixture exports" in capture and "╭".encode() in capture and b"Reference fixture slice" in capture, "framed goal dashboard")
+            if mode == "fullscreen":
+                # Use the host's painted heading position, not a fixed screen row.
+                painted = re.split(rb"\x1b\[(\d+);1H", bytes(capture))
+                rows = [int(row) for row, line in zip(painted[1::2], painted[2::2]) if b"Unified fixture exports" in line]
+                self.assertTrue(rows, "goal heading has a fullscreen cursor position")
+                closed = events().count("inspector-closed")
+                send(f"\x1b[<0;4;{rows[-1]}M\x1b[<0;4;{rows[-1]}m".encode())
+                wait(lambda: b"1 slices" in capture and b"Reference fixture slice" in capture, "click opens goal inspector")
+                send(b"\r")
+                wait(lambda: events().count("inspector-closed") > closed, "clicked inspector closed")
             send(b"/goal\r")
             wait(lambda: b"1 slices" in capture, "inspector")
             send(b"2")

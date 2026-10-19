@@ -1,5 +1,6 @@
 import path from "node:path";
 import { Type } from "typebox";
+import { MouseRegion } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { labelText, sourceText } from "../../src/index.ts";
 import { FollowedWidget, GoalInspector, inspection, orientation, compactSummary, type Focus, type GoalView } from "./present.ts";
@@ -65,11 +66,23 @@ export default function goalExtension(pi: ExtensionAPI, source: GoalSource = dot
         const owned = { view: new FollowedWidget(), theme, redraw: () => tui.requestRender() };
         widget = owned;
         owned.view.update([...followed.values()], focus?.id, theme);
-        return {
+        const region = new MouseRegion({
           render: (width) => active && epoch === generation ? owned.view.render(width) : [],
           invalidate: () => owned.view.invalidate(),
+        }, (event) => {
+          if (!active || epoch !== generation || widget !== owned || dialog || closeInspector
+            || event.button !== "left" || event.shift || event.alt || event.ctrl) return undefined;
+          // Pi synthesizes a click after an accepted press, only when it was not a drag.
+          if (event.type === "press") return { handled: true, render: false };
+          if (event.type !== "click") return undefined;
+          void show(ctx).catch((error) => {
+            if (active && epoch === generation && widget === owned) notify(ctx, String(error), "error");
+          });
+          return { handled: true, render: false };
+        });
+        return Object.assign(region, {
           dispose: () => { if (widget === owned) { widget = undefined; mounted = false; } },
-        };
+        });
       });
     }
     if (widget) { widget.view.update([...followed.values()], focus?.id, widget.theme); widget.redraw(); }
