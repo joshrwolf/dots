@@ -23,7 +23,8 @@
       "extensions/memory/index.ts",
       "extensions/workers/index.ts",
       "extensions/wake/index.ts",
-      "extensions/jobs/index.ts"
+      "extensions/jobs/index.ts",
+      "extensions/goal/index.ts"
     ],
     "skills": [],
     "prompts": [],

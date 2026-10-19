@@ -73,7 +73,7 @@ class Client {
         assert.doesNotMatch(this.stderr,/Failed to load extension|ERR_MODULE_NOT_FOUND|Cannot find module|stale after session/i);
     }
 }
-const expected=["context","memory","ui","workers","wakes","jobs"];
+const expected=["context","memory","ui","workers","wakes","jobs","goal"];
 await install(join(work,"installed"));
 const installed=new Client(undefined,"installed");
 try {

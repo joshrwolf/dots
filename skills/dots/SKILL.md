@@ -19,6 +19,8 @@ In Herdr, register every PR you create or start working on with `dots herdr prs 
 
 For multi-PR efforts, `dots task` is the shared work list for a project across sessions and worktrees. Plan slices as tasks under a parent, record prerequisites, and claim a slice (`dots task claim ID --owner <session> --json` or `--next`) before delegating it. Only the parent session edits tasks; workers return results. Record the PR URL with `update --pr`, close with `done` once verified, and `hold` with a reason when blocked. Task records are coordination, not evidence: confirm branch and PR state in Git/GitHub when resuming, and do not keep a lease on work nobody is doing.
 
+Task lists are project-scoped; linked worktrees share the project. `dots task list` shows open/held roots by default. Use `--parent ID` for one goal's slices, `--flat` for every level, and `--all` to include closed history. Records are retained, not automatically cleaned up. For opt-in goal mode, write a Markdown brief and use `dots task goal create TITLE --brief PATH --json`, or `attach` an existing root. Goal overviews show active task details with complete totals; `show ID --all` includes closed details. Goal tracking does not authorize execution.
+
 ## Available workflows
 
 - `dots herdr`: Register and inspect PR associations in Herdr workspaces. Help: `dots herdr --help`.
@@ -34,11 +36,17 @@ For multi-PR efforts, `dots task` is the shared work list for a project across s
 - `dots github reviews`: Inspect unresolved PR review threads and read exact conversations. Help: `dots github reviews --help`.
 - `dots github reviews thread`: Read an exact review thread, its replies, and original reviewed diff context. Help: `dots github reviews thread --help`.
 - `dots task`: Track shared, claimable work for a project across concurrent sessions. Help: `dots task --help`.
-- `dots task list`: List tasks; open and held by default, highest priority then oldest first. Help: `dots task list --help`.
+- `dots task goal`: Associate durable briefs with task roots; inspect recorded progress without executing work. Help: `dots task goal --help`.
+- `dots task goal create`: Create a root task and attach its brief atomically; no claims or execution. Help: `dots task goal create --help`.
+- `dots task goal attach`: Attach or replace a root's brief reference; never changes the document or executes work. Help: `dots task goal attach --help`.
+- `dots task goal list`: List explicitly attached goals; open and held by default. Help: `dots task goal list --help`.
+- `dots task goal show`: Show open/held descendants and complete progress counts; no network or document reads. Help: `dots task goal show --help`.
+- `dots task goal detach`: Remove only the association; keep the document, tasks, and history. Help: `dots task goal detach --help`.
+- `dots task list`: List open/held roots by default; use --parent ID to drill down or --flat for every level. Help: `dots task list --help`.
 - `dots task ready`: Fresh leaf work: open, unblocked, childless, no PR recorded, not under a live lease. Help: `dots task ready --help`.
 - `dots task show`: Show one task with blockers, children count, and recent events. Help: `dots task show --help`.
 - `dots task events`: Project history after an event seq, oldest first; use the last seen seq as a cursor. Help: `dots task events --help`.
-- `dots task add`: Create an open task; --parent groups slices under a larger effort. Help: `dots task add --help`.
+- `dots task add`: Create an open task; --parent groups slices under a larger goal. Help: `dots task add --help`.
 - `dots task claim`: Atomically claim a task (or the next ready one) for --owner with a lease. Help: `dots task claim --help`.
 - `dots task release`: Release --owner's claim without changing status. Help: `dots task release --help`.
 - `dots task update`: Edit fields or append a note; recording the PR URL is the usual update. Help: `dots task update --help`.

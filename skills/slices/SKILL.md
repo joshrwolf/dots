@@ -5,8 +5,9 @@ description: Run a multi-PR effort as small, independently shippable slices acro
 
 # Slices
 
-An effort is a parent task with one child per PR-sized slice. Three stores,
-three jobs, no overlap:
+An effort is a parent task with one child per PR-sized slice. Goal mode is
+optional: attach a durable brief when focus, progress visibility, and cold
+resume are useful. Three stores, three jobs, no overlap:
 
 - `dots task`: what remains and who holds what. Slices, claims, branch, PR,
   per-slice notes.
@@ -31,6 +32,14 @@ and proceed; stop for agreement only when the pattern itself is in doubt.
 dots task add "<effort>" --body "pattern: <path>; done when: <criterion>" --json
 dots task add "<slice>" --parent <effort> --priority <n> [--blocked-by <id>] --json
 ```
+
+For goal mode, write the agreed Markdown brief and use
+`dots task goal create "<goal>" --brief <path> --json` instead of adding an ordinary
+parent, or `dots task goal attach <parent> --brief <path> --json` to adopt one.
+In Pi, `goal_focus { id: "<parent>" }` focuses the result without starting work.
+Keep the working agreement in the brief or conversation; no separate execution
+protocol is needed. Goal overviews show active slices and complete totals;
+`dots task goal show <parent> --all --json` includes closed details.
 
 Before the pattern exists in the repository, keep it in a project-memory topic
 file and point at its absolute path; make "promote the pattern into the repo"

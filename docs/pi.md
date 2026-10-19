@@ -89,6 +89,38 @@ Web research comes from the pinned `pi-web-access` package. Optional provider
 settings belong in `~/.pi/agent/web-search.json`; browser-cookie access and hosted
 fetch fallbacks remain opt-in.
 
+## Goals
+
+Use `/goal new IDEA` to start a planning conversation. The agent can write the
+brief, create initial slices, and focus the result with `goal_focus`; this does
+not request implementation. Your desired involvement stays in the conversation
+or brief, not a separate execution policy.
+
+For direct setup, `dots task goal create TITLE --brief PATH` creates a root and
+attaches an existing Markdown brief together. Use
+`dots task goal attach ID --brief PATH` to adopt an existing root. These require a
+`dots` build with the `task goal` commands; Pi never installs it automatically.
+
+`/goal focus ID` (or `/goal focus` to choose) focuses a goal without starting work.
+`/goal` opens a slice-first overview: `1` slices, `2` brief, `3` record details.
+The quiet strip shows recorded progress and claims, not live execution.
+`/goal history` includes closed details. `/goal list`, `/goal refresh`, and `/goal unfocus`
+provide explicit controls. Focus follows the session branch across reload/resume.
+A fresh session starts unfocused.
+
+Tasks are project-scoped, shared across linked worktrees. `dots task list` shows
+open/held roots, not every slice. Use `--parent ID` to drill down, `--flat` for all
+levels, and `--all` to include closed history. Goal lists also hide done/dropped
+roots by default. Records are retained, not automatically deleted; close finished
+work and drop abandoned work to keep the active view useful.
+
+Pi refreshes local task records and the brief before each new agent run and
+refreshes the widget afterward; it does not poll. Brief context is bounded to
+24 KiB, with a reference for the rest. Missing briefs or CLI failures stay
+visible rather than reusing stale context. Counts are recorded task state—not
+verified PR or worker status. Focusing, inspecting, or restoring never authorizes
+execution or automatic continuation. See the [goal-mode direction](goal-mode.md).
+
 ## Jobs
 
 `job_start`, `job_status`, and `job_stop` run trusted finite shell commands on

@@ -3,7 +3,7 @@ import { HStack, Text, sliceByColumn, truncateToWidth, visibleWidth, type Compon
 import { readableForeground } from "./color.ts";
 import { labelText } from "./text.ts";
 
-export type Tone = "text" | "toolTitle" | "muted" | "dim" | "success" | "warning" | "error" | "toolDiffAdded" | "toolDiffRemoved";
+export type Tone = "accent" | "text" | "toolTitle" | "muted" | "dim" | "success" | "warning" | "error" | "toolDiffAdded" | "toolDiffRemoved";
 export interface Segment {
   readonly text: string;
   readonly tone: Tone;

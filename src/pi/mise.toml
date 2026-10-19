@@ -34,7 +34,7 @@ cache = { enabled = false }
 depends = [":check", ":prepare"]
 run = [
   "node --test tests/acceptance/*.test.mjs",
-  "python3 -m unittest discover -s tests/acceptance -p test_terminal.py -v",
+  "python3 -m unittest discover -s tests/acceptance -p 'test*terminal.py' -v",
 ]
 env = { PYTHONDONTWRITEBYTECODE = "1" }
 cache = { enabled = false }
@@ -46,7 +46,7 @@ cache = { enabled = false }
 
 [tasks."verify-terminal"]
 depends = [":prepare"]
-run = "python3 -m unittest discover -s tests/acceptance -p test_terminal.py -v"
+run = "python3 -m unittest discover -s tests/acceptance -p 'test*terminal.py' -v"
 env = { PYTHONDONTWRITEBYTECODE = "1" }
 cache = { enabled = false }
 

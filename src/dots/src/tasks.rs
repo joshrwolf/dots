@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, bail};
 use dots_tasks::{Actor, Filter, NewTask, Owner, Project, Status, Store, Task, Update};
 use time::OffsetDateTime;
 
-use crate::command::{DepCommand, TaskCommand, TaskMutation, TaskQuery};
+use crate::command::{DepCommand, GoalCommand, TaskCommand, TaskMutation, TaskQuery};
 
 pub(crate) struct Request<'a> {
     pub command: TaskCommand,
@@ -32,7 +32,13 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
         name: request.owner.map(Owner::new).transpose()?,
         now,
     };
-    let outcome = execute(&mut store, &project, request.command, actor)?;
+    let outcome = execute(
+        &mut store,
+        &project,
+        request.command,
+        actor,
+        request.directory,
+    )?;
     if request.json {
         let mut value = serde_json::to_value(&outcome)?;
         if let serde_json::Value::Object(fields) = &mut value {
@@ -48,6 +54,18 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
 #[derive(Debug, serde::Serialize)]
 #[serde(untagged)]
 enum Outcome {
+    Goal {
+        goal: Box<dots_tasks::Goal>,
+    },
+    Goals {
+        goals: Vec<dots_tasks::Goal>,
+    },
+    Overview {
+        overview: Box<dots_tasks::GoalOverview>,
+    },
+    Detached {
+        detached: String,
+    },
     Task {
         task: Box<Shown>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -89,6 +107,7 @@ fn execute(
     project: &Project,
     command: TaskCommand,
     actor: Actor<'_>,
+    directory: &Path,
 ) -> Result<Outcome> {
     let now = actor.now;
     let shown = |tasks: Vec<Task>| {
@@ -98,10 +117,12 @@ fn execute(
             .collect()
     };
     match command {
+        TaskCommand::Goal { command } => execute_goal(store, project, command, actor, directory),
         TaskCommand::Query(TaskQuery::List {
             parent,
             claimed_by,
             roots,
+            flat,
             status,
             all,
         }) => {
@@ -114,7 +135,7 @@ fn execute(
             let filter = Filter {
                 owner,
                 parent: parent.as_deref(),
-                roots,
+                roots: roots || (parent.is_none() && !flat && owner.is_none()),
                 status,
                 include_closed: all,
             };
@@ -161,7 +182,7 @@ fn execute(
                 let below = store.unclosed_descendants(project, &task.id)?;
                 if below > 0 {
                     warnings.push(format!(
-                        "{below} unclosed descendants stay claimable; hold them individually to pause the effort"
+                        "{below} unclosed descendants stay claimable; hold them individually to pause the goal"
                     ));
                 }
             }
@@ -256,6 +277,52 @@ fn mutate(
     Ok(Some(task))
 }
 
+fn execute_goal(
+    store: &mut Store,
+    project: &Project,
+    command: GoalCommand,
+    actor: Actor<'_>,
+    directory: &Path,
+) -> Result<Outcome> {
+    match command {
+        GoalCommand::Create { title, brief } => {
+            let brief = brief_path(directory, &brief)?;
+            Ok(Outcome::Goal {
+                goal: Box::new(store.create_goal(project, &title, &brief, actor)?),
+            })
+        }
+        GoalCommand::Attach { id, brief } => {
+            let brief = brief_path(directory, &brief)?;
+            Ok(Outcome::Goal {
+                goal: Box::new(store.attach_goal(project, &id, &brief, actor)?),
+            })
+        }
+        GoalCommand::List { all } => Ok(Outcome::Goals {
+            goals: store.goals(project, all)?,
+        }),
+        GoalCommand::Show { id, all } => Ok(Outcome::Overview {
+            overview: Box::new(store.goal_overview(project, &id, actor.now, all)?),
+        }),
+        GoalCommand::Detach { id } => {
+            store.detach_goal(project, &id, actor)?;
+            Ok(Outcome::Detached { detached: id })
+        }
+    }
+}
+
+fn brief_path(directory: &Path, brief: &Path) -> Result<String> {
+    let path = directory.join(brief);
+    let path = path
+        .canonicalize()
+        .with_context(|| format!("resolve brief {}", path.display()))?;
+    if !path.is_file() {
+        bail!("brief must be a file: {}", path.display());
+    }
+    path.to_str()
+        .map(ToOwned::to_owned)
+        .context("brief path is not Unicode")
+}
+
 fn owner(actor: Actor<'_>) -> Result<Owner<'_>> {
     actor
         .name
@@ -286,6 +353,38 @@ fn main_checkout(directory: &Path) -> Result<String> {
 
 fn text(outcome: &Outcome, now: i64) -> String {
     match outcome {
+        Outcome::Goal { goal } => goal_text(goal, now),
+        Outcome::Goals { goals } if goals.is_empty() => "No matching goals.\n".into(),
+        Outcome::Goals { goals } => goals.iter().map(|goal| goal_text(goal, now)).collect(),
+        Outcome::Detached { detached } => {
+            format!("Detached goal {detached}; tasks and document preserved.\n")
+        }
+        Outcome::Overview { overview } => {
+            let mut out = goal_text(&overview.goal, now);
+            let p = &overview.progress;
+            let _ = writeln!(
+                out,
+                "Recorded leaf tasks: {} total · {} done · {} dropped · {} held · {} open",
+                p.total, p.done, p.dropped, p.held, p.open
+            );
+            let _ = writeln!(
+                out,
+                "Open-task facets (may overlap): {} ready · {} claimed · {} with PR recorded",
+                p.ready, p.claimed, p.with_pr
+            );
+            out.push_str("Local records only; reconcile Git/PR state before acting.\n");
+            if overview.hidden_closed > 0 {
+                let _ = writeln!(
+                    out,
+                    "{} closed task details hidden; use dots task goal show {} --all for history.",
+                    overview.hidden_closed, overview.goal.root.id
+                );
+            }
+            for task in &overview.tasks {
+                out.push_str(&line(task, now));
+            }
+            out
+        }
         Outcome::Events { events } if events.is_empty() => "No events.\n".to_owned(),
         Outcome::Events { events } => events.iter().map(event_line).collect(),
         Outcome::Tasks { tasks } if tasks.is_empty() => "No matching tasks.\n".to_owned(),
@@ -339,6 +438,10 @@ fn text(outcome: &Outcome, now: i64) -> String {
             out
         }
     }
+}
+
+fn goal_text(goal: &dots_tasks::Goal, now: i64) -> String {
+    format!("{}Brief: {}\n", line(&goal.root, now), goal.brief)
 }
 
 fn event_line(event: &dots_tasks::Event) -> String {

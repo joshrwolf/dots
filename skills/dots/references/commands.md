@@ -543,11 +543,12 @@ Parent sessions create, claim, update and close tasks. Delegated workers report 
 Usage: dots task [OPTIONS] <COMMAND>
 
 Commands:
-  list     List tasks; open and held by default, highest priority then oldest first
+  goal     Associate durable briefs with task roots; inspect recorded progress without executing work
+  list     List open/held roots by default; use --parent ID to drill down or --flat for every level
   ready    Fresh leaf work: open, unblocked, childless, no PR recorded, not under a live lease
   show     Show one task with blockers, children count, and recent events
   events   Project history after an event seq, oldest first; use the last seen seq as a cursor
-  add      Create an open task; --parent groups slices under a larger effort
+  add      Create an open task; --parent groups slices under a larger goal
   claim    Atomically claim a task (or the next ready one) for --owner with a lease
   release  Release --owner's claim without changing status
   update   Edit fields or append a note; recording the PR URL is the usual update
@@ -580,10 +581,225 @@ Options:
           Print help (see a summary with '-h')
 ```
 
+## dots task goal
+
+```text
+Optional goal context on existing root tasks. The root task id is the goal id; slices, claims, and status stay in the task store. Briefs remain external Markdown documents, independent of memory storage. These commands neither execute work nor authorize continuation. Overview counts describe local records, not verified GitHub or worker state.
+
+Usage: dots task goal [OPTIONS] <COMMAND>
+
+Commands:
+  create  Create a root task and attach its brief atomically; no claims or execution
+  attach  Attach or replace a root's brief reference; never changes the document or executes work
+  list    List explicitly attached goals; open and held by default
+  show    Show open/held descendants and complete progress counts; no network or document reads
+  detach  Remove only the association; keep the document, tasks, and history
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots task goal create
+
+```text
+Create a root task and attach its brief atomically; no claims or execution
+
+Usage: dots task goal create [OPTIONS] --brief <PATH> <TITLE>
+
+Arguments:
+  <TITLE>
+
+
+Options:
+      --brief <PATH>
+          Existing Markdown file; relative to --directory, stored as an absolute path
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task goal attach
+
+```text
+Attach or replace a root's brief reference; never changes the document or executes work
+
+Usage: dots task goal attach [OPTIONS] --brief <PATH> <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --brief <PATH>
+          Existing Markdown file; relative to --directory (or the current directory), stored as an absolute path
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task goal list
+
+```text
+List explicitly attached goals; open and held by default
+
+Usage: dots task goal list [OPTIONS]
+
+Options:
+      --all
+          Include done and dropped goals
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task goal show
+
+```text
+Show open/held descendants and complete progress counts; no network or document reads
+
+Usage: dots task goal show [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --all
+          Include done/dropped task details; totals always include them
+
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots task goal detach
+
+```text
+Remove only the association; keep the document, tasks, and history
+
+Usage: dots task goal detach [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --project <KEY>
+          Explicit project key instead of the main Git checkout path
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --owner <NAME>
+          Session or agent name recorded on claims and events
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
 ## dots task list
 
 ```text
-List tasks; open and held by default, highest priority then oldest first
+Project-scoped task overview: open and held root tasks by default, highest priority then oldest first. Child counts keep slices grouped. Use --parent ID for descendants or --flat for every level; --claimed-by also searches every level unless --roots is explicit. --all adds closed history without changing the hierarchy scope. Nothing is deleted or auto-archived.
 
 Usage: dots task list [OPTIONS]
 
@@ -610,10 +826,13 @@ Options:
           Bypass log caching and saved observations; fresh inspection always queries status
 
       --roots
-          Only top-level tasks
+          Only top-level tasks (the default unless --parent, --flat, or --claimed-by is given)
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --flat
+          Every task level, rather than the default root overview
 
       --status <STATUS>
           Exactly one status: open, held, done or dropped
@@ -622,7 +841,7 @@ Options:
           Include done and dropped tasks
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 ```
 
 ## dots task ready
@@ -735,7 +954,7 @@ Options:
 ## dots task add
 
 ```text
-Create an open task; --parent groups slices under a larger effort
+Create an open task; --parent groups slices under a larger goal
 
 Usage: dots task add [OPTIONS] <TITLE>
 

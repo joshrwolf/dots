@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde::Serialize;
 
+mod goals;
+pub use goals::{Goal, GoalOverview, GoalProgress};
+
 /// Path relative to the caller's platform state directory.
 pub const STORE_PATH: &str = "dots/tasks/tasks.sqlite3";
 
@@ -335,8 +338,14 @@ impl Store {
                  PRAGMA user_version=2;",
             )?,
             1 => tx.execute_batch("ALTER TABLE tasks ADD COLUMN branch TEXT; PRAGMA user_version=2;")?,
-            2 => {}
+            2 | 3 => {}
             other => return Err(Error::Schema(other)),
+        }
+        if version <= 2 {
+            tx.execute_batch(
+                "CREATE TABLE goals(root TEXT PRIMARY KEY REFERENCES tasks(id), brief TEXT NOT NULL);
+                 PRAGMA user_version=3;",
+            )?;
         }
         tx.commit()?;
         Ok(Self { connection })
@@ -354,29 +363,8 @@ impl Store {
         task: &NewTask,
         actor: Actor<'_>,
     ) -> Result<Task, Error> {
-        if task.title.trim().is_empty() || task.title.len() > 512 {
-            return Err(Error::Invalid("title"));
-        }
         let tx = self.write()?;
-        if let Some(parent) = &task.parent {
-            load(&tx, project, parent)?;
-        }
-        for blocker in &task.blocked_by {
-            load(&tx, project, blocker)?;
-        }
-        let id = fresh_id(&tx)?;
-        tx.execute(
-            "INSERT INTO tasks(id,project,parent,title,body,status,priority,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,'open',?6,?7,?7)",
-            params![id, project.0, task.parent, task.title.trim(), task.body, task.priority, actor.now],
-        )?;
-        for blocker in &task.blocked_by {
-            tx.execute(
-                "INSERT INTO deps VALUES(?1,?2) ON CONFLICT DO NOTHING",
-                params![id, blocker],
-            )?;
-        }
-        record(&tx, &id, actor, "created", None)?;
-        let created = load(&tx, project, &id)?;
+        let created = insert_task(&tx, project, task, actor)?;
         tx.commit()?;
         Ok(created)
     }
@@ -585,6 +573,11 @@ impl Store {
             changes.push(format!("priority {} -> {priority}", before.priority));
         }
         if let Some(parent) = &update.parent {
+            if parent.is_some() && goals::attached(&tx, id)? {
+                return Err(Error::Invalid(
+                    "goal must remain a root task; detach it before reparenting",
+                ));
+            }
             if let Some(parent) = parent {
                 load(&tx, project, parent)?;
                 if parent == id || descends_from(&tx, parent, id)? {
@@ -857,6 +850,36 @@ fn take(
         None => ("claimed", None),
     };
     record(tx, &task.id, actor, kind, detail.as_deref())
+}
+
+fn insert_task(
+    tx: &Transaction<'_>,
+    project: &Project,
+    task: &NewTask,
+    actor: Actor<'_>,
+) -> Result<Task, Error> {
+    if task.title.trim().is_empty() || task.title.len() > 512 {
+        return Err(Error::Invalid("title"));
+    }
+    if let Some(parent) = &task.parent {
+        load(tx, project, parent)?;
+    }
+    for blocker in &task.blocked_by {
+        load(tx, project, blocker)?;
+    }
+    let id = fresh_id(tx)?;
+    tx.execute(
+        "INSERT INTO tasks(id,project,parent,title,body,status,priority,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,'open',?6,?7,?7)",
+        params![id, project.0, task.parent, task.title.trim(), task.body, task.priority, actor.now],
+    )?;
+    for blocker in &task.blocked_by {
+        tx.execute(
+            "INSERT INTO deps VALUES(?1,?2) ON CONFLICT DO NOTHING",
+            params![id, blocker],
+        )?;
+    }
+    record(tx, &id, actor, "created", None)?;
+    load(tx, project, &id)
 }
 
 fn record(

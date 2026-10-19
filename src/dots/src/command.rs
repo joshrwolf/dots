@@ -58,6 +58,14 @@ pub(crate) enum Command {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum TaskCommand {
+    /// Associate durable briefs with task roots; inspect recorded progress without executing work
+    #[command(
+        long_about = "Optional goal context on existing root tasks. The root task id is the goal id; slices, claims, and status stay in the task store. Briefs remain external Markdown documents, independent of memory storage. These commands neither execute work nor authorize continuation. Overview counts describe local records, not verified GitHub or worker state."
+    )]
+    Goal {
+        #[command(subcommand)]
+        command: GoalCommand,
+    },
     #[command(flatten)]
     Query(TaskQuery),
     #[command(flatten)]
@@ -65,8 +73,44 @@ pub(crate) enum TaskCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub(crate) enum GoalCommand {
+    /// Create a root task and attach its brief atomically; no claims or execution
+    Create {
+        title: String,
+        /// Existing Markdown file; relative to --directory, stored as an absolute path
+        #[arg(long, value_name = "PATH")]
+        brief: PathBuf,
+    },
+    /// Attach or replace a root's brief reference; never changes the document or executes work
+    Attach {
+        id: String,
+        /// Existing Markdown file; relative to --directory (or the current directory), stored as an absolute path
+        #[arg(long, value_name = "PATH")]
+        brief: PathBuf,
+    },
+    /// List explicitly attached goals; open and held by default
+    List {
+        /// Include done and dropped goals
+        #[arg(long)]
+        all: bool,
+    },
+    /// Show open/held descendants and complete progress counts; no network or document reads
+    Show {
+        id: String,
+        /// Include done/dropped task details; totals always include them
+        #[arg(long)]
+        all: bool,
+    },
+    /// Remove only the association; keep the document, tasks, and history
+    Detach { id: String },
+}
+
+#[derive(Debug, Subcommand)]
 pub(crate) enum TaskQuery {
-    /// List tasks; open and held by default, highest priority then oldest first
+    /// List open/held roots by default; use --parent ID to drill down or --flat for every level
+    #[command(
+        long_about = "Project-scoped task overview: open and held root tasks by default, highest priority then oldest first. Child counts keep slices grouped. Use --parent ID for descendants or --flat for every level; --claimed-by also searches every level unless --roots is explicit. --all adds closed history without changing the hierarchy scope. Nothing is deleted or auto-archived."
+    )]
     List {
         /// Only tasks anywhere below this one
         #[arg(long, value_name = "ID", conflicts_with = "roots")]
@@ -74,9 +118,12 @@ pub(crate) enum TaskQuery {
         /// Only tasks whose recorded owner is NAME, live lease or not
         #[arg(long, value_name = "NAME")]
         claimed_by: Option<String>,
-        /// Only top-level tasks
-        #[arg(long)]
+        /// Only top-level tasks (the default unless --parent, --flat, or --claimed-by is given)
+        #[arg(long, conflicts_with = "flat")]
         roots: bool,
+        /// Every task level, rather than the default root overview
+        #[arg(long, conflicts_with = "parent")]
+        flat: bool,
         /// Exactly one status: open, held, done or dropped
         #[arg(long, conflicts_with = "all")]
         status: Option<String>,
@@ -105,7 +152,7 @@ pub(crate) enum TaskQuery {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum TaskMutation {
-    /// Create an open task; --parent groups slices under a larger effort
+    /// Create an open task; --parent groups slices under a larger goal
     Add {
         title: String,
         /// Longer description, pattern reference, or acceptance notes

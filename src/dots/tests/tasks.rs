@@ -90,6 +90,200 @@ mod tests {
     }
 
     #[test]
+    fn default_overview_groups_slices_and_keeps_history_explicit() {
+        let fixture = Fixture::new();
+        assert!(
+            fixture
+                .fail(
+                    "checkout",
+                    &["goal", "create", "Broken", "--brief", "missing.md"]
+                )
+                .contains("resolve brief")
+        );
+        assert_eq!(
+            fixture
+                .ok("checkout", &["list"])
+                .pointer("/tasks")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        let created = fixture.ok(
+            "checkout",
+            &["goal", "create", "Goal", "--brief", "README.md"],
+        );
+        let root = created.pointer("/goal/root/id").unwrap().as_str().unwrap();
+        let closed = id(&fixture.ok(
+            "checkout",
+            &["add", "Finished", "--parent", root, "--priority", "100"],
+        ));
+        let active = id(&fixture.ok("checkout", &["add", "Next", "--parent", root]));
+        fixture.ok("checkout", &["done", &closed]);
+        let roots = fixture.ok("linked", &["list"]);
+        assert_eq!(
+            roots.pointer("/tasks").unwrap().as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(roots.pointer("/tasks/0/id").unwrap(), root);
+        let cases: &[(&[&str], usize)] = &[
+            (&["list", "--flat"], 2),
+            (&["list", "--all"], 1),
+            (&["list", "--flat", "--all"], 3),
+        ];
+        for (args, expected) in cases {
+            let listed = fixture.ok("checkout", args);
+            assert_eq!(
+                listed.pointer("/tasks").unwrap().as_array().unwrap().len(),
+                *expected
+            );
+        }
+        let below = fixture.ok("checkout", &["list", "--parent", root]);
+        assert_eq!(below.pointer("/tasks/0/id").unwrap(), &active);
+        let quiet = fixture.ok("checkout", &["goal", "show", root]);
+        assert_eq!(
+            quiet
+                .pointer("/overview/tasks")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(quiet.pointer("/overview/hidden_closed").unwrap(), 1);
+        assert_eq!(quiet.pointer("/overview/progress/done").unwrap(), 1);
+        let history = fixture.ok("checkout", &["goal", "show", root, "--all"]);
+        assert_eq!(
+            history
+                .pointer("/overview/tasks")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(history.pointer("/overview/hidden_closed").unwrap(), 0);
+        fixture.ok("checkout", &["done", &active]);
+        fixture.ok("checkout", &["done", root]);
+        assert_eq!(
+            fixture
+                .ok("checkout", &["goal", "list"])
+                .pointer("/goals")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(
+            fixture
+                .ok("checkout", &["goal", "list", "--all"])
+                .pointer("/goals")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn goals_share_references_and_preserve_tasks_without_reading_documents() {
+        let fixture = Fixture::new();
+        let root = id(&fixture.ok("checkout", &["add", "Goal"]));
+        let slice = id(&fixture.ok("checkout", &["add", "Slice", "--parent", &root]));
+        assert_eq!(
+            fixture
+                .ok("checkout", &["goal", "list"])
+                .pointer("/goals")
+                .unwrap(),
+            &serde_json::json!([])
+        );
+        assert!(
+            fixture
+                .fail(
+                    "checkout",
+                    &["goal", "attach", &root, "--brief", "missing.md"]
+                )
+                .contains("resolve brief")
+        );
+        assert!(
+            fixture
+                .fail("checkout", &["goal", "attach", &root, "--brief", "."])
+                .contains("must be a file")
+        );
+        assert!(
+            fixture
+                .fail(
+                    "checkout",
+                    &["goal", "attach", &slice, "--brief", "README.md"]
+                )
+                .contains("root task")
+        );
+        let attached = fixture.ok(
+            "linked",
+            &[
+                "--directory",
+                "../checkout",
+                "goal",
+                "attach",
+                &root,
+                "--brief",
+                "README.md",
+            ],
+        );
+        let brief = fixture
+            .root
+            .join("checkout/README.md")
+            .canonicalize()
+            .unwrap();
+        assert_eq!(
+            attached.pointer("/goal/brief").unwrap(),
+            brief.to_str().unwrap()
+        );
+        assert_eq!(attached.pointer("/goal/root/id").unwrap(), &root);
+        assert!(attached.pointer("/goal/root/owner").unwrap().is_null());
+        // A missing document remains an inspectable reference, not an empty brief.
+        fs::remove_file(&brief).unwrap();
+        let overview = fixture.ok("linked", &["goal", "show", &root]);
+        assert_eq!(
+            overview.pointer("/overview/goal/brief").unwrap(),
+            brief.to_str().unwrap()
+        );
+        assert_eq!(overview.pointer("/overview/tasks/0/id").unwrap(), &slice);
+        assert_eq!(overview.pointer("/overview/progress/ready").unwrap(), 1);
+        assert_eq!(overview.pointer("/overview/progress/total").unwrap(), 1);
+        assert_eq!(
+            fixture
+                .ok("checkout", &["goal", "list"])
+                .pointer("/goals")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let text = Command::new(env!("CARGO_BIN_EXE_dots"))
+            .args(["task", "goal", "show", &root])
+            .current_dir(fixture.root.join("linked"))
+            .env("XDG_STATE_HOME", fixture.root.join("state"))
+            .output()
+            .unwrap();
+        assert!(text.status.success());
+        let text = String::from_utf8(text.stdout).unwrap();
+        assert!(text.contains("Local records only"));
+        assert!(text.contains("1 ready"));
+        fixture.ok("linked", &["goal", "detach", &root]);
+        assert_eq!(id(&fixture.ok("checkout", &["show", &slice])), slice);
+        assert!(
+            fixture
+                .fail("checkout", &["goal", "show", &root])
+                .contains("no goal association")
+        );
+    }
+
+    #[test]
     fn worktrees_share_one_list_and_claims_are_exclusive() {
         let fixture = Fixture::new();
         let epic = fixture.ok(
@@ -171,7 +365,7 @@ mod tests {
                 "netpol/first",
             ],
         );
-        let all = fixture.ok("checkout", &["--owner", "session-a", "list", "--all"]);
+        let all = fixture.ok("checkout", &["list", "--flat", "--all"]);
         assert_eq!(all.pointer("/tasks").unwrap().as_array().unwrap().len(), 3);
         let mine = fixture.ok("checkout", &["list", "--all", "--claimed-by", "session-a"]);
         assert_eq!(mine.pointer("/tasks").unwrap().as_array().unwrap().len(), 1);
