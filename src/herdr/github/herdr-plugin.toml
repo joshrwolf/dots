@@ -70,3 +70,12 @@ id = "actions-run"
 title = "Open GitHub Actions run"
 pattern = "^https://github\\.com/[^/]+/[^/]+/actions/runs/[0-9]+"
 action = "open-link"
+
+# Open one of the workspace's registered PRs in the browser.
+[[panes]]
+id = "prs"
+title = "Open registered PR"
+placement = "popup"
+command = ["./bin/herdr-github"]
+width = 120
+height = 16

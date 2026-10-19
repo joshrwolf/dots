@@ -3,6 +3,8 @@
 - Use the repository-root Cargo workspace: shared libraries, local applications, `herdrkit`, contract tests, and one crate per plugin.
 - Load the `herdr-plugin` and `idiomatic-rust` skills for changes here; the former owns Herdr protocol semantics and the latter owns Rust design.
 - Keep protocol wire shapes, validation, environment parsing, transport, terminal UI primitives, and test fakes in `herdrkit`.
+- Target stock Herdr releases and set each manifest's `min_herdr_version` to the oldest release providing what it uses. Do not patch the host; present plugin state through metadata tokens, plugin panes, and link handlers.
+- Herdr workspace IDs are reused after a workspace closes; durable per-workspace state must end with its workspace.
 - Plugins must use typed `herdrkit::Client` operations; do not add raw socket calls or locally duplicate protocol DTOs.
 - Vocabulary is fixed: workspace, tab, pane, agent, repository, checkout, invocation, entrypoint, subscription, and metadata token.
 - Use `InvocationKind::{Action, PaneEntrypoint, Startup, Event}` for exhaustive process dispatch; link-handler identity remains orthogonal.

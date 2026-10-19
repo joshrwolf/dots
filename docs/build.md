@@ -45,8 +45,8 @@ Place each test by structure, not by a list of names:
 - Node: acceptance lives in `tests/acceptance/` of the Pi package or the
   repository, which only the owning `verify` task runs.
 
-Tests that need a host not pinned by mise, such as the stock Herdr navigation
-test, stay `#[ignore]`d inside the acceptance binary and document how to run them.
+Host acceptance uses the installed application, such as the `herdr` on `PATH`,
+in an isolated temporary home and session; it never contacts the live server.
 
 ## Development
 
@@ -94,9 +94,8 @@ links. Neovim and Finicky have separate `<name>:install` tasks.
 Stow uses `--no-folding` to keep runtime directories out of the checkout.
 
 `mise run //src/herdr:install` installs all Herdr plugins and the Herdr/Neovim
-configuration. It requires the [patched client and server](../src/herdr/host/README.md)
-for GitHub workspace resources. Stock Herdr users should install supported
-plugins individually and configure only their bindings.
+configuration for stock Herdr 0.9.1 or newer. To use only some plugins, install
+them individually and configure only their bindings.
 
 Herdr registers immutable copies under `~/.local/share/dots/herdr/releases/`.
 Registration is idempotent, but not transactional across plugins: inspect and

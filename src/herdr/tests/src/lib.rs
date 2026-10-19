@@ -206,7 +206,7 @@ mod tests {
             "GitHub action dispatch drifted"
         );
         ensure!(
-            ids(&github.panes) == BTreeSet::from(["ci-arm", "ci-brief"]),
+            ids(&github.panes) == BTreeSet::from(["ci-arm", "ci-brief", "prs"]),
             "GitHub pane dispatch drifted"
         );
         ensure!(

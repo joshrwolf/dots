@@ -4,6 +4,11 @@ vars = { package = "herdr-nav" }
 depends = ["^check"]
 cache = { enabled = false }
 
+[tasks.verify]
+extends = "rust-verify"
+vars = { package = "herdr-nav" }
+depends = [":check"]
+
 [tasks.build]
 run = 'cargo install --frozen --path . --root "$MISE_MONOREPO_ROOT/dist" --force'
 cache = { enabled = false }

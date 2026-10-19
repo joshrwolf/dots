@@ -67,7 +67,7 @@ Options:
 ## dots herdr prs
 
 ```text
-Register every PR created or worked on in this Herdr workspace. Associations survive branch changes and agent completion. Requires a host with persistent workspace identities. No GitHub publication, CI fixes, or merges. Use a full PR URL; never substitute the focused workspace. Registration is safe to repeat after shipping or resuming work. An explicit --workspace is required. Verify it against the task and live workspace inventory; inherited pane/workspace IDs, current directory, and UI focus are not reliable ownership evidence.
+Register every PR created or worked on in this Herdr workspace. Associations survive branch changes and agent completion. Associations end when their workspace closes; a reopened workspace needs fresh registration. No GitHub publication, CI fixes, or merges. Use a full PR URL; never substitute the focused workspace. Registration is safe to repeat after shipping or resuming work. An explicit --workspace is required. Verify it against the task and live workspace inventory; inherited pane/workspace IDs, current directory, and UI focus are not reliable ownership evidence.
 
 Usage: dots herdr prs [OPTIONS] <COMMAND>
 

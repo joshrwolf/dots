@@ -9,7 +9,7 @@ use herdrkit::{Invocation, InvocationKind};
 fn main() -> ExitCode {
     let surface = if matches!(
         InvocationKind::from_env(),
-        Ok(InvocationKind::PaneEntrypoint { ref id }) if id == "ci-brief"
+        Ok(InvocationKind::PaneEntrypoint { ref id }) if id == "ci-brief" || id == "prs"
     ) {
         FailureSurface::Popup
     } else {
@@ -25,7 +25,10 @@ fn run() -> Result<()> {
         PluginCommand::Refresh => sidebar::invoke(&invocation, true),
         PluginCommand::Ensure => sidebar::invoke(&invocation, false),
         PluginCommand::Status => sidebar::show_status(&invocation),
-        action @ (PluginCommand::Fix | PluginCommand::Arm | PluginCommand::Brief) => {
+        action @ (PluginCommand::Fix
+        | PluginCommand::Arm
+        | PluginCommand::Brief
+        | PluginCommand::OpenPr) => {
             let Some(target) =
                 herdr_github::targets::select(&invocation, action != PluginCommand::Fix)?
             else {
@@ -46,6 +49,7 @@ fn run() -> Result<()> {
                     Config::from_env()?,
                     &target,
                 ),
+                PluginCommand::OpenPr => herdr_github::open::open_url(target.as_str()),
                 _ => herdr_github::ci::brief::show(invocation.require_target_dir()?, &target),
             }
         }
@@ -65,6 +69,7 @@ enum PluginCommand {
     Fix,
     Arm,
     Brief,
+    OpenPr,
     OpenLink,
 }
 
@@ -84,6 +89,7 @@ fn command(kind: &InvocationKind) -> Result<PluginCommand> {
         InvocationKind::Action { id } if id == "ci-fix" => Ok(PluginCommand::Fix),
         InvocationKind::PaneEntrypoint { id } if id == "ci-arm" => Ok(PluginCommand::Arm),
         InvocationKind::PaneEntrypoint { id } if id == "ci-brief" => Ok(PluginCommand::Brief),
+        InvocationKind::PaneEntrypoint { id } if id == "prs" => Ok(PluginCommand::OpenPr),
         InvocationKind::Action { id } if id == "open-link" => Ok(PluginCommand::OpenLink),
         other => bail!("unsupported GitHub manifest invocation: {other:?}"),
     }
@@ -123,6 +129,13 @@ mod tests {
             })
             .unwrap(),
             PluginCommand::Brief
+        );
+        assert_eq!(
+            command(&InvocationKind::PaneEntrypoint {
+                id: "prs".to_owned()
+            })
+            .unwrap(),
+            PluginCommand::OpenPr
         );
         assert!(
             command(&InvocationKind::Action {

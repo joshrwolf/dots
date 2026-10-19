@@ -4,6 +4,9 @@ use herdrkit::{Client, WorkspaceId};
 
 use crate::command::{HerdrCommand, PrAssociationCommand};
 
+/// Workspace metadata token herdr-github publishes for the sidebar.
+const SIDEBAR_TOKEN: &str = "prs";
+
 pub(crate) fn run(command: HerdrCommand, json: bool) -> Result<String> {
     let HerdrCommand::Prs { workspace, command } = command;
     let workspace = workspace.context("--workspace is required; verify the intended workspace from the task and live inventory, not inherited Herdr IDs or UI focus")?;
@@ -21,13 +24,7 @@ pub(crate) fn run(command: HerdrCommand, json: bool) -> Result<String> {
     let workspace = snapshot
         .workspace(&workspace_id)
         .context("explicit workspace no longer exists")?;
-    let identity = workspace.identity.clone().context("Herdr does not expose persistent workspace identities; build the required host changes first")?;
-    let endpoint = client
-        .endpoint()
-        .to_str()
-        .context("Herdr endpoint path is not Unicode")?
-        .to_owned();
-    let scope = Scope::new(endpoint, identity)?;
+    let scope = Scope::at(client.endpoint(), workspace_id.as_str())?;
     let path = herdrkit::user_state_directory()?.join(herdr_prs::REGISTRY_PATH);
     let directory = path.parent().context("PR registry path has no parent")?;
     std::fs::create_dir_all(directory).context("create PR registry directory")?;
@@ -46,25 +43,11 @@ pub(crate) fn run(command: HerdrCommand, json: bool) -> Result<String> {
         _ => bail!("invalid PR command target"),
     };
     let associations = registry.list(&scope)?;
-    let (observed, watcher_error) = match client.workspace_resources(&workspace_id) {
-        Ok(resources) if resources.identity == scope.identity() => (
-            resources
-                .collections
-                .get("herdr-github")
-                .map(|collection| collection.resources.clone())
-                .unwrap_or_default(),
-            None,
-        ),
-        Ok(_) => (Vec::new(), Some("workspace lifetime changed".to_owned())),
-        Err(error) => (Vec::new(), Some(error.to_string())),
-    };
-    let observations: Vec<_> = associations.pulls.iter().map(|pull| {
-        let resource = observed.iter().find(|resource| resource.id == pull.url.as_str());
-        serde_json::json!({"url": pull.url, "status": resource.map_or_else(|| "Awaiting watcher projection".to_owned(), status_text), "projection": resource})
-    }).collect();
+    // The summary reflects the watcher's last publication, which may predate this change.
+    let sidebar = workspace.tokens.get(SIDEBAR_TOKEN);
     if json {
         Ok(crate::json::render(
-            serde_json::json!({"workspace_id": workspace_id, "scope": scope, "changed": changed, "associations": associations, "observations": observations, "watcher_error": watcher_error}),
+            serde_json::json!({"workspace_id": workspace_id, "scope": scope, "changed": changed, "associations": associations, "sidebar": sidebar}),
         ))
     } else if associations.pulls.is_empty() {
         Ok(format!("{workspace_id}: no registered PRs\n"))
@@ -72,31 +55,13 @@ pub(crate) fn run(command: HerdrCommand, json: bool) -> Result<String> {
         let mut output = String::new();
         for pull in &associations.pulls {
             output.push_str(pull.url.as_str());
-            if let Some(resource) = observed
-                .iter()
-                .find(|resource| resource.id == pull.url.as_str())
-            {
-                output.push_str("  ");
-                output.push_str(&status_text(resource));
-            } else {
-                output.push_str("  Awaiting watcher projection");
-            }
             output.push('\n');
         }
-        if let Some(error) = watcher_error {
-            output.push_str("Watcher unavailable: ");
-            output.push_str(&error);
-            output.push('\n');
-        }
+        output.push_str("Sidebar: ");
+        output.push_str(sidebar.map_or("awaiting watcher", String::as_str));
+        output.push('\n');
         Ok(output)
     }
-}
-
-fn status_text(resource: &herdrkit::resources::Resource) -> String {
-    resource.detail.as_ref().map_or_else(
-        || resource.status.clone(),
-        |detail| format!("{} · {}", resource.status, detail.text),
-    )
 }
 
 #[cfg(test)]

@@ -10,8 +10,8 @@ mod tests {
     use herdrkit::testing::{Server, Step};
     use serde_json::{Value, json};
 
-    const FIRST: &str = "11111111-1111-4111-8111-111111111111";
-    const SECOND: &str = "22222222-2222-4222-8222-222222222222";
+    const FIRST: &str = "w1";
+    const SECOND: &str = "w2";
     const PR: &str = "https://github.com/example/project/pull/7";
     const NEXT_PR: &str = "https://github.com/example/project/pull/8";
 
@@ -31,8 +31,8 @@ mod tests {
             fs::create_dir_all(root.join("checkout")).unwrap();
             // Both workspaces deliberately share a checkout. Focus and inherited IDs
             // consistently name w1, while the explicit task target will be w2.
-            let workspaces: Vec<_> = [("w1", FIRST), ("w2", SECOND)].into_iter().map(|(id, uuid)| {
-            json!({"workspace_id":id,"identity":uuid,"label":id,"focused":id=="w1","agent_status":"idle",
+            let workspaces: Vec<_> = [FIRST, SECOND].into_iter().map(|id| {
+            json!({"workspace_id":id,"label":id,"focused":id=="w1","agent_status":"idle","tokens":{"prs":"#7 ✓✓"},
                 "worktree":{"repo_key":"example","repo_name":"project","repo_root":root.join("checkout"),"checkout_path":root.join("checkout"),"is_linked_worktree":false}})
         }).collect();
             let snapshot = json!({"type":"session_snapshot","snapshot":{
@@ -46,11 +46,6 @@ mod tests {
                 steps.push(Step::reply(
                     json!({"id":"{id}","result":snapshot}).to_string(),
                 ));
-                // Registration must survive a watcher failure, independently of its target.
-                steps.push(Step::reply(
-                json!({"id":"{id}","error":{"code":"unavailable","message":"watcher unavailable"}})
-                    .to_string(),
-            ));
             }
             Self {
                 root,
@@ -73,12 +68,8 @@ mod tests {
                 .unwrap()
         }
 
-        fn scope(&self, uuid: &str) -> Scope {
-            Scope::new(
-                self.server.client().endpoint().to_str().unwrap().into(),
-                uuid.into(),
-            )
-            .unwrap()
+        fn scope(&self, workspace: &str) -> Scope {
+            Scope::at(self.server.client().endpoint(), workspace).unwrap()
         }
 
         fn registry(&self) -> Registry {
@@ -162,9 +153,12 @@ mod tests {
         fixture.seed();
         let first = fixture.success(&["register", PR, "--workspace", "w2"]);
         assert_eq!(first.get("workspace_id").unwrap(), "w2");
-        assert_eq!(first.get("scope").unwrap().get("identity").unwrap(), SECOND);
+        assert_eq!(
+            first.get("scope").unwrap().get("workspace").unwrap(),
+            SECOND
+        );
         assert_eq!(first.get("changed").unwrap(), true);
-        assert!(first.get("watcher_error").unwrap().is_string());
+        assert_eq!(first.get("sidebar").unwrap(), "#7 ✓✓");
         let repeat = fixture.success(&["register", PR, "--workspace", "w2"]);
         assert_eq!(repeat.get("changed").unwrap(), false);
         fixture.success(&["register", NEXT_PR, "--workspace", "w2"]);
@@ -197,12 +191,12 @@ mod tests {
         assert_eq!(remaining.pulls.len(), 1);
         assert_eq!(remaining.pulls.first().unwrap().url.as_str(), NEXT_PR);
         let requests = fixture.server.requests();
-        assert_eq!(requests.len(), 10);
-        for [snapshot, resources] in requests.as_chunks::<2>().0 {
-            assert_eq!(snapshot.method, "session.snapshot");
-            assert_eq!(resources.method, "workspace.resources.get");
-            assert_eq!(resources.params, json!({"workspace_id":"w2"}));
-        }
+        assert_eq!(requests.len(), 5);
+        assert!(
+            requests
+                .iter()
+                .all(|request| request.method == "session.snapshot")
+        );
     }
 
     #[test]

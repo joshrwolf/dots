@@ -47,5 +47,3 @@ pub use metadata::MetadataReporter;
 pub use socket::Client;
 pub use theme::{Indicators, Theme};
 pub use tokens::{TokenError, Tokens};
-
-pub mod resources;

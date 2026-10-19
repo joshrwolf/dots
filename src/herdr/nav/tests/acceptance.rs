@@ -1,4 +1,4 @@
-//! Run explicitly with `HERDR_NAV_TEST_BINARY` pointing at stock Herdr 0.9.1+.
+//! Drives the `herdr` on `PATH` (stock 0.9.1+) in an isolated temporary session.
 mod support;
 
 use std::fs::{self, File};
@@ -35,7 +35,6 @@ struct Destination {
 }
 
 #[test]
-#[ignore = "requires an explicit stock Herdr binary; starts only isolated temporary sessions"]
 #[expect(
     clippy::panic_in_result_fn,
     reason = "integration assertions include expected/actual values; Result propagates setup failures"
