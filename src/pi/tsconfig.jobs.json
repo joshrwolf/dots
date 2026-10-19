@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.ui.json",
+  "include": ["extensions/jobs/**/*.ts", "tests/jobs*.test.ts"]
+}

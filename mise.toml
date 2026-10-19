@@ -1,0 +1,181 @@
+min_version = "2026.10.12"
+monorepo_root = true
+
+[settings]
+experimental = true
+use_versions_host = false
+use_versions_host_track = false
+lockfile = true
+locked = true
+task.source_freshness_hash_contents = true
+task.cache_max_size = "256MiB"
+
+# Native lockfiles still own application dependencies. These are build/test SDKs.
+[tools]
+node = "24.22.0"
+python = "3.15.0"
+rust = { version = "1.99.0", profile = "minimal", components = "clippy,rustfmt" }
+"github:nextest-rs/nextest" = { version = "0.9.148", version_prefix = "cargo-nextest-" }
+"aqua:neovim/neovim" = "0.12.6"
+
+[env]
+# Never consult or publish a remote task cache.
+MISE_TASK_CACHE = "local-only"
+
+[vars]
+# Cargo's staging records are not dotfiles.
+stow = 'stow --dir=home --no-folding --ignore="(^|/)\.crates(2\.json|\.toml)$"'
+
+[monorepo]
+config_roots = ["src/*", "src/github/*", "src/herdr/*", "src/herdr/review/core", "src/claude/*", "tests", "home", "skills"]
+lockfile = true
+
+[monorepo.path_aliases]
+dots = "src/dots"
+github-client = "src/github/client"
+github-inspect = "src/github/inspect"
+tasks = "src/tasks"
+herdr = "src/herdr"
+pi = "src/pi"
+codex-agent = "src/claude/codex-agent"
+
+# Cross-plugin manifest tests consume these files, not their build artifacts.
+[monorepo.projects."cargo:herdr-plugin-contracts"]
+depends_add = ["cargo:herdr-find", "cargo:herdr-github", "cargo:herdr-nav", "cargo:herdr-nvim", "cargo:herdr-review", "custom:home"]
+
+[monorepo.projects."custom:pi"]
+root = "src/pi"
+
+[monorepo.projects."custom:codex-agent"]
+root = "src/claude/codex-agent"
+
+[monorepo.projects."custom:skills"]
+root = "skills"
+depends = ["cargo:dots-cli"]
+
+[monorepo.projects."custom:home"]
+root = "home"
+depends = ["custom:skills", "custom:codex-agent", "cargo:herdr-nvim", "cargo:herdr-review", "custom:aerospace", "custom:gitsign"]
+
+[monorepo.projects."cargo:dots-repository-tests"]
+depends_add = ["custom:home"]
+
+[monorepo.projects."custom:herdr-deploy"]
+root = "src/herdr/deploy"
+depends = ["cargo:herdr-find", "cargo:herdr-github", "cargo:herdr-nav", "cargo:herdr-nvim", "cargo:herdr-review"]
+
+[monorepo.projects."custom:aerospace"]
+root = "src/aerospace"
+
+[monorepo.projects."custom:gitsign"]
+root = "src/gitsign"
+
+[task_templates.rust-check]
+run = [
+  "cargo fmt -p {{ vars.package }} --check",
+  "cargo clippy --locked -p {{ vars.package }} --all-features --all-targets -- -D warnings",
+  "cargo nextest run --locked -p {{ vars.package }} --all-features --all-targets",
+  "cargo test --locked -p {{ vars.package }} --all-features --doc",
+  "cargo doc --locked -p {{ vars.package }} --all-features --no-deps",
+]
+env = { RUSTDOCFLAGS = "-D warnings" }
+cache = { enabled = false }
+
+[tasks.build]
+description = "Build all native deliverables; never activate them"
+depends = ["rust-build", "//src/pi:package"]
+cache = { enabled = false }
+
+[tasks."rust-build"]
+# Cargo owns artifact placement and replacement, including custom target dirs.
+# This installation root is build output, never the user's executable directory.
+run = [
+  "cargo install --frozen --path src/dots --root dist --force",
+  "cargo install --frozen --path src/herdr/find --root dist --force",
+  "cargo install --frozen --path src/herdr/github --root dist --force",
+  "cargo install --frozen --path src/herdr/nav --root dist --force",
+  "cargo install --frozen --path src/herdr/nvim --root dist --force",
+  "cargo install --frozen --path src/herdr/review --root dist --force",
+  "cargo install --frozen --path src/herdr/issue --root dist --force",
+]
+cache = { enabled = false }
+
+[tasks.verify]
+description = "Complete checks, builds, and isolated host/installation acceptance"
+depends = ["check", "build", "//src/pi:verify", "//tests:verify"]
+cache = { enabled = false }
+
+[tasks.deps]
+description = "Explicitly install locked development and test dependencies"
+depends = ["//src/pi:deps", "//src/herdr:deps"]
+run = "cargo fetch --locked"
+cache = { enabled = false }
+
+[tasks.check]
+description = "Complete repository gate, without installation or cloud CI"
+depends = ["rust-check", "//src/pi:check", "//src/claude/codex-agent:check", "//skills:check", "//src/herdr/deploy:check", "//src/aerospace:check", "//src/gitsign:check", "//home:check", "//tests:graph-check"]
+cache = { enabled = false }
+
+[tasks."rust-check"]
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --locked --workspace --all-features --all-targets -- -D warnings",
+  "cargo nextest run --locked --workspace --all-features --all-targets",
+  "cargo test --locked --workspace --all-features --doc",
+  "cargo doc --locked --workspace --all-features --no-deps",
+]
+env = { RUSTDOCFLAGS = "-D warnings" }
+cache = { enabled = false }
+
+
+[tasks.doctor]
+description = "Native mise diagnostics, selected SDKs, and compiler identity"
+depends = ["doctor:platform"]
+run = ["mise doctor", "mise ls --current", "cargo clippy --version", "cargo fmt --version", "cc --version"]
+cache = { enabled = false }
+
+[tasks."doctor:platform"]
+skip_if = 'test "$(uname -s)" != Darwin'
+run = "xcrun --show-sdk-path"
+cache = { enabled = false }
+
+[tasks."install"]
+run = ['{{ vars.stow }} --target "$HOME" --simulate --restow aerospace brew codex ghostty pi skills theme zsh', '{{ vars.stow }} --target "$HOME" --restow aerospace brew codex ghostty pi skills theme zsh']
+cache = { enabled = false }
+
+[tasks."unstow"]
+run = '{{ vars.stow }} --target "$HOME" --delete aerospace brew codex ghostty pi skills theme zsh'
+cache = { enabled = false }
+
+
+[tasks."nvim:install"]
+run = ['{{ vars.stow }} --target "$HOME" --simulate --restow nvim', '{{ vars.stow }} --target "$HOME" --restow nvim']
+cache = { enabled = false }
+
+
+[tasks."finicky:install"]
+run = ['test "$(uname -s)" = Darwin', 'test -x /Applications/Finicky.app/Contents/MacOS/Finicky', '{{ vars.stow }} --target "$HOME" --simulate --restow finicky', '{{ vars.stow }} --target "$HOME" --restow finicky']
+cache = { enabled = false }
+
+[tasks."gitsign:install"]
+description = "Explicit macOS signing-service activation"
+run = [
+  'test "$(uname -s)" = Darwin',
+  'test -x /opt/homebrew/bin/gitsign && test -x /opt/homebrew/bin/gitsign-credential-cache && test -x /opt/homebrew/bin/python3',
+  '{{ vars.stow }} --target "$HOME" --simulate --restow gitsign',
+  '{{ vars.stow }} --target "$HOME" --restow gitsign',
+  'launchctl enable "gui/$(id -u)/dev.joshrwolf.gitsign-credential-cache"',
+  'launchctl print "gui/$(id -u)/dev.joshrwolf.gitsign-credential-cache" >/dev/null 2>&1 || launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/dev.joshrwolf.gitsign-credential-cache.plist"',
+]
+cache = { enabled = false }
+
+
+
+
+[tasks."pi-cli:install"]
+run = "curl -fsSL https://pi.dev/install.sh | sh"
+cache = { enabled = false }
+
+[tasks."pi-cli:update"]
+run = "pi update --self"
+cache = { enabled = false }

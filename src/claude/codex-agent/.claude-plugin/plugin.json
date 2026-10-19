@@ -1,0 +1,7 @@
+{
+  "name": "codex-agent",
+  "version": "0.2.0",
+  "description": "Delegate tasks to OpenAI models as Codex subagents, on your ChatGPT/Codex subscription",
+  "author": { "name": "Josh Wolf" },
+  "types": "./types/index.d.ts"
+}

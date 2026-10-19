@@ -1,0 +1,9 @@
+[tasks.check]
+extends = "rust-check"
+vars = { package = "herdr-issue" }
+depends = ["^check"]
+cache = { enabled = false }
+
+[tasks.build]
+run = 'cargo install --frozen --path . --root "$MISE_MONOREPO_ROOT/dist" --force'
+cache = { enabled = false }

@@ -1,6 +1,0 @@
-# Each source is an editable subtree at skills/.local/share/agent-skills/<name>.
-# Skill paths are directory glob patterns relative to that subtree.
-[sources.golang]
-url = "https://github.com/samber/cc-skills-golang.git"
-ref = "main"
-skills = ["skills/*"]

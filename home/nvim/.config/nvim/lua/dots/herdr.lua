@@ -1,0 +1,1 @@
+../../../../../../src/herdr/nvim/editor/lua/dots/herdr.lua

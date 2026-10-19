@@ -1,142 +1,77 @@
 # Skills in dots
 
-Personal skills live in `skills/.agents/skills/`. Third-party collections are
-registered in `skill-sources.toml` and imported as squashed Git subtrees under
-`skills/.local/share/agent-skills/<source>/`. Shared skills are tracked in dots;
-a fresh clone needs no submodule setup. Machine-local skills use the ignored
-`local-*` namespace described below. Preserve upstream licenses and attribution.
+Authored skills live once at `skills/<name>/`, with a `SKILL.md` and relative
+supporting files. Stow installs discovery links from `home/skills/` into
+`~/.agents/skills` for Pi/Codex and `~/.claude/skills` for Claude.
 
-## Install and edit
+Imported skills remain editable Git subtrees under
+`skills/.local/share/agent-skills/`. This is their Git-recorded source prefix,
+not an installation payload. Preserve upstream licenses and instruction files;
+do not replace source or discovery links with copies.
 
-Run `make skills` to regenerate discovery links and restow the skills package.
-Plain `make` also regenerates these links. Neither command fetches updates.
-Python 3.11+ and GNU Stow are required. Codex and Pi use
-`~/.agents/skills/<name>`; Claude uses `~/.claude/skills/<name>`.
-
-Edit imported files directly in their subtree and commit changes in dots.
-Keep imported-content edits separate from unrelated dotfiles changes where
-practical; this makes reviewing updates and extracting contributions easier.
-Keep repository instructions in canonical `AGENTS.md` files with sibling
-`CLAUDE.md -> AGENTS.md` links, following this repository's convention.
-
-## Machine-local skills
-
-Keep company-specific workflows and references inside this checkout under
-`skills/.agents/skills/local-<name>/`. Git ignores these directories and their
-generated `skills/.claude/skills/local-<name>` discovery links. The `local-`
-prefix is reserved for uncommitted skills; imported collections cannot use it.
-
-For example, create `skills/.agents/skills/local-work-context/SKILL.md`:
-
-```markdown
----
-name: local-work-context
-description: Load company conventions when working on company projects.
----
-
-Describe which projects this applies to and the instructions to follow.
-Keep supporting material in relative paths such as references/conventions.md.
-```
-
-The frontmatter name must match the directory name. Run `make skills` to create
-the Claude discovery link and install the skill for all three agents. This uses
-the same Stow package as shared skills, including when a home discovery directory
-is itself a Stow symlink. No separate private checkout or package is needed.
-
-Confirm the source and link are excluded with:
+## Install and validate
 
 ```sh
-git check-ignore skills/.agents/skills/local-work-context/SKILL.md \
-  skills/.claude/skills/local-work-context
+mise run //skills:check       # canonical definitions and generated CLI docs
+mise run //home:check         # discovery links and isolated Stow behavior
+mise run //skills:install
 ```
 
-These files remain on this machine, are absent from fresh clones, and must never
-be force-added to Git. Give private skills distinct names; they add to the catalog
-and do not merge with existing skills. Remove a local skill directory and rerun
-`make skills` to remove its generated discovery link. Restart agent sessions if
-needed; Pi also supports `/reload`.
+Installation only restows authored links. It never fetches upstream, generates
+aliases or rewrites source. Claude's native validator checks imported definitions
+at their real paths because it intentionally does not follow directory symlinks.
 
-Skills load their full instructions on demand. Use them for company workflows
-and reference material; rules that must apply to every task need an instruction
-file or an explicit instruction to load the skill.
+## Add a personal skill
 
-## Add a source
-
-Add a named table to `skill-sources.toml`, for example:
-
-```toml
-[sources.golang]
-url = "https://github.com/samber/cc-skills-golang.git"
-ref = "main"
-skills = ["skills/*"]
-```
-
-Choose a unique lowercase, hyphen-separated source name. `skills` contains
-non-overlapping directory glob patterns relative to the imported repository.
-Use `["."]` for a repository with one root-level skill, or explicit directories
-to select only some skills. Each matched directory must contain a `SKILL.md`
-with standard frontmatter; its `name` determines the discovery link name.
-Duplicate names across collections and collisions with personal skills fail
-before any links change. Sources do not need to share a directory layout.
-
-Commit the registry entry and start with a clean working tree, then run:
+Create `skills/example/SKILL.md` with `name: example` and a useful `description`
+in YAML frontmatter, then add both discovery links from the repository root:
 
 ```sh
-make skills-import SOURCE=golang
+ln -s ../../../../skills/example home/skills/.agents/skills/example
+ln -s ../../.agents/skills/example home/skills/.claude/skills/example
+mise run //skills:check ::: //home:check
+mise run //skills:install
 ```
 
-This imports the full repository and creates a subtree commit, then generates
-links for the selected skills. Review the imported instructions, normalize any
-repository instruction files to the convention above, and commit the discovery
-links and customizations. Run `make skills` to install.
+For machine-local skills, use `local-<name>` for the directory and both aliases.
+Git ignores all three. Never force-add private workflows or machine captures.
+Installation leaves existing private skills alone. To remove one, remove its
+source and both discovery aliases, then restow.
 
-Import newly registered sources one at a time. All registered sources must be
-present before link generation can succeed.
+## Imported collections
 
-## Merge upstream updates
-
-Start with a clean working tree, then run:
+The Go subtree at `skills/.local/share/agent-skills/golang` tracks
+`https://github.com/samber/cc-skills-golang.git`. Native Git operations are explicit:
 
 ```sh
-make skills-update SOURCE=golang
+mise run //skills:golang:import  # only when initially adding the collection
+mise run //skills:golang:update # fetch and merge upstream main
 ```
 
-This fetches the selected source's configured ref and performs a squashed subtree
-merge. Git preserves committed customizations and reports conflicts for
-overlapping changes. The command creates commits; it does not push anything.
-Review the resulting diff, including new skills and changes to instructions.
+These create local commits. Start with a clean tree, review upstream changes and
+resolve conflicts normally; `git merge --abort` abandons a conflicted merge.
+Neither operation pushes or installs anything.
 
-If the merge conflicts, resolve it and finish with `git commit`, or cancel with
-`git merge --abort`. Upstream changes to a renamed `CLAUDE.md` may need to be
-applied to our canonical `AGENTS.md`.
+After an update, add discovery links for new skills and remove obsolete aliases:
 
-After resolving a merge, run `make skills-links`. This adds links for new skills
-and removes links for deleted imported skills without removing personal skills.
-Commit any link changes, then run `make skills` to restow. Restart the agent
-session if its skill catalog does not refresh automatically.
+```sh
+ln -s ../../../../skills/.local/share/agent-skills/golang/skills/golang-example home/skills/.agents/skills/golang-example
+ln -s ../../.agents/skills/golang-example home/skills/.claude/skills/golang-example
+```
 
-To remove a source, remove its registry entry, explicitly remove its subtree
-with `git rm -r`, and run `make skills-links` to remove its discovery links.
-Review and commit the removal, then run `make skills`. The helper never deletes
-imported source files or customizations itself.
+`//home:check` detects missing or misdirected aliases. Review and commit source/link
+changes together, then restow. Do not overwrite a personal skill to accommodate
+an imported name collision. Another collection needs explicit subtree tasks and
+reviewed links, not a new registry or generator.
 
-## Optional contributions
-
-Dots is the source of truth. The `joshrwolf/cc-skills-golang` fork is only needed
-when publishing changes; it is not an installation or update source. To extract
-that imported directory's history into a local branch:
+For an explicitly requested upstream contribution, extract the collection's history:
 
 ```sh
 git subtree split --prefix=skills/.local/share/agent-skills/golang -b go-skills-export
 ```
 
-Substitute the source directory for other collections. Review the extracted
-branch before explicitly pushing it to a fork. No installation or update target
-publishes changes.
-
 ## Generated CLI skill
 
-The `dots` skill and its command reference come from the CLI command tree.
-Run `make cli-skills` after changing commands; `make cli-check` and the full
-Rust gate reject stale generated files. `make cli` installs the binary and
-shared skills together. See [the CLI home](../apps/dots-cli/README.md).
+`mise run //dots:skills` generates the `dots` skill and reference from its Rust
+command tree. Validation uses `dots skills check`. Discovery links are authored,
+not generated. See [the CLI home](../src/dots/README.md).

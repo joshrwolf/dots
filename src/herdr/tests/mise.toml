@@ -1,0 +1,4 @@
+[tasks.check]
+extends = "rust-check"
+vars = { package = "herdr-plugin-contracts" }
+cache = { enabled = false }

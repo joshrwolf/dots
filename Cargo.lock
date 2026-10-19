@@ -454,6 +454,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dots-repository-tests"
+version = "0.1.0"
+dependencies = [
+ "toml",
+]
+
+[[package]]
 name = "dots-tasks"
 version = "0.1.0"
 dependencies = [

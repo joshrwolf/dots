@@ -6,7 +6,7 @@ It uses `gh` for GitHub authentication and queries; `gh` remains available for
 general GitHub operations. No Herdr session is required.
 
 ```sh
-make cli                 # build and Stow ~/.local/bin/dots
+mise run //src/dots:install                 # build and Stow ~/.local/bin/dots
 dots github ci           # current branch: checks and bounded failure excerpts
 dots github ci --pr https://github.com/example/project/pull/7
 dots github ci --repo example/project --ref main
@@ -129,7 +129,7 @@ without depending on job names. Classification is explicitly heuristic. The
 45-second operation budget still bounds queries.
 
 
-See [the general-purpose CLI home](../apps/dots-cli/README.md) for installation,
+See [the general-purpose CLI home](../src/dots/README.md) for installation,
 agent discovery, architecture, and adding workflows.
 
 ## GitHub check-run evidence

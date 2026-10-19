@@ -1,0 +1,55 @@
+{
+  "name": "@joshrwolf/pi-dots",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal Pi workflow extensions maintained in dots",
+  "exports": {
+    "./ui": "./src/index.ts"
+  },
+  "files": [
+    "extensions",
+    "src",
+    "themes",
+    "npm-shrinkwrap.json"
+  ],
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "extensions/context/index.ts",
+      "extensions/ui/index.ts",
+      "extensions/memory/index.ts",
+      "extensions/workers/index.ts",
+      "extensions/wake/index.ts",
+      "extensions/jobs/index.ts"
+    ],
+    "skills": [],
+    "prompts": [],
+    "themes": [
+      "themes/dots-light.json",
+      "themes/dots-dark.json"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.ui.json && tsc -p tsconfig.jobs.json",
+    "check": "npm run typecheck && node --experimental-strip-types --test tests/*.test.mjs tests/ui*.test.ts tests/jobs*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=1.3.0",
+    "@earendil-works/pi-tui": ">=1.3.0",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.3.0",
+    "@earendil-works/pi-tui": "1.3.0",
+    "@types/node": "22.19.15",
+    "typebox": "1.3.27",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "diff": "9.0.0",
+    "shiki": "4.5.0"
+  }
+}

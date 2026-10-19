@@ -1,0 +1,3 @@
+[tasks.check]
+depends = ["//tests:home-check"]
+cache = { enabled = false }

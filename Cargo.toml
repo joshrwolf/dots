@@ -1,20 +1,21 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/herdr-prs",
-    "crates/dots-tasks",
-    "apps/dots-cli",
-    "crates/github-inspect",
-    "herdr-plugins/contracts",
-    "crates/github-client",
-    "herdr-plugins/issue",
-    "herdr-plugins/crates/herdrkit",
-    "herdr-plugins/crates/review-core",
-    "herdr-plugins/find",
-    "herdr-plugins/github",
-    "herdr-plugins/nav",
-    "herdr-plugins/nvim",
-    "herdr-plugins/review",
+    "tests",
+    "src/herdr/prs",
+    "src/tasks",
+    "src/dots",
+    "src/github/inspect",
+    "src/herdr/tests",
+    "src/github/client",
+    "src/herdr/issue",
+    "src/herdr/kit",
+    "src/herdr/review/core",
+    "src/herdr/find",
+    "src/herdr/github",
+    "src/herdr/nav",
+    "src/herdr/nvim",
+    "src/herdr/review",
 ]
 
 [workspace.package]
@@ -24,15 +25,15 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-herdr-prs = { path = "crates/herdr-prs" }
+herdr-prs = { path = "src/herdr/prs" }
 clap = { version = "4", features = ["derive"] }
-github-inspect = { path = "crates/github-inspect" }
-github-client = { path = "crates/github-client" }
-dots-tasks = { path = "crates/dots-tasks" }
+github-inspect = { path = "src/github/inspect" }
+github-client = { path = "src/github/client" }
+dots-tasks = { path = "src/tasks" }
 tokio = { version = "1", features = ["rt", "sync", "time", "net", "io-util", "macros", "fs", "process"] }
-herdrkit = { path = "herdr-plugins/crates/herdrkit" }
-herdr-review = { path = "herdr-plugins/review" }
-review-core = { path = "herdr-plugins/crates/review-core" }
+herdrkit = { path = "src/herdr/kit" }
+herdr-review = { path = "src/herdr/review" }
+review-core = { path = "src/herdr/review/core" }
 anyhow = "1"
 nucleo = "0.5"
 nix = { version = "0.29", features = ["process", "signal"] }

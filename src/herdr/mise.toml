@@ -1,0 +1,22 @@
+[tasks.deps]
+run = """nvim --headless -u NONE -i NONE '+lua vim.pack.add({}, {confirm=false,load=false}); vim.pack.update(nil, {target="lockfile",force=true})' +qa"""
+env = { NVIM_APPNAME = "nvim", XDG_CONFIG_HOME = "{{config_root}}/nvim/tests", XDG_DATA_HOME = "{{config_root}}/target/test-deps", XDG_STATE_HOME = "{{config_root}}/target/nvim-state", XDG_CACHE_HOME = "{{config_root}}/target/nvim-cache" }
+cache = { enabled = false }
+
+[tasks.install]
+dir = "{{config_root}}/../.."
+depends = ["./...:build"]
+run = [
+  'mkdir -p home/herdr/.local',
+  '{{vars.stow}} --target="$HOME" --restow --simulate herdr nvim',
+  'cargo install --frozen --path src/herdr/issue --root home/herdr/.local --force',
+  'cargo install --frozen --path src/herdr/review --root home/herdr/.local --force',
+  '{{vars.stow}} --target="$HOME" --restow herdr nvim',
+  'python3 src/herdr/deploy/main.py',
+]
+cache = { enabled = false }
+
+[tasks.link]
+depends = ["./...:build"]
+run = 'python3 "$MISE_MONOREPO_ROOT/src/herdr/deploy/main.py"'
+cache = { enabled = false }

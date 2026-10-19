@@ -1,0 +1,4 @@
+[tasks.check]
+run = ["sh -n cache-service", "python3 -m unittest discover -s . -p 'test_*.py' -v"]
+env = { PYTHONDONTWRITEBYTECODE = "1" }
+cache = { enabled = false }
