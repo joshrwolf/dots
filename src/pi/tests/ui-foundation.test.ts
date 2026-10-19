@@ -240,7 +240,7 @@ test("source preparation and output tails obey budgets even at one column", asyn
 });
 
 test("preferences allow independent ownership and reject malformed configuration", () => {
-  assert.deepEqual(parsePreferences({ version: 1, tools: ["write"], footer: "native" }), { version: 1, tools: ["write"], footer: "native", editor: "soft" });
+  assert.deepEqual(parsePreferences({ version: 1, tools: ["write"], footer: "native" }), { version: 1, tools: ["write"], otherTools: "compact", header: "compact", footer: "native", editor: "soft" });
   assert.deepEqual(parsePreferences({ version: 1, tools: [], footer: "native" }).tools, []);
   for (const value of [{ version: 2 }, { version: 1, tools: ["bash", "bash"] }, { version: 1, tools: ["other"] }, { version: 1, footer: "hidden" }, { version: 1, footer: null }, { version: 1, tools: null }, { version: 1, unknown: true }, null]) assert.throws(() => parsePreferences(value));
 });

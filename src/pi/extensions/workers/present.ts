@@ -2,8 +2,10 @@ import type { MessageRenderer, MessageRenderOptions, Theme } from "@earendil-wor
 
 /** The custom message shape, derived from the public renderer signature. */
 type CustomMessage<T> = Parameters<MessageRenderer<T>>[0];
-import { VStack, type Component } from "@earendil-works/pi-tui";
-import { OutputView, PriorityRow, ToolCard, labelText, type ActivityState, type Notice, type Segment, type Tone } from "../../src/index.ts";
+import { VStack, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { activityDecoration, activityHeader, PriorityRow, ActivityCard, labelText, type ActivityState, type Notice, type Segment, type Tone } from "../../src/index.ts";
+
+import { MarkdownView } from "../../src/ui/markdown.ts";
 
 // Presentation for worker events and the live worker widget, composed from
 // the companion's presentation library. Pure projection from recorded data;
@@ -28,7 +30,7 @@ export interface EventModel {
 }
 
 const KIND_TONE: Record<string, Tone> = {
-  completed: "success",
+  completed: "muted",
   failed: "error",
   stopped: "warning",
   asking: "warning",
@@ -51,11 +53,11 @@ function bodyOf(content: CustomMessage<unknown>["content"]): string {
 export function projectEvent(message: CustomMessage<EventDetails>): EventModel {
   const details = message.details ?? { id: "?", kind: "event" };
   const kind = labelText(details.kind);
-  const heading: Segment[] = [
-    { text: labelText(details.label ?? details.id), tone: "toolTitle", priority: 90, shrink: "clip", clip: "end", minWidth: 8 },
-    { text: kind, tone: KIND_TONE[kind] ?? "muted", priority: 100, shrink: "clip" },
+  const heading: Segment[] = [...activityHeader("worker", labelText(details.label ?? details.id), []).start];
+  const status: Segment[] = [
+    { text: kind, tone: KIND_TONE[kind] ?? "muted", priority: 100, minWidth: Math.min(9, kind.length), shrink: "clip" },
+    { text: labelText(details.id).slice(0, 12), tone: "dim", priority: 10, shrink: "omit" },
   ];
-  const status: Segment[] = [{ text: labelText(details.id), tone: "dim", priority: 30, shrink: "omit" }];
   if (details.elapsed) status.push({ text: labelText(details.elapsed), tone: "dim", priority: 40, shrink: "omit" });
   if (typeof details.tokens === "number") status.push({ text: `${details.tokens.toLocaleString("en-US")} tok`, tone: "dim", priority: 20, shrink: "omit" });
   const notices: Notice[] = [];
@@ -65,17 +67,13 @@ export function projectEvent(message: CustomMessage<EventDetails>): EventModel {
   return { heading, status, notices, body: bodyOf(message.content), caption: details.session ? `session ${details.session}` : "" };
 }
 
-/** Collapsed: one row with the first body line as a clipped summary. Expanded: the bounded body. */
+/** The same identity/outcome header as tools, with a bounded result preview. */
 export function renderEvent(message: CustomMessage<EventDetails>, options: MessageRenderOptions, theme: Theme): Component {
   const model = projectEvent(message);
-  const card = new ToolCard();
-  const firstLine = model.body.split("\n").find((line) => line.trim()) ?? "";
-  const heading = options.expanded || !firstLine
-    ? model.heading
-    : [...model.heading, { text: firstLine, tone: "muted" as const, priority: 10, shrink: "clip" as const, clip: "end" as const }];
+  const card = new ActivityCard();
   const kind = message.details?.kind ?? "";
-  const state: ActivityState | undefined = kind === "completed" ? "done" : kind === "failed" || kind === "undeliverable" ? "failed" : kind === "stopped" ? "cancelled" : kind === "asking" ? "queued" : undefined;
-  card.update({ heading, status: model.status, notices: model.notices, body: options.expanded ? new OutputView(model.body) : undefined, caption: model.caption, ...(state ? { state } : {}) }, theme);
+  const state: ActivityState | undefined = kind === "completed" ? "done" : kind === "failed" || kind === "undeliverable" ? "failed" : kind === "stopped" ? "cancelled" : kind === "asking" ? "waiting" : undefined;
+  card.update({ header: activityHeader("worker", model.heading[1]?.text ?? "", model.status.slice(0, 1), "end", model.status.slice(1)), notices: model.notices.map((notice) => !options.expanded && notice.text.startsWith("excerpt;") ? { ...notice, text: "Excerpt · worker_status for full result" } : notice), body: model.body ? new MarkdownView(model.body, theme, options.expanded ? undefined : 3) : undefined, caption: options.expanded ? model.caption : "", ...(state ? { state } : {}) }, theme);
   const pad = Math.max(0, options.outputPad);
   return {
     render: (width) => card.render(width - 2 * pad).map((line) => " ".repeat(pad) + line),
@@ -182,17 +180,25 @@ export function createWidget(rows: () => WidgetRow[], theme: Theme, maxRows: num
       const all = rows();
       if (all.length === 0 || width <= 0) return [];
       stack.clear();
+      const header = new PriorityRow();
+      const active = all.filter((row) => row.state === "running" || row.state === "asking").length;
+      header.update({ layout: "inline", start: [{ text: "workers", tone: "accent", bold: true, priority: 80, shrink: "clip" }],
+        end: [{ text: `${active} active`, tone: "muted", priority: 90, shrink: "clip" },
+          { text: "/workers", tone: "dim", priority: 20, shrink: "omit" }], separator: " ", groupSeparator: " ", endSeparator: " ",
+      }, theme);
+      stack.addChild(header);
       const shown = all.slice(0, Math.max(1, maxRows));
-      const column = Math.min(24, Math.max(...shown.map((r) => r.depth * 2 + labelText(r.label).length)));
+      const column = Math.min(24, Math.max(...shown.map((r) => r.depth * 2 + visibleWidth(labelText(r.label)))));
       for (const row of shown) {
         const asking = row.state === "asking";
         const stalled = quiet(row);
         const live = row.state === "running" || asking;
-        const glyph = !live ? "\u25cb" : asking ? "?" : row.failed ? "\u2717" : "\u25cf";
-        const glyphTone: Tone = !live ? "dim" : asking ? "warning" : row.failed ? "error" : stalled ? "dim" : "success";
+        const decoration = activityDecoration(asking ? "waiting" : row.failed ? "failed" : "running");
+        const glyph = live ? decoration.glyph : "○";
+        const glyphTone: Tone = !live ? "dim" : stalled ? "warning" : decoration.tone;
         const indent = row.depth ? "\u2937 " : "";
         const label = labelText(row.label);
-        const padTo = Math.max(label.length, column - row.depth * 2);
+        const padTo = Math.max(visibleWidth(label), column - row.depth * 2);
         const end: Segment[] = [];
         if (stalled) end.push({ text: `quiet ${formatMs(row.idleMs)}`, tone: "warning", priority: 65, shrink: "omit" });
         end.push(

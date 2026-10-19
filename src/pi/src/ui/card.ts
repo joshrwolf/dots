@@ -1,7 +1,7 @@
 import { displayLimits } from "./policy.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { VStack, stripTerminalSequences, type Component } from "@earendil-works/pi-tui";
-import { PriorityRow, type RowLayout, type RowModel, type Segment } from "./row.ts";
+import { VStack, stripTerminalSequences, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { PriorityRow, type RowModel, type Segment } from "./row.ts";
 import { StateGutter, type ActivityState } from "./state.ts";
 import { DetailView } from "./details.ts";
 import { labelText, layoutText, plainLines, sourceText } from "./text.ts";
@@ -11,17 +11,19 @@ export interface Notice { readonly text: string; readonly severity: "warning" | 
 export class Notices implements Component {
   private theme: Theme | undefined;
   private values: readonly Notice[] = [];
-  private indent = 0;
-  update(values: readonly Notice[], theme: Theme, indent = 0): void {
+  update(values: readonly Notice[], theme: Theme): void {
     this.values = values; this.theme = theme;
-    this.indent = Number.isFinite(indent) ? Math.max(0, Math.floor(indent)) : 0;
   }
   invalidate(): void {}
   render(width: number): string[] {
     const theme = this.theme;
     if (!theme || width <= 0) return [];
-    const indent = Math.min(this.indent, Math.max(0, width - 16));
-    return this.values.flatMap((notice) => plainLines(notice.text, width - indent).map((line) => " ".repeat(indent) + theme.fg(notice.severity, line)));
+    const inset = width >= 20 ? "  " : "";
+    const room = width - inset.length;
+    return this.values.flatMap((notice) => {
+      const mark = room >= 8 ? notice.severity === "error" ? "↳ " : notice.severity === "warning" ? "! " : "· " : "";
+      return plainLines(notice.text, room - mark.length).map((line, index) => inset + theme.fg(notice.severity, (index === 0 ? mark : " ".repeat(mark.length)) + line));
+    });
   }
 }
 
@@ -50,52 +52,61 @@ export class OutputView implements Component {
   }
 }
 
-export type ToolCardModel = {
+/** A bounded glance at recorded text. Expansion always uses the full OutputView. */
+export class PreviewView implements Component {
+  private readonly output: OutputView;
+  private readonly theme: Theme;
+  private readonly rows: number;
+  constructor(text: string, theme: Theme, rows = 3) { this.output = new OutputView(text); this.theme = theme; this.rows = rows; }
+  invalidate(): void { this.output.invalidate(); }
+  render(width: number): string[] {
+    if (width <= 0) return [];
+    const lines = this.output.render(width);
+    return lines.length <= this.rows ? lines : [...lines.slice(0, this.rows), ...plainLines("… Ctrl+O to expand", width, 1).map((line) => this.theme.fg("dim", line))];
+  }
+}
+
+export interface ActivityCardModel {
   /** Optional static decoration; the caller supplies the semantic state. */
   readonly state?: ActivityState;
   readonly notices: readonly Notice[];
-  /** Soft indentation, surrendered to retain up to 16 cells for diagnostics. */
-  readonly noticeIndent?: number;
   readonly body: Component | undefined;
   readonly caption: string;
   /** Default always; omit a redundant caption only when its full text appears in the rendered header. */
   readonly captionPolicy?: "always" | "when-not-in-header";
-} & ({
-  /** Explicit row composition; caller owns order, grouping and spacing. */
   readonly header: RowModel;
-  readonly heading?: never;
-  readonly status?: never;
-  readonly layout?: never;
-  readonly groupSeparator?: never;
-} | {
-  readonly header?: never;
-  readonly heading: readonly Segment[];
-  readonly status: readonly Segment[];
-  /** Header placement only; defaults to inline and never constrains the body. */
-  readonly layout?: RowLayout;
-  readonly groupSeparator?: string;
-});
+}
+
+/** Outcomes stay beside the subject; only explicitly secondary metadata spans
+ * to the trailing edge. Shrink priorities still protect outcomes in narrow panes. */
+export function activityHeader(kind: string, subject: string, status: readonly Segment[], clip: NonNullable<Segment["clip"]> = "middle", secondary: readonly Segment[] = []): RowModel {
+  return {
+    layout: "edges", separator: "  ", groupSeparator: "  ", endSeparator: " · ",
+    start: [
+      { text: kind, tone: "accent", bold: true, priority: 90, shrink: "clip", padTo: 8, minWidth: Math.min(5, visibleWidth(kind)) },
+      { text: subject, tone: "text", priority: 40, shrink: "clip", clip, minWidth: 8 },
+      ...status.map((segment, index) => ({ ...segment, separatorBefore: segment.separatorBefore ?? (index === 0 ? "  " : " · ") })),
+    ], end: secondary,
+  };
+}
 
 /** Composition only: no tool/session state or syntax service ownership. */
-export class ToolCard implements Component {
+export class ActivityCard extends VStack {
   private readonly row = new PriorityRow();
   private readonly notices = new Notices();
-  private readonly stack = new VStack();
-  update(model: ToolCardModel, theme: Theme): void {
-    const header = model.header ?? { layout: model.layout, start: model.heading, end: model.status, endSeparator: " · ", ...(model.groupSeparator === undefined ? {} : { groupSeparator: model.groupSeparator }) };
-    this.row.update({ ...header, layout: header.layout ?? "inline" }, theme);
-    this.notices.update(model.notices, theme, model.noticeIndent);
-    this.stack.clear();
-    const decorated = model.state ? new StateGutter(this.row, model.state, theme) : this.row;
-    this.stack.addChild(decorated);
-    this.stack.addChild(this.notices);
+  update(model: ActivityCardModel, theme: Theme): void {
+    this.row.update(model.header, theme);
+    this.notices.update(model.notices, theme);
+    this.clear();
+    const decorated = new StateGutter(this.row, model.state ?? "done", theme);
+    this.addChild(decorated);
+    this.addChild(this.notices);
     if (model.body) {
       const caption = model.captionPolicy === "when-not-in-header"
         ? (width: number) => stripTerminalSequences(decorated.render(width).join("")).includes(labelText(model.caption)) ? "" : model.caption
         : model.caption;
-      this.stack.addChild(new DetailView(model.body, caption, theme));
+      this.addChild(new DetailView(model.body, caption, theme));
     }
   }
-  invalidate(): void { this.stack.invalidate(); }
-  render(width: number): string[] { return width > 0 ? this.stack.render(width) : []; }
+  override render(width: number): string[] { return width > 0 ? super.render(width) : []; }
 }

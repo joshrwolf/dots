@@ -1,7 +1,7 @@
 import { join, resolve } from "node:path";
 import { Type } from "typebox";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ToolCard, OutputView } from "../../src/index.ts";
+import { renderJobMessage } from "./transcript.ts";
 import { CompletionDelivery, registerDeliveryHooks } from "./delivery.ts";
 import { JobsRuntime } from "./runtime.ts";
 import { JobsPresentation } from "./ui.ts";
@@ -42,7 +42,7 @@ export default function jobs(pi: ExtensionAPI): void {
       persist: (job) => pi.appendEntry(ENTRY_TYPE, job),
       terminal: (job) => {
         // A human stop records its eventual outcome without buying a model turn.
-        if (humanStops.delete(job.id)) pi.sendMessage({ customType: RECORD_TYPE, content: summary(job), display: true, details: { id: job.id, state: job.state } }, { triggerTurn: false });
+        if (humanStops.delete(job.id)) pi.sendMessage({ customType: RECORD_TYPE, content: summary(job), display: true, details: { id: job.id, state: job.state, job: jobOutput(job) } }, { triggerTurn: false });
         else delivery?.record(job);
         presentation?.refresh();
       },
@@ -120,16 +120,8 @@ export default function jobs(pi: ExtensionAPI): void {
       if (ctx.mode === "tui" && ctx.hasUI) { await presentation?.open(args.trim() || undefined); return; }
       const jobs = args.trim() ? [runtime.get(args.trim())] : runtime.list();
       // Headless/RPC inspection remains a bounded, non-waking transcript record.
-      pi.sendMessage({ customType: "dots-jobs-inspection", content: jobs.map(summary).join("\n\n") || "No retained jobs.", display: true }, { triggerTurn: false });
+      pi.sendMessage({ customType: "dots-jobs-inspection", content: jobs.map(summary).join("\n\n") || "No retained jobs.", display: true, details: { jobs: jobs.map(jobOutput) } }, { triggerTurn: false });
     },
   });
-  for (const type of [RECORD_TYPE, "dots-jobs-inspection"]) pi.registerMessageRenderer(type, (message, options, theme) => {
-    const text = typeof message.content === "string" ? message.content : message.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
-    const card = new ToolCard();
-    card.update({
-      heading: [{ text: "jobs", tone: "toolTitle", bold: true, priority: 100, shrink: "clip" }],
-      status: [], notices: [], body: new OutputView(text), caption: "",
-    }, theme);
-    return { render: (width) => card.render(Math.max(0, width - options.outputPad * 2)).map((line) => " ".repeat(options.outputPad) + line), invalidate: () => card.invalidate() };
-  });
+  for (const type of [RECORD_TYPE, "dots-jobs-inspection"]) pi.registerMessageRenderer(type, renderJobMessage);
 }

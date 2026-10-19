@@ -51,8 +51,8 @@ env = { PYTHONDONTWRITEBYTECODE = "1" }
 cache = { enabled = false }
 
 [tasks.install]
-description = "Explicitly activate an immutable prepared companion; never reload Pi"
-depends = [":prepare"]
+description = "Verify and install the companion update; then /reload when idle"
+depends = [":verify"]
 run = "node install/index.mjs"
 cache = { enabled = false }
 
@@ -62,6 +62,11 @@ cache = { enabled = false }
 
 [tasks."upstream-install"]
 run = "node install/index.mjs --upstream"
+cache = { enabled = false }
+
+[tasks.workbench]
+description = "Interactive fixture-only Pi UI; disposable home, no providers or installation"
+run = "node dev/run.mjs"
 cache = { enabled = false }
 
 [tasks.check]

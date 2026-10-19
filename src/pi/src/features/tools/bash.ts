@@ -2,10 +2,12 @@ import { displayLimits } from "../../ui/policy.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Spacer, VStack, type Component } from "@earendil-works/pi-tui";
 import type { PresentationView, ToolObservation, ToolPresentation } from "../../host/tools.ts";
-import { OutputView, ToolCard, type Notice } from "../../ui/card.ts";
+import { activityHeader, OutputView, ActivityCard, type Notice } from "../../ui/card.ts";
+import { fitLabel } from "../../ui/row.ts";
+import { labelText } from "../../ui/text.ts";
 import { SourceView } from "../../ui/previews/view.ts";
 import type { SyntaxService } from "../../ui/previews/syntax.ts";
-import { activityState, duration, toolHeader, outcome, record, segment, string, type Outcome } from "./records.ts";
+import { activityState, duration, outcome, record, segment, string, type Outcome } from "./records.ts";
 
 interface BashModel { readonly command: string; readonly truncated: boolean; readonly fullOutput: string; readonly status: string; readonly outcome: Outcome }
 export function projectBash(frame: ToolObservation): BashModel {
@@ -28,7 +30,7 @@ export function projectBash(frame: ToolObservation): BashModel {
   return { command: string(record(frame.args)?.command) ?? "…", truncated, fullOutput, status, outcome: state };
 }
 class BashView implements PresentationView<BashModel> {
-  private readonly card = new ToolCard();
+  private readonly card = new ActivityCard();
   private command = "";
   private preview: SourceView | undefined;
   private text = "";
@@ -49,7 +51,8 @@ class BashView implements PresentationView<BashModel> {
     }
     if (state.kind === "result") {
       if (!state.partial && state.error) {
-        notices.push({ text: model.status, severity: "error" });
+        if (/^exit \d+$/.test(model.status)) segments.push(segment(model.status, "error", 100));
+        else notices.push({ text: model.status, severity: "error" });
       }
       segments.push(...duration(state, expanded));
       if (model.truncated) segments.push(segment("truncated", "warning", 100));
@@ -61,7 +64,7 @@ class BashView implements PresentationView<BashModel> {
         body = new VStack([body, new Spacer(1), this.output]);
       }
     }
-    this.card.update({ state: activityState(state), header: toolHeader("bash", model.command, segments, "end"), notices, noticeIndent: 9, body, caption: "command / output" }, theme);
+    this.card.update({ state: activityState(state), header: activityHeader("bash", expanded ? model.command : fitLabel(labelText(model.command), 72), segments, "end"), notices, body, caption: "command / output" }, theme);
   }
   invalidate(): void { this.card.invalidate(); }
   render(width: number): string[] { return this.card.render(width); }

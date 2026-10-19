@@ -119,7 +119,7 @@ function writeRow(content) {
 test("write uses compact summaries and a single-column source preview, not a fabricated diff", () => {
   const row = writeRow('const one = 1;\nconst two = 2;\n');
   assert.equal(row.render(140).filter((line) => line.trim()).length, 1);
-  assert.match(plain(row.render(140)), /write  sample\.ts  2 lines/);
+  assert.match(plain(row.render(140)), /write +sample\.ts +2 lines/);
   row.setExpanded(true);
   const expanded = plain(row.render(140));
   assert.match(expanded, /1  const one/);
@@ -135,13 +135,13 @@ test("write uses compact summaries and a single-column source preview, not a fab
 
 test("write progress follows streamed arguments, execution, and completion without timers", () => {
   const row = new ToolExecutionComponent("write", "stream", { path: "sample.ts", content: "const" }, { outputPad: 1 }, writeRenderers(), { requestRender() {} }, "/missing/project");
-  assert.match(plain(row.render(120)), /· write  sample\.ts  ~5 chars/);
+  assert.match(plain(row.render(120)), /· write +sample\.ts +~5 chars/);
   row.updateArgs({ path: "sample.ts", content: "x".repeat(4200) });
-  assert.match(plain(row.render(120)), /· write  sample\.ts  ~4\.2k chars/);
+  assert.match(plain(row.render(120)), /· write +sample\.ts +~4\.2k chars/);
   row.setArgsComplete();
   assert.match(plain(row.render(120)), /◦ write/);
   row.markExecutionStarted();
-  assert.match(plain(row.render(120)), /◌ write/);
+  assert.match(plain(row.render(120)), /● write/);
   row.updateResult({ content: [{ type: "text", text: "Successfully wrote file" }], isError: false });
   assert.match(plain(row.render(120)), /\n   write/);
   assert.doesNotMatch(plain(row.render(120)), /receiving|writing…|queued/);

@@ -62,7 +62,7 @@ mise run install                    # base Stow packages
 mise run //src/dots:install         # CLI and generated discovery skill
 mise run //src/herdr/nav:install    # navigation plugin only
 mise run //src/pi:upstream-install  # pinned third-party Pi packages
-mise run //src/pi:install           # immutable companion release
+mise run //src/pi:install           # verify and install the companion update
 ```
 
 Base Stow packages are listed in root `mise.toml`; `unstow` removes only those
@@ -79,6 +79,7 @@ Registration is idempotent, but not transactional across plugins: inspect and
 retry a partial failure. Old releases remain available. Installing a binary
 does not upgrade a running server; never restart it as a build or test step.
 
-[Pi activation](pi.md) also uses immutable releases. Close sessions and avoid
-concurrent package writers when installing or rolling back. Neither installer
-reloads a Pi session. Hosts retain control of their reload/restart lifecycle.
+[Pi installation](pi.md#updates) verifies and installs an immutable companion
+snapshot. Use `/reload` afterward when jobs and workers are idle. Restart for Pi
+CLI/SDK or startup environment changes. Coordinate package writers across sessions.
+Installation and rollback never reload sessions automatically.

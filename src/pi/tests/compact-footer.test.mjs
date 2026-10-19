@@ -4,7 +4,7 @@ import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { registerUI as register } from "../extensions/ui/index.ts";
 import { createFooter } from "../src/features/footer.ts";
 
-const theme = { fg: (role, text) => `\x1b[${role === "error" ? 31 : role === "warning" ? 33 : 90}m${text}\x1b[39m` };
+const theme = { bold: (text) => `\x1b[1m${text}\x1b[22m`, fg: (role, text) => `\x1b[${role === "error" ? 31 : role === "warning" ? 33 : 90}m${text}\x1b[39m` };
 function fixture() {
   let usageCalls = 0;
   let unsubscribed = 0;
@@ -32,7 +32,7 @@ test("one line shows project/branch, current model, thinking, and context", () =
   const lines = footer.render(120);
   assert.equal(lines.length, 1);
   assert.match(plain(lines), /example · main/);
-  assert.match(plain(lines), /model-a · medium · ctx 25%/);
+  assert.match(plain(lines), /model-a · think medium · ctx 25%/);
   assert.equal(visibleWidth(lines[0]), 120);
 });
 
@@ -131,13 +131,16 @@ test("dispose unsubscribes once and stops rendering stale session context", () =
   assert.equal(stats().usageCalls, 0);
 });
 
-test("registration only installs the footer in TUI mode, not RPC/print/JSON", () => {
+test("registration only installs frame surfaces in TUI mode, not RPC/print/JSON", () => {
   let start;
   register({ registerCommand() {}, registerToolRenderer() {}, on(event, fn) { if (event === "session_start") start = fn; } });
   let installed = 0;
-  const ctx = { ui: { getEditorComponent() { return () => {}; }, setFooter(factory) { assert.equal(typeof factory, "function"); installed++; } } };
+  let headers = 0;
+  const ctx = { ui: { setHeader(factory) { assert.equal(typeof factory, "function"); headers++; }, getEditorComponent() { return () => {}; }, setFooter(factory) { assert.equal(typeof factory, "function"); installed++; } } };
   for (const mode of ["rpc", "print", "json"]) start({}, { ...ctx, mode });
   assert.equal(installed, 0);
+  assert.equal(headers, 0);
   start({}, { ...ctx, mode: "tui" });
   assert.equal(installed, 1);
+  assert.equal(headers, 1);
 });

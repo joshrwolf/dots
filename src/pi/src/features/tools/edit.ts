@@ -1,10 +1,10 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { PresentationView, ToolObservation, ToolPresentation } from "../../host/tools.ts";
-import { OutputView, ToolCard, type Notice } from "../../ui/card.ts";
+import { activityHeader, OutputView, ActivityCard, type Notice } from "../../ui/card.ts";
 import { parsePatch, type Patch } from "../../ui/previews/patch.ts";
 import { DiffView } from "../../ui/previews/view.ts";
 import type { SyntaxService } from "../../ui/previews/syntax.ts";
-import { activityState, duration, errorNotice, toolHeader, pathLabel, outcome, record, segment, string, type Outcome } from "./records.ts";
+import { activityState, duration, errorNotice, pathLabel, outcome, record, segment, string, type Outcome } from "./records.ts";
 
 interface EditModel { readonly path: string; readonly subject: string; readonly patch: string | undefined; readonly fallback: string; readonly outcome: Outcome }
 export function projectEdit(frame: ToolObservation): EditModel {
@@ -14,7 +14,7 @@ export function projectEdit(frame: ToolObservation): EditModel {
   return { path, subject: pathLabel(path, frame.cwd), patch: string(details?.patch), fallback: string(details?.diff) ?? string(details?.patch) ?? (state.kind === "result" ? state.text : ""), outcome: state };
 }
 class EditView implements PresentationView<EditModel> {
-  private readonly card = new ToolCard();
+  private readonly card = new ActivityCard();
   private raw: string | undefined;
   private path = "";
   private patch: Patch | undefined;
@@ -39,7 +39,7 @@ class EditView implements PresentationView<EditModel> {
           this.preview = undefined;
         }
         if (this.patch) {
-          segments.push(segment(`+${this.patch.added}`, "toolDiffAdded", 100), segment(`−${this.patch.removed}`, "toolDiffRemoved", 100));
+          segments.push(segment(`+${this.patch.added}`, "toolDiffAdded", 100), { ...segment(`−${this.patch.removed}`, "toolDiffRemoved", 100), separatorBefore: " " });
           if (expanded) {
             this.preview ??= new DiffView({ patch: this.patch, path: model.path, theme, syntax: this.syntax, invalidate: this.notify });
             this.preview.setTheme(theme);
@@ -52,7 +52,7 @@ class EditView implements PresentationView<EditModel> {
       }
     }
     segments.push(...duration(state, expanded));
-    this.card.update({ state: activityState(state), header: toolHeader("edit", model.subject, segments), notices, noticeIndent: 9, body, caption: model.path, captionPolicy: "when-not-in-header" }, theme);
+    this.card.update({ state: activityState(state), header: activityHeader("edit", model.subject, segments), notices, body, caption: model.path, captionPolicy: "when-not-in-header" }, theme);
   }
   invalidate(): void { this.card.invalidate(); }
   render(width: number): string[] { return this.card.render(width); }

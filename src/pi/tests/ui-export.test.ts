@@ -52,7 +52,9 @@ test("real export bypasses builtin templates but invokes a standalone foundation
     assert.match(payload, /FOUNDATION_RESULT/);
     assert.match(payload, /Recorded write result/);
     assert.ok(visited.includes("codemode"));
-    assert.match(payload, /nested results are not recorded/);
+    const expanded = JSON.parse(payload).renderedTools.codemode.resultHtmlExpanded as string;
+    const exportedText = expanded.replace(/<[^>]+>/g, "").replace(/│/g, " ").replace(/\s+/g, " ");
+    assert.match(exportedText, /nested results are not recorded/);
     assert.match(payload, /Arguments/);
     assert.doesNotMatch(payload, />running</, "the serialized invocation must not claim a job is still running");
   } finally { syntax.dispose(); await rm(dir, { recursive: true, force: true }); }

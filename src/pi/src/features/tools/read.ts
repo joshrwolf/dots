@@ -1,10 +1,10 @@
 import { displayLimits } from "../../ui/policy.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { PresentationView, ToolObservation, ToolPresentation } from "../../host/tools.ts";
-import { OutputView, ToolCard, type Notice } from "../../ui/card.ts";
+import { activityHeader, OutputView, ActivityCard, type Notice } from "../../ui/card.ts";
 import { SourceView } from "../../ui/previews/view.ts";
 import type { SyntaxService } from "../../ui/previews/syntax.ts";
-import { activityState, duration, errorNotice, toolHeader, pathLabel, lines, outcome, positive, record, segment, string, type Outcome } from "./records.ts";
+import { activityState, duration, errorNotice, pathLabel, lines, outcome, positive, record, segment, string, type Outcome } from "./records.ts";
 
 export function readExcerpt(text: string, args: Record<string, unknown>, details: unknown): { source: string; notice: string; start: number; count: number } {
   const start = positive(args.offset) ?? 1;
@@ -31,7 +31,7 @@ export function projectRead(frame: ToolObservation): ReadModel {
   return { path, subject: pathLabel(path, frame.cwd), ...excerpt, truncated: record(record(details)?.truncation)?.truncated === true, image, outcome: state };
 }
 class ReadView implements PresentationView<ReadModel> {
-  private readonly card = new ToolCard();
+  private readonly card = new ActivityCard();
   private source = "";
   private path = "";
   private start = 0;
@@ -56,7 +56,8 @@ class ReadView implements PresentationView<ReadModel> {
       } else {
         segments.push(segment(model.truncated && !model.source ? "read limit exceeded" : model.count ? `lines ${model.start}–${model.start + model.count - 1}` : "empty result"));
         if (model.truncated) segments.push(segment("truncated", "warning", 100));
-        if (model.notice) notices.push({ text: model.notice, severity: "warning" });
+        if (model.notice && (model.truncated || expanded)) notices.push({ text: model.notice, severity: model.truncated ? "warning" : "dim" });
+        else if (model.notice) segments.push(segment("more available", "dim", 10));
         if (model.source.length > displayLimits.sourceCodeUnits) notices.push({ text: "Display limited; recorded result retains complete content.", severity: "warning" });
         if (model.source !== this.source || model.path !== this.path || model.start !== this.start || model.count !== this.count) {
           this.source = model.source; this.path = model.path; this.start = model.start; this.count = model.count; this.preview = undefined;
@@ -69,7 +70,7 @@ class ReadView implements PresentationView<ReadModel> {
       }
       segments.push(...duration(state, expanded));
     }
-    this.card.update({ state: activityState(state), header: toolHeader("read", model.subject, segments), notices, noticeIndent: 9, body, caption: model.path, captionPolicy: "when-not-in-header" }, theme);
+    this.card.update({ state: activityState(state), header: activityHeader("read", model.subject, segments), notices, body, caption: model.path, captionPolicy: "when-not-in-header" }, theme);
   }
   invalidate(): void { this.card.invalidate(); }
   render(width: number): string[] { return this.card.render(width); }

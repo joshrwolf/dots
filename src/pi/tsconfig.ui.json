@@ -9,5 +9,5 @@
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["src/**/*.ts", "extensions/ui/**/*.ts", "tests/ui*.test.ts", "tests/fixtures/terminal-observer.ts"]
+  "include": ["src/**/*.ts", "extensions/ui/**/*.ts", "tests/ui*.test.ts", "tests/fixtures/terminal-observer.ts", "dev/**/*.ts"]
 }

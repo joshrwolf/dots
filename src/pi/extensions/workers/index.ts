@@ -723,6 +723,7 @@ export default function (pi: ExtensionAPI) {
     activity: worker.activity,
     lastFailure: worker.failed,
     quietFor: worker.state === "running" ? elapsed(worker.lastEventAt) : undefined,
+    quiet: worker.state === "running" && Date.now() - worker.lastEventAt >= STALL_MS,
     children: subtree(worker),
     recent: withRegistry((r) => r.events(worker.id, 8))?.reverse().map((e) => `${e.kind}: ${e.text}`),
     question: worker.question?.text,

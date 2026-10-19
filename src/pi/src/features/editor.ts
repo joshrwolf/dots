@@ -1,5 +1,5 @@
 import { CustomEditor, type CustomEditorOptions, type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import { styleTextWithAnsi, type EditorTheme, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { type EditorTheme, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 
 /** Native editing, focus, shortcuts, scroll hints, and working status; quieter chrome. */
 export class SoftEditor extends CustomEditor {
@@ -13,17 +13,12 @@ export class SoftEditor extends CustomEditor {
   }
   override render(width: number): string[] {
     if (width <= 0) return [];
-    // Pi may change this callback for thinking level or bash mode. Soften the
-    // current callback only during rendering; do not replace its semantic hue.
-    const border = this.borderColor;
-    this.borderColor = (text) => styleTextWithAnsi(border(text), undefined, undefined, { dim: true });
-    try {
-      // Native word wrapping needs room for a wide grapheme. Keep the draft
-      // intact while a resize leaves less than that plus the desired padding.
-      if (width < this.minimumWidth()) return [this.borderColor("…")];
-      return super.render(width);
-    }
-    finally { this.borderColor = border; }
+    // Native word wrapping needs room for a wide grapheme. Keep the draft
+    // intact while a resize leaves less than that plus the desired padding.
+    // Keep semantic thinking/bash border colors at full contrast: ANSI dim is
+    // terminal-dependent and can make light-theme controls disappear.
+    if (width < this.minimumWidth()) return [this.borderColor("…")];
+    return super.render(width);
   }
 }
 

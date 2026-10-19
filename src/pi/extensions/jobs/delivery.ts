@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { jobOutput } from "./results.ts";
 import { RECORD_TYPE, WAKE_TYPE, summary, type Job } from "./protocol.ts";
 
 export function registerDeliveryHooks(pi: ExtensionAPI, current: () => CompletionDelivery | undefined): void {
@@ -21,7 +22,7 @@ export class CompletionDelivery {
   record(job: Job): void {
     const ctx = this.context();
     if (this.closed || !ctx) return;
-    this.pi.sendMessage({ customType: RECORD_TYPE, content: summary(job), display: true, details: { id: job.id, state: job.state } }, { triggerTurn: false });
+    this.pi.sendMessage({ customType: RECORD_TYPE, content: summary(job), display: true, details: { id: job.id, state: job.state, job: jobOutput(job) } }, { triggerTurn: false });
     if (ctx.signal?.aborted) this.suppressed = true;
     if (this.suppressed) return;
     this.owed.add(job.id);

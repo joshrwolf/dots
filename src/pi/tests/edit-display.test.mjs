@@ -61,10 +61,10 @@ test("pairing preserves unequal blocks, order, and explicit newline notes", () =
   assert.equal(rows[2].right.text, "const extra = 4;");
 });
 
-test("registers only presentation; delegates all other tools", () => {
+test("registers only presentation; preserves other custom renderers", () => {
   let resolver;
   register({ registerCommand() {}, on() {}, registerToolRenderer(fn) { resolver = fn; } });
-  const downstream = { renderShell: "default" };
+  const downstream = { renderShell: "default", renderCall() {} };
   for (const tool of ["find", "custom_edit"]) {
     assert.equal(resolver(tool, () => downstream), downstream);
   }
@@ -80,7 +80,7 @@ test("real host component transitions from pending to one compact summary", () =
   component.updateResult(result);
   const collapsed = component.render(140);
   assert.equal(collapsed.filter((line) => line.trim()).length, 1);
-  assert.match(plain(collapsed), /edit\s+sample\.ts  \+2 −1/);
+  assert.match(plain(collapsed), /edit\s+sample\.ts +\+2 −1/);
   assert.doesNotMatch(plain(collapsed), /const old/);
   component.setExpanded(true);
   assert.match(plain(component.render(140)), /before.*│ after/);

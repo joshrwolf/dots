@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {spawn,spawnSync} from "node:child_process";
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,cpSync,rmSync} from "node:fs";
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,cpSync,rmSync,symlinkSync,renameSync} from "node:fs";
 import {join} from "node:path";
 import {tmpdir} from "node:os";
 import {fileURLToPath} from "node:url";
@@ -73,7 +73,7 @@ class Client {
         assert.doesNotMatch(this.stderr,/Failed to load extension|ERR_MODULE_NOT_FOUND|Cannot find module|stale after session/i);
     }
 }
-const expected=["context","memory","ui","workers","wakes","jobs","goal"];
+const expected=["context","memory","ui","ui-version","workers","wakes","jobs","goal"];
 await install(join(work,"installed"));
 const installed=new Client(undefined,"installed");
 try {
@@ -139,6 +139,55 @@ assert.equal(marks.filter(m=>m.event==="child-pass").length,2);
 assert.ok(marks.filter(m=>m.event==="start").length>=2);
 assert.ok(marks.filter(m=>m.event==="shutdown").length>=2);
 results.push({gate:"packaged-child-public-export-reload-shutdown",passed:true});
+// Two isolated package snapshots exercise the real registered-path transition,
+// including changed transitive imports. Fixture IDs are labels, not integrity attestations.
+const switching=join(work,"switching");
+const base=join(switching,"dots/packages/pi-dots");
+const current=join(base,"current");
+const revisions=[["a".repeat(64),"A"],["b".repeat(64),"B"]];
+for(const [id,value] of revisions){
+ const release=join(base,"releases",id);
+ mkdirSync(release,{recursive:true});
+ cpSync(prepared,release,{recursive:true});
+ const packageFile=join(release,"package.json");
+ const fixtureManifest=JSON.parse(readFileSync(packageFile,"utf8"));
+ fixtureManifest.pi.extensions.push("trial-revision.ts");
+ writeFileSync(packageFile,JSON.stringify(fixtureManifest));
+ writeFileSync(join(release,"trial-value.ts"),`export const value=${JSON.stringify(value)};\n`);
+ writeFileSync(join(release,"trial-revision.ts"),`
+import {appendFileSync} from "node:fs";
+import {value} from "./trial-value.ts";
+import {releaseStatus} from "./src/host/release.ts";
+export default function(pi){
+ pi.registerCommand("lab-revision",{async handler(){appendFileSync(process.env.PI_TRIAL_MARKER,JSON.stringify({event:"revision",value,...releaseStatus()})+"\\n");}});
+ pi.registerCommand("lab-reload",{async handler(args,ctx){await ctx.reload();}});
+}
+`);
+}
+const switchTo=id=>{symlinkSync(join(base,"releases",id),current+".next");renameSync(current+".next",current);};
+switchTo(revisions[0][0]);
+writeFileSync(join(switching,"settings.json"),JSON.stringify({packages:[current]}));
+const switchingClient=new Client(undefined,"switching");
+const lastRevision=()=>readFileSync(marker,"utf8").trim().split("\n").map(JSON.parse).filter(m=>m.event==="revision").at(-1);
+try{
+ await switchingClient.call("get_commands");
+ await switchingClient.call("prompt",{message:"/lab-revision"});
+ assert.deepEqual(lastRevision(),{event:"revision",value:"A",loaded:revisions[0][0],installed:revisions[0][0],reloadNeeded:false});
+ switchTo(revisions[1][0]);
+ await switchingClient.call("prompt",{message:"/lab-revision"});
+ assert.deepEqual(lastRevision(),{event:"revision",value:"A",loaded:revisions[0][0],installed:revisions[1][0],reloadNeeded:true});
+ await switchingClient.call("prompt",{message:"/ui-version"});
+ assert.ok(switchingClient.events.some(e=>e.type==="extension_ui_request" && e.method==="notify" && e.message?.includes("loaded aaaaaaaaaaaa") && e.message?.includes("installed bbbbbbbbbbbb")));
+ await switchingClient.call("prompt",{message:"/lab-reload"});
+ await switchingClient.call("prompt",{message:"/lab-revision"});
+ assert.deepEqual(lastRevision(),{event:"revision",value:"B",loaded:revisions[1][0],installed:revisions[1][0],reloadNeeded:false});
+ switchTo(revisions[0][0]);
+ await switchingClient.call("prompt",{message:"/lab-reload"});
+ await switchingClient.call("prompt",{message:"/lab-revision"});
+ assert.deepEqual(lastRevision(),{event:"revision",value:"A",loaded:revisions[0][0],installed:revisions[0][0],reloadNeeded:false});
+ switchingClient.verify();
+ results.push({gate:"release-switch-and-rollback-via-reload",passed:true});
+}finally{await switchingClient.close();}
 assert.ok(!existsSync(join(work,"manifest/settings.json")),"manifest test must not register packages");
 console.log(JSON.stringify({passed:true,results},null,2));
 });

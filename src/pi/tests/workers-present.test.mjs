@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { getThemeByName } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 import { STALL_MS, createWidget, describeActivity, describeText, projectEvent, renderEvent } from "../extensions/workers/present.ts";
@@ -18,16 +18,17 @@ const completed = {
 
 test("worker event projects to a card: outcome first, pointer to the full text, recoverable when narrow", () => {
   const model = projectEvent(completed);
-  assert.equal(model.heading[0].text, "netpol-api");
-  assert.equal(model.heading[1].text, "completed");
+  assert.equal(model.heading[0].text, "worker");
+  assert.equal(model.heading[1].text, "netpol-api");
+  assert.equal(model.status[0].text, "completed");
   assert.match(model.body, /^OUTCOME: policy added/);
   assert.ok(model.notices.some((n) => /worker_status/.test(n.text)));
 
   const collapsedLines = renderEvent(completed, { expanded: false, outputPad: 1 }, theme).render(100);
   const collapsed = plain(collapsedLines);
-  assert.match(stripTerminalSequences(collapsedLines[0]), /netpol-api completed OUTCOME: policy added/, "summary rides the heading row");
-  assert.doesNotMatch(collapsed, /│/, "no rail when collapsed");
-  assert.doesNotMatch(collapsed, /commit 0fabb23/, "collapsed shows the first line only");
+  assert.match(stripTerminalSequences(collapsedLines[0]), /worker +netpol-api +completed/, "identity and outcome share the same header contract as tools");
+  assert.match(collapsed, /│ OUTCOME: policy added/, "result preview sits under the header");
+  assert.match(collapsed, /Ctrl\+O to expand/, "long results advertise expansion");
   const expanded = plain(renderEvent(completed, { expanded: true, outputPad: 1 }, theme).render(100));
   assert.match(expanded, /commit 0fabb23/);
   assert.match(expanded, /session \/tmp\/s\.jsonl/);
@@ -38,8 +39,8 @@ test("worker event projects to a card: outcome first, pointer to the full text, 
     for (const line of lines) assert.ok(stripTerminalSequences(line).length <= width, `width ${width}: ${stripTerminalSequences(line)}`);
     if (width >= 20) assert.match(plain(lines), /completed/, `state survives width ${width}`);
   }
-  // Hopeless width: the label's declared floor is protected over the state.
-  assert.match(stripTerminalSequences(renderEvent(completed, { expanded: false, outputPad: 0 }, theme).render(12)[0]), /^.{0,2}netpo\.\.\./, "label floor survives after the state gutter");
+  // At hopeless widths, the outcome takes priority over identity.
+  assert.match(stripTerminalSequences(renderEvent(completed, { expanded: false, outputPad: 0 }, theme).render(12)[0]), /completed/);
 });
 
 test("asking and undeliverable events carry their recovery notice; control characters never render", () => {
@@ -70,7 +71,8 @@ test("widget rows keep label and state, drop tokens then calls then elapsed as w
   ];
   const widget = createWidget(rows, theme);
   const lines = widget.render(120).map((l) => stripTerminalSequences(l));
-  assert.equal(lines.length, 2, "no header; the footer carries the count");
+  assert.equal(lines.length, 3);
+  assert.match(lines.shift(), /^workers 2 active \/workers/);
   assert.match(lines[0], /^● netpol-api bash git status.*2m · 12 calls · 15k tok$/);
   assert.match(lines[1], /^\? web        asking: Which ingress\?.*40s · 3 calls · 2\.0k tok$/, "labels pad to one column");
   const wide = lines.join("\n");
@@ -81,6 +83,13 @@ test("widget rows keep label and state, drop tokens then calls then elapsed as w
   assert.deepEqual(createWidget(() => [], theme).render(80), [], "nothing live, nothing drawn");
 });
 
+test("worker label columns use terminal cells, not string lengths", () => {
+  const rows = ["日本語", "👩🏽‍💻", "review"].map((label) => ({ label, state: "running", depth: 0, elapsed: "1m", tokens: 1, calls: 1, detail: "read report.ts", idleMs: 0 }));
+  const lines = createWidget(() => rows, theme).render(100).slice(1).map(stripTerminalSequences);
+  const columns = lines.map((line) => visibleWidth(line.slice(0, line.indexOf("read report.ts"))));
+  assert.ok(columns.every((column) => column === columns[0]));
+});
+
 test("widget flags a failed last call and a quiet worker", () => {
   const rows = () => [
     { label: "a", state: "running", depth: 0, elapsed: "5m", tokens: 1, calls: 4, detail: "\u201cRetrying.\u201d", failed: "bash", idleMs: 0 },
@@ -89,7 +98,7 @@ test("widget flags a failed last call and a quiet worker", () => {
     { label: "leaf", state: "running", depth: 1, elapsed: "4m", tokens: 900, calls: 1, detail: "bash sleep 25", idleMs: 0 },
     { label: "twig", state: "asking", depth: 2, elapsed: "1m", tokens: 90, calls: 1, detail: "asking: ok?", idleMs: 0 },
   ];
-  const lines = createWidget(rows, theme).render(100).map((l) => stripTerminalSequences(l));
+  const lines = createWidget(rows, theme).render(100).slice(1).map((l) => stripTerminalSequences(l));
   // Column = longest (indent + label); every activity starts at the same cell.
   const col = lines.slice(0, 5).map((l) => l.search(/bash|worker_wait|asking/));
   assert.ok(col.every((c) => c === col[0] && c > 0), `aligned: ${lines.slice(0, 5).join("|")}`);
@@ -99,22 +108,22 @@ test("widget flags a failed last call and a quiet worker", () => {
   assert.match(lines[3], /^\u2937 ● leaf +bash sleep 25.*900 tok$/, "child indented under its owner");
   assert.match(lines[4], /^  \u2937 \? twig +asking: ok\?/, "grandchild indented further");
   const folded = createWidget(rows, theme, 2).render(100).map((l) => stripTerminalSequences(l));
-  assert.equal(folded.length, 3);
-  assert.match(folded[2], /\+3 more \u00b7 \/workers/);
+  assert.equal(folded.length, 4);
+  assert.match(folded[3], /\+3 more \u00b7 \/workers/);
 });
 
-test("wake fire renders note, cadence, exit code, and lateness; check output only when expanded", () => {
+test("wake fire renders note, cadence, exit code, and lateness; failed checks preview their evidence", () => {
   const fire = {
     role: "custom", customType: "dots.wake", timestamp: 0, display: true,
     content: "Wake k-1 (fire 2 of 4, every 1m)\n\nCI changed; inspect\n\ncheck: gh run list\nexit: 1\nfailure\n\nCancel with wake_cancel { id: \"k-1\" }.",
     details: { id: "k-1", fired: 2, limit: 4, late: 5 * 60_000, every: "1m", check: "gh run list", exit: 1, text: "CI changed; inspect" },
   };
   const collapsed = plain(renderWake(fire, { expanded: false, outputPad: 0 }, theme).render(100));
-  assert.match(collapsed, /wake CI changed; inspect/);
+  assert.match(collapsed, /wake +CI changed; inspect/);
   assert.match(collapsed, /2\/4 · every 1m/);
   assert.match(collapsed, /exit 1/);
   assert.match(collapsed, /late by 5m/);
-  assert.doesNotMatch(collapsed, /gh run list/);
+  assert.match(collapsed, /Ctrl\+O to expand/);
   const expanded = plain(renderWake(fire, { expanded: true, outputPad: 0 }, theme).render(100));
   assert.match(expanded, /check: gh run list/);
   assert.match(expanded, /failure/);

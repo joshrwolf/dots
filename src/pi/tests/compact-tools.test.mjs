@@ -16,11 +16,13 @@ function row(kind, args, requestRender = () => {}) {
 }
 function result(text, details, isError = false) { return { content: [{ type: "text", text }], details, isError }; }
 
-test("only selected builtin presentation changes", () => {
+test("selected builtins and otherwise unstyled tools share the compact shell", () => {
   let resolve;
   register({ registerCommand() {}, on() {}, registerToolRenderer(fn) { resolve = fn; } });
   const original = {};
-  for (const name of ["grep", "subagent", "mcp__lookup"]) assert.equal(resolve(name, () => original), original);
+  for (const name of ["grep", "subagent", "mcp__lookup", "job_start"]) assert.equal(resolve(name, () => original).renderShell, "self");
+  const custom = { renderCall() {} };
+  assert.equal(resolve("mcp__lookup", () => custom), custom);
   for (const name of ["read", "write", "edit", "bash", "codemode"]) assert.equal(resolve(name, () => original).renderShell, "self");
 });
 
@@ -29,7 +31,7 @@ test("bash stays compact while streaming, expands full command/output, records d
   component.markExecutionStarted();
   component.setArgsComplete();
   component.updateResult(result("first"), true);
-  assert.match(plain(component.render(100)), /◌ bash/);
+  assert.match(plain(component.render(100)), /● bash/);
   assert.equal(component.render(100).filter((line) => line.trim()).length, 1);
   component.setExpanded(true);
   assert.match(plain(component.render(100)), /first/);
@@ -47,7 +49,7 @@ test("silent bash calls expose their phase and expanded command before any outpu
   component.setArgsComplete();
   assert.match(plain(component.render(100)), /◦ bash/);
   component.markExecutionStarted();
-  assert.match(plain(component.render(100)), /◌ bash/);
+  assert.match(plain(component.render(100)), /● bash/);
   component.setExpanded(true);
   assert.match(plain(component.render(100)), /1  sleep 2/);
   assert.match(plain(component.render(100)), /2  printf/);
@@ -93,7 +95,8 @@ test("user-limited reads separate verified continuation notices and retain file 
   const component = row("read", args);
   component.updateResult(result(text));
   assert.match(plain(component.render(120)), /lines 20–21/);
-  assert.match(plain(component.render(120)), /offset=22/);
+  assert.match(plain(component.render(120)), /more available/);
+  assert.doesNotMatch(plain(component.render(120)), /! |offset=22/);
   component.setExpanded(true);
   const output = plain(component.render(120));
   assert.match(output, /20  const one/);
@@ -111,7 +114,7 @@ test("real partial reads preserve a selected blank final line, including blank-o
       const component = row("read", args);
       component.updateResult({ ...response, isError: false });
       assert.match(plain(component.render(100)), new RegExp(`lines ${args.offset}–2`));
-      assert.match(plain(component.render(100)), /offset=3/);
+      assert.match(plain(component.render(100)), /more available/);
       component.setExpanded(true);
       assert.ok(component.render(100).some((line) => /^\s*(?:│\s*)?2\s*$/.test(stripTerminalSequences(line))), "selected blank line 2 has a gutter");
     }

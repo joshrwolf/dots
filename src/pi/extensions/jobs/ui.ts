@@ -1,8 +1,8 @@
-import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
-import { ScrollView, Text, VStack, matchesKey } from "@earendil-works/pi-tui";
-import { OutputView, labelText } from "../../src/index.ts";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { labelText } from "../../src/index.ts";
+import { JobInspector } from "./inspector.ts";
 import { MAX_RETAINED, type Job } from "./protocol.ts";
-import { JobsWidget, canStop, inspectCard, projectJob, type JobView } from "./present.ts";
+import { JobsWidget, canStop, projectJob, type JobView } from "./present.ts";
 
 export const JOBS_WIDGET = "dots.jobs";
 export interface JobSource {
@@ -14,37 +14,6 @@ export interface JobSource {
 type UIContext = Pick<ExtensionContext, "mode" | "hasUI"> & {
   ui: Pick<ExtensionContext["ui"], "setWidget" | "select" | "confirm" | "notify" | "custom">;
 };
-
-/** Native layout/scrolling; no reads, clocks, or process/session access in render. */
-export class JobInspector extends VStack {
-  private readonly body = new VStack();
-  private readonly scroll = new ScrollView(this.body, { scrollbar: "always", overscroll: "contain" });
-  private readonly bindings: Pick<KeybindingsManager, "matches">;
-  private readonly close: () => void;
-  private readonly redraw: () => void;
-  constructor(model: JobView, theme: Theme, bindings: Pick<KeybindingsManager, "matches">, close: () => void, redraw: () => void) {
-    super();
-    this.bindings = bindings; this.close = close; this.redraw = redraw;
-    this.addChild(this.scroll, { basis: 20, grow: 1, minSize: 1, maxSize: 24 });
-    this.addChild(new Text("↑/↓ PgUp/PgDn scroll · Enter/Esc close", 0, 0));
-    this.update(model, theme);
-  }
-  update(model: JobView | undefined, theme: Theme): void {
-    this.body.clear();
-    this.body.addChild(model ? inspectCard(model, theme) : new OutputView("Job is no longer retained in this history."));
-    this.invalidate();
-  }
-  handleInput(data: string): void {
-    if (this.bindings.matches(data, "tui.select.cancel") || this.bindings.matches(data, "tui.select.confirm")) { this.close(); return; }
-    if (matchesKey(data, "up")) this.scroll.scrollBy(-1);
-    else if (matchesKey(data, "down")) this.scroll.scrollBy(1);
-    else if (matchesKey(data, "pageUp")) this.scroll.scrollBy(-Math.max(1, this.scroll.viewportHeight));
-    else if (matchesKey(data, "pageDown")) this.scroll.scrollBy(Math.max(1, this.scroll.viewportHeight));
-    else if (matchesKey(data, "home")) this.scroll.scrollToStart();
-    else if (matchesKey(data, "end")) this.scroll.scrollToEnd();
-    this.redraw();
-  }
-}
 
 /** One session/branch UI owner. A single 1s refresh exists only for live TUI jobs. */
 export class JobsPresentation {
@@ -143,10 +112,10 @@ export class JobsPresentation {
         const selectedId = id;
         await this.ctx.ui.custom<void>((tui, theme, bindings, done) => {
           if (!active()) { done(); return { render: () => [], invalidate() {} }; }
-          const view = new JobInspector(projectJob(this.source.get(selectedId)), theme, bindings, () => done(), () => tui.requestRender());
+          const view = new JobInspector(projectJob(this.source.get(selectedId)), theme, bindings, () => done(), () => tui.requestRender(), () => Math.max(1, Math.min(24, tui.terminal.rows - 10)));
           const owned = { id: selectedId, view, theme, redraw: () => tui.requestRender(), close: () => done() };
           this.inspector = owned;
-          // Return the native stack itself so its layout/scroll nodes remain visible.
+          // Return the interactive component itself; preserve input and mouse dispatch.
           return Object.assign(view, { dispose: () => { if (this.inspector === owned) this.inspector = undefined; } });
         });
       }

@@ -3,7 +3,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ActivityState } from "../../ui/state.ts";
 import type { Notice } from "../../ui/card.ts";
 import type { ToolObservation } from "../../host/tools.ts";
-import type { RowModel, Segment, Tone } from "../../ui/row.ts";
+import type { Segment, Tone } from "../../ui/row.ts";
 import { labelText, sourceText } from "../../ui/text.ts";
 
 export function record(value: unknown): Record<string, unknown> | undefined {
@@ -21,13 +21,6 @@ export function pathLabel(path: string, cwd: string | undefined): string {
   if (!cwd || !isAbsolute(path)) return path;
   const local = relative(cwd, path);
   return local && local !== ".." && !local.startsWith(`..${sep}`) && !isAbsolute(local) ? local : path;
-}
-export function toolHeader(verb: string, subject: string, status: readonly Segment[], clip: NonNullable<Segment["clip"]> = "middle"): RowModel {
-  return {
-    layout: "inline", separator: "  ", groupSeparator: "  ", endSeparator: " ",
-    start: [{ ...segment(verb, "toolTitle", 90), bold: true, padTo: 5, minWidth: Math.min(5, visibleWidth(verb)) }, { ...segment(subject, "text", 10), clip }],
-    end: status,
-  };
 }
 
 export type Outcome =

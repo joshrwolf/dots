@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { VStack, type Component } from "@earendil-works/pi-tui";
-import { OutputView, PriorityRow, ToolCard, labelText, sourceText, type Notice, type Segment } from "../../src/index.ts";
+import { activityHeader, StateGutter, OutputView, PriorityRow, ActivityCard, fitLabel, labelText, sourceText, type Notice, type Segment } from "../../src/index.ts";
 import { live, type Job } from "./protocol.ts";
 
 export interface JobView {
@@ -62,15 +62,12 @@ export function projectJob(job: Job): JobView {
 }
 
 function heading(model: JobView): Segment[] {
-  return [
-    { text: "job", tone: "toolTitle", bold: true, priority: 90, shrink: "clip" },
-    { text: model.subject, tone: "text", priority: 60, shrink: "clip", minWidth: 8 },
-  ];
+  return [...activityHeader("job", model.subject, []).start];
 }
 function status(model: JobView): Segment[] {
   return [
-    { text: model.state, tone: model.state === "unknown" ? "warning" : "muted", priority: 110, shrink: "clip" },
-    { text: model.root, tone: model.rootFailed ? "error" : "muted", priority: 100, shrink: "clip" },
+    { text: model.state, tone: model.state === "unknown" || model.state === "stopping" ? "warning" : model.live ? "accent" : "muted", priority: 110, shrink: "clip" },
+    ...(!model.live || model.root !== "root outcome unobserved" ? [{ text: model.root, tone: model.rootFailed ? "error" as const : "muted" as const, priority: 100, shrink: "clip" as const }] : []),
     { text: model.id.slice(0, 10), tone: "dim", priority: 10, shrink: "omit" },
   ];
 }
@@ -81,16 +78,16 @@ export class JobsWidget implements Component {
   update(models: readonly JobView[], theme: Theme): void {
     const visible = models.filter((m) => m.live || m.state === "unknown");
     const header = new PriorityRow();
-    header.update({ layout: "inline", start: [{ text: "jobs", tone: "toolTitle", bold: true, priority: 80, shrink: "clip" }], end: [
-      { text: `${visible.filter((m) => m.live).length} active · ${visible.filter((m) => m.state === "unknown").length} unknown`, tone: "muted", priority: 90, shrink: "clip" },
+    header.update({ layout: "inline", start: [{ text: "jobs", tone: "accent", bold: true, priority: 80, shrink: "clip" }], end: [
+      { text: [visible.filter((m) => m.live).length ? `${visible.filter((m) => m.live).length} active` : "", visible.filter((m) => m.state === "unknown").length ? `${visible.filter((m) => m.state === "unknown").length} unknown` : ""].filter(Boolean).join(" · "), tone: "muted", priority: 90, shrink: "clip" },
       { text: "/jobs", tone: "dim", priority: 20, shrink: "omit" },
     ] }, theme);
     this.stack.clear();
     this.stack.addChild(header);
     for (const model of visible.slice(0, 4)) {
       const row = new PriorityRow();
-      row.update({ layout: "inline", start: heading(model), end: status(model), endSeparator: " · " }, theme);
-      this.stack.addChild(row);
+      row.update({ layout: "inline", start: heading({ ...model, subject: fitLabel(model.subject, 72) }), end: status(model), endSeparator: " · " }, theme);
+      this.stack.addChild(new StateGutter(row, model.state === "unknown" ? "unknown" : model.rootFailed ? "failed" : model.state === "accepted" ? "queued" : "running", theme));
     }
     if (visible.length > 4) {
       const more = new PriorityRow();
@@ -102,10 +99,11 @@ export class JobsWidget implements Component {
   render(width: number): string[] { return width > 0 ? this.stack.render(width) : []; }
 }
 
-export function inspectCard(model: JobView, theme: Theme): ToolCard {
-  const card = new ToolCard();
+export function inspectCard(model: JobView, theme: Theme): ActivityCard {
+  const card = new ActivityCard();
   card.update({
-    heading: heading(model), status: status(model), notices: model.notices, noticeIndent: 2,
+    header: activityHeader("job", model.subject, status(model)), notices: model.notices,
+    state: model.state === "unknown" ? "unknown" : model.rootFailed ? "failed" : model.live ? model.state === "accepted" ? "queued" : "running" : "done",
     body: new OutputView(model.detail), caption: "Recorded snapshot · output paths are for ordinary read",
   }, theme);
   return card;

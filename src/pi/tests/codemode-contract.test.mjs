@@ -17,7 +17,7 @@ test("native codemode publishes the summaries consumed by live and replay presen
   const result = await tool.execute("contract", args, undefined, (update) => {
     updates.push(structuredClone(update));
     component.updateResult({ ...update, isError: false }, true);
-    assert.match(stripTerminalSequences(component.render(120).join("\n")), /◌ codemode/);
+    assert.match(stripTerminalSequences(component.render(120).join("\n")), /● codemode/);
   }, {
     tools: [createReadToolDefinition("/workspace")], sessionManager: { getBranch: () => [] },
     async executeTool(name, args) {

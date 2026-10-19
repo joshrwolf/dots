@@ -11,10 +11,16 @@
   imported Pi host libraries as peers, with exact development versions when
   needed for checks; do not bundle another Pi runtime. Commit npm lockfiles.
 - Use `mise run //src/pi:deps`, `mise run //src/pi:check`, and
-  `mise run //src/pi:verify-host`. Explicit `mise run //src/pi:install` prepares
-  an immutable runtime and changes registration through the public settings API;
-  it never reloads a session. Use `upstream-install` for pinned third-party npm
-  packages through Pi. Do not install merely to test; use isolated temporary homes.
+  `mise run //src/pi:verify-host`. Explicit `mise run //src/pi:install` runs the
+  full verification gate and installs an immutable runtime through the public
+  settings API. Use the install/rollback tasks, not ad hoc activation scripts.
+  Neither reloads a session; companion updates use `/reload` when jobs/workers
+  are idle, while CLI/SDK updates require restart. Use `upstream-install` for
+  pinned third-party npm packages through Pi. Do not install merely to test;
+  use isolated temporary homes.
+- Serialize preparation, verification, and installation within a checkout: they
+  share `dist/` staging. The installer lock protects the final switch, not builds;
+  use separate checkouts for independent builds.
 - Updates are explicit: change the exact npm pin, remove the old registration
   with `pi remove`, then run `mise run //src/pi:upstream-install`. Preserve resource filters when
   replacing a registration. Never install an unpinned tracking version.
@@ -58,7 +64,12 @@
   checked through the public API; preserve native input and working status.
 - Pi owns theme, startup, and editor settings. Validate our own preferences and
   cancel pending dialogs at shutdown; never use an old context after reload.
+- Use `dev/` for opt-in, neutral fixture scenarios built from shipping components,
+  not parallel mock implementations. Run `mise run //src/pi:verify-terminal` for
+  presentation changes; real scrolling, focus, resize, and reload are contracts.
 - Use strict, erasable TypeScript and typed consumer tests. Verify real host
   transitions and HTML export, including cold custom-tool exports; builtin
-  export templates can bypass registered renderers. Keep compatibility tests
+  export templates can bypass registered renderers. Test release switching and
+  rollback through `/reload`, including changed transitive imports and version
+  reporting. Keep compatibility tests
   separate from production imports.

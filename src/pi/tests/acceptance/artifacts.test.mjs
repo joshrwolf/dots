@@ -56,6 +56,7 @@ test("native npm artifacts are repeatable, restored from cache, and verified bef
     assert.equal(artifact().integrity, initial);
 
     run("mise", ["run", "//src/pi:prepare"], root);
+    assert.ok(!existsSync(join(runtime, "dev")), "development workbench must not ship");
     for (const path of ["extensions/context/index.ts", "node_modules/diff/package.json"]) {
         const file = join(runtime, path), contents = readFileSync(file);
         writeFileSync(file, "corrupt");

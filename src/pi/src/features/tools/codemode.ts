@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { VStack, type Component } from "@earendil-works/pi-tui";
 import type { PresentationView, ToolObservation, ToolPresentation } from "../../host/tools.ts";
-import { Notices, OutputView, ToolCard, type Notice } from "../../ui/card.ts";
+import { activityHeader, Notices, OutputView, ActivityCard, type Notice } from "../../ui/card.ts";
 import { displayLimits } from "../../ui/policy.ts";
 import { StateGutter } from "../../ui/state.ts";
 import { PriorityRow } from "../../ui/row.ts";
@@ -44,6 +44,20 @@ export function projectCodemode(frame: ToolObservation): CodemodeModel {
     fullOutput: bounded(string(details?.fullOutputPath) ?? ""), output: output.kind === "result" ? output.text : "", outcome: outcome(frame) };
 }
 
+/** A label from a complete JSON string token in the recorded preview, not
+ * reconstructed arguments. Truncated/unknown shapes retain their raw preview. */
+function callLabel(call: Call): string {
+  if (!["read", "write", "edit"].includes(call.name)) return call.args;
+  const match = /^\s*\{\s*"path"\s*:\s*("(?:[^"\\\\]|\\\\.)*")/.exec(call.args);
+  if (!match?.[1]) return call.args;
+  try {
+    const path: unknown = JSON.parse(match[1]);
+    if (typeof path !== "string") return call.args;
+    const parts = path.split(/[\\\\/]/).filter(Boolean);
+    return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : path;
+  } catch { return call.args; }
+}
+
 const label = (status: Status): string => status === "ok" ? "done" : status === "error" ? "failed" : status;
 const rank = (call: Call): number => call.status === "error" ? 0 : call.status === "running" ? 1 : call.status === "cancelled" ? 2 : 3;
 
@@ -59,7 +73,7 @@ class CallList implements Component {
     for (const call of selected) {
       const row = new PriorityRow();
       row.update({ layout: "inline", separator: "  ", groupSeparator: "  ", endSeparator: " ", start: [
-        { ...segment(call.name, "toolTitle", 90), bold: true, padTo: 5 }, segment(call.args, "dim", 10),
+        { ...segment(call.name, "accent", 90), bold: true, padTo: 5 }, segment(expanded ? call.args : callLabel(call), "dim", 10),
       ], end: [
         ...(call.durationMs === undefined || (!expanded && call.durationMs < 1000) ? [] : [{ ...segment(`${(call.durationMs / 1000).toFixed(1)}s`, "dim", 0), separatorBefore: " ", shrink: "omit" as const }]),
         ...(call.cost === undefined ? [] : [{ ...segment(`$${call.cost.toPrecision(3)}`, "dim", 0), shrink: "omit" as const }]),
@@ -91,7 +105,7 @@ class CallList implements Component {
 }
 
 class CodemodeView implements PresentationView<CodemodeModel> {
-  private readonly card = new ToolCard();
+  private readonly card = new ActivityCard();
   private readonly syntax: SyntaxService;
   private readonly notify: () => void;
   private code = "";
@@ -129,7 +143,11 @@ class CodemodeView implements PresentationView<CodemodeModel> {
       this.preview ??= new SourceView({ source: model.code.slice(0, displayLimits.sourceCodeUnits), path: "script.js", theme, syntax: this.syntax, invalidate: this.notify });
       this.preview.setTheme(theme); body.addChild(this.preview);
     }
-    if (model.output) {
+    const receiptLines = model.output.split("\n").map((line) => line.trim()).filter((line) => line && !/^==> text \d+\/\d+ <==$/.test(line));
+    const writeReceipts = model.calls.length > 0 && model.calls.every((call) => call.name === "write" && call.status === "ok") && receiptLines.length > 0 && receiptLines.every((line) => /^Successfully wrote to [^\n]+$/.test(line));
+    if (model.output && !expanded && writeReceipts && state.kind === "result" && !state.error && !state.partial) {
+      const output = new Notices(); output.update([{ text: "Write receipts · Ctrl+O to expand", severity: "dim" }], theme); body.addChild(output);
+    } else if (model.output) {
       const output = new OutputView(model.output);
       body.addChild(expanded ? output : { invalidate: () => output.invalidate(), render: (width) => {
         const lines = output.render(width);
@@ -137,9 +155,8 @@ class CodemodeView implements PresentationView<CodemodeModel> {
       } });
     }
     this.card.update({ ...(state.kind === "result" ? { state: activityState(state) } : {}),
-      groupSeparator: "  ", noticeIndent: 2, heading: [{ ...segment("codemode", "toolTitle", 90), bold: true }],
-      status: duration(state, expanded),
-      notices, body: model.calls.length || model.output || model.available || (expanded && model.code) ? body : undefined, caption: expanded ? "calls / recorded script / output" : "activity / output" }, theme);
+      header: activityHeader("codemode", "", duration(state, expanded)),
+      notices, body: model.calls.length || model.output || model.available || (expanded && model.code) ? body : undefined, caption: expanded ? "calls / recorded script / output" : "" }, theme);
   }
   invalidate(): void { this.card.invalidate(); }
   render(width: number): string[] { return this.card.render(width); }

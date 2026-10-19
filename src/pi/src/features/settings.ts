@@ -11,14 +11,18 @@ export async function configureUI(ui: SettingsUI, reload: () => Promise<void>, s
     let draft: Preferences = initial;
     for (;;) {
       const tools = toolNames.map((name) => `${name}: ${draft.tools.includes(name) ? "dots" : "native"}`);
+      const otherTools = `other tools: ${draft.otherTools}`;
+      const header = `header: ${draft.header}`;
       const footer = `footer: ${draft.footer}`;
       const editor = `editor: ${draft.editor}`;
-      const selected = await ui.select("Presentation · choose a setting to toggle", [...tools, footer, editor, "Use dots UI", "Use native UI", "Apply and reload", "Cancel"], signal ? { signal } : undefined);
+      const selected = await ui.select("Presentation · choose a setting to toggle", [...tools, otherTools, header, footer, editor, "Use dots UI", "Use native UI", "Apply and reload", "Cancel"], signal ? { signal } : undefined);
       if (signal?.aborted) return;
       if (!selected || selected === "Cancel") return;
       if (selected === "Apply and reload") { store.save(draft, initial); break; }
       if (selected === "Use dots UI") { draft = defaultPreferences; continue; }
-      if (selected === "Use native UI") { draft = { version: 1, tools: [], footer: "native", editor: "native" }; continue; }
+      if (selected === "Use native UI") { draft = { version: 1, tools: [], otherTools: "native", header: "native", footer: "native", editor: "native" }; continue; }
+      if (selected === otherTools) { draft = { ...draft, otherTools: draft.otherTools === "compact" ? "native" : "compact" }; continue; }
+      if (selected === header) { draft = { ...draft, header: draft.header === "compact" ? "native" : "compact" }; continue; }
       if (selected === footer) { draft = { ...draft, footer: draft.footer === "compact" ? "native" : "compact" }; continue; }
       if (selected === editor) { draft = { ...draft, editor: draft.editor === "soft" ? "native" : "soft" }; continue; }
       const name = toolNames.find((_, index) => tools[index] === selected);

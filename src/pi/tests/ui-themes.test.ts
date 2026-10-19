@@ -23,7 +23,7 @@ function contrast(a: Color, b: Color): number {
   const first = luminance(a), second = luminance(b);
   return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
 }
-const bodyRoles: readonly ThemeColor[] = ["text", "userMessageText", "customMessageText", "toolTitle", "toolOutput", "muted", "dim", "thinkingText", "success", "error", "warning", "mdLink", "mdCode", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable", "syntaxString", "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation"];
+const bodyRoles: readonly ThemeColor[] = ["accent", "text", "userMessageText", "customMessageText", "toolTitle", "toolOutput", "muted", "dim", "thinkingText", "success", "error", "warning", "mdLink", "mdCode", "syntaxComment", "syntaxKeyword", "syntaxFunction", "syntaxVariable", "syntaxString", "syntaxNumber", "syntaxType", "syntaxOperator", "syntaxPunctuation"];
 
 for (const appearance of appearances) {
   test(`${appearance} palette validates, keeps quiet surfaces, and provides readable text`, async () => {

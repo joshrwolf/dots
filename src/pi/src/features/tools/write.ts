@@ -1,10 +1,10 @@
 import { displayLimits } from "../../ui/policy.ts";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { PresentationView, ToolObservation, ToolPresentation } from "../../host/tools.ts";
-import { OutputView, ToolCard, type Notice } from "../../ui/card.ts";
+import { activityHeader, OutputView, ActivityCard, type Notice } from "../../ui/card.ts";
 import { SourceView } from "../../ui/previews/view.ts";
 import type { SyntaxService } from "../../ui/previews/syntax.ts";
-import { activityState, duration, errorNotice, toolHeader, pathLabel, lines, outcome, record, segment, string, type Outcome } from "./records.ts";
+import { activityState, duration, errorNotice, pathLabel, lines, outcome, record, segment, string, type Outcome } from "./records.ts";
 
 interface WriteModel { readonly path: string; readonly subject: string; readonly source: string | undefined; readonly outcome: Outcome }
 export function projectWrite(frame: ToolObservation): WriteModel {
@@ -13,7 +13,7 @@ export function projectWrite(frame: ToolObservation): WriteModel {
   return { path, subject: pathLabel(path, frame.cwd), source: string(args?.content), outcome: outcome(frame) };
 }
 class WriteView implements PresentationView<WriteModel> {
-  private readonly card = new ToolCard();
+  private readonly card = new ActivityCard();
   private preview: SourceView | undefined;
   private source: string | undefined;
   private path = "";
@@ -53,7 +53,7 @@ class WriteView implements PresentationView<WriteModel> {
       }
     }
     segments.push(...duration(state, expanded));
-    this.card.update({ state: activityState(state), header: toolHeader("write", model.subject, segments), notices, noticeIndent: 9, body, caption: model.path, captionPolicy: "when-not-in-header" }, theme);
+    this.card.update({ state: activityState(state), header: activityHeader("write", model.subject, segments), notices, body, caption: model.path, captionPolicy: "when-not-in-header" }, theme);
   }
   invalidate(): void { this.card.invalidate(); }
   render(width: number): string[] { return this.card.render(width); }

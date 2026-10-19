@@ -141,7 +141,7 @@ export async function install(agent, replaceSource, persist) {
             symlinkSync(old, temporary);
             renameSync(temporary, join(base, "previous"));
         }
-        console.log("Prepared companion activated. Restart Pi when ready; no session was reloaded.");
+        console.log("Companion update installed. Use /reload when jobs and workers are idle; no session was reloaded.");
     } catch (error) {
         if (published) {
             rmSync(temporary, {force: true});
@@ -174,7 +174,7 @@ export function rollback(agent) {
         renameSync(temporary, current);
         symlinkSync(old, temporary);
         renameSync(temporary, previous);
-        console.log("Previous companion activated; restart Pi when ready.");
+        console.log("Previous companion restored. Use /reload when jobs and workers are idle; no session was reloaded.");
     } finally {
         rmSync(temporary, {force: true});
         rmSync(lock, {recursive: true});

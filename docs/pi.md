@@ -11,7 +11,6 @@ Use the [pinned development tools](build.md), separately from Pi's managed runti
 mise run pi-cli:install
 mise run install
 mise run //src/pi:deps
-mise run //src/pi:check
 mise run //src/pi:upstream-install
 mise run //src/pi:install
 ```
@@ -21,43 +20,70 @@ machine-local under `~/.pi/agent/`. Shared skills use `~/.agents/skills/`.
 Use `pi list` to inspect packages and `pi config` to select their resources.
 Do not register duplicate local/Git copies of managed packages.
 
-The companion runs from immutable releases under
-`~/.pi/agent/dots/packages/pi-dots/`, not the checkout. Close sessions and avoid
-concurrent package writers during activation; registrations are last-writer-wins.
-Installation does not reload sessions. Restart afterward; `pi -c` resumes.
-`mise run //src/pi:rollback` reactivates the previous release without reloading.
+The companion runs from an installed snapshot, not the checkout. Our installer
+stores releases under `~/.pi/agent/dots/packages/pi-dots/` and switches its
+`current` link; Pi loads that local package. Mise runs the commands.
 
 ## Updates
 
-`mise run pi-cli:update` updates the CLI, not pinned extensions. Restart after
-a CLI update: `/reload` reloads resources, not the running SDK.
+For companion changes, run one command:
+
+```sh
+mise run //src/pi:install
+```
+
+It verifies, packages, and installs the update without reloading sessions.
+Use `/reload` when background work is idle: it shuts down extensions and stops
+this session’s jobs and worker processes. Coordinate installations across
+sessions; another install changes the copy everyone loads next. Do not overlap
+verification and installation in one checkout: they share build staging.
+
+`/ui-version` reports loaded and installed versions. A mismatch also appears in
+the footer when a turn starts or you check the version; there is no background poll.
+
+| Change | Load it |
+|---|---|
+| Companion source | Install, then `/reload` |
+| Already-installed companion update or rollback | `/reload` |
+| Pi CLI/SDK or startup environment/options | Restart Pi; `pi -c` resumes the last project session |
+| Workbench source | `/reload` in the workbench; relaunch for launcher changes |
+
+`mise run //src/pi:rollback` restores the previous installed copy; it does not
+reload sessions. Use the same idle-session precautions afterward.
 
 Keep the companion's exact development SDK and lockfile aligned with the host.
-Restore dependencies with `mise run //src/pi:deps`, then run
-`mise run //src/pi:verify` before installing source changes. Verification uses
-isolated provider-free hosts; it does not activate or prove live-model access.
+After dependency changes, run `mise run //src/pi:deps`. For checks without
+installation, use `mise run //src/pi:check` or `mise run //src/pi:verify`.
+Verification uses isolated provider-free hosts; it does not change the live
+installation or prove live-model access.
+
+`mise run pi-cli:update` updates Pi itself, not pinned extensions.
 
 Third-party npm versions live in `pi-packages.json`. To upgrade, edit the pin,
 remove the old registration with `pi remove npm:<package>@<old-version>`, then
 run `mise run //src/pi:upstream-install` and `mise run //src/pi:check`.
-Preserve resource filters and restart. Companion checks do not run upstream's
+Preserve resource filters and use `/reload` when idle. Companion checks do not run upstream's
 test suite; test a worker launch/result in a fresh session after upgrades.
 
 ## Presentation
 
-Use `/ui` to select tool displays, the footer, and editor styling. Changes take
+Use `/ui` to select tool displays, the header, footer, and editor styling. Changes take
 effect only with **Apply and reload**; Cancel leaves settings unchanged.
-Preferences live in `~/.pi/agent/dots-ui.json`. Disabling the UI resource through
+**Other tools** covers background tools and tools without their own custom renderer;
+third-party custom renderers retain ownership. Preferences live in
+`~/.pi/agent/dots-ui.json`. Disabling the UI resource through
 `pi config` restores native surfaces.
 
 Ctrl+O expands recorded tool details. Paths, failures, truncation notices, and
 full-output links remain visible; display shortening does not change tool results.
-Codemode child previews cannot show nested results that Pi did not record.
+Background calls and completion messages use the same identity/outcome layout.
+Job summaries keep capture and cleanup warnings visible; expand or use `/jobs`
+for full evidence. Codemode child previews cannot show nested results that Pi did not record.
 
 Theme selection stays in Pi's `/settings`. The base `dots` theme follows
 `~/.config/theme/current/pi.json`; the companion also supplies
 `dots-light/dots-dark` for automatic light/dark selection. Package theme changes
-require rebuilding/installing; a central theme-link change needs reload/restart.
+require installation and `/reload`; a central theme-link change needs `/reload`.
 
 `/context` shows reported usage and estimated contributions, not exact billing.
 The [presentation library](../src/pi/src/README.md) documents lifecycle constraints

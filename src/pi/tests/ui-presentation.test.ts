@@ -5,8 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { CustomEditor, ToolExecutionComponent, getSelectListTheme, initTheme, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { ProcessTerminal, TuiMainScreen, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { StateGutter, type ActivityState, DiffView, parsePatch, PriorityRow, ToolCard, SoftEditor, createSyntaxService, fitLabel, type RowModel } from "@joshrwolf/pi-dots/ui";
-import { toolHeader, duration } from "../src/features/tools/records.ts";
+import { activityDecoration, activityHeader, Notices, StateGutter, type ActivityState, DiffView, parsePatch, PriorityRow, ActivityCard, SoftEditor, createSyntaxService, fitLabel, type RowModel } from "@joshrwolf/pi-dots/ui";
+import { duration } from "../src/features/tools/records.ts";
 import { toolRenderers } from "../extensions/ui/index.ts";
 import { installEditor } from "../src/features/editor.ts";
 import { configureUI } from "../src/features/settings.ts";
@@ -75,18 +75,18 @@ test("both layouts handle missing groups without orphan separators", () => {
   }
 });
 
-test("ToolCard defaults to inline, supports edge headers, and preserves body width", () => {
-  const card = new ToolCard();
+test("ActivityCard uses one explicit header model and preserves body width", () => {
+  const card = new ActivityCard();
   const widths: number[] = [];
   const model = {
-    heading: [{ text: "write example.ts", tone: "toolTitle", priority: 50, shrink: "clip" }] as const,
-    status: [{ text: "written", tone: "success", priority: 100, shrink: "clip" }] as const,
+    header: { layout: "inline", start: [{ text: "write example.ts", tone: "toolTitle", priority: 50, shrink: "clip" }],
+      end: [{ text: "written", tone: "success", priority: 100, shrink: "clip" }] } as const,
     notices: [], caption: "recorded source",
     body: { invalidate() {}, render(width: number) { widths.push(width); return ["body"]; } },
   };
   card.update(model, theme);
-  assert.equal(plain(card.render(240)).split("\n")[0]?.trimEnd(), "write example.ts written");
-  card.update({ ...model, layout: "edges" }, theme);
+  assert.equal(plain(card.render(240)).split("\n")[0]?.trimEnd(), "  write example.ts written");
+  card.update({ ...model, header: { ...model.header, layout: "edges" } }, theme);
   assert.equal(visibleWidth(plain(card.render(240)).split("\n")[0]!.trimEnd()), 240);
   assert.deepEqual(widths, [238, 238]);
 });
@@ -127,12 +127,12 @@ test("soft slots align short labels, never cap long labels, and yield before con
 });
 
 test("explicit card headers preserve caller ordering and spacing", () => {
-  const card = new ToolCard();
+  const card = new ActivityCard();
   card.update({ header: { layout: "inline", separator: " · ", groupSeparator: " · ",
     start: [{ text: "read", tone: "muted", priority: 90, shrink: "clip", padTo: 5 }, { text: "done", tone: "success", priority: 100, shrink: "clip" }],
     end: [{ text: "example.ts", tone: "toolTitle", priority: 10, shrink: "clip" }],
   }, body: undefined, notices: [], caption: "" }, theme);
-  assert.equal(plain(card.render(120)).trimEnd(), "read  · done · example.ts");
+  assert.equal(plain(card.render(120)).trimEnd(), "  read  · done · example.ts");
 });
 
 test("segment separators express related metadata without orphan punctuation", () => {
@@ -156,7 +156,7 @@ test("short timings are quiet only in collapsed tool summaries", () => {
 });
 
 test("caption policy follows actual header visibility on every resize", () => {
-  const card = new ToolCard();
+  const card = new ActivityCard();
   const path = "/workspace/example.ts";
   const model = { header: { start: [{ text: path, tone: "toolTitle", priority: 10, shrink: "clip" }], end: [] },
     caption: path, notices: [], body: { invalidate() {}, render() { return ["SOURCE"]; } },
@@ -240,13 +240,24 @@ test("row indentation is layout-owned and stays bounded in narrow panes", () => 
 
 test("state decoration is static, distinct without color, and bounded at tiny widths", () => {
   const child = { invalidate() {}, render: (width: number) => ["bash".slice(0, width)] };
-  const expected: Record<ActivityState, string> = { receiving: "·", queued: "◦", running: "◌", done: " ", failed: "✗", cancelled: "−", unknown: "?" };
+  const expected: Record<ActivityState, string> = { receiving: "·", queued: "◦", running: "●", done: " ", failed: "✗", cancelled: "−", unknown: "?", waiting: "?" };
   for (const state of Object.keys(expected) as ActivityState[]) {
     const view: StateGutter = new StateGutter(child, state, theme);
     assert.equal(plain(view.render(20)), `${expected[state]} bash`);
     assert.deepEqual(view.render(20), view.render(20));
     for (const width of [0, 1, 2, 3, 20]) assert.ok(view.render(width).every((line) => visibleWidth(line) <= width));
   }
+});
+
+test("activity colors distinguish work from attention without coloring every success", () => {
+  assert.deepEqual(activityDecoration("running"), { glyph: "●", tone: "accent" });
+  assert.deepEqual(activityDecoration("waiting"), { glyph: "?", tone: "warning" });
+  assert.deepEqual(activityDecoration("failed"), { glyph: "✗", tone: "error" });
+  assert.deepEqual(activityDecoration("done"), { glyph: " ", tone: "muted" });
+  const notices = new Notices();
+  notices.update([{ text: "Recover the result", severity: "warning" }, { text: "Permission denied", severity: "error" }], theme);
+  assert.match(plain(notices.render(80)), /! Recover the result/);
+  assert.match(plain(notices.render(80)), /↳ Permission denied/);
 });
 
 test("bold identity and failure badges retain text and never overflow", () => {
@@ -266,22 +277,22 @@ test("bold identity and failure badges retain text and never overflow", () => {
 });
 
 test("tool subjects have a stable anchor and diagnostics are softly indented", () => {
-  const card = new ToolCard();
+  const card = new ActivityCard();
   const render = (verb: string, metadata: string) => {
-    card.update({ header: toolHeader(verb, "example.ts", [{ text: metadata, tone: "dim", priority: 50, shrink: "clip" }]),
+    card.update({ header: activityHeader(verb, "example.ts", [{ text: metadata, tone: "dim", priority: 50, shrink: "clip" }]),
       state: "done", notices: [], body: undefined, caption: "" }, theme);
     return plain(card.render(120));
   };
   const write = render("write", "2 lines");
   const read = render("read", "lines 1–3");
   assert.equal(write.indexOf("example.ts"), read.indexOf("example.ts"));
-  assert.match(write, /write  example\.ts  2 lines/);
+  assert.match(write, /write +example\.ts +2 lines/);
   assert.doesNotMatch(write, /·/);
-  card.update({ header: toolHeader("read", "missing.ts", []), state: "failed", noticeIndent: 9,
+  card.update({ header: activityHeader("read", "missing.ts", []), state: "failed",
     notices: [{ text: "File not found", severity: "error" }], body: undefined, caption: "" }, theme);
   const lines = card.render(120).map((line) => stripTerminalSequences(line));
   assert.match(lines[0]!, /^✗ read/);
-  assert.match(lines[1]!, /^ {9}File not found/);
+  assert.match(lines[1]!, /^  ↳ File not found/);
   assert.doesNotMatch(lines.join(""), /failed/);
   for (const width of [1, 8, 16, 20, 80]) assert.ok(card.render(width).every((line) => visibleWidth(line) <= width));
 });
@@ -385,7 +396,9 @@ test("soft editor preserves native text, cursor layout, controls, and semantic b
   assert.equal(plain(soft.render(80)), plain(native.render(80)));
   const border = (text: string) => theme.fg("success", text);
   soft.borderColor = border;
-  assert.match(soft.render(80).join("\n"), /\x1b\[2m/);
+  assert.doesNotMatch(soft.render(80).join("\n"), /\x1b\[2m/);
+  native.borderColor = border;
+  assert.deepEqual(soft.render(80), native.render(80));
   assert.equal(soft.borderColor, border);
   let escaped = 0;
   let exited = 0;
@@ -435,7 +448,7 @@ test("settings cancel is side-effect free; apply saves before reload", async () 
   assert.equal(saved, undefined);
   assert.deepEqual(events, []);
   await configureUI(ui, reload, store);
-  assert.deepEqual(saved, { version: 1, tools: [], footer: "native", editor: "native" });
+  assert.deepEqual(saved, { version: 1, tools: [], otherTools: "native", header: "native", footer: "native", editor: "native" });
   assert.deepEqual(events, ["save", "reload"]);
 });
 
@@ -487,6 +500,8 @@ test("preference persistence is private, validated, and detects intervening edit
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     assert.throws(() => savePreferences(defaultPreferences, defaultPreferences, path), /changed while/);
     assert.deepEqual(loadPreferences(path), next);
+    assert.throws(() => parsePreferences({ version: 1, header: null }), /header/);
+    assert.throws(() => parsePreferences({ version: 1, header: "unknown" }), /header/);
     assert.throws(() => parsePreferences({ version: 1, editor: null }), /editor/);
     assert.throws(() => parsePreferences({ version: 1, editor: "unknown" }), /editor/);
   } finally { await rm(dir, { recursive: true, force: true }); }

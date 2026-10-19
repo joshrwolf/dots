@@ -68,7 +68,7 @@ test("shared widget and inspection fit narrow/wide panes, sanitize controls, and
   assert.match(wide, /Recent tail: \/tmp\/fixture\/job\/tail\.log/);
   assert.match(wide, /Capture is not confirmed complete/);
   assert.doesNotMatch(wide, /failed/); // Root diagnostic, no redundant failed badge.
-  assert.match(plain(widget.render(180)), /job echo.*unknown.*root exit 9/);
+  assert.match(plain(widget.render(180)), /job +echo.*unknown.*root exit 9/);
   assert.match(plain(widget.render(30)), /unknown/);
   assert.equal(job.directory.includes("\x1b"), true); // Raw records unchanged.
 });
@@ -81,7 +81,7 @@ test("widget bounds retained rows and distinguishes unknown history from active 
   widget.update(jobs, theme);
   const lines = widget.render(100);
   assert.equal(lines.length, 6);
-  assert.match(plain(lines), /0 active · 32 unknown/);
+  assert.match(plain(lines), /32 unknown/);
   assert.match(plain(lines), /\+28 more/);
 });
 
@@ -104,7 +104,7 @@ function harness(mode: ExtensionContext["mode"] = "tui", hasUI = true) {
   let deferWidget = false;
   let brokenWidget = false;
   // Narrow host fakes: these factories only need redraw and selection bindings.
-  const tui = { requestRender: () => { redraws++; } } as TUI;
+  const tui = { terminal: { rows: 40 }, requestRender: () => { redraws++; } } as TUI;
   const bindings = { matches: (data: string, action: string) => (data === "\u001b" && action === "tui.select.cancel") || (data === "\r" && action === "tui.select.confirm") } as KeybindingsManager;
   const custom: ExtensionUIContext["custom"] = (factory) => new Promise((resolve, reject) => {
     const done = (value: unknown) => { inspector?.dispose?.(); resolve(value as never); };
