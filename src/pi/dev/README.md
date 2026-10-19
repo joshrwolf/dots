@@ -30,7 +30,13 @@ actual tool/message components through the shipping renderer resolver: calls,
 job completions, worker replies, wakes, and an otherwise unstyled tool share one
 transcript. `/ui-lab thinking` previews summaries, structured detail, and unfinished
 streaming Markdown through Pi’s real assistant component; **E** toggles its native
-thinking disclosure. Expand and scroll to compare summaries with recorded evidence. Wake scenarios show
+thinking disclosure. `/ui-lab goal` starts with nested groups in the framed dashboard.
+Space cycles through closed history, partial trees, multiple follows, held work,
+unavailable data, and brief warnings. In its
+inspector, **[**/**]** select groups and **←**/**→** fold/unfold them; Space remains
+the workbench state switch.
+**E** switches between the persistent panel and slice inspection; the frame
+scenario also shows the goal panel beside the native editor. Expand and scroll to compare summaries with recorded evidence. Wake scenarios show
 scheduled follow-ups and failed checks. Input outside commands is ignored, not sent to a model.
 
 `mise run //src/pi:verify-terminal` exercises real-host interaction in regular

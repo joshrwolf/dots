@@ -51,7 +51,7 @@ class GoalTerminalTests(unittest.TestCase):
                 os.write(master, b"\x1b[1;1R")
 
         def events():
-            return marker.read_text() if marker.exists() else ""
+            return marker.read_text().splitlines() if marker.exists() else []
 
         def wait(predicate, label):
             deadline = time.monotonic() + 15
@@ -69,6 +69,12 @@ class GoalTerminalTests(unittest.TestCase):
             capture.clear()
             os.write(master, text)
 
+        def close_inspector(args, label):
+            event = f"command-end:{args}"
+            before = events().count(event)
+            send(b"\r")
+            wait(lambda: events().count(event) > before, label)
+
         try:
             wait(lambda: "start" in events(), "startup")
             # Let the editor mount before sending input in either host mode.
@@ -76,11 +82,11 @@ class GoalTerminalTests(unittest.TestCase):
             while time.monotonic() < until:
                 pump()
             send(b"/goal focus t-123abc\r")
-            wait(lambda: b"slices done" in capture and b"Unified fixture exports" in capture, "focused widget")
+            wait(lambda: b"slices done" in capture and b"Unified fixture exports" in capture and "╭".encode() in capture and b"Reference fixture slice" in capture, "framed goal dashboard")
             send(b"/goal\r")
             wait(lambda: b"1 slices" in capture, "inspector")
             send(b"2")
-            wait(lambda: b"brief" in capture, "brief tab")
+            wait(lambda: b"Fixture brief" in capture, "brief body mounted")
             send(b"\x1b[F")
             wait(lambda: b"END_OF_GOAL_BRIEF" in capture, "scroll to end")
             for rows, columns in ((24, 45), (48, 160)):
@@ -88,20 +94,36 @@ class GoalTerminalTests(unittest.TestCase):
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
                 os.kill(process.pid, signal.SIGWINCH)
                 wait(lambda: b"Unified fixture exports" in capture, "resize")
-            send(b"\r")
-            until = time.monotonic() + .3
-            while time.monotonic() < until:
-                pump()
+            close_inspector("", "inspector closed")
+            send(b"/goal follow t-abcdef\r")
+            wait(lambda: b"Nested fixture goal" in capture and b"Core interface" in capture, "nested dashboard")
+            send(b"/goal show t-abcdef\r")
+            wait(lambda: b"Consumer migration" in capture and b"Adapt consumers" in capture, "nested inspector")
+            send(b"\x1b[D")
+            wait(lambda: "▸".encode() in capture and b"Core interface" in capture, "fold parent")
+            self.assertNotIn(b"Adapt consumers", capture)
+            send(b"\x1b[C")
+            wait(lambda: b"Consumer migration" in capture and b"Adapt consumers" in capture, "unfold parent")
+            send(b"]")
+            wait(lambda: b"Consumer migration" in capture, "select nested group")
+            send(b"\x1b[D")
+            wait(lambda: "▸".encode() in capture and b"Consumer migration" in capture, "fold nested group")
+            self.assertNotIn(b"Adapt consumers", capture)
+            send(b"\x1b[C")
+            wait(lambda: b"Adapt consumers" in capture, "unfold nested group")
+            close_inspector("show t-abcdef", "nested inspector closed")
+            send(b"/goal history t-abcdef\r")
+            wait(lambda: b"Define shared types" in capture and b"Document shared types" in capture, "closed leaves in history")
+            close_inspector("history t-abcdef", "history closed")
+            send(b"/goal unfollow t-abcdef\r")
+            wait(lambda: b"Unfollowed t-abcdef" in capture, "remove hierarchy fixture")
             send(b"/goal follow t-999999\r")
             wait(lambda: b"2 followed" in capture and b"Second fixture goal" in capture, "two followed goals")
             send(b"/goal\r")
             wait(lambda: b"Inspect a followed goal" in capture, "goal selection")
             send(b"\r")
             wait(lambda: b"1 slices" in capture, "selected inspection")
-            send(b"\r")
-            until = time.monotonic() + .3
-            while time.monotonic() < until:
-                pump()
+            close_inspector("", "selected inspector closed")
             send(b"/reload\r")
             wait(lambda: events().count("start") >= 2 and b"2 followed" in capture, "reload followed set")
             send(b"/goal unfollow t-999999\r")

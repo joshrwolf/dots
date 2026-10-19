@@ -1,8 +1,12 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { VStack, matchesKey } from "@earendil-works/pi-tui";
+import { matchesKey } from "@earendil-works/pi-tui";
+import { Panel } from "../../src/ui/panel.ts";
 import { MarkdownView } from "../../src/ui/markdown.ts";
-import { Inspector, OutputView, PriorityRow, labelText } from "../../src/index.ts";
+import { Inspector, OutputView, labelText } from "../../src/index.ts";
 import type { Brief, GoalSnapshot } from "./source.ts";
+import { compactSummary, goalOverview } from "./dashboard.ts";
+import { goalTree, isGroup, treeRows, type TreeState } from "./hierarchy.ts";
+export { compactSummary, GoalWidget, FollowedWidget } from "./dashboard.ts";
 
 export interface Focus { readonly id: string; readonly project: string }
 export interface GoalView {
@@ -53,63 +57,6 @@ export function orientation(view: GoalView): string {
   ].join("\n\n");
 }
 
-export function compactSummary(view: GoalView): string {
-  const p = view.snapshot?.overview.progress;
-  if (!p || view.error) return view.error ? "unavailable · /goal refresh" : "loading";
-  return [p.total ? `${p.done}/${p.total} slices done` : "No slices recorded", p.claimed && `${p.claimed} claimed`, p.held && `${p.held} held`, p.dropped && `${p.dropped} dropped`, view.brief?.warning && "brief needs attention"].filter(Boolean).join(" · ");
-}
-
-function claimedSlice(view: GoalView): string | undefined {
-  const snapshot = view.snapshot;
-  if (!snapshot || view.error || snapshot.overview.progress.claimed !== 1) return undefined;
-  const claimed = snapshot.overview.tasks.filter((task) => task.children === 0 && task.status === "open" && task.owner && task.lease_until !== null && task.lease_until > snapshot.now);
-  return claimed.length === 1 ? `Claimed: ${text(claimed[0]!.title)}` : undefined;
-}
-
-export class GoalWidget extends VStack {
-  private readonly heading = new PriorityRow();
-  private readonly progress = new PriorityRow();
-  constructor() { super(); this.addChild(this.heading); this.addChild(this.progress); }
-  update(view: GoalView, theme: Theme): void {
-    this.heading.update({ start: [
-      { text: "Goal", tone: "accent", bold: true, priority: 100, shrink: "clip" },
-      { text: view.snapshot?.overview.goal.root.title ?? view.focus.id, tone: "text", priority: 60, shrink: "clip" },
-    ], end: [{ text: "/goal", tone: "dim", priority: 20, shrink: "omit" }] }, theme);
-    this.progress.update({ layout: "inline", start: [
-      { text: compactSummary(view), tone: view.error || view.brief?.warning ? "warning" : "muted", priority: 80, shrink: "clip" },
-    ], end: [{ text: claimedSlice(view) ?? "", tone: "dim", priority: 30, shrink: "clip" }] }, theme);
-    this.invalidate();
-  }
-}
-
-/** Compact session overview; display limits never remove followed context. */
-export class FollowedWidget extends VStack {
-  override render(width: number): string[] { return width > 0 ? super.render(width) : []; }
-  update(views: readonly GoalView[], selected: string | undefined, theme: Theme): void {
-    this.clear();
-    if (views.length === 1) {
-      const widget = new GoalWidget(); widget.update(views[0]!, theme); this.addChild(widget); return;
-    }
-    const heading = new PriorityRow();
-    const bytes = views.reduce((total, view) => total + new TextEncoder().encode(view.brief?.text ?? "").length, 0);
-    const unavailable = views.filter((view) => view.error || view.brief?.warning).length;
-    heading.update({ start: [{ text: `Goals · ${views.length} followed${unavailable ? ` · ${unavailable} need attention` : ""}`, tone: unavailable ? "warning" : "accent", priority: 100, shrink: "clip" }],
-      end: [{ text: `~${Math.ceil(bytes / 1024)} KiB brief text · /goal`, tone: "dim", priority: 20, shrink: "omit" }] }, theme);
-    this.addChild(heading);
-    const ordered = [...views].sort((a, b) => Number(b.focus.id === selected) - Number(a.focus.id === selected));
-    for (const view of ordered.slice(0, 6)) {
-      const row = new PriorityRow();
-      row.update({ layout: "inline", start: [{ text: `${view.focus.id === selected ? ">" : "·"} ${view.snapshot?.overview.goal.root.title ?? view.focus.id}`, tone: "text", priority: 60, shrink: "clip", minWidth: 10 }],
-        end: [{ text: compactSummary(view), tone: view.error || view.brief?.warning ? "warning" : "dim", priority: 80, shrink: "clip" }] }, theme);
-      this.addChild(row);
-    }
-    if (views.length > 6) {
-      const more = new PriorityRow(); more.update({ start: [{ text: `${views.length - 6} more followed · /goal followed (all remain in context)`, tone: "dim", priority: 100, shrink: "clip" }], end: [] }, theme); this.addChild(more);
-    }
-    this.invalidate();
-  }
-}
-
 type Section = "slices" | "brief" | "details";
 
 export function overview(model: GoalView): string {
@@ -130,24 +77,69 @@ export function overview(model: GoalView): string {
   return lines.join("\n");
 }
 
-export function setInspection(view: Inspector, model: GoalView, theme: Theme, section: Section = "slices", resetScroll = false): void {
-  view.setContent({ title: model.snapshot?.overview.goal.root.title ?? "Goal inspection", detail: `${model.history ? "history · " : ""}${section}`,
-    body: section === "brief" ? new MarkdownView(model.error ?? [model.brief?.text ?? "Brief not loaded.", model.brief?.warning].filter(Boolean).join("\n\n"), theme) : new OutputView(section === "details" ? inspection(model) : overview(model)),
-    hint: "1 slices · 2 brief · 3 details · ↑/↓ scroll · Enter/Esc close",
+export function setInspection(view: Inspector, model: GoalView, theme: Theme, section: Section = "slices", resetScroll = false, treeState?: TreeState): void {
+  let body: Panel;
+  if (section === "slices") body = goalOverview(model, theme, treeState);
+  else {
+    body = new Panel();
+    body.update({ heading: { start: [{ text: section === "brief" ? "Brief" : "Record details", tone: "accent", bold: true, priority: 100, shrink: "clip" }], end: [] },
+      body: section === "brief" ? new MarkdownView(model.error ?? [model.brief?.text ?? "Brief not loaded.", model.brief?.warning].filter(Boolean).join("\n\n"), theme) : new OutputView(inspection(model)),
+    }, theme);
+  }
+  view.setContent({ title: model.snapshot?.overview.goal.root.title ?? "Goal inspection", detail: model.history ? "history" : "inspection",
+    body,
+    hint: section === "slices" && treeState ? "1 slices · 2 brief · 3 details · [/] group · ←/→ fold · ↑/↓ scroll · Esc close" : "1 slices · 2 brief · 3 details · ↑/↓ scroll · Enter/Esc close",
   }, theme, resetScroll);
 }
 
 export class GoalInspector extends Inspector {
   private goal: { model: GoalView; theme: Theme; redraw: () => void } | undefined;
+  private section: Section = "slices";
+  private readonly collapsed = new Set<string>();
+  private selected: string | undefined;
+
+  private refresh(resetScroll = false, reveal = false): void {
+    if (!this.goal) return;
+    const { model, theme } = this.goal;
+    const rows = model.snapshot && !model.error ? treeRows(goalTree(model.snapshot), this.collapsed).slice(0, 100) : [];
+    const groups = rows.filter((row) => isGroup(row.node));
+    if (!groups.some((row) => row.node.task.id === this.selected)) this.selected = groups[0]?.node.task.id;
+    setInspection(this, model, theme, this.section, resetScroll, groups.length ? { collapsed: this.collapsed, selected: this.selected } : undefined);
+    if (reveal && this.section === "slices" && this.selected) {
+      const index = rows.findIndex((row) => row.node.task.id === this.selected);
+      const dependencies = rows.slice(0, index).filter((row) => row.node.task.blocked_by.length).length;
+      this.revealLine(3 + Number(model.snapshot?.overview.goal.root.status !== "open") + index + dependencies);
+    }
+  }
+
   setGoal(model: GoalView, theme: Theme, redraw: () => void): void {
+    const changed = this.goal?.model.focus.id !== model.focus.id;
+    if (changed) { this.section = "slices"; this.collapsed.clear(); this.selected = undefined; }
     this.goal = { model, theme, redraw };
-    setInspection(this, model, theme);
+    if (model.snapshot) {
+      const nodes = goalTree(model.snapshot).nodes;
+      for (const id of this.collapsed) if (!nodes.has(id) || !isGroup(nodes.get(id)!)) this.collapsed.delete(id);
+    }
+    this.refresh(changed);
   }
   override handleInput(data: string): void {
     const section = matchesKey(data, "1") ? "slices" : matchesKey(data, "2") ? "brief" : matchesKey(data, "3") ? "details" : undefined;
     if (section && this.goal) {
-      setInspection(this, this.goal.model, this.goal.theme, section, true);
+      this.section = section;
+      this.refresh(true);
       this.goal.redraw();
+    } else if (this.section === "slices" && this.goal?.model.snapshot && !this.goal.model.error
+      && (matchesKey(data, "[") || matchesKey(data, "]") || matchesKey(data, "space") || matchesKey(data, "left") || matchesKey(data, "right"))) {
+      const groups = treeRows(goalTree(this.goal.model.snapshot), this.collapsed).slice(0, 100).filter((row) => isGroup(row.node));
+      if (!groups.length) return;
+      if (matchesKey(data, "[") || matchesKey(data, "]")) {
+        const current = Math.max(0, groups.findIndex((row) => row.node.task.id === this.selected));
+        this.selected = groups[(current + (matchesKey(data, "]") ? 1 : groups.length - 1)) % groups.length]!.node.task.id;
+      } else if (this.selected) {
+        if (matchesKey(data, "left") || (matchesKey(data, "space") && !this.collapsed.has(this.selected))) this.collapsed.add(this.selected);
+        else this.collapsed.delete(this.selected);
+      }
+      this.refresh(false, true); this.goal.redraw();
     } else super.handleInput(data);
   }
 }

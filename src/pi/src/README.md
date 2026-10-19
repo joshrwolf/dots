@@ -12,6 +12,10 @@ secondary metadata uses the trailing edge. Native Pi components remain directly 
 [ui-foundation.test.ts](../tests/ui-foundation.test.ts) and
 [ui-export.test.ts](../tests/ui-export.test.ts) show custom-tool and export use.
 
+Use `Panel` for read-only dashboards and inspection sections: a light frame,
+a clear heading, aligned content, and a quiet footer. Keep transcript activity
+unboxed. Panels own no input; an enclosing `Inspector` owns scrolling.
+
 A presentation projects recorded observations into a readonly model, then
 updates a native Pi component. Feature owners supply facts and actions; host
 adapters mount components and own subscriptions. Renderer ownership and shell mode stay fixed

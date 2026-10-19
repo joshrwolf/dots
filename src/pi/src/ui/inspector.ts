@@ -15,6 +15,8 @@ export interface InspectorModel {
 class InspectorViewport extends ScrollView {
   private readonly height: () => number;
   private readonly redraw: () => void;
+  private pendingLine: number | undefined;
+  revealLine(line: number): void { this.pendingLine = Math.max(0, Math.floor(line)); }
   constructor(content: Component, height: () => number, redraw: () => void) {
     super(content, { scrollbar: "hidden", overscroll: "contain" });
     this.height = height; this.redraw = redraw;
@@ -23,6 +25,12 @@ class InspectorViewport extends ScrollView {
     if (width <= 0) return [];
     const lines = super.render(width);
     this.updateLayout(lines.length, Math.min(lines.length, Math.max(1, Math.floor(this.height()))), this.redraw);
+    if (this.pendingLine !== undefined) {
+      const line = Math.min(this.pendingLine, Math.max(0, lines.length - 1));
+      this.pendingLine = undefined;
+      if (line < this.scrollTop) this.scrollTo(line);
+      else if (line >= this.scrollTop + this.viewportHeight) this.scrollTo(line - this.viewportHeight + 1);
+    }
     return lines.slice(this.scrollTop, this.scrollTop + this.viewportHeight);
   }
 }
@@ -59,9 +67,12 @@ export class Inspector extends VStack {
     this.content.clear();
     this.content.addChild(model.body);
     this.hint.update({ start: [{ text: model.hint ?? "↑/↓ PgUp/PgDn scroll · Enter/Esc close", tone: "dim", priority: 1, shrink: "clip" }], end: [] }, theme);
-    if (resetScroll) this.viewport.scrollToStart();
+    if (resetScroll) { this.viewport.scrollToStart(); this.viewport.revealLine(0); }
     this.invalidate();
   }
+
+  /** Reveal a known body row after its new layout, without replacing native scrolling. */
+  revealLine(line: number): void { this.viewport.revealLine(line); this.redraw(); }
 
   handleInput(data: string): void {
     if (this.bindings.matches(data, "tui.select.cancel") || this.bindings.matches(data, "tui.select.confirm")) { this.close(); return; }

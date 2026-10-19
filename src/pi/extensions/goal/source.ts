@@ -25,6 +25,8 @@ export interface GoalSnapshot {
   readonly project: string;
   readonly now: number;
   readonly overview: { readonly goal: Goal; readonly tasks: readonly GoalTask[]; readonly hidden_closed: number; readonly progress: Progress };
+  /** Complete descendants from the same --all snapshot, for hierarchy rollups only. */
+  readonly allTasks?: readonly GoalTask[];
 }
 export interface GoalList { readonly project: string; readonly goals: readonly Goal[] }
 export interface Brief { readonly text: string; readonly warning?: string }
@@ -118,8 +120,16 @@ export async function readBrief(file: string): Promise<Brief> {
   }
 }
 
+/** Keep ordinary context quiet while retaining complete records for group totals. */
+export function withHierarchy(snapshot: GoalSnapshot, history = false): GoalSnapshot {
+  if (snapshot.overview.hidden_closed !== 0 && !snapshot.allTasks) return snapshot;
+  const allTasks = snapshot.allTasks ?? snapshot.overview.tasks;
+  const tasks = history ? allTasks : allTasks.filter((task) => task.status !== "done" && task.status !== "dropped");
+  return { ...snapshot, allTasks, overview: { ...snapshot.overview, tasks, hidden_closed: allTasks.length - tasks.length } };
+}
+
 export const dotsSource: GoalSource = {
   async list(cwd, signal) { return decodeList(await query(cwd, ["list"], signal)); },
-  async show(cwd, id, signal, history = false) { return decodeSnapshot(await query(cwd, ["show", id, ...(history ? ["--all"] : [])], signal)); },
+  async show(cwd, id, signal, history = false) { return withHierarchy(decodeSnapshot(await query(cwd, ["show", id, "--all"], signal)), history); },
   brief: readBrief,
 };

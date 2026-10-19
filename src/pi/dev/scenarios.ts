@@ -3,6 +3,9 @@ import { Text, Spacer, VStack, type Component, type TUI } from "@earendil-works/
 import { Inspector, OutputView, type SyntaxService, type ToolObservation, type ToolPresentation } from "../src/index.ts";
 import { transcript } from "./transcript.ts";
 import { thinkingComponent } from "./thinking.ts";
+import { goalFixtures } from "./goals.ts";
+import { GoalInspector } from "../extensions/goal/present.ts";
+import { FollowedWidget } from "../extensions/goal/dashboard.ts";
 import { bashPresentation } from "../src/features/tools/bash.ts";
 import { readPresentation } from "../src/features/tools/read.ts";
 import { writePresentation } from "../src/features/tools/write.ts";
@@ -94,6 +97,34 @@ const thinkingScenario: Scenario = {
   },
 };
 
+function goalScenario(): Scenario {
+  const states = [[8, "nested groups"], [9, "closed history"], [10, "incomplete snapshot"],
+    [0, "claimed"], [1, "held"], [2, "recorded complete"], [3, "multiple goals"],
+    [4, "unavailable"], [5, "loading"], [6, "brief warning"], [7, "empty"]] as const;
+  return { id: "goal", title: "Goal dashboard", phases: states.map(([, label]) => label), create(context) {
+    const preview = new Inspector(context.bindings, context.close, context.redraw, context.height);
+    const inspection = new GoalInspector(context.bindings, context.close, context.redraw, context.height);
+    const widget = new FollowedWidget();
+    let expanded = false;
+    const component = Object.assign(new VStack(), { handleInput(data: string) { (expanded ? inspection : preview).handleInput(data); } });
+    return { component, update(phase, nextExpanded, theme) {
+      expanded = nextExpanded;
+      const views = goalFixtures(states[phase]![0]);
+      widget.update(views, views[0]!.focus.id, theme);
+      component.clear();
+      if (expanded) {
+        inspection.setGoal(views[0]!, theme, context.redraw);
+        component.addChild(inspection);
+      } else {
+        preview.setContent({ title: "Goal dashboard", detail: "persistent widget", body: widget,
+          hint: "Space state · E inspect · T theme · ↑/↓ scroll · Esc close",
+        }, theme);
+        component.addChild(preview);
+      }
+    } };
+  } };
+}
+
 export const scenarios: readonly Scenario[] = [
   { id: "frame", title: "Application frame", phases: ["ordinary", "context warning", "context critical", "unknown context"], create(context) {
     const inspector = new Inspector(context.bindings, context.close, context.redraw, context.height);
@@ -103,11 +134,14 @@ export const scenarios: readonly Scenario[] = [
       const job = jobFixture(phase === 1 ? 1 : phase === 2 ? 4 : 3);
       job.command = "printf 'Checking presentation fixtures\\n'; npm test -- --reporter=spec; printf 'Check complete\\n'";
       if (phase === 2) job.supervisorExit = { code: null, signal: "SIGKILL" };
+      const goals = new FollowedWidget();
+      const followed = goalFixtures(phase === 2 ? 1 : phase === 3 ? 3 : 8);
+      goals.update(followed, followed[0]!.focus.id, theme);
       const activity = phase === 1 ? createWidget(() => [{ label: "review", state: "asking", depth: 0, elapsed: "1m", calls: 4, tokens: 2000, detail: "Which revision should I compare?", idleMs: 0 }], theme) : undefined;
       inspector.setContent({ title: "Application frame", detail: "real components · fixture conversation", body: new VStack([
         createHeader(theme), new Spacer(1), new UserMessageComponent("Check the renderer and report any failures.", undefined, 0),
         thinkingComponent(0, false), new Spacer(1), new Text(theme.fg("text", "I’ll run the focused checks, then review the result."), 0, 0), new Spacer(1), ...transcript(context, phase, expanded, job),
-        new Spacer(1), ...(activity ? [activity, new Spacer(1)] : []), ...(context.createEditor ? [context.createEditor(theme)] : []), footer,
+        new Spacer(1), ...(activity ? [activity, new Spacer(1)] : []), goals, new Spacer(1), ...(context.createEditor ? [context.createEditor(theme)] : []), footer,
       ]) }, theme);
     } };
   } },
@@ -173,4 +207,5 @@ export const scenarios: readonly Scenario[] = [
     } };
   } },
   thinkingScenario,
+  goalScenario(),
 ];

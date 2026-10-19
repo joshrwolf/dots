@@ -45,14 +45,15 @@ test("goal overview distinguishes claims, dependencies, held work and history wi
   const model = { focus: { id: "t-123abc", project: value.project }, snapshot: value, brief: { text: "# Accepted design\n\nUse **one** interface." } };
   const theme = getThemeByName("dark"), widget = new GoalWidget();
   widget.update(model, theme);
-  assert.match(plain(widget.render(160)), /1\/5 slices done · 1 claimed · 1 held.*Claimed: Reference/);
+  assert.match(plain(widget.render(160)), /1\/5 slices done · 1 claimed · 1 held/);
+  assert.match(plain(widget.render(160)), /› Claimed +Reference/);
   assert.match(overview(model), /Waiting +Consumer\n +Needs: Reference/);
   assert.match(overview(model), /Open +Expired/);
   assert.doesNotMatch(overview(model), /Project:|Recorded at:|t-aa|Brief content:/);
   assert.match(overview(model), /closed task details hidden/);
   value.overview.progress.claimed = 2;
   widget.update(model, theme);
-  assert.doesNotMatch(plain(widget.render(160)), /Claimed:/, "multiple claims must not invent a current slice");
+  assert.doesNotMatch(plain(widget.render(160)), /Current:|Running/, "multiple claims must not invent a current or running slice");
   assert.equal(compactSummary({ ...model, error: "offline" }), "unavailable · /goal refresh");
   let redraws = 0;
   const inspector = new GoalInspector({ matches: () => false }, () => {}, () => {}, () => 20);

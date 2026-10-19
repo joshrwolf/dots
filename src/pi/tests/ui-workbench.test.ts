@@ -41,6 +41,21 @@ test("every workbench scenario uses real bounded components in both themes and e
   } finally { syntax.dispose(); }
 });
 
+test("goal starts with nested groups and cycles every fixture in one scenario", () => {
+  assert.equal(scenarios.filter((scenario) => scenario.id.startsWith("goal")).length, 1);
+  const h = harness("goal");
+  try {
+    for (const expected of [/Core interface/, /Core interface/, /totals unavailable/, /Update exports/,
+      /Resolve compatibility/, /4\/4 slices done/, /3 followed/, /Goal source unavailable/,
+      /Loading goal/, /Brief truncated/, /No slices recorded/]) {
+      assert.match(plain(h.view.render(160)), expected);
+      h.view.handleInput(" ");
+    }
+    assert.equal(h.view.state.phase, 0);
+    assert.match(plain(h.view.render(160)), /Core interface/);
+  } finally { h.dispose(); }
+});
+
 test("native inspector handles scroll/close without taking ownership of actions", () => {
   let closed = 0;
   let redraws = 0;

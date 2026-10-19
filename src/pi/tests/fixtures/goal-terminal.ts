@@ -2,7 +2,8 @@
 import { appendFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import goal from "../../extensions/goal/index.ts";
-import type { GoalSnapshot } from "../../extensions/goal/source.ts";
+import { withHierarchy, type GoalSnapshot } from "../../extensions/goal/source.ts";
+import { goalFixtures } from "../../dev/goals.ts";
 
 export default function (pi: ExtensionAPI): void {
   const mark = (text: string) => appendFileSync(process.env.DOTS_GOAL_MARKER!, `${text}\n`);
@@ -14,10 +15,22 @@ export default function (pi: ExtensionAPI): void {
       hidden_closed: 0,
       progress: { total: 1, open: 1, held: 0, done: 0, dropped: 0, ready: 1, claimed: 0, with_pr: 0 } },
   };
-  goal(pi, {
+  const observed: ExtensionAPI = { ...pi, registerCommand(name, definition) {
+    pi.registerCommand(name, { ...definition, async handler(args, ctx) {
+      try { await definition.handler(args, ctx); } finally { mark(`command-end:${args}`); }
+    } });
+  } };
+  goal(observed, {
     async list() { return { project: snapshot.project, goals: [snapshot.overview.goal] }; },
-    async show(_cwd, id) {
+    async show(_cwd, id, _signal, history = false) {
       mark("read");
+      if (id === "t-abcdef") {
+        const nested = goalFixtures(8)[0]!.snapshot!;
+        const allTasks = nested.allTasks!.map((task) => ({ ...task, parent: task.parent === nested.overview.goal.root.id ? id : task.parent }));
+        return withHierarchy({ ...nested, project: snapshot.project, allTasks,
+          overview: { ...nested.overview, goal: { ...nested.overview.goal, root: { ...nested.overview.goal.root, id, title: "Nested fixture goal" } } },
+        }, history);
+      }
       return { ...snapshot, overview: { ...snapshot.overview,
         goal: { ...snapshot.overview.goal, root: { ...root, id, title: id === root.id ? root.title : "Second fixture goal" } },
         tasks: snapshot.overview.tasks.map((task) => ({ ...task, parent: id })),

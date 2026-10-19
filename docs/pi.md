@@ -136,7 +136,8 @@ attaches an existing Markdown brief together. Use
 Follow several goals at once; selecting another never pauses or closes earlier
 work. `/goal` chooses which followed goal to inspect, with `1` slices, `2` brief,
 and `3` record details. `/goal show ID` selects directly; `/goal history ID`
-includes closed details. Selection affects display, not which goals get context.
+includes closed details. In slices, `[`/`]` select a group; left/right fold and
+unfold it (Space toggles). Selection affects display, not which goals get context.
 
 `/goal list` lists shared open/held goals and marks this session's follows;
 `/goal followed` lists the session set. `/goal unfollow ID` removes one;
@@ -147,8 +148,13 @@ other sessions. Unfollowing removes future injected context, not prior messages.
 
 The followed set and display selection survive branch reload/resume; older
 single-focus sessions restore as a one-goal set. Fresh sessions follow nothing.
-The compact widget shows recorded progress, not live execution; `/goal refresh`
-refreshes the whole set without polling.
+The dashboard shows recorded progress and a short slice list, not live execution.
+Claimed and held slices get priority under their parent groups; `/goal` opens
+nested inspection. Group fractions include all recorded leaves, even closed ones;
+closed leaf details stay behind history, while group summaries preserve ancestry.
+Incomplete trees show a warning rather than guessed group totals.
+With several follows, the selected goal gets detail and the others
+stay in a compact list. `/goal refresh` refreshes the whole set without polling.
 
 Tasks are project-scoped, shared across linked worktrees. `dots task list` shows
 open/held roots, not every slice. Use `--parent ID` to drill down, `--flat` for all

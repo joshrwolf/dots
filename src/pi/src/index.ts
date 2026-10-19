@@ -1,5 +1,6 @@
 // Consumer surface: importing the library registers nothing and starts no work.
 export { Inspector, type InspectorModel } from "./ui/inspector.ts";
+export { Panel, type PanelModel } from "./ui/panel.ts";
 export { activityDecoration, StateGutter, type ActivityState } from "./ui/state.ts";
 export { SoftEditor } from "./features/editor.ts";
 export { createToolRenderers, selectToolRenderers, type PresentationView, type ToolObservation, type ToolPresentation } from "./host/tools.ts";

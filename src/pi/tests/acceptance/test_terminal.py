@@ -185,7 +185,7 @@ class PackagedTerminalTests(unittest.TestCase):
         send(b"\x1b")
         wait(lambda: "workbench closed" in events(), "editor focus restored")
         wait(lambda: events().count(f"frame 160 {initial_theme}") >= 2, "original palette restored")
-        for scenario, expected in (("frame", b"Application frame"), ("wake", b"Scheduled follow-up"), ("thinking", b"Thinking blocks")):
+        for scenario, expected in (("frame", b"Application frame"), ("wake", b"Scheduled follow-up"), ("thinking", b"Thinking blocks"), ("goal", b"Goal dashboard")):
             closed = events().count("workbench closed")
             capture.clear()
             command(f"/ui-lab {scenario}")
@@ -208,6 +208,27 @@ class PackagedTerminalTests(unittest.TestCase):
             if scenario == "wake":
                 send(b" ")
                 wait(lambda: b"exit 1" in capture, "failed wake check")
+            if scenario == "goal":
+                wait(lambda: b"Core interface" in capture and b"1/3 done" in capture, "group preview with complete totals")
+                send(b"E")
+                wait(lambda: state("goal", 0, True) and b"Consumer migration" in capture, "nested slice inspection")
+                send(b"\x1b[D")
+                wait(lambda: b"Core interface" in capture and "▸".encode() in capture, "fold group in workbench")
+                send(b"\x1b[C")
+                wait(lambda: b"Consumer migration" in capture, "unfold group in workbench")
+                send(b"E")
+                wait(lambda: state("goal", 0, False), "hierarchy dashboard")
+                send(b" ")
+                wait(lambda: state("goal", 1), "history fixture")
+                send(b"E")
+                wait(lambda: b"Define shared types" in capture, "closed slice detail")
+                send(b"E")
+                wait(lambda: state("goal", 1, False), "history dashboard")
+                send(b" ")
+                wait(lambda: b"totals unavailable" in capture, "partial hierarchy without guessed totals")
+                for phase, label in enumerate((b"Update exports", b"Resolve compatibility", b"4/4 slices done", b"3 followed", b"Goal source unavailable", b"Loading goal", b"Brief truncated", b"No slices recorded"), 3):
+                    send(b" ")
+                    wait(lambda: state("goal", phase) and label in capture, f"goal phase {phase}")
             if scenario == "thinking":
                 wait(lambda: b"collapsed" in capture, "native thinking disclosure")
                 send(b"E")

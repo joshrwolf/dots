@@ -14,7 +14,7 @@ export default function workbenchExtension(pi: ExtensionAPI): void {
   pi.on("session_shutdown", () => { current?.close(false); current = undefined; });
   pi.registerCommand("ui-lab-exit", { handler: async (_args, ctx) => { ctx.shutdown(); } });
   pi.registerCommand("ui-lab", {
-    description: "Fixture-only component workbench: bash/read/write/edit/codemode/job/workers/wake/frame",
+    description: "Fixture-only presentation workbench; choose a scenario with N/P",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") { ctx.ui.notify("UI workbench requires TUI mode", "warning"); return; }
       if (current) { ctx.ui.notify("Workbench is already open", "warning"); return; }
