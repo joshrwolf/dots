@@ -53,13 +53,10 @@ depends = ["cargo:dots-cli"]
 
 [monorepo.projects."custom:home"]
 root = "home"
-depends = ["custom:skills", "custom:codex-agent", "cargo:herdr-review", "custom:aerospace"]
+depends = ["custom:skills", "custom:codex-agent", "cargo:herdr-review"]
 
 [monorepo.projects."cargo:dots-repository-tests"]
 depends_add = ["custom:home"]
-
-[monorepo.projects."custom:aerospace"]
-root = "src/aerospace"
 
 [task_templates.rust-check]
 run = [
@@ -94,7 +91,7 @@ cache = { enabled = false }
 
 [tasks.check]
 description = "Complete repository gate, without installation or cloud CI"
-depends = ["rust-check", "//src/pi:check", "//src/claude/codex-agent:check", "//src/aerospace:check", "//home:check", "//tests:graph-check"]
+depends = ["rust-check", "//src/pi:check", "//src/claude/codex-agent:check", "//home:check", "//tests:graph-check"]
 cache = { enabled = false }
 
 [tasks."rust-check"]

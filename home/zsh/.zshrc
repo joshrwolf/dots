@@ -11,8 +11,6 @@ path=(
   # Homebrew keeps the ext filesystem utilities keg-only.
   "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/e2fsprogs/bin"
   "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/e2fsprogs/sbin"
-  # Homebrew keeps unversioned python/pip here; opt/python follows its default release.
-  "${HOMEBREW_PREFIX:-/opt/homebrew}/opt/python/libexec/bin"
   "${HOMEBREW_PREFIX:-/opt/homebrew}/bin"
   # Include optional components installed through gcloud's component manager.
   "${HOMEBREW_PREFIX:-/opt/homebrew}/share/google-cloud-sdk/bin"
