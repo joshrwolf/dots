@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = [
-    "tests",
     "src/herdr/prs",
     "src/tasks",
     "src/process",

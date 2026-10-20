@@ -34,12 +34,3 @@ specifiers = ["24.22.0"]
 [tools.node."platforms.macos-arm64"]
 checksum = "sha256:6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5"
 url = "https://nodejs.org/dist/v24.22.0/node-v24.22.0-darwin-arm64.tar.gz"
-
-[[tools.rust]]
-version = "1.99.0"
-backend = "core:rust"
-specifiers = ["1.99.0"]
-
-[tools.rust.options]
-components = "clippy,rustfmt"
-profile = "minimal"

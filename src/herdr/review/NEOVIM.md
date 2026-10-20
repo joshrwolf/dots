@@ -40,6 +40,6 @@ coordinates. The bridge validates binding scope, but pane movement can still
 race the final lookup.
 
 `mise run //src/herdr/review:deps` restores locked Neovim test dependencies;
-`mise run //src/herdr/review:check` runs the isolated Lua suite and bridge
-checks, and `mise run //src/herdr/review:verify` adds the editor-restart
+`cargo nextest run -p herdr-review` runs the isolated Lua suite and bridge
+checks, and adding `--profile acceptance` runs the editor-restart
 acceptance test. Neither loads the user's configuration or contacts a live server.

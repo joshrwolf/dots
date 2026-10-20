@@ -1,5 +1,11 @@
+# Simulate every package into an empty target so conflicts surface without
+# touching $HOME, and keep each skills root a link to the canonical skills/.
 [tasks.check]
-depends = ["//tests:home-check", "//src/dots:skills-check"]
+depends = ["//src/dots:skills-check"]
 dir = "{{config_root}}/.."
-run = "claude plugin validate skills"
-cache = { enabled = false }
+run = [
+  "claude plugin validate skills",
+  "test -L home/skills/.agents/skills && test home/skills/.agents/skills -ef skills",
+  "test -L home/skills/.claude/skills && test home/skills/.claude/skills -ef skills",
+  't=$(mktemp -d) && trap "rmdir $t" EXIT && {{ vars.stow }} --target "$t" --simulate --restow {{ vars.base }} herdr nvim finicky',
+]

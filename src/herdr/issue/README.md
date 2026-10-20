@@ -48,4 +48,4 @@ precedes workspace mutation. SQLite and Herdr cannot commit atomically, so a
 retry reconciles the same branch with live state instead of inventing a new one.
 Unrelated clients can still race the launcher's lock.
 
-Run `mise run //src/herdr/issue:check` for scoped validation.
+Run `cargo nextest run -p herdr-issue` for scoped validation.

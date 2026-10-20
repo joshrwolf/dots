@@ -16,9 +16,9 @@ mise run build
 mise run verify
 ```
 
-The SDK lock supports macOS arm64. Checks need the installed Claude host; full
-acceptance also needs Stow, Herdr, and a Pi host matching the companion's exact
-development SDK. Host applications keep their own installers and runtime state.
+The SDK lock supports macOS arm64. Checks need rustup, Stow, and the installed
+Claude host; full acceptance also needs Herdr and a Pi host matching the
+companion's exact development SDK. Host applications keep their own installers and runtime state.
 
 `build` stages Herdr plugin binaries in each plugin's `bin/`; user commands
 have no build step. Check, build, and verify never activate against your real home; provider-free tests do not prove live-model compatibility.
@@ -30,9 +30,8 @@ and tests that spawn only short-lived real dependencies such as Git in a
 temporary repository. Agents run it routinely.
 
 `verify` runs `check` and `build`, then acceptance: process lifecycle (deadlines,
-kills, detached or cross-process children), PTYs, host applications, and
-installation in disposable homes and checkouts. Use it at integration
-checkpoints.
+kills, detached or cross-process children), PTYs, and host applications in
+disposable homes. Use it at integration checkpoints.
 
 Place each test by structure, not by a list of names:
 
@@ -40,41 +39,35 @@ Place each test by structure, not by a list of names:
   or in a `#[cfg(test)] mod acceptance` when it needs private items.
   [`.config/nextest.toml`](../.config/nextest.toml) excludes both from the
   default profile and selects only them in the `acceptance` profile.
-  `rust-check`/`:check` use the default profile; `rust-verify`/`:verify` use
-  `acceptance`.
-- Node: acceptance lives in `tests/acceptance/` of the Pi package or the
-  repository, which only the owning `verify` task runs.
+  `check` uses the default profile; `verify` uses `acceptance`.
+- Node: acceptance lives in the Pi package's `tests/acceptance/`, which only
+  its `verify` task runs.
+- Stow: `//home:check` simulates every package into an empty temporary target,
+  so conflicts between packages surface without touching `$HOME`.
 
 Host acceptance uses the installed application, such as the `herdr` on `PATH`,
 in an isolated temporary home and session; it never contacts the live server.
 
 ## Development
 
-Use `mise tasks --all` for available tasks and scoped paths for focused work:
+Use `mise tasks --all` for available tasks. Root `check` and `verify` run the
+whole Cargo workspace in one pass; a project keeps a `mise.toml` only for real
+tasks such as build, install, deps, or non-Cargo checks. Scope focused work with
+the native tools:
 
 ```sh
-mise run //src/dots:check
-mise run //src/herdr/nav:check
+cargo nextest run -p herdr-nav
+cargo nextest run -p dots-process --profile acceptance
 mise run //src/pi:check
-mise run rust-check
-mise run //src/process:verify
-mise run --affected --affected-json '//...:check'
-mise tasks graph --explain
 ```
 
-Rust leaf checks include upstream dependencies. The root Rust gate checks the
-workspace in one pass. Root/configuration changes conservatively affect all
-projects.
+Code lives under named owners in `src/`, Stow payloads in `home/`, and canonical
+skills in `skills/`.
 
-Code lives under named owners in `src/`, Stow payloads in `home/`, canonical
-skills in `skills/`, and repository contracts in `tests/`.
-
-To update SDKs, edit `mise.toml`, align `rust-toolchain.toml` when applicable,
-then run `MISE_LOCKED=false mise lock --platform macos-arm64`. Review the lock,
-install, and verify. Cargo's MSRV is a separate compatibility requirement.
-
-No task uses mise's artifact cache (`MISE_TASK_CACHE=off`); Cargo caches
-compilation.
+Rustup selects Rust from `rust-toolchain.toml`; mise pins the other SDKs in
+`mise.toml`. After editing `mise.toml`, run
+`MISE_LOCKED=false mise lock --platform macos-arm64`, review the lock, install,
+and verify. Cargo's MSRV is a separate compatibility requirement.
 
 ## Activation
 

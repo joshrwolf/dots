@@ -13,8 +13,7 @@ MIT notice. There is no upstream sync.
 ## Setup
 
 ```sh
-mise run //home:check      # skill frontmatter, generated CLI skill, checkout contracts
-mise run //tests:verify    # isolated Stow and installation behavior
+mise run //home:check      # skill frontmatter, generated CLI skill, links, Stow simulation
 mise run install           # restow the base packages, including skills
 ```
 

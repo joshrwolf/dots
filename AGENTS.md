@@ -70,21 +70,21 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
   graphs. Put ordinary native commands directly in tasks, not dispatch wrappers.
   Remove redundant behavior before translating a wrapper into another language.
 - Keep substantial application logic and acceptance tests in their owning
-  toolchain. Keep `rust-toolchain.toml` aligned with `mise.toml`.
+  toolchain.
 - Use `mise run doctor`, `deps`, `check`, and `verify` as documented in
   [build and activation](docs/build.md). Builds/checks never activate.
 - Base Stow packages are explicit in root `mise.toml`. Herdr, CLI, and Pi
   activation are separate; do not install or reload merely to validate changes.
   Herdr plugins and the Pi companion run from the checkout that registered
   them: register only from the primary checkout, never from an agent worktree.
-- No task uses mise's artifact cache.
+- Add a project `mise.toml` only for real tasks (build, install, deps, non-Cargo
+  checks); Cargo crates need none to be checked.
 
 ## Source ownership
 
 - Root Cargo workspace, lockfile, toolchain, and lint policy govern Rust under
-  `src/` and repository contracts in `tests/`. Use `mise run rust-check` for the
-  complete fast gate and `mise run rust-verify` for Rust acceptance; leaf checks include upstream dependencies. Libraries need no
-  artificial build tasks.
+  `src/`. Root `check` and `verify` run the whole workspace; scope a run with
+  `cargo nextest run -p <crate>`.
 - Keep shared operations with their named owners. The task store derives
   readiness, claims transactionally, and accepts project key and time explicitly.
 - Pi uses pinned stock npm releases and a companion in `src/pi/`. Consume public

@@ -1,26 +1,12 @@
 [tasks.deps]
 run = """nvim --headless -u NONE -i NONE '+lua vim.pack.add({}, {confirm=false,load=false}); vim.pack.update(nil, {target="lockfile",force=true})' +qa"""
 env = { NVIM_APPNAME = "nvim", XDG_CONFIG_HOME = "{{config_root}}/tests", XDG_DATA_HOME = "{{config_root}}/../target/test-deps", XDG_STATE_HOME = "{{config_root}}/../target/nvim-state", XDG_CACHE_HOME = "{{config_root}}/../target/nvim-cache" }
-cache = { enabled = false }
-
-[tasks.check]
-extends = "rust-check"
-vars = { package = "herdr-review" }
-depends = ["^check"]
-cache = { enabled = false }
 
 [tasks.build]
 description = "Stage bin/ in this plugin directory"
 run = "cargo install --locked --path . --root . --force"
-cache = { enabled = false }
 
 [tasks.install]
 description = "Build and link this plugin; install herdr-review into Cargo's bin directory for editors"
 depends = [":build"]
 run = ["herdr plugin link .", "cargo install --locked --path ."]
-cache = { enabled = false }
-
-[tasks.verify]
-extends = "rust-verify"
-vars = { package = "herdr-review" }
-depends = [":check"]

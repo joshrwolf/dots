@@ -56,6 +56,6 @@ failure halts mutations rather than risking duplicate or inconsistent jumps.
 
 ## Checks
 
-`mise run //src/herdr/nav:check` checks the feature without activation.
-`mise run //src/herdr/nav:verify` drives the `herdr` on `PATH` through a
+`cargo nextest run -p herdr-nav` checks the feature without activation.
+`cargo nextest run -p herdr-nav --profile acceptance` drives the `herdr` on `PATH` through a
 disposable server and PTY client.

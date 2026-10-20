@@ -1,6 +1,5 @@
 [tasks.deps]
 depends = ["//src/herdr/review:deps"]
-cache = { enabled = false }
 
 # Plugins register first, so restowed key bindings never name a missing action.
 [tasks.install]
@@ -10,4 +9,3 @@ run = [
   '{{vars.stow}} --target="$HOME" --restow --simulate herdr nvim',
   '{{vars.stow}} --target="$HOME" --restow herdr nvim',
 ]
-cache = { enabled = false }

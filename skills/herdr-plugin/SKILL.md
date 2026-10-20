@@ -145,13 +145,13 @@ sent. Manifest-to-dispatch and build invariants belong in `src/herdr/tests`.
 Run the complete gate from the repository root:
 
 ```sh
-mise run rust-check
+mise run check
 ```
 
 It checks per-plugin build contracts, formatting, strict all-feature/all-target
 Clippy, the workspace's fast tests through `cargo nextest`, doctests, and
 rustdoc with warnings denied. Process-lifecycle, PTY, and host tests go in a
-crate's `tests/acceptance.rs` or a `mod acceptance`; `mise run rust-verify`
+crate's `tests/acceptance.rs` or a `mod acceptance`; `mise run verify`
 runs them.
 
 Do not link, install, or reload a live Herdr session merely to validate an

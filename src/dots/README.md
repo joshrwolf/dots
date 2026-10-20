@@ -35,7 +35,8 @@ after changing either:
 
 ```sh
 mise run //src/dots:skills
-mise run //src/dots:check
+cargo nextest run -p dots-cli
+mise run //src/dots:skills-check
 ```
 
 Generation is offline and uses no model, credentials, or session data.
