@@ -90,9 +90,7 @@ impl Runner {
     /// operation-specific context and interprets the exit status. A timeout
     /// never proves a side effect did not occur.
     pub fn output(self, command: Command) -> Result<Output, Error> {
-        if self.deadline.is_zero() || self.stdout_limit == 0 || self.stderr_limit == 0 {
-            return Err(Error::InvalidLimits);
-        }
+        self.validate()?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -104,7 +102,10 @@ impl Runner {
         result
     }
 
-    async fn run(self, mut command: Command) -> Result<Output, Error> {
+    /// [`Runner::output`] for callers already inside a Tokio runtime; it needs
+    /// the runtime's I/O and time drivers.
+    pub async fn run(self, mut command: Command) -> Result<Output, Error> {
+        self.validate()?;
         command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -149,6 +150,13 @@ impl Runner {
             child.wait().await.map_err(Error::Wait)?;
         }
         result
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        if self.deadline.is_zero() || self.stdout_limit == 0 || self.stderr_limit == 0 {
+            return Err(Error::InvalidLimits);
+        }
+        Ok(())
     }
 }
 
