@@ -12,7 +12,6 @@ task.source_freshness_hash_contents = true
 # Native lockfiles still own application dependencies. These are build/test SDKs.
 [tools]
 node = "24.22.0"
-python = "3.15.0"
 rust = { version = "1.99.0", profile = "minimal", components = "clippy,rustfmt" }
 "github:nextest-rs/nextest" = { version = "0.9.148", version_prefix = "cargo-nextest-" }
 "aqua:neovim/neovim" = "0.12.6"

@@ -2,10 +2,6 @@
 .idea/
 .envrc
 
-# Python interpreter caches are generated, not source.
-__pycache__/
-*.pyc
-
 # Codex settings and trusted project paths belong to the local user.
 /home/codex/.codex/config.toml
 
