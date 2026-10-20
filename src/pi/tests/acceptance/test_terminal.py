@@ -17,9 +17,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[4]
 
 
-class PackagedTerminalTests(unittest.TestCase):
+class PackageTerminalTests(unittest.TestCase):
     def test_regular_and_fullscreen(self):
-        subprocess.run(["node", "src/pi/install/artifact.mjs", "verify"], cwd=ROOT, check=True, timeout=30)
         with tempfile.TemporaryDirectory(prefix="dpt-", dir="/tmp") as directory:
             work = Path(directory)
             for mode in ("regular", "fullscreen"):
@@ -49,7 +48,7 @@ class PackagedTerminalTests(unittest.TestCase):
             args = [
                 os.environ.get("PI_BIN", "pi"), "--no-session", "--offline", "--no-mcp", "--no-extensions",
                 "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-approve",
-                "--extension", str(ROOT / "dist/pi-runtime"),
+                "--extension", str(ROOT / "src/pi"),
                 "--extension", str(ROOT / "src/pi/tests/fixtures/terminal-observer.ts"), "--tui-mode", mode,
             ]
             cwd = work

@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext, ToolRenderers, ToolRendererResolver } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolRenderers, ToolRendererResolver } from "@earendil-works/pi-coding-agent";
 import { createToolRenderers } from "../../src/host/tools.ts";
 import { defaultPreferences, loadPreferences, toolNames, type Preferences, type ToolName } from "../../src/host/preferences.ts";
 import { createSyntaxService, type SyntaxService } from "../../src/ui/previews/syntax.ts";
@@ -11,7 +11,6 @@ import { activityPresentation } from "../../src/features/tools/activity.ts";
 import { configureUI } from "../../src/features/settings.ts";
 import { installEditor } from "../../src/features/editor.ts";
 import { createFooter } from "../../src/features/footer.ts";
-import { releaseStatus, releaseDescription } from "../../src/host/release.ts";
 import { createHeader } from "../../src/features/frame.ts";
 import { hiddenThinkingLabel, thinkingMarkdown } from "../../src/features/thinking.ts";
 
@@ -48,16 +47,6 @@ export function registerUI(pi: ExtensionAPI, preferences: Preferences = defaultP
   pi.registerToolRenderer(rendererResolver(syntax, preferences));
   if (preferences.thinking === "compact") pi.registerMarkdownTransformer(thinkingMarkdown);
   const interactions = new Set<AbortController>();
-  const refreshRelease = (ctx: ExtensionContext) => {
-    const status = releaseStatus();
-    if (ctx.mode === "tui" && ctx.hasUI) ctx.ui.setStatus("dots-ui-release", status.reloadNeeded ? "Companion update · /reload when idle" : undefined);
-    return status;
-  };
-  pi.registerCommand("ui-version", {
-    description: "Show loaded and installed companion versions; does not install or reload",
-    handler: async (_args, ctx) => { ctx.ui.notify(releaseDescription(refreshRelease(ctx)), "info"); },
-  });
-  pi.on("before_agent_start", (_event, ctx) => { refreshRelease(ctx); });
   pi.registerCommand("ui", {
     description: "Configure tools, thinking, and frame styling; apply with a reload",
     handler: async (_args, ctx) => {
@@ -76,7 +65,6 @@ export function registerUI(pi: ExtensionAPI, preferences: Preferences = defaultP
     syntax.dispose();
   });
   pi.on("session_start", (_event, ctx) => {
-    refreshRelease(ctx);
     if (ctx.mode === "tui" && preferences.thinking === "compact") ctx.ui.setHiddenThinkingLabel(hiddenThinkingLabel);
     releaseEditor();
     releaseEditor = preferences.editor === "soft" ? installEditor(ctx) : () => {};

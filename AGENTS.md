@@ -55,7 +55,7 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
   `dots` only for user commands.
 - Each artifact has one build path: build once into `dist/` (a Herdr plugin
   into its own directory, Herdr's native layout), then install or link from
-  there.
+  there. Source-loaded packages, like the Pi companion, have no build step.
 - `check` is fast and side-effect free (format, lint, unit tests, typecheck)
   and is what agents run. `verify` holds process-lifecycle, PTY, host,
   installation, and bootstrap acceptance. Place tests by the structural
@@ -74,8 +74,9 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
   [build and activation](docs/build.md). Builds/checks never activate.
 - Base Stow packages are explicit in root `mise.toml`. Herdr, CLI, and Pi
   activation are separate; do not install or reload merely to validate changes.
-- Only proven distributable tasks may use local artifact caching. Dependencies,
-  checks, smoke tests, updates, and activation are always uncached.
+  Herdr plugins and the Pi companion run from the checkout that registered
+  them: register only from the primary checkout, never from an agent worktree.
+- No task uses mise's artifact cache.
 
 ## Source ownership
 

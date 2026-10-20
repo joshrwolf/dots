@@ -8,7 +8,6 @@ use_versions_host_track = false
 lockfile = true
 locked = true
 task.source_freshness_hash_contents = true
-task.cache_max_size = "256MiB"
 
 # Native lockfiles still own application dependencies. These are build/test SDKs.
 [tools]
@@ -19,8 +18,8 @@ rust = { version = "1.99.0", profile = "minimal", components = "clippy,rustfmt" 
 "aqua:neovim/neovim" = "0.12.6"
 
 [env]
-# Never consult or publish a remote task cache.
-MISE_TASK_CACHE = "local-only"
+# No task uses mise's artifact cache, local or remote.
+MISE_TASK_CACHE = "off"
 
 [vars]
 # Cargo's staging records are not dotfiles.

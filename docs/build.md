@@ -73,9 +73,8 @@ To update SDKs, edit `mise.toml`, align `rust-toolchain.toml` when applicable,
 then run `MISE_LOCKED=false mise lock --platform macos-arm64`. Review the lock,
 install, and verify. Cargo's MSRV is a separate compatibility requirement.
 
-Only the Pi tarball uses mise's local artifact cache; Cargo caches compilation.
-Checks, dependency installs, acceptance, updates, and activation are uncached.
-The repository disables remote task caching.
+No task uses mise's artifact cache (`MISE_TASK_CACHE=off`); Cargo caches
+compilation.
 
 ## Activation
 
@@ -86,8 +85,8 @@ mise run install                    # base Stow packages
 mise run //src/dots:install         # CLI and generated discovery skill
 mise run //src/herdr:install        # Herdr plugins, CLIs, and configuration
 mise run //src/herdr/nav:install    # navigation plugin only
-mise run //src/pi:upstream-install  # pinned third-party Pi packages
-mise run //src/pi:install           # verify and install the companion update
+mise run //src/pi:packages          # pinned third-party Pi packages
+mise run //src/pi:install           # register the companion from this checkout
 ```
 
 Base Stow packages are listed in root `mise.toml`; `unstow` removes only those
@@ -106,7 +105,7 @@ from the checkout, so every later `build` there, including `mise run build`
 and `verify`, changes the live plugin. Link only from the primary checkout,
 never from an agent worktree.
 
-[Pi installation](pi.md#updates) verifies and installs an immutable companion
-snapshot. Use `/reload` afterward when jobs and workers are idle. Restart for Pi
-CLI/SDK or startup environment changes. Coordinate package writers across sessions.
-Installation and rollback never reload sessions automatically.
+[Pi installation](pi.md#setup) works the same way: `pi install` registers
+`src/pi` by path, so sessions load the checkout's files on their next `/reload`
+or start. Install it only from the primary checkout, never from an agent
+worktree. Installation never reloads sessions.

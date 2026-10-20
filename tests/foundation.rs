@@ -62,12 +62,12 @@ mod tests {
             table(&mise, "env")
                 .get("MISE_TASK_CACHE")
                 .and_then(Value::as_str),
-            Some("local-only")
+            Some("off")
         );
     }
 
     #[test]
-    fn only_the_pi_distributable_has_an_outer_artifact_cache() {
+    fn no_task_enables_the_artifact_cache() {
         let mut paths: BTreeSet<_> = members()
             .into_iter()
             .map(|p| format!("{p}/mise.toml"))
@@ -91,21 +91,13 @@ mod tests {
                     .and_then(Value::as_bool)
                     == Some(true)
                 {
-                    assert!(
-                        task.get("sources").is_some(),
-                        "{path}:{name}: cache sources"
-                    );
-                    assert!(
-                        task.get("outputs").is_some(),
-                        "{path}:{name}: cache outputs"
-                    );
                     cached.push((path.clone(), name.clone()));
                 }
             }
         }
-        assert_eq!(
-            cached,
-            [("src/pi/mise.toml".to_owned(), "package".to_owned())]
+        assert!(
+            cached.is_empty(),
+            "tasks enable the artifact cache: {cached:?}"
         );
     }
 

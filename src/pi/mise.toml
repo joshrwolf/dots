@@ -2,36 +2,8 @@
 run = "npm ci --ignore-scripts"
 cache = { enabled = false }
 
-[tasks.build]
-depends = [":package"]
-cache = { enabled = false }
-
-[tasks.package]
-dir = "{{ config_root }}/../.."
-run = [
-  "rm -rf dist/pi-package",
-  "mkdir -p dist/pi-package",
-  "npm pack ./src/pi --offline --ignore-scripts --json --pack-destination dist/pi-package > dist/pi-package/artifact.json",
-]
-sources = ["src/pi/extensions/**", "src/pi/src/**", "src/pi/themes/**", "src/pi/package.json", "src/pi/npm-shrinkwrap.json", "src/pi/.npmignore", "src/pi/.npmrc", "src/pi/README*", "src/pi/LICENSE*", "src/pi/LICENCE*", "src/pi/mise.toml", "mise.toml", "mise.lock"]
-outputs = ["dist/pi-package"]
-cache = { enabled = true, env = ["NODE_OPTIONS", "NODE_ENV", "NPM_CONFIG_USERCONFIG"] }
-
-[tasks.prepare]
-dir = "{{ config_root }}/../.."
-depends = [":package"]
-run = [
-  "node src/pi/install/artifact.mjs validate-archive",
-  "rm -rf dist/pi-runtime",
-  "mkdir -p dist/pi-runtime",
-  "tar -xzf dist/pi-package/*.tgz --strip-components=1 -C dist/pi-runtime",
-  "npm ci --prefix dist/pi-runtime --omit=dev --legacy-peer-deps --ignore-scripts --no-audit --no-fund",
-  "node src/pi/install/artifact.mjs seal-runtime",
-]
-cache = { enabled = false }
-
 [tasks.verify]
-depends = [":check", ":prepare"]
+depends = [":check"]
 run = [
   "node --experimental-strip-types --test tests/acceptance/*.test.mjs tests/acceptance/*.test.ts",
   "python3 -m unittest discover -s tests/acceptance -p 'test*terminal.py' -v",
@@ -40,28 +12,26 @@ env = { PYTHONDONTWRITEBYTECODE = "1" }
 cache = { enabled = false }
 
 [tasks."verify-host"]
-depends = [":prepare"]
 run = "node --test tests/acceptance/host.test.mjs"
 cache = { enabled = false }
 
 [tasks."verify-terminal"]
-depends = [":prepare"]
 run = "python3 -m unittest discover -s tests/acceptance -p 'test*terminal.py' -v"
 env = { PYTHONDONTWRITEBYTECODE = "1" }
 cache = { enabled = false }
 
+# Pi loads a local package from its path without copying; run only from the
+# primary checkout. Reinstalling is harmless.
 [tasks.install]
-description = "Verify and install the companion update; then /reload when idle"
-depends = [":verify"]
-run = "node install/index.mjs"
+description = "Install dependencies, then register this checkout's companion with Pi; /reload when idle"
+depends = [":deps"]
+run = "pi install '{{ config_root }}'"
 cache = { enabled = false }
 
-[tasks.rollback]
-run = "node install/index.mjs --rollback"
-cache = { enabled = false }
-
-[tasks."upstream-install"]
-run = "node install/index.mjs --upstream"
+# Pi replaces an older registration of the same npm package and keeps its filters.
+[tasks.packages]
+description = "Install pinned third-party Pi packages; /reload when idle"
+run = "pi install npm:pi-web-access@0.41.0"
 cache = { enabled = false }
 
 [tasks.workbench]
