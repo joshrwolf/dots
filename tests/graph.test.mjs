@@ -20,7 +20,7 @@ test("mise selects the actual affected deliverables", async t => {
         return result.stdout.trim();
     };
     try {
-        const files = new Set(["mise.toml", "mise.lock", "Cargo.toml", "tests/Cargo.toml", "tests/mise.toml", "home/mise.toml", "skills/mise.toml",
+        const files = new Set(["mise.toml", "mise.lock", "Cargo.toml", "tests/Cargo.toml", "tests/mise.toml", "home/mise.toml",
             ...globSync(["src/**/Cargo.toml", "src/**/mise.toml"],
                 {cwd: source, exclude: ["**/target/**"]})]);
         for (const file of files) {
@@ -34,20 +34,20 @@ test("mise selects the actual affected deliverables", async t => {
         // Fixture-only object creation; no hooks, signing configuration changes, or publication.
         const commit = run("git", ["commit-tree", tree, "-m", "Neutral graph fixture"]);
         run("git", ["update-ref", "HEAD", commit]);
-        const all = JSON.parse(run("mise", ["tasks", "graph", "--json"])).projects.map(project => project.id);
+        // custom:skills owns no tasks; skill changes select the custom:home check.
+        const all = JSON.parse(run("mise", ["tasks", "graph", "--json"])).projects.map(project => project.id).filter(id => id !== "custom:skills");
         const home = ["custom:home", "cargo:herdr-plugin-contracts", "cargo:dots-repository-tests"];
-        const skills = ["custom:skills", ...home];
         for (const [file, expected] of [
-            ["src/github/client/src/probe.rs", ["cargo:github-client", "cargo:github-inspect", "cargo:herdr-prs", "cargo:dots-cli", "cargo:herdr-github", "cargo:herdr-review", "cargo:herdr-find", ...skills]],
+            ["src/github/client/src/probe.rs", ["cargo:github-client", "cargo:github-inspect", "cargo:herdr-prs", "cargo:dots-cli", "cargo:herdr-github", "cargo:herdr-review", "cargo:herdr-find", ...home]],
             ["src/herdr/nav/src/probe.rs", ["cargo:herdr-nav", "cargo:herdr-plugin-contracts"]],
             ["src/herdr/review/core/src/probe.rs", ["cargo:review-core", "cargo:herdr-review", "cargo:herdr-find", ...home]],
-            ["src/tasks/src/probe.rs", ["cargo:dots-tasks", "cargo:dots-cli", ...skills]],
+            ["src/tasks/src/probe.rs", ["cargo:dots-tasks", "cargo:dots-cli", ...home]],
             ["src/herdr/tests/src/probe.rs", ["cargo:herdr-plugin-contracts"]],
             ["src/pi/extensions/probe.ts", ["custom:pi"]],
             ["src/claude/codex-agent/hooks/probe.ts", ["custom:codex-agent", ...home]],
             ["home/zsh/.zshrc-probe", home],
-            ["skills/herdr-plugin/probe.md", skills],
-            ["skills/.local/share/agent-skills/golang/skills/probe.md", skills],
+            ["skills/herdr-plugin/probe.md", home],
+            ["skills/golang-cli/probe.md", home],
             ["src/herdr/review/editor/lua/probe.lua", ["cargo:herdr-review", "cargo:herdr-find", ...home]],
             ["src/aerospace/probe.py", ["custom:aerospace", ...home]],
             ["tests/shared-probe.mjs", ["cargo:dots-repository-tests"]],

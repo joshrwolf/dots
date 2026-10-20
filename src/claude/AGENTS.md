@@ -4,8 +4,8 @@
   `name` in `.claude-plugin/plugin.json`. Write and edit mods here, never in a
   session's `~/.claude/dev-mods/` folder; decline that folder's hot-reload
   prompt. Commit a relative link per mod,
-  `ln -s ../../../../src/claude/<name> home/skills/.claude/skills/<name>`, which
-  `mise run //skills:install` stows to `~/.claude/skills/<name>`. Sessions load it as
+  `ln -s ../src/claude/<name> skills/<name>`, which `~/.claude/skills/<name>`
+  reaches through the skills directory link. Sessions load it as
   `<name>@skills-dir` (a running one after `/reload-plugins`) and hot-reload
   its edits.
 - Layout per mod: `.claude-plugin/plugin.json`, `hooks/hooks.json`,
@@ -18,9 +18,8 @@
   contract. Extract a kit once a second mod needs the code, not before.
 - Load the `plugin-authoring` skill before writing a mod and read the API in the
   types it writes. Run `mise run //src/claude/codex-agent:check` for native validation
-  and tests, and `mise run //home:check` for discovery links. Skills-dir mods get
-  no editor types; run an interactive `claude --plugin-dir src/claude/<name>`
-  to generate them.
+  and tests. Skills-dir mods get no editor types; run an interactive
+  `claude --plugin-dir src/claude/<name>` to generate them.
 - Tests fake the host with hooks beneath the plugin (`process.spawn`,
   `tool.call`) and hand-authored data. Never commit captured transcripts,
   process output, or tokens; keep credentials in the tools a mod drives.

@@ -9,7 +9,7 @@ run = "node --test graph.test.mjs"
 cache = { enabled = false }
 
 [tasks."home-check"]
-run = "node --test skills.test.mjs checkout.test.mjs"
+run = "node --test checkout.test.mjs"
 cache = { enabled = false }
 
 [tasks.verify]

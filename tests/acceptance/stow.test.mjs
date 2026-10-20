@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
+import {existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync} from "node:fs";
 import {homedir, tmpdir} from "node:os";
 import {join} from "node:path";
 import {spawnSync} from "node:child_process";
@@ -31,12 +31,22 @@ test("native Stow tasks preserve runtime state and reject unmanaged files", {ski
         success("install");
         assert.ok(lstatSync(join(home, ".zshrc")).isSymbolicLink());
         assert.ok(!lstatSync(join(home, ".agents")).isSymbolicLink());
-        assert.ok(!lstatSync(join(home, ".agents/skills")).isSymbolicLink());
+        for (const skills of [".agents/skills", ".claude/skills"]) {
+            assert.ok(lstatSync(join(home, skills)).isSymbolicLink(), skills);
+            assert.equal(realpathSync(join(home, skills)), realpathSync(join(root, "skills")), skills);
+            assert.ok(existsSync(join(home, skills, "golang-testing/SKILL.md")), skills);
+        }
+        assert.ok(existsSync(join(home, ".claude/skills/codex-agent/.claude-plugin/plugin.json")));
         assert.ok(!lstatSync(join(home, ".pi/agent")).isSymbolicLink());
         assert.ok(existsSync(join(home, ".claude/rules/personal.md")));
         assert.ok(!existsSync(join(home, ".claude/CLAUDE.md")));
         success("unstow");
         assert.ok(!existsSync(join(home, ".zshrc")));
+        mkdirSync(join(home, ".claude/skills/unmanaged"), {recursive: true});
+        assert.notEqual(run("install").status, 0);
+        assert.deepEqual(readdirSync(join(home, ".claude/skills")), ["unmanaged"]);
+        assert.ok(!existsSync(join(home, ".zshrc")));
+        rmSync(join(home, ".claude/skills"), {recursive: true});
         assert.equal(readFileSync(settings, "utf8"), '{"theme":"example"}');
         writeFileSync(join(home, ".zshrc"), "unmanaged configuration\n");
         assert.notEqual(run("install").status, 0);

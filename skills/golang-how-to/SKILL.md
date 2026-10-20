@@ -57,8 +57,8 @@ Routing alone requires no tool installation or persistent configuration changes.
 | Use log/slog | `golang-observability` | `golang-samber-slog` (when using its extensions) |
 | Use dependency injection | `golang-dependency-injection` | `golang-samber-do` (when already used) |
 
-Skill names above refer to installed skills. `golang-go-cmp` is the local
-comparison skill; the other skills originate from samber/cc-skills-golang.
+Skill names above refer to installed skills. Most began in samber/cc-skills-golang
+and are now maintained in dots.
 
 ## Choosing how to execute
 

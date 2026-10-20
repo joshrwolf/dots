@@ -18,17 +18,16 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
 
 - Use native `AGENTS.md` discovery; do not add `CLAUDE.md` compatibility links.
   Claude personal instructions use its native user rules directory.
-- Keep canonical skills at `skills/<name>/`, with `name` and `description`
-  frontmatter in `SKILL.md` and relative supporting paths.
-- Author both discovery links in `home/skills/.agents/skills/` and
-  `home/skills/.claude/skills/`; installation only restows them.
-  See [skill setup](docs/skills.md) for targets and validation.
+- Skills are ours and flat: one directory per skill at `skills/<name>/`, with
+  `name` and `description` frontmatter in `SKILL.md` and relative supporting
+  paths. Tools discover `skills/` itself through two directory links,
+  `~/.agents/skills` and `~/.claude/skills`; add no per-skill links. Keep
+  other files there to what every tool ignores. See [skill setup](docs/skills.md).
 - Reserve `local-*` for ignored machine-local skills and links; never commit them.
 - Keep shared guidance portable. A symlink does not make tool-specific hooks,
   commands, metadata, or permissions portable.
-- Imported skills are editable Git subtrees under
-  `skills/.local/share/agent-skills/`. Preserve upstream instructions and licenses;
-  edit source, not copied discovery files. Updates are explicit mise/Git tasks.
+- Keep upstream licenses for adapted skills, such as
+  `skills/LICENSE-cc-skills-golang`.
 - Check upstream before compatibility patches. Prefer upstream releases, keep
   local patches minimal, and remove superseded patches. Personal features stay
   outside vendored code.

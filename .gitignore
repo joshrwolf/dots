@@ -35,10 +35,8 @@ __pycache__/
 /pi-plugins
 /scripts/
 
-# Private skills and their discovery links stay machine-local.
+# Private skills and Claude mod links stay machine-local.
 /skills/local-*
-/home/skills/.agents/skills/local-*
-/home/skills/.claude/skills/local-*
 
 **/*.old
 **/*hide.lua

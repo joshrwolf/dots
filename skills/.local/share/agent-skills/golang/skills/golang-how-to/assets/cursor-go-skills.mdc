@@ -1,9 +1,0 @@
----
-description: Select relevant Go skills when deciding which guidance a task needs
-alwaysApply: false
----
-
-Use the skill that matches the requested task. Consult `golang-how-to` only when
-skill boundaries are unclear. Load additional guidance for concrete needs, not as
-an automatic bundle. Follow existing project instructions and keep the work within
-the requested scope; consulting a skill does not require configuration changes.

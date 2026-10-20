@@ -74,11 +74,14 @@ mod tests {
             .collect();
         paths.extend(["mise.toml", "src/herdr/mise.toml"].map(str::to_owned));
         let mise = config("mise.toml");
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        // Task-less projects, such as the live skills root, have no configuration.
         paths.extend(
             table(table(&mise, "monorepo"), "projects")
                 .values()
                 .filter_map(|project| project.get("root").and_then(Value::as_str))
-                .map(|root| format!("{root}/mise.toml")),
+                .map(|root| format!("{root}/mise.toml"))
+                .filter(|path| checkout.join(path).exists()),
         );
         let mut cached = Vec::new();
         for path in paths {

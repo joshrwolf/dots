@@ -1,3 +1,7 @@
+The golang-* skills derive from https://github.com/samber/cc-skills-golang,
+imported at commit 19a0626ae8565d27a7b7bdf59d8d99d94d7e284c and since modified
+in this repository. The upstream license below applies to that material.
+
 MIT License
 
 Copyright (c) 2026 Samuel Berthe

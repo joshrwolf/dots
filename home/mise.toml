@@ -1,3 +1,5 @@
 [tasks.check]
-depends = ["//tests:home-check"]
+depends = ["//tests:home-check", "//src/dots:skills-check"]
+dir = "{{config_root}}/.."
+run = "claude plugin validate skills"
 cache = { enabled = false }

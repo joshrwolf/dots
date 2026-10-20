@@ -5,7 +5,7 @@ through function hooks.
 
 ## Setup
 
-`mise run //skills:install` links authored mods into `~/.claude/skills/`.
+Each mod has a link in `skills/`, which Claude reads as `~/.claude/skills/`.
 Claude loads them as `<name>@skills-dir`; use `/reload-plugins` in an existing
 session. Loaded edits hot-reload, and `claude plugin list` shows status.
 
