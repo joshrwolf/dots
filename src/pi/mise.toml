@@ -4,20 +4,16 @@ cache = { enabled = false }
 
 [tasks.verify]
 depends = [":check"]
-run = [
-  "node --experimental-strip-types --test tests/acceptance/*.test.mjs tests/acceptance/*.test.ts",
-  "python3 -m unittest discover -s tests/acceptance -p 'test*terminal.py' -v",
-]
-env = { PYTHONDONTWRITEBYTECODE = "1" }
+run = "node --experimental-strip-types --test tests/acceptance/*.test.mjs tests/acceptance/*.test.ts"
 cache = { enabled = false }
 
 [tasks."verify-host"]
 run = "node --test tests/acceptance/host.test.mjs"
 cache = { enabled = false }
 
+# Pi's interactive host in both TUI modes through its public virtual-terminal option.
 [tasks."verify-terminal"]
-run = "python3 -m unittest discover -s tests/acceptance -p 'test*terminal.py' -v"
-env = { PYTHONDONTWRITEBYTECODE = "1" }
+run = "node --experimental-strip-types --test tests/acceptance/terminal.test.mjs"
 cache = { enabled = false }
 
 # Pi loads a local package from its path without copying; run only from the
