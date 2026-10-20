@@ -1,17 +1,21 @@
 # Herdr PR status
 
-Registered PRs appear beneath their workspace with separate review and CI status;
-selecting one opens it in the browser.
+Each workspace's Space row in the sidebar summarizes its registered PRs, such as
+`#42 ✓✗ · #43 ◷✓`: the PR number, then its review and CI glyphs. Ctrl+S then U
+opens a picker of the workspace's PRs with their status in words; choosing one
+opens it in the browser.
 
 ## Setup
 
-Both client and server need the [workspace-resources patch](../host/README.md).
-Then install the CLI and plugins:
+Requires stock Herdr 0.9.0 or newer. Install the CLI and plugins:
 
 ```sh
 mise run //src/dots:install
 mise run //src/herdr:install
 ```
+
+The Space row and keybinding live in `home/herdr/.config/herdr/config.toml`;
+the row shows the `$prs` workspace metadata token.
 
 ## Use
 
@@ -30,20 +34,26 @@ PR URLs are supported. Ship-it and managed review creation/resume register PRs;
 other existing PRs need explicit registration. Unregistering removes only the
 local association, not the PR.
 
-CI brief and watcher panes offer a PR picker. Direct fix requires exactly one
+Glyphs: review `✓` approved, `!` changes requested, `◷` awaiting review, `○`
+draft or unreviewed, `?` unknown; CI `✓` passing, `✗` failing, `◷` pending,
+`?` cancelled or unknown, `—` none. Merged and closed PRs show `◆` and `×`.
+A trailing `…` marks a missing or delayed observation.
+
+CI brief and watcher panes use the same PR picker. Direct fix requires exactly one
 registered PR. The **GitHub status service health** action reports watcher failures.
 
 ## Constraints
 
 Associations live in
 `${XDG_STATE_HOME:-$HOME/.local/state}/dots/herdr-prs/registry.sqlite3`, keyed by
-endpoint and persistent workspace UUID. Closing a workspace retains its records;
-a new workspace needs fresh registration.
+Herdr endpoint and workspace ID. Herdr reuses the IDs of closed workspaces, so
+the watcher discards a workspace's associations once it closes; a reopened
+workspace needs fresh registration.
 
 One pane-less service shares fetches across workspaces. Pending CI refreshes
 more often than settled or completed PRs; rate limits and failures delay updates.
 Errors retain cached status and its age, never become a no-PR result.
-Expired sidebar projections disappear if their producer stops.
+Tokens expire two minutes after the service stops renewing them.
 
 Hooks wake the service rather than querying GitHub themselves. Crash recovery
 depends on the next startup/event/action hook, not Herdr supervision.

@@ -4,13 +4,10 @@
 //! a pull request explicitly, or ask GitHub to resolve the current branch.
 
 use std::ffi::OsString;
-use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
 use std::time::Duration;
 
-use nix::sys::signal::{Signal, killpg};
-use nix::unistd::Pid;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -186,6 +183,27 @@ impl Client {
     /// Unsupported local remotes are ignored.
     pub fn repositories(self, checkout: &Path) -> Result<Vec<GitHubRepository>> {
         repositories_with(&SystemRunner, checkout)
+    }
+}
+
+/// The [`Client::repositories`] inventory over a caller's own `git` transport,
+/// which receives each argument list and answers for the intended checkout.
+pub fn repositories_via(
+    git: impl Fn(&[&str]) -> Result<CommandOutput>,
+) -> Result<Vec<GitHubRepository>> {
+    repositories_with(&GitVia(git), Path::new(""))
+}
+
+struct GitVia<F>(F);
+
+impl<F: Fn(&[&str]) -> Result<CommandOutput>> Runner for GitVia<F> {
+    fn output(&self, _cwd: &Path, _program: &str, args: &[OsString]) -> Result<CommandOutput> {
+        // Arguments originate as `&str` in `git_text`, so the round trip is lossless.
+        let args = args
+            .iter()
+            .map(|argument| argument.to_string_lossy())
+            .collect::<Vec<_>>();
+        (self.0)(&args.iter().map(AsRef::as_ref).collect::<Vec<_>>())
     }
 }
 
@@ -917,88 +935,53 @@ fn command_with_destination(
     stdout_limit: usize,
     destination: Option<std::fs::File>,
 ) -> Result<CommandOutput> {
-    let description = command_description(program, args);
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|source| Error::CommandRuntime { source })?;
-    let result = runtime.block_on(async {
-        let mut child = tokio::process::Command::from(configured_command(cwd, program, args))
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|source| Error::StartCommand {
-                program: description.clone(),
-                cwd: cwd.to_path_buf(),
-                source,
-            })?;
-        let group = child
-            .id()
-            .and_then(|id| i32::try_from(id).ok())
-            .map(Pid::from_raw);
-        let result = tokio::time::timeout(timeout, async {
-            let stdout = child
-                .stdout
-                .take()
-                .ok_or_else(|| Error::ReadCommandOutput {
-                    program: description.clone(),
-                    stream: "stdout",
-                    source: std::io::Error::other("stdout pipe was not captured"),
-                })?;
-            let stderr = child
-                .stderr
-                .take()
-                .ok_or_else(|| Error::ReadCommandOutput {
-                    program: description.clone(),
-                    stream: "stderr",
-                    source: std::io::Error::other("stderr pipe was not captured"),
-                })?;
-            // Retain the leader's PID until both pipes finish. Capture is
-            // cancellable: a detached pipe holder cannot strand a reader thread.
-            let (stdout, stderr) = tokio::try_join!(
-                capture(stdout, &description, "stdout", stdout_limit, destination),
-                capture(
-                    stderr,
-                    &description,
-                    "stderr",
-                    MAX_COMMAND_OUTPUT_BYTES,
-                    None
-                ),
-            )?;
-            let status = child.wait().await.map_err(|source| Error::InspectCommand {
-                program: description.clone(),
-                source,
-            })?;
-            Ok(CommandOutput {
-                status,
-                stdout,
-                stderr,
-            })
-        })
-        .await
-        .unwrap_or_else(|_| {
-            Err(Error::CommandTimedOut {
-                program: description.clone(),
-                timeout,
-            })
-        });
-        // Never signal a group after reaping its leader. Descendants that
-        // close both pipes are not supervised by this one-shot runner.
-        if result.is_err() && child.id().is_some() {
-            if let Some(group) = group {
-                let _ = killpg(group, Signal::SIGKILL);
-            }
-            let _ = child.start_kill();
-            child.wait().await.map_err(|source| Error::InspectCommand {
-                program: description,
-                source,
-            })?;
-        }
-        result
-    });
-    // An OS write already in progress cannot be cancelled. Do not let runtime
-    // shutdown turn a command timeout into an unbounded wait for that syscall.
-    runtime.shutdown_background();
-    result
+    let mut runner =
+        dots_process::Runner::new(timeout, MAX_COMMAND_OUTPUT_BYTES).stdout_limit(stdout_limit);
+    if let Some(destination) = destination {
+        runner = runner.stdout_to(destination);
+    }
+    runner
+        .output(configured_command(cwd, program, args))
+        .map_err(|error| command_error(error, cwd, program, args))
+}
+
+fn command_error(
+    error: dots_process::Error,
+    cwd: &Path,
+    program: &str,
+    args: &[OsString],
+) -> Error {
+    use dots_process::Error as Process;
+    let program = command_description(program, args);
+    match error {
+        Process::Spawn(source) => Error::StartCommand {
+            program,
+            cwd: cwd.to_path_buf(),
+            source,
+        },
+        Process::Timeout(timeout) => Error::CommandTimedOut { program, timeout },
+        Process::OutputLimit { stream, limit } => Error::CommandOutputTooLarge {
+            program,
+            stream,
+            limit,
+        },
+        Process::Read { stream, source } => Error::ReadCommandOutput {
+            program,
+            stream,
+            source,
+        },
+        Process::Sink(source) => Error::ReadCommandOutput {
+            program,
+            stream: "stdout",
+            source,
+        },
+        Process::Runtime(source) => Error::CommandRuntime { source },
+        Process::Wait(source) => Error::InspectCommand { program, source },
+        error => Error::InspectCommand {
+            program,
+            source: std::io::Error::other(error),
+        },
+    }
 }
 
 fn configured_command(cwd: &Path, program: &str, args: &[OsString]) -> Command {
@@ -1008,71 +991,14 @@ fn configured_command(cwd: &Path, program: &str, args: &[OsString]) -> Command {
         .current_dir(cwd)
         .env_remove("GH_REPO")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GH_HTTP_TIMEOUT", "10")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
+        .env("GH_HTTP_TIMEOUT", "10");
     command
-}
-
-async fn capture(
-    mut reader: impl tokio::io::AsyncRead + Unpin,
-    program: &str,
-    stream: &'static str,
-    limit: usize,
-    mut destination: Option<std::fs::File>,
-) -> Result<Vec<u8>> {
-    use std::io::Write as _;
-    use tokio::io::AsyncReadExt as _;
-    let mut length = 0;
-    let mut bytes = Vec::new();
-    let mut buffer = vec![0_u8; 16 * 1024];
-    let io_error = |source| Error::ReadCommandOutput {
-        program: program.to_owned(),
-        stream,
-        source,
-    };
-    loop {
-        let count = reader.read(&mut buffer).await.map_err(io_error)?;
-        if count == 0 {
-            return Ok(bytes);
-        }
-        let retained = count.min(limit.saturating_sub(length));
-        let chunk = buffer.get(..retained).unwrap_or_default();
-        if let Some(mut file) = destination.take() {
-            let chunk = chunk.to_vec();
-            // One bounded chunk in flight; never block pipe progress or the
-            // deadline on a synchronous sink. On timeout this last write may
-            // complete later, so failed captures must be discarded, not reused.
-            destination = Some(
-                tokio::task::spawn_blocking(move || {
-                    file.write_all(&chunk)?;
-                    Ok::<_, std::io::Error>(file)
-                })
-                .await
-                .map_err(|error| io_error(std::io::Error::other(error)))?
-                .map_err(io_error)?,
-            );
-        } else {
-            bytes.extend_from_slice(chunk);
-        }
-        length += retained;
-        if retained < count {
-            return Err(Error::CommandOutputTooLarge {
-                program: program.to_owned(),
-                stream,
-                limit,
-            });
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
-    use std::time::Instant;
 
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt as _;
@@ -1096,32 +1022,6 @@ mod tests {
         ] {
             assert!(PullRequestUrl::parse(invalid).is_err(), "{invalid}");
         }
-    }
-
-    #[test]
-    fn log_budget_is_separate_from_metadata_and_still_bounded() {
-        let bytes = vec![b'x'; 3 * 1024 * 1024];
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        let metadata = runtime.block_on(capture(
-            bytes.as_slice(),
-            "test",
-            "stdout",
-            MAX_COMMAND_OUTPUT_BYTES,
-            None,
-        ));
-        assert!(matches!(metadata, Err(Error::CommandOutputTooLarge { .. })));
-        let log = runtime
-            .block_on(capture(
-                bytes.as_slice(),
-                "test",
-                "stdout",
-                64 * 1024 * 1024,
-                None,
-            ))
-            .unwrap();
-        assert_eq!(log, bytes);
     }
 
     const BASE: &str = "1111111111111111111111111111111111111111";
@@ -1490,232 +1390,5 @@ mod tests {
             .is_err()
         );
         assert_eq!(runner.calls().len(), 0);
-    }
-
-    #[test]
-    fn command_deadline_kills_and_reaps_the_child() {
-        let started = Instant::now();
-        let error = command_with_timeout(
-            Path::new("/tmp"),
-            "sh",
-            &[OsString::from("-c"), OsString::from("sleep 2 & wait")],
-            Duration::from_millis(20),
-        )
-        .unwrap_err();
-        assert!(matches!(error, Error::CommandTimedOut { .. }));
-        assert!(started.elapsed() < Duration::from_secs(1));
-    }
-
-    #[test]
-    fn retained_pipes_timeout_without_reaping_the_leader_first() {
-        let started = Instant::now();
-        let result = command_with_timeout(
-            Path::new("/tmp"),
-            "sh",
-            &[OsString::from("-c"), OsString::from("sleep 2 & exit 0")],
-            Duration::from_millis(200),
-        );
-        assert!(
-            matches!(result, Err(Error::CommandTimedOut { .. })),
-            "{result:?}"
-        );
-        assert!(started.elapsed() < Duration::from_secs(1));
-    }
-
-    #[test]
-    fn detached_pipe_holder_cannot_extend_the_deadline() {
-        let started = Instant::now();
-        let result = command_with_timeout(
-            Path::new("/tmp"),
-            "python3",
-            &[
-                OsString::from("-c"),
-                OsString::from(
-                    "import subprocess; subprocess.Popen(['/bin/sleep', '1'], start_new_session=True)",
-                ),
-            ],
-            Duration::from_millis(100),
-        );
-        assert!(
-            matches!(result, Err(Error::CommandTimedOut { .. })),
-            "{result:?}"
-        );
-        assert!(started.elapsed() < Duration::from_millis(800));
-    }
-
-    #[test]
-    fn successful_leader_leaves_closed_pipe_descendants_alone() {
-        use std::io::{Read as _, Write as _};
-        use std::os::unix::net::UnixListener;
-        let root = std::env::temp_dir().join(format!(
-            "github-process-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir(&root).unwrap();
-        let socket = root.join("gate");
-        let listener = UnixListener::bind(&socket).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        // The descendant cannot finish before we release it. No guessed delay
-        // between leader exit and the child's observable work is needed.
-        let script = "import subprocess,sys; subprocess.Popen([sys.executable,'-c','import socket,sys; s=socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect(sys.argv[1]); s.recv(1); s.sendall(b\"survived\")',sys.argv[1]],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)";
-        let result = command_with_timeout(
-            &root,
-            "python3",
-            &[
-                OsString::from("-c"),
-                OsString::from(script),
-                socket.into_os_string(),
-            ],
-            Duration::from_secs(5),
-        );
-        let observed = (|| -> std::io::Result<Vec<u8>> {
-            let watchdog = Instant::now();
-            let mut stream = loop {
-                match listener.accept() {
-                    Ok((stream, _)) => break stream,
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::WouldBlock
-                            && watchdog.elapsed() < Duration::from_secs(5) =>
-                    {
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(error) => return Err(error),
-                }
-            };
-            stream.set_nonblocking(false)?;
-            stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-            stream.write_all(b"x")?;
-            let mut bytes = Vec::new();
-            stream.read_to_end(&mut bytes)?;
-            Ok(bytes)
-        })();
-        std::fs::remove_dir_all(root).unwrap();
-        assert!(result.unwrap().status.success());
-        assert_eq!(observed.unwrap(), b"survived");
-    }
-
-    #[test]
-    fn slow_destination_does_not_block_the_deadline_or_runtime_shutdown() {
-        use std::io::Read as _;
-        use std::os::fd::OwnedFd;
-        use std::os::unix::net::UnixStream;
-        let (sink, mut reader) = UnixStream::pair().unwrap();
-        let (release, gate) = std::sync::mpsc::channel();
-        let reader = std::thread::spawn(move || {
-            gate.recv().unwrap();
-            let mut bytes = Vec::new();
-            reader.read_to_end(&mut bytes).unwrap();
-            bytes.len()
-        });
-        let file = std::fs::File::from(OwnedFd::from(sink));
-        let (completed, result) = std::sync::mpsc::channel();
-        let runner = std::thread::spawn(move || {
-            let result = command_with_destination(
-                Path::new("/tmp"),
-                "/bin/dd",
-                &[
-                    OsString::from("if=/dev/zero"),
-                    OsString::from("bs=1048576"),
-                    OsString::from("count=2"),
-                ],
-                Duration::from_millis(100),
-                3 * 1024 * 1024,
-                Some(file),
-            );
-            let _ = completed.send(result);
-        });
-        // The sink stays blocked until the command returns. This is a hang
-        // watchdog, not a guess about how fast the fixture can start or drain.
-        let result = result.recv_timeout(Duration::from_secs(5));
-        release.send(()).unwrap();
-        runner.join().unwrap();
-        let written = reader.join().unwrap();
-        let result = result.expect("command waited for the blocked sink");
-        assert!(
-            matches!(result, Err(Error::CommandTimedOut { .. })),
-            "{result:?}"
-        );
-        assert!(
-            written < 2 * 1024 * 1024,
-            "must not continue writing the whole output after timeout"
-        );
-    }
-
-    #[test]
-    fn capture_streams_to_a_file_without_retaining_a_second_copy() {
-        let path = std::env::temp_dir().join(format!("github-capture-{}", std::process::id()));
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        let file = std::fs::File::create(&path).unwrap();
-        let result = runtime
-            .block_on(capture(
-                b"complete".as_slice(),
-                "test",
-                "stdout",
-                8,
-                Some(file),
-            ))
-            .unwrap();
-        assert_eq!(result, b"");
-        assert_eq!(std::fs::read(&path).unwrap(), b"complete");
-        let file = std::fs::File::create(&path).unwrap();
-        let result = runtime.block_on(capture(
-            b"overflow".as_slice(),
-            "test",
-            "stdout",
-            4,
-            Some(file),
-        ));
-        assert!(matches!(result, Err(Error::CommandOutputTooLarge { .. })));
-        assert_eq!(std::fs::read(&path).unwrap(), b"over");
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn command_output_is_bounded_without_blocking_the_child() {
-        let error = command_with_timeout(
-            Path::new("/tmp"),
-            "sh",
-            &[
-                OsString::from("-c"),
-                OsString::from("yes x | head -c 2200000"),
-            ],
-            Duration::from_secs(5),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            error,
-            Error::CommandOutputTooLarge {
-                stream: "stdout",
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn oversized_output_stops_a_slow_producer_before_its_deadline() {
-        for (stream, script) in [
-            ("stdout", "head -c 2200000 /dev/zero; sleep 10"),
-            ("stderr", "head -c 2200000 /dev/zero >&2; sleep 10"),
-        ] {
-            let started = Instant::now();
-            let error = command_with_timeout(
-                Path::new("/tmp"),
-                "sh",
-                &[OsString::from("-c"), OsString::from(script)],
-                Duration::from_secs(2),
-            )
-            .unwrap_err();
-            assert!(
-                matches!(error, Error::CommandOutputTooLarge { stream: actual, .. } if actual == stream),
-                "expected {stream} overflow, got {error:?}",
-            );
-            assert!(started.elapsed() < Duration::from_secs(1));
-        }
     }
 }

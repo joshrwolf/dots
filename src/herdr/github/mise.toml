@@ -1,20 +1,8 @@
-[tasks.check]
-extends = "rust-check"
-vars = { package = "herdr-github" }
-depends = ["^check"]
-cache = { enabled = false }
-
 [tasks.build]
-run = 'cargo install --frozen --path . --root "$MISE_MONOREPO_ROOT/dist" --force'
-cache = { enabled = false }
+description = "Stage bin/ in this plugin directory"
+run = "cargo install --locked --path . --root . --force"
 
 [tasks.install]
-description = "Register this plugin from a verified immutable release"
+description = "Build, then link this plugin directory into Herdr"
 depends = [":build"]
-run = 'python3 "$MISE_MONOREPO_ROOT/src/herdr/deploy/main.py" github'
-cache = { enabled = false }
-
-[tasks.prepare]
-description = "Explicit Herdr source-install callback"
-run = "cargo install --frozen --path . --root . --force"
-cache = { enabled = false }
+run = "herdr plugin link ."

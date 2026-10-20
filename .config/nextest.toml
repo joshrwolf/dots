@@ -1,0 +1,8 @@
+# Two gate tiers; see docs/build.md. Acceptance tests live in a crate's
+# `acceptance` integration-test binary or, when they need private items, in a
+# `#[cfg(test)] mod acceptance`.
+[profile.default]
+default-filter = "not (binary(acceptance) | test(/(^|::)acceptance::/))"
+
+[profile.acceptance]
+default-filter = "binary(acceptance) | test(/(^|::)acceptance::/)"

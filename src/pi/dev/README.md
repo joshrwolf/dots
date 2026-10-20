@@ -45,5 +45,6 @@ no-model states. The preview uses the same footer component as the dots UI;
 fixture state never changes your session or saved preferences. Expand and scroll to compare summaries with recorded evidence. Wake scenarios show
 scheduled follow-ups and failed checks. Input outside commands is ignored, not sent to a model.
 
-`mise run //src/pi:verify-terminal` exercises real-host interaction in regular
-and fullscreen modes. This directory is excluded from the published package.
+`mise run //src/pi:verify-terminal` exercises the real interactive host, through
+Pi's virtual-terminal option, in regular and fullscreen modes. This directory is
+excluded from the published package.

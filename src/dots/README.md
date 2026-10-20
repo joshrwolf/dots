@@ -10,8 +10,8 @@ mise run //src/dots:install
 dots --help
 ```
 
-Installation links `~/.local/bin/dots` and its generated discovery skill.
-`mise run //src/dots:build` only stages the executable in `dist/bin/`.
+Installation runs `cargo install`, which places `dots` in `~/.cargo/bin`. The
+base `mise run install` links its generated discovery skill.
 
 ## Use
 
@@ -35,7 +35,8 @@ after changing either:
 
 ```sh
 mise run //src/dots:skills
-mise run //src/dots:check
+cargo nextest run -p dots-cli
+mise run //src/dots:skills-check
 ```
 
 Generation is offline and uses no model, credentials, or session data.

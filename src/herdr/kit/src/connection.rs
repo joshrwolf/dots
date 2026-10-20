@@ -7,11 +7,10 @@
 
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Command, Output};
 use std::time::Duration;
 
 use serde::Deserialize;
-use tokio::io::{AsyncRead, AsyncReadExt as _};
 
 use crate::{Client, Error, Result, env};
 
@@ -89,7 +88,7 @@ impl Request {
         match self.target {
             Target::Inherited(socket) => connection(socket, None, self.timeout.as_deref()),
             Target::Session(name) => {
-                let listing = discover(&mut discovery_command(&self.executable)).await?;
+                let listing = discover(discovery_command(&self.executable)).await?;
                 let socket = select(&listing, &name)?;
                 connection(socket, Some(name), self.timeout.as_deref())
             }
@@ -180,8 +179,8 @@ fn select(bytes: &[u8], name: &str) -> Result<PathBuf> {
     Ok(session.socket_path)
 }
 
-fn discovery_command(executable: &Path) -> tokio::process::Command {
-    let mut command = tokio::process::Command::new(executable);
+fn discovery_command(executable: &Path) -> Command {
+    let mut command = Command::new(executable);
     command.args(["session", "list", "--json"]);
     // Listing must not inherit an unrelated socket/session selection. Herdr's
     // normal configuration environment remains intact for its session registry.
@@ -189,60 +188,35 @@ fn discovery_command(executable: &Path) -> tokio::process::Command {
     command
 }
 
-async fn bounded(mut reader: impl AsyncRead + Unpin, maximum: usize) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    let mut chunk = vec![0_u8; 8192];
-    loop {
-        let count = reader
-            .read(&mut chunk)
-            .await
-            .map_err(Error::SessionDiscoveryIo)?;
-        if count == 0 {
-            return Ok(bytes);
-        }
-        if bytes.len().saturating_add(count) > maximum {
-            return Err(Error::SessionDiscoveryTooLarge);
-        }
-        bytes.extend_from_slice(chunk.get(..count).ok_or(Error::SessionDiscoveryTooLarge)?);
-    }
+/// Bounded by the shared runner: a deadline, an output limit, or an I/O failure
+/// kills the process group and reaps the child.
+async fn discover(command: Command) -> Result<Vec<u8>> {
+    listing(
+        dots_process::Runner::new(DEADLINE, MAX_DIAGNOSTIC)
+            .stdout_limit(MAX_LISTING)
+            .run(command)
+            .await,
+    )
 }
 
-async fn discover(command: &mut tokio::process::Command) -> Result<Vec<u8>> {
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(Error::SessionDiscoveryIo)?;
-    let stdout = child.stdout.take().ok_or(Error::InvalidConnectionTarget {
-        reason: "session discovery stdout unavailable",
+fn listing(output: std::result::Result<Output, dots_process::Error>) -> Result<Vec<u8>> {
+    use dots_process::Error as Process;
+    let output = output.map_err(|error| match error {
+        Process::Timeout(_) => Error::SessionDiscoveryTimeout,
+        Process::OutputLimit { .. } => Error::SessionDiscoveryTooLarge,
+        Process::Runtime(source)
+        | Process::Spawn(source)
+        | Process::Read { source, .. }
+        | Process::Sink(source)
+        | Process::Wait(source) => Error::SessionDiscoveryIo(source),
+        error => Error::SessionDiscoveryIo(std::io::Error::other(error)),
     })?;
-    let stderr = child.stderr.take().ok_or(Error::InvalidConnectionTarget {
-        reason: "session discovery stderr unavailable",
-    })?;
-    let result = tokio::time::timeout(DEADLINE, async {
-        let (status, stdout, _) = tokio::try_join!(
-            async { child.wait().await.map_err(Error::SessionDiscoveryIo) },
-            bounded(stdout, MAX_LISTING),
-            bounded(stderr, MAX_DIAGNOSTIC),
-        )?;
-        if !status.success() {
-            return Err(Error::SessionDiscoveryExit {
-                code: status.code(),
-            });
-        }
-        Ok(stdout)
-    })
-    .await
-    .unwrap_or(Err(Error::SessionDiscoveryTimeout));
-    if result.is_err() {
-        // A failed read/limit/timeout must not leave a child or full pipe behind.
-        // kill waits/reaps as well; wait also covers an already-exited process.
-        let _ = child.kill().await;
-        let _ = child.wait().await;
+    if !output.status.success() {
+        return Err(Error::SessionDiscoveryExit {
+            code: output.status.code(),
+        });
     }
-    result
+    Ok(output.stdout)
 }
 
 #[cfg(test)]
@@ -341,49 +315,82 @@ mod tests {
     }
 
     #[test]
-    fn bounded_reader_accepts_exact_limit_and_rejects_overflow() {
-        runtime().block_on(async {
-            assert_eq!(bounded(&b"abc"[..], 3).await.unwrap(), b"abc");
-            assert!(matches!(
-                bounded(&b"abcd"[..], 3).await,
-                Err(Error::SessionDiscoveryTooLarge)
-            ));
-        });
+    fn discovery_requires_success_and_maps_runner_failures() {
+        use std::os::unix::process::ExitStatusExt as _;
+        use std::process::ExitStatus;
+        let exited = |code: i32| Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: br#"{"sessions":[]}"#.to_vec(),
+            stderr: b"neutral diagnostic".to_vec(),
+        };
+        assert_eq!(listing(Ok(exited(0))).unwrap(), br#"{"sessions":[]}"#);
+        assert!(matches!(
+            listing(Ok(exited(7))),
+            Err(Error::SessionDiscoveryExit { code: Some(7) })
+        ));
+        assert!(matches!(
+            listing(Err(dots_process::Error::Timeout(DEADLINE))),
+            Err(Error::SessionDiscoveryTimeout)
+        ));
+        assert!(matches!(
+            listing(Err(dots_process::Error::OutputLimit {
+                stream: "stdout",
+                limit: MAX_LISTING
+            })),
+            Err(Error::SessionDiscoveryTooLarge)
+        ));
+        assert!(matches!(
+            listing(Err(dots_process::Error::Spawn(std::io::Error::other(
+                "missing"
+            )))),
+            Err(Error::SessionDiscoveryIo(_))
+        ));
     }
 
-    #[test]
-    fn discovery_checks_exit_status_and_drains_both_streams() {
-        runtime().block_on(async {
-            let mut command = tokio::process::Command::new("/bin/sh");
-            command.args([
-                "-c",
-                "printf '%s' '{\"sessions\":[]}'; printf '%s' 'neutral diagnostic' >&2; exit 7",
-            ]);
-            assert!(matches!(
-                discover(&mut command).await,
-                Err(Error::SessionDiscoveryExit { code: Some(7) })
-            ));
-        });
-    }
+    /// Host acceptance: the verify tier selects `acceptance` modules.
+    mod acceptance {
+        use super::*;
 
-    #[test]
-    fn discovery_deadline_kills_and_reaps_the_process() {
-        runtime().block_on(async {
-            let mut command = tokio::process::Command::new("/bin/sleep");
-            command.arg("30");
-            let start = std::time::Instant::now();
+        /// Stock Herdr on `PATH` lists an isolated home's registry without
+        /// starting a server; its sole session is reported as stopped.
+        #[test]
+        fn stock_herdr_listing_is_decoded_and_stopped_sessions_fail() {
+            let herdr = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                .map(|directory| directory.join("herdr"))
+                .find(|path| path.is_file())
+                .expect("stock Herdr must be on PATH");
+            let root =
+                std::env::temp_dir().join(format!("herdrkit-discovery-{}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            let mut command = discovery_command(&herdr);
+            for (name, _) in std::env::vars_os() {
+                let text = name.to_string_lossy();
+                if text.starts_with("HERDR_") || text.starts_with("XDG_") {
+                    command.env_remove(&name);
+                }
+            }
+            command
+                .current_dir(&root)
+                .env("HOME", &root)
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .env("XDG_STATE_HOME", root.join("state"));
+            let listing = runtime().block_on(discover(command));
+            std::fs::remove_dir_all(&root).unwrap();
+            let listing = listing.unwrap();
             assert!(matches!(
-                discover(&mut command).await,
-                Err(Error::SessionDiscoveryTimeout)
+                select(&listing, "default"),
+                Err(Error::SessionStopped { .. })
             ));
-            assert!(start.elapsed() < Duration::from_secs(6));
-        });
+            assert!(matches!(
+                select(&listing, "missing"),
+                Err(Error::SessionNotFound { .. })
+            ));
+        }
     }
 
     #[test]
     fn discovery_only_requests_listing_and_removes_inherited_endpoint() {
         let command = discovery_command(Path::new("/opt/bin/herdr"));
-        let command = command.as_std();
         assert_eq!(command.get_program(), "/opt/bin/herdr");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),

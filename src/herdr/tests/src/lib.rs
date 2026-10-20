@@ -16,6 +16,7 @@ mod tests {
     #[derive(Debug, Deserialize)]
     struct Manifest {
         id: String,
+        #[serde(default)]
         build: Vec<Command>,
         #[serde(default)]
         startup: Vec<Command>,
@@ -101,22 +102,17 @@ mod tests {
     }
 
     #[test]
-    fn every_plugin_uses_its_own_mise_build_primitive() -> Result<()> {
+    fn every_plugin_is_linked_prebuilt() -> Result<()> {
         for plugin in ["find", "github", "nav", "review"] {
             let manifest = manifest(plugin)?;
             ensure!(
                 manifest.id == format!("herdr-{plugin}"),
                 "{plugin} manifest id is inconsistent"
             );
+            // `herdr plugin link` never runs a build callback; `:build` stages bin/.
             ensure!(
-                manifest.build.len() == 1,
-                "{plugin} must have exactly one build primitive"
-            );
-            let expected = vec!["mise".to_owned(), "run".to_owned(), ":prepare".to_owned()];
-            ensure!(
-                manifest.build.first().map(|build| build.command.as_slice())
-                    == Some(expected.as_slice()),
-                "{plugin} does not use its per-plugin mise preparation task"
+                manifest.build.is_empty(),
+                "{plugin} must not declare a Herdr build callback"
             );
         }
         Ok(())
@@ -146,6 +142,13 @@ mod tests {
                         event.on
                     );
                 }
+            }
+            for startup in &manifest.startup {
+                ensure!(
+                    startup.command == [binary.as_str()],
+                    "{} startup hook duplicates its Herdr identity in argv",
+                    manifest.id
+                );
             }
         }
         Ok(())
@@ -206,7 +209,7 @@ mod tests {
             "GitHub action dispatch drifted"
         );
         ensure!(
-            ids(&github.panes) == BTreeSet::from(["ci-arm", "ci-brief"]),
+            ids(&github.panes) == BTreeSet::from(["ci-arm", "ci-brief", "prs"]),
             "GitHub pane dispatch drifted"
         );
         ensure!(

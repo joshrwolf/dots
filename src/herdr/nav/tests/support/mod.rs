@@ -87,10 +87,10 @@ pub(crate) struct Stock {
 
 impl Stock {
     pub(crate) fn start() -> Result<Self> {
-        let herdr = fs::canonicalize(
-            std::env::var_os("HERDR_NAV_TEST_BINARY")
-                .context("set HERDR_NAV_TEST_BINARY to a stock Herdr 0.9.1+ binary")?,
-        )?;
+        let herdr = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|directory| directory.join("herdr"))
+            .find(|path| path.is_file())
+            .context("stock Herdr 0.9.1+ must be on PATH")?;
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let root = PathBuf::from(format!("/tmp/nav-stock-{}-{nonce}", std::process::id()));
         fs::DirBuilder::new().mode(0o700).create(&root)?;
@@ -311,6 +311,7 @@ pub(crate) fn command(root: &Path, program: &Path) -> Command {
     }
     command
         .current_dir(root)
+        .env("HOME", root)
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -323,7 +324,7 @@ pub(crate) fn command(root: &Path, program: &Path) -> Command {
 }
 
 pub(crate) fn run(command: Command) -> Result<String> {
-    let result = herdrkit::process::output(command, Duration::from_secs(25), 64 * 1024)?;
+    let result = dots_process::output(command, Duration::from_secs(25), 64 * 1024)?;
     ensure!(
         result.status.success(),
         "action failed: {}",

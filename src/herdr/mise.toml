@@ -1,21 +1,11 @@
 [tasks.deps]
 depends = ["//src/herdr/review:deps"]
-cache = { enabled = false }
 
+# Plugins register first, so restowed key bindings never name a missing action.
 [tasks.install]
 dir = "{{config_root}}/../.."
-depends = ["./...:build"]
+depends = ["./...:install"]
 run = [
-  'mkdir -p home/herdr/.local',
   '{{vars.stow}} --target="$HOME" --restow --simulate herdr nvim',
-  'cargo install --frozen --path src/herdr/issue --root home/herdr/.local --force',
-  'cargo install --frozen --path src/herdr/review --root home/herdr/.local --force',
   '{{vars.stow}} --target="$HOME" --restow herdr nvim',
-  'python3 src/herdr/deploy/main.py',
 ]
-cache = { enabled = false }
-
-[tasks.link]
-depends = ["./...:build"]
-run = 'python3 "$MISE_MONOREPO_ROOT/src/herdr/deploy/main.py"'
-cache = { enabled = false }

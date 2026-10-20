@@ -20,7 +20,6 @@ pub mod apps;
 pub mod connection;
 pub mod events;
 pub mod picker;
-pub mod process;
 pub mod runtime;
 pub mod service;
 pub mod state_file;
@@ -48,5 +47,3 @@ pub use metadata::MetadataReporter;
 pub use socket::Client;
 pub use theme::{Indicators, Theme};
 pub use tokens::{TokenError, Tokens};
-
-pub mod resources;

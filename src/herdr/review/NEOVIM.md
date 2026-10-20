@@ -7,9 +7,9 @@ Herdr review binding.
 
 Open a review from Herdr's review picker, then start Neovim yourself in that
 workspace. Install the [Neovim configuration](../../../home/nvim/.config/nvim/README.md)
-and build with `mise run rust-build`; the client finds the staged
-`herdr-review` or an executable on PATH. Set `vim.g.herdr_review_binary` to
-select one explicitly.
+and install `herdr-review` with `mise run //src/herdr:install`; the client
+finds `herdr-review` on PATH, then in Cargo's `~/.cargo/bin`. Set
+`vim.g.herdr_review_binary` to select one explicitly.
 
 Setup is passive. A private stdio bridge starts on the first review operation;
 review content remains in the repository's registry, not the editor process.
@@ -40,5 +40,6 @@ coordinates. The bridge validates binding scope, but pane movement can still
 race the final lookup.
 
 `mise run //src/herdr/review:deps` restores locked Neovim test dependencies;
-`mise run //src/herdr/review:check` runs isolated bridge/editor checks without
-loading the user's configuration or contacting a live server.
+`cargo nextest run -p herdr-review` runs the isolated Lua suite and bridge
+checks, and adding `--profile acceptance` runs the editor-restart
+acceptance test. Neither loads the user's configuration or contacts a live server.

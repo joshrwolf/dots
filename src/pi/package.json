@@ -7,15 +7,6 @@
   "exports": {
     "./ui": "./src/index.ts"
   },
-  "files": [
-    "extensions",
-    "src",
-    "themes",
-    "npm-shrinkwrap.json"
-  ],
-  "keywords": [
-    "pi-package"
-  ],
   "pi": {
     "extensions": [
       "extensions/context/index.ts",

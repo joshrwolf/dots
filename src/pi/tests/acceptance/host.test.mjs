@@ -1,23 +1,17 @@
 import assert from "node:assert/strict";
 import {spawn,spawnSync} from "node:child_process";
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,cpSync,rmSync,symlinkSync,renameSync} from "node:fs";
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync,rmSync} from "node:fs";
 import {join} from "node:path";
 import {tmpdir} from "node:os";
 import {fileURLToPath} from "node:url";
 import {once} from "node:events";
 import {test} from "node:test";
-import {install} from "../../install/index.mjs";
-const root=fileURLToPath(new URL("../../../../",import.meta.url));
-import {runtime as prepared, verifyRuntime} from "../../install/artifact.mjs";
+const companion=fileURLToPath(new URL("../../",import.meta.url)).replace(/\/$/,"");
 
-test("installed Pi loads the package, runs a native child, reloads, and shuts down", async t => {
-verifyRuntime();
-mkdirSync(join(root,"dist"),{recursive:true});
+test("Pi loads the checkout package, runs a native child, reloads, and shuts down", async t => {
 const work=mkdtempSync(join(tmpdir(),"dots-pi-host-"));
 t.after(() => rmSync(work,{recursive:true,force:true}));
-const runtime=join(work,"runtime");
-cpSync(prepared,runtime,{recursive:true});
-const manifest=JSON.parse(readFileSync(join(runtime,"package.json"),"utf8"));
+const manifest=JSON.parse(readFileSync(join(companion,"package.json"),"utf8"));
 const binary=process.env.PI_BIN??"pi";
 const version=spawnSync(binary,["--version"],{encoding:"utf8",timeout:10000});
 assert.equal(version.status,0,version.stderr);
@@ -73,28 +67,36 @@ class Client {
         assert.doesNotMatch(this.stderr,/Failed to load extension|ERR_MODULE_NOT_FOUND|Cannot find module|stale after session/i);
     }
 }
-const expected=["context","memory","ui","ui-version","workers","wakes","jobs","goal"];
-await install(join(work,"installed"));
+const expected=["context","memory","ui","workers","wakes","jobs","goal"];
+// Native local install registers the checkout path; Pi loads it without copying.
+const agent=join(work,"installed");mkdirSync(agent,{recursive:true});
+for(let attempt=0;attempt<2;attempt++){
+    const result=spawnSync(binary,["install",companion],{encoding:"utf8",timeout:30000,env:{...process.env,PI_CODING_AGENT_DIR:agent,PI_OFFLINE:"1"}});
+    assert.equal(result.status,0,result.stderr);
+}
+const packages=JSON.parse(readFileSync(join(agent,"settings.json"),"utf8")).packages;
+assert.equal(packages.length,1,"reinstalling must not duplicate the registration");
+assert.equal(join(agent,packages[0]),companion);
 const installed=new Client(undefined,"installed");
 try {
     const response=await installed.call("get_commands");
-    for(const name of expected)assert.ok(response.data.commands.some(c=>c.name===name),"installed resource missing: "+name);
-    installed.verify();results.push({gate:"installed-settings-and-release-pointer-loading",passed:true});
+    for(const name of expected)assert.ok(response.data.commands.some(c=>c.name===name && c.sourceInfo?.path?.startsWith(companion+"/")),"installed resource missing: "+name);
+    installed.verify();results.push({gate:"native-local-install-loads-checkout",passed:true});
 } finally {await installed.close();}
-const normal=new Client(runtime,"manifest");
+const normal=new Client(companion,"manifest");
 try{
     const response=await normal.call("get_commands");
     for(const name of expected)assert.ok(response.data.commands.some(c=>c.name===name),"manifest resource missing: "+name);
     await normal.call("prompt",{message:"/jobs"});
     normal.verify();results.push({gate:"real-package-manifest-loading",passed:true});
 }finally{await normal.close();}
-// Hand-authored driver loads the identical artifact factories with a narrow
-// registration observer. Disable automatic model turns, not job execution.
-const driver=join(runtime,".trial-driver.ts");
-writeFileSync(driver,`${manifest.pi.extensions.map((p,i)=>`import extension${i} from ${JSON.stringify("./"+p)};`).join("\n")}
+// Hand-authored driver, kept outside the checkout, loads the identical package
+// factories with a narrow registration observer. Disable automatic model turns, not job execution.
+const driver=join(work,"trial-driver.ts");
+writeFileSync(driver,`${manifest.pi.extensions.map((p,i)=>`import extension${i} from ${JSON.stringify(join(companion,p))};`).join("\n")}
 import {appendFileSync,readFileSync} from "node:fs";
 import {join} from "node:path";
-import {createToolRenderers} from "@joshrwolf/pi-dots/ui";
+import {createToolRenderers} from ${JSON.stringify(join(companion,manifest.exports["./ui"]))};
 export default function(pi){
  const marker=process.env.PI_TRIAL_MARKER;
  const mark=(data)=>appendFileSync(marker,JSON.stringify(data)+"\\n");
@@ -107,7 +109,7 @@ export default function(pi){
  ${manifest.pi.extensions.map((_,i)=>`extension${i}(proxy);`).join("\n")}
  pi.on("session_start",()=>mark({event:"start"}));
  pi.on("session_shutdown",()=>mark({event:"shutdown"}));
- pi.registerCommand("lab-job",{description:"isolated packaged child-process acceptance",async handler(args,ctx){
+ pi.registerCommand("lab-job",{description:"isolated package child-process acceptance",async handler(args,ctx){
   if(typeof createToolRenderers!=="function")throw new Error("public UI export missing");
   const started=await tools.get("job_start").execute("start",{command:"printf PACKAGE_CHILD_OK",cwd:ctx.cwd,timeoutMs:5000},undefined,undefined,ctx);
   const id=started.details.id;let job;
@@ -118,7 +120,7 @@ export default function(pi){
    if(job.state==="finished")break;
    await new Promise(resolve=>setTimeout(resolve,50));
   }while(Date.now()<deadline);
-  if(job.state!=="finished" || job.facts.root?.code!==0)throw new Error("packaged child did not finish: "+JSON.stringify(job));
+  if(job.state!=="finished" || job.facts.root?.code!==0)throw new Error("package child did not finish: "+JSON.stringify(job));
   const output=readFileSync(join(job.directory,"output.log"),"utf8");
   if(output!=="PACKAGE_CHILD_OK")throw new Error("child capture mismatch");
   mark({event:"child-pass",id,publicExport:true});
@@ -138,56 +140,7 @@ const marks=readFileSync(marker,"utf8").trim().split("\n").map(JSON.parse);
 assert.equal(marks.filter(m=>m.event==="child-pass").length,2);
 assert.ok(marks.filter(m=>m.event==="start").length>=2);
 assert.ok(marks.filter(m=>m.event==="shutdown").length>=2);
-results.push({gate:"packaged-child-public-export-reload-shutdown",passed:true});
-// Two isolated package snapshots exercise the real registered-path transition,
-// including changed transitive imports. Fixture IDs are labels, not integrity attestations.
-const switching=join(work,"switching");
-const base=join(switching,"dots/packages/pi-dots");
-const current=join(base,"current");
-const revisions=[["a".repeat(64),"A"],["b".repeat(64),"B"]];
-for(const [id,value] of revisions){
- const release=join(base,"releases",id);
- mkdirSync(release,{recursive:true});
- cpSync(prepared,release,{recursive:true});
- const packageFile=join(release,"package.json");
- const fixtureManifest=JSON.parse(readFileSync(packageFile,"utf8"));
- fixtureManifest.pi.extensions.push("trial-revision.ts");
- writeFileSync(packageFile,JSON.stringify(fixtureManifest));
- writeFileSync(join(release,"trial-value.ts"),`export const value=${JSON.stringify(value)};\n`);
- writeFileSync(join(release,"trial-revision.ts"),`
-import {appendFileSync} from "node:fs";
-import {value} from "./trial-value.ts";
-import {releaseStatus} from "./src/host/release.ts";
-export default function(pi){
- pi.registerCommand("lab-revision",{async handler(){appendFileSync(process.env.PI_TRIAL_MARKER,JSON.stringify({event:"revision",value,...releaseStatus()})+"\\n");}});
- pi.registerCommand("lab-reload",{async handler(args,ctx){await ctx.reload();}});
-}
-`);
-}
-const switchTo=id=>{symlinkSync(join(base,"releases",id),current+".next");renameSync(current+".next",current);};
-switchTo(revisions[0][0]);
-writeFileSync(join(switching,"settings.json"),JSON.stringify({packages:[current]}));
-const switchingClient=new Client(undefined,"switching");
-const lastRevision=()=>readFileSync(marker,"utf8").trim().split("\n").map(JSON.parse).filter(m=>m.event==="revision").at(-1);
-try{
- await switchingClient.call("get_commands");
- await switchingClient.call("prompt",{message:"/lab-revision"});
- assert.deepEqual(lastRevision(),{event:"revision",value:"A",loaded:revisions[0][0],installed:revisions[0][0],reloadNeeded:false});
- switchTo(revisions[1][0]);
- await switchingClient.call("prompt",{message:"/lab-revision"});
- assert.deepEqual(lastRevision(),{event:"revision",value:"A",loaded:revisions[0][0],installed:revisions[1][0],reloadNeeded:true});
- await switchingClient.call("prompt",{message:"/ui-version"});
- assert.ok(switchingClient.events.some(e=>e.type==="extension_ui_request" && e.method==="notify" && e.message?.includes("loaded aaaaaaaaaaaa") && e.message?.includes("installed bbbbbbbbbbbb")));
- await switchingClient.call("prompt",{message:"/lab-reload"});
- await switchingClient.call("prompt",{message:"/lab-revision"});
- assert.deepEqual(lastRevision(),{event:"revision",value:"B",loaded:revisions[1][0],installed:revisions[1][0],reloadNeeded:false});
- switchTo(revisions[0][0]);
- await switchingClient.call("prompt",{message:"/lab-reload"});
- await switchingClient.call("prompt",{message:"/lab-revision"});
- assert.deepEqual(lastRevision(),{event:"revision",value:"A",loaded:revisions[0][0],installed:revisions[0][0],reloadNeeded:false});
- switchingClient.verify();
- results.push({gate:"release-switch-and-rollback-via-reload",passed:true});
-}finally{await switchingClient.close();}
+results.push({gate:"checkout-child-public-export-reload-shutdown",passed:true});
 assert.ok(!existsSync(join(work,"manifest/settings.json")),"manifest test must not register packages");
 console.log(JSON.stringify({passed:true,results},null,2));
 });

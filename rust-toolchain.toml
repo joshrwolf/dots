@@ -1,5 +1,4 @@
 [toolchain]
-# Native-editor mirror of mise.toml; checked by `mise run doctor`.
 channel = "1.99.0"
 components = ["clippy", "rustfmt"]
 profile = "minimal"

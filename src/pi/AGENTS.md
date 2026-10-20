@@ -1,7 +1,7 @@
 # Pi packages in dots
 
-- Stock third-party npm releases are pinned in `../../pi-packages.json` and
-  installed by Pi. Do not vendor them or edit Pi's managed package cache.
+- Stock third-party npm releases are pinned in the `packages` task and
+  installed by `pi install`. Do not vendor them or edit Pi's managed package cache.
 - This directory is our private companion package. List resource entrypoints
   explicitly in `package.json`; do not also install discovery symlinks. Add
   extensions under `extensions/<name>/index.ts` for actual functionality.
@@ -11,19 +11,18 @@
   imported Pi host libraries as peers, with exact development versions when
   needed for checks; do not bundle another Pi runtime. Commit npm lockfiles.
 - Use `mise run //src/pi:deps`, `mise run //src/pi:check`, and
-  `mise run //src/pi:verify-host`. Explicit `mise run //src/pi:install` runs the
-  full verification gate and installs an immutable runtime through the public
-  settings API. Use the install/rollback tasks, not ad hoc activation scripts.
-  Neither reloads a session; companion updates use `/reload` when jobs/workers
-  are idle, while CLI/SDK updates require restart. Use `upstream-install` for
-  pinned third-party npm packages through Pi. Do not install merely to test;
-  use isolated temporary homes.
-- Serialize preparation, verification, and installation within a checkout: they
-  share `dist/` staging. The installer lock protects the final switch, not builds;
-  use separate checkouts for independent builds.
-- Updates are explicit: change the exact npm pin, remove the old registration
-  with `pi remove`, then run `mise run //src/pi:upstream-install`. Preserve resource filters when
-  replacing a registration. Never install an unpinned tracking version.
+  `mise run //src/pi:verify-host`. `mise run //src/pi:install` registers this
+  directory with `pi install <path>`; Pi loads it in place, so the primary
+  checkout's working tree is live on every session's next `/reload` or start.
+  Never install from an agent worktree, and do not install merely to test; use
+  isolated temporary homes. Installation never reloads a session; changes use
+  `/reload` when jobs/workers are idle, while CLI/SDK updates require restart.
+- Pi does not install a local package's dependencies: `:deps` (`npm ci`) owns
+  `node_modules`. Pi maps host packages to its own copies, so development copies
+  of peers serve only checks; keep host packages out of `dependencies`.
+- Updates are explicit: change the exact npm pin in the `packages` task, then run
+  it; Pi replaces the older registration and keeps resource filters. Never
+  install an unpinned tracking version.
 - After an SDK or source update, run the full `mise run //src/pi:check` and a bounded
   native async child launch/result against the installed host. Command discovery
   and development-SDK tests alone do not prove host compatibility. Keep smoke
@@ -67,9 +66,10 @@
 - Use `dev/` for opt-in, neutral fixture scenarios built from shipping components,
   not parallel mock implementations. Run `mise run //src/pi:verify-terminal` for
   presentation changes; real scrolling, focus, resize, and reload are contracts.
+  It drives Pi's own `InteractiveMode` through its public `terminal` option in
+  both TUI modes; tty raw mode and protocol negotiation stay upstream's concern,
+  so do not add a PTY harness. Extend `tests/fixtures/terminal-host.mjs` flows.
 - Use strict, erasable TypeScript and typed consumer tests. Verify real host
   transitions and HTML export, including cold custom-tool exports; builtin
-  export templates can bypass registered renderers. Test release switching and
-  rollback through `/reload`, including changed transitive imports and version
-  reporting. Keep compatibility tests
+  export templates can bypass registered renderers. Keep compatibility tests
   separate from production imports.

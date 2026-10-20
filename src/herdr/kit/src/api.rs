@@ -126,14 +126,14 @@ pub struct WorkspaceWorktree {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Workspace {
     pub workspace_id: WorkspaceId,
-    /// Lifetime identity, absent on hosts without persistent workspace identities.
-    #[serde(default)]
-    pub identity: Option<String>,
     pub label: String,
     pub focused: bool,
     pub agent_status: AgentStatus,
     #[serde(default)]
     pub worktree: Option<WorkspaceWorktree>,
+    /// Display metadata from every source, keyed by token name; see [`Pane::tokens`].
+    #[serde(default)]
+    pub tokens: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

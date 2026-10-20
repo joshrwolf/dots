@@ -9,14 +9,53 @@ mod skills;
 mod tasks;
 
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 use clap::{CommandFactory as _, Parser as _};
-use github_inspect::GitHub;
+use github_inspect::{Executables, GitHub, Transport};
 
 use command::{CiCommand, Cli, Command, GitHubCommand, InspectArgs, SkillCommand};
 
+/// Host context of one invocation, resolved by the binary and supplied by tests.
+#[derive(Debug)]
+pub struct Environment<'a> {
+    /// Default for `--directory`; `None` resolves the process working directory.
+    pub directory: Option<PathBuf>,
+    /// GitHub evidence cache root; `None` disables caching.
+    pub cache: Option<PathBuf>,
+    /// Every `gh` and `git` query of the GitHub commands.
+    pub github: &'a dyn Transport,
+}
+
+impl Environment<'static> {
+    /// The process working directory, XDG cache, and installed executables.
+    pub fn process() -> Self {
+        Self {
+            directory: None,
+            cache: cache_directory(),
+            github: &Executables,
+        }
+    }
+}
+
+impl Environment<'_> {
+    fn directory(&self, selected: Option<PathBuf>) -> Result<PathBuf> {
+        selected
+            .or_else(|| self.directory.clone())
+            .map_or_else(std::env::current_dir, Ok)
+            .context("resolve working directory")
+    }
+}
+
 pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
+    run_in(&Environment::process(), args)
+}
+
+pub fn run_in(
+    environment: &Environment<'_>,
+    args: impl IntoIterator<Item = OsString>,
+) -> Result<String> {
     let arguments = std::iter::once(OsString::from("dots")).chain(args);
     let cli = match Cli::try_parse_from(arguments) {
         Ok(cli) => cli,
@@ -61,10 +100,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
                 cli.repo.is_none() && !cli.no_cache,
                 "tasks are local to the project checkout; --repo and --no-cache do not apply"
             );
-            let directory = cli
-                .directory
-                .map_or_else(std::env::current_dir, Ok)
-                .context("resolve working directory")?;
+            let directory = environment.directory(cli.directory)?;
             tasks::run(tasks::Request {
                 command,
                 project,
@@ -87,15 +123,12 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
             command: SkillCommand::Check { output },
         } => skills::publish(&output, true),
         Command::Github { command } => {
-            let directory = cli
-                .directory
-                .map_or_else(std::env::current_dir, Ok)
-                .context("resolve working directory")?;
-            let mut provider = GitHub::new(&directory);
+            let directory = environment.directory(cli.directory)?;
+            let mut provider = GitHub::with_transport(&directory, environment.github);
             if !cli.no_cache
-                && let Some(cache) = cache_directory()
+                && let Some(cache) = &environment.cache
             {
-                provider = provider.with_cache(&cache);
+                provider = provider.with_cache(cache);
             }
             match command {
                 GitHubCommand::Ci(args) => ci(&provider, *args, cli.repo.as_ref(), cli.json),
@@ -205,12 +238,10 @@ fn inspect(
     }
 }
 
-fn cache_directory() -> Option<std::path::PathBuf> {
+fn cache_directory() -> Option<PathBuf> {
     let root = std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
+        .map(PathBuf::from)
         .filter(|path| path.is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache"))
-        })?;
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
     Some(root.join("dots/github"))
 }

@@ -1,1 +1,0 @@
-../../../../src/aerospace/resize-step.py

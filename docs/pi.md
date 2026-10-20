@@ -10,59 +10,49 @@ Use the [pinned development tools](build.md), separately from Pi's managed runti
 ```sh
 mise run pi-cli:install
 mise run install
-mise run //src/pi:deps
-mise run //src/pi:upstream-install
+mise run //src/pi:packages
 mise run //src/pi:install
 ```
+
+`:packages` runs `pi install` for the pinned third-party npm packages.
+`:install` runs `mise run //src/pi:deps` (`npm ci`), then
+`pi install <checkout>/src/pi`. Pi loads a local package from its path without
+copying, so the companion runs from the checkout. Install only from the primary
+checkout, never from an agent worktree. Reinstalling is harmless.
 
 Settings, credentials, models, sessions, and package registrations stay
 machine-local under `~/.pi/agent/`. Shared skills use `~/.agents/skills/`.
 Use `pi list` to inspect packages and `pi config` to select their resources.
-Do not register duplicate local/Git copies of managed packages.
-
-The companion runs from an installed snapshot, not the checkout. Our installer
-stores releases under `~/.pi/agent/dots/packages/pi-dots/` and switches its
-`current` link; Pi loads that local package. Mise runs the commands.
+Register one companion copy: Pi identifies local packages by path, so a second
+checkout's copy loads alongside and conflicts. Use `pi remove <path>` first.
 
 ## Updates
 
-For companion changes, run one command:
-
-```sh
-mise run //src/pi:install
-```
-
-It verifies, packages, and installs the update without reloading sessions.
+Companion changes take effect in the primary checkout's working tree; there is
+no install step. A running session keeps the code it loaded until `/reload`.
 Use `/reload` when background work is idle: it shuts down extensions and stops
-this session’s jobs and worker processes. Coordinate installations across
-sessions; another install changes the copy everyone loads next. Do not overlap
-verification and installation in one checkout: they share build staging.
-
-`/ui-version` reports loaded and installed versions. A mismatch also appears in
-the footer when a turn starts or you check the version; there is no background poll.
+this session's jobs and worker processes. Every session loads the checkout's
+current files on its next reload or start, so switching branches or editing
+there changes them all.
 
 | Change | Load it |
 |---|---|
-| Companion source | Install, then `/reload` |
-| Already-installed companion update or rollback | `/reload` |
+| Companion source | `/reload` |
+| Companion dependencies | `mise run //src/pi:deps`, then `/reload` |
 | Pi CLI/SDK or startup environment/options | Restart Pi; `pi -c` resumes the last project session |
 | Workbench source | `/reload` in the workbench; relaunch for launcher changes |
 
-`mise run //src/pi:rollback` restores the previous installed copy; it does not
-reload sessions. Use the same idle-session precautions afterward.
-
 Keep the companion's exact development SDK and lockfile aligned with the host.
-After dependency changes, run `mise run //src/pi:deps`. For checks without
-installation, use `mise run //src/pi:check` or `mise run //src/pi:verify`.
-Verification uses isolated provider-free hosts; it does not change the live
-installation or prove live-model access.
+Pi supplies its own SDK, TUI, and TypeBox to extensions; the development copies
+in `node_modules` serve only checks. Use `mise run //src/pi:check` or
+`mise run //src/pi:verify`; verification uses isolated provider-free hosts and
+does not change the live installation or prove live-model access.
 
 `mise run pi-cli:update` updates Pi itself, not pinned extensions.
 
-Third-party npm versions live in `pi-packages.json`. To upgrade, edit the pin,
-remove the old registration with `pi remove npm:<package>@<old-version>`, then
-run `mise run //src/pi:upstream-install` and `mise run //src/pi:check`.
-Preserve resource filters and use `/reload` when idle. Companion checks do not run upstream's
+Third-party npm pins live in the `:packages` task. To upgrade, edit the pin and
+run `mise run //src/pi:packages`; Pi replaces the older registration and keeps
+its resource filters. Use `/reload` when idle. Companion checks do not run upstream's
 test suite; test a worker launch/result in a fresh session after upgrades.
 
 ## Presentation
@@ -87,8 +77,8 @@ for full evidence. Codemode child previews cannot show nested results that Pi di
 
 Theme selection stays in Pi's `/settings`. The base `dots` theme follows
 `~/.config/theme/current/pi.json`; the companion also supplies
-`dots-light/dots-dark` for automatic light/dark selection. Package theme changes
-require installation and `/reload`; a central theme-link change needs `/reload`.
+`dots-light/dots-dark` for automatic light/dark selection. Package theme and central
+theme-link changes need `/reload`.
 
 `/context` shows reported usage and estimated contributions, not exact billing.
 The [presentation library](../src/pi/src/README.md) documents lifecycle constraints

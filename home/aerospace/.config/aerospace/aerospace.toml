@@ -19,9 +19,10 @@ alt-shift-j = 'move down'
 alt-shift-k = 'move up'
 alt-shift-l = 'move right'
 
-# Move the horizontal divider left/right through 1/4, 1/3, 1/2, 2/3, and 3/4.
-ctrl-alt-shift-h = 'exec-and-forget python3 "${HOME}/.config/aerospace/resize-step.py" left'
-ctrl-alt-shift-l = 'exec-and-forget python3 "${HOME}/.config/aerospace/resize-step.py" right'
+# Shrink/grow the focused window along its parent's axis; equalize all tiles.
+ctrl-alt-shift-h = 'resize smart -100'
+ctrl-alt-shift-l = 'resize smart +100'
+ctrl-alt-shift-equal = 'balance-sizes'
 
 ctrl-1 = 'workspace 1'
 ctrl-2 = 'workspace 2'

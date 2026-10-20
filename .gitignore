@@ -2,47 +2,14 @@
 .idea/
 .envrc
 
-# Python interpreter caches are generated, not source.
-__pycache__/
-*.pyc
-
 # Codex settings and trusted project paths belong to the local user.
 /home/codex/.codex/config.toml
-
-# Machine-local configuration; omitted from fresh clones.
-/sesh/
-/starship/
-/git/
-/fzf/
-/claude/
-/bin/
-/tmux/
-/worktrunk/
-/tools/
-/slack/
-
-# Retired layout may still contain ignored private state before/after cutover.
-# Keep these exclusions even when tracked payloads have moved.
-/skills/.agents/skills/local-*
-/skills/.claude/skills/local-*
-/skills/.local/share/dots/
-/herdr/
-/pi/
-/nvim/
-/gitsign/
-/cli/
-/claude-mods/
-/herdr-plugins
-/pi-plugins
-/scripts/
 
 # Optional independent private source checkout; never add it to public history.
 /private/
 
-# Private skills and their discovery links stay machine-local.
+# Private skills and Claude mod links stay machine-local.
 /skills/local-*
-/home/skills/.agents/skills/local-*
-/home/skills/.claude/skills/local-*
 
 **/*.old
 **/*hide.lua
@@ -51,15 +18,11 @@ __pycache__/
 # Game audio; this repo is public
 home/herdr/.config/herdr/sounds/*.mp3
 
-# nvim writes here when started with -V*/path logging.
-nvim.log
-
-# Source-install callbacks may stage binaries beside manifests; never commit them.
+# Plugin builds stage bin/ and Cargo install records beside manifests.
 src/herdr/target/
 src/herdr/*/bin/
 src/herdr/*/.crates.toml
 src/herdr/*/.crates2.json
-
 
 # Pi package build/dependency artifacts and local runtime data.
 src/pi/**/node_modules/
@@ -72,26 +35,14 @@ src/pi/**/*.tgz
 # Scratch handoff notes, not part of the dotfiles.
 src/herdr/HANDOFF.md
 
-# Native Cargo staging and tracking records are machine-local.
-/home/herdr/.local/.crates.toml
-/home/herdr/.local/.crates2.json
-home/herdr/.local/bin/herdr-issue
-home/herdr/.local/bin/herdr-issue.tmp.*
-home/herdr/.local/bin/herdr-review
-home/herdr/.local/bin/herdr-review.tmp.*
-
 # Runtime data must never be captured through a folded Stow directory.
 /home/herdr/.config/herdr/plugins.json
 /home/herdr/.config/herdr/.plugins.lock
+/home/herdr/.config/herdr/plugins/
 /home/skills/.local/share/dots/
 
-# Shared Rust workspace and prepared artifacts (never live registration).
+# Shared Rust workspace build output.
 /target/
-/dist/
-/home/cli/.local/bin/dots
-/home/cli/.local/.crates.toml
-/home/cli/.local/.crates2.json
-/home/cli/.local/bin/dots.tmp.*
 
 # Engine-written editor types and machine-local Claude mods.
 src/claude/*/.claude-plugin/types/

@@ -18,20 +18,51 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
 
 - Use native `AGENTS.md` discovery; do not add `CLAUDE.md` compatibility links.
   Claude personal instructions use its native user rules directory.
-- Keep canonical skills at `skills/<name>/`, with `name` and `description`
-  frontmatter in `SKILL.md` and relative supporting paths.
-- Author both discovery links in `home/skills/.agents/skills/` and
-  `home/skills/.claude/skills/`; installation only restows them.
-  See [skill setup](docs/skills.md) for targets and validation.
+- Skills are ours and flat: one directory per skill at `skills/<name>/`, with
+  `name` and `description` frontmatter in `SKILL.md` and relative supporting
+  paths. Tools discover `skills/` itself through two directory links,
+  `~/.agents/skills` and `~/.claude/skills`; add no per-skill links. Keep
+  other files there to what every tool ignores. See [skill setup](docs/skills.md).
 - Reserve `local-*` for ignored machine-local skills and links; never commit them.
 - Keep shared guidance portable. A symlink does not make tool-specific hooks,
   commands, metadata, or permissions portable.
-- Imported skills are editable Git subtrees under
-  `skills/.local/share/agent-skills/`. Preserve upstream instructions and licenses;
-  edit source, not copied discovery files. Updates are explicit mise/Git tasks.
+- Keep upstream licenses for adapted skills, such as
+  `skills/LICENSE-cc-skills-golang`.
 - Check upstream before compatibility patches. Prefer upstream releases, keep
   local patches minimal, and remove superseded patches. Personal features stay
   outside vendored code.
+
+## Tooling
+
+- Before porting a script, look for native capabilities of the surrounding
+  tools (host app, package manager, OS services, upstream main) that make it
+  obsolete, and question assumptions that drive outsized complexity. Porting
+  to Rust is the last resort.
+- Language follows the artifact: Rust for executables, repository and
+  installation contracts, and automation logic; TypeScript/Node only inside the
+  Pi and Claude packages; Lua only for Neovim. No Python. Shell appears only as
+  one-line inline mise commands; a host-required executable shim must justify
+  itself.
+- Tests spawn only real dependencies or our own fixtures: test-binary re-exec,
+  or `[[bin]]` fixtures behind a `testing` feature. No interpreters and no
+  detached socket call-backs.
+- Keep one implementation per capability (for example, `dots-process` is the
+  only subprocess runner), tested once where it lives.
+- Mise selects tools and orders tasks. Plain cargo/npm/stow calls stay inline;
+  other logic lives in Rust: `cargo xtask` (in-repo, never installed, created
+  only on demonstrated need) for repository build, install, and contracts;
+  `dots` only for user commands.
+- Each artifact has one build path. A Herdr plugin builds into its own
+  directory (Herdr's native layout) and is linked from there. User commands
+  have no build step: `cargo install --locked --path .` places them in Cargo's
+  bin directory; Stow carries configuration only. Source-loaded packages, like
+  the Pi companion, have no build step.
+- `check` is fast and side-effect free (format, lint, unit tests, typecheck)
+  and is what agents run. `verify` holds process-lifecycle, PTY, host,
+  installation, and bootstrap acceptance. Place tests by the structural
+  markers in [build and activation](docs/build.md#check-and-verify).
+- Delete tests that serve no purpose, such as tests of mise's own graph or of
+  task-file shape, rather than porting them.
 
 ## Build and activation
 
@@ -39,20 +70,21 @@ GNU Stow dotfiles: package contents under `home/` mirror `$HOME`.
   graphs. Put ordinary native commands directly in tasks, not dispatch wrappers.
   Remove redundant behavior before translating a wrapper into another language.
 - Keep substantial application logic and acceptance tests in their owning
-  toolchain. Keep `rust-toolchain.toml` aligned with `mise.toml`.
+  toolchain.
 - Use `mise run doctor`, `deps`, `check`, and `verify` as documented in
   [build and activation](docs/build.md). Builds/checks never activate.
 - Base Stow packages are explicit in root `mise.toml`. Herdr, CLI, and Pi
   activation are separate; do not install or reload merely to validate changes.
-- Only proven distributable tasks may use local artifact caching. Dependencies,
-  checks, smoke tests, updates, and activation are always uncached.
+  Herdr plugins and the Pi companion run from the checkout that registered
+  them: register only from the primary checkout, never from an agent worktree.
+- Add a project `mise.toml` only for real tasks (build, install, deps, non-Cargo
+  checks); Cargo crates need none to be checked.
 
 ## Source ownership
 
 - Root Cargo workspace, lockfile, toolchain, and lint policy govern Rust under
-  `src/` and repository contracts in `tests/`. Use `mise run rust-check` for the
-  complete gate; leaf checks include upstream dependencies. Libraries need no
-  artificial build tasks.
+  `src/`. Root `check` and `verify` run the whole workspace; scope a run with
+  `cargo nextest run -p <crate>`.
 - Keep shared operations with their named owners. The task store derives
   readiness, claims transactionally, and accepts project key and time explicitly.
 - Pi uses pinned stock npm releases and a companion in `src/pi/`. Consume public

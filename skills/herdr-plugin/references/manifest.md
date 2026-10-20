@@ -14,9 +14,6 @@ min_herdr_version = "0.8.2"
 description = "..."
 platforms = ["macos", "linux"]
 
-[[build]]
-command = ["mise", "run", ":prepare"]
-
 [[actions]]
 id = "refresh"
 title = "Refresh example state"
@@ -115,8 +112,8 @@ command = "herdr-nav.left"
 ```
 
 When replacing a native chord, a missing plugin registration leaves the chord
-dead. This is why `mise run //src/herdr:install` builds first and links plugins last, and
-why a link failure is fatal.
+dead. This is why `mise run //src/herdr:install` links plugins before it
+restows the configuration, and stops if any build or link fails.
 
 Plugin registration in `~/.config/herdr/plugins.json` is derived external
 state, not a tracked file. Do not edit or commit it. Building or checking source

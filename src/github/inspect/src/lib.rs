@@ -26,7 +26,7 @@ pub use inspect::{
 pub use output::{
     Annotation, CheckOutput, OutputOptions, OutputRef, check_output, check_output_target,
 };
-pub use provider::{GitHub, Provider};
+pub use provider::{Executables, GitHub, Provider, Transport, TransportError};
 pub use reference::CheckRef;
 pub use snapshot::SnapshotRef;
 pub use subjects::inspect_target;

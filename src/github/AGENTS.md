@@ -13,5 +13,5 @@
   calls and output. References must identify the inspected evidence, not a moving
   branch or whichever run is newest.
 - Use neutral hand-authored fixtures. Never save live machine/API output here.
-- `mise run //src/dots:check` checks the standalone dependency graph; `mise run rust-check`
+- `cargo nextest run -p <crate>` checks one crate; root `mise run check`
   checks the complete workspace, including Herdr adapters and contract tests.

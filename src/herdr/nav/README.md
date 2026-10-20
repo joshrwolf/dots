@@ -13,8 +13,7 @@ mise run //src/herdr/nav:install
 
 Configure the navigation bindings from `home/herdr/.config/herdr/config.toml`
 and the matching Ghostty bindings, then reload those configurations when ready.
-Do not copy bindings for uninstalled plugins. The aggregate Herdr installation
-also includes GitHub integration, which needs the [patched host](../host/README.md).
+Do not copy bindings for uninstalled plugins.
 
 ## Use
 
@@ -57,11 +56,6 @@ failure halts mutations rather than risking duplicate or inconsistent jumps.
 
 ## Checks
 
-`mise run //src/herdr/nav:check` checks the feature without activation.
-An opt-in integration test uses a disposable stock server and PTY client:
-
-```sh
-HERDR_NAV_TEST_BINARY=/path/to/stock/herdr \
-  cargo test --manifest-path Cargo.toml -p herdr-nav \
-  --test stock stock_server_jumplist -- --ignored --nocapture
-```
+`cargo nextest run -p herdr-nav` checks the feature without activation.
+`cargo nextest run -p herdr-nav --profile acceptance` drives the `herdr` on `PATH` through a
+disposable server and PTY client.

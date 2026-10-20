@@ -45,8 +45,7 @@ test("every registered scenario can launch directly in either terminal mode", ()
   }
 });
 
-test("development resources are opt-in, not published or registered", () => {
+test("development resources are opt-in, not registered", () => {
   const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-  assert.ok(!manifest.files.includes("dev"));
   assert.ok(manifest.pi.extensions.every((entry) => !entry.startsWith("dev/")));
 });

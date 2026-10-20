@@ -547,19 +547,15 @@ fn register_pr_references(
     if urls.is_empty() {
         return Ok(());
     }
-    let snapshot = invocation.client().snapshot()?;
-    let identity = snapshot
-        .workspace(workspace_id)
-        .and_then(|workspace| workspace.identity.clone())
-        .context("Herdr persistent workspace identity required")?;
-    let scope = herdr_prs::Scope::new(
+    anyhow::ensure!(
         invocation
             .client()
-            .endpoint()
-            .to_string_lossy()
-            .into_owned(),
-        identity,
-    )?;
+            .snapshot()?
+            .workspace(workspace_id)
+            .is_some(),
+        "review workspace {workspace_id} closed before PR registration"
+    );
+    let scope = herdr_prs::Scope::at(invocation.client().endpoint(), workspace_id.as_str())?;
     let path = herdrkit::user_state_directory()?.join(herdr_prs::REGISTRY_PATH);
     std::fs::create_dir_all(path.parent().context("PR registry path has no parent")?)?;
     let mut registry = herdr_prs::Registry::open(&path)?;

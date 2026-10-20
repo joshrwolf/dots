@@ -88,6 +88,11 @@ because a refresh failed. TTLs are for temporary signals, not scheduling.
 Retained metadata lasts until cleared/replaced or the workspace closes; it
 does not survive a server restart and must be republished from cache.
 
+Herdr draws a token only where the user's config names it: `$name` in
+`[ui.sidebar.spaces]` rows for workspace tokens, or `[ui.sidebar.agents]` rows
+for pane tokens. Config rules style values; reporters send text only. Plugin v1
+has no native non-terminal UI, so choices go in a popup plugin pane.
+
 `Client::notify` returning `Ok` does not prove a notification appeared. Inspect
 `Notification.shown` and `Notification.reason` when the notification is the
 only failure surface.

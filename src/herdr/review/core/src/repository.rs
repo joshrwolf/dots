@@ -498,11 +498,11 @@ fn git_path(checkout: &Path, field: &'static str, args: &[&str]) -> Result<PathB
 }
 
 fn output_with_timeout(command: Command, timeout: Duration, checkout: &Path) -> Result<Output> {
-    herdrkit::process::output(command, timeout, MAX_GIT_OUTPUT_BYTES).map_err(|error| match error {
-        herdrkit::process::Error::Timeout(_) => Error::GitTimedOut {
+    dots_process::output(command, timeout, MAX_GIT_OUTPUT_BYTES).map_err(|error| match error {
+        dots_process::Error::Timeout(_) => Error::GitTimedOut {
             checkout: checkout.to_path_buf(),
         },
-        herdrkit::process::Error::OutputLimit { .. } => Error::GitOutputTooLarge {
+        dots_process::Error::OutputLimit { .. } => Error::GitOutputTooLarge {
             checkout: checkout.to_path_buf(),
             limit: MAX_GIT_OUTPUT_BYTES,
         },
@@ -531,25 +531,6 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
-    }
-
-    #[test]
-    fn deadline_includes_detached_pipe_holder() {
-        let mut command = Command::new("python3");
-        command
-            .args([
-                "-c",
-                "import subprocess; subprocess.Popen(['/bin/sleep', '1'], start_new_session=True)",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let started = std::time::Instant::now();
-        let result = output_with_timeout(command, Duration::from_millis(100), Path::new("/tmp"));
-        assert!(
-            matches!(result, Err(Error::GitTimedOut { .. })),
-            "{result:?}"
-        );
-        assert!(started.elapsed() < Duration::from_millis(800));
     }
 
     #[test]

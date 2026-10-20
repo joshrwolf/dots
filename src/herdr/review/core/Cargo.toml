@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 herdrkit.workspace = true
+dots-process.workspace = true
 nix.workspace = true
 rusqlite.workspace = true
 serde.workspace = true

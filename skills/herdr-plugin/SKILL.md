@@ -115,11 +115,12 @@ Keep latency-sensitive logic in process. Do not interpose shell, `jq`, a text
 record format, or a second invocation of the same plugin between indexing and
 acting. A picker returns the typed value it was given.
 
-Use `herdrkit::process::output` for new bounded, noninteractive subprocesses.
-Supply caller-specific limits, deadlines, and diagnostic context. It drains both
-pipes before reaping and kills the still-owned process group on failure; never
-signal a process group after reaping its leader because that PID may be reused.
-This helper does not supervise detached descendants that close both pipes.
+Use `dots_process::output` (crate `dots-process`) for new bounded,
+noninteractive subprocesses. Supply caller-specific limits, deadlines, and
+diagnostic context. It drains both pipes before reaping and kills the
+still-owned process group on failure; never signal a process group after
+reaping its leader because that PID may be reused. This helper does not
+supervise detached descendants that close both pipes.
 
 Render error chains at the binary boundary and add context at meaningful
 operation boundaries. Use `runtime::finish` with the appropriate
@@ -144,15 +145,18 @@ sent. Manifest-to-dispatch and build invariants belong in `src/herdr/tests`.
 Run the complete gate from the repository root:
 
 ```sh
-mise run rust-check
+mise run check
 ```
 
 It checks per-plugin build contracts, formatting, strict all-feature/all-target
-Clippy, the full workspace through `cargo nextest`, doctests, and rustdoc with
-warnings denied.
+Clippy, the workspace's fast tests through `cargo nextest`, doctests, and
+rustdoc with warnings denied. Process-lifecycle, PTY, and host tests go in a
+crate's `tests/acceptance.rs` or a `mod acceptance`; `mise run verify`
+runs them.
 
 Do not link, install, or reload a live Herdr session merely to validate an
-edit. `mise run rust-build` stages all release binaries; `mise run //src/herdr:install` builds,
-restows, and links immutable plugin releases last; `mise run install` restows only the base packages.
-If live activation was not explicitly requested, report the command the user
-must run.
+edit. `mise run build` stages every binary; `mise run //src/herdr:install`
+builds and links each plugin directory, then installs the Herdr CLIs and
+configuration. Linked plugins run from that checkout, so link only from the
+primary checkout, never from an agent worktree. If live activation was not
+explicitly requested, report the command the user must run.

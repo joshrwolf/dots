@@ -1,3 +1,2 @@
 [tasks.check]
 run = ["claude plugin validate .", "claude plugin test ."]
-cache = { enabled = false }
