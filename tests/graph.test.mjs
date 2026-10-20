@@ -49,7 +49,6 @@ test("mise selects the actual affected deliverables", async t => {
             ["skills/herdr-plugin/probe.md", skills],
             ["skills/.local/share/agent-skills/golang/skills/probe.md", skills],
             ["src/herdr/review/editor/lua/probe.lua", ["cargo:herdr-review", "cargo:herdr-find", ...home]],
-            ["src/aerospace/probe.py", ["custom:aerospace", ...home]],
             ["tests/shared-probe.mjs", ["cargo:dots-repository-tests"]],
             ["build-policy.txt", all], ["Cargo.lock", all],
         ]) {

@@ -20,8 +20,6 @@ brew "gopls"
 brew "lua-language-server"
 brew "mise"
 brew "melange"
-# Runtime interpreter for AeroSpace scripts, not the build SDK.
-brew "python"
 brew "qemu"
 brew "ripgrep"
 brew "semgrep"
