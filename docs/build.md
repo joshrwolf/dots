@@ -20,8 +20,8 @@ The SDK lock supports macOS arm64. Checks need the installed Claude host; full
 acceptance also needs Stow, Herdr, and a Pi host matching the companion's exact
 development SDK. Host applications keep their own installers and runtime state.
 
-`build` stages artifacts in `dist/` and Herdr plugin binaries in each plugin's
-`bin/`. Check, build, and verify never activate against your real home; provider-free tests do not prove live-model compatibility.
+`build` stages Herdr plugin binaries in each plugin's `bin/`; user commands
+have no build step. Check, build, and verify never activate against your real home; provider-free tests do not prove live-model compatibility.
 
 ## Check and verify
 
@@ -82,7 +82,7 @@ Run installation only when ready to change the live setup:
 
 ```sh
 mise run install                    # base Stow packages
-mise run //src/dots:install         # CLI and generated discovery skill
+mise run //src/dots:install         # dots CLI
 mise run //src/herdr:install        # Herdr plugins, CLIs, and configuration
 mise run //src/herdr/nav:install    # navigation plugin only
 mise run //src/pi:packages          # pinned third-party Pi packages
@@ -93,10 +93,15 @@ Base Stow packages are listed in root `mise.toml`; `unstow` removes only those
 links. Neovim and Finicky have separate `<name>:install` tasks.
 Stow uses `--no-folding` to keep runtime directories out of the checkout.
 
-`mise run //src/herdr:install` links all Herdr plugins, then installs the
-`herdr-issue` and `herdr-review` commands and the Herdr/Neovim configuration,
-for stock Herdr 0.9.1 or newer. To use only some plugins, install them
-individually and configure only their bindings.
+Stow carries configuration only. `dots`, `herdr-issue`, and `herdr-review`
+install with `cargo install --locked --path .` into Cargo's bin directory
+(`~/.cargo/bin`, on `PATH` through mise and the zsh configuration); Cargo
+owns their tracking and replacement.
+
+`mise run //src/herdr:install` links all Herdr plugins, installs the
+`herdr-issue` and `herdr-review` commands, then stows the Herdr/Neovim
+configuration, for stock Herdr 0.9.1 or newer. To use only some plugins,
+install them individually and configure only their bindings.
 
 A plugin's `install` runs its `build`, which stages `bin/` in the plugin
 directory, then `herdr plugin link` on that directory. Relinking is harmless

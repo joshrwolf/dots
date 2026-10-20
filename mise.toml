@@ -22,8 +22,7 @@ rust = { version = "1.99.0", profile = "minimal", components = "clippy,rustfmt" 
 MISE_TASK_CACHE = "off"
 
 [vars]
-# Cargo's staging records are not dotfiles.
-stow = 'stow --dir=home --no-folding --ignore="(^|/)\.crates(2\.json|\.toml)$"'
+stow = "stow --dir=home --no-folding"
 
 [monorepo]
 config_roots = ["src/*", "src/github/*", "src/herdr/*", "src/herdr/review/core", "src/claude/*", "tests", "home", "skills"]

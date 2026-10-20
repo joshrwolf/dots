@@ -4,6 +4,7 @@ vars = { package = "herdr-issue" }
 depends = ["^check"]
 cache = { enabled = false }
 
-[tasks.build]
-run = 'cargo install --frozen --path . --root "$MISE_MONOREPO_ROOT/dist" --force'
+[tasks.install]
+description = "Install herdr-issue into Cargo's bin directory"
+run = "cargo install --locked --path ."
 cache = { enabled = false }

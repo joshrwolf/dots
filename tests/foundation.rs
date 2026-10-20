@@ -102,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_components_have_scoped_checks_and_native_staging() {
+    fn rust_components_have_scoped_checks_and_native_installation() {
         for member in members() {
             let manifest = config(&format!("{member}/Cargo.toml"));
             let config = config(&format!("{member}/mise.toml"));
@@ -123,22 +123,31 @@ mod tests {
                         .any(|v| v.as_str() == Some("//:rust-check"))
                 );
             }
-            if let Some(build) = tasks.get("build") {
-                let command = build.get("run").and_then(Value::as_str).unwrap();
-                // A Herdr plugin stages into its own directory, which
-                // `herdr plugin link` registers in place.
-                let plugin = Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("..")
-                    .join(&member)
-                    .join("herdr-plugin.toml")
-                    .is_file();
-                if plugin {
-                    assert_eq!(command, "cargo install --locked --path . --root . --force");
-                } else {
-                    assert!(command.starts_with("cargo install --frozen --path . "));
-                    assert!(command.contains("$MISE_MONOREPO_ROOT/dist"));
+            // A Herdr plugin stages into its own directory, which
+            // `herdr plugin link` registers in place. Nothing else has a
+            // build step: user commands go straight to Cargo's own root.
+            let plugin = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join(&member)
+                .join("herdr-plugin.toml")
+                .is_file();
+            let build = tasks
+                .get("build")
+                .map(|build| build.get("run").and_then(Value::as_str).unwrap());
+            assert_eq!(
+                build,
+                plugin.then_some("cargo install --locked --path . --root . --force"),
+                "{member}: unexpected build task"
+            );
+            let install = tasks.get("install").map(|install| match &install["run"] {
+                Value::String(command) => vec![command.as_str()],
+                Value::Array(commands) => commands.iter().map(|v| v.as_str().unwrap()).collect(),
+                other => panic!("{member}: unexpected install run {other:?}"),
+            });
+            for command in install.into_iter().flatten() {
+                if command.starts_with("cargo install") {
+                    assert_eq!(command, "cargo install --locked --path .", "{member}");
                 }
-                assert!(!command.contains("--no-track"));
             }
         }
     }

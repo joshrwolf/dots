@@ -12,9 +12,8 @@
   rather than adding version markers or compatibility layers. Separate stdout
   data from stderr errors. Failed CI is not command failure; validate arguments
   before provider work.
-- Use `mise run //src/dots:build`, `mise run //src/dots:check`, and
-  `mise run //src/dots:install` for staging, validation, and explicit Stow
-  installation. Building must not activate Herdr.
+- Use `mise run //src/dots:check` for validation and
+  `mise run //src/dots:install` (`cargo install`) for explicit installation.
 - Command metadata in `src/command.rs` owns parsing, help, and generated
   skill discovery. Put usage/effect guidance there; do not maintain a second
   command list. `mise run //src/dots:skills` updates the checked-in artifacts and the

@@ -15,9 +15,9 @@ run = "cargo install --locked --path . --root . --force"
 cache = { enabled = false }
 
 [tasks.install]
-description = "Build, then link this plugin directory into Herdr"
+description = "Build and link this plugin; install herdr-review into Cargo's bin directory for editors"
 depends = [":build"]
-run = "herdr plugin link ."
+run = ["herdr plugin link .", "cargo install --locked --path ."]
 cache = { enabled = false }
 
 [tasks.verify]

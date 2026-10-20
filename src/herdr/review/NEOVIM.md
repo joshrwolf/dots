@@ -8,8 +8,8 @@ Herdr review binding.
 Open a review from Herdr's review picker, then start Neovim yourself in that
 workspace. Install the [Neovim configuration](../../../home/nvim/.config/nvim/README.md)
 and install `herdr-review` with `mise run //src/herdr:install`; the client
-finds `~/.local/bin/herdr-review` or an executable on PATH. Set `vim.g.herdr_review_binary` to
-select one explicitly.
+finds `herdr-review` on PATH, then in Cargo's `~/.cargo/bin`. Set
+`vim.g.herdr_review_binary` to select one explicitly.
 
 Setup is passive. A private stdio bridge starts on the first review operation;
 review content remains in the repository's registry, not the editor process.

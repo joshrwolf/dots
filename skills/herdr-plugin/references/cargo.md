@@ -68,8 +68,9 @@ staging `bin/` beside the manifest. Its `install` task builds, then runs
 placement, and installation tracking/locking; do not disable tracking or add
 another copy/staging dispatcher.
 
-Other executables build into `--root dist`. Cargo shares compilation work
-through the root workspace.
+User commands have no build task; their `install` runs plain
+`cargo install --locked --path .` into Cargo's bin directory. Cargo shares
+compilation work through the root workspace.
 
 Useful targets from the repository root:
 

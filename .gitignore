@@ -50,7 +50,7 @@ home/herdr/.config/herdr/sounds/*.mp3
 # nvim writes here when started with -V*/path logging.
 nvim.log
 
-# Source-install callbacks may stage binaries beside manifests; never commit them.
+# Plugin builds stage bin/ and Cargo install records beside manifests.
 src/herdr/target/
 src/herdr/*/bin/
 src/herdr/*/.crates.toml
@@ -68,27 +68,14 @@ src/pi/**/*.tgz
 # Scratch handoff notes, not part of the dotfiles.
 src/herdr/HANDOFF.md
 
-# Native Cargo staging and tracking records are machine-local.
-/home/herdr/.local/.crates.toml
-/home/herdr/.local/.crates2.json
-home/herdr/.local/bin/herdr-issue
-home/herdr/.local/bin/herdr-issue.tmp.*
-home/herdr/.local/bin/herdr-review
-home/herdr/.local/bin/herdr-review.tmp.*
-
 # Runtime data must never be captured through a folded Stow directory.
 /home/herdr/.config/herdr/plugins.json
 /home/herdr/.config/herdr/.plugins.lock
 /home/herdr/.config/herdr/plugins/
 /home/skills/.local/share/dots/
 
-# Shared Rust workspace and prepared artifacts (never live registration).
+# Shared Rust workspace build output.
 /target/
-/dist/
-/home/cli/.local/bin/dots
-/home/cli/.local/.crates.toml
-/home/cli/.local/.crates2.json
-/home/cli/.local/bin/dots.tmp.*
 
 # Engine-written editor types and machine-local Claude mods.
 src/claude/*/.claude-plugin/types/

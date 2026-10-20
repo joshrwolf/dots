@@ -33,14 +33,16 @@ local function binary()
     end
     return nil, "g:herdr_review_binary is not executable: " .. vim.g.herdr_review_binary
   end
-  -- GUI-launched editors may not inherit ~/.local/bin on PATH.
-  local managed = vim.fn.expand("~/.local/bin/herdr-review")
-  if vim.fn.executable(managed) == 1 then
-    return managed
-  end
   local installed = vim.fn.exepath("herdr-review")
   if installed ~= "" then
     return installed
+  end
+  -- GUI-launched editors may not inherit the shell's PATH; fall back to
+  -- Cargo's install directory.
+  local cargo_home = vim.env.CARGO_HOME or vim.fn.expand("~/.cargo")
+  local cargo = cargo_home .. "/bin/herdr-review"
+  if vim.fn.executable(cargo) == 1 then
+    return cargo
   end
   return nil, "herdr-review is not installed; run mise run //src/herdr:install"
 end

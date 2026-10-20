@@ -1,7 +1,3 @@
-[tasks.build]
-run = 'cargo install --frozen --path . --root "$MISE_MONOREPO_ROOT/dist" --force'
-cache = { enabled = false }
-
 [tasks.check]
 extends = "rust-check"
 vars = { package = "dots-cli" }
@@ -13,14 +9,8 @@ run = 'cargo run --locked --quiet -p dots-cli -- skills check --output "$MISE_MO
 cache = { enabled = false }
 
 [tasks.install]
-dir = "{{ config_root }}/../.."
-depends = [":build", ":skills-check"]
-run = [
-  "mkdir -p home/cli/.local/bin",
-  '{{ vars.stow }} --target "$HOME" --simulate --restow cli skills',
-  "cargo install --frozen --path src/dots --root home/cli/.local --force",
-  '{{ vars.stow }} --target "$HOME" --restow cli skills',
-]
+description = "Install dots into Cargo's bin directory"
+run = "cargo install --locked --path ."
 cache = { enabled = false }
 
 [tasks.skills]
