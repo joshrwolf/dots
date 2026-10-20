@@ -66,6 +66,9 @@
 - Use `dev/` for opt-in, neutral fixture scenarios built from shipping components,
   not parallel mock implementations. Run `mise run //src/pi:verify-terminal` for
   presentation changes; real scrolling, focus, resize, and reload are contracts.
+  It drives Pi's own `InteractiveMode` through its public `terminal` option in
+  both TUI modes; tty raw mode and protocol negotiation stay upstream's concern,
+  so do not add a PTY harness. Extend `tests/fixtures/terminal-host.mjs` flows.
 - Use strict, erasable TypeScript and typed consumer tests. Verify real host
   transitions and HTML export, including cold custom-tool exports; builtin
   export templates can bypass registered renderers. Keep compatibility tests
