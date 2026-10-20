@@ -1,0 +1,2 @@
+# Machine setup does not inherit the checkout's development SDKs or tasks.
+ceiling_paths = ["{{ config_root | dirname }}"]

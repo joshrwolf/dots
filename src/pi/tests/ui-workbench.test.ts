@@ -194,6 +194,24 @@ test("preview resets return to the page, preserving explicit child backgrounds a
   }
 });
 
+test("B jumps to the frame footer without changing its data or expansion state", () => {
+  for (const key of ["b", "B", "\x1b[98u", "\x1b[98;2u"]) {
+    const h = harness("frame");
+    try {
+      h.view.handleInput(" ");
+      h.view.render(120); // Establish native scroll bounds before jumping to bottom.
+      const before = h.view.state;
+      h.view.handleInput(key);
+      assert.deepEqual(h.view.state, before);
+      assert.match(plain(h.view.render(120)), /✦ high.*! ctx 80%/);
+      h.view.handleInput("t");
+      assert.match(plain(h.view.render(120)), /✦ high.*! ctx 80%/);
+      h.view.handleInput("n");
+      assert.equal(h.view.state.scenario, "bash");
+    } finally { h.dispose(); }
+  }
+});
+
 test("frame presentation is deterministic, theme-owned, and shows unknown context honestly", () => {
   const footer = new FooterView();
   for (const theme of [dark, light]) {

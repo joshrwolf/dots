@@ -17,6 +17,7 @@ path=(
   # Include optional components installed through gcloud's component manager.
   "${HOMEBREW_PREFIX:-/opt/homebrew}/share/google-cloud-sdk/bin"
   "$HOME/.cargo/bin"
+  "$HOME/go/bin"
   $path
 )
 

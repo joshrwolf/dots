@@ -15,6 +15,7 @@ Commands:
   herdr   Register and inspect PR associations in Herdr workspaces
   github  Inspect GitHub CI evidence and PR review threads
   task    Track shared, claimable work for a project across concurrent sessions
+  memory  Read, publish, and search scoped Markdown memory without a service
   skills  Export agent discovery documentation from this command tree
 
 Options:
@@ -1402,6 +1403,213 @@ Options:
 
   -h, --help
           Print help
+```
+
+## dots memory
+
+```text
+Portable Markdown memory outside the checkout. Reads never initialize storage. Writes require an explicit scope and expected revision, briefly lock that scope, and atomically replace one file. No automatic ingestion, installation, indexing, or network access. See the shared memory skill for evidence and maintenance policy.
+
+Usage: dots memory [OPTIONS] <COMMAND>
+
+Commands:
+  scope   Resolve global and current-project locations; creates nothing
+  read    Read a bounded page and its full-file revision; absent files have revision "missing"
+  write   Publish one Markdown file from UTF-8 input; rejects stale revisions and symlink paths
+  remove  Remove one file with revision checking; does not erase backups or external indexes
+  search  Case-insensitive literal search of current knowledge; defaults to global plus this project
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots memory scope
+
+```text
+Resolve global and current-project locations; creates nothing
+
+Usage: dots memory scope [OPTIONS]
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --json
+          Return JSON instead of readable output
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory read
+
+```text
+Read a bounded page and its full-file revision; absent files have revision "missing"
+
+Usage: dots memory read [OPTIONS] --scope <SCOPE> <PATH>
+
+Arguments:
+  <PATH>
+
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --scope <SCOPE>
+          [possible values: global, project]
+
+      --json
+          Return JSON instead of readable output
+
+      --start <START>
+          [default: 1]
+
+      --lines <LINES>
+          [default: 100]
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory write
+
+```text
+Publish one file using --expected from memory read (or 'missing' for a new file). Reads at most 256 KiB from --content-file. Creates scope/topic directories on first write. A short cooperative .write-lock covers revision checking and atomic replacement; conflicts change no file contents. Multi-file updates are NOT transactions: write topics before the index, and handle interrupted updates explicitly. No shell commands or model calls run under the lock.
+
+Usage: dots memory write [OPTIONS] --scope <SCOPE> --expected <EXPECTED> --content-file <CONTENT_FILE> <PATH>
+
+Arguments:
+  <PATH>
+
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --scope <SCOPE>
+          [possible values: global, project]
+
+      --expected <EXPECTED>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --content-file <CONTENT_FILE>
+
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots memory remove
+
+```text
+Remove one file with revision checking; does not erase backups or external indexes
+
+Usage: dots memory remove [OPTIONS] --scope <SCOPE> --expected <EXPECTED> <PATH>
+
+Arguments:
+  <PATH>
+
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --scope <SCOPE>
+          [possible values: global, project]
+
+      --expected <EXPECTED>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory search
+
+```text
+Search live Markdown files, not a cached index. Default scope is global plus the current project, never unrelated projects. Sources and log.md are excluded unless --include-sources is set. Results are deterministic path/line matches, not semantic ranking; read the source before applying a snippet. Output reports backend, scope, and pagination. QMD is not installed or invoked.
+
+Usage: dots memory search [OPTIONS] <QUERY>
+
+Arguments:
+  <QUERY>
+
+
+Options:
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --scope <SCOPE>
+          [possible values: global, project]
+
+      --include-sources
+
+
+      --json
+          Return JSON instead of readable output
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+      --offset <OFFSET>
+          Skip this many matches in each selected scope
+
+          [default: 0]
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --limit <LIMIT>
+          Maximum matches per scope
+
+          [default: 5]
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## dots skills

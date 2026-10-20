@@ -1,0 +1,4 @@
+[tasks.check]
+extends = "rust-check"
+vars = { package = "dots-memory" }
+cache = { enabled = false }

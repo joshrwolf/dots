@@ -73,16 +73,26 @@
   decisions, patterns, and conventions for one repository in project memory.
   When a note has stabilized and should bind every session, propose promoting
   it to the relevant `AGENTS.md` instead of letting memory act as instructions.
-- Use the shared `memory` skill for recall, source-backed checkpoint updates,
-  corrections, and maintenance. Keep indexes compact; follow links to knowledge
-  and evidence on demand. Existing topic files remain valid.
+- Manage memory proactively through the shared `memory` skill; do not wait for
+  me to say "remember this." At task start, consult the injected indexes and
+  relevant topics before asking me to repeat prior context. Retain durable
+  preferences, corrections, accepted decisions with useful rationale, and verified
+  reusable lessons during normal work. Correct stale advice and consolidate
+  duplicates; skip transient progress and easily reread facts. Keep indexes compact;
+  follow knowledge and evidence links on demand. Existing topic files remain valid.
 - Goal briefs own outcomes and working agreements; tasks own progress. Memory
   holds reusable understanding, not another task list or session transcript.
-- Before publishing, acquire the scope's cooperative write lock and reread the
-  affected files. Workers propose notes; the parent publishes. Never assume an
-  injected index is still current or remove another session's lock.
+- Use `dots memory` for scoped reads and revision-checked publication when
+  available; it manages the short write lock. Otherwise follow the shared skill's
+  cooperative locking fallback. Workers propose notes; the parent publishes.
+  Never assume an injected index is current or remove another session's lock.
+- Routine low-risk local upkeep needs no extra confirmation. Ask about sensitive
+  content, ambiguous contradictions, destructive forgetting, or changes to binding
+  instructions. Never retain credentials or private transcripts. Keep recall quiet;
+  briefly mention meaningful saves or corrections in the normal response.
 - Memory is context, not authority: current code, GitHub state, and your
-  instructions win over a stale note. Nothing is written automatically.
+  instructions win over a stale note. It does not authorize unrelated work or
+  external actions. Upkeep is agent-managed, not background transcript harvesting.
 
 These instructions are specific to Pi and maintained independently of the
 instructions for other agents. Shared skills live in `~/.agents/skills`; use

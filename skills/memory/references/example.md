@@ -1,7 +1,24 @@
-# Example: a corrected project decision
+# Memory examples
 
-A small scope might have these files. The names and evidence are illustrative,
-not claims about a real project. Omit sections that add no useful information.
+The names and evidence are illustrative, not claims about a real project.
+Use the smallest structure that preserves meaning; omit empty sections.
+
+## A simple preference
+
+A topic and one index link are enough; no separate evidence file is needed.
+
+```markdown
+# Review preferences
+
+Source: user preference, 2026-10-19.
+Applies to routine code reviews unless the request specifies another format.
+
+Lead with actionable findings. Usually omit a summary when there are no findings.
+```
+
+## A corrected project decision
+
+A substantive decision can retain rationale, exceptions, and selected evidence:
 
 ## MEMORY.md
 
@@ -16,23 +33,24 @@ not claims about a real project. Omit sections that add no useful information.
 ```markdown
 # Export strategy
 
-## Current understanding
+## Current conclusion
 
 Use streaming for large exports. Keep buffering for the small preview endpoint.
+
+## Applicability
+
 This decision applies to the export API, not every response handler.
 
-## Why
+## Rationale and evidence
 
 Buffering the entire export exceeded the agreed memory budget in the large-data
 check. Streaming stayed within that budget. Preview responses remain bounded
 and do not need the additional lifecycle handling.
 
-## Evidence
-
 - [Export checkpoint](../sources/2026-10-19-export-check.md): the observed check
   and the user's accepted decision.
 
-## Changed understanding
+## Supersession
 
 2026-10-19 supersedes the earlier recommendation to buffer all exports. That
 recommendation was based on small inputs and did not establish large-input safety.

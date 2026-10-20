@@ -1,4 +1,4 @@
-min_version = "2026.10.12"
+min_version = "2026.10.14"
 monorepo_root = true
 
 [settings]
@@ -23,11 +23,12 @@ rust = { version = "1.99.0", profile = "minimal", components = "clippy,rustfmt" 
 MISE_TASK_CACHE = "local-only"
 
 [vars]
+base_stow_packages = "aerospace brew codex ghostty pi skills theme zsh"
 # Cargo's staging records are not dotfiles.
 stow = 'stow --dir=home --no-folding --ignore="(^|/)\.crates(2\.json|\.toml)$"'
 
 [monorepo]
-config_roots = ["src/*", "src/github/*", "src/herdr/*", "src/herdr/review/core", "src/claude/*", "tests", "home", "skills"]
+config_roots = ["src/*", "src/github/*", "src/herdr/*", "src/herdr/review/core", "src/claude/*", "tests", "home", "skills", "private/*"]
 lockfile = true
 
 [monorepo.path_aliases]
@@ -112,7 +113,7 @@ cache = { enabled = false }
 
 [tasks.check]
 description = "Complete repository gate, without installation or cloud CI"
-depends = ["rust-check", "//src/pi:check", "//src/claude/codex-agent:check", "//skills:check", "//src/herdr/deploy:check", "//src/aerospace:check", "//src/gitsign:check", "//home:check", "//tests:graph-check"]
+depends = ["rust-check", "//src/pi:check", "//src/claude/codex-agent:check", "//skills:check", "//src/herdr/deploy:check", "//src/aerospace:check", "//src/gitsign:check", "//home:check", "//tests:graph-check", "//tests:bootstrap-check"]
 cache = { enabled = false }
 
 [tasks."rust-check"]
@@ -139,11 +140,11 @@ run = "xcrun --show-sdk-path"
 cache = { enabled = false }
 
 [tasks."install"]
-run = ['{{ vars.stow }} --target "$HOME" --simulate --restow aerospace brew codex ghostty pi skills theme zsh', '{{ vars.stow }} --target "$HOME" --restow aerospace brew codex ghostty pi skills theme zsh']
+run = ['{{ vars.stow }} --target "$HOME" --simulate --restow {{ vars.base_stow_packages }}', '{{ vars.stow }} --target "$HOME" --restow {{ vars.base_stow_packages }}']
 cache = { enabled = false }
 
 [tasks."unstow"]
-run = '{{ vars.stow }} --target "$HOME" --delete aerospace brew codex ghostty pi skills theme zsh'
+run = '{{ vars.stow }} --target "$HOME" --delete {{ vars.base_stow_packages }}'
 cache = { enabled = false }
 
 

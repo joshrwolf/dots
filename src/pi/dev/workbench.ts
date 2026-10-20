@@ -43,7 +43,10 @@ export class Workbench extends VStack {
     this.refresh();
   }
 
-  get state(): WorkbenchState { return { scenario: scenarios[this.selection]!.id, phase: this.phase, expanded: this.expanded }; }
+  get state(): WorkbenchState {
+    const scenario = scenarios[this.selection]!;
+    return { scenario: scenario.id, phase: this.phase, expanded: this.expanded };
+  }
 
   private refresh(): void {
     if (!this.alive) return;
@@ -61,7 +64,7 @@ export class Workbench extends VStack {
     this.heading.update({ layout: "inline", groupSeparator: "  ", start: [
       { text: "UI workbench", tone: "accent", bold: true, priority: 100, shrink: "clip" },
     ], end: [{ text: `${this.selection + 1}/${scenarios.length} · ${scenario.id} · ${scenario.phases[this.phase]} · ${this.expanded ? "expanded" : "collapsed"}`, tone: "muted", priority: 80, shrink: "clip" }] }, theme);
-    this.help.setText(theme.fg("dim", "N/P scenario · Space state · E expand · T theme · S simulated stop · Esc close"));
+    this.help.setText(theme.fg("dim", `N/P scenario · Space state · B bottom · E expand · T theme · S simulated stop · Esc close`));
     this.invalidate();
     this.host.redraw();
     this.host.changed?.(this.state);
@@ -77,7 +80,7 @@ export class Workbench extends VStack {
 
   handleInput(data: string): void {
     if (!this.alive) return;
-    const pressed = (key: "n" | "p" | "e" | "t" | "s") => matchesKey(data, key) || matchesKey(data, `shift+${key}`) || data === key.toUpperCase();
+    const pressed = (key: "n" | "p" | "e" | "t" | "s" | "b") => matchesKey(data, key) || matchesKey(data, `shift+${key}`) || data === key.toUpperCase();
     if (pressed("n") || pressed("p")) {
       this.selection = (this.selection + (pressed("n") ? 1 : scenarios.length - 1)) % scenarios.length;
       this.phase = 0; this.view = undefined;
@@ -85,6 +88,7 @@ export class Workbench extends VStack {
     else if (pressed("e")) this.expanded = !this.expanded;
     else if (pressed("t")) this.host.toggleTheme();
     else if (pressed("s")) { void this.requestStop(); return; }
+    else if (pressed("b")) { this.view?.component.handleInput?.("\x1b[F"); return; }
     else { this.view?.component.handleInput?.(data); return; }
     this.refresh();
   }

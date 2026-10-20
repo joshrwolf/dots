@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 herdr-prs.workspace = true
 dots-tasks.workspace = true
+dots-memory.workspace = true
 herdrkit.workspace = true
 clap.workspace = true
 anyhow.workspace = true

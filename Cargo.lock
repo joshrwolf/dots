@@ -444,6 +444,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dots-memory",
  "dots-tasks",
  "github-inspect",
  "herdr-prs",
@@ -451,6 +452,16 @@ dependencies = [
  "serde",
  "serde_json",
  "time",
+]
+
+[[package]]
+name = "dots-memory"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2",
+ "thiserror 2.0.20",
+ "unicode-segmentation",
 ]
 
 [[package]]

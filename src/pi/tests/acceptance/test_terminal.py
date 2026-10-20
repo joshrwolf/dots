@@ -146,7 +146,8 @@ class PackagedTerminalTests(unittest.TestCase):
             if not records:
                 return False
             latest = json.loads(records[-1].removeprefix("workbench "))
-            return latest["scenario"] == scenario and latest["phase"] == phase and (expanded is None or latest["expanded"] == expanded)
+            return (latest["scenario"] == scenario and latest["phase"] == phase
+                    and (expanded is None or latest["expanded"] == expanded))
 
         def send(data):
             capture.clear()
@@ -203,8 +204,11 @@ class PackagedTerminalTests(unittest.TestCase):
                 wait(lambda: state("frame", 1), "running mixed transcript")
                 send(b" ")
                 wait(lambda: state("frame", 2) and b"supervisor SIGKILL" in capture, "cleanup distinct from root outcome")
-                send(b"\x1b[F")
+                send(b"B")
                 wait(lambda: b"Review the result" in capture and b"example_lookup" in capture, "native editor and fallback tool")
+                wait(lambda: b"ctx 95%" in capture and "✦ high".encode() in capture, "icon footer below editor and goals")
+                send(b" ")
+                wait(lambda: state("frame", 3) and b"ctx ?" in capture, "unknown context in footer study")
             if scenario == "wake":
                 send(b" ")
                 wait(lambda: b"exit 1" in capture, "failed wake check")

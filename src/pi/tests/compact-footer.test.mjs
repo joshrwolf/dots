@@ -31,8 +31,8 @@ test("one line shows project/branch, current model, thinking, and context", () =
   const { footer } = fixture();
   const lines = footer.render(120);
   assert.equal(lines.length, 1);
-  assert.match(plain(lines), /example · main/);
-  assert.match(plain(lines), /model-a · think medium · ctx 25%/);
+  assert.match(plain(lines), /example  ⑂ main/);
+  assert.match(plain(lines), /model-a  ✦ medium  ◔ ctx 25%/);
   assert.equal(visibleWidth(lines[0]), 120);
 });
 

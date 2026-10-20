@@ -2,6 +2,7 @@
 mod command;
 mod herdr;
 mod json;
+mod memory;
 mod render;
 mod reviews;
 mod skills;
@@ -33,6 +34,17 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> Result<String> {
         return Ok(Cli::command().render_long_help().to_string());
     };
     match command {
+        Command::Memory { command } => {
+            anyhow::ensure!(
+                cli.repo.is_none() && !cli.no_cache,
+                "memory is local; --repo and --no-cache do not apply"
+            );
+            let directory = cli
+                .directory
+                .map_or_else(std::env::current_dir, Ok)
+                .context("resolve working directory")?;
+            memory::run(command, &directory, cli.json)
+        }
         Command::Herdr { command } => {
             anyhow::ensure!(
                 cli.repo.is_none() && cli.directory.is_none() && !cli.no_cache,

@@ -49,10 +49,78 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: TaskCommand,
     },
+    /// Read, publish, and search scoped Markdown memory without a service
+    #[command(
+        long_about = "Portable Markdown memory outside the checkout. Reads never initialize storage. Writes require an explicit scope and expected revision, briefly lock that scope, and atomically replace one file. No automatic ingestion, installation, indexing, or network access. See the shared memory skill for evidence and maintenance policy."
+    )]
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommand,
+    },
     /// Export agent discovery documentation from this command tree
     Skills {
         #[command(subcommand)]
         command: SkillCommand,
+    },
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum MemoryScope {
+    Global,
+    Project,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum MemoryCommand {
+    /// Resolve global and current-project locations; creates nothing
+    Scope,
+    /// Read a bounded page and its full-file revision; absent files have revision "missing"
+    Read {
+        path: PathBuf,
+        #[arg(long, value_enum)]
+        scope: MemoryScope,
+        #[arg(long, default_value_t = 1, value_parser = positive)]
+        start: usize,
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=200))]
+        lines: u16,
+    },
+    /// Publish one Markdown file from UTF-8 input; rejects stale revisions and symlink paths
+    #[command(
+        long_about = "Publish one file using --expected from memory read (or 'missing' for a new file). Reads at most 256 KiB from --content-file. Creates scope/topic directories on first write. A short cooperative .write-lock covers revision checking and atomic replacement; conflicts change no file contents. Multi-file updates are NOT transactions: write topics before the index, and handle interrupted updates explicitly. No shell commands or model calls run under the lock."
+    )]
+    Write {
+        path: PathBuf,
+        #[arg(long, value_enum)]
+        scope: MemoryScope,
+        #[arg(long)]
+        expected: String,
+        #[arg(long)]
+        content_file: PathBuf,
+    },
+    /// Remove one file with revision checking; does not erase backups or external indexes
+    Remove {
+        path: PathBuf,
+        #[arg(long, value_enum)]
+        scope: MemoryScope,
+        #[arg(long)]
+        expected: String,
+    },
+    /// Case-insensitive literal search of current knowledge; defaults to global plus this project
+    #[command(
+        long_about = "Search live Markdown files, not a cached index. Default scope is global plus the current project, never unrelated projects. Sources and log.md are excluded unless --include-sources is set. Results are deterministic path/line matches, not semantic ranking; read the source before applying a snippet. Output reports backend, scope, and pagination. QMD is not installed or invoked."
+    )]
+    Search {
+        query: String,
+        #[arg(long, value_enum)]
+        scope: Option<MemoryScope>,
+        #[arg(long)]
+        include_sources: bool,
+        /// Skip this many matches in each selected scope
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=100000))]
+        offset: u32,
+        /// Maximum matches per scope
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..=20))]
+        limit: u16,
     },
 }
 

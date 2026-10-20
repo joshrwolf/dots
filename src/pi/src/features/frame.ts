@@ -19,13 +19,17 @@ export class FooterView implements Component {
   update(model: FooterModel, theme: Theme): void {
     const percent = model.contextPercent;
     const known = typeof percent === "number" && Number.isFinite(percent);
-    const start: Segment[] = [{ text: model.project, tone: "toolTitle", bold: true, priority: 40, shrink: "clip", clip: "middle", minWidth: 10 }];
-    if (model.branch) start.push({ text: model.branch, tone: "dim", priority: 20, shrink: "omit" });
-    const end: Segment[] = [{ text: model.model || "no model", tone: "muted", priority: 50, shrink: "clip", clip: "middle", minWidth: 12 }];
-    if (model.thinking && model.thinking !== "off") end.push({ text: `think ${model.thinking}`, tone: "dim", priority: 10, shrink: "omit" });
+    const start: Segment[] = [{ text: model.project, tone: "accent", priority: 40, shrink: "clip", clip: "middle", minWidth: 10 }];
+    if (model.branch) start.push({ text: `⑂ ${model.branch}`, tone: "muted", priority: 20, shrink: "omit" });
+    const end: Segment[] = [{ text: model.model || "no model", tone: "text", priority: 50, shrink: "clip", clip: "middle", minWidth: 12 }];
+    if (model.thinking && model.thinking !== "off") end.push({ text: `✦ ${model.thinking}`, tone: "muted", priority: 10, shrink: "omit" });
     const context = known ? `ctx ${Math.max(0, percent).toFixed(0)}%` : "ctx ?";
-    end.push({ text: context, minWidth: context.length, tone: known && percent >= 90 ? "error" : known && percent >= 75 ? "warning" : "dim", priority: 100, shrink: "clip" });
-    this.row.update({ layout: "edges", start, end, separator: " · " }, theme);
+    const warning = known && percent >= 75;
+    const tone = known && percent >= 90 ? "error" : warning ? "warning" : "muted";
+    // The context value survives even when its decorative icon cannot fit.
+    end.push({ text: warning ? "!" : "◔", tone, priority: 90, shrink: "omit" });
+    end.push({ text: context, minWidth: context.length, tone, priority: 100, shrink: "clip", separatorBefore: " " });
+    this.row.update({ layout: "edges", start, end, separator: "  " }, theme);
     this.statuses = model.statuses.map(statusText);
   }
   invalidate(): void { this.row.invalidate(); }

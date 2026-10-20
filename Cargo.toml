@@ -4,6 +4,7 @@ members = [
     "tests",
     "src/herdr/prs",
     "src/tasks",
+    "src/memory",
     "src/dots",
     "src/github/inspect",
     "src/herdr/tests",
@@ -29,6 +30,7 @@ clap = { version = "4", features = ["derive"] }
 github-inspect = { path = "src/github/inspect" }
 github-client = { path = "src/github/client" }
 dots-tasks = { path = "src/tasks" }
+dots-memory = { path = "src/memory" }
 tokio = { version = "1", features = ["rt", "sync", "time", "net", "io-util", "macros", "fs", "process"] }
 herdrkit = { path = "src/herdr/kit" }
 herdr-review = { path = "src/herdr/review" }

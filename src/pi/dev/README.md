@@ -13,6 +13,8 @@ Press Enter to open the prefilled `/ui-lab` command. Inside the workbench:
 
 - **N/P** selects a scenario; **Space** advances its recorded state.
 - **E** expands details; **T** switches light/dark themes.
+- **B** scrolls to the bottom. In **frame**, this reveals the editor, goals, and
+  icon footer; use `/ui-lab frame` to open that preview directly.
 - **↑/↓**, **PgUp/PgDn**, **Home/End** scroll; fullscreen also supports the wheel.
 - **S** confirms a simulated job stop. **Esc** closes the workbench.
 
@@ -36,7 +38,11 @@ unavailable data, and brief warnings. In its
 inspector, **[**/**]** select groups and **←**/**→** fold/unfold them; Space remains
 the workbench state switch.
 **E** switches between the persistent panel and slice inspection; the frame
-scenario also shows the goal panel below the native editor. Expand and scroll to compare summaries with recorded evidence. Wake scenarios show
+scenario also shows the goal panel below the native editor. Its footer uses
+foreground colors and Unicode icons, never Powerline bars. Space cycles
+through ordinary, warning, critical, unknown, long-label, publisher-overflow, and
+no-model states. The preview uses the same footer component as the dots UI;
+fixture state never changes your session or saved preferences. Expand and scroll to compare summaries with recorded evidence. Wake scenarios show
 scheduled follow-ups and failed checks. Input outside commands is ignored, not sent to a model.
 
 `mise run //src/pi:verify-terminal` exercises real-host interaction in regular

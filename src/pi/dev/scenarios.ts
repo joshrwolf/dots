@@ -126,11 +126,19 @@ function goalScenario(): Scenario {
 }
 
 export const scenarios: readonly Scenario[] = [
-  { id: "frame", title: "Application frame", phases: ["ordinary", "context warning", "context critical", "unknown context"], create(context) {
+  { id: "frame", title: "Application frame",
+    phases: ["ordinary", "context warning", "context critical", "unknown context", "long labels", "publisher overflow", "no model"], create(context) {
     const inspector = new Inspector(context.bindings, context.close, context.redraw, context.height);
     const footer = new FooterView();
     return { component: inspector, update(phase, expanded, theme) {
-      footer.update({ project: "example", branch: "feature/presentation", model: "example-model", thinking: "high", contextPercent: [25, 80, 95, undefined][phase], statuses: phase === 1 ? ["workers 1 · ?1"] : [] }, theme);
+      footer.update({
+        project: phase === 4 ? "日本語-project-👩🏽‍💻" : "example",
+        branch: phase === 6 ? undefined : phase === 4 ? "feature/a-long-branch-for-responsive-status-preview" : "feature/presentation",
+        model: phase === 6 ? "no model" : phase === 4 ? "example-provider/long-reasoning-model-name" : "example-model",
+        thinking: phase === 6 ? "off" : "high",
+        contextPercent: phase === 3 || phase === 6 ? undefined : phase === 1 ? 80 : phase === 2 ? 95 : 25,
+        statuses: phase === 5 ? ["workers 2 · awaiting input: choose a revision", "Companion update · /reload when idle", "example publisher: additional details unavailable"] : phase === 1 ? ["workers 1 · ?1"] : [],
+      }, theme);
       const job = jobFixture(phase === 1 ? 1 : phase === 2 ? 4 : 3);
       job.command = "printf 'Checking presentation fixtures\\n'; npm test -- --reporter=spec; printf 'Check complete\\n'";
       if (phase === 2) job.supervisorExit = { code: null, signal: "SIGKILL" };
@@ -138,7 +146,7 @@ export const scenarios: readonly Scenario[] = [
       const followed = goalFixtures(phase === 2 ? 1 : phase === 3 ? 3 : 8);
       goals.update(followed, followed[0]!.focus.id, theme);
       const activity = phase === 1 ? createWidget(() => [{ label: "review", state: "asking", depth: 0, elapsed: "1m", calls: 4, tokens: 2000, detail: "Which revision should I compare?", idleMs: 0 }], theme) : undefined;
-      inspector.setContent({ title: "Application frame", detail: "real components · fixture conversation", body: new VStack([
+      inspector.setContent({ title: "Application frame", detail: "icon footer · B bottom", body: new VStack([
         createHeader(theme), new Spacer(1), new UserMessageComponent("Check the renderer and report any failures.", undefined, 0),
         thinkingComponent(0, false), new Spacer(1), new Text(theme.fg("text", "I’ll run the focused checks, then review the result."), 0, 0), new Spacer(1), ...transcript(context, phase, expanded, job),
         new Spacer(1), ...(activity ? [activity, new Spacer(1)] : []), ...(context.createEditor ? [context.createEditor(theme), new Spacer(1)] : []), goals, footer,
