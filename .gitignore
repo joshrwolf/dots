@@ -27,11 +27,7 @@ src/herdr/*/.crates2.json
 
 # Pi companion dependencies and local runtime data.
 src/pi/**/node_modules/
-src/pi/**/coverage/
 src/pi/**/.pi/
-
-# Scratch handoff notes, not part of the dotfiles.
-src/herdr/HANDOFF.md
 
 # Runtime data must never be captured through a folded Stow directory.
 /home/herdr/.config/herdr/plugins.json
