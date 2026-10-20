@@ -186,6 +186,27 @@ impl Client {
     }
 }
 
+/// The [`Client::repositories`] inventory over a caller's own `git` transport,
+/// which receives each argument list and answers for the intended checkout.
+pub fn repositories_via(
+    git: impl Fn(&[&str]) -> Result<CommandOutput>,
+) -> Result<Vec<GitHubRepository>> {
+    repositories_with(&GitVia(git), Path::new(""))
+}
+
+struct GitVia<F>(F);
+
+impl<F: Fn(&[&str]) -> Result<CommandOutput>> Runner for GitVia<F> {
+    fn output(&self, _cwd: &Path, _program: &str, args: &[OsString]) -> Result<CommandOutput> {
+        // Arguments originate as `&str` in `git_text`, so the round trip is lossless.
+        let args = args
+            .iter()
+            .map(|argument| argument.to_string_lossy())
+            .collect::<Vec<_>>();
+        (self.0)(&args.iter().map(AsRef::as_ref).collect::<Vec<_>>())
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {

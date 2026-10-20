@@ -771,6 +771,7 @@ dependencies = [
 name = "herdrkit"
 version = "0.1.0"
 dependencies = [
+ "dots-process",
  "nix",
  "nucleo",
  "ratatui",
