@@ -1,7 +1,7 @@
 # Cargo, build, and validation
 
 Use this reference for workspace membership, dependencies, mise tasks,
-release staging, and checks. Read the files themselves before changing exact
+plugin staging, and checks. Read the files themselves before changing exact
 versions or lint settings.
 
 ## Workspace shape
@@ -48,7 +48,7 @@ code uses directly even when another crate also happens to pull them in.
 
 ## Lints and toolchain
 
-The exact mise-pinned toolchain includes `clippy` and `rustfmt`. Workspace lints forbid
+`rust-toolchain.toml` pins the exact toolchain, including `clippy` and `rustfmt`. Workspace lints forbid
 unsafe code and deny panic-prone shortcuts including `unwrap_used`,
 `expect_used`, `panic`, `panic_in_result_fn`, `indexing_slicing`, `todo`,
 `unimplemented`, and `dbg_macro`. `pedantic` and `rust_2018_idioms` use
@@ -76,7 +76,7 @@ Useful targets from the repository root:
 
 ```sh
 mise run //src/herdr/find:build    # stage one plugin in its directory
-mise run build                     # every deliverable
+mise run build                     # every plugin
 mise run //src/herdr/find:install  # build, then link the plugin directory
 ```
 
@@ -92,7 +92,8 @@ Run from the repository root:
 mise run check
 ```
 
-This is intentionally one gate:
+This is intentionally one gate; besides the Pi, Claude mod, and Stow checks,
+it runs:
 
 1. `cargo fmt --all --check`;
 2. `cargo clippy --locked --workspace --all-features --all-targets -- -D warnings`;

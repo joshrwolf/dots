@@ -119,10 +119,10 @@ or brief, not a separate execution policy.
 
 For direct setup, `dots task goal create TITLE --brief PATH` creates a root and
 attaches an existing Markdown brief together. Use
-`dots task goal attach ID --brief PATH` to adopt an existing root. These require a
-`dots` build with the `task goal` commands; Pi never installs it automatically.
+`dots task goal attach ID --brief PATH` to adopt an existing root. Pi uses the
+installed `dots` and never installs it.
 
-`/goal follow ID` adds a goal to this session (`focus` remains an alias).
+`/goal follow ID` adds a goal to this session (`focus` is an alias).
 Follow several goals at once; selecting another never pauses or closes earlier
 work. `/goal` chooses which followed goal to inspect, with `1` slices, `2` brief,
 and `3` record details. `/goal show ID` selects directly; `/goal history ID`
@@ -135,13 +135,13 @@ Selection affects display, not which goals get context.
 
 `/goal list` lists shared open/held goals and marks this session's follows;
 `/goal followed` lists the session set. `/goal unfollow ID` removes one;
-`/goal clear` removes all (`unfocus` without an ID remains a clear-all alias).
+`/goal clear` removes all (`unfocus` without an ID also clears all).
 Agents use `goal_focus {id}`, `goal_list {}`, and `goal_unfocus {id}` or
 `goal_unfocus {all: true}`. These change no shared tasks, claims, workers, or
 other sessions. Unfollowing removes future injected context, not prior messages.
 
-The followed set and display selection survive branch reload/resume; older
-single-focus sessions restore as a one-goal set. Fresh sessions follow nothing.
+The followed set and display selection survive branch reload/resume. Fresh
+sessions follow nothing.
 The dashboard sits below the editor, above the status line. It shows recorded
 progress and a short slice list, not live execution.
 Claimed and held slices get priority under their parent groups; `/goal` opens

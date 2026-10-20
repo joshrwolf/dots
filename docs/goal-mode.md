@@ -12,8 +12,8 @@ context and coordination reliable.
 - A Markdown brief captures the outcome, non-goals, design guidance, reference
   patterns, and uncertainties as needed—not a mandatory template. It links to
   canonical material rather than duplicating it.
-- Brief references do not depend on the current memory implementation. Memory
-  remains shared context; transcripts are not the only place decisions survive.
+- Memory remains shared context; transcripts are not the only place decisions
+  survive.
 - Focus, execution permission, and progress are separate. Creating or inspecting
   a goal never authorizes execution. A working agreement can range from
   “do one slice and return” to “continue within the agreed scope.” It lives in
@@ -39,9 +39,9 @@ attention; no scheduler or execution policy is implied. Existing workers and
 wakes remain available without a goal-specific execution layer.
 Durable goal state stays independent of live runtimes.
 
-Presentation uses the existing Pi UI foundation: readonly observations, shared
-components, and host-owned lifecycles. Rendering neither edits tasks nor starts
-execution. Initial autonomous work requires a live Pi session; a durable runner,
+Presentation uses the [Pi presentation library](../src/pi/src/README.md): readonly
+observations, shared components, and host-owned lifecycles. Rendering neither
+edits tasks nor starts execution. Autonomous work requires a live Pi session; a durable runner,
 workflow DSL, generic plugin framework, and automatic merging are out of scope.
 
 See [goal usage](pi.md#goals) for commands and session behavior.

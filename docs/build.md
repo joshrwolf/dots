@@ -71,10 +71,9 @@ and verify. Cargo's MSRV is a separate compatibility requirement.
 
 ## Machine setup
 
-The [machine-setup entry point](../bootstrap/README.md) separates host setup from
-this checkout's development SDKs. Select portable agent configuration or the
-existing macOS desktop configuration without installing host packages. The root
-activation tasks below remain available.
+[Machine setup](../bootstrap/README.md) applies a selected configuration,
+portable agent instructions or the macOS desktop, without this checkout's
+development SDKs or host packages.
 
 ## Activation
 

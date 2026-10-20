@@ -27,7 +27,7 @@
 - Render complete error chains at binary boundaries and add context at each meaningful operation boundary.
 - Never capture live machine, employer, or session data in fixtures; hand-author neutral protocol-realistic inputs.
 - Never run `herdr server reload-config`, link plugins, or install plugins while editing; report that the user must perform live activation.
-- A missing installed command can surface as exit 127 in `herdr plugin log list`. Inspect staging and home links; request explicit activation rather than installing as a diagnostic step.
+- A missing installed command can surface as exit 127 in `herdr plugin log list`. Inspect the plugin's `bin/` and `~/.cargo/bin`; request explicit activation rather than installing as a diagnostic step.
 - Follow `kit/src/api.rs` for shared API design and each plugin's `src/main.rs` for dispatch structure.
 
 ## Local review ownership

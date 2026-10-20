@@ -18,19 +18,17 @@
 # Game audio; this repo is public
 home/herdr/.config/herdr/sounds/*.mp3
 
-# Plugin builds stage bin/ and Cargo install records beside manifests.
+# Plugin builds stage bin/ and Cargo install records beside manifests; the
+# review plugin's locked Neovim test dependencies go to src/herdr/target/.
 src/herdr/target/
 src/herdr/*/bin/
 src/herdr/*/.crates.toml
 src/herdr/*/.crates2.json
 
-# Pi package build/dependency artifacts and local runtime data.
+# Pi companion dependencies and local runtime data.
 src/pi/**/node_modules/
-src/pi/**/dist/
-src/pi/**/dist-pkg/
 src/pi/**/coverage/
 src/pi/**/.pi/
-src/pi/**/*.tgz
 
 # Scratch handoff notes, not part of the dotfiles.
 src/herdr/HANDOFF.md
@@ -39,7 +37,6 @@ src/herdr/HANDOFF.md
 /home/herdr/.config/herdr/plugins.json
 /home/herdr/.config/herdr/.plugins.lock
 /home/herdr/.config/herdr/plugins/
-/home/skills/.local/share/dots/
 
 # Shared Rust workspace build output.
 /target/

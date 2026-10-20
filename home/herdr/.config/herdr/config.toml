@@ -114,7 +114,7 @@ type = "plugin_action"
 command = "herdr-nav.right"
 description = "focus right / forward to the active application"
 
-# Ctrl+L is navigation now; use prefix then Ctrl+L to clear a shell screen.
+# Ctrl+L navigates; use prefix then Ctrl+L to clear a shell screen.
 [[keys.command]]
 key = "prefix+ctrl+l"
 type = "shell"

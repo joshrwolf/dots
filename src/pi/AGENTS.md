@@ -33,8 +33,7 @@
   development guidance here, not release history or session findings in the guide.
 - Check fixtures must be hand-authored with neutral names. Credentials, runtime
   state, transcripts, captures, package caches, and node_modules stay untracked.
-- New instruction scopes use AGENTS.md directly; no CLAUDE.md compatibility links.
-  See [Pi setup](../../docs/pi.md) for installation and use.
+- See [Pi setup](../../docs/pi.md) for installation and use.
 
 ## Presentation code
 

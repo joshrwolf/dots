@@ -9,7 +9,7 @@ The [aggregate Herdr installation](../../../docs/build.md#activation) installs
 the command. With the target session already running:
 
 ```sh
-herdr-issue configure-linear --session default --herdr "$HOME/.local/bin/herdr"
+herdr-issue configure-linear --session default --herdr "$(command -v herdr)"
 ```
 
 This updates only `openIssue` in `~/.linear/coding-tools.json`. In Linear, choose

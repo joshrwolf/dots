@@ -10,8 +10,9 @@ mise run //src/dots:install
 dots --help
 ```
 
-Installation runs `cargo install`, which places `dots` in `~/.cargo/bin`. The
-base `mise run install` links its generated discovery skill.
+Installation runs `cargo install`, which places `dots` in `~/.cargo/bin`. Its
+generated skill reaches agents through the [shared skills](../../docs/skills.md)
+links from the base `mise run install`.
 
 ## Use
 
@@ -24,8 +25,6 @@ Agents should request `--json`; structured follow-ups preserve that mode.
 Commands describe their own effects—there is no blanket read-only guarantee.
 
 Installed help is authoritative if the executable and skill versions differ.
-Codex and Pi discover skills through `~/.agents/skills`; Claude uses
-`~/.claude/skills`. A running harness may need a reload or new session.
 
 ## Development
 

@@ -6,9 +6,10 @@ supporting files. Codex, Pi and Claude all read that directory directly: the
 `~/.claude/skills` (Claude) to it. Edits in the stowed checkout are live; a
 running harness may need a reload or a new session.
 
-The `golang-*` skills began as [samber/cc-skills-golang](https://github.com/samber/cc-skills-golang)
-and are now maintained here; `skills/LICENSE-cc-skills-golang` keeps the upstream
-MIT notice. There is no upstream sync.
+The `golang-*` skills are adapted from
+[samber/cc-skills-golang](https://github.com/samber/cc-skills-golang) and
+maintained here without upstream sync; `skills/LICENSE-cc-skills-golang` keeps
+its MIT notice.
 
 ## Setup
 

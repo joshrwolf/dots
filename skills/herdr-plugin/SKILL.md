@@ -30,8 +30,8 @@ plugin's domain policy in its crate.
 
 ## Architecture
 
-The root Cargo manifest declares packages under the named `src/` owners and
-repository contracts under `tests/`. Herdr features live under `src/herdr/`. A plugin is normally one
+The root Cargo manifest declares packages under the named `src/` owners.
+Herdr features and their contract tests (`src/herdr/tests`) live under `src/herdr/`. A plugin is normally one
 `herdr-<name>` Rust binary plus `herdr-plugin.toml`. Keep `main.rs` thin and put
 testable domain logic in the library.
 
@@ -155,7 +155,7 @@ crate's `tests/acceptance.rs` or a `mod acceptance`; `mise run verify`
 runs them.
 
 Do not link, install, or reload a live Herdr session merely to validate an
-edit. `mise run build` stages every binary; `mise run //src/herdr:install`
+edit. `mise run build` stages every plugin's `bin/`; `mise run //src/herdr:install`
 builds and links each plugin directory, then installs the Herdr CLIs and
 configuration. Linked plugins run from that checkout, so link only from the
 primary checkout, never from an agent worktree. If live activation was not

@@ -24,7 +24,7 @@ the other palette on a matching panel surface; closing restores the initial pale
 
 Resize the real terminal to check layout. Reopen with `/ui-lab [scenario]`;
 use `/ui-lab-exit` to exit. Source changes load with `/reload`; launcher changes
-require relaunching the workbench. No installation is needed. For everyday Pi
+require relaunching the workbench. For everyday Pi
 sessions, use the [install and reload workflow](../../../docs/pi.md#updates).
 Scenarios cover tools, nested codemode activity, job inspection, workers, thinking, and the
 application frame (the default), including its native editor. The frame uses Pi’s
@@ -46,5 +46,5 @@ fixture state never changes your session or saved preferences. Expand and scroll
 scheduled follow-ups and failed checks. Input outside commands is ignored, not sent to a model.
 
 `mise run //src/pi:verify-terminal` exercises the real interactive host, through
-Pi's virtual-terminal option, in regular and fullscreen modes. This directory is
-excluded from the published package.
+Pi's virtual-terminal option, in regular and fullscreen modes. The companion
+manifest does not load this directory.

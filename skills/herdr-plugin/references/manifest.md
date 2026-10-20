@@ -84,7 +84,8 @@ then focused-pane cwd, then workspace cwd, ignoring empty paths. There is no
 process-cwd fallback. `Snapshot::effective_workspace_dir` applies the same
 checkout-or-pane policy to snapshot data.
 
-`HERDR_PLUGIN_ROOT` is managed and may be replaced on reinstall. Persist user
+`HERDR_PLUGIN_ROOT` is the linked plugin directory in the checkout; never write
+there. Persist user
 configuration in `config_dir()` and runtime state in `state_dir()`.
 
 ## Placement and lifecycle

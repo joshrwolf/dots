@@ -84,7 +84,3 @@ The relay grants read access only during the connection. It does not authenticat
 remote `gh`, allow pushes, or supply ongoing credentials. It is GitHub-specific;
 other Git hosts need separately provisioned access. Workstation creation, project
 checkouts, agent login and interactive sessions remain separate workflows.
-
-Fixture tests cover pinned clones, private opt-in, repeatability, conflicts,
-dirty-checkout preservation and staging removal. They do not exercise real
-GitHub credentials, provider permissions or cloud workstation lifecycle.

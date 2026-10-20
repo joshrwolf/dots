@@ -1,5 +1,5 @@
 [vars]
-# Matches the root base_stow_packages inventory; bootstrap tests enforce parity.
+# Keep in step with the root `base` Stow packages.
 packages = "aerospace brew codex ghostty pi skills theme zsh"
 macos_only = true
 stow_ignore = '(?!)'
