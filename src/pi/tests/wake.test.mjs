@@ -40,8 +40,11 @@ function fakeClock(start = Date.UTC(2026, 0, 1)) {
 }
 
 // A session file: entries in file order with ids; `branch` is the current leaf's path (all of it unless a test moves it).
+// Runs finish at once unless a test calls `busy()`; `turn()` then settles that run.
 function harness(clock, run, {session = 'session-a', mode = 'rpc'} = {}) {
+  const listeners = {};
   const handlers = {};
+  let idle = true;
   const tools = new Map();
   const messages = [];
   const widgets = new Map();
@@ -50,7 +53,13 @@ function harness(clock, run, {session = 'session-a', mode = 'rpc'} = {}) {
   let next = 0;
   const pi = {
     on: (name, fn) => {
-      handlers[name] = fn;
+      (listeners[name] ??= []).push(fn);
+      handlers[name] = (event, context) => {
+        let result;
+        for (const listener of listeners[name])
+          result = listener(event, context);
+        return result;
+      };
     },
     registerTool: tool => tools.set(tool.name, tool),
     registerCommand: () => {},
@@ -71,6 +80,7 @@ function harness(clock, run, {session = 'session-a', mode = 'rpc'} = {}) {
     cwd: '/project',
     hasUI: true,
     mode,
+    isIdle: () => idle,
     ui: {
       notify: (message, level) => notices.push({message, level}),
       setWidget: (key, factory) =>
@@ -93,14 +103,19 @@ function harness(clock, run, {session = 'session-a', mode = 'rpc'} = {}) {
   const text = async (name, params) =>
     (await tools.get(name).execute('c', params, undefined, undefined, ctx))
       .content[0].text;
-  // Pi emits message_start when a follow-up is consumed, including inside an
-  // existing run. This does not require a fresh before_agent_start event.
-  let consumed = 0;
-  const turn = () => {
-    for (const {message} of messages.slice(consumed))
-      handlers.message_start?.({message: {role: 'custom', ...message}}, ctx);
-    consumed = messages.length;
+  /** A run is in progress until `turn()`. */
+  const busy = () => {
+    idle = false;
   };
+  /** The run settles; held messages are delivered on the next macrotask. */
+  const turn = async ({aborted = false} = {}) => {
+    idle = true;
+    handlers.agent_settled?.({type: 'agent_settled', aborted}, ctx);
+    await new Promise(resolve => setTimeout(resolve, 5));
+  };
+  /** The user prompts, which ends a cancellation. */
+  const prompt = () =>
+    handlers.before_agent_start?.({messageType: 'user', prompt: 'go on'}, ctx);
   return {
     handlers,
     tools,
@@ -111,7 +126,9 @@ function harness(clock, run, {session = 'session-a', mode = 'rpc'} = {}) {
     ctx,
     call,
     text,
+    busy,
     turn,
+    prompt,
     navigate,
   };
 }
@@ -152,14 +169,17 @@ test('the TUI wake section follows creation, checking, queued consumption, cance
   assert.ok(renders > 0);
   await clock.advance(1000);
   assert.match(shown(), /checking/);
+  h.busy();
   complete({stdout: 'changed', stderr: '', code: 0});
   await new Promise(resolve => setImmediate(resolve));
   assert.match(shown(), /queued/);
-  h.turn();
+  assert.equal(h.messages.length, 0, 'a fire waits for the run to settle');
+  await h.turn();
+  assert.equal(h.messages.length, 1);
   assert.equal(
     h.widgets.size,
     0,
-    'a delivered one-shot disappears only after consumption',
+    'a fired one-shot disappears only once delivered',
   );
   assert.equal(clock.pending(), 0, 'the display clock stops when empty');
   const recurring = await h.call('wake', {text: 'Poll status', every: '1m'});
@@ -212,10 +232,7 @@ test('one-shot, recurring with limit, no drift, no pile-up, cancel, manual run',
   await clock.advance(60_000);
   assert.equal(h.messages.length, 1);
   assert.match(h.messages[0].message.content, /check the deploy/);
-  assert.deepEqual(h.messages[0].options, {
-    triggerTurn: true,
-    deliverAs: 'followUp',
-  });
+  assert.deepEqual(h.messages[0].options, {triggerTurn: true});
   assert.equal(
     (await h.call('wake_list', {})).length,
     0,
@@ -227,18 +244,18 @@ test('one-shot, recurring with limit, no drift, no pile-up, cancel, manual run',
   await clock.advance(10 * 60_000);
   assert.equal(h.messages.length, 2);
   assert.match(h.messages[1].message.content, /fire 1 of 3/);
-  // Not consumed by a turn yet: the next tick is skipped, not stacked.
+  // A busy session holds the next fire; a tick while it waits is skipped, not
+  // stacked.
+  h.busy();
+  await clock.advance(10 * 60_000);
   await clock.advance(10 * 60_000);
   assert.equal(h.messages.length, 2);
-  h.turn();
-  await clock.advance(10 * 60_000);
+  await h.turn();
   assert.equal(h.messages.length, 3);
   assert.match(h.messages[2].message.content, /fire 2 of 3/);
-  h.turn();
   await clock.advance(10 * 60_000);
   assert.equal(h.messages.length, 4);
   assert.match(h.messages[3].message.content, /fire 3 of 3/);
-  h.turn();
   await clock.advance(30 * 60_000);
   assert.equal(h.messages.length, 4, 'limit reached');
   assert.equal((await h.call('wake_list', {})).length, 0);
@@ -246,7 +263,6 @@ test('one-shot, recurring with limit, no drift, no pile-up, cancel, manual run',
   const loop = await h.call('wake', {text: 'tick', every: '5m'});
   assert.equal(loop.limit, 50);
   await clock.advance(5 * 60_000);
-  h.turn();
   assert.equal(h.messages.length, 5);
   assert.match(await h.text('wake_run', {id: loop.id}), /fired \(2 total\)/);
   assert.match(h.messages[5].message.content, /manual/);
@@ -298,14 +314,12 @@ test('check-gated wakes only wake on the chosen condition and carry output', asy
   assert.deepEqual(runs[0], ['gh run list --limit 1', '/project']);
   assert.equal(h.messages.length, 1, 'first observation fires');
   assert.match(h.messages[0].message.content, /exit: 0\npending/);
-  h.turn();
   await clock.advance(5 * 60_000);
   assert.equal(h.messages.length, 1, 'same output: silent');
   output = {stdout: 'failure\n', stderr: '', code: 0};
   await clock.advance(5 * 60_000);
   assert.equal(h.messages.length, 2, 'changed output fires');
   assert.match(h.messages[1].message.content, /failure/);
-  h.turn();
 
   const red = await h.call('wake', {
     text: 'build broke',
@@ -320,7 +334,6 @@ test('check-gated wakes only wake on the chosen condition and carry output', asy
   await clock.advance(2 * 60_000);
   assert.equal(h.messages.length, 3);
   assert.match(h.messages[2].message.content, /exit: 2\nstderr: boom/);
-  h.turn();
   assert.match(await h.text('wake_run', {id: red.id}), /fired/);
   assert.equal(h.messages.length, 4, 'manual run ignores the gate');
   await h.call('wake_cancel', {id: ci.id});
@@ -370,7 +383,6 @@ test('reload re-arms from the session; a missed one-shot fires once, late', asyn
     '15m',
     'continues from now, not from the missed slots',
   );
-  h2.turn();
   await clock.advance(20 * 60_000);
   assert.equal(
     h2.messages.filter(m => /\blater\b/.test(m.message.content)).length,
@@ -472,6 +484,8 @@ test('manual checks own the timer, reject overlap, and enforce the shared limit'
     check: 'true',
   });
   await clock.advance(30_000);
+  // wake_run is a tool call: the run that made it is in progress.
+  h.busy();
   const manual = h.text('wake_run', {id: wake.id});
   await assert.rejects(h.call('wake_run', {id: wake.id}), /check in progress/);
   await clock.advance(60_000);
@@ -479,13 +493,13 @@ test('manual checks own the timer, reject overlap, and enforce the shared limit'
   complete({stdout: 'ok', stderr: '', code: 0});
   assert.match(await manual, /fired \(1 total\)/);
   await clock.advance(0);
+  await h.turn();
   assert.equal(
     h.messages.length,
     1,
     'the missed scheduled slot is not stacked',
   );
   assert.equal((await h.call('wake_list', {}))[0].in, '30s');
-  h.turn();
   const final = h.text('wake_run', {id: wake.id});
   complete({stdout: 'ok', stderr: '', code: 0});
   assert.match(await final, /fired \(2 total\)/);
@@ -495,34 +509,65 @@ test('manual checks own the timer, reject overlap, and enforce the shared limit'
   assert.equal(runs, 2);
 });
 
-test('follow-up consumption releases only the matching fire without a new run', async () => {
+test('held fires share one run and release their slot once delivered', async () => {
   const clock = fakeClock();
   const h = harness(clock);
   await h.handlers.session_start({}, h.ctx);
   const wake = await h.call('wake', {text: 'poll', every: '1m', limit: 4});
+  h.busy();
   await clock.advance(60_000);
   await h.call('wake_run', {id: wake.id});
-  const consume = index =>
-    h.handlers.message_start({
-      message: {role: 'custom', ...h.messages[index].message},
-    });
-  consume(0);
   await clock.advance(60_000);
-  assert.equal(
-    h.messages.length,
-    2,
-    'an older consumed fire does not release the newest pending one',
+  assert.equal(h.messages.length, 0, 'fires wait while the session is busy');
+  await h.turn();
+  assert.deepEqual(
+    h.messages.map(({message, options}) => [
+      message.details.fired,
+      options.triggerTurn,
+    ]),
+    [
+      [1, false],
+      [2, true],
+    ],
+    'appended together; the last starts the run',
   );
-  h.handlers.message_start({message: {role: 'user', content: 'unrelated'}});
   await clock.advance(60_000);
-  assert.equal(h.messages.length, 2);
-  consume(1);
+  assert.equal(h.messages.length, 3, 'delivery releases the pending slot');
+  h.handlers.session_shutdown({}, h.ctx);
+});
+
+test('a fire held through /tree carries the provenance of the branch it lands on', async () => {
+  const clock = fakeClock();
+  const h = harness(clock);
+  await h.handlers.session_start({}, h.ctx);
+  await h.call('wake', {text: 'poll', in: '1m'});
+  // A summarized navigation keeps the session busy while the fire is due.
+  h.busy();
   await clock.advance(60_000);
-  assert.equal(
-    h.messages.length,
-    3,
-    'consumption inside the same agent run releases the pending slot',
-  );
+  assert.equal(h.messages.length, 0);
+  h.navigate();
+  await h.turn();
+  const [{message}] = h.messages;
+  assert.equal(message.details.elsewhere, true);
+  assert.match(message.content, / · set on another branch of this session\n/);
+  h.handlers.session_shutdown({}, h.ctx);
+});
+
+test('a fire after a cancelled run is recorded without a run until the user prompts', async () => {
+  const clock = fakeClock();
+  const h = harness(clock);
+  await h.handlers.session_start({}, h.ctx);
+  await h.call('wake', {text: 'poll', every: '1m', limit: 4});
+  h.busy();
+  await clock.advance(60_000);
+  await h.turn({aborted: true});
+  assert.deepEqual(h.messages.at(-1)?.options, {triggerTurn: false});
+  await clock.advance(60_000);
+  assert.equal(h.messages.length, 2, 'the next fire is not skipped');
+  assert.deepEqual(h.messages.at(-1)?.options, {triggerTurn: false});
+  h.prompt();
+  await clock.advance(60_000);
+  assert.deepEqual(h.messages.at(-1)?.options, {triggerTurn: true});
   h.handlers.session_shutdown({}, h.ctx);
 });
 
@@ -536,7 +581,6 @@ test('checks persist a bounded digest rather than complete output', async () => 
   await h.handlers.session_start({}, h.ctx);
   await h.call('wake', {text: 'poll', every: '1m', check: 'verbose fixture'});
   await clock.advance(60_000);
-  h.turn();
   await clock.advance(60_000);
   assert.equal(h.messages.length, 1);
   assert.ok(h.entries.every(entry => JSON.stringify(entry).length < 1000));
@@ -586,7 +630,6 @@ test('wakes are session resources: /tree keeps them armed and reload agrees', as
     /^Wake k-[0-9a-f]{16} \(fire 1 of 5, every 10m\) · set on another branch of this session\n/,
   );
   assert.equal(h.messages[0].message.details.elsewhere, true);
-  h.turn();
   h.handlers.session_shutdown({}, h.ctx);
   // Reload from the same session file, still on the new branch: the same wake, the same schedule.
   const reloaded = harness(clock);

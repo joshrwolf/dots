@@ -167,7 +167,12 @@ mod tests {
         repo.write("ignored.log", "noise\n");
         let overview = repo
             .reviews()
-            .start(TargetSpec::Worktree, Some("standard".into()), 100)
+            .start(
+                TargetSpec::Worktree,
+                Some("standard".into()),
+                Some("pi-session".into()),
+                100,
+            )
             .unwrap();
 
         let paths: Vec<_> = overview
@@ -199,6 +204,9 @@ mod tests {
         );
         assert!(overview.review.id.starts_with("r-"));
         assert_eq!(overview.review.profile.as_deref(), Some("standard"));
+        assert_eq!(overview.review.owner.as_deref(), Some("pi-session"));
+        let listed = repo.reviews().list(false).unwrap();
+        assert_eq!(listed[0].owner.as_deref(), Some("pi-session"));
         assert_eq!(overview.review.worktree.path, repo.root);
         assert_eq!(overview.review.worktree.branch.as_deref(), Some("main"));
         assert_eq!(
@@ -214,7 +222,7 @@ mod tests {
         let repo = Repo::new();
         let reviews = repo.reviews();
         assert!(matches!(
-            reviews.start(TargetSpec::Worktree, None, 1),
+            reviews.start(TargetSpec::Worktree, None, None, 1),
             Err(Error::NothingToReview(_))
         ));
         assert!(matches!(TargetSpec::range("main"), Err(Error::Invalid(_))));
@@ -225,12 +233,17 @@ mod tests {
                     reference: "missing".into()
                 },
                 None,
+                None,
                 1
             ),
             Err(Error::Invalid(_))
         ));
         assert!(matches!(
-            reviews.start(TargetSpec::Worktree, Some("Not A Name".into()), 1),
+            reviews.start(TargetSpec::Worktree, Some("Not A Name".into()), None, 1),
+            Err(Error::Invalid(_))
+        ));
+        assert!(matches!(
+            reviews.start(TargetSpec::Worktree, None, Some("two\nlines".into()), 1),
             Err(Error::Invalid(_))
         ));
         assert!(
@@ -255,6 +268,7 @@ mod tests {
                     reference: "main".into(),
                 },
                 None,
+                None,
                 1,
             )
             .unwrap();
@@ -263,7 +277,7 @@ mod tests {
         assert_eq!(paths, ["later.txt", "src/lib.rs"]);
 
         let range = reviews
-            .start(TargetSpec::range("main..feature").unwrap(), None, 2)
+            .start(TargetSpec::range("main..feature").unwrap(), None, None, 2)
             .unwrap();
         let revision = range.review.current();
         assert_eq!(revision.base, initial);
@@ -286,7 +300,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -381,7 +395,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -440,7 +454,7 @@ mod tests {
         repo.write("src/lib.rs", &(lines.join("\n") + "\n"));
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -542,7 +556,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -626,7 +640,7 @@ mod tests {
         // changes, not of timestamps or ids.
         let start = || {
             reviews
-                .start(TargetSpec::Worktree, None, 1)
+                .start(TargetSpec::Worktree, None, None, 1)
                 .unwrap()
                 .review
                 .id
@@ -671,7 +685,7 @@ mod tests {
         fs::write(linked.join("src/lib.rs"), numbered(1..=21)).unwrap();
         let other = Reviews::open(&linked).unwrap();
         let id = other
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -710,7 +724,7 @@ mod tests {
         repo.write("notes/new.md", "new file\n");
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -743,7 +757,7 @@ mod tests {
         change_line_ten(&repo);
         let primary = repo.reviews();
         let own = primary
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -751,7 +765,7 @@ mod tests {
         fs::write(linked.join("src/lib.rs"), "replaced\n").unwrap();
         let other = Reviews::open(&linked).unwrap();
         let theirs = other
-            .start(TargetSpec::Worktree, None, 2)
+            .start(TargetSpec::Worktree, None, None, 2)
             .unwrap()
             .review
             .id;
@@ -798,7 +812,7 @@ mod tests {
         fs::write(linked.join("src/lib.rs"), numbered(1..=21)).unwrap();
         let other = Reviews::open(&linked).unwrap();
         let id = other
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -854,7 +868,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -886,7 +900,7 @@ mod tests {
         fs::write(linked.join("src/lib.rs"), "replaced\n").unwrap();
         let reviews = Reviews::open(&linked).unwrap();
         let id = reviews
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -898,7 +912,7 @@ mod tests {
         change_line_ten(&repo);
         let primary = repo.reviews();
         let own = primary
-            .start(TargetSpec::Worktree, None, 2)
+            .start(TargetSpec::Worktree, None, None, 2)
             .unwrap()
             .review
             .id;
@@ -916,7 +930,7 @@ mod tests {
         change_line_ten(&repo);
         let id = repo
             .reviews()
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -943,7 +957,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, 1)
+            .start(TargetSpec::Worktree, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -953,6 +967,13 @@ mod tests {
             .join(format!("{id}.json"));
         assert!(file.is_file());
         assert_eq!(reviews.directory(), file.parent().unwrap());
+
+        // Files written before reviews recorded an owner load without one.
+        let mut written: serde_json::Value =
+            serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+        written.as_object_mut().unwrap().remove("owner");
+        fs::write(&file, serde_json::to_vec(&written).unwrap()).unwrap();
+        assert_eq!(reviews.show(&id).unwrap().review.owner, None);
 
         fs::write(
             &file,

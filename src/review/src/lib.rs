@@ -131,6 +131,8 @@ pub struct Summary {
     pub id: String,
     pub target: TargetSpec,
     pub profile: Option<String>,
+    /// The session that started the review, if known.
+    pub owner: Option<String>,
     pub worktree: Worktree,
     /// The review file.
     pub file: PathBuf,
@@ -240,10 +242,20 @@ impl Reviews {
         self.store.directory()
     }
 
-    /// Start a review of `target` in this worktree. Refuses an empty change.
-    pub fn start(&self, target: TargetSpec, profile: Option<String>, now: i64) -> Result<Overview> {
+    /// Start a review of `target` in this worktree on behalf of `owner`, the
+    /// session to tell about replies. Refuses an empty change.
+    pub fn start(
+        &self,
+        target: TargetSpec,
+        profile: Option<String>,
+        owner: Option<String>,
+        now: i64,
+    ) -> Result<Overview> {
         if let Some(profile) = &profile {
             name("profile", profile).map_err(Error::Invalid)?;
+        }
+        if let Some(owner) = &owner {
+            text("owner", owner, 200, false).map_err(Error::Invalid)?;
         }
         self.store.prepare()?;
         let resolved = resolve(&self.git, self.store.directory(), &target)?;
@@ -265,6 +277,7 @@ impl Reviews {
                 id: String::new(),
                 target,
                 profile,
+                owner,
                 worktree,
                 created_at: now,
                 updated_at: now,
@@ -324,6 +337,7 @@ impl Reviews {
                     id: review.id,
                     target: review.target,
                     profile: review.profile,
+                    owner: review.owner,
                     worktree: review.worktree,
                     created_at: review.created_at,
                     updated_at: review.updated_at,

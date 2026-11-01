@@ -221,6 +221,9 @@ pub struct Review {
     pub target: TargetSpec,
     /// Opaque name of the profile that produced it, if any.
     pub profile: Option<String>,
+    /// The session that started the review, such as `pi-<id>`, and is told
+    /// when the user replies; absent when none was known.
+    pub owner: Option<String>,
     pub worktree: Worktree,
     pub created_at: i64,
     pub updated_at: i64,

@@ -1,7 +1,7 @@
 # Pi
 
 The companion adds workers, finite background jobs, wakes, memory, goal
-inspection and Rex status to stock Pi.
+inspection, review reply notices and Rex status to stock Pi.
 
 ## Setup
 
@@ -113,6 +113,8 @@ Use trusted finite checks, not daemons, and cancel schedules whose purpose is ov
 
 Wakes persist but do not fire while Pi is closed. A missed wake fires once on
 return. `/tree` preserves them; `/fork` and `/clone` copy inactive history.
+A fire waits until the session is idle; after a cancelled run it is recorded
+without starting a turn until the next prompt.
 
 ## Memory
 
@@ -121,6 +123,16 @@ project notes take precedence over global notes. Memory is learned context, not
 an instruction override, task list or transcript archive. Nothing is written
 automatically. The [memory skill](../skills/memory/SKILL.md) owns upkeep through
 revision-checked `dots memory` commands.
+
+## Review replies
+
+A review records the session that started it (`dots review start --owner`
+defaults to the invoking agent session). That session watches the reviews it
+owns across the repository's worktrees and, when the user comments or changes a
+status, receives one batched notice. Like a wake fire, it waits until the
+session is idle and does not restart a cancelled run. Notices on the current branch are the receipts, so
+reload and resume neither repeat a reply nor lose one that arrived while Pi was
+closed.
 
 ## Anthropic request guard
 

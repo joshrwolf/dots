@@ -2242,6 +2242,9 @@ Options:
       --profile <NAME>
           Name of the profile running the review, recorded as given
 
+      --owner <NAME>
+          Session told about the user's replies; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID), otherwise none
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -2249,7 +2252,7 @@ Options:
 ## dots review list
 
 ```text
-List reviews, oldest first: this worktree's, or with --all those of every worktree of the repository. Each entry carries its worktree (path and branch at start), review file, current revision and thread counts by status.
+List reviews, oldest first: this worktree's, or with --all those of every worktree of the repository. Each entry carries its owner (the session that started it, or null), worktree (path and branch at start), review file, current revision and thread counts by status.
 
 Usage: dots review list [OPTIONS]
 
@@ -2262,6 +2265,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Only reviews owned by this session, such as pi-<id>
 
   -h, --help
           Print help (see a summary with '-h')

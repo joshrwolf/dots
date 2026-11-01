@@ -17,6 +17,7 @@ import {
   inspectorHeight,
   inspectorOverlay,
 } from '../../src/ui/inspector.ts';
+import {TurnMessages} from '../../src/host/delivery.ts';
 import {
   checkDigest,
   runCheck,
@@ -80,7 +81,7 @@ const WakeSchema = Type.Object(
 type WakeRecord = Static<typeof WakeSchema>;
 
 export interface Wake extends Omit<WakeRecord, 'version' | 'owner'> {
-  /** Set while a fire's message is queued and not yet consumed by a turn. */
+  /** Set from a fire until its message is delivered. */
   pending: boolean;
 }
 
@@ -158,6 +159,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
   const timers = new Map<string, unknown>();
   const checking = new Map<Wake, AbortController>();
   const checkRuns = new Set<Promise<CheckResult>>();
+  const delivery = new TurnMessages(pi);
   let context: ExtensionContext | undefined;
   let owner: string | undefined;
   let cwd = process.cwd();
@@ -366,30 +368,39 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
       }
       wake.fired += 1;
       const late = now - planned;
-      const elsewhere = !setOnBranch(wake.id);
-      const header = `Wake ${wake.id}${wake.every ? ` (fire ${wake.fired} of ${wake.limit}, every ${describe(wake.every)})` : ''}${late > 60_000 && reason !== 'manual' ? ` · late by ${describe(late)}` : ''}${reason === 'manual' ? ' · manual' : ''}${elsewhere ? ' · set on another branch of this session' : ''}`;
       wake.pending = true;
-      // A tick is time-based, not urgent: start a turn when idle, otherwise queue
-      // after the current turn rather than interrupting it.
-      pi.sendMessage(
-        {
-          customType: 'dots.wake',
-          content: `${header}\n\n${body}\n\nCancel with wake_cancel { id: "${wake.id}" }.`,
-          display: true,
-          details: {
-            id: wake.id,
-            fired: wake.fired,
-            limit: wake.limit,
-            late,
-            manual: reason === 'manual',
-            text: wake.text,
-            ...(wake.every ? {every: describe(wake.every)} : {}),
-            ...(wake.check ? {check: wake.check} : {}),
-            ...(exit === undefined ? {} : {exit}),
-            ...(elsewhere ? {elsewhere} : {}),
-          } satisfies WakeDetails,
+      const fired = wake.fired;
+      // A tick is time-based, not urgent: it waits for the session to be idle
+      // and does not restart a run the user cancelled. Only delivery of this
+      // exact fire releases its slot. Provenance is read when it is delivered,
+      // from the branch it lands on.
+      delivery.send(
+        () => {
+          const elsewhere = !setOnBranch(wake.id, fired);
+          const header = `Wake ${wake.id}${wake.every ? ` (fire ${fired} of ${wake.limit}, every ${describe(wake.every)})` : ''}${late > 60_000 && reason !== 'manual' ? ` · late by ${describe(late)}` : ''}${reason === 'manual' ? ' · manual' : ''}${elsewhere ? ' · set on another branch of this session' : ''}`;
+          return {
+            customType: 'dots.wake',
+            content: `${header}\n\n${body}\n\nCancel with wake_cancel { id: "${wake.id}" }.`,
+            display: true,
+            details: {
+              id: wake.id,
+              fired,
+              limit: wake.limit,
+              late,
+              manual: reason === 'manual',
+              text: wake.text,
+              ...(wake.every ? {every: describe(wake.every)} : {}),
+              ...(wake.check ? {check: wake.check} : {}),
+              ...(exit === undefined ? {} : {exit}),
+              ...(elsewhere ? {elsewhere} : {}),
+            } satisfies WakeDetails,
+          };
         },
-        {triggerTurn: true, deliverAs: 'followUp'},
+        () => {
+          if (wakes.get(wake.id) !== wake || wake.fired !== fired) return;
+          wake.pending = false;
+          refresh();
+        },
       );
       if (wake.fired >= wake.limit) finish(wake);
       else if (reason === 'timer' || reason === 'restore') advance(wake);
@@ -441,15 +452,20 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     return wake;
   };
 
-  /** Whether any record of this wake lies on the branch the session is on now. */
-  const setOnBranch = (id: string): boolean => {
+  /**
+   * Whether a record of this wake from before fire `fired` lies on the branch
+   * the session is on now. Every earlier record counts fewer fires; the records
+   * this fire and later ones write do not count.
+   */
+  const setOnBranch = (id: string, fired: number): boolean => {
     const branch = context?.sessionManager.getBranch() ?? [];
     return branch.some(
       entry =>
         entry.type === 'custom' &&
         entry.customType === ENTRY &&
         Check(WakeSchema, entry.data) &&
-        entry.data.id === id,
+        entry.data.id === id &&
+        entry.data.fired < fired,
     );
   };
 
@@ -459,6 +475,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     armed = true;
     context = ctx;
     cwd = ctx.cwd;
+    delivery.bind(ctx);
     owner = ctx.sessionManager.getSessionId();
     for (const timer of timers.keys()) disarm(timer);
     wakes.clear();
@@ -525,38 +542,18 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     widgetMounted = false;
     redraw = undefined;
     context = undefined;
+    delivery.close();
     for (const controller of checking.values()) controller.abort();
     for (const id of [...timers.keys()]) disarm(id);
     // RPC exits immediately after disposal. Keep it alive through TERM/KILL
     // escalation and bounded pipe drain, rather than abandoning those timers.
     await Promise.allSettled([...checkRuns]);
   });
-  // Follow-ups can be consumed inside an existing agent loop, without another
-  // before_agent_start. Only consumption of this exact fire releases its slot.
-  pi.on('message_start', event => {
-    const message = event.message;
-    if (message.role !== 'custom' || message.customType !== 'dots.wake') return;
-    const details = message.details;
-    if (
-      typeof details !== 'object' ||
-      details === null ||
-      !('id' in details) ||
-      !('fired' in details) ||
-      typeof details.id !== 'string'
-    )
-      return;
-    const wake = wakes.get(details.id);
-    if (wake && details.fired === wake.fired) {
-      wake.pending = false;
-      refresh();
-    }
-  });
-
   pi.registerTool({
     name: 'wake',
     label: 'Wake',
     description:
-      'Wake this session later with a note to self, once (in/at) or on an interval (every). The fire arrives as a message that starts a turn when idle or follows the current one. With check, a shell command runs at each tick and the session wakes only per `on` (always, change in output, failure, success), so polling costs no tokens until something changes. Recurring wakes stop after limit fires. Use this for follow-ups, supervision of long work, and CI polling; not for sub-minute loops.',
+      'Wake this session later with a note to self, once (in/at) or on an interval (every). The fire arrives as a message that starts a turn once the session is idle. With check, a shell command runs at each tick and the session wakes only per `on` (always, change in output, failure, success), so polling costs no tokens until something changes. Recurring wakes stop after limit fires. Use this for follow-ups, supervision of long work, and CI polling; not for sub-minute loops.',
     promptSnippet:
       'Schedule a future or recurring wake-up for this session, optionally gated on a shell check.',
     parameters: Type.Object({

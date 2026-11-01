@@ -66,3 +66,14 @@ Re-review until a round adds nothing new, or the user stops it.
 
 `dots review remove <id>` deletes a review once the user is done with it;
 reviews also disappear with their worktree.
+
+## Reply notices
+
+The session that runs `dots review start` owns the review; start it yourself
+(or pass `--owner`) rather than from a worker. In Pi, when the user comments or
+changes a status, the owner receives a notice naming the review, thread,
+location and comment. Read the thread with `dots review show`, then decide:
+answer it yourself, fix the change, or resume the worker that owns that change
+or finding with `message` and give it the thread. Reply on the thread with the
+outcome (`dots review reply`, or `dots review set` with evidence), so the user
+sees it in the review.

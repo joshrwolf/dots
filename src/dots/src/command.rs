@@ -747,15 +747,21 @@ pub(crate) enum ReviewCommand {
         /// Name of the profile running the review, recorded as given
         #[arg(long, value_name = "NAME")]
         profile: Option<String>,
+        /// Session told about the user's replies; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID), otherwise none
+        #[arg(long, value_name = "NAME")]
+        owner: Option<String>,
     },
     /// List this worktree's reviews, or every worktree's with --all
     #[command(
-        long_about = "List reviews, oldest first: this worktree's, or with --all those of every worktree of the repository. Each entry carries its worktree (path and branch at start), review file, current revision and thread counts by status."
+        long_about = "List reviews, oldest first: this worktree's, or with --all those of every worktree of the repository. Each entry carries its owner (the session that started it, or null), worktree (path and branch at start), review file, current revision and thread counts by status."
     )]
     List {
         /// Reviews of every worktree of the repository
         #[arg(long)]
         all: bool,
+        /// Only reviews owned by this session, such as pi-<id>
+        #[arg(long, value_name = "NAME")]
+        owner: Option<String>,
     },
     /// Show a review with its worktree, revisions, threads, changed files, and diff command
     #[command(

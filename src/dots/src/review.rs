@@ -25,27 +25,28 @@ struct Batch {
 pub(crate) fn run(command: ReviewCommand, directory: &Path, json: bool) -> Result<String> {
     let reviews = Reviews::open(directory)?;
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    let id = |id: Option<String>| -> Result<String> {
-        Ok(match id {
-            Some(id) => id,
-            None => reviews.latest()?,
-        })
-    };
+    let id = |id: Option<String>| id.map_or_else(|| reviews.latest(), Ok);
     match command {
-        ReviewCommand::Start { target, profile } => {
-            let overview = reviews.start(spec(target)?, profile, now)?;
+        ReviewCommand::Start {
+            target,
+            profile,
+            owner,
+        } => {
+            let owner = owner.or_else(crate::agent::session);
+            let overview = reviews.start(spec(target)?, profile, owner, now)?;
             Ok(if json {
                 crate::json::render(serde_json::to_value(&overview)?)
             } else {
                 render_overview(&overview)
             })
         }
-        ReviewCommand::List { all } => {
-            let summaries = reviews.list(all)?;
+        ReviewCommand::List { all, owner } => {
+            let mut summaries = reviews.list(all)?;
+            summaries.retain(|summary| owner.is_none() || summary.owner == owner);
             Ok(if json {
                 crate::json::render(json!({ "reviews": summaries }))
             } else {
-                render_list(&summaries, all)
+                render_list(&summaries, all, owner.as_deref())
             })
         }
         ReviewCommand::Show { id: review } => {
@@ -165,12 +166,16 @@ fn render_changed(review: &str, thread: &Thread, json: bool) -> String {
     out
 }
 
-fn render_list(summaries: &[Summary], all: bool) -> String {
+fn render_list(summaries: &[Summary], all: bool, owner: Option<&str>) -> String {
     if summaries.is_empty() {
-        return if all {
-            "No reviews in this repository.\n".into()
+        let place = if all {
+            "this repository"
         } else {
-            "No reviews in this worktree.\n".into()
+            "this worktree"
+        };
+        return match owner {
+            Some(owner) => format!("No reviews owned by {owner} in {place}.\n"),
+            None => format!("No reviews in {place}.\n"),
         };
     }
     let mut out = String::new();
@@ -211,13 +216,18 @@ fn render_overview(overview: &Overview) -> String {
     let review = &overview.review;
     let revision = review.current();
     let mut out = format!(
-        "{} · {}{}\n{}{}\nbase {} · head tree {}{}\n",
+        "{} · {}{}{}\n{}{}\nbase {} · head tree {}{}\n",
         review.id,
         review.target,
         review
             .profile
             .as_deref()
             .map(|profile| format!(" · profile {profile}"))
+            .unwrap_or_default(),
+        review
+            .owner
+            .as_deref()
+            .map(|owner| format!(" · owner {owner}"))
             .unwrap_or_default(),
         review.worktree.path.display(),
         review
