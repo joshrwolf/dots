@@ -24,7 +24,8 @@ function codediff.revisions(tab)
   return context and context.original_revision, context and context.modified_revision
 end
 
--- Whether buf's diff has rendered: CodeDiff clears the result while a file loads.
+-- Whether buf's diff has rendered. This says nothing about the buffer's content:
+-- added and deleted files publish an empty result before their content loads.
 function codediff.rendered(tab, buf)
   local session = require("codediff.ui.lifecycle").get_session(tab)
   return session ~= nil
@@ -291,7 +292,10 @@ local function jump_to(view, thread)
     for _, win in ipairs(vim.api.nvim_tabpage_list_wins(view.tab)) do
       local buf = vim.api.nvim_win_get_buf(win)
       local path, side = side_of(view, buf)
-      if path == a.path and side == a.side and codediff.rendered(view.tab, buf) then
+      -- The buffer must also hold its content: a loading side is one empty line,
+      -- and the cursor would clamp to it and never move again.
+      local loaded = vim.api.nvim_buf_line_count(buf) >= a.start
+      if path == a.path and side == a.side and loaded and codediff.rendered(view.tab, buf) then
         set_cursor(win, a.start)
         return true
       end
