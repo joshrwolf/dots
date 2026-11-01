@@ -1,3 +1,0 @@
-[tasks.install]
-description = "Install herdr-issue into Cargo's bin directory"
-run = "cargo install --locked --path ."

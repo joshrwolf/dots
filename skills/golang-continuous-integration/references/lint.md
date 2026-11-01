@@ -1,0 +1,88 @@
+# Go Linting
+
+Use the repository's existing golangci-lint configuration and lint targets.
+The [example configuration](../assets/golangci.yml) is a starting point when
+setting up linting, not a required linter set for every project.
+
+## Quick Reference
+
+```bash
+# Run all configured linters
+golangci-lint run ./...
+
+# Auto-fix issues where possible
+golangci-lint run --fix ./...
+
+# Format code (golangci-lint v2+)
+golangci-lint fmt ./...
+
+# Run a single linter only
+golangci-lint run --enable-only govet ./...
+
+# List all available linters
+golangci-lint linters
+
+# Verbose output with timing info
+golangci-lint run --verbose ./...
+```
+
+## Configuration
+
+The [example .golangci.yml](../assets/golangci.yml) illustrates configuration options. For configuration details, linter categories, and per-linter descriptions, see the **[linter reference](lint/linter-reference.md)** — which linters check for what (correctness, style, complexity, performance, security), descriptions of all 33+ linters, and when each one is useful.
+
+## Modernization Checks
+
+Use the configured `modernize` linter, or preview `go fix -diff` on affected
+packages with Go 1.26+, to catch outdated forms during ordinary implementation.
+Check `go help fix` for available flags. Apply relevant fixes, inspect the diff,
+and run the project's checks; do not stop at recommending a straightforward
+migration. When setting up linting, enable modernization checks supported by the
+toolchain. Existing configuration still controls which checks are required.
+
+## Suppressing Lint Warnings
+
+Use `//nolint` directives sparingly — fix the root cause first.
+
+```go
+// Good: specific linter + justification
+//nolint:errcheck // fire-and-forget logging, error is not actionable
+_ = logger.Sync()
+
+// Bad: blanket suppression without reason
+//nolint
+_ = logger.Sync()
+```
+
+Rules:
+
+1. **//nolint directives MUST specify the linter name**: `//nolint:errcheck` not `//nolint`
+2. **//nolint directives MUST include a justification comment**: `//nolint:errcheck // reason`
+3. **Configure `nolintlint` with `require-specific: true` and `require-explanation: true` to enforce both rules** — it flags bare `//nolint` and missing reasons
+4. **NEVER suppress security linters** (gosec, bodyclose, sqlclosecheck) without a very strong reason
+
+For comprehensive patterns and examples, see **[nolint directives](lint/nolint-directives.md)** — when to suppress, how to write justifications, patterns for per-line vs per-function suppression, and anti-patterns.
+
+## Interpreting Output
+
+Each issue follows this format:
+
+```
+path/to/file.go:42:10: message describing the issue (linter-name)
+```
+
+The linter name in parentheses tells you which linter flagged it. Use this to:
+
+- Look up the linter in the [reference](lint/linter-reference.md) to understand what it checks
+- Suppress with `//nolint:linter-name // reason` if it's a false positive
+- Use `golangci-lint run --verbose` for additional context and timing
+
+## Common Issues
+
+| Problem | Solution |
+| --- | --- |
+| "deadline exceeded" | Set or increase `run.timeout` in `.golangci.yml`; golangci-lint v2 defaults to no timeout (`0`) |
+| Too many issues on legacy code | Use `issues.new-from-merge-base: main` for branch changes, or `new-from-rev` for an explicit baseline; ensure that history is fetched |
+| Linter not found | Check `golangci-lint linters` — linter may need a newer version |
+| Conflicts between linters | Disable the less useful one with a comment explaining why |
+| v1 config errors after upgrade | Run `golangci-lint migrate` to convert config format |
+| Slow on large repos | Inspect timings and memory pressure before tuning `run.concurrency`; path exclusions filter reports and do not avoid package analysis |

@@ -14,6 +14,19 @@ const HOLD: Duration = Duration::from_secs(30);
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
 
+/// Start a same-group descendant that holds `lock` and inherits stderr, and
+/// wait until it has the lock.
+fn hold_lock(lock: &str) -> Result {
+    let mut holder = Command::new(std::env::current_exe()?)
+        .args(["hold-lock", lock])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let mut line = String::new();
+    BufReader::new(holder.stdout.take().ok_or("holder stdout")?).read_line(&mut line)?;
+    Ok(())
+}
+
 fn main() -> Result {
     let mut args = std::env::args().skip(1);
     let role = args.next().unwrap_or_default();
@@ -38,6 +51,15 @@ fn main() -> Result {
                 std::thread::sleep(HOLD);
             }
         }
+        // lines COUNT STDERR: print COUNT numbered lines, write STDERR, then exit 3.
+        "lines" => {
+            let (count, stderr): (usize, String) = (arg()?.parse()?, arg()?);
+            for line in 1..=count {
+                println!("line {line}");
+            }
+            std::io::stderr().write_all(stderr.as_bytes())?;
+            std::process::exit(3);
+        }
         // spew: write both streams until killed; deadlocks unless both are drained.
         "spew" => loop {
             std::io::stdout().write_all(&[b'x'; 4096])?;
@@ -47,14 +69,30 @@ fn main() -> Result {
         // pipes, then record this leader's PID in READY and keep running.
         "group" => {
             let (ready, lock) = (arg()?, arg()?);
-            let mut holder = Command::new(std::env::current_exe()?)
-                .args(["hold-lock", &lock])
-                .stdout(Stdio::piped())
-                .spawn()?;
-            let mut line = String::new();
-            BufReader::new(holder.stdout.take().ok_or("holder stdout")?).read_line(&mut line)?;
+            hold_lock(&lock)?;
             std::fs::write(ready, std::process::id().to_string())?;
             std::thread::sleep(HOLD);
+        }
+        // linger LOCK: leave a same-group descendant holding LOCK and stderr,
+        // but not stdout, then exit.
+        "linger" => hold_lock(&arg()?)?,
+        // escape PIDFILE: leave a stderr writer in a new session, then exit.
+        "escape" => {
+            Command::new(std::env::current_exe()?)
+                .args(["escaped", &arg()?])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .spawn()?;
+        }
+        // Write to stderr until its reader goes away, or HOLD passes.
+        "escaped" => {
+            nix::unistd::setsid()?;
+            std::fs::write(arg()?, std::process::id().to_string())?;
+            let start = std::time::Instant::now();
+            while start.elapsed() < HOLD {
+                std::io::stderr().write_all(b".")?;
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
         "hold-lock" => {
             let lock = File::create(arg()?)?;

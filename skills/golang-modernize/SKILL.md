@@ -1,34 +1,18 @@
 ---
 name: golang-modernize
-description: "Choose current Go idioms when writing, reviewing, or refactoring code. Use for version-sensitive API choices, proactive modernization, and Go or tooling upgrades."
-user-invocable: true
+description: "Check version-sensitive Go API choices, modernization hazards, and coordinated Go or tooling upgrades. Use for requested modernization passes or audits, reviewing go fix or modernize output, raising a module's go directive or toolchain, and checking release-specific behavior or support requirements."
 license: MIT
-compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
-metadata:
-  author: samber
-  version: "1.5.1"
-  openclaw:
-    emoji: "🔄"
-    homepage: https://github.com/samber/cc-skills-golang
-    requires:
-      bins:
-        - go
-    install: []
-    skill-library-version: "1.27"
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch WebSearch AskUserQuestion EnterWorktree ExitWorktree
-paths:
-  - "**/*.go"
 ---
 
 <!-- markdownlint-disable ol-prefix -->
 
 # Go Code Modernization
 
-Prefer current idioms during ordinary implementation and review. Apply
-straightforward, behavior-preserving modernizations in affected code and nearby
-uses of the same pattern; an explicit modernization request is not necessary.
-Existing older syntax is not by itself a reason to repeat it. Keep unrelated,
-large migrations separate so the requested change remains reviewable.
+Use this skill for release-specific facts and migration hazards.
+Straightforward, behavior-preserving modernization belongs in affected code
+without a separate request; check the relevant reference
+when its version or semantic contract needs verification. Keep unrelated large
+migrations separate so the requested change remains reviewable.
 
 ## Version and behavior contracts
 
@@ -47,10 +31,10 @@ Newest is not a reason to break those contracts or enable experimental APIs.
 For a requested audit, report findings; for implementation, make the relevant
 modernizations and verify them rather than merely suggesting them.
 
-Everyday defaults belong to `golang-code-style`, `golang-testing`,
-`golang-concurrency`, and `golang-error-handling`. Use this skill's references for
-release-specific details and migration hazards. For semantic renames, use
-`golang-gopls` and review dynamic or external consumers separately.
+Use `golang`, `golang-testing`, and `golang-concurrency` for API, test and
+concurrency details. Use this skill's references for release-specific details
+and migration hazards. For semantic renames, use
+`golang-refactoring` and review dynamic or external consumers separately.
 
 ## Go Version Changelogs
 
@@ -70,7 +54,7 @@ For versions newer than Go 1.27, consult the official Go release notes.
 
 ## Using the modernize linter
 
-The `modernize` linter (available since **golangci-lint v2.6.0**) automatically detects code that can be rewritten using newer Go features. It originates from `golang.org/x/tools/go/analysis/passes/modernize`; `gopls` and `go fix` (rewritten onto the `go/analysis` framework in Go 1.26, with fixer coverage still growing in Go 1.27 — see [Tooling modernization](./references/tooling.md) for the exact fixer list) cover overlapping modernization checks, but exact coverage differs by tool version. See the `samber/cc-skills-golang@golang-lint` skill for configuration.
+The `modernize` linter (available since **golangci-lint v2.6.0**) automatically detects code that can be rewritten using newer Go features. It originates from `golang.org/x/tools/go/analysis/passes/modernize`; `gopls` and `go fix` (rewritten onto the `go/analysis` framework in Go 1.26, with fixer coverage still growing in Go 1.27 — see [Tooling modernization](./references/tooling.md) for the exact fixer list) cover overlapping modernization checks, but exact coverage differs by tool version. See the `golang-continuous-integration` skill for configuration.
 
 ## Version-specific modernizations
 
@@ -101,10 +85,7 @@ For govulncheck, PGO, golangci-lint v2, and tool configuration, see [Tooling mod
 
 ## Go 1.27+ version-bump risk checklist
 
-Several Go 1.27 changes need **verification, not a rewrite**, before a `go.mod` bump ships. Most notably: a `godebug` line in `go.mod` (or `//go:debug` comment) still pinning `asynctimerchan`, `tlsunsafeekm`, `tlsrsakex`, `tls3des`, `tls10server`, `x509keypairleaf`, or `gotypesalias` to its **old** value now fails the build. Full checklist in [Go version modernizations](./references/versions.md#go-127-version-bump-risk-checklist-verify-dont-rewrite).
+Several Go 1.27 changes need **verification, not a rewrite**, before a `go.mod` bump ships. Most notably: a `godebug` line in `go.mod` (or `//go:debug` comment) still pinning `asynctimerchan`, `tlsunsafeekm`, `tlsrsakex`, `tls3des`, `tls10server`, `x509keypairleaf`, or `gotypesalias` to its **old** value now fails the build, and the same old value in the `GODEBUG` environment variable stops the program at startup. Full checklist in [Go version modernizations](./references/versions.md#go-127-version-bump-risk-checklist-verify-dont-rewrite).
 
-## Related Skills
 
-See `samber/cc-skills-golang@golang-concurrency`, `samber/cc-skills-golang@golang-testing`, `samber/cc-skills-golang@golang-observability`, `samber/cc-skills-golang@golang-error-handling`, `samber/cc-skills-golang@golang-lint`, `samber/cc-skills-golang@golang-continuous-integration` skills.
-
-- → See `samber/cc-skills-golang@golang-refactoring` skill for Go-specific risks when moving declarations or changing package boundaries.
+Use `golang-refactoring` for the mechanics of moving declarations or changing package boundaries.

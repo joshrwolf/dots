@@ -3,8 +3,22 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::status::CheckBucket;
 use crate::{Error, Provider, PullRequest, Result};
+
+/// How a check's latest state counts toward CI, as stored in snapshots.
+///
+/// States this version does not recognize stay `Unknown`, never passing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckBucket {
+    Pass,
+    Fail,
+    Pending,
+    Skipping,
+    Cancel,
+    #[serde(other)]
+    Unknown,
+}
 
 pub(crate) const QUERY: &str = r"query($owner: String!, $repo: String!, $number: Int!, $endCursor: String) {
   repository(owner: $owner, name: $repo) {

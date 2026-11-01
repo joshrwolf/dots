@@ -9,17 +9,17 @@ func TestCreateUserHandler(t *testing.T) {
 	tests := []struct {
 		name           string
 		body           string
-		expectedStatus int
+		wantStatus int
 	}{
 		{
 			name:           "valid request",
 			body:           `{"name": "Alice", "email": "alice@example.com"}`,
-			expectedStatus: http.StatusCreated,
+			wantStatus: http.StatusCreated,
 		},
 		{
 			name:           "invalid JSON",
 			body:           `invalid json`,
-			expectedStatus: http.StatusBadRequest,
+			wantStatus: http.StatusBadRequest,
 		},
 	}
 
@@ -33,7 +33,7 @@ func TestCreateUserHandler(t *testing.T) {
 			handler := http.HandlerFunc(CreateUserHandler)
 			handler.ServeHTTP(w, req)
 
-			if got, want := w.Code, tt.expectedStatus; got != want {
+			if got, want := w.Code, tt.wantStatus; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
 		})
@@ -49,19 +49,19 @@ func TestListUsersHandler(t *testing.T) {
 		name           string
 		query          string
 		authHeader     string
-		expectedStatus int
+		wantStatus int
 	}{
 		{
 			name:           "paginated results",
 			query:          "?page=1&limit=10",
 			authHeader:     "Bearer token123",
-			expectedStatus: http.StatusOK,
+			wantStatus: http.StatusOK,
 		},
 		{
 			name:           "missing auth",
 			query:          "?page=1",
 			authHeader:     "",
-			expectedStatus: http.StatusUnauthorized,
+			wantStatus: http.StatusUnauthorized,
 		},
 	}
 
@@ -77,7 +77,7 @@ func TestListUsersHandler(t *testing.T) {
 			handler := AuthMiddleware(ListUsersHandler)
 			handler.ServeHTTP(w, req)
 
-			if got, want := w.Code, tt.expectedStatus; got != want {
+			if got, want := w.Code, tt.wantStatus; got != want {
 				t.Errorf("got %v, want %v", got, want)
 			}
 		})

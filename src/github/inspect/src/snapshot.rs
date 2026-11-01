@@ -1,9 +1,13 @@
 //! Explicit, short-lived observations scoped to a repository and target.
-use crate::checks::Row;
-use crate::{Error, Provider, Repository, Result, Subject};
+use std::fmt;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::{fmt, str::FromStr};
+
+use crate::checks::Row;
+use crate::target::Resource;
+use crate::{Error, Provider, Repository, Result, Subject};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(try_from = "String", into = "String")]
@@ -16,33 +20,32 @@ impl SnapshotRef {
     pub(crate) fn host(&self) -> &str {
         &self.repository.host
     }
+    #[must_use]
     pub fn url(&self) -> String {
         format!("{}/{}", self.repository.url(), self.path)
     }
+    #[must_use]
     pub fn refresh_command(&self) -> String {
-        match crate::target::Resource::parse(&self.url()).map(|(_, resource)| resource) {
-            Ok(
-                crate::target::Resource::ReviewThreads(pr)
-                | crate::target::Resource::ReviewThread(pr, _),
-            ) => format!(
+        match Resource::parse(&self.url()).map(|(_, resource)| resource) {
+            Ok(Resource::ReviewThreads(pr) | Resource::ReviewThread(pr, _)) => format!(
                 "dots github reviews --pr {}/pull/{pr}",
                 self.repository.url()
             ),
-            Ok(crate::target::Resource::Pr(_)) => format!("dots github ci --pr {}", self.url()),
-            Ok(crate::target::Resource::Commit(sha)) => {
+            Ok(Resource::Pr(_)) => format!("dots github ci --pr {}", self.url()),
+            Ok(Resource::Commit(sha)) => {
                 format!("dots github ci --repo {} --sha {sha}", self.repository)
             }
-            Ok(crate::target::Resource::Run { .. }) => {
+            Ok(Resource::Run { .. }) => {
                 format!("dots github ci --run {}", self.url())
             }
-            Ok(crate::target::Resource::Job { .. }) => {
+            Ok(Resource::Job { .. }) => {
                 format!("dots github ci logs {}", self.url())
             }
             _ => format!("dots github ci output {}", self.url()),
         }
     }
     pub(crate) fn create(url: &str, bytes: &[u8]) -> Option<Self> {
-        crate::target::Resource::parse(url).ok()?;
+        Resource::parse(url).ok()?;
         let (repository, path) = Repository::from_url(url).ok()?;
         Some(Self {
             repository,
@@ -59,7 +62,7 @@ impl FromStr for SnapshotRef {
             return Err(crate::target::invalid());
         };
         let repository: Repository = repository.parse()?;
-        crate::target::Resource::parse(&format!("{}/{path}", repository.url()))?;
+        Resource::parse(&format!("{}/{path}", repository.url()))?;
         if path.contains(['?', '#']) {
             return Err(crate::target::invalid());
         }
@@ -140,7 +143,8 @@ impl TryFrom<String> for SnapshotRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CachedLog, PullRequest, status::CheckBucket};
+    use crate::checks::CheckBucket;
+    use crate::{CachedLog, PullRequest};
     use std::cell::RefCell;
     use std::process::Output;
 

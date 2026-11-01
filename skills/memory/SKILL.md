@@ -42,25 +42,22 @@ agent-managed upkeep through the shared tools and workflow.
 
 When available, use `dots memory scope --json` for authoritative locations and
 `dots memory --help` for the installed interface. Scope/read/search do not create
-storage. Otherwise use the memory paths supplied by the host or resolve them as
-follows:
+storage. Project scope comes from the registered project ID bound to the canonical
+Git common directory. Linked worktrees share that binding; separate clones do
+not share it unless explicitly bound. Moving a checkout requires explicit
+`dots project rebind`, not moving knowledge or guessing from names/remotes.
 
-- Root: `$XDG_DATA_HOME/dots/memory` when `XDG_DATA_HOME` is absolute;
-  otherwise `$HOME/.local/share/dots/memory`.
-- Global scope: `_global/` beneath the root.
-- Project scope: run `git rev-parse --path-format=absolute --git-common-dir`
-  in the requested working directory. Resolve its parent to the real main
-  checkout path. The directory key drops leading `/` characters and replaces
-  each run outside ASCII letters, digits, `.`, `_`, and `-` with `-`.
-- Linked worktrees use that same main checkout. Outside Git, consult only
-  global memory; do not infer a project from a folder name. A failed Git query
-  is not evidence that an existing project's memory is empty.
+Current files live under `$XDG_DATA_HOME/dots/workspaces/` when
+`XDG_DATA_HOME` is absolute, otherwise under
+`$HOME/.local/share/dots/workspaces/`. Global knowledge is
+`global/knowledge/`; project knowledge is `<project-id>/knowledge/`.
 
-This is the existing local checkout-key convention, not a portable repository
-identity. Moving a checkout requires explicitly relocating its memory; separately
-cloned repositories do not automatically share it. The normalized key can collide:
-if two checkout paths normalize to the same key, stop and resolve the ambiguity
-rather than combining their knowledge.
+If the CLI is unavailable, use the host's explicit current paths or a known
+registered project ID for ordinary file reads. Otherwise read only global
+knowledge and report project scope unavailable. Never reconstruct an ID from a
+checkout path. A missing binding, failed Git query or invalid catalog is not
+evidence that a project's memory is empty. Managed writes require explicit catalog
+initialization; reads never initialize it.
 
 Read global and current-project `MEMORY.md`. Prefer applicable project context
 over a global default, but surface genuine contradictions rather than silently
@@ -73,13 +70,14 @@ Each scope is ordinary Markdown, usable without a database or Pi:
 ```text
 MEMORY.md           compact orientation and links to knowledge
 wiki/               current understanding, one coherent topic per page
-sources/            selected evidence or dated checkpoint notes
 log.md              brief record of meaningful knowledge changes
 ```
 
 Create files only when there is something worth retaining. Existing topic files
 beside `MEMORY.md` remain valid; do not move them or break references just to
-match this layout. Use ordinary relative Markdown links within a scope.
+match this layout. Use ordinary relative Markdown links resolved from the
+containing document. Retained source evidence lives once in project `outputs/`,
+not in the knowledge directory; default recall never scans outputs or scratch.
 
 Keep the index short: dated one-line conclusions and descriptive links, grouped
 only when grouping helps navigation. It is not a chronological activity feed.
@@ -104,7 +102,7 @@ Tooling owns scope, revision checks, publication, and retrieval—not whether a
 claim is true. Add machine-readable fields only when a concrete consumer needs
 them. See the [examples](references/example.md).
 
-Sources preserve selected evidence, not an unfiltered transcript. Prefer a stable
+Retained outputs preserve selected evidence, not an unfiltered transcript. Prefer a stable
 reference to canonical material (commit and path, document, public URL) over a
 copy. When retaining a checkpoint, distinguish user decisions, observed results,
 and agent hypotheses; include the date and the conditions of a check. Never
@@ -122,8 +120,8 @@ Never copy private knowledge into a public repository.
    `dots memory search "terms" --json`: bounded case-insensitive literal matches
    in global and current-project knowledge, including root-level topics. It is
    not semantic search; try different terms when appropriate. Select `--scope`
-   to narrow it and `--include-sources` only when investigating evidence. Follow
-   per-scope pagination. Ordinary scoped text search remains a fallback.
+   to narrow it. Follow per-scope pagination. Ordinary scoped text search remains
+   a fallback. Inspect task-linked output revisions explicitly for historical evidence.
 3. Read the actual page before applying a search snippet. Check dates, scope,
    supersession, and evidence. Follow sources when the distinction matters.
 4. Answer with the relevant page/source references. If there is no support, say
@@ -153,7 +151,7 @@ Workers report proposed notes; their parent publishes them.
 4. Update the topic's current explanation. Distinguish a proposal from an accepted
    decision and a hypothesis from an observed result. State applicability rather
    than generalizing one incident into an unconditional rule.
-5. Publish each topic/source before its index using `dots memory write PATH
+5. Publish each topic before its index using `dots memory write PATH
    --scope global|project --expected REVISION --content-file INPUT --json`.
    INPUT is a private UTF-8 draft outside the public checkout. The command creates
    directories, locks briefly, rejects stale revisions, and atomically replaces
@@ -191,24 +189,18 @@ than claiming complete erasure.
 
 ## Publish without clobbering another session
 
-Prefer `dots memory write/remove`: they manage `.write-lock/` internally and
-compare the expected revision while holding it. Do not acquire an external lock
-around these commands; they will correctly report contention. Reads and model
-reasoning happen outside the lock. A crashed process may leave a lock; inspect
-its owner and coordinate recovery, never automatically delete it based on PID alone.
+Use `dots memory write/remove`: they acquire the kernel-held `dots/mutation.lock`
+briefly and compare the expected revision before mutation. Do not acquire an
+external lock around these commands. Reads and model reasoning happen outside
+it. Contention returns busy; retry after the writer finishes, without spinning.
+Closing the last file handle releases the lock, including after process exit.
+Never unlink or replace the stable lock file.
 
-Without the CLI, all cooperating writers use that same lock directory. Acquire
-it with atomic `mkdir`, never `mkdir -p`; create the scope first if needed. Record
-your session identifier inside it. Reread before editing and release only your
-own lock. Keep it only for a short read/edit/review operation, not research or
-waiting for user input.
-
-If it already exists, do not write, spin, or delete it. Report contention and retry
-later after coordinating with the owner. A crashed writer can leave a lock behind;
-confirm it is abandoned before asking to remove it. Release only your own lock.
-Use anchored edits against freshly read content, and publish the index last.
+Without the CLI, ordinary reads remain available; do not publish concurrent
+changes through a hand-built locking fallback. Restore CLI access or coordinate
+an offline edit with all writers stopped.
 
 This is cooperative writer exclusion, not atomic multi-file snapshots or a
 security boundary. Readers can encounter a partial update; missing links or
-conflicting pages should produce an explicit incomplete result, not an invented
-answer. Raw edits by a noncooperating writer remain a risk.
+conflicting pages should produce an explicit incomplete result. Native edits
+bypass revision checks.

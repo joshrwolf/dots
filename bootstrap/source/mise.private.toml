@@ -1,0 +1,8 @@
+[vars]
+dots_private_url = { required = "Set dots_private_url to a credential-free repository URL in mise.local.toml or with mise vars." }
+
+[bootstrap.repos."~/.local/share/dots/checkouts/dots/private"]
+url = "{{ vars.dots_private_url }}"
+
+[dotfiles]
+"~/.config/mise/conf.d/dots-private" = { source = "~/.local/share/dots/checkouts/dots/private/bootstrap", mode = "symlink" }

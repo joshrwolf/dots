@@ -1,6 +1,10 @@
 [tasks."skills-check"]
 run = 'cargo run --locked --quiet -p dots-cli -- skills check --output "$MISE_MONOREPO_ROOT/skills/dots"'
 
+[tasks."test-cli"]
+description = "Prepare the candidate dots executable for cross-package tests, without installation"
+run = 'cargo build --locked -p dots-cli --target-dir "$MISE_MONOREPO_ROOT/target"'
+
 [tasks.install]
 description = "Install dots into Cargo's bin directory"
 run = "cargo install --locked --path ."

@@ -10,7 +10,7 @@ vim.api.nvim_create_autocmd({ "FocusGained", "BufEnter", "TermClose", "TermLeave
 })
 
 -- Restore once on ordinary file opens, never on reloads or hidden buffer loads.
--- Keep this synchronous so explicit destinations (Herdr, +line, search) win.
+-- Keep this synchronous so explicit destinations (+line, search) win.
 vim.api.nvim_create_autocmd("BufWinEnter", {
   group = vim.api.nvim_create_augroup("dots.last_position", { clear = true }),
   callback = function(event)

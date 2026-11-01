@@ -238,11 +238,14 @@ mod tests {
                 cache: Some(self.directory.join("cache/dots/github")),
                 github: &self.fake,
             };
+            let mut out = Vec::new();
             dots_cli::run_in(
                 &environment,
                 args.iter().map(|arg| OsString::from(arg.as_ref())),
+                &mut out,
             )
-            .map_err(|error| format!("{error:#}"))
+            .map_err(|error| format!("{error:#}"))?;
+            Ok(String::from_utf8(out).unwrap())
         }
 
         fn ok<S: AsRef<str>>(&self, args: &[S]) -> String {
@@ -723,12 +726,33 @@ mod tests {
                 .current_dir(&fixture.directory)
                 .env("PATH", "")
                 .env("XDG_CACHE_HOME", fixture.directory.join("cache"))
+                .env("XDG_DATA_HOME", fixture.directory.join("data"))
                 .output()
                 .unwrap()
         };
         let help = dots(&["github", "ci", "--help"]);
         assert!(help.status.success());
         assert!(String::from_utf8(help.stdout).unwrap().contains("logs"));
+        let json_help = dots(&["--json", "github", "ci", "--help"]);
+        assert!(json_help.status.success());
+        assert!(
+            String::from_utf8(json_help.stdout)
+                .unwrap()
+                .contains("logs")
+        );
+        assert_eq!(json_help.stderr, b"");
+        let positional = dots(&["memory", "read", "--scope", "global", "--", "--json"]);
+        assert!(!positional.status.success());
+        assert!(
+            positional.stdout.is_empty(),
+            "positional --json is not a flag"
+        );
+        let bad_json_flag = dots(&["--json", "--not-a-flag"]);
+        assert!(!bad_json_flag.status.success());
+        assert!(
+            bad_json_flag.stdout.is_empty(),
+            "invalid arguments have no JSON body"
+        );
         let invalid = dots(&["github", "ci", "logs", "bad"]);
         assert!(!invalid.status.success());
         assert_eq!(invalid.stdout.len(), 0);

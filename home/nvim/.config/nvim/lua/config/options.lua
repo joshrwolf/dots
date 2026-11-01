@@ -1,7 +1,10 @@
 vim.opt.number = true
 vim.opt.undofile = true
 vim.opt.swapfile = false -- Allow opening files in multiple editors without swap prompts.
-vim.opt.clipboard:append("unnamedplus") -- Use the system clipboard for ordinary yanks and puts.
+if vim.env.REX_BLOCK and vim.env.REX_BLOCK ~= "" then
+  vim.g.clipboard = "osc52" -- Clipboard belongs to the viewing client, not the server.
+end
+vim.opt.clipboard:append("unnamedplus")
 vim.opt.ignorecase = true
 vim.opt.smartcase = true
 vim.opt.splitbelow = true

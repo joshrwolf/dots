@@ -1,0 +1,21 @@
+[vars]
+dots_public_url = "{{ env.HOME }}/.local/share/dots/source-bundles/public.bundle"
+dots_private_url = "{{ env.HOME }}/.local/share/dots/source-bundles/private.bundle"
+
+[bootstrap.directories."~/.local/share/dots/source-bundles"]
+mode = "0700"
+
+[bootstrap.hooks.pre-repos]
+run = [
+  '"{{ mise_bin }}" dot apply --yes ~/.local/share/dots/source-bundles/public.bundle',
+  '{% set modules = mise_env | default(value=[]) %}{% if "private" in modules %}"{{ mise_bin }}" -E private dot apply --yes ~/.local/share/dots/source-bundles/private.bundle{% else %}true{% endif %}',
+]
+
+[dotfiles]
+"~/.local/share/dots/source-bundles/public.bundle" = { source = "public.bundle", mode = "copy", permissions = "0600" }
+
+[dotfiles."~/.local/share/dots/source-bundles/private.bundle"]
+source = "private.bundle"
+mode = "copy"
+permissions = "0600"
+variants = [{ profile = "private" }]

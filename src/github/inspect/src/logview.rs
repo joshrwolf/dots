@@ -1,6 +1,7 @@
 //! Bounded navigation over a local log spool. No provider calls happen here.
 use std::fs::File;
 use std::io::{BufRead as _, Seek as _, SeekFrom};
+
 use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::{CheckRef, LogMatch, LogPage, LogSource, Result};

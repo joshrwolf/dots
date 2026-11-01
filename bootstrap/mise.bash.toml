@@ -1,0 +1,6 @@
+[dotfiles]
+"~/.bash_profile/dots-path" = { line = 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"', position = "prepend" }
+"~/.bashrc/dots-path" = { line = 'export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"', position = "prepend" }
+
+[bootstrap.mise_shell_activate]
+bash = true

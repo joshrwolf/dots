@@ -1,4 +1,4 @@
-# Zephyr's ls, completion, and man colors inherit Ghostty's ANSI palette.
+# Zephyr's ls, completion, and man colors inherit the terminal's ANSI palette.
 # Explicit syntax colors use GitHub Light's code palette; suggestions stay muted.
 ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE='fg=#6e7781'
 typeset -gA ZSH_HIGHLIGHT_STYLES

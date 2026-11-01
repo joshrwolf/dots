@@ -9,13 +9,16 @@
   },
   "pi": {
     "extensions": [
+      "extensions/anthropic-request-guard/index.ts",
       "extensions/context/index.ts",
       "extensions/ui/index.ts",
       "extensions/memory/index.ts",
       "extensions/workers/index.ts",
       "extensions/wake/index.ts",
       "extensions/jobs/index.ts",
-      "extensions/goal/index.ts"
+      "extensions/goal/index.ts",
+      "extensions/rex/index.ts",
+      "extensions/status/index.ts"
     ],
     "skills": [],
     "prompts": [],
@@ -25,22 +28,18 @@
     ]
   },
   "scripts": {
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.ui.json && tsc -p tsconfig.jobs.json",
-    "check": "npm run typecheck && node --experimental-strip-types --test tests/*.test.mjs tests/ui*.test.ts tests/jobs*.test.ts"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"tests/*.test.{ts,mjs}\"",
+    "check": "pnpm run typecheck && pnpm run test"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=1.3.0",
-    "@earendil-works/pi-tui": ">=1.3.0",
+    "@earendil-works/pi-ai": ">=1.4.0",
+    "@earendil-works/pi-coding-agent": ">=1.4.0",
+    "@earendil-works/pi-tui": ">=1.4.0",
     "typebox": "*"
   },
-  "devDependencies": {
-    "@earendil-works/pi-coding-agent": "1.3.0",
-    "@earendil-works/pi-tui": "1.3.0",
-    "@types/node": "22.19.15",
-    "typebox": "1.3.27",
-    "typescript": "5.9.3"
-  },
   "dependencies": {
+    "@joshrwolf/pi-kit": "workspace:*",
     "diff": "9.0.0",
     "shiki": "4.5.0"
   }

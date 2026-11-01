@@ -1,35 +1,37 @@
 //! Exact GitHub check-run output, including checks backed by external providers.
-use crate::logview::{Navigation, Query, page};
-use crate::provider::checked;
-use crate::{Error, LogPage, LogSource, ObservationSource, Provider, Result, SnapshotRef};
+use std::fmt;
+use std::io::{Seek as _, Write as _};
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
-use std::{
-    fmt,
-    io::{Seek as _, Write as _},
-    str::FromStr,
-};
 use unicode_segmentation::UnicodeSegmentation as _;
+
+use crate::logview::{self, Navigation, Query};
+use crate::target::Resource;
+use crate::{
+    Error, LogPage, LogSource, ObservationSource, Provider, Repository, Result, SnapshotRef,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(into = "String")]
 pub struct OutputRef {
-    repository: crate::Repository,
+    repository: Repository,
     pr: Option<u64>,
     head: String,
     id: u64,
 }
 impl OutputRef {
     pub(crate) fn create(url: &str, head: &str, id: u64) -> Option<Self> {
-        let (repository, resource) = crate::target::Resource::parse(url).ok()?;
-        let pr = if let crate::target::Resource::Pr(pr) = resource {
+        let (repository, resource) = Resource::parse(url).ok()?;
+        let pr = if let Resource::Pr(pr) = resource {
             Some(pr)
         } else {
             None
         };
-        Self::new(repository, pr, head, id).ok()
+        Self::try_new(repository, pr, head, id).ok()
     }
-    pub(crate) fn new(
-        repository: crate::Repository,
+    pub(crate) fn try_new(
+        repository: Repository,
         pr: Option<u64>,
         head: &str,
         id: u64,
@@ -50,6 +52,7 @@ impl OutputRef {
     fn endpoint(&self) -> String {
         self.repository.endpoint(&format!("check-runs/{}", self.id))
     }
+    #[must_use]
     pub fn command(&self) -> String {
         format!("dots github ci output {self}")
     }
@@ -66,7 +69,7 @@ impl FromStr for OutputRef {
     fn from_str(value: &str) -> Result<Self> {
         let parts: Vec<_> = value.split(':').collect();
         match parts.as_slice() {
-            ["check", repo, pr, head, id] => Self::new(
+            ["check", repo, pr, head, id] => Self::try_new(
                 repo.parse()?,
                 crate::reference::optional_id(pr)?,
                 head,
@@ -158,6 +161,7 @@ pub struct CheckOutput {
 
 impl CheckOutput {
     /// Navigate this observation, preserving its snapshot when available.
+    #[must_use]
     pub fn command(&self) -> String {
         self.snapshot.as_ref().map_or_else(
             || self.reference.command(),
@@ -198,7 +202,7 @@ pub fn check_output(
 pub fn check_output_target(
     provider: &impl Provider,
     value: &str,
-    repository: Option<&crate::Repository>,
+    repository: Option<&Repository>,
     options: OutputOptions<'_>,
 ) -> Result<CheckOutput> {
     validate(options)?;
@@ -208,8 +212,7 @@ pub fn check_output_target(
         return check_output(provider, &reference, options);
     }
     let (repository, id) = if value.starts_with("https://") {
-        let (repo, crate::target::Resource::Check(id)) = crate::target::Resource::parse(value)?
-        else {
+        let (repo, Resource::Check(id)) = Resource::parse(value)? else {
             return Err(crate::target::invalid());
         };
         (
@@ -233,7 +236,7 @@ pub fn check_output_target(
         return check_output(provider, &reference, options);
     }
     let endpoint = repository.endpoint(&format!("check-runs/{id}"));
-    let wire: Wire = serde_json::from_slice(&checked(
+    let wire: Wire = serde_json::from_slice(&crate::provider::checked(
         provider,
         &["api", "--hostname", &repository.host, &endpoint],
     )?)?;
@@ -242,7 +245,7 @@ pub fn check_output_target(
             "GitHub returned a different check ID".into(),
         ));
     }
-    let reference = OutputRef::new(repository, None, &wire.head_sha, id)?;
+    let reference = OutputRef::try_new(repository, None, &wire.head_sha, id)?;
     output_known(provider, &reference, options, None, Some(wire))
 }
 
@@ -288,7 +291,7 @@ fn output_known(
             reference.endpoint(),
             options.annotation_page
         );
-        match checked(
+        match crate::provider::checked(
             provider,
             &["api", "--hostname", &reference.repository.host, &endpoint],
         ) {
@@ -378,7 +381,7 @@ fn text_page(
     file.rewind()?;
     let query = options.search.map_or(Query::Window, Query::Search);
     let start = options.start;
-    page(
+    logview::page(
         &mut file,
         nav,
         start,
@@ -431,7 +434,7 @@ fn observation(
     let wire = if let Some(wire) = wire {
         wire
     } else {
-        let bytes = checked(
+        let bytes = crate::provider::checked(
             provider,
             &[
                 "api",
@@ -457,7 +460,7 @@ fn observation(
         Some(head.into())
     } else if let Some(pr) = reference.pr {
         let url = format!("{}/pull/{pr}", reference.repository.url());
-        match checked(provider, &["pr", "view", &url, "--json", "headRefOid"]) {
+        match crate::provider::checked(provider, &["pr", "view", &url, "--json", "headRefOid"]) {
             Ok(bytes) => {
                 #[derive(Deserialize)]
                 struct Head {

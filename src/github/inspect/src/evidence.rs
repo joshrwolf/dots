@@ -1,9 +1,10 @@
-use crate::logview::{Navigation, Query, page};
-use serde::{Deserialize, Serialize};
 use std::io::Seek as _;
 
-use crate::provider::checked;
-use crate::{CheckRef, Error, Provider, Result};
+use serde::{Deserialize, Serialize};
+
+use crate::logview::{self, Navigation, Query};
+use crate::target::Resource;
+use crate::{CheckRef, Error, ObservationSource, Provider, Repository, Result, SnapshotRef};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Step {
@@ -29,9 +30,9 @@ pub(crate) struct Job {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Evidence {
-    pub snapshot: Option<crate::SnapshotRef>,
+    pub snapshot: Option<SnapshotRef>,
     pub observed_at: u64,
-    pub source: crate::ObservationSource,
+    pub source: ObservationSource,
     pub reference: CheckRef,
     pub job_name: String,
     pub run_attempt: u64,
@@ -92,7 +93,7 @@ pub enum LogSource {
 
 #[derive(Debug, Clone, Copy)]
 pub struct LogOptions<'a> {
-    pub snapshot: Option<&'a crate::SnapshotRef>,
+    pub snapshot: Option<&'a SnapshotRef>,
     pub start: Option<usize>,
     pub lines: usize,
     pub search: Option<&'a str>,
@@ -103,7 +104,7 @@ pub struct LogOptions<'a> {
 pub fn job_logs(
     provider: &impl Provider,
     value: &str,
-    repository: Option<&crate::Repository>,
+    repository: Option<&Repository>,
     options: LogOptions<'_>,
 ) -> Result<Evidence> {
     if options.lines == 0
@@ -153,9 +154,7 @@ pub fn job_logs(
         );
     }
     let (repository, id, expected_run) = if value.starts_with("https://") {
-        let (repo, crate::target::Resource::Job { id, run }) =
-            crate::target::Resource::parse(value)?
-        else {
+        let (repo, Resource::Job { id, run }) = Resource::parse(value)? else {
             return Err(crate::target::invalid());
         };
         (
@@ -171,7 +170,7 @@ pub fn job_logs(
         )
     };
     let endpoint = repository.endpoint(&format!("actions/jobs/{id}"));
-    let job: Job = serde_json::from_slice(&checked(
+    let job: Job = serde_json::from_slice(&crate::provider::checked(
         provider,
         &["api", "--hostname", &repository.host, &endpoint],
     )?)?;
@@ -255,7 +254,7 @@ fn retrieve(
         ));
     }
     let endpoint = reference.endpoint();
-    let data = checked(
+    let data = crate::provider::checked(
         provider,
         &["api", "--hostname", &reference.repository.host, &endpoint],
     )?;
@@ -298,7 +297,7 @@ fn retrieve_job(
     let mut evidence = Evidence {
         snapshot: None,
         observed_at: crate::cache::now(),
-        source: crate::ObservationSource::Network,
+        source: ObservationSource::Network,
         reference: reference.clone(),
         job_name: job.name,
         run_attempt: job.run_attempt,
@@ -329,7 +328,7 @@ fn retrieve_job(
     if let Some((mut file, fetched_at)) = provider.cached_log_file(reference, evidence.run_attempt)
     {
         let navigation = save_navigation(provider, &mut evidence, true);
-        evidence.log = Some(page(
+        evidence.log = Some(logview::page(
             &mut file,
             &navigation,
             start,
@@ -355,7 +354,7 @@ fn retrieve_job(
                     provider.cache_log_file(reference, evidence.run_attempt, &mut file, fetched_at);
                 file.rewind()?;
                 let navigation = save_navigation(provider, &mut evidence, saved);
-                evidence.log = Some(page(
+                evidence.log = Some(logview::page(
                     &mut file,
                     &navigation,
                     start,
@@ -424,32 +423,24 @@ fn current_head(provider: &impl Provider, reference: &CheckRef) -> Result<String
     let pr = reference
         .pull_request_url()
         .ok_or_else(crate::target::invalid)?;
-    let bytes = checked(provider, &["pr", "view", &pr, "--json", "headRefOid"])?;
+    let bytes = crate::provider::checked(provider, &["pr", "view", &pr, "--json", "headRefOid"])?;
     Ok(serde_json::from_slice::<Head>(&bytes)?.oid)
 }
 
 fn fetch_log(provider: &impl Provider, host: &str, endpoint: &str) -> Result<std::fs::File> {
     let mut file = crate::cache::spool()?;
-    // New gh needs this flag for raw logs. Old gh rejects it before HTTP, so
-    // compatibility fallback costs a process, never a second log download.
-    let args = [
-        "api",
-        "--hostname",
-        host,
-        endpoint,
-        "--allow-escape-sequences",
-    ];
-    let result = match checked_log(provider, &args, &mut file) {
-        Err(Error::Query { message, .. })
-            if message.contains("unknown flag: --allow-escape-sequences") =>
-        {
-            file.set_len(0)?;
-            file.rewind()?;
-            checked_log(provider, &["api", "--hostname", host, endpoint], &mut file)
-        }
-        result => result,
-    };
-    result?;
+    // gh needs this flag to return raw logs.
+    checked_log(
+        provider,
+        &[
+            "api",
+            "--hostname",
+            host,
+            endpoint,
+            "--allow-escape-sequences",
+        ],
+        &mut file,
+    )?;
     file.rewind()?;
     Ok(file)
 }
@@ -529,6 +520,7 @@ fn dependency_steps(steps: &[Step]) -> bool {
 
 impl Evidence {
     /// Navigate the saved observation when available; omit its snapshot to refresh.
+    #[must_use]
     pub fn command(&self) -> String {
         self.snapshot.as_ref().map_or_else(
             || self.reference.command(),
@@ -557,7 +549,7 @@ fn save_navigation(
     // Only advertise zero-query navigation if both the metadata and log are saved.
     if log_saved
         && let Ok(bytes) = serde_json::to_vec(evidence)
-        && let Some(snapshot) = crate::SnapshotRef::create(&evidence.reference.job_url(), &bytes)
+        && let Some(snapshot) = SnapshotRef::create(&evidence.reference.job_url(), &bytes)
         && provider.save_snapshot(&snapshot, &bytes, evidence.observed_at)
     {
         evidence.snapshot = Some(snapshot);
@@ -568,7 +560,7 @@ fn save_navigation(
 fn saved_logs(
     provider: &impl Provider,
     reference: &CheckRef,
-    snapshot: &crate::SnapshotRef,
+    snapshot: &SnapshotRef,
     options: LogOptions<'_>,
     query: Query<'_>,
 ) -> Result<Evidence> {
@@ -585,7 +577,7 @@ fn saved_logs(
             reference.command()
         ))
     })?;
-    if crate::SnapshotRef::create(&reference.job_url(), &cached.bytes)
+    if SnapshotRef::create(&reference.job_url(), &cached.bytes)
         .is_none_or(|actual| actual.to_string() != snapshot.to_string())
     {
         return Err(invalid());
@@ -604,8 +596,8 @@ fn saved_logs(
         .cached_log_file(reference, evidence.run_attempt)
         .ok_or_else(invalid)?;
     evidence.snapshot = Some(snapshot.clone());
-    evidence.source = crate::ObservationSource::Snapshot;
-    evidence.log = Some(page(
+    evidence.source = ObservationSource::Snapshot;
+    evidence.log = Some(logview::page(
         &mut file,
         &evidence.navigation(),
         options.start,

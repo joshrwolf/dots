@@ -1,7 +1,12 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, type Component } from "@earendil-works/pi-tui";
-import { PriorityRow, type Segment } from "../ui/row.ts";
-import { statusText } from "../ui/text.ts";
+import type {Theme} from '@earendil-works/pi-coding-agent';
+import type {Component} from '@earendil-works/pi-tui';
+import {PriorityRow, type Segment} from '@joshrwolf/pi-kit/ui';
+import {
+  statusItems,
+  renderStatusRow,
+  type StatusItem,
+} from '../ui/status-row.ts';
+import {runtimeMetadata} from '../ui/runtime-metadata.ts';
 
 export interface FooterModel {
   readonly project: string;
@@ -9,34 +14,42 @@ export interface FooterModel {
   readonly model: string;
   readonly thinking?: string | undefined;
   readonly contextPercent?: number | undefined;
-  readonly statuses: readonly string[];
+  readonly statuses: readonly StatusItem[];
 }
 
 /** One source for model/context information; no clocks, probes or session reads. */
 export class FooterView implements Component {
   private readonly row = new PriorityRow();
-  private statuses: readonly string[] = [];
+  private statuses: readonly StatusItem[] = [];
   update(model: FooterModel, theme: Theme): void {
-    const percent = model.contextPercent;
-    const known = typeof percent === "number" && Number.isFinite(percent);
-    const start: Segment[] = [{ text: model.project, tone: "accent", priority: 40, shrink: "clip", clip: "middle", minWidth: 10 }];
-    if (model.branch) start.push({ text: `⑂ ${model.branch}`, tone: "muted", priority: 20, shrink: "omit" });
-    const end: Segment[] = [{ text: model.model || "no model", tone: "text", priority: 50, shrink: "clip", clip: "middle", minWidth: 12 }];
-    if (model.thinking && model.thinking !== "off") end.push({ text: `✦ ${model.thinking}`, tone: "muted", priority: 10, shrink: "omit" });
-    const context = known ? `ctx ${Math.max(0, percent).toFixed(0)}%` : "ctx ?";
-    const warning = known && percent >= 75;
-    const tone = known && percent >= 90 ? "error" : warning ? "warning" : "muted";
-    // The context value survives even when its decorative icon cannot fit.
-    end.push({ text: warning ? "!" : "◔", tone, priority: 90, shrink: "omit" });
-    end.push({ text: context, minWidth: context.length, tone, priority: 100, shrink: "clip", separatorBefore: " " });
-    this.row.update({ layout: "edges", start, end, separator: "  " }, theme);
-    this.statuses = model.statuses.map(statusText);
+    const start: Segment[] = [
+      {
+        text: model.project,
+        tone: 'accent',
+        priority: 40,
+        shrink: 'clip',
+        clip: 'middle',
+        minWidth: 10,
+      },
+    ];
+    if (model.branch)
+      start.push({
+        text: `⑂ ${model.branch}`,
+        tone: 'muted',
+        priority: 20,
+        shrink: 'omit',
+      });
+    const end = runtimeMetadata({...model, model: model.model || 'no model'});
+    this.row.update({layout: 'edges', start, end, separator: '  '}, theme);
+    this.statuses = statusItems(model.statuses);
   }
-  invalidate(): void { this.row.invalidate(); }
+  invalidate(): void {
+    this.row.invalidate();
+  }
   render(width: number): string[] {
     if (width <= 0) return [];
     const lines = this.row.render(width);
-    if (this.statuses.length) lines.push(truncateToWidth(this.statuses.join(" "), width));
+    lines.push(...renderStatusRow(this.statuses, width));
     return lines;
   }
 }
@@ -44,8 +57,18 @@ export class FooterView implements Component {
 /** Startup chrome only: model, context and active work belong below the editor. */
 export function createHeader(theme: Theme): Component {
   const row = new PriorityRow();
-  row.update({ layout: "inline", groupSeparator: "  ", start: [
-    { text: "Pi", tone: "accent", bold: true, priority: 100, shrink: "clip" },
-  ], end: [{ text: "/ui appearance", tone: "dim", priority: 10, shrink: "omit" }] }, theme);
+  row.update(
+    {
+      layout: 'inline',
+      groupSeparator: '  ',
+      start: [
+        {text: 'Pi', tone: 'accent', bold: true, priority: 100, shrink: 'clip'},
+      ],
+      end: [
+        {text: '/ui appearance', tone: 'dim', priority: 10, shrink: 'omit'},
+      ],
+    },
+    theme,
+  );
   return row;
 }

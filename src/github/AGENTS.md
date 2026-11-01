@@ -1,10 +1,8 @@
 # GitHub libraries
 
-- Load `idiomatic-rust` for Rust changes. Root `Cargo.toml`, `Cargo.lock`,
-  `clippy.toml`, and `rust-toolchain.toml` govern every Rust package.
 - Provider libraries own external command/API boundaries and validated identities.
   Domain libraries own operations and results. Neither prints user output,
-  dispatches harness actions, or requires a Herdr session.
+  dispatches harness actions.
 - Pass context explicitly. Resolve working directories and environment in the
   application or host adapter, not implicitly in domain code.
 - Expose typed results independently of the consuming frontend.
@@ -14,4 +12,4 @@
   branch or whichever run is newest.
 - Use neutral hand-authored fixtures. Never save live machine/API output here.
 - `cargo nextest run -p <crate>` checks one crate; root `mise run check`
-  checks the complete workspace, including Herdr adapters and contract tests.
+  checks the complete workspace.

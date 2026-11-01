@@ -1,0 +1,27 @@
+packages:
+  - src/pi
+  - src/pi-kit
+  - private/src/*
+
+catalog:
+  '@earendil-works/chord': 1.4.0
+  '@earendil-works/pi-ai': 1.4.0
+  '@earendil-works/pi-codemode': 1.4.0
+  '@earendil-works/pi-coding-agent': 1.4.0
+  '@earendil-works/pi-durable': 1.4.0
+  '@earendil-works/pi-mcp': 1.4.0
+  '@earendil-works/pi-tui': 1.4.0
+  'typebox': 1.3.27
+
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+blockExoticSubdeps: true
+nodeLinker: hoisted
+autoInstallPeers: false
+verifyDepsBeforeRun: error
+trustPolicy: no-downgrade
+strictDepBuilds: true
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false

@@ -402,10 +402,10 @@ s = handle.Value()
 
 ### Timer/Ticker behavior change _(Go 1.23+)_
 
-With `go 1.23` or later in `go.mod`:
+With `go 1.23` or later in `go.mod` (and always with a Go 1.27+ toolchain, which removed `asynctimerchan`):
 
-- Unreachable channel-based timers and tickers can be collected without `Stop()`
-- Timer channels are now unbuffered (capacity 0, was 1)
+- Unreachable channel-based timers and tickers can be collected without `Stop()`, so `time.After` in a loop no longer leaks
+- Timer channels are now unbuffered (capacity 0, was 1); `Reset` needs no prior `Stop` or drain
 
 Retain `Stop` when it cancels pending work. `AfterFunc` has different lifetime semantics: its scheduled callback is not canceled merely because the timer variable goes out of scope. Stopping a ticker does not close its channel or terminate a receiving goroutine.
 
@@ -443,7 +443,7 @@ defer f.Close()
 
 ### Use `omitzero` JSON tag _(Go 1.24+)_
 
-Use `omitzero` when the contract requires omission of zero values, including zero `time.Time`. Both `omitempty` and `omitzero` omit a plain false boolean in v1; neither preserves explicit false. Keep bool fields unconditionally, or use `*bool` with `omitempty` to distinguish absent from explicit false. Do not change tags without checking the wire contract:
+Use `omitzero` when the contract requires omission of zero values, including zero `time.Time`. Unlike `omitempty`, it emits empty non-nil slices and maps (`[]`, `{}`). Both `omitempty` and `omitzero` omit a plain false boolean in v1; neither preserves explicit false. Keep bool fields unconditionally, or use `*bool` with `omitempty` to distinguish absent from explicit false. Do not change tags without checking the wire contract:
 
 ```go
 // Before: omitempty doesn't work well for time.Time
@@ -700,7 +700,7 @@ if pathErr, ok := errors.AsType[*os.PathError](err); ok {
 
 ### Use enhanced `new()` _(Go 1.26+)_
 
-`new(expr)` now accepts a value expression and returns a pointer to it (not zero-initialized):
+`new(expr)` accepts a value expression and returns a pointer to a newly initialized value. Keep `&existing` when identity with an existing variable matters: `new(existing)` copies its current value into a distinct allocation.
 
 ```go
 // Before: helper function needed
@@ -917,7 +917,7 @@ synctest.Test(t, func(t *testing.T) {
 
 ### `runtime/pprof` `goroutineleak` profile is generally available _(Go 1.27+)_
 
-The goroutine leak profile (previously experimental behind `GOEXPERIMENT=goroutineleakprofile` in Go 1.26) is now a standard `runtime/pprof` profile, also served at `/debug/pprof/goroutineleak` — no build flag required. It reports goroutines blocked on a concurrency primitive that can never be unblocked; leaks reachable from global variables or still-runnable goroutines are not detected. → See `samber/cc-skills-golang@golang-concurrency` skill for using it in a leak investigation.
+The goroutine leak profile (previously experimental behind `GOEXPERIMENT=goroutineleakprofile` in Go 1.26) is now a standard `runtime/pprof` profile, also served at `/debug/pprof/goroutineleak` — no build flag required. It reports goroutines blocked on a concurrency primitive that can never be unblocked; leaks reachable from global variables or still-runnable goroutines are not detected. → See `golang-concurrency` skill for using it in a leak investigation.
 
 ### `go fix` gains new modernizers _(Go 1.27+)_
 
@@ -941,7 +941,7 @@ For modules with `go 1.27` or later in `go.mod`, `go mod tidy` consolidates dupl
 
 These changes need review before or during a bump to `go 1.27` — none of them require a code rewrite, but skipping the check risks a build failure or a silent behavior change:
 
-- **Removed `GODEBUG` settings** — `asynctimerchan`, `tlsunsafeekm`, `tlsrsakex`, `tls3des`, `tls10server`, `x509keypairleaf`, `gotypesalias`. A `godebug` line in `go.mod` or a `//go:debug` comment still pinning one of these to its old value now **fails the build**; pinning it to its current default value is accepted. Search with `rg -n 'go:debug|godebug' -g go.mod -g go.work -g '*.go'`.
+- **Removed `GODEBUG` settings** — `asynctimerchan`, `tlsunsafeekm`, `tlsrsakex`, `tls3des`, `tls10server`, `x509keypairleaf`, `gotypesalias`. A `godebug` line in `go.mod` or a `//go:debug` comment still pinning one of these to its old value now **fails the build**; pinning it to its current default value is accepted. The same old value in the `GODEBUG` environment variable makes a Go 1.27-built program exit with a fatal error at startup, so check deployment manifests and service environments too. Search with `rg -n 'go:debug|godebug' -g go.mod -g go.work -g '*.go'`.
 - **JSON API compatibility** — retain v1 behavior on a toolchain-only upgrade. If also migrating to v2, test the changed API semantics separately against representative payloads.
 - **Size-specialized allocator** — up to 30% faster allocations under 80 bytes, roughly 1% faster overall, at the cost of ~60 KB binary size. Enabled by default; disable with `GOEXPERIMENT=nosizespecializedmalloc` if binary size is constrained, but treat that flag as scheduled for removal in Go 1.28, not a long-term setting.
 - **Darwin floor raised to macOS 13 (Ventura)** — older macOS targets can no longer run binaries built with this toolchain.

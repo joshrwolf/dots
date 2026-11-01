@@ -1,26 +1,134 @@
-min_version = "2026.10.14"
+min_version = "2026.10.25"
+include = ["tools.toml", "packages.toml"]
 
-# Machine setup never declares the enclosing checkout's development SDKs.
+[settings]
+lockfile = false
+locked = false
+locked_scopes = ["project", "system"]
+task.run_auto_install = false
+dotfiles.root = "{{ config_source | canonicalize | dirname }}/../home"
+
+[bootstrap.repos."~/.local/share/antidote"]
+url = "https://github.com/mattmc3/antidote.git"
+ref = "main"
+
+[bootstrap.directories."~/.local/share/dots/skills"]
+mode = "0755"
+
+[dotfile_groups.agent-instructions]
+root = "codex"
+
+[dotfile_groups.pi]
+root = "pi"
+
+[dotfile_groups.worktrunk]
+root = "worktrunk"
+
+[dotfile_groups.shell]
+root = "zsh"
+
+[dotfile_groups.editor]
+root = "nvim"
+exclude = ["README.md", "AGENTS.md"]
+
+[dotfile_groups.rex]
+root = "rex"
+exclude = ["README.md", "AGENTS.md", "**/tests/**", "**/types/**", "**/selene.toml", "**/.luarc.json"]
+
+[dotfile_groups.theme]
+root = "theme"
+
+[dotfile_groups.theme.entries]
+"~/.config/theme/current" = { mode = "symlink" }
+
+[dotfile_groups.public-skills]
+root = "../skills"
+target = "~/.local/share/dots/skills"
+manifest = "git"
+
+[dotfile_groups.agent-discovery]
+root = "."
+exclude = ["*"]
+
+[dotfile_groups.agent-discovery.entries]
+"~/.agents/skills" = { source = "~/.local/share/dots/skills", mode = "symlink" }
+"~/.claude/skills" = { source = "~/.local/share/dots/skills", mode = "symlink" }
+
 [vars]
-packages = ""
-# A never-matching regex leaves the complete package intact.
-stow_ignore = '(?!)'
-macos_only = false
-stow = 'stow --dir="{{ config_root }}/../home" --target="$HOME" --no-folding --ignore="(^|/)\.crates(2\.json|\.toml)$"'
+dots_source_root = "{{ config_source | canonicalize | dirname }}/.."
+dots_runtime_extra_filter = ""
+dots_cargo_home = "{{ env.CARGO_HOME | default(value=env.HOME ~ '/.cargo') }}"
+dots_rust_channel = "{{ read_toml(path='../rust-toolchain.toml')['toolchain']['channel'] }}"
 
-[tasks.preview]
-description = "Check selected Stow links and conflicts without changing the home directory"
-skip_if = 'test -z "{{ vars.packages }}"'
-run = [
-  '''case "$(uname -s)/$(uname -m)" in Darwin/arm64|Linux/x86_64|Linux/aarch64) ;; *) echo "Unsupported machine platform" >&2; exit 1 ;; esac
-{% if vars.macos_only %}test "$(uname -s)" = Darwin || { echo "The desktop selection requires macOS" >&2; exit 1; }{% endif %}''',
-  '{{ vars.stow }} --ignore="{{ vars.stow_ignore }}" --simulate --restow {{ vars.packages }}',
+[env]
+CLOUDSDK_PYTHON = "python3"
+_.path = [
+  "{{ vars.dots_cargo_home }}/bin",
+  { path = "{{ env.HOME }}/.local/bin", position = "append" },
+  { path = "{{ system_brew_prefix }}/bin", position = "append" },
+  { path = "{{ system_brew_prefix }}/opt/e2fsprogs/bin", position = "append" },
+  { path = "{{ system_brew_prefix }}/opt/e2fsprogs/sbin", position = "append" },
 ]
-cache = { enabled = false }
+
+[bootstrap.hooks.pre-packages]
+run = '"{{ mise_bin }}" run --skip-tools macos:build-tools'
+
+[bootstrap.hooks.post-tools]
+run = '{% if os() == "linux" %}"{{ mise_bin }}" -E "{{ mise_env | default(value=[]) | join(sep=",") }}" run --skip-tools rex:agents{% else %}true{% endif %}'
+
+[tasks."rex:agents"]
+description = "Let Rex reconcile its generated skill and native agent hooks"
+run = "rex skill setup --agent pi --agent claude --agent codex --session-naming"
 
 [tasks.bootstrap]
-description = "Apply explicitly selected configuration with Stow; install no tools or host packages"
-depends = ["preview"]
-skip_if = 'test -z "{{ vars.packages }}"'
-run = '{{ vars.stow }} --ignore="{{ vars.stow_ignore }}" --restow {{ vars.packages }}'
-cache = { enabled = false }
+depends = ["commands:install", "pi:packages"]
+run = '"{{ vars.dots_cargo_home }}/bin/rustup" component add --toolchain "{{ vars.dots_rust_channel }}" rust-analyzer rust-src clippy rustfmt'
+
+[tasks."macos:build-tools"]
+description = "Request Apple's native Command Line Tools when the SDK is missing"
+skip_if = 'test "$(uname -s)" != Darwin || { xcode-select -p >/dev/null 2>&1 && xcrun --show-sdk-path >/dev/null 2>&1; }'
+run = ["xcode-select --install", { task = "macos:build-tools-ready" }]
+
+[tasks."macos:build-tools-ready"]
+description = "Verify completion of the attended Apple installer"
+skip_if = 'test "$(uname -s)" != Darwin || { xcode-select -p >/dev/null 2>&1 && xcrun --show-sdk-path >/dev/null 2>&1; }'
+confirm = "Complete the Apple Command Line Tools installer, then continue setup?"
+run = "xcrun --show-sdk-path && xcrun --find clang"
+
+[tasks."rustup:install"]
+description = "Install Rustup through its native installer without editing startup files"
+depends = ["macos:build-tools"]
+skip_if = 'test -x "{{ vars.dots_cargo_home }}/bin/rustup"'
+run = 'curl --proto "=https" --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "{{ vars.dots_rust_channel }}" --no-modify-path'
+
+[tasks."rustup:toolchain"]
+description = "Provide the source compiler without the repository test components"
+depends = ["rustup:install"]
+skip_if = '"{{ vars.dots_cargo_home }}/bin/rustup" run "{{ vars.dots_rust_channel }}" rustc --version'
+run = '"{{ vars.dots_cargo_home }}/bin/rustup" toolchain install "{{ vars.dots_rust_channel }}" --profile minimal'
+
+[tasks."commands:install"]
+description = "Install source-owned commands through Cargo"
+depends = ["rustup:toolchain"]
+dir = "{{ env.HOME }}"
+run = [
+  '"{{ vars.dots_cargo_home }}/bin/cargo" +{{ vars.dots_rust_channel }} install --locked --path "{{ vars.dots_source_root }}/src/dots"',
+  '"{{ vars.dots_cargo_home }}/bin/cargo" +{{ vars.dots_rust_channel }} install --locked --path "{{ vars.dots_source_root }}/src/pick"',
+]
+
+[tasks."runtime:deps"]
+description = "Install the selected source-loaded runtime closure without development tools"
+dir = "{{ env.HOME }}"
+run = 'pnpm --dir "{{ vars.dots_source_root }}" --filter @joshrwolf/pi-dots... {% if vars.dots_runtime_extra_filter != "" %}--filter {{ vars.dots_runtime_extra_filter | quote }} {% endif %}install --prod --frozen-lockfile'
+
+[tasks."pi:install"]
+description = "Register the durable primary companion source without reloading sessions"
+depends = ["runtime:deps"]
+dir = "{{ env.HOME }}"
+run = ['test -d "{{ vars.dots_source_root }}/.git"', 'node "{{ vars.dots_source_root }}/src/pi/setup.mjs" "$("{{ mise_bin }}" -C "{{ env.HOME }}" where npm:@earendil-works/pi-coding-agent)" "{{ vars.dots_source_root }}/src/pi"']
+
+[tasks."pi:packages"]
+description = "Reconcile selected third-party Pi resources without upgrading installed packages"
+depends = ["pi:install"]
+dir = "{{ env.HOME }}"
+run = 'node "{{ vars.dots_source_root }}/src/pi/setup.mjs" "$("{{ mise_bin }}" where npm:@earendil-works/pi-coding-agent)" npm:pi-web-access'

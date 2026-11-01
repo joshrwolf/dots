@@ -4,14 +4,10 @@ Finicky routes external links to selected Brave profiles on macOS.
 
 ## Setup
 
-```sh
-brew install --cask finicky
-mise run finicky:install
-open -a Finicky
-```
+Select the desktop module in [machine setup](../bootstrap/README.md), then
+open Finicky from Applications.
 
-Select Finicky as the default browser in System Settings. Base installation does
-not enable it. Finicky watches its configuration for edits.
+Select Finicky as the default browser in System Settings. Finicky watches its configuration for edits.
 
 Check profile directories in `brave://version` before using
 `home/finicky/.config/finicky/finicky.js`: the configured `Default` and
@@ -24,7 +20,7 @@ Brave's last-active-profile behavior. The config is authoritative for host rules
 Links already inside Brave are not automatically rerouted.
 
 To disable routing, select Brave as the default browser and quit Finicky.
-Use Homebrew for updates; built-in update checks are disabled.
+Use native mise package upgrades; built-in update checks are disabled.
 
 ## Constraints
 

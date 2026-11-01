@@ -41,6 +41,10 @@ coordinator; delegate these bounded roles with explicit checkout ownership:
   scope, and previous experiment outcomes. For Go, give it
   [references/go-profiling.md](references/go-profiling.md).
 
+When the harness lets you choose models, give the optimizer strong reasoning for
+hypotheses; an evaluator on a different model family checks candidates more
+independently.
+
 During evaluator setup, the optimizer can inspect code and existing profiles.
 Begin candidate experiments once the contract is established. Start with one
 optimizer; add more only for independent investigations that justify the cost.

@@ -1,6 +1,6 @@
 # The Fowler Catalog, Mapped to Go
 
-Each entry below follows the same structure: **Motivation** (why the refactoring earns its keep), **Smell trigger** (the code shape that signals it's time), **Go mechanics** (what the transform actually looks like in Go), **Tool** (what performs it), and **Risk** (matching the Risk Stratification table in [SKILL.md](../SKILL.md)). Entries are grouped by family, following the shape of Fowler's _Refactoring_ catalog.
+Each entry below follows the same structure: **Motivation** (why the refactoring earns its keep), **Smell trigger** (the code shape that signals it's time), **Go mechanics** (what the transform actually looks like in Go), **Tool** (what performs it), and **Risk** (matching the Risk table in [SKILL.md](../SKILL.md)). Entries are grouped by family, following the shape of Fowler's _Refactoring_ catalog.
 
 ## Table of Contents
 
@@ -22,7 +22,7 @@ Each entry below follows the same structure: **Motivation** (why the refactoring
 
 ## Extract Function / Extract Method
 
-- **Motivation:** Extract a step when its contract lets callers understand it without reading its implementation. Reuse, encapsulated complexity, or a separate resource lifetime can justify extraction even with one caller. Follow `golang-code-style` for the target shape.
+- **Motivation:** Extract a step when its contract lets callers understand it without reading its implementation. Reuse, encapsulated complexity, or a separate resource lifetime can justify extraction even with one caller. Follow `golang` for the target shape.
 - **Smell trigger:** A distinct operation is obscured inside its caller and has a meaningful boundary. Function length or a comment introducing a step is not sufficient; keep a cohesive sequence together when extraction would only relocate the logic into a chain of helpers or methods.
 - **Go mechanics:** Select the statements to extract; the tool infers the parameter list from free variables and the return list from variables used after the extracted block. For a method, it additionally infers the receiver.
 - **Tool:**
@@ -83,7 +83,7 @@ Editor-integrated as "Rename Symbol" (F2 in most gopls-backed editors).
 
 - **Risk:** Low — but treat any refusal as a real semantic hazard to investigate, not friction to route around by hand-editing instead.
 
-→ See `samber/cc-skills-golang@golang-naming` skill for what to rename identifiers _to_. This entry covers only _how_ to apply the rename safely at scale.
+→ See `golang` skill for what to rename identifiers _to_. This entry covers only _how_ to apply the rename safely at scale.
 
 ## Change Function Declaration (Signature)
 
@@ -104,7 +104,7 @@ eg -t template.go -w ./...   # staged migration for adding/generalizing a parame
 
 - **Risk:** Medium for a single-parameter add/remove with a handful of call sites; High when the signature changes across many callers with no mechanical one-shot action available.
 
-→ See `samber/cc-skills-golang@golang-design-patterns` skill for converting a long parameter list into an options struct rather than just reordering or trimming it.
+→ See `golang` skill for converting a long parameter list into an options struct rather than just reordering or trimming it.
 
 ## Move Function / Move Field / Move Type
 
@@ -124,7 +124,7 @@ Cross-package moves require updating declarations, imports, and callers as above
 
 - **Risk:** High.
 
-→ See `samber/cc-skills-golang@golang-project-layout` skill for target package layout. See [structural.md](structural.md) for the cross-package move guidance.
+→ See `golang-project-layout` skill for target package layout. See [structural.md](structural.md) for the cross-package move guidance.
 
 ## Split Package / Merge Package
 
@@ -141,7 +141,7 @@ gopls codeaction -exec -kind=source.splitPackage file.go   # opens an experiment
 
 - **Risk:** High.
 
-→ See `samber/cc-skills-golang@golang-project-layout` skill for target package layout.
+→ See `golang-project-layout` skill for target package layout.
 
 ## Replace Nested Conditional with Guard Clauses
 
@@ -156,27 +156,27 @@ gopls codeaction -exec -w -kind=refactor.rewrite.invertIf file.go:#offset
 
 - **Risk:** Low.
 
-→ See `samber/cc-skills-golang@golang-code-style` skill for the full early-return style rule this refactor works toward.
+→ See `golang` skill for the full early-return style rule this refactor works toward.
 
 ## Introduce Parameter Object
 
 - **Motivation:** A related group of inputs may form a meaningful value with its own contract or validation. Repeated parameters are a clue to inspect that relationship, not sufficient justification for a struct.
-- **Smell trigger:** Several inputs form one concept whose meaning becomes clearer as a value. If a type instead owns an operation's state and behavior, use `golang-structs-interfaces` to decide its fields and methods. Keep temporary calculations local rather than turning them into fields to shorten signatures.
+- **Smell trigger:** Several inputs form one concept whose meaning becomes clearer as a value. If a type instead owns an operation's state and behavior, use `golang` to decide its fields and methods. Keep temporary calculations local rather than turning them into fields to shorten signatures.
 - **Go mechanics:** Define a struct that holds the recurring parameter group, then change each affected function's signature to take the struct instead of the individual values. gopls has a planned "Extract parameter struct" action tracked as golang/go#65552; as of this writing it is not yet generally available. Until it lands, treat this as an Extract-Variable-style manual step (define the struct, construct it at each call site) followed by a signature change at each call site — the same staged approach as Change Function Declaration above.
 - **Tool:** No dedicated gopls action yet (golang/go#65552 tracks it). Combine manual struct extraction with the signature-change tooling above.
 - **Risk:** Medium.
 
-→ See `samber/cc-skills-golang@golang-design-patterns` skill for functional options as the alternative when the struct exists to configure construction rather than to group a plain data clump.
+→ See `golang` skill for functional options as the alternative when the struct exists to configure construction rather than to group a plain data clump.
 
 ## Replace Conditional with Polymorphism
 
 - **Motivation:** A `switch` on a type or state constant that shows up in more than one place forces every new case to be added in lock-step at every one of those places; an interface with one implementation per case collects each case's behavior in one place instead.
-- **Smell trigger:** The same `switch` recurs at multiple call sites and the cases implement a meaningful shared behavioral contract. First consider whether uniform cases differ only in data, or whether explicit control flow is clearer for divergent cases; repetition alone does not require polymorphism. See `golang-design-patterns`.
+- **Smell trigger:** The same `switch` recurs at multiple call sites and the cases implement a meaningful shared behavioral contract. First consider whether uniform cases differ only in data, or whether explicit control flow is clearer for divergent cases; repetition alone does not require polymorphism. See `golang`.
 - **Go mechanics:** Define an interface with one method per behavior that currently varies by case, then give each case its own implementing type. Callers that used to switch on the tag now just call the interface method, and dispatch happens through Go's interface mechanism instead of a repeated `switch`.
 - **Tool:** Manual — no mechanical tool performs this transform; use Extract Function/Interface steps to carve out each case's behavior into its own type, then Rename/Inline to clean up the seams.
 - **Risk:** Medium.
 
-→ See `samber/cc-skills-golang@golang-design-patterns` skill for the target interface-dispatch pattern.
+→ See `golang` skill for the target interface-dispatch pattern.
 
 ## Hide Delegate / Remove Middle Man
 
@@ -229,7 +229,7 @@ Divergent Change and Shotgun Surgery point to opposite fixes even though both ar
 - → See [structural.md](structural.md) for the cross-package move guidance used by Move Function/Field/Type, and for breaking import cycles ahead of a package split or merge.
 - → See [safety-net.md](safety-net.md) for the characterization tests and seams for isolating affected behavior.
 - → See [go-tooling.md](go-tooling.md) for the full gopls code-action reference, `gofmt -r`, `eg`, invocation details.
-- → See `samber/cc-skills-golang@golang-naming` skill for what to rename identifiers _to_.
-- → See `samber/cc-skills-golang@golang-project-layout` skill for target package/directory layout.
-- → See `samber/cc-skills-golang@golang-design-patterns` skill for options structs, consumer-side interfaces, and interface-dispatch patterns referenced throughout this catalog.
-- → See `samber/cc-skills-golang@golang-code-style` skill for the guard-clause/early-return style rule.
+- → See `golang` skill for what to rename identifiers _to_.
+- → See `golang-project-layout` skill for target package/directory layout.
+- → See `golang` skill for options structs, consumer-side interfaces, and interface-dispatch patterns referenced throughout this catalog.
+- → See `golang` skill for the guard-clause/early-return style rule.

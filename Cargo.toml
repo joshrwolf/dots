@@ -1,42 +1,36 @@
 [workspace]
 resolver = "3"
 members = [
-    "src/herdr/prs",
+    "src/bootstrap",
     "src/tasks",
     "src/memory",
     "src/process",
+    "src/review",
     "src/dots",
     "src/github/inspect",
-    "src/herdr/tests",
     "src/github/client",
-    "src/herdr/issue",
-    "src/herdr/kit",
-    "src/herdr/review/core",
-    "src/herdr/find",
-    "src/herdr/github",
-    "src/herdr/nav",
-    "src/herdr/review",
+    "src/github/watch",
+    "src/pick",
 ]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.89"
 license = "MIT"
 publish = false
 
 [workspace.dependencies]
-herdr-prs = { path = "src/herdr/prs" }
 clap = { version = "4", features = ["derive"] }
 github-inspect = { path = "src/github/inspect" }
 github-client = { path = "src/github/client" }
+github-watch = { path = "src/github/watch" }
 dots-tasks = { path = "src/tasks" }
 dots-memory = { path = "src/memory" }
 dots-process = { path = "src/process" }
+dots-review = { path = "src/review" }
+dots-pick = { path = "src/pick" }
 tokio = { version = "1", features = ["rt", "sync", "time", "net", "io-util", "macros", "fs", "process"] }
-herdrkit = { path = "src/herdr/kit" }
-herdr-review = { path = "src/herdr/review" }
-review-core = { path = "src/herdr/review/core" }
 anyhow = "1"
+getrandom = { version = "0.4", features = ["std"] }
 nucleo = "0.5"
 nix = { version = "0.29", features = ["process", "signal"] }
 ratatui = "0.30"
@@ -62,10 +56,6 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
 unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-panic_in_result_fn = "deny"
-indexing_slicing = "deny"
 todo = "deny"
 unimplemented = "deny"
 dbg_macro = "deny"

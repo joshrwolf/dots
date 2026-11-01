@@ -7,15 +7,9 @@ use github_inspect::{Repository, SnapshotRef};
 #[derive(Debug, Parser)]
 #[command(name = "dots", version, about = "Workflow tools for coding agents", long_about = "Workflow tools for coding agents across local tools, services, and host integrations.\nUse the available command groups for supported tasks; native tools remain available.\nHelp and skill generation work offline. Commands document their own effects and prerequisites.", disable_help_subcommand = true, term_width = 100, color = clap::ColorChoice::Never)]
 pub(crate) struct Cli {
-    /// Explicit repository for numeric IDs or refs; URLs must agree with it
-    #[arg(long, global = true, value_name = "[HOST/]OWNER/REPO")]
-    pub repo: Option<Repository>,
     /// Return JSON instead of readable output
     #[arg(long, global = true)]
     pub json: bool,
-    /// Bypass log caching and saved observations; fresh inspection always queries status
-    #[arg(long, global = true)]
-    pub no_cache: bool,
     /// Working directory for commands that use checkout context
     #[arg(long, global = true, value_name = "PATH")]
     pub directory: Option<PathBuf>,
@@ -25,25 +19,40 @@ pub(crate) struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
-    /// Register and inspect PR associations in Herdr workspaces
-    Herdr {
+    /// Publish and inspect immutable project evidence; publication does not accept tasks
+    Output {
+        #[arg(long, global = true)]
+        project: Option<String>,
+        #[arg(long, global = true)]
+        owner: Option<String>,
         #[command(subcommand)]
-        command: HerdrCommand,
+        command: OutputCommand,
     },
-    /// Inspect GitHub CI evidence and PR review threads
+    /// Initialize the workspace catalog and explicitly bind local Git projects
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
+    /// Inspect GitHub CI evidence and PR review threads, and keep a PR watch list
     Github {
+        /// Explicit repository for numeric IDs or refs; URLs must agree with it
+        #[arg(long, global = true, value_name = "[HOST/]OWNER/REPO")]
+        repo: Option<Repository>,
+        /// Bypass log caching and saved observations; fresh inspection always queries status
+        #[arg(long, global = true)]
+        no_cache: bool,
         #[command(subcommand)]
         command: GitHubCommand,
     },
     /// Track shared, claimable work for a project across concurrent sessions
     #[command(
-        long_about = "Local SQLite work list shared by every session and worktree of one project. Records intent and coordination: open slices, dependencies, atomic claims with leases, and the PR each slice produced. Git and GitHub remain the truth about code; reconcile against them when resuming.\nThe project defaults to the main checkout of the Git repository at --directory, so linked worktrees share one list; --project selects an explicit key.\nParent sessions create, claim, update and close tasks. Delegated workers report results; they do not edit the list. Claims expire so an abandoned session cannot hold work forever; renew by claiming again with the same owner. No network access."
+        long_about = "Local work list shared by every session and worktree of one project: tasks, dependencies, claims, results, and issue/PR references. Git and GitHub remain the source of truth for code.\nThe project comes from the Git checkout at --directory, bound with dots project init; --project selects a registered project ID.\nA claim marks which session is working on a task. It lasts until that session releases, hands off, or closes the task; Pi releases a session's claims when the session ends. Workers report results to their parent session, which records them.\nThe catalog is $XDG_DATA_HOME/dots/workspace.sqlite3 (default ~/.local/share/dots/workspace.sqlite3)."
     )]
     Task {
-        /// Explicit project key instead of the main Git checkout path
+        /// Registered project ID instead of the current Git common-directory binding
         #[arg(long, global = true, value_name = "KEY")]
         project: Option<String>,
-        /// Session or agent name recorded on claims and events
+        /// Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
         #[arg(long, global = true, value_name = "NAME")]
         owner: Option<String>,
         #[command(subcommand)]
@@ -54,13 +63,131 @@ pub(crate) enum Command {
         long_about = "Portable Markdown memory outside the checkout. Reads never initialize storage. Writes require an explicit scope and expected revision, briefly lock that scope, and atomically replace one file. No automatic ingestion, installation, indexing, or network access. See the shared memory skill for evidence and maintenance policy."
     )]
     Memory {
+        /// Registered project ID instead of resolving the current checkout
+        #[arg(long, global = true, value_name = "ID")]
+        project: Option<String>,
         #[command(subcommand)]
         command: MemoryCommand,
+    },
+    /// Review a repository's changes in threads anchored to exact revisions, across its worktrees
+    #[command(
+        long_about = "Reviews of a repository's changes. A review pins its target to exact content: a base commit and a head tree, with uncommitted work captured as a tree, so threads refer to bytes reviewers can read with `git show HEAD_TREE:PATH`. Each revision also records a snapshot commit whose tree is its head, so viewers can diff base..snapshot. A thread is an agent finding or a comment: an optional anchor validated against the reviewed diff, optional finding fields, a status, and a conversation whose replies and status changes name their author. Refresh carries threads forward when the change moves. Reviews never post anywhere.\nA review belongs to the worktree that started it: its file lives in that worktree's own Git directory ($(git rev-parse --git-dir)/dots/reviews) and disappears with it. A shared ref (refs/dots/reviews/ID) keeps reviewed content safe from garbage collection and makes ids unique across the repository, so any worktree can show or change any review by id; without an id, commands use this worktree's most recently updated review. remove releases the ref, and the next start or remove releases refs whose review is gone from every worktree. Parallel writers to one review are safe."
+    )]
+    Review {
+        #[command(subcommand)]
+        command: ReviewCommand,
     },
     /// Export agent discovery documentation from this command tree
     Skills {
         #[command(subcommand)]
         command: SkillCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum OutputCommand {
+    /// Publish a UTF-8 snapshot (at most 1 MiB); read the published revision before acceptance
+    Publish {
+        slug: String,
+        #[arg(long)]
+        filename: String,
+        #[arg(long, value_parser=["text/markdown","text/plain","application/json"])]
+        media_type: String,
+        #[arg(long)]
+        content_file: PathBuf,
+        /// First publication; only an identical sole revision can retry this operation
+        #[arg(long)]
+        create: bool,
+        #[arg(long, default_value = "")]
+        description: String,
+        #[arg(long, default_value = "")]
+        provenance: String,
+        /// Optional discovery association; does not record acceptance
+        #[arg(long)]
+        task: Option<String>,
+    },
+    /// List output slugs, optionally associated with one task; never select implicit latest evidence
+    List {
+        #[arg(long)]
+        task: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
+    /// List up to 20 exact revisions with metadata and pagination
+    Revisions {
+        slug: String,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
+    /// Read and verify an exact revision; missing, corrupt and purged never fall back
+    Show {
+        slug: String,
+        #[arg(long)]
+        digest: String,
+        #[arg(long, default_value_t = 1)]
+        start: usize,
+        #[arg(long, default_value_t=200, value_parser=clap::value_parser!(u16).range(1..=200))]
+        lines: u16,
+    },
+    /// Show an exact revision's native path and availability without printing its content
+    Path {
+        slug: String,
+        #[arg(long)]
+        digest: String,
+    },
+    /// Associate output discovery with a task without accepting it
+    Attach {
+        slug: String,
+        #[arg(long)]
+        task: String,
+    },
+    /// Remove discovery only, preserving historical acceptance evidence and bytes
+    Detach {
+        slug: String,
+        #[arg(long)]
+        task: String,
+    },
+    /// Inspect payloads, orphan/staging files and catalog remnants without repairing them
+    Integrity,
+    /// Explicitly erase one project digest; tombstone before unlink, retry interrupted removal
+    #[command(
+        long_about = "Use only after an explicit user request to purge this project digest. Marks all matching revisions purged before removing matching managed output bytes, including orphan/staging copies. Sources, scratch, other projects, backups and session copies remain outside this guarantee. No automatic cleanup."
+    )]
+    Purge {
+        #[arg(long)]
+        digest: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ProjectCommand {
+    /// Initialize a catalog if absent, register a project, and bind this Git common directory
+    Init {
+        name: String,
+        /// Start a fresh catalog while leaving any old-format data untouched
+        #[arg(long)]
+        fresh: bool,
+    },
+    /// Register an unbound project for explicit --project use
+    Register { name: String },
+    /// List registered projects and their exact common-directory bindings
+    List,
+    /// Show the binding and workspace directory for this checkout; never initialize storage
+    Resolve,
+    /// Bind this checkout to a registered project; refuse conflicting ownership
+    Bind { id: String },
+    /// Remove one exact binding, preserving the project and all its work
+    Unbind {
+        id: String,
+        /// Exact recorded common directory from project list; may no longer exist
+        #[arg(long)]
+        path: PathBuf,
+    },
+    /// Move an exact recorded binding to this checkout's common directory
+    Rebind {
+        id: String,
+        #[arg(long)]
+        from: PathBuf,
     },
 }
 
@@ -86,7 +213,7 @@ pub(crate) enum MemoryCommand {
     },
     /// Publish one Markdown file from UTF-8 input; rejects stale revisions and symlink paths
     #[command(
-        long_about = "Publish one file using --expected from memory read (or 'missing' for a new file). Reads at most 256 KiB from --content-file. Creates scope/topic directories on first write. A short cooperative .write-lock covers revision checking and atomic replacement; conflicts change no file contents. Multi-file updates are NOT transactions: write topics before the index, and handle interrupted updates explicitly. No shell commands or model calls run under the lock."
+        long_about = "Publish one file using --expected from memory read (or 'missing' for a new file). Reads at most 256 KiB from --content-file. Creates scope/topic directories on first write. A kernel-held dots/mutation.lock covers revision checking and atomic replacement across scopes; contention returns busy without waiting; conflicts change no file contents. Multi-file updates are NOT transactions: write topics before the index, and handle interrupted updates explicitly. No shell commands or model calls run under the lock."
     )]
     Write {
         path: PathBuf,
@@ -107,14 +234,12 @@ pub(crate) enum MemoryCommand {
     },
     /// Case-insensitive literal search of current knowledge; defaults to global plus this project
     #[command(
-        long_about = "Search live Markdown files, not a cached index. Default scope is global plus the current project, never unrelated projects. Sources and log.md are excluded unless --include-sources is set. Results are deterministic path/line matches, not semantic ranking; read the source before applying a snippet. Output reports backend, scope, and pagination. QMD is not installed or invoked."
+        long_about = "Search live Markdown files, not a cached index. Default scope is global plus the current project, never unrelated projects. The knowledge change log is excluded. Retained outputs and scratch are outside the searched knowledge roots. Results are deterministic path/line matches, not semantic ranking; read the source before applying a snippet. Output reports backend, scope, and pagination. QMD is not installed or invoked."
     )]
     Search {
         query: String,
         #[arg(long, value_enum)]
         scope: Option<MemoryScope>,
-        #[arg(long)]
-        include_sources: bool,
         /// Skip this many matches in each selected scope
         #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=100000))]
         offset: u32,
@@ -126,9 +251,9 @@ pub(crate) enum MemoryCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum TaskCommand {
-    /// Associate durable briefs with task roots; inspect recorded progress without executing work
+    /// Create, list, and inspect goals: root tasks with a Markdown brief
     #[command(
-        long_about = "Optional goal context on existing root tasks. The root task id is the goal id; slices, claims, and status stay in the task store. Briefs remain external Markdown documents, independent of memory storage. These commands neither execute work nor authorize continuation. Overview counts describe local records, not verified GitHub or worker state."
+        long_about = "A goal is a root task with a Markdown brief in the project workspace's briefs/ directory; dots project resolve prints the workspace path. Create briefs/ there if it does not exist yet. The root task ID is the goal ID; its tasks, claims, and results stay in the task list."
     )]
     Goal {
         #[command(subcommand)]
@@ -142,48 +267,51 @@ pub(crate) enum TaskCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum GoalCommand {
-    /// Create a root task and attach its brief atomically; no claims or execution
+    /// Create a root task with an existing brief
     Create {
         title: String,
-        /// Existing Markdown file; relative to --directory, stored as an absolute path
+        /// Existing Markdown file, as briefs/<name>.md relative to the project workspace (dots project resolve prints its path)
         #[arg(long, value_name = "PATH")]
         brief: PathBuf,
     },
-    /// Attach or replace a root's brief reference; never changes the document or executes work
+    /// Attach or replace a root task's brief
     Attach {
         id: String,
-        /// Existing Markdown file; relative to --directory (or the current directory), stored as an absolute path
+        /// Existing Markdown file, as briefs/<name>.md relative to the project workspace (dots project resolve prints its path)
         #[arg(long, value_name = "PATH")]
         brief: PathBuf,
     },
-    /// List explicitly attached goals; open and held by default
+    /// List unfinished goals with progress, most recently active first
     List {
         /// Include done and dropped goals
         #[arg(long)]
         all: bool,
+        /// Only goals where NAME claims the root or a descendant
+        #[arg(long, value_name = "NAME")]
+        claimed_by: Option<String>,
     },
-    /// Show open/held descendants and complete progress counts; no network or document reads
+    /// Show a goal's brief, progress, and unfinished tasks
     Show {
         id: String,
-        /// Include done/dropped task details; totals always include them
+        /// Include done and dropped tasks
         #[arg(long)]
         all: bool,
     },
-    /// Remove only the association; keep the document, tasks, and history
+    /// Remove the brief association; the tasks and the document stay
     Detach { id: String },
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum TaskQuery {
-    /// List open/held roots by default; use --parent ID to drill down or --flat for every level
+    /// List unfinished root tasks; use --parent ID to drill down or --flat for every level
     #[command(
-        long_about = "Project-scoped task overview: open and held root tasks by default, highest priority then oldest first. Child counts keep slices grouped. Use --parent ID for descendants or --flat for every level; --claimed-by also searches every level unless --roots is explicit. --all adds closed history without changing the hierarchy scope. Nothing is deleted or auto-archived."
+        long_about = "Unfinished root tasks by default, oldest first, with child counts. Use --parent ID for descendants or --flat for every level; --claimed-by searches every level unless --roots is given. --all includes closed tasks."
     )]
     List {
         /// Only tasks anywhere below this one
         #[arg(long, value_name = "ID", conflicts_with = "roots")]
         parent: Option<String>,
-        /// Only tasks whose recorded owner is NAME, live lease or not
+        /// Only tasks claimed by NAME
         #[arg(long, value_name = "NAME")]
         claimed_by: Option<String>,
         /// Only top-level tasks (the default unless --parent, --flat, or --claimed-by is given)
@@ -192,21 +320,27 @@ pub(crate) enum TaskQuery {
         /// Every task level, rather than the default root overview
         #[arg(long, conflicts_with = "parent")]
         flat: bool,
-        /// Exactly one status: open, held, done or dropped
-        #[arg(long, conflicts_with = "all")]
+        /// Exactly one status: open, review, held, done or dropped
+        #[arg(long, conflicts_with = "all", value_parser = ["open", "review", "held", "done", "dropped"])]
         status: Option<String>,
         /// Include done and dropped tasks
         #[arg(long)]
         all: bool,
     },
-    /// Fresh leaf work: open, unblocked, childless, no PR recorded, not under a live lease
+    /// Unclaimed, unblocked open tasks without children
     Ready {
         /// Only tasks anywhere below this one
         #[arg(long, value_name = "ID")]
         parent: Option<String>,
     },
-    /// Show one task with blockers, children count, and recent events
+    /// Show one task with its result, evidence, and recent events
     Show { id: String },
+    /// Show an earlier result and its evidence
+    ResultEvent {
+        id: String,
+        #[arg(long)]
+        event: i64,
+    },
     /// Project history after an event seq, oldest first; use the last seen seq as a cursor
     Events {
         /// Only events with seq greater than this (default 0)
@@ -220,111 +354,157 @@ pub(crate) enum TaskQuery {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum TaskMutation {
-    /// Create an open task; --parent groups slices under a larger goal
+    /// Create an open task; --parent groups it under a larger task or goal
     Add {
         title: String,
-        /// Longer description, pattern reference, or acceptance notes
+        /// What the task is for and how to tell it is done
         #[arg(long)]
         body: Option<String>,
         /// Parent task ID
         #[arg(long, value_name = "ID")]
         parent: Option<String>,
-        /// Higher runs first among ready tasks (default 0)
-        #[arg(long, default_value_t = 0, allow_hyphen_values = true)]
-        priority: i64,
         /// Prerequisite task IDs; repeatable
         #[arg(long, value_name = "ID")]
         blocked_by: Vec<String>,
     },
-    /// Atomically claim a task (or the next ready one) for --owner with a lease
+    /// Claim a task, or the next ready one, for this session
     #[command(
-        long_about = "Atomically claim a task for --owner. Fails if another owner holds a live lease, the task is blocked, it has open children, or it is not open. Claiming again with the same owner renews the lease; an expired lease can be taken over. --next claims the highest-priority ready task that has no children, optionally under --parent, and fails with exit 1 when nothing is ready. Claim before delegating a slice; release or close when the work stops."
+        long_about = "Claim a task for this session. Fails if the task is blocked, has unfinished children, is neither open nor in review, or is claimed by another session; --take takes over a claim whose session has stopped working on it. Claiming your own task again changes nothing. Review tasks need an explicit ID. --next claims the oldest ready task without children, optionally under --parent, and exits 1 when nothing is ready."
     )]
     Claim {
         /// Task ID; omit with --next
         #[arg(required_unless_present = "next", conflicts_with = "next")]
         id: Option<String>,
-        /// Claim the highest-priority ready task instead of a specific ID
+        /// Claim the oldest ready task instead of a specific ID
         #[arg(long)]
         next: bool,
         /// With --next, only consider tasks anywhere below this one
         #[arg(long, value_name = "ID", requires = "next")]
         parent: Option<String>,
-        /// Lease length in minutes, 1 to 10080 (default 120)
-        #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u32).range(1..=10080))]
-        lease: u32,
+        /// Take over another session's claim
+        #[arg(long, conflicts_with = "next")]
+        take: bool,
     },
-    /// Release --owner's claim without changing status
-    Release { id: String },
-    /// Edit fields or append a note; recording the PR URL is the usual update
+    /// Release this session's claim on a task, or every claim it holds with --all
+    Release {
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        id: Option<String>,
+        /// Release every claim this owner holds, in every project
+        #[arg(long)]
+        all: bool,
+    },
+    /// Edit a task's fields, or replace its current result
     #[command(
-        long_about = "Edit fields or append a note. Field edits on a task under another owner's live lease are refused unless --force; a --note is always allowed. Once a PR is recorded the slice leaves the ready pool: claim --next skips it even after the lease expires, and picking it up again means claiming it by id."
+        long_about = "Edit the title, body, branch, or parent, or replace the current result with --result; earlier results stay in history. A task claimed by another session needs --force."
     )]
     Update {
         id: String,
+        /// New title
         #[arg(long)]
         title: Option<String>,
+        /// New description in Markdown: scope, acceptance criteria, and pointers; replaces the old one
         #[arg(long)]
         body: Option<String>,
-        /// Full pull/merge request URL produced for this task
-        #[arg(long, value_name = "URL")]
-        pr: Option<String>,
+        /// Current result in Markdown: what changed, where it is, checks run, and what remains
+        #[arg(long, conflicts_with_all = ["title", "body", "branch", "parent"])]
+        result: Option<String>,
+        /// Published output revision the result cites; repeatable
+        #[arg(long, num_args = 2, value_names = ["SLUG", "DIGEST"], requires = "result")]
+        evidence: Vec<String>,
         /// Branch carrying the work, so another session can find it
         #[arg(long)]
         branch: Option<String>,
-        #[arg(long, allow_hyphen_values = true)]
-        priority: Option<i64>,
         /// New parent task ID; an empty string detaches
         #[arg(long, value_name = "ID")]
         parent: Option<String>,
-        /// Append a dated note to the task history
-        #[arg(long)]
-        note: Option<String>,
-        /// Edit fields despite another owner's live lease
+        /// Edit a task claimed by another session
         #[arg(long)]
         force: bool,
     },
-    /// Mark done; refuses while blocked, with open children, or leased to another owner unless --force
+    /// Record a result and move the task to review; clears the claim
+    Review {
+        id: String,
+        /// What changed, where it is, checks run, and what the reviewer should look at
+        #[arg(long)]
+        result: String,
+        /// Published output revision the result cites; repeatable
+        #[arg(long, num_args = 2, value_names = ["SLUG", "DIGEST"])]
+        evidence: Vec<String>,
+        /// Ignore blockers, unfinished children, and another session's claim
+        #[arg(long)]
+        force: bool,
+    },
+    /// Close a task whose acceptance criteria are met
     Done {
         id: String,
-        /// Outcome, e.g. the merge or verification evidence
+        /// The outcome and how it was verified
         #[arg(long)]
-        note: Option<String>,
-        /// Close anyway: ignore blockers, open children, and another owner's live lease
+        result: String,
+        /// Published output revision the result cites; repeatable
+        #[arg(long, num_args = 2, value_names = ["SLUG", "DIGEST"])]
+        evidence: Vec<String>,
+        /// Ignore blockers, unfinished children, and another session's claim
         #[arg(long)]
         force: bool,
     },
-    /// Pause this task with a reason; it is never ready, its claim is cleared; descendants stay claimable (warned)
+    /// Pause a task with a reason and clear its claim; its descendants stay claimable
     Hold {
         id: String,
         #[arg(long)]
         reason: String,
-        /// Override another owner's live lease
+        /// Pause a task claimed by another session
         #[arg(long)]
         force: bool,
     },
-    /// Close a task as not going to happen; dependents are unblocked; same --force rules as done
+    /// Close a task that will not be done; its dependents are unblocked
     Drop {
         id: String,
         #[arg(long)]
         reason: String,
-        /// Close anyway: ignore blockers, open children, and another owner's live lease
+        /// Ignore blockers, unfinished children, and another session's claim
         #[arg(long)]
         force: bool,
     },
-    /// Return a held, done or dropped task to open; fails if it is already open
+    /// Return a task to open; its result stays
     Reopen {
         id: String,
         #[arg(long)]
-        note: Option<String>,
-        /// Override another owner's live lease
+        reason: Option<String>,
+        /// Reopen a task claimed by another session
         #[arg(long)]
         force: bool,
+    },
+    /// Link issues, pull requests, and tickets to a task; nothing is sent to their provider
+    Ref {
+        #[command(subcommand)]
+        command: TaskReferenceCommand,
     },
     /// Manage prerequisites between tasks
     Dep {
         #[command(subcommand)]
         command: DepCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum TaskReferenceCommand {
+    /// Link an issue, pull request, or ticket by URL; setting it again replaces the label
+    Set {
+        id: String,
+        /// Full URL, such as a GitHub pull request or a Linear issue
+        url: String,
+        /// Short name to show instead of the URL, such as ENG-123
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove only this task's association, leaving the external item unchanged
+    Remove {
+        id: String,
+        url: String,
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -345,42 +525,79 @@ pub(crate) enum DepCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum HerdrCommand {
-    /// Explicit workspace PR associations; local writes, no GitHub mutations
-    #[command(
-        long_about = "Register every PR created or worked on in this Herdr workspace. Associations survive branch changes and agent completion. Associations end when their workspace closes; a reopened workspace needs fresh registration. No GitHub publication, CI fixes, or merges. Use a full PR URL; never substitute the focused workspace. Registration is safe to repeat after shipping or resuming work. An explicit --workspace is required. Verify it against the task and live workspace inventory; inherited pane/workspace IDs, current directory, and UI focus are not reliable ownership evidence."
-    )]
-    Prs {
-        /// Verified workspace handle; required, never inferred from environment or focus
-        #[arg(long, global = true)]
-        workspace: Option<String>,
-        #[command(subcommand)]
-        command: PrAssociationCommand,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum PrAssociationCommand {
-    /// Attach a PR to this workspace; repeat calls are harmless
-    Register { url: String },
-    /// List every PR registered in this workspace
-    List,
-    /// Remove this workspace's association without changing the PR
-    Unregister { url: String },
-}
-
-#[derive(Debug, Subcommand)]
 pub(crate) enum GitHubCommand {
     /// Inspect PR, ref, commit, or workflow-run CI and retrieve failure evidence
     #[command(
-        long_about = "Inspect CI for a PR, remote ref, commit, or exact workflow run/attempt.\nRead-only; uses existing gh authentication and needs no Herdr session.\nWith no subcommand, inspect the current branch's PR. Use --pr URL for another PR, --ref main or --sha SHA with --repo, or --run RUN_URL [--attempt N].\nA ref selects its current commit, not the latest historical/scheduled run. Use gh run list for run discovery; pass a run URL here for diagnosis.\nDetails default to failed, cancelled, unknown and pending checks. --all includes passing/skipped checks; --name TEXT searches check names across all states. Both remain paged; summary always covers every check.\nFailed or pending CI is data, not a command error. No checks does not mean CI passed.\nFollow returned commands rather than constructing job references or selecting the latest run."
+        long_about = "Inspect CI for a PR, remote ref, commit, or exact workflow run/attempt.\nRead-only; uses existing gh authentication.\nWith no subcommand, inspect the current branch's PR. Use --pr URL for another PR, --ref main or --sha SHA with --repo, or --run RUN_URL [--attempt N].\nA ref selects its current commit, not the latest historical/scheduled run. Use gh run list for run discovery; pass a run URL here for diagnosis.\nDetails default to failed, cancelled, unknown and pending checks. --all includes passing/skipped checks; --name TEXT searches check names across all states. Both remain paged; summary always covers every check.\nFailed or pending CI is data, not a command error. No checks does not mean CI passed.\nFollow returned commands rather than constructing job references or selecting the latest run."
     )]
     Ci(Box<CiArgs>),
     /// Inspect unresolved PR review threads and read exact conversations
     #[command(
         long_about = "Read-only review-thread investigation. Defaults to unresolved threads, including outdated feedback. Opening-comment previews are not full conversations. Follow the returned thread command for replies and reviewed diff context. Use --json for agent workflows. General PR discussion, review submission, replies, resolution, and merging remain with gh or GitHub. Fresh lists traverse at most 1000 threads; conversations at most 200 comments. Query errors and incomplete traversals fail explicitly. Saved observations expire after five minutes; paging requires local credential/keychain access but makes no GitHub requests. Refresh preserves the filter and page size and restarts at offset zero. JSON has_more indicates continuation; complete means this page contains the entire matching collection."
     )]
-    Reviews(Box<ReviewArgs>),
+    Reviews(Box<GitHubReviewArgs>),
+    /// Keep an agent-curated list of PRs with cached status
+    #[command(
+        long_about = "Agent-curated list of pull requests worth following, with cached status for pickers and agents. Add PRs you create or work on; adding records intent only and authorizes no CI fixes, monitoring, or merging. Entries are identified by canonical github.com PR URL.\nNo daemon: each row stores its next due check (60s before the first check or while CI is pending, 10 minutes once settled, 5 minutes after an error; merged or closed PRs are never checked again). Refresh fetches only due rows, one GraphQL request per 50 PRs, using existing gh authentication; concurrent refreshers never fetch the same PR twice. A failed check keeps the previous status and records the error. While a picker is open, its follow command refreshes due PRs; nothing runs otherwise.\nThe store is $XDG_STATE_HOME/dots/github/watch.sqlite3 (default ~/.local/state/dots/github/watch.sqlite3)."
+    )]
+    Watch {
+        #[command(subcommand)]
+        command: WatchCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum WatchCommand {
+    /// Add a PR, or update its checkout and sessions; idempotent, then refreshes that PR
+    #[command(
+        long_about = "Add a PR by URL, or update its entry: the original added time is kept, the checkout, agent session, and Rex session become the latest non-empty values, and the PR becomes due. The agent session is the invoking agent's: pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID. The Rex session is the one the work belongs to: $REX_SESSION in a Rex terminal, otherwise $DOTS_REX_SESSION, which Pi workers inherit from the session that started them. Then refreshes this PR only; a GitHub failure is a warning in the result and never fails the add."
+    )]
+    Add {
+        /// github.com pull request URL
+        #[arg(value_parser = pull_request_url)]
+        url: github_watch::PullRequestUrl,
+        /// Checkout the PR is worked from, stored as an absolute path; defaults to --directory or the current directory (a linked worktree itself, not its main checkout)
+        #[arg(long, value_name = "PATH")]
+        checkout: Option<PathBuf>,
+    },
+    /// Remove a PR from the list; an unlisted PR is not an error
+    Remove {
+        /// github.com pull request URL
+        #[arg(value_parser = pull_request_url)]
+        url: github_watch::PullRequestUrl,
+    },
+    /// List watched PRs with cached status, newest first; no network
+    #[command(
+        long_about = "List watched PRs with their cached status, most recently added first, and how many are due for a check. Makes no network requests; run refresh to update. Drops merged or closed PRs a day after their closure was observed."
+    )]
+    List,
+    /// Show one watched PR's cached status and description; no network
+    #[command(
+        long_about = "Show one watched PR for a preview pane: identity and title, state, review and CI, branch, checkout, Rex session, who added it and when, when it was last checked, the last check error, then the PR description cached by the last successful check. --color adds ANSI styling; COLUMNS wraps visible text to the given width. Makes no network requests. A PR that is not on the watch list is an error. --json returns the entry with its description."
+    )]
+    Show {
+        /// github.com pull request URL
+        #[arg(value_parser = pull_request_url)]
+        url: github_watch::PullRequestUrl,
+        /// Style the text with basic ANSI colors; ignored by --json
+        #[arg(long)]
+        color: bool,
+    },
+    /// Refresh due PRs while a picker reads the output; prints a line when rows change
+    #[command(
+        long_about = "Meant as a picker's watch command. Prints `ready` at once, then refreshes PRs as they become due, exactly like refresh, and prints `changed` whenever the watched rows differ from what it last saw: a status change, a recorded error, or an entry another session added or removed. It has no effect beyond refreshing due PRs. Sleeps until the earliest due PR (between 1 and 60 seconds, re-checking at least every minute for new entries). Runs only while its reader is alive: it exits 0 when its output is closed or on SIGTERM, SIGINT, or SIGHUP. GitHub failures are recorded on their PRs and never end it; a storage failure does."
+    )]
+    Follow,
+    /// Fetch status for PRs that are due; --all makes every open PR due first
+    Refresh {
+        /// Check every PR that is not merged or closed, due or not
+        #[arg(long)]
+        all: bool,
+    },
+}
+
+fn pull_request_url(value: &str) -> Result<github_watch::PullRequestUrl, String> {
+    github_watch::PullRequestUrl::parse(value).map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Args)]
@@ -518,24 +735,136 @@ fn positive(value: &str) -> Result<usize, String> {
         .ok_or_else(|| "line must be a positive integer".into())
 }
 
-#[derive(Debug, Args)]
-#[command(args_conflicts_with_subcommands = true)]
-pub(crate) struct ReviewArgs {
-    #[command(flatten)]
-    pub list: ReviewListArgs,
-    #[command(subcommand)]
-    pub command: Option<ReviewCommand>,
-}
 #[derive(Debug, Subcommand)]
 pub(crate) enum ReviewCommand {
+    /// Start a review of one target and print its revision, changed files, and diff command
+    #[command(
+        long_about = "Start a review. Choose exactly one target: --worktree reviews uncommitted changes (tracked and untracked, not ignored) against HEAD; --base REF reviews everything since the merge base of REF and HEAD, including uncommitted work; --range FROM..TO reviews committed changes only. Refuses an empty change. Reviewers read the patch with the returned diff_command and file content with `git show HEAD:PATH` using the review's head tree, not the live working tree."
+    )]
+    Start {
+        #[command(flatten)]
+        target: ReviewTarget,
+        /// Name of the profile running the review, recorded as given
+        #[arg(long, value_name = "NAME")]
+        profile: Option<String>,
+    },
+    /// List this worktree's reviews, or every worktree's with --all
+    #[command(
+        long_about = "List reviews, oldest first: this worktree's, or with --all those of every worktree of the repository. Each entry carries its worktree (path and branch at start), review file, current revision and thread counts by status."
+    )]
+    List {
+        /// Reviews of every worktree of the repository
+        #[arg(long)]
+        all: bool,
+    },
+    /// Show a review with its worktree, revisions, threads, changed files, and diff command
+    #[command(
+        long_about = "Show a review: its file, worktree, revisions (each with base, head tree and snapshot, the commit whose tree is that head, so base..snapshot is the reviewed diff), threads with their conversations, the current revision's changed files, and the command that reads its patch. Patches take attributes from the reviewed tree, never from the calling worktree, so they read the same everywhere. ID defaults to this worktree's most recently updated review."
+    )]
+    Show {
+        /// Review id; defaults to this worktree's most recently updated review
+        id: Option<String>,
+    },
+    /// Open threads from a JSON file at the current revision; all or none
+    #[command(
+        long_about = "Open threads at the review's current revision. The file (or - for stdin) holds {\"threads\": [...]}, at most 200 per batch. Each thread: body (the opening comment; Markdown, at most 16 KiB), author (who wrote it: a model id, an agent, user), optional anchor {path, side: new|old, start, end} whose lines fall within one hunk of the reviewed diff (omit for a review-level thread), and, for findings, optional title (one line, at most 200 characters), severity (critical, important, minor or nit), pre_existing (bool), confidence (0 to 1), angle (lowercase name like correctness) and rule {path, start, end} citing instruction-file lines in the reviewed head. Unknown fields are refused. Any invalid thread rejects the whole batch, listing every error by index. Pass --revision with the index of the revision the anchors were read against (its position in show's revisions, from zero); if the review has moved to another revision since, the whole batch is refused. ID defaults to this worktree's most recently updated review.",
+        allow_missing_positional = true
+    )]
+    Add {
+        /// Review id; defaults to this worktree's most recently updated review
+        id: Option<String>,
+        /// JSON file with the threads, or - for stdin
+        #[arg(long, value_name = "PATH")]
+        threads: PathBuf,
+        /// Revision index the anchors were read against; refuse the batch if the review has moved
+        #[arg(long, value_name = "N")]
+        revision: Option<usize>,
+    },
+    /// Reply to a thread without changing its status
+    #[command(allow_missing_positional = true)]
+    Reply {
+        /// Review id; defaults to this worktree's most recently updated review
+        id: Option<String>,
+        /// Thread id, like t1
+        thread: String,
+        /// Who is replying: a model id, an agent, user
+        #[arg(long, value_name = "NAME")]
+        author: String,
+        #[command(flatten)]
+        body: ReviewBody,
+    },
+    /// Change a thread's status: open, accepted, dismissed, fixed or posted
+    #[command(
+        long_about = "Change a thread's status, recorded in its conversation as a comment naming the author and new status, with an optional body giving the evidence. Outdated is set only by refresh. A thread left at an earlier revision cannot be reopened (open or accepted); open a new thread instead. ID defaults to this worktree's most recently updated review.",
+        allow_missing_positional = true
+    )]
+    Set {
+        /// Review id; defaults to this worktree's most recently updated review
+        id: Option<String>,
+        /// Thread id, like t1
+        thread: String,
+        #[arg(long, value_parser = ["open", "accepted", "dismissed", "fixed", "posted"])]
+        status: String,
+        /// Who decides: a model id, an agent, user
+        #[arg(long, value_name = "NAME")]
+        author: String,
+        /// Why, for the record
+        #[arg(long, value_name = "TEXT")]
+        body: Option<String>,
+    },
+    /// Re-resolve the target in the review's worktree; carry unchanged threads forward, mark changed ones outdated
+    #[command(
+        long_about = "Re-resolve the review's target in the worktree the review belongs to, whichever worktree runs the command. When the content moved, append a revision; open and accepted threads whose lines are unchanged and still within the new diff move to their new line numbers, and the rest become outdated through a status comment by dots review refresh. Dismissed, fixed and posted threads follow unchanged lines too but are never outdated; one left at an earlier revision cannot be reopened, so open a new thread instead. Whether a thread was fixed is a judgment for reviewers: compare with the returned delta diff_command. Review-level threads always carry forward."
+    )]
+    Refresh { id: String },
+    /// Delete a review and release its pinned content
+    Remove { id: String },
+}
+
+/// A comment body, given inline or read from a file.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub(crate) struct ReviewBody {
+    /// Comment body (Markdown)
+    #[arg(long, value_name = "TEXT")]
+    pub body: Option<String>,
+    /// File holding the comment body, or - for stdin
+    #[arg(long, value_name = "PATH")]
+    pub body_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub(crate) struct ReviewTarget {
+    /// Uncommitted changes against HEAD
+    #[arg(long)]
+    pub worktree: bool,
+    /// Changes since the merge base with REF, including uncommitted work
+    #[arg(long, value_name = "REF")]
+    pub base: Option<String>,
+    /// Committed changes from FROM to TO
+    #[arg(long, value_name = "FROM..TO")]
+    pub range: Option<String>,
+}
+
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+pub(crate) struct GitHubReviewArgs {
+    #[command(flatten)]
+    pub list: GitHubReviewListArgs,
+    #[command(subcommand)]
+    pub command: Option<GitHubReviewCommand>,
+}
+#[derive(Debug, Subcommand)]
+pub(crate) enum GitHubReviewCommand {
     /// Read an exact review thread, its replies, and original reviewed diff context
     #[command(
         long_about = "Read an exact review conversation. Diff context appears only at offset zero; later pages provide context_command to recover it. original_commit_id identifies the original reviewed revision; commit_id is GitHub's current comment association and may be a later commit. full_diff_hunk_command retrieves the untruncated review hunk, not surrounding file source. Use gh or the checkout for broader context. has_more indicates another page; complete means all comments are in this page. Snapshot reads need local credentials but make no GitHub requests."
     )]
-    Thread(ReviewThreadArgs),
+    Thread(GitHubReviewThreadArgs),
 }
 #[derive(Debug, Args)]
-pub(crate) struct ReviewListArgs {
+pub(crate) struct GitHubReviewListArgs {
     /// PR URL or number; defaults to the current branch's PR
     #[arg(long)]
     pub pr: Option<String>,
@@ -553,7 +882,7 @@ pub(crate) struct ReviewListArgs {
     pub offset: u32,
 }
 #[derive(Debug, Args)]
-pub(crate) struct ReviewThreadArgs {
+pub(crate) struct GitHubReviewThreadArgs {
     /// Exact reference emitted by review-thread discovery
     #[arg(conflicts_with = "repo")]
     pub reference: github_inspect::reviews::ThreadRef,

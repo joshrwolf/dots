@@ -1,218 +1,149 @@
 # Pi
 
-Dotfiles provide Pi instructions and themes; the companion adds local memory,
-workers, jobs, wakes, and compact presentation.
+The companion adds workers, finite background jobs, wakes, memory, goal
+inspection and Rex status to stock Pi.
 
 ## Setup
 
-Use the [pinned development tools](build.md), separately from Pi's managed runtime:
+[Machine setup](../bootstrap/README.md) installs Pi and the companion's runtime
+dependencies, then registers its durable source. From HOME:
 
 ```sh
-mise run pi-cli:install
-mise run install
-mise run //src/pi:packages
-mise run //src/pi:install
+mise run pi:packages
+pi list
 ```
 
-`:packages` runs `pi install` for the pinned third-party npm packages.
-`:install` runs `mise run //src/pi:deps` (`npm ci`), then
-`pi install <checkout>/src/pi`. Pi loads a local package from its path without
-copying, so the companion runs from the checkout. Install only from the primary
-checkout, never from an agent worktree. Reinstalling is harmless.
-
-Settings, credentials, models, sessions, and package registrations stay
-machine-local under `~/.pi/agent/`. Shared skills use `~/.agents/skills/`.
-Use `pi list` to inspect packages and `pi config` to select their resources.
-Register one companion copy: Pi identifies local packages by path, so a second
-checkout's copy loads alongside and conflicts. Use `pi remove <path>` first.
+Keep one companion registration. Pi identifies local packages by path, so
+registering another checkout loads a second copy. Remove the old path before
+registering a replacement. Credentials, models, settings and sessions stay in
+`~/.pi/agent/`; skills use the shared [skill namespace](skills.md).
 
 ## Updates
 
-Companion changes take effect in the primary checkout's working tree; there is
-no install step. A running session keeps the code it loaded until `/reload`.
-Use `/reload` when background work is idle: it shuts down extensions and stops
-this session's jobs and worker processes. Every session loads the checkout's
-current files on its next reload or start, so switching branches or editing
-there changes them all.
+The registered source is `~/.local/share/dots/checkouts/dots/src/pi`.
+Changes in a development worktree do not change the running setup. Update the
+acquired source through [machine setup](../bootstrap/README.md#inspect-and-update),
+then load it:
 
-| Change | Load it |
-|---|---|
-| Companion source | `/reload` |
-| Companion dependencies | `mise run //src/pi:deps`, then `/reload` |
-| Pi CLI/SDK or startup environment/options | Restart Pi; `pi -c` resumes the last project session |
-| Workbench source | `/reload` in the workbench; relaunch for launcher changes |
+| Change                         | Action                                               |
+| ------------------------------ | ---------------------------------------------------- |
+| Companion source               | `/reload`                                            |
+| Runtime dependencies           | `mise run runtime:deps` from HOME, then `/reload`    |
+| Pi host or startup environment | Restart Pi; `pi -c` resumes the last project session |
+| Third-party package            | `pi update npm:pi-web-access`, then `/reload`        |
 
-Keep the companion's exact development SDK and lockfile aligned with the host.
-Pi supplies its own SDK, TUI, and TypeBox to extensions; the development copies
-in `node_modules` serve only checks. Use `mise run //src/pi:check` or
-`mise run //src/pi:verify`; verification uses isolated provider-free hosts and
-does not change the live installation or prove live-model access.
-
-`mise run pi-cli:update` updates Pi itself, not pinned extensions.
-
-Third-party npm pins live in the `:packages` task. To upgrade, edit the pin and
-run `mise run //src/pi:packages`; Pi replaces the older registration and keeps
-its resource filters. Use `/reload` when idle. Companion checks do not run upstream's
-test suite; test a worker launch/result in a fresh session after upgrades.
+Reload only when background work is idle: it shuts down this session's extensions,
+jobs and workers. Other sessions keep their loaded code until their own reload
+or restart. Pi and the development SDK must match the workspace catalog pin.
 
 ## Presentation
 
-Use `/ui` to select tool displays, thinking, the header, footer, and editor styling. Changes take
-effect only with **Apply and reload**; Cancel leaves settings unchanged.
-**Other tools** covers background tools and tools without their own custom renderer;
-third-party custom renderers retain ownership. Preferences live in
-`~/.pi/agent/dots-ui.json`. Disabling the UI resource through
-`pi config` restores native surfaces.
+- `/ui` selects compact/native displays, thinking, header, footer and editor
+  styling. **Apply and reload** saves; Cancel leaves settings unchanged.
+- Ctrl+T toggles thinking; Ctrl+O expands tool details. Compact displays retain
+  errors, truncation and full-output links without changing recorded results.
+- `/goal`, `/workers`, `/jobs` and `/wakes` inspect activity without replacing
+  the editor draft. Scrolling a transcript pauses follow; F resumes it.
+- `/settings` owns theme selection. The `dots` theme follows
+  `~/.config/theme/current/pi.json`; theme-source changes need `/reload`.
+- `/context` shows reported usage and prompt-source estimates, not billing or
+  cache-hit measurements. Its overlapping estimates must not be added together.
 
-Compact thinking labels short summaries and groups longer Markdown under **Thinking**.
-Ctrl+T toggles native thinking visibility; fullscreen also supports clicking a block.
-This changes terminal presentation only, not recorded reasoning or HTML exports.
-Select **thinking: native** in `/ui` to restore the original presentation.
-
-Ctrl+O expands recorded tool details. Paths, failures, truncation notices, and
-full-output links remain visible; display shortening does not change tool results.
-Background calls and completion messages use the same identity/outcome layout.
-Job summaries keep capture and cleanup warnings visible; expand or use `/jobs`
-for full evidence. Codemode child previews cannot show nested results that Pi did not record.
-
-Theme selection stays in Pi's `/settings`. The base `dots` theme follows
-`~/.config/theme/current/pi.json`; the companion also supplies
-`dots-light/dots-dark` for automatic light/dark selection. Package theme and central
-theme-link changes need `/reload`.
-
-`/context` shows reported usage and estimated contributions, not exact billing.
-The [presentation library](../src/pi/src/README.md) documents lifecycle constraints
-for companion developers.
+UI preferences live in `~/.pi/agent/dots-ui.json`. Disable the UI resource through
+`pi config` to restore native surfaces. Third-party custom renderers remain
+owned by their packages.
 
 ## Workers
 
-Workers are background Pi RPC children with their own context and session.
-Use `worker_spawn` for a bounded brief; `message` steers or resumes the same
-worker. Completions, failures, and questions arrive as events—do not poll for them.
-Use `worker_wait` only when there is nothing else to do, and `worker_status` or
-`/workers` to inspect activity.
+Workers are headless Pi sessions managed by their parent. An interactive Pi
+opened in a Rex pane is independent, not a managed worker.
 
-Model selection accepts `provider/model[:thinking]` or a role from
-`~/.pi/agent/dots/workers.json` under `modelRoles`. Omission inherits the parent's
-model and thinking level. An empty tool allowlist permits only `message`.
+Use `/workers` to inspect progress, transcripts and results; M messages an owned
+worker and X offers stop confirmation. Descendants are read-only. Completion
+means a result is ready, not that its process exited or its work was accepted.
+Worker costs are shown separately from the parent's session cost.
 
-A worker asks its parent through `message` with `wait: true`; timeout or
-cancellation is not approval. Sibling relays are send-only and do not authorize
-scope expansion. Keep decisions in the parent conversation.
+Workers belong to a session, not a conversation branch. `/tree` preserves them;
+`/fork` and `/clone` copy only read-only history. Reload/exit stops owned workers;
+`message` can resume their saved sessions. Stop retained worker processes before
+removing their worktrees.
 
-Children stop when the parent exits and resume as paused sessions through
-`message`. Completed means a result is ready, not necessarily that the child
-process exited. `worker_stop { all: true }` closes owned processes and descendants
-while retaining results. Sessions live under `~/.pi/agent/dots/workers/`; the
-observation database is not the authority for resume state.
+Agents use `worker_spawn` for bounded work, `message` to steer or resume it, and
+completion events rather than polling. Tool schemas supply models, thinking
+levels, skill handoff and task-assignment arguments. Task association does not
+claim, complete or accept a task.
 
-Web research comes from the pinned `pi-web-access` package. Optional provider
-settings belong in `~/.pi/agent/web-search.json`; browser-cookie access and hosted
-fetch fallbacks remain opt-in.
+Native Pi settings own compaction. The companion displays context pressure and
+warns near supported workers' native triggers; it neither changes model capacity
+nor replaces a worker automatically. Unknown or stale context remains explicit.
 
 ## Goals
 
-Use `/goal new IDEA` to start a planning conversation. The agent can write the
-brief, create initial slices, and follow the result with `goal_focus`; this does
-not request implementation. Your desired involvement stays in the conversation
-or brief, not a separate execution policy.
+Use `/goal new IDEA` to plan an outcome, or `/goal follow ID` to follow an existing
+one. Following adds its brief and task outline to context; it does not authorize
+implementation or start work. Use `/goal` to inspect, `/goal refresh` to refresh,
+and `/goal unfollow ID` to remove its future context.
 
-For direct setup, `dots task goal create TITLE --brief PATH` creates a root and
-attaches an existing Markdown brief together. Use
-`dots task goal attach ID --brief PATH` to adopt an existing root. Pi uses the
-installed `dots` and never installs it.
+For another project, supply its exact `project` key from `dots task --json`,
+not a guessed path. Several goals may be followed at once; selecting one changes
+only the display. The followed set survives session reload/resume.
 
-`/goal follow ID` adds a goal to this session (`focus` is an alias).
-Follow several goals at once; selecting another never pauses or closes earlier
-work. `/goal` chooses which followed goal to inspect, with `1` slices, `2` brief,
-and `3` record details. `/goal show ID` selects directly; `/goal history ID`
-includes closed details. In slices, `[`/`]` select a group; left/right fold and
-unfold it (Space toggles). Inspection opens in a bounded overlay; Escape closes
-it without replacing the editor. Finished goals include closed slices in inspection,
-not in ordinary agent context. In fullscreen mode, clicking the dashboard opens
-the selected goal's inspector; dashboard group arrows remain read-only.
-Selection affects display, not which goals get context.
-
-`/goal list` lists shared open/held goals and marks this session's follows;
-`/goal followed` lists the session set. `/goal unfollow ID` removes one;
-`/goal clear` removes all (`unfocus` without an ID also clears all).
-Agents use `goal_focus {id}`, `goal_list {}`, and `goal_unfocus {id}` or
-`goal_unfocus {all: true}`. These change no shared tasks, claims, workers, or
-other sessions. Unfollowing removes future injected context, not prior messages.
-
-The followed set and display selection survive branch reload/resume. Fresh
-sessions follow nothing.
-The dashboard sits below the editor, above the status line. It shows recorded
-progress and a short slice list, not live execution.
-Claimed and held slices get priority under their parent groups; `/goal` opens
-nested inspection. Group fractions include all recorded leaves, even closed ones;
-closed leaf details stay behind history, while group summaries preserve ancestry.
-Incomplete trees show a warning rather than guessed group totals.
-With several follows, the selected goal gets detail and the others
-stay in a compact list. `/goal refresh` refreshes the whole set without polling.
-
-Tasks are project-scoped, shared across linked worktrees. `dots task list` shows
-open/held roots, not every slice. Use `--parent ID` to drill down, `--flat` for all
-levels, and `--all` to include closed history. Goal lists also hide done/dropped
-roots by default. Records are retained, not automatically deleted; close finished
-work and drop abandoned work to keep the active view useful.
-
-Pi refreshes every followed goal's local tasks and brief before each new agent
-run and refreshes the widget afterward. Brief context is bounded to 24 KiB per
-goal, with a reference for the rest; total context grows with the followed set.
-The multi-goal widget reports approximate brief-text size. Display limits never
-silently remove goals from context. Missing briefs or CLI failures stay
-visible rather than reusing stale context. Counts are recorded task state—not
-verified PR or worker status. Focusing, inspecting, or restoring never authorizes
-execution or automatic continuation. See the [goal-mode direction](goal-mode.md).
+Briefs hold agreements, tasks hold progress, and retained outputs hold evidence.
+The agent manages claims through `dots`; direct CLI use needs an explicit
+`--owner` rather than an inherited session identity. See [tasks](tasks.md) and
+[documents](documents.md).
 
 ## Jobs
 
-`job_start`, `job_status`, and `job_stop` run trusted finite shell commands on
-macOS in a kept-alive TUI/RPC session. They do not support one-shot print mode,
-stdin, PTYs, service readiness, or reload survival. Cancellation after admission
-does not stop the job; use `job_stop`.
+`/jobs` inspects finite session-owned Bash commands, outcomes and captured output.
+Jobs support neither PTYs nor stdin, service supervision or reload survival.
+They require a live TUI/RPC session, not one-shot print mode.
 
-`/jobs` inspects outcomes, cleanup evidence, and output paths without starting a
-model turn. Historical jobs are inspection-only; unfinished restored jobs are
-unknown, never resumed. Reload/shutdown stops owned jobs. Aborting a model run
-suppresses automatic job wakes until the next user-started run.
-
-Output under `~/.pi/agent/dots/jobs/` retains a bounded prefix and tail, not
-necessarily a complete log. Use `read` on the returned paths and inspect capture
-warnings. Artifact eviction is runtime-local, not a global disk quota.
-
-Root outcome, stop intent, cleanup evidence, and capture completeness are
-separate facts. Process-group cleanup cannot contain detached descendants,
-supervisor failure, or all simultaneous shutdown races. Do not treat successful
-root exit as proof that every descendant stopped.
+Aborting an agent response does not stop an admitted job; use `job_stop`.
+Root exit, stop intent, cleanup and capture completeness are separate facts.
+Process-group cleanup cannot contain every detached descendant. Historical jobs
+are inspection-only, never resumed. Output retains a bounded prefix and tail
+under `~/.pi/agent/dots/jobs/`; check capture warnings before treating it as complete.
 
 ## Wakes
 
-`wake` schedules a future turn, once or periodically. An optional shell
-`check` gates model wakes on output changes, success, or failure. Use coarse
-intervals and a finite limit; `wake_list`, `wake_cancel`, `wake_run`, and
-`/wakes` manage them.
+`/wakes` inspects scheduled turns. Agents use `wake` for a one-shot reminder or a
+finite recurring check; native schemas describe the timing and change gates.
+Use trusted finite checks, not daemons, and cancel schedules whose purpose is over.
 
-Wakes persist in the session, but nothing fires while Pi is closed. A missed
-wake fires once on return rather than replaying every missed interval.
-Manual fires count toward the limit; overlapping checks are rejected.
-
-Checks have bounded execution and pipe draining. Cancellation/reload discards
-late results; deliberately detached descendants may survive. Use trusted finite
-checks, not daemons.
+Wakes persist but do not fire while Pi is closed. A missed wake fires once on
+return. `/tree` preserves them; `/fork` and `/clone` copy inactive history.
 
 ## Memory
 
-`/memory` shows global and project indexes under `~/.local/share/dots/memory/`.
-Linked worktrees share the project index; project notes take precedence over
-global notes. Memory is learned context, not an instruction override.
+`/memory` shows global and project indexes. Linked worktrees share project memory;
+project notes take precedence over global notes. Memory is learned context, not
+an instruction override, task list or transcript archive. Nothing is written
+automatically. The [memory skill](../skills/memory/SKILL.md) owns upkeep through
+revision-checked `dots memory` commands.
 
-Nothing is written automatically. The shared [memory skill](../skills/memory/SKILL.md)
-provides recall, source-backed updates, correction, and maintenance. Indexes stay
-compact; linked knowledge and selected evidence load on demand. Existing adjacent
-topic files remain valid. Cooperating writers acquire a per-scope directory lock
-and reread before editing; readers do not get atomic multi-file snapshots.
-Goal briefs and tasks retain working context and progress separately.
-Credentials, private captures, and transcripts do not belong in memory.
-Contributor guidance lives in [AGENTS.md](../src/pi/AGENTS.md).
+## Anthropic request guard
+
+Direct Anthropic streams have 90 seconds after headers to produce
+`message_start`; keepalive pings do not extend it. Timeout uses Pi's normal retry
+budget. User cancellation never retries, and thinking after the response starts
+is not limited.
+
+`/request-guard` shows counts and timings. Records contain metadata, not prompts,
+response text or credentials. The guard uses Pi's simple-stream override: custom
+Anthropic full-stream options are normalized as simple-stream options. Disable
+it through `pi config` and restart Pi when workers are idle; reload alone does
+not remove provider overrides.
+
+## Rex
+
+Rex supplies session-start orientation. The companion reports OSC7501 status
+for the parent and its jobs/workers; Rex owns notifications. A child finishing
+does not announce parent completion. See [Rex configuration](../home/rex/.config/rex/README.md).
+
+## Development
+
+Use the [SDK/check setup](build.md), [contributor rules](../src/pi/AGENTS.md) and
+[presentation library](../src/pi/src/README.md). Checks use disposable hosts and
+never activate the live setup. After a host upgrade, also exercise a native child
+launch/result in a fresh session; provider-free checks do not establish live-model access.

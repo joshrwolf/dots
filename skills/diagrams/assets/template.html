@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic: what this page explains</title>
+<link rel="stylesheet" href="kit.css">
+</head>
+<body>
+<div class="page">
+  <aside><div class="title">Topic</div><nav data-toc></nav></aside>
+  <main>
+    <section id="overview">
+      <h2>Overview</h2>
+      <p class="lead">One or two sentences: what the reader will understand by the end.</p>
+      <script type="application/json" data-diagram>
+      {
+        "id": "overview",
+        "title": "Request path from client to storage",
+        "nodes": [
+          { "id": "client", "label": "Client", "col": 0, "row": 0 },
+          { "id": "api", "label": "API", "sub": "validates and routes", "col": 1, "row": 0, "tone": "accent", "detail": "#api-detail" },
+          { "id": "store", "label": "Store", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "client", "to": "api", "label": "request" },
+          { "from": "api", "to": "store" }
+        ]
+      }
+      </script>
+      <template id="api-detail"><p>Longer explanation shown when the box is selected. <span class="src">path/to/file.go:10-42</span></p></template>
+    </section>
+  </main>
+</div>
+<script src="diagram-kit.js"></script>
+</body>
+</html>

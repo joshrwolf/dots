@@ -1,0 +1,4 @@
+# Worktrunk project config for dots; placement lives in the user config.
+# A new worktree gets the workspace's dependencies before `wt switch` returns,
+# so checks (and workers started there) can run at once.
+pre-start = "mise run deps"

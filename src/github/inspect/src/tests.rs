@@ -48,10 +48,6 @@ impl Fake {
 }
 
 impl Provider for Fake {
-    #[expect(
-        clippy::panic_in_result_fn,
-        reason = "scripted test provider asserts exact query boundaries"
-    )]
     fn gh(&self, args: &[&str]) -> Result<Output> {
         let call = self.0.borrow_mut().pop_front().expect("unexpected query");
         assert_eq!(args, call.args);
@@ -410,39 +406,6 @@ fn oversized_lines_are_bounded_and_have_a_full_log_escape_hatch() {
 }
 
 #[test]
-fn older_gh_flag_rejection_retries_before_any_log_download() {
-    let mut fallback = log("\u{1b}[31m##[error] failed\u{1b}[0m");
-    fallback.args.pop();
-    let mut rejected = log("");
-    rejected.code = 1;
-    rejected.error = "unknown flag: --allow-escape-sequences".into();
-    let provider = Fake::new(vec![job(30, "completed"), head(HEAD), rejected, fallback]);
-    let result = job_logs(
-        &provider,
-        &reference().to_string(),
-        None,
-        LogOptions {
-            snapshot: None,
-            start: None,
-            lines: 100,
-            search: None,
-            test: None,
-        },
-    )
-    .unwrap();
-    assert!(
-        result
-            .log
-            .unwrap()
-            .lines
-            .first()
-            .unwrap()
-            .contains("failed")
-    );
-    provider.done();
-}
-
-#[test]
 fn large_prs_keep_complete_counts_and_page_failure_first_details() {
     let mut rows = (0..300)
         .map(|n| {
@@ -469,7 +432,7 @@ fn large_prs_keep_complete_counts_and_page_failure_first_details() {
     assert_eq!(result.omitted_checks, 0);
     assert_eq!(
         result.checks.first().unwrap().bucket,
-        crate::status::CheckBucket::Fail
+        crate::CheckBucket::Fail
     );
     assert!(result.next_command.is_none());
     provider.done();

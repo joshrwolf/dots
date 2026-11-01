@@ -8,6 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest as _, Sha256};
 
+use crate::{Error, Result};
+
 const TTL: u64 = 24 * 60 * 60;
 const MAX_BODY: u64 = 512 * 1024 * 1024;
 const MAX_FILES: usize = 64;
@@ -41,7 +43,9 @@ impl Cache {
     }
 
     pub(crate) fn get_file(&self, key: &str) -> Option<(File, u64)> {
-        self.private_directory()?;
+        if !self.is_private_directory() {
+            return None;
+        }
         let path = self.directory.join(format!("{key}.log"));
         let metadata = fs::symlink_metadata(&path).ok()?;
         if !metadata.is_file()
@@ -78,7 +82,8 @@ impl Cache {
             if length > MAX_BODY {
                 return None;
             }
-            hasher.update(buffer.get(..count)?);
+            // `Read::read` never reports more bytes than the buffer holds.
+            hasher.update(&buffer[..count]);
         }
         if length == 0 || hasher.finalize().as_slice() != digest {
             return None;
@@ -95,7 +100,7 @@ impl Cache {
                 .mode(0o700)
                 .create(&self.directory);
         }
-        if self.private_directory().is_none() {
+        if !self.is_private_directory() {
             return false;
         }
         let temporary = self.directory.join(format!(
@@ -124,7 +129,8 @@ impl Cache {
                 if length > MAX_BODY {
                     return Err(std::io::Error::other("log too large"));
                 }
-                let chunk = buffer.get(..count).unwrap_or_default();
+                // `Read::read` never reports more bytes than the buffer holds.
+                let chunk = &buffer[..count];
                 hasher.update(chunk);
                 file.write_all(chunk)?;
             }
@@ -148,9 +154,8 @@ impl Cache {
         self.read(key).ok()
     }
 
-    pub(crate) fn read(&self, key: &str) -> crate::Result<CachedLog> {
-        let invalid =
-            |reason: &str| crate::Error::InvalidResponse(format!("Saved observation {reason}"));
+    pub(crate) fn read(&self, key: &str) -> Result<CachedLog> {
+        let invalid = |reason: &str| Error::InvalidResponse(format!("Saved observation {reason}"));
         let io_error = |error: std::io::Error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 invalid("is absent for the active credential/cache location")
@@ -220,7 +225,7 @@ impl Cache {
         {
             return;
         }
-        if self.private_directory().is_none() {
+        if !self.is_private_directory() {
             return;
         }
         let temporary = self.directory.join(format!(
@@ -250,9 +255,9 @@ impl Cache {
         clippy::verbose_bit_mask,
         reason = "octal masks express Unix permission bits directly"
     )]
-    fn private_directory(&self) -> Option<()> {
-        let metadata = fs::symlink_metadata(&self.directory).ok()?;
-        (metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0).then_some(())
+    fn is_private_directory(&self) -> bool {
+        fs::symlink_metadata(&self.directory)
+            .is_ok_and(|metadata| metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0)
     }
 
     fn prune(&self) {
@@ -346,23 +351,38 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
-    struct Fixture(PathBuf);
+    /// A root directory this test created, removed again on drop, holding a
+    /// cache directory the cache creates itself. Process IDs repeat and an
+    /// interrupted run leaves its root behind, so a name in use is skipped,
+    /// never reused or removed.
+    struct Fixture {
+        root: PathBuf,
+    }
     impl Fixture {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "dots-log-cache-test-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            Self(path)
+            loop {
+                let root = std::env::temp_dir().join(format!(
+                    "dots-log-cache-test-{}-{}",
+                    std::process::id(),
+                    NEXT.fetch_add(1, Ordering::Relaxed)
+                ));
+                match fs::create_dir(&root) {
+                    Ok(()) => return Self { root },
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => panic!("create {}: {error}", root.display()),
+                }
+            }
+        }
+        fn directory(&self) -> PathBuf {
+            self.root.join("cache")
         }
         fn cache(&self) -> Cache {
-            Cache::new(self.0.clone())
+            Cache::new(self.directory())
         }
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+            let _ = fs::remove_dir_all(&self.root);
         }
     }
 
@@ -431,7 +451,7 @@ mod tests {
         let mut body = String::new();
         cached.read_to_string(&mut body).unwrap();
         assert_eq!(body, "neutral log\ncafe\u{301}\n");
-        let path = fixture.0.join("spool.log");
+        let path = fixture.directory().join("spool.log");
         let mut corrupt = OpenOptions::new().append(true).open(path).unwrap();
         corrupt.write_all(b"corrupt").unwrap();
         assert!(cache.get_file("spool").is_none());
@@ -444,10 +464,14 @@ mod tests {
         cache.put("test", b"hello", now());
         assert_eq!(cache.get("test").unwrap().bytes, b"hello");
         assert_eq!(
-            fs::metadata(&fixture.0).unwrap().permissions().mode() & 0o777,
+            fs::metadata(fixture.directory())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
             0o700
         );
-        let path = fixture.0.join("test.log");
+        let path = fixture.directory().join("test.log");
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
@@ -465,7 +489,7 @@ mod tests {
         for id in 0..100 {
             cache.put(&format!("test-{id}"), b"hello", now());
         }
-        assert!(fs::read_dir(&fixture.0).unwrap().count() <= MAX_FILES);
+        assert!(fs::read_dir(fixture.directory()).unwrap().count() <= MAX_FILES);
     }
 
     #[test]
@@ -518,15 +542,15 @@ mod tests {
     fn unsafe_or_unwritable_directories_and_symlinks_disable_cache() {
         let fixture = Fixture::new();
         let cache = fixture.cache();
-        fs::create_dir(&fixture.0).unwrap();
-        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::create_dir(fixture.directory()).unwrap();
+        fs::set_permissions(fixture.directory(), fs::Permissions::from_mode(0o755)).unwrap();
         cache.put("test", b"private", now());
         assert!(cache.get("test").is_none());
-        assert!(!fixture.0.join("test.log").exists());
-        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o700)).unwrap();
-        let target = fixture.0.join("original");
+        assert!(!fixture.directory().join("test.log").exists());
+        fs::set_permissions(fixture.directory(), fs::Permissions::from_mode(0o700)).unwrap();
+        let target = fixture.directory().join("original");
         fs::write(&target, b"unchanged").unwrap();
-        symlink(&target, fixture.0.join("test.log")).unwrap();
+        symlink(&target, fixture.directory().join("test.log")).unwrap();
         assert!(cache.get("test").is_none());
         cache.put("test", b"private", now());
         assert_eq!(fs::read(&target).unwrap(), b"unchanged");

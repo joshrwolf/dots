@@ -439,29 +439,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "dots-bootstrap-tests"
+version = "0.1.0"
+dependencies = [
+ "dots-process",
+ "serde_json",
+]
+
+[[package]]
 name = "dots-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "dots-memory",
+ "dots-process",
+ "dots-review",
  "dots-tasks",
  "github-inspect",
- "herdr-prs",
- "herdrkit",
+ "github-watch",
+ "nix",
  "serde",
  "serde_json",
  "time",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
 name = "dots-memory"
 version = "0.1.0"
 dependencies = [
+ "dots-process",
+ "getrandom 0.4.3",
  "serde",
  "sha2",
  "thiserror 2.0.20",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "dots-pick"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dots-process",
+ "nix",
+ "nucleo",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "toml",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
@@ -474,9 +507,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dots-review"
+version = "0.1.0"
+dependencies = [
+ "dots-process",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "dots-tasks"
 version = "0.1.0"
 dependencies = [
+ "dots-memory",
+ "dots-process",
  "rusqlite",
  "serde",
  "thiserror 2.0.20",
@@ -639,8 +685,6 @@ version = "0.1.0"
 dependencies = [
  "dots-process",
  "serde",
- "serde_json",
- "sha2",
  "thiserror 2.0.20",
 ]
 
@@ -648,12 +692,23 @@ dependencies = [
 name = "github-inspect"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "github-client",
  "nix",
  "serde",
  "serde_json",
  "sha2",
+ "thiserror 2.0.20",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "github-watch"
+version = "0.1.0"
+dependencies = [
+ "github-client",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "unicode-segmentation",
 ]
@@ -685,109 +740,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "herdr-find"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "herdr-review",
- "herdrkit",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "herdr-github"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "github-client",
- "github-inspect",
- "herdr-prs",
- "herdrkit",
- "rusqlite",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "herdr-issue"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "herdrkit",
- "rusqlite",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "herdr-nav"
-version = "0.5.0"
-dependencies = [
- "anyhow",
- "dots-process",
- "herdrkit",
- "nix",
- "rustix",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "herdr-plugin-contracts"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "herdr-prs"
-version = "0.1.0"
-dependencies = [
- "github-client",
- "rusqlite",
- "serde",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "herdr-review"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dots-process",
- "github-client",
- "herdr-prs",
- "herdrkit",
- "review-core",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "herdrkit"
-version = "0.1.0"
-dependencies = [
- "dots-process",
- "nix",
- "nucleo",
- "ratatui",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
- "tokio",
- "toml",
- "unicode-segmentation",
- "unicode-width",
-]
 
 [[package]]
 name = "hex"
@@ -1482,20 +1434,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "review-core"
-version = "0.1.0"
-dependencies = [
- "dots-process",
- "herdrkit",
- "nix",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
-]
 
 [[package]]
 name = "rusqlite"

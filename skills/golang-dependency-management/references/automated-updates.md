@@ -21,7 +21,7 @@ Automate minor/patch dependency updates to reduce maintenance burden and stay cu
 - **Major updates**: Create PR for manual review (may contain breaking changes)
 - **Security updates**: Prioritize promptly, but retain compatibility review and required checks. A security fix does not make a major-version upgrade safe to merge automatically.
 
-For workflow configuration files (dependabot.yml, renovate.json, auto-merge workflows), see the `samber/cc-skills-golang@golang-continuous-integration` skill.
+For workflow configuration files (dependabot.yml, renovate.json, auto-merge workflows), see the `golang-continuous-integration` skill.
 
 ## Update Verification
 

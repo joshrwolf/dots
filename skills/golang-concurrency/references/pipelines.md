@@ -246,7 +246,7 @@ Use goroutine+channel pipelines when:
 
 ### samber/ro
 
-For projects already using `samber/ro`, see `golang-samber-ro` for its observable/observer model and operators. It is an external reactive-stream library, not a standard iterator helper; consult the resolved version for Collect and Pipe signatures.
+For projects already using `samber/ro`, see [samber-ro.md](samber-ro.md) for its observable/observer model and operators. It is an external reactive-stream library, not a standard iterator helper; consult the resolved version for Collect and Pipe signatures.
 
 ## Goroutine Leak Detection
 
@@ -262,5 +262,3 @@ a consumer stops early. Exercise blocked sends and receives explicitly.
 | Unbounded goroutine spawning | Use `errgroup.SetLimit` or a semaphore |
 | Sending mutable data through channel | Send copies or immutable values |
 | Blocking send without select | Wrap channel sends in select with `ctx.Done()` |
-
-→ See `samber/cc-skills-golang@golang-concurrency` skill for sync primitives and channel patterns.

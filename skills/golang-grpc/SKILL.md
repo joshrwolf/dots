@@ -1,42 +1,12 @@
 ---
 name: golang-grpc
 description: "Build and review Go gRPC services and clients. Use for protobuf organization, interceptors, status errors, TLS, streaming, and bufconn tests."
-user-invocable: true
 license: MIT
-compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
-metadata:
-  author: samber
-  version: "1.2.2"
-  openclaw:
-    emoji: "🌐"
-    homepage: https://github.com/samber/cc-skills-golang
-    requires:
-      bins:
-        - go
-        - protoc
-    install:
-      - kind: brew
-        formula: protobuf
-        bins: [protoc]
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch Bash(protoc:*) AskUserQuestion Bash(gopls:*) LSP mcp__gopls__*
-paths:
-  - "**/*.go"
 ---
-
-**Dependencies:**
-
-- protoc: `brew install protobuf`
-- protoc-gen-go: `go install google.golang.org/protobuf/cmd/protoc-gen-go@latest`
-- protoc-gen-go-grpc: `go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest`
 
 # Go gRPC Best Practices
 
 Treat gRPC as a pure transport layer — keep it separate from business logic. The official Go implementation is `google.golang.org/grpc`.
-
-This skill is not exhaustive — refer to library documentation and code examples for more information:
-
-- Consult `go doc` for the resolved package API; see `golang-go-doc` for lookup guidance.
-- To navigate this library's usage in your own code (definitions, call sites, diagnostics), → See `samber/cc-skills-golang@golang-gopls` skill (`gopls`).
 
 ## Quick Reference
 
@@ -217,7 +187,6 @@ Most services do not need connection pooling — profile before adding complexit
 
 ## Cross-References
 
-- → See `samber/cc-skills-golang@golang-context` skill for deadline and cancellation patterns
-- → See `samber/cc-skills-golang@golang-error-handling` skill for gRPC error to Go error mapping
-- → See `samber/cc-skills-golang@golang-observability` skill for gRPC interceptors (logging, tracing, metrics)
-- → See `samber/cc-skills-golang@golang-testing` skill for gRPC testing with bufconn
+- → See `golang-concurrency` skill for deadline and cancellation patterns
+- → See `golang-observability` skill for gRPC interceptors (logging, tracing, metrics)
+- → See `golang-testing` skill for gRPC testing with bufconn

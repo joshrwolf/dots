@@ -8,7 +8,7 @@ use clap::{Command, CommandFactory as _};
 
 use crate::command::Cli;
 
-const GUIDANCE: &str = "Use `dots` for supported workflows before assembling equivalent shell/API calls. Native tools remain available for unsupported operations or useful follow-up.\n\nStart with `dots --help` to discover the installed command groups, then use the relevant command's `--help`. For detailed syntax, read [the generated command reference](references/commands.md). Help is authoritative if this skill and the installed binary differ.\n\nFor agent workflows, request `--json`; generated dots follow-up commands preserve JSON mode.\n\nUse the task's explicit target or working directory; do not silently substitute another checkout or workspace. Follow the references and next commands returned by the tool. Treat partial or unavailable evidence as such. Tool availability does not authorize mutations beyond the user's request.\n\nIn Herdr, register every PR you create or start working on with `dots herdr prs register <full-pr-url> --workspace <verified-id> --json`, including sequential PRs in the same workspace. Every PR command requires an explicit workspace. Verify it against the task and live workspace inventory (`herdr api snapshot`); never copy inherited Herdr IDs, use UI focus, or treat a matching checkout as proof of ownership. Shared daemons can carry another pane's IDs. If the intended workspace is ambiguous, ask before registering. Registration is idempotent and independent of GitHub availability. Keep earlier registrations; unregister only when explicitly correcting an association. The background plugin watches status; registration does not authorize CI fixes, monitoring by the agent, or merging.\n\nFor multi-PR efforts, `dots task` is the shared work list for a project across sessions and worktrees. Plan slices as tasks under a parent, record prerequisites, and claim a slice (`dots task claim ID --owner <session> --json` or `--next`) before delegating it. Only the parent session edits tasks; workers return results. Record the PR URL with `update --pr`, close with `done` once verified, and `hold` with a reason when blocked. Task records are coordination, not evidence: confirm branch and PR state in Git/GitHub when resuming, and do not keep a lease on work nobody is doing.\n\nTask lists are project-scoped; linked worktrees share the project. `dots task list` shows open/held roots by default. Use `--parent ID` for one goal's slices, `--flat` for every level, and `--all` to include closed history. Records are retained, not automatically cleaned up. For opt-in goal mode, write a Markdown brief and use `dots task goal create TITLE --brief PATH --json`, or `attach` an existing root. Goal overviews show active task details with complete totals; `show ID --all` includes closed details. Goal tracking does not authorize execution.\n";
+const GUIDANCE: &str = "Use `dots` for supported workflows before assembling equivalent shell/API calls. Native tools remain available for unsupported operations or useful follow-up.\n\nRun `dots COMMAND --help` for any command's details. For detailed syntax, read [the generated command reference](references/commands.md). Help is authoritative if this skill and the installed binary differ.\n\nFor agent workflows, request `--json`; generated dots follow-up commands preserve JSON mode.\n\nUse the task's explicit target or working directory; do not silently substitute another checkout or workspace. Follow the references and next commands returned by the tool. Treat partial or unavailable evidence as such. Tool availability does not authorize mutations beyond the user's request.\n\n`dots task` keeps one work list per project, shared by every session and linked worktree: tasks, dependencies, claims, results, and links to PRs or tickets. Claim a task before working on it or delegating it; workers report results to the session that records them. The `goals` skill covers planning, handoff, and acceptance.\n\nAdd every PR you create or start working on to the watch list with `dots github watch add <url> --json`. Adding is idempotent and records intent only: it does not authorize CI fixes, monitoring, or merging. Remove a PR only when explicitly asked or to correct a mistake.\n";
 
 fn tree() -> Command {
     let mut command = Cli::command();
@@ -41,15 +41,29 @@ pub(crate) fn skill() -> String {
     out
 }
 
+pub(crate) fn generate(output: &Path) -> Result<String> {
+    publish(output, Mode::Generate)
+}
+
+pub(crate) fn check(output: &Path) -> Result<String> {
+    publish(output, Mode::Check)
+}
+
+#[derive(Clone, Copy)]
+enum Mode {
+    Generate,
+    Check,
+}
+
 /// Generated documentation belongs to the command tree, not a second build driver.
-pub(crate) fn publish(output: &Path, check: bool) -> Result<String> {
+fn publish(output: &Path, mode: Mode) -> Result<String> {
     let artifacts = [
         ("SKILL.md", skill()),
         ("references/commands.md", reference()),
     ];
     for (name, content) in artifacts {
         let path = output.join(name);
-        if check {
+        if matches!(mode, Mode::Check) {
             let actual = std::fs::read_to_string(&path)
                 .with_context(|| format!("read generated skill {}", path.display()))?;
             ensure!(
@@ -66,7 +80,7 @@ pub(crate) fn publish(output: &Path, check: bool) -> Result<String> {
                 .with_context(|| format!("write generated skill {}", path.display()))?;
         }
     }
-    Ok(if check {
+    Ok(if matches!(mode, Mode::Check) {
         "CLI skill artifacts match the command tree\n"
     } else {
         "Generated CLI skill artifacts\n"
@@ -74,17 +88,23 @@ pub(crate) fn publish(output: &Path, check: bool) -> Result<String> {
     .to_owned())
 }
 
+/// One line per group: help carries each command's details.
 fn workflow_index(command: &Command, parent: &str, out: &mut String) {
     let path = format!("{parent} {}", command.get_name());
-    if let Some(about) = command.get_about() {
-        let _ = writeln!(out, "- `{path}`: {about}. Help: `{path} --help`.");
-    }
-    for child in command
+    let about = command
+        .get_about()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let commands: Vec<_> = command
         .get_subcommands()
         .filter(|child| !child.is_hide_set())
-    {
-        workflow_index(child, &path, out);
+        .map(Command::get_name)
+        .collect();
+    let _ = write!(out, "- `{path}`: {about}.");
+    if !commands.is_empty() {
+        let _ = write!(out, " Commands: {}.", commands.join(", "));
     }
+    let _ = writeln!(out);
 }
 
 pub(crate) fn reference() -> String {

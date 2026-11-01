@@ -1,0 +1,163 @@
+# samber/slog-\*\*\*\* — Structured Logging Pipeline for Go
+
+20+ composable `slog.Handler` packages. slog was introduced in Go 1.21; individual module versions can require a newer Go toolchain. Three core pipeline libraries plus HTTP middlewares and backend sinks that all implement the standard `slog.Handler` interface.
+
+**Official resources:**
+
+- [github.com/samber/slog-multi](https://github.com/samber/slog-multi) — handler composition
+- [github.com/samber/slog-sampling](https://github.com/samber/slog-sampling) — throughput control
+- [github.com/samber/slog-formatter](https://github.com/samber/slog-formatter) — attribute transformation
+
+## The Pipeline Model
+
+Choose pipeline ordering according to delivery and redaction requirements. Sampling early on a sampled branch avoids work for dropped records; routing may precede sampling to exempt critical logs.
+
+```
+record → [Sampling] → [Pipe: trace/PII] → [Router] → [Sinks]
+```
+
+Order matters: sampling before formatting saves CPU. Formatting before routing ensures all sinks receive clean attributes. Reversing this wastes work on records that get dropped.
+
+## Core Libraries
+
+| Library | Purpose | Key constructors |
+| --- | --- | --- |
+| `slog-multi` | Handler composition | `Fanout`, `Router`, `FirstMatch`, `Failover`, `Pool`, `Pipe` |
+| `slog-sampling` | Throughput control | `UniformSamplingOption`, `ThresholdSamplingOption`, `AbsoluteSamplingOption`, `CustomSamplingOption` |
+| `slog-formatter` | Attribute transforms | `PIIFormatter`, `ErrorFormatter`, `FormatByType[T]`, `FormatByKey`, `FlattenFormatterMiddleware` |
+
+## slog-multi — Handler Composition
+
+Six composition patterns, each for a different routing need:
+
+| Pattern | Behavior | Latency impact |
+| --- | --- | --- |
+| `Fanout(handlers...)` | Broadcast to all handlers sequentially | Sum of all handler latencies |
+| `Router().Add(h, predicate).Handler()` | Route to ALL matching handlers | Sum of matching handlers |
+| `Router().Add(...).FirstMatch().Handler()` | Route to FIRST match only | Selected handler latency, plus sequential retries on failures |
+| `Failover()(handlers...)` | Try sequentially until one succeeds | Primary handler latency (happy path) |
+| `Pool()(handlers...)` | Load-balance: sends each record to ONE handler | Selected handler latency, plus sequential retries on failures |
+| `Pipe(middlewares...).Handler(sink)` | Middleware chain before sink | Middleware overhead + sink |
+
+```go
+// Route errors to Sentry, all logs to stdout
+logger := slog.New(
+    slogmulti.Router().
+        Add(sentryHandler, slogmulti.LevelIs(slog.LevelError)).
+        Add(slog.NewJSONHandler(os.Stdout, nil)).
+        Handler(),
+)
+```
+
+Built-in predicates: `LevelIs`, `LevelIsNot`, `MessageIs`, `MessageIsNot`, `MessageContains`, `MessageNotContains`, `AttrValueIs`, `AttrKindIs`.
+
+For full code examples of every pattern, see [Pipeline Patterns](samber-slog/pipeline-patterns.md).
+
+## slog-sampling — Throughput Control
+
+| Strategy | Behavior | Best for |
+| --- | --- | --- |
+| Uniform | Drop fixed % of all records | Dev/staging noise reduction |
+| Threshold | Log first N per interval, then sample at rate R | Production — preserves initial visibility |
+| Absolute | Adaptive probability targeting N per interval per matcher bucket | Approximate volume reduction; not a hard cap |
+| Custom | User function returns sample rate per record | Level-aware or time-aware rules |
+
+Place sampling early on branches that permit dropping records. A router may sit outside it to preserve warnings/errors; formatting may precede routing when every route requires redaction.
+
+```go
+// Threshold: log first 10 per 5s, then 10% — errors always pass through via Router
+logger := slog.New(
+    slogmulti.
+        Pipe(slogsampling.ThresholdSamplingOption{
+            Tick: 5 * time.Second, Threshold: 10, Rate: 0.1,
+        }.NewMiddleware()).
+        Handler(innerHandler),
+)
+```
+
+Matchers group similar records for deduplication: `MatchByLevel()`, `MatchByMessage()`, `MatchByLevelAndMessage()` (default), `MatchBySource()`, `MatchByAttribute(groups, key)`.
+
+For strategy comparison and configuration details, see [Sampling Strategies](samber-slog/sampling-strategies.md).
+
+## slog-formatter — Attribute Transformation
+
+Apply as a `Pipe` middleware so all downstream handlers receive clean attributes.
+
+```go
+logger := slog.New(
+    slogmulti.Pipe(slogformatter.NewFormatterMiddleware(
+        slogformatter.PIIFormatter("user"),          // mask PII fields
+        slogformatter.ErrorFormatter("error"),       // structured error info
+        slogformatter.IPAddressFormatter("client"),  // mask IP addresses
+    )).Handler(slog.NewJSONHandler(os.Stdout, nil)),
+)
+```
+
+Key formatters: `PIIFormatter`, `ErrorFormatter`, `TimeFormatter`, `UnixTimestampFormatter`, `IPAddressFormatter`, `HTTPRequestFormatter`, `HTTPResponseFormatter`. Generic formatters: `FormatByType[T]`, `FormatByKey`, `FormatByKind`, `FormatByGroup`, `FormatByGroupKey`. Flatten nested attributes with `FlattenFormatterMiddleware`.
+
+## HTTP Middlewares
+
+Consistent pattern across frameworks: `router.Use(slogXXX.New(logger))`.
+
+Available: `slog-gin`, `slog-echo`, `slog-fiber`, `slog-chi`, `slog-http` (net/http).
+
+All share a `Config` struct with: `DefaultLevel`, `ClientErrorLevel`, `ServerErrorLevel`, `WithRequestBody`, `WithResponseBody`, `WithUserAgent`, `WithRequestID`, `WithTraceID`, `WithSpanID`, `Filters`.
+
+```go
+// Gin with filters — skip health checks
+router.Use(sloggin.NewWithConfig(logger, sloggin.Config{
+    DefaultLevel:     slog.LevelInfo,
+    ClientErrorLevel: slog.LevelWarn,
+    ServerErrorLevel: slog.LevelError,
+    WithRequestBody:  true,
+    Filters: []sloggin.Filter{
+        sloggin.IgnorePath("/health", "/metrics"),
+    },
+}))
+```
+
+For framework-specific setup, see [HTTP Middlewares](samber-slog/http-middlewares.md).
+
+## Backend Sinks
+
+All follow the `Option{}.NewXxxHandler()` constructor pattern.
+
+| Category     | Packages                                                   |
+| ------------ | ---------------------------------------------------------- |
+| Cloud        | `slog-datadog`, `slog-sentry`, `slog-loki`, `slog-graylog` |
+| Messaging    | `slog-kafka`, `slog-fluentd`, `slog-logstash`, `slog-nats` |
+| Notification | `slog-slack`, `slog-telegram`, `slog-webhook`              |
+| Storage      | `slog-parquet`                                             |
+| Bridges      | `slog-zap`, `slog-zerolog`, `slog-logrus`                  |
+
+**Buffered handlers require graceful shutdown** — `slog-datadog`, `slog-loki`, `slog-kafka`, and `slog-parquet` buffer records internally. Flush on shutdown (e.g., `handler.Stop(ctx)` for Datadog, `lokiClient.Stop()` for Loki, `writer.Close()` for Kafka) or buffered logs are lost.
+
+For configuration examples and shutdown patterns, see [Backend Handlers](samber-slog/backend-handlers.md).
+
+## Common Mistakes
+
+| Mistake | Why it fails | Fix |
+| --- | --- | --- |
+| Sampling after formatting | Wastes CPU formatting records that get dropped | Place sampling early within branches whose records may be dropped |
+| Fanout to many synchronous handlers | Blocks caller — latency is sum of all handlers | Use buffering or asynchronous handlers with explicit shutdown/error handling; Pool changes delivery to one destination |
+| Missing shutdown flush on batch handlers | Buffered logs lost on shutdown | `defer handler.Stop(ctx)` (Datadog), `defer lokiClient.Stop()` (Loki), `defer writer.Close()` (Kafka) |
+| Router without default/catch-all handler | Unmatched records silently dropped | Add a handler with no predicate as catch-all |
+| `AttrFromContext` with missing/mismatched values | Extraction only sees the context passed to the log call | Populate the agreed keys and log with InfoContext/ErrorContext; HTTP middleware is optional |
+| Using `Pipe` with no middleware | No-op wrapper adding per-record overhead | Remove `Pipe()` if no middleware needed |
+
+## Performance Warnings
+
+- **Fanout latency** = sum of all handler latencies (sequential). With 5 handlers at 10ms each, every log call costs 50ms. Pool selects one enabled handler and tries others sequentially on errors; it is not concurrent fanout, so it cannot preserve delivery to every sink
+- **Pipe middleware** adds per-record function call overhead — keep chains short (2-4 middlewares)
+- **slog-formatter** processes attributes sequentially — many formatters compound. For hot-path attribute formatting, prefer implementing `slog.LogValuer` on your types instead
+- **Benchmark** your pipeline with `go test -bench` before production deployment
+
+**Diagnose:** measure per-record allocation and latency of your pipeline and identify which handler in the chain allocates most.
+
+## Best Practices
+
+1. **Choose ordering by delivery policy** — sample early on eligible branches; route first to exempt critical records and redact before every sink that needs it
+2. **Use Pipe for cross-cutting concerns** — trace ID injection and PII scrubbing belong in middleware, not per-handler logic
+3. **Test pipelines with `slogmulti.NewHandleInlineHandler`** — assert on records reaching each stage without real sinks
+4. **Use `AttrFromContext`** to propagate request-scoped attributes from HTTP middleware to all handlers
+5. **Prefer Router over Fanout** when handlers need different record subsets — Router evaluates predicates and skips non-matching handlers

@@ -1,7 +1,7 @@
 # GitHub CI
 
 `dots github ci` inspects checks and retrieves exact-job logs or check-run output
-using `gh` authentication, without a Herdr session.
+using `gh` authentication.
 
 ## Use
 

@@ -1,0 +1,1 @@
+ceiling_paths = ["{{ config_root | dirname }}"]

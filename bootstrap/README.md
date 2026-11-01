@@ -1,76 +1,106 @@
 # Machine setup
 
-Install selected personal configuration without loading the dots development
-SDKs. The base installs nothing; choose `agents` for portable instructions and
-coding skills, or `desktop` for the macOS laptop configuration.
+Mise installs committed source into `~/.local/share/dots/checkouts/dots`,
+registers its machine modules, then applies them from HOME. Development
+checkouts and machine-local credentials, settings and sessions stay separate.
 
-## Use
+## Setup
 
-Use mise 2026.10.14 or newer and GNU Stow. Review the configuration before
-trusting it, and keep this checkout at a persistent path:
-
-```sh
-cd bootstrap
-mise trust
-mise -E agents run preview             # Stow conflict check; changes nothing
-mise -E agents bootstrap --dry-run     # preview the full mise operation
-mise -E agents bootstrap
-```
-
-Use `-E desktop` instead for macOS arm64. The agent selection also supports
-Linux amd64 and arm64. These are alternative selections, not additive profiles;
-choose one. No selection installs host packages or agent binaries. Install those
-separately when needed.
-
-The portable selection links Codex, Claude, and Pi instructions and the Go/Rust
-coding skills. It leaves shell/editor settings, Pi themes, agent credentials,
-workflow-specific skills, and ignored private skills alone. Some instructions
-refer to optional tools or private workflows; this selection does not supply them.
-Desktop applies the root base Stow packages, including local skills. Neither selection activates services or changes the login shell.
-
-Run from this directory, not with `mise -C bootstrap`: the supported mise version
-reads discovery settings before applying `-C`. `.miserc.toml` stops discovery
-before the enclosing checkout, excluding its development SDKs and tasks. Global
-mise configuration still applies; inspect `mise config` before applying setup.
-
-## Private configuration
-
-An optional independent Git repository can live at `private/` beside this
-directory. Public Git ignores it; public setup never clones or activates it.
-Keep its remote URL and company-specific source in private or machine-local
-configuration. An ignore rule prevents ordinary staging, not access by local
-tools or agents.
-
-Private source follows the same layout: `home/`, canonical `skills/`, and a
-`bootstrap/` entry point with its own discovery boundary. Apply it separately:
+Use Git and mise 2026.10.25 or newer. From reviewed source:
 
 ```sh
-cd ../private/bootstrap
+cd bootstrap/source
 mise trust
-mise -E skills run preview
-mise -E skills bootstrap
+mise vars "dots_public_url=$(git rev-parse --show-toplevel)"
+mise bootstrap --only files,repos,dotfiles,task
 ```
 
-The private repository owns its selections and checks. Optional `private/*`
-config roots are discoverable in the development task graph, but machine setup
-runs from its own bootstrap directory to avoid development SDK inheritance.
-Use distinct installed paths for public and private content; neither installer
-should replace files owned by the other. The portable selection never moves or
-installs ignored local skills.
+The selected Git path supplies committed HEAD, not working-tree changes.
+Use a credential-free Git URL instead to install published source. Mise
+remembers that selection; it does not fall back to another repository.
 
-## Constraints
+The base includes shell, editor, Rex, theme, skills, Pi and source-built
+commands. Dependencies live in [tools.toml](tools.toml) and
+[packages.toml](packages.toml). On Mac, missing Command Line Tools open Apple's
+attended installer. Rustup owns Rust; Cargo owns the commands it builds.
 
-Stow owns these links, not mise's native dotfile manager. Mise's dry run prints
-the task commands; `run preview` actually checks the Stow destinations. Apply
-also checks conflicts across all selected packages before changing any links.
-Do not force replacements or adopt unmanaged files to resolve a conflict.
-Reapplication is supported, but a failed bootstrap is not a transaction.
-Selecting fewer files does not remove files installed by an earlier selection.
+### Optional modules
 
-For SSH hosts, use the [minimal remote bootstrap project](remote/README.md).
-Do not send the whole dots checkout: ignored files are not a safe transfer
-allowlist. Remote setup clones pinned revisions into persistent source paths;
-installed files never link into mise's temporary staging directory.
+Select additions through native environments:
 
-See mise's [bootstrap](https://mise.jdx.dev/bootstrap.html) and
-[machine modules](https://mise.jdx.dev/bootstrap/modules.html) documentation.
+```sh
+mise -E desktop bootstrap --only files,repos,dotfiles,task
+```
+
+- `desktop`: macOS arm64 desktop apps and configuration; Rex requires macOS 15+.
+- `bash`: Bash activation without changing the login shell.
+- `rex-server`: Linux login service; requires glibc, GNU coreutils, systemd 253+,
+  SSH PAM and an enrolled Tailscale node with account policy.
+
+For private tools and skills, supply their repository and select `private`:
+
+```sh
+mise vars dots_private_url=ssh://git@example.net/owner/private-dots.git
+mise -E private,desktop bootstrap --only files,repos,dotfiles,task
+```
+
+Private source lives in the acquired checkout's ignored `private/` directory.
+Its modules declare their own requirements. Both sources deploy tracked skills
+into `~/.local/share/dots/skills`; the two agent discovery directories link there.
+User-local and generated skills are not pruned automatically.
+
+Environment selection persists in the machine's `miserc.local.toml`. Removing
+an environment does not uninstall its resources; preview native unapply/prune
+before removing anything.
+
+## Inspect and update
+
+From the source project:
+
+```sh
+mise bootstrap --only files,repos,dotfiles,task --dry-run
+mise bootstrap --only files,repos,dotfiles,task --update
+```
+
+Normal apply keeps deployed source revisions. `--update` fetches and
+fast-forwards; dirty sources and conflicting origins stop it. A first-use dry
+run stops before loading an uncloned module; it is not a complete install preview.
+
+From HOME:
+
+```sh
+mise bootstrap status
+mise dot status
+mise bootstrap
+mise bootstrap --upgrade
+```
+
+Reapply reconciles the installed modules; `--upgrade` also upgrades their tools
+and packages. Machine tools normally use latest. Project SDK/dependency locks
+and Pi's host/SDK pin retain their own version contracts.
+
+While Rex is beta, mise records a pinned initial installer and the signed Rex
+updater owns later app releases. Reapply preserves a self-updated app; mise's
+receipt reports the installer version, not the running build. Adopting an
+unmanaged app requires an identical bundle and explicit approval.
+
+Rex login-service updates do not restart it automatically. Activate one with
+`mise run rex:restart-login`. Agent packages and source-loaded apps have their
+own reload/start boundaries.
+
+## SSH
+
+Stage only the authored files in [source/](source/) and a `mise.local.toml`
+containing the reviewed, credential-free source inputs:
+
+```sh
+mise bootstrap remote --host devbox --source ./prepared-setup --install-mise --only files,repos,dotfiles,task
+```
+
+Use `--remote-env` for target environments; local `-E` selects local config.
+Mise owns SSH transport and host-key checks. Private Git access uses the host's
+credentials or an explicitly selected read-only relay, never copied credentials.
+
+Setup does not enroll devices, enable file history/synchronization or broadly
+prune packages. Existing unmanaged files stop deployment rather than being
+silently overwritten. See [SDK checks](../docs/build.md) for repository work.

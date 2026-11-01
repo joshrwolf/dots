@@ -6,27 +6,21 @@ vim.keymap.set("n", "[t", "<cmd>tabprevious<CR>", { desc = "Previous tab" })
 vim.keymap.set("x", "<", "<gv", { desc = "Indent left and keep selection" })
 vim.keymap.set("x", ">", ">gv", { desc = "Indent right and keep selection" })
 
--- Herdr forwards these keys to Neovim. Move locally first, then hand focus
--- back to Herdr at a split edge. Outside Herdr, they just navigate Vim splits.
+-- Rex forwards these keys to Neovim. Move locally first, then hand focus back
+-- to Rex at a split edge. Outside Rex, they just navigate splits.
+local in_rex = vim.env.REX_BLOCK ~= nil and vim.env.REX_BLOCK ~= ""
+
 for key, direction in pairs({ h = "left", j = "down", k = "up", l = "right" }) do
   vim.keymap.set("n", "<C-" .. key .. ">", function()
     local from = vim.api.nvim_get_current_win()
     vim.cmd.wincmd(key)
-    if vim.api.nvim_get_current_win() ~= from or vim.env.HERDR_ENV ~= "1" then
+    if not in_rex or vim.api.nvim_get_current_win() ~= from then
       return
     end
-    local pane = vim.env.HERDR_PANE_ID
-    if not pane or pane == "" then
-      vim.notify("Cannot navigate Herdr: HERDR_PANE_ID is missing", vim.log.levels.WARN)
-      return
-    end
-    vim.system({ "herdr", "pane", "focus", "--direction", direction, "--pane", pane }, {
-      text = true,
-      timeout = 2000,
-    }, function(result)
+    vim.system({ "rex", "focus", direction }, { text = true, timeout = 2000 }, function(result)
       if result.code ~= 0 then
         vim.schedule(function()
-          vim.notify("Herdr focus " .. direction .. " failed: " .. (result.stderr or ""), vim.log.levels.WARN)
+          vim.notify("Rex focus " .. direction .. " failed: " .. (result.stderr or ""), vim.log.levels.WARN)
         end)
       end
     end)
@@ -93,3 +87,18 @@ vim.keymap.set("n", "<leader>gd", "<cmd>CodeDiff<CR>", { desc = "Review Git chan
 vim.keymap.set("n", "<leader>gD", function()
   require("config.branch-diff").open()
 end, { desc = "Review branch changes (PR-style)" })
+
+-- dots reviews; thread actions (]r, [r, <leader>r…) are local to review buffers.
+vim.keymap.set("n", "<leader>gr", function()
+  require("config.review").open()
+end, { desc = "Open this worktree's latest dots review" })
+vim.keymap.set("n", "<leader>fR", function()
+  require("config.review").pick_reviews()
+end, { desc = "Find dots reviews (all worktrees)" })
+vim.keymap.set("n", "<leader>ft", function()
+  require("config.review").pick_threads()
+end, { desc = "Find threads in this tab's review" })
+-- Lets agents open a review for the user, e.g. `nvim +Review` in a new pane.
+vim.api.nvim_create_user_command("Review", function(command)
+  require("config.review").open(command.args ~= "" and command.args or nil)
+end, { nargs = "?", desc = "Open a dots review (default: this worktree's latest)" })

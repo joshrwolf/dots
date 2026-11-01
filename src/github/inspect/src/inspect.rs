@@ -2,8 +2,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::status::CheckBucket;
-use crate::{CheckRef, Error, Evidence, Provider, Result, Subject};
+use crate::checks::{CheckBucket, Row};
+use crate::snapshot::Snapshot;
+use crate::{
+    CheckOutput, CheckRef, Error, Evidence, OutputOptions, OutputRef, Provider, Repository, Result,
+    SnapshotRef, Subject,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,7 +21,7 @@ pub struct PullRequest {
 #[derive(Debug, Serialize)]
 pub struct Inspection {
     pub source: ObservationSource,
-    pub snapshot: Option<crate::SnapshotRef>,
+    pub snapshot: Option<SnapshotRef>,
     pub observed_at: u64,
     pub subject: Option<Subject>,
     pub local_head: Option<String>,
@@ -33,7 +37,7 @@ pub struct Inspection {
     pub warnings: Vec<String>,
 }
 
-#[derive(Debug, serde::Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObservationSource {
     Network,
@@ -77,9 +81,9 @@ pub struct Check {
     pub next_command: Option<String>,
     pub evidence: Option<Evidence>,
     pub evidence_note: Option<String>,
-    pub output_reference: Option<crate::OutputRef>,
+    pub output_reference: Option<OutputRef>,
     pub output_command: Option<String>,
-    pub output_evidence: Option<crate::CheckOutput>,
+    pub output_evidence: Option<CheckOutput>,
 }
 
 /// Inspect one PR. Provider calls remain separate from rendering and harnesses.
@@ -145,8 +149,8 @@ pub fn inspect_with_options(
         let resolved: PullRequest = serde_json::from_slice(&result.stdout)?;
         crate::checks::fetch(provider, &resolved.url, Some(&resolved.head_ref_oid))?
     };
-    let repository = crate::Repository::from_url(&pr.url)?.0;
-    let snapshot = crate::snapshot::Snapshot {
+    let repository = Repository::from_url(&pr.url)?.0;
+    let snapshot = Snapshot {
         subject: Subject::PullRequest { repository, pr },
         checks: all,
         warnings,
@@ -158,7 +162,7 @@ pub fn inspect_with_options(
 pub(crate) fn complete(
     provider: &impl Provider,
     mut inspection: Inspection,
-    mut snapshot: crate::snapshot::Snapshot,
+    mut snapshot: Snapshot,
     options: InspectOptions<'_>,
 ) -> Inspection {
     snapshot.checks.sort_by_key(|check| {
@@ -203,7 +207,7 @@ pub(crate) fn empty() -> Inspection {
 
 pub fn inspect_snapshot(
     provider: &impl Provider,
-    reference: &crate::SnapshotRef,
+    reference: &SnapshotRef,
     offset: usize,
     limit: usize,
 ) -> Result<Inspection> {
@@ -222,7 +226,7 @@ pub fn inspect_snapshot(
 
 pub fn inspect_snapshot_filtered(
     provider: &impl Provider,
-    reference: &crate::SnapshotRef,
+    reference: &SnapshotRef,
     mut options: InspectOptions<'_>,
 ) -> Result<Inspection> {
     options.include_evidence = false;
@@ -237,18 +241,7 @@ pub fn inspect_snapshot_filtered(
         observed_at: snapshot.observed_at,
         source: ObservationSource::Snapshot,
         snapshot: Some(reference.clone()),
-        subject: None,
-        local_head: None,
-        checks: Vec::new(),
-        summary: Summary::default(),
-        total_checks: 0,
-        matching_checks: 0,
-        hidden_checks: 0,
-        all_checks_command: None,
-        offset: 0,
-        omitted_checks: 0,
-        next_command: None,
-        warnings: Vec::new(),
+        ..empty()
     };
     Ok(finish(provider, inspection, snapshot, options))
 }
@@ -256,10 +249,10 @@ pub fn inspect_snapshot_filtered(
 fn finish(
     provider: &impl Provider,
     mut inspection: Inspection,
-    snapshot: crate::snapshot::Snapshot,
+    snapshot: Snapshot,
     options: InspectOptions<'_>,
 ) -> Inspection {
-    let crate::snapshot::Snapshot {
+    let Snapshot {
         subject,
         checks: all,
         warnings,
@@ -345,7 +338,7 @@ fn severity(bucket: CheckBucket) -> u8 {
 fn project_checks(
     provider: &impl Provider,
     subject: &Subject,
-    all: Vec<crate::checks::Row>,
+    all: Vec<Row>,
     include_evidence: bool,
 ) -> Vec<Check> {
     let mut result = Vec::new();
@@ -400,7 +393,7 @@ fn project_checks(
                     match crate::output::output_observed(
                         provider,
                         reference,
-                        crate::OutputOptions::default(),
+                        OutputOptions::default(),
                         Some(subject.head()),
                     ) {
                         Ok(output) => {
@@ -429,13 +422,13 @@ fn project_checks(
     result
 }
 
-fn project_check(subject: &Subject, check: crate::checks::Row) -> Check {
+fn project_check(subject: &Subject, check: Row) -> Check {
     let reference = CheckRef::from_subject(subject, &check.link);
     let required = check.required;
     let output_reference = check
         .check_id
-        .and_then(|id| crate::OutputRef::create(&subject.url(), subject.head(), id));
-    let output_command = output_reference.as_ref().map(crate::OutputRef::command);
+        .and_then(|id| OutputRef::create(&subject.url(), subject.head(), id));
+    let output_command = output_reference.as_ref().map(OutputRef::command);
     let next_command = reference
         .as_ref()
         .map(CheckRef::command)

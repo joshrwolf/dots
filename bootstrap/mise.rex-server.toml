@@ -1,0 +1,45 @@
+[bootstrap.hooks.pre-packages]
+run = '"{{ mise_bin }}" run --skip-tools rex:preflight'
+
+[bootstrap.hooks.post-packages]
+run = '"{{ mise_bin }}" -E "{{ mise_env | join(sep=",") }}" run --skip-tools rex:install'
+
+[bootstrap.files."/etc/systemd/system/rex-login-server.service"]
+source = "rex/rex-login-server.service"
+owner = "root"
+group = "root"
+mode = "0644"
+os = "linux"
+notify = ["rex-login-server"]
+
+[bootstrap.files."/etc/pam.d/rex-login-server"]
+source = "rex/rex-login-server.pam"
+owner = "root"
+group = "root"
+mode = "0644"
+os = "linux"
+
+[bootstrap.services.rex-login-server]
+state = "running"
+enabled = true
+on_change = "none"
+
+[tasks."rex:preflight"]
+description = "Require Linux glibc, systemd 253+ and the host SSH PAM policy"
+run = [
+  'test "$(uname -s)" = Linux && getconf GNU_LIBC_VERSION >/dev/null && command -v systemctl >/dev/null && test -r /etc/pam.d/sshd',
+  'test "$(systemctl --version | head -n 1 | cut -d " " -f 2)" -ge 253 || { echo "Rex login requires systemd 253 or newer" >&2; exit 1; }',
+]
+
+[tasks."rex:install"]
+description = "Install the verified root-owned Rex binary without restarting servers"
+depends = ["rex:preflight"]
+run = [
+  '"{{ mise_bin }}" -E "{{ mise_env | join(sep=",") }}" install http:rex',
+  'sudo install -d -m 0755 /usr/local/bin',
+  'source="$("{{ mise_bin }}" -E "{{ mise_env | join(sep=",") }}" which rex --tool http:rex)" && "$source" version && sudo install --compare --no-target-directory -o root -g root -m 0755 "$source" /usr/local/bin/rex',
+]
+
+[tasks."rex:restart-login"]
+description = "Explicitly restart the login proxy; account servers keep running"
+run = "sudo systemctl daemon-reload && sudo systemctl restart rex-login-server.service"

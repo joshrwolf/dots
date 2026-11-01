@@ -1,11 +1,22 @@
-# Simulate every package into an empty target so conflicts surface without
-# touching $HOME, and keep each skills root a link to the canonical skills/.
+# Repository configuration-check tools are separate from machine runtime selection.
+[tools]
+"aqua:JohnnyMorganz/StyLua" = "2.6.0"
+"aqua:LuaLS/lua-language-server" = "3.19.2"
+"aqua:Kampfkarren/selene" = "0.32.0"
+
+# Rex Lua runs in Rex's own interpreter. REX_SERVER names an address no server
+# uses so scripts still run when no Rex server is up. When one is running,
+# `rex do` connects to it regardless; tests/isolate.lua keeps tests off it.
 [tasks.check]
+env = { REX_SERVER = "unix:///nonexistent/dots-check.sock" }
 depends = ["//src/dots:skills-check"]
 dir = "{{config_root}}/.."
 run = [
+  "pnpm run check:finicky",
   "claude plugin validate skills",
-  "test -L home/skills/.agents/skills && test home/skills/.agents/skills -ef skills",
-  "test -L home/skills/.claude/skills && test home/skills/.claude/skills -ef skills",
-  't=$(mktemp -d) && trap "rmdir $t" EXIT && {{ vars.stow }} --target "$t" --simulate --restow {{ vars.base }} herdr nvim finicky',
+  "stylua --check home/rex/.config/rex",
+  "cd home/rex/.config/rex && selene --quiet .",
+  't=$(mktemp -d) && trap "rm -rf $t" EXIT && lua-language-server --check=home/rex/.config/rex --checklevel=Hint --check_format=json --logpath="$t" >/dev/null && test "$(cat "$t/check.json")" = "[]" || { cat "$t/check.json"; exit 1; }',
+  "rex --autostart=false config check home/rex/.config/rex/init.lua",
+  "rex --autostart=false do home/rex/.config/rex/tests/run.lua",
 ]

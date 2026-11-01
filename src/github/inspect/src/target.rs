@@ -1,7 +1,10 @@
 //! Validated repository identities and explicit CI subjects.
-use crate::{Error, Provider, PullRequest, Result};
+use std::fmt;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+
+use crate::{Error, Provider, PullRequest, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -11,6 +14,7 @@ pub struct Repository {
     pub(crate) repo: String,
 }
 impl Repository {
+    #[must_use]
     pub fn url(&self) -> String {
         format!("https://{self}")
     }
@@ -179,6 +183,7 @@ pub enum Subject {
     },
 }
 impl Subject {
+    #[must_use]
     pub fn repository(&self) -> &Repository {
         match self {
             Self::PullRequest { repository, .. }
@@ -186,12 +191,14 @@ impl Subject {
             | Self::Run { repository, .. } => repository,
         }
     }
+    #[must_use]
     pub fn head(&self) -> &str {
         match self {
             Self::PullRequest { pr, .. } => &pr.head_ref_oid,
             Self::Commit { sha, .. } | Self::Run { sha, .. } => sha,
         }
     }
+    #[must_use]
     pub fn pr(&self) -> Option<&PullRequest> {
         if let Self::PullRequest { pr, .. } = self {
             Some(pr)
@@ -199,6 +206,7 @@ impl Subject {
             None
         }
     }
+    #[must_use]
     pub fn url(&self) -> String {
         match self {
             Self::PullRequest { repository, pr } => {
@@ -215,6 +223,7 @@ impl Subject {
             } => format!("{}/actions/runs/{id}/attempts/{attempt}", repository.url()),
         }
     }
+    #[must_use]
     pub fn command(&self) -> String {
         match self {
             Self::PullRequest { pr, .. } => format!("dots github ci --pr {}", pr.url),

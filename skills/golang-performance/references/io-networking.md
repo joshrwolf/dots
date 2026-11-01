@@ -256,7 +256,7 @@ With batching per stage, total throughput = min(A_throughput, B_throughput, C_th
 - **Latency matters more than throughput** — A record still traverses stages sequentially; queueing and handoff overhead may increase its latency even as throughput improves.
 - **Memory is tight** — Each stage's channel buffer is a memory budget; deeply buffered channels can exhaust available RAM.
 
-→ See `samber/cc-skills-golang@golang-concurrency` skill for detailed channel patterns and when to use worker pools instead.
+→ See `golang-concurrency` skill for detailed channel patterns and when to use worker pools instead.
 
 ## Batch Operations
 
@@ -291,7 +291,7 @@ func copyUsers(ctx context.Context, db *sql.DB, users []User) error {
 }
 ```
 
-→ See `samber/cc-skills-golang@golang-database` skill for detailed batch patterns and connection pool configuration.
+→ See `golang-database` skill for detailed batch patterns and connection pool configuration.
 
 ### HTTP: batch API calls
 

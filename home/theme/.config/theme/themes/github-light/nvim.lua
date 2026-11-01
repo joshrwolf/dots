@@ -1,4 +1,4 @@
--- Match Ghostty's GitHub Light Default with the plugin's corresponding variant.
+-- Match the terminal's GitHub Light Default with the plugin's corresponding variant.
 vim.opt.termguicolors = true
 require("github-theme").setup({
   groups = {

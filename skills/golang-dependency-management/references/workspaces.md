@@ -24,4 +24,4 @@ go work sync                    # Write workspace-selected dependency versions b
 - Workspaces eliminate the need for `replace` directives during local development — the workspace automatically resolves local modules
 - Keep personal workspaces local. If a repository intentionally shares a workspace, track its go.work and generated go.work.sum together under the project's policy
 - A workspace affects commands run inside it, including CI. Consumers do not inherit it; test independently published modules with `GOWORK=off` as well
-- For workspace directory structure examples, see the `samber/cc-skills-golang@golang-project-layout` skill
+- For workspace directory structure examples, see `golang-project-layout`

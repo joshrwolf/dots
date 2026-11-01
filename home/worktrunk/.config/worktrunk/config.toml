@@ -1,0 +1,3 @@
+# Keep agent checkouts outside source directories. The full primary-checkout
+# path distinguishes separate clones without depending on remote metadata.
+worktree-path = "~/.wt{{ repo_path }}/{{ branch | sanitize }}"

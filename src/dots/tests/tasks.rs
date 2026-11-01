@@ -8,8 +8,11 @@ mod tests {
 
     use serde_json::Value;
 
+    const HISTORY_FOOTER: &str = "dots task show ID shows a task's full result and history.";
+
     struct Fixture {
         root: PathBuf,
+        project: String,
     }
 
     impl Fixture {
@@ -32,7 +35,35 @@ mod tests {
                 &checkout,
                 &["worktree", "add", "-q", "../linked", "-b", "slice"],
             );
-            Self { root }
+            let initialized = Command::new(env!("CARGO_BIN_EXE_dots"))
+                .args(["--json", "project", "init", "fixture", "--fresh"])
+                .current_dir(&checkout)
+                .env("HOME", root.join("home"))
+                .env("XDG_DATA_HOME", root.join("data"))
+                .env("XDG_STATE_HOME", root.join("state"))
+                .output()
+                .unwrap();
+            assert!(
+                initialized.status.success(),
+                "{}",
+                String::from_utf8_lossy(&initialized.stderr)
+            );
+            let initialized: Value = serde_json::from_slice(&initialized.stdout).unwrap();
+            let project = initialized
+                .pointer("/project/id")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let fixture = Self { root, project };
+            fs::create_dir_all(fixture.workspace().join("briefs")).unwrap();
+            fs::write(fixture.workspace().join("briefs/README.md"), "# Goal\n").unwrap();
+            fs::write(fixture.workspace().join("briefs/brief.md"), "# Goal\n").unwrap();
+            fixture
+        }
+
+        fn workspace(&self) -> PathBuf {
+            self.root.join("data/dots/workspaces").join(&self.project)
         }
 
         fn run_in(&self, directory: &str, args: &[&str]) -> Output {
@@ -40,8 +71,13 @@ mod tests {
                 .arg("--json")
                 .arg("task")
                 .args(args)
+                .env_remove("PI_SESSION_ID")
+                .env_remove("CLAUDE_CODE_SESSION_ID")
+                .env_remove("CODEX_SESSION_ID")
                 .current_dir(self.root.join(directory))
                 .env("XDG_STATE_HOME", self.root.join("state"))
+                .env("HOME", self.root.join("home"))
+                .env("XDG_DATA_HOME", self.root.join("data"))
                 .output()
                 .unwrap()
         }
@@ -56,6 +92,27 @@ mod tests {
             serde_json::from_slice(&output.stdout).unwrap()
         }
 
+        fn readable(&self, args: &[&str]) -> String {
+            let output = Command::new(env!("CARGO_BIN_EXE_dots"))
+                .arg("task")
+                .args(args)
+                .env_remove("PI_SESSION_ID")
+                .env_remove("CLAUDE_CODE_SESSION_ID")
+                .env_remove("CODEX_SESSION_ID")
+                .current_dir(self.root.join("checkout"))
+                .env("XDG_STATE_HOME", self.root.join("state"))
+                .env("HOME", self.root.join("home"))
+                .env("XDG_DATA_HOME", self.root.join("data"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap()
+        }
+
         fn fail(&self, directory: &str, args: &[&str]) -> String {
             let output = self.run_in(directory, args);
             assert!(!output.status.success());
@@ -67,6 +124,234 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn readable_task_inspection_labels_report_discovery_separately() {
+        let fixture = Fixture::new();
+        let created = fixture.ok("checkout", &["add", "Inspect reports"]);
+        let id = created["task"]["id"].as_str().unwrap();
+        let shown = fixture.readable(&["show", id]);
+        assert!(shown.contains(&format!(
+            "Reports: dots output list --task {id} --project {}\n",
+            fixture.project
+        )));
+        assert!(!shown.contains("--json"));
+        let linked = fixture.ok("linked", &["show", id]);
+        assert_eq!(
+            linked["discovery_command"],
+            format!(
+                "dots --json output list --task {id} --project {}",
+                fixture.project
+            )
+        );
+    }
+
+    #[test]
+    fn brief_inspection_reads_current_bytes_with_explicit_limits_and_failures() {
+        let fixture = Fixture::new();
+        let created = fixture.ok(
+            "checkout",
+            &["goal", "create", "Goal", "--brief", "briefs/README.md"],
+        );
+        let id = created.pointer("/goal/root/id").unwrap().as_str().unwrap();
+        assert_eq!(
+            created.pointer("/goal/brief/relative").unwrap(),
+            "briefs/README.md"
+        );
+        let revision = created.pointer("/goal/brief/document/revision").unwrap();
+        assert!(
+            fixture
+                .readable(&["goal", "show", id])
+                .contains("Brief content:\n# Goal\n")
+        );
+        let path = fixture.workspace().join("briefs/README.md");
+        fs::write(&path, "changed\n".repeat(250)).unwrap();
+        let shown = fixture.ok("linked", &["goal", "show", id]);
+        assert_ne!(
+            shown
+                .pointer("/overview/goal/brief/document/revision")
+                .unwrap(),
+            revision
+        );
+        assert_eq!(
+            shown
+                .pointer("/overview/goal/brief/document/next_line")
+                .unwrap(),
+            201
+        );
+        assert_eq!(
+            shown
+                .pointer("/overview/goal/brief/document/total_lines")
+                .unwrap(),
+            250
+        );
+        let listed = fixture.ok("linked", &["goal", "list"]);
+        assert!(listed.pointer("/goals/0/brief/document").unwrap().is_null());
+        for bytes in [vec![0xff], vec![b'x'; dots_memory::MAX_FILE_BYTES + 1]] {
+            fs::write(&path, bytes).unwrap();
+            let shown = fixture.ok("linked", &["goal", "show", id]);
+            assert!(
+                shown
+                    .pointer("/overview/goal/brief/document")
+                    .unwrap()
+                    .is_null()
+            );
+            assert!(
+                shown
+                    .pointer("/overview/goal/brief/diagnostic")
+                    .unwrap()
+                    .is_string()
+            );
+        }
+        fs::remove_file(&path).unwrap();
+        let shown = fixture.ok("linked", &["goal", "show", id]);
+        assert_eq!(
+            shown
+                .pointer("/overview/goal/brief/document/exists")
+                .unwrap(),
+            false
+        );
+        assert_eq!(
+            shown
+                .pointer("/overview/goal/brief/document/revision")
+                .unwrap(),
+            "missing"
+        );
+        fs::create_dir(&path).unwrap();
+        let shown = fixture.ok("linked", &["goal", "show", id]);
+        assert!(
+            shown
+                .pointer("/overview/goal/brief/diagnostic")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("regular file")
+        );
+    }
+
+    #[test]
+    fn brief_associations_reject_unmanaged_paths_and_symlinked_ancestors() {
+        let fixture = Fixture::new();
+        for path in [
+            "README.md",
+            "/tmp/brief.md",
+            "briefs/../README.md",
+            "briefs//README.md",
+            "briefs/./README.md",
+            "knowledge/MEMORY.md",
+            "briefs/bad\nname.md",
+        ] {
+            fixture.fail("checkout", &["goal", "create", "Rejected", "--brief", path]);
+        }
+        assert_eq!(
+            fixture.ok("checkout", &["list"])["tasks"],
+            serde_json::json!([])
+        );
+        let created = fixture.ok(
+            "checkout",
+            &["goal", "create", "Goal", "--brief", "briefs/README.md"],
+        );
+        let id = created.pointer("/goal/root/id").unwrap().as_str().unwrap();
+        let workspaces = fixture.root.join("data/dots/workspaces");
+        let displaced = fixture.root.join("displaced-workspaces");
+        fs::rename(&workspaces, &displaced).unwrap();
+        std::os::unix::fs::symlink(&displaced, &workspaces).unwrap();
+        let shown = fixture.ok("linked", &["goal", "show", id]);
+        assert!(
+            shown
+                .pointer("/overview/goal/brief/document")
+                .unwrap()
+                .is_null()
+        );
+        assert!(
+            shown
+                .pointer("/overview/goal/brief/diagnostic")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("symlink")
+        );
+        assert!(
+            fixture
+                .fail(
+                    "checkout",
+                    &["goal", "attach", id, "--brief", "briefs/README.md"]
+                )
+                .contains("symlink")
+        );
+        assert_eq!(
+            fs::read_to_string(displaced.join(&fixture.project).join("briefs/README.md")).unwrap(),
+            "# Goal\n"
+        );
+    }
+
+    #[test]
+    fn pi_session_ownership_and_claimed_goal_discovery() {
+        let f = Fixture::new();
+        fs::write(f.workspace().join("briefs/brief.md"), "# Goal").unwrap();
+        let goal = f.ok(
+            "checkout",
+            &["goal", "create", "goal", "--brief", "briefs/brief.md"],
+        );
+        assert!(
+            goal.get("follow_hint")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("goal_focus")
+        );
+        let root = goal.pointer("/goal/root/id").unwrap().as_str().unwrap();
+        let leaf = f.ok("checkout", &["add", "leaf", "--parent", root]);
+        let id = leaf.pointer("/task/id").unwrap().as_str().unwrap();
+        let run = |session: &str, args: &[&str]| {
+            Command::new(env!("CARGO_BIN_EXE_dots"))
+                .args(["--json", "task"])
+                .args(args)
+                .current_dir(f.root.join("linked"))
+                .env("XDG_STATE_HOME", f.root.join("state"))
+                .env("XDG_DATA_HOME", f.root.join("data"))
+                .env("PI_SESSION_ID", session)
+                .output()
+                .unwrap()
+        };
+        let output = run("fixture-session", &["claim", id]);
+        assert!(output.status.success(), "{output:?}");
+        let claimed: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            claimed.pointer("/task/owner").unwrap(),
+            "pi-fixture-session"
+        );
+        assert_eq!(
+            f.ok(
+                "checkout",
+                &["goal", "list", "--claimed-by", "pi-fixture-session"]
+            )
+            .pointer("/goals/0/root/id")
+            .unwrap(),
+            root
+        );
+        assert!(!run("other-session", &["release", id]).status.success());
+        assert!(run("fixture-session", &["release", id]).status.success());
+        assert_eq!(
+            f.ok(
+                "checkout",
+                &["goal", "list", "--claimed-by", "pi-fixture-session"]
+            )
+            .get("goals")
+            .unwrap(),
+            &serde_json::json!([])
+        );
+        let output = run("fixture-session", &["claim", id, "--owner", "explicit"]);
+        assert!(output.status.success());
+        let claimed: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(claimed.pointer("/task/owner").unwrap(), "explicit");
+        assert!(
+            run("another-session", &["release", id, "--owner", "explicit"])
+                .status
+                .success()
+        );
+        assert!(!run("", &["claim", id]).status.success());
     }
 
     fn git(directory: &Path, args: &[&str]) {
@@ -96,9 +381,9 @@ mod tests {
             fixture
                 .fail(
                     "checkout",
-                    &["goal", "create", "Broken", "--brief", "missing.md"]
+                    &["goal", "create", "Broken", "--brief", "briefs/missing.md"]
                 )
-                .contains("resolve brief")
+                .contains("brief is missing")
         );
         assert_eq!(
             fixture
@@ -112,15 +397,12 @@ mod tests {
         );
         let created = fixture.ok(
             "checkout",
-            &["goal", "create", "Goal", "--brief", "README.md"],
+            &["goal", "create", "Goal", "--brief", "briefs/README.md"],
         );
         let root = created.pointer("/goal/root/id").unwrap().as_str().unwrap();
-        let closed = id(&fixture.ok(
-            "checkout",
-            &["add", "Finished", "--parent", root, "--priority", "100"],
-        ));
+        let closed = id(&fixture.ok("checkout", &["add", "Finished", "--parent", root]));
         let active = id(&fixture.ok("checkout", &["add", "Next", "--parent", root]));
-        fixture.ok("checkout", &["done", &closed]);
+        fixture.ok("checkout", &["done", &closed, "--result", "verified"]);
         let roots = fixture.ok("linked", &["list"]);
         assert_eq!(
             roots.pointer("/tasks").unwrap().as_array().unwrap().len(),
@@ -152,7 +434,7 @@ mod tests {
             1
         );
         assert_eq!(quiet.pointer("/overview/hidden_closed").unwrap(), 1);
-        assert_eq!(quiet.pointer("/overview/progress/done").unwrap(), 1);
+        assert_eq!(quiet.pointer("/overview/goal/progress/done").unwrap(), 1);
         let history = fixture.ok("checkout", &["goal", "show", root, "--all"]);
         assert_eq!(
             history
@@ -164,8 +446,11 @@ mod tests {
             2
         );
         assert_eq!(history.pointer("/overview/hidden_closed").unwrap(), 0);
-        fixture.ok("checkout", &["done", &active]);
-        fixture.ok("checkout", &["done", root]);
+        fixture.ok("checkout", &["done", &active, "--result", "verified"]);
+        fixture.ok(
+            "checkout",
+            &["done", root, "--result", "combined outcome verified"],
+        );
         assert_eq!(
             fixture
                 .ok("checkout", &["goal", "list"])
@@ -189,7 +474,43 @@ mod tests {
     }
 
     #[test]
-    fn goals_share_references_and_preserve_tasks_without_reading_documents() {
+    fn goal_overview_shows_branch_and_bounded_result() {
+        let fixture = Fixture::new();
+        let goal = fixture.ok(
+            "checkout",
+            &["goal", "create", "Goal", "--brief", "briefs/README.md"],
+        );
+        let root = goal.pointer("/goal/root/id").unwrap().as_str().unwrap();
+        let fresh = id(&fixture.ok("checkout", &["add", "Fresh", "--parent", root]));
+        let text = fixture.readable(&["goal", "show", root]);
+        assert!(text.contains(&fresh), "{text}");
+        assert!(!text.contains(HISTORY_FOOTER), "{text}");
+
+        let slice = id(&fixture.ok("checkout", &["add", "Slice", "--parent", root]));
+        fixture.ok("checkout", &["update", &slice, "--branch", "topic/slice"]);
+        let result = format!(
+            "{}👨\u{200d}👩\u{200d}👧 tail\nFurther verification details",
+            "a".repeat(158)
+        );
+        fixture.ok("checkout", &["update", &slice, "--result", &result]);
+        fixture.ok("checkout", &["hold", &slice, "--reason", "awaiting review"]);
+
+        let text = fixture.readable(&["goal", "show", root]);
+        assert!(text.contains("  Branch: topic/slice\n"), "{text}");
+        assert!(
+            text.contains(&format!("  Result: {}…\n", "a".repeat(158))),
+            "{text}"
+        );
+        assert!(!text.contains("Further verification details"), "{text}");
+        assert!(!text.contains("awaiting review"), "{text}");
+        assert_eq!(text.matches(HISTORY_FOOTER).count(), 1, "{text}");
+        let shown = fixture.ok("checkout", &["goal", "show", root]);
+        assert_eq!(shown.pointer("/overview/tasks/1/result").unwrap(), &result);
+        assert_eq!(shown.pointer("/overview/goal/progress/held").unwrap(), 1);
+    }
+
+    #[test]
+    fn goals_share_workspace_briefs_and_report_missing_documents() {
         let fixture = Fixture::new();
         let root = id(&fixture.ok("checkout", &["add", "Goal"]));
         let slice = id(&fixture.ok("checkout", &["add", "Slice", "--parent", &root]));
@@ -204,20 +525,20 @@ mod tests {
             fixture
                 .fail(
                     "checkout",
-                    &["goal", "attach", &root, "--brief", "missing.md"]
+                    &["goal", "attach", &root, "--brief", "briefs/missing.md"]
                 )
-                .contains("resolve brief")
+                .contains("brief is missing")
         );
         assert!(
             fixture
                 .fail("checkout", &["goal", "attach", &root, "--brief", "."])
-                .contains("must be a file")
+                .contains("relative components")
         );
         assert!(
             fixture
                 .fail(
                     "checkout",
-                    &["goal", "attach", &slice, "--brief", "README.md"]
+                    &["goal", "attach", &slice, "--brief", "briefs/README.md"]
                 )
                 .contains("root task")
         );
@@ -230,16 +551,12 @@ mod tests {
                 "attach",
                 &root,
                 "--brief",
-                "README.md",
+                "briefs/README.md",
             ],
         );
-        let brief = fixture
-            .root
-            .join("checkout/README.md")
-            .canonicalize()
-            .unwrap();
+        let brief = fixture.workspace().join("briefs/README.md");
         assert_eq!(
-            attached.pointer("/goal/brief").unwrap(),
+            attached.pointer("/goal/brief/path").unwrap(),
             brief.to_str().unwrap()
         );
         assert_eq!(attached.pointer("/goal/root/id").unwrap(), &root);
@@ -248,12 +565,18 @@ mod tests {
         fs::remove_file(&brief).unwrap();
         let overview = fixture.ok("linked", &["goal", "show", &root]);
         assert_eq!(
-            overview.pointer("/overview/goal/brief").unwrap(),
+            overview.pointer("/overview/goal/brief/path").unwrap(),
             brief.to_str().unwrap()
         );
         assert_eq!(overview.pointer("/overview/tasks/0/id").unwrap(), &slice);
-        assert_eq!(overview.pointer("/overview/progress/ready").unwrap(), 1);
-        assert_eq!(overview.pointer("/overview/progress/total").unwrap(), 1);
+        assert_eq!(
+            overview.pointer("/overview/goal/progress/ready").unwrap(),
+            1
+        );
+        assert_eq!(
+            overview.pointer("/overview/goal/progress/total").unwrap(),
+            1
+        );
         assert_eq!(
             fixture
                 .ok("checkout", &["goal", "list"])
@@ -268,12 +591,14 @@ mod tests {
             .args(["task", "goal", "show", &root])
             .current_dir(fixture.root.join("linked"))
             .env("XDG_STATE_HOME", fixture.root.join("state"))
+            .env("HOME", fixture.root.join("home"))
+            .env("XDG_DATA_HOME", fixture.root.join("data"))
             .output()
             .unwrap();
         assert!(text.status.success());
         let text = String::from_utf8(text.stdout).unwrap();
-        assert!(text.contains("Local records only"));
-        assert!(text.contains("1 ready"));
+        assert!(text.contains("  1 open · last activity "), "{text}");
+        assert!(text.contains("Brief unavailable"), "{text}");
         fixture.ok("linked", &["goal", "detach", &root]);
         assert_eq!(id(&fixture.ok("checkout", &["show", &slice])), slice);
         assert!(
@@ -284,6 +609,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "One cross-worktree scenario checks claims, reference recording, and accepted completion"
+    )]
     fn worktrees_share_one_list_and_claims_are_exclusive() {
         let fixture = Fixture::new();
         let epic = fixture.ok(
@@ -291,10 +620,7 @@ mod tests {
             &["add", "migrate policies", "--body", "pattern: docs/net.md"],
         );
         let epic = id(&epic);
-        let first = id(&fixture.ok(
-            "checkout",
-            &["add", "first", "--parent", &epic, "--priority", "5"],
-        ));
+        let first = id(&fixture.ok("checkout", &["add", "first", "--parent", &epic]));
         let second = id(&fixture.ok(
             "linked",
             &["add", "second", "--parent", &epic, "--blocked-by", &first],
@@ -327,7 +653,7 @@ mod tests {
         assert!(
             fixture
                 .fail("linked", &["--owner", "session-b", "claim", &first])
-                .contains("leased to session-a")
+                .contains("claimed by session-a")
         );
         assert!(
             fixture
@@ -347,8 +673,18 @@ mod tests {
         );
         assert!(
             fixture
-                .fail("linked", &["--owner", "session-b", "done", &first])
-                .contains("leased to session-a")
+                .fail(
+                    "linked",
+                    &[
+                        "--owner",
+                        "session-b",
+                        "done",
+                        &first,
+                        "--result",
+                        "verified"
+                    ]
+                )
+                .contains("claimed by session-a")
         );
 
         rejects_misuse(&fixture, &epic, &first);
@@ -359,10 +695,19 @@ mod tests {
                 "session-a",
                 "update",
                 &first,
-                "--pr",
-                "https://github.com/example/project/pull/1",
                 "--branch",
                 "netpol/first",
+            ],
+        );
+        fixture.ok(
+            "checkout",
+            &[
+                "--owner",
+                "session-a",
+                "ref",
+                "set",
+                &first,
+                "https://github.com/example/project/pull/1",
             ],
         );
         let all = fixture.ok("checkout", &["list", "--flat", "--all"]);
@@ -381,7 +726,7 @@ mod tests {
         );
         let done = fixture.ok(
             "checkout",
-            &["--owner", "session-a", "done", &first, "--note", "merged"],
+            &["--owner", "session-a", "done", &first, "--result", "merged"],
         );
         assert_eq!(done.pointer("/task/status").unwrap(), "done");
         assert!(done.pointer("/task/owner").unwrap().is_null());
@@ -395,7 +740,7 @@ mod tests {
         assert!(
             fixture
                 .fail("checkout", &["claim", first])
-                .contains("--owner is required")
+                .contains("No session identity available; pass --owner")
         );
         assert!(
             fixture
@@ -409,7 +754,10 @@ mod tests {
         );
         assert!(
             fixture
-                .fail("checkout", &["--owner", "session-a", "done", epic])
+                .fail(
+                    "checkout",
+                    &["--owner", "session-a", "done", epic, "--result", "verified"]
+                )
                 .contains("cannot be closed yet")
         );
         assert!(
@@ -417,22 +765,22 @@ mod tests {
                 .fail(
                     "checkout",
                     &[
-                        "update",
+                        "ref",
+                        "set",
                         first,
-                        "--pr",
-                        "https://github.com/example/project/pull/9"
+                        "https://github.com/example/project/pull/9",
                     ]
                 )
-                .contains("leased to session-a"),
-            "field edits under another owner's lease are refused"
+                .contains("claimed by session-a"),
+            "field edits on another session's claim are refused"
         );
         assert!(
             fixture
                 .fail(
                     "checkout",
-                    &["--owner", "session-a", "update", first, "--pr", "PR 1"]
+                    &["--owner", "session-a", "ref", "set", first, "PR 1",]
                 )
-                .contains("full pull request URL")
+                .contains("full HTTP(S)")
         );
         assert!(
             fixture
@@ -451,12 +799,15 @@ mod tests {
             .iter()
             .map(|event| event.pointer("/kind").unwrap().as_str().unwrap().to_owned())
             .collect();
-        assert_eq!(kinds, ["created", "claimed", "updated", "pr", "done"]);
+        assert_eq!(
+            kinds,
+            ["created", "claimed", "updated", "reference_set", "done"]
+        );
         assert_eq!(shown.pointer("/task/branch").unwrap(), "netpol/first");
         assert_eq!(shown.pointer("/task/last_event/kind").unwrap(), "done");
-        assert_eq!(shown.pointer("/task/last_event/detail").unwrap(), "merged");
+        assert_eq!(shown.pointer("/task/last_event/result").unwrap(), "merged");
         assert_eq!(
-            shown.pointer("/task/pr").unwrap(),
+            shown.pointer("/task/references/0/url").unwrap(),
             "https://github.com/example/project/pull/1"
         );
 
@@ -520,12 +871,137 @@ mod tests {
     }
 
     #[test]
+    fn local_review_and_issue_references_survive_cold_cli_invocations() {
+        let fixture = Fixture::new();
+        let task = id(&fixture.ok("checkout", &["add", "local implementation"]));
+        assert!(
+            fixture
+                .fail("checkout", &["done", &task])
+                .contains("--result")
+        );
+        assert!(
+            fixture
+                .fail("checkout", &["review", &task, "--result", " "])
+                .contains("nonempty")
+        );
+        fixture.ok(
+            "checkout",
+            &[
+                "ref",
+                "set",
+                &task,
+                "https://linear.app/example/issue/ENG-123",
+                "--label",
+                "ENG-123",
+            ],
+        );
+        assert_eq!(
+            fixture
+                .ok("linked", &["show", &task])
+                .pointer("/task/ready")
+                .unwrap(),
+            true
+        );
+        let reviewed = fixture.ok(
+            "checkout",
+            &[
+                "review",
+                &task,
+                "--result",
+                "Unit checks pass; integration pending.",
+            ],
+        );
+        assert_eq!(reviewed.pointer("/task/status").unwrap(), "review");
+        assert_eq!(
+            fixture.ok("linked", &["ready"]).pointer("/tasks").unwrap(),
+            &serde_json::json!([])
+        );
+        fixture.ok("linked", &["claim", &task, "--owner", "reviewer"]);
+        let done = fixture.ok(
+            "linked",
+            &[
+                "done",
+                &task,
+                "--owner",
+                "reviewer",
+                "--result",
+                "Integrated and verified.",
+            ],
+        );
+        assert_eq!(
+            done.pointer("/task/result").unwrap(),
+            "Integrated and verified."
+        );
+        assert_eq!(done.pointer("/task/references/0/label").unwrap(), "ENG-123");
+        fixture.ok(
+            "checkout",
+            &[
+                "ref",
+                "remove",
+                &task,
+                "https://linear.app/example/issue/ENG-123",
+            ],
+        );
+        let reopened = fixture.ok("checkout", &["reopen", &task]);
+        assert_eq!(
+            reopened.pointer("/task/result").unwrap(),
+            "Integrated and verified."
+        );
+        assert_eq!(
+            reopened.pointer("/task/references").unwrap(),
+            &serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn repeated_review_handoff_survives_cold_cli_invocations() {
+        let fixture = Fixture::new();
+        let task = id(&fixture.ok("checkout", &["add", "handoff"]));
+        fixture.ok(
+            "checkout",
+            &["review", &task, "--result", "Initial handoff"],
+        );
+        fixture.ok("linked", &["claim", &task, "--owner", "reviewer"]);
+        let handed_off = fixture.ok(
+            "linked",
+            &[
+                "review",
+                &task,
+                "--owner",
+                "reviewer",
+                "--result",
+                "Corrections checked; acceptance pending.",
+            ],
+        );
+        assert_eq!(handed_off.pointer("/task/status").unwrap(), "review");
+        assert_eq!(
+            handed_off.pointer("/task/result").unwrap(),
+            "Corrections checked; acceptance pending."
+        );
+        assert!(handed_off.pointer("/task/owner").unwrap().is_null());
+        let saved = fixture.ok("checkout", &["show", &task]);
+        assert_eq!(
+            saved.pointer("/task/result"),
+            handed_off.pointer("/task/result")
+        );
+    }
+
+    #[test]
     fn explicit_project_keys_are_isolated_and_required_outside_git() {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.root.join("plain")).unwrap();
         assert!(fixture.fail("plain", &["list"]).contains("--project"));
-        let created = fixture.ok("plain", &["--project", "notes", "add", "write docs"]);
-        assert_eq!(created.pointer("/project").unwrap(), "notes");
+        let registered = Command::new(env!("CARGO_BIN_EXE_dots"))
+            .args(["--json", "project", "register", "notes"])
+            .env("HOME", fixture.root.join("home"))
+            .env("XDG_DATA_HOME", fixture.root.join("data"))
+            .output()
+            .unwrap();
+        assert!(registered.status.success());
+        let registered: Value = serde_json::from_slice(&registered.stdout).unwrap();
+        let project = registered.pointer("/project/id").unwrap().as_str().unwrap();
+        let created = fixture.ok("plain", &["--project", project, "add", "write docs"]);
+        assert_eq!(created.pointer("/project").unwrap(), project);
         assert_eq!(
             fixture
                 .ok("checkout", &["list"])
@@ -542,9 +1018,11 @@ mod tests {
                 .contains("does not exist in this project")
         );
         let text = Command::new(env!("CARGO_BIN_EXE_dots"))
-            .args(["task", "--project", "notes", "list"])
+            .args(["task", "--project", project, "list"])
             .current_dir(&fixture.root)
             .env("XDG_STATE_HOME", fixture.root.join("state"))
+            .env("HOME", fixture.root.join("home"))
+            .env("XDG_DATA_HOME", fixture.root.join("data"))
             .output()
             .unwrap();
         let text = String::from_utf8(text.stdout).unwrap();
@@ -582,7 +1060,7 @@ mod tests {
                     "linked",
                     &["--owner", "session-b", "hold", &slice, "--reason", "x"]
                 )
-                .contains("leased to session-a")
+                .contains("claimed by session-a")
         );
         let other = id(&fixture.ok("checkout", &["add", "other"]));
         let warned = fixture.ok("checkout", &["dep", "add", &slice, "--blocked-by", &other]);
@@ -592,7 +1070,7 @@ mod tests {
                 .unwrap()
                 .as_str()
                 .unwrap()
-                .contains("leased to session-a")
+                .contains("claimed by session-a")
         );
         assert!(warned.pointer("/now").unwrap().is_i64());
         let held = fixture.ok(
@@ -610,19 +1088,5 @@ mod tests {
         assert!(held.pointer("/task/owner").unwrap().is_null());
         assert_eq!(held.pointer("/task/last_event/detail").unwrap(), "x");
         nested_groups_are_one_subtree(&fixture, &epic);
-        for arguments in [
-            vec!["list", "--repo", "example/project"],
-            vec!["list", "--no-cache"],
-        ] {
-            let output = Command::new(env!("CARGO_BIN_EXE_dots"))
-                .arg("task")
-                .args(&arguments)
-                .current_dir(fixture.root.join("checkout"))
-                .env("XDG_STATE_HOME", fixture.root.join("state"))
-                .output()
-                .unwrap();
-            assert!(!output.status.success());
-            assert!(String::from_utf8_lossy(&output.stderr).contains("do not apply"));
-        }
     }
 }

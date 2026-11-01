@@ -1,27 +1,10 @@
 ---
 name: golang-database
 description: "Implement and review Go database access. Use for queries, scanning, transactions, connection pools, migrations, and database tests."
-user-invocable: true
 license: MIT
-compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
-metadata:
-  author: samber
-  version: "1.3.2"
-  openclaw:
-    emoji: "🗄"
-    homepage: https://github.com/samber/cc-skills-golang
-    requires:
-      bins:
-        - go
-    install: []
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent AskUserQuestion
-paths:
-  - "**/*.go"
 ---
 
 Inspect existing query patterns and naming conventions before adding database code.
-
-> **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-database` skill takes precedence.
 
 # Go Database Best Practices
 
@@ -100,7 +83,7 @@ if !allowed[sortCol] {
 query := fmt.Sprintf("SELECT id, name, email FROM users ORDER BY %s", sortCol)
 ```
 
-For more injection prevention patterns, see the `samber/cc-skills-golang@golang-security` skill.
+For more injection prevention patterns, see the `golang-security` skill.
 
 ## Struct Scanning and NULLable Columns
 
@@ -181,7 +164,7 @@ db.Query("SELECT ...")
 db.QueryContext(ctx, "SELECT ...")
 ```
 
-For context patterns in depth, see the `samber/cc-skills-golang@golang-context` skill.
+For context patterns in depth, see the `golang-concurrency` skill.
 
 ## Transactions, Isolation Levels, and Locking
 
@@ -227,10 +210,10 @@ For requested schema work, establish types, keys, nullability and constraints fr
 
 ## Cross-References
 
-- → See `samber/cc-skills-golang@golang-security` skill for SQL injection prevention patterns
-- → See `samber/cc-skills-golang@golang-context` skill for context propagation to database operations
-- → See `samber/cc-skills-golang@golang-error-handling` skill for database error wrapping patterns
-- → See `samber/cc-skills-golang@golang-testing` skill for database integration test patterns
+- → See `golang-security` skill for SQL injection prevention patterns
+- → See `golang-concurrency` skill for context propagation to database operations
+- → See `golang` skill for database error wrapping patterns
+- → See `golang-testing` skill for database integration test patterns
 
 ## References
 

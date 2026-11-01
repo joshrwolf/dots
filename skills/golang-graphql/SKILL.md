@@ -1,37 +1,14 @@
 ---
 name: golang-graphql
 description: "Build GraphQL APIs in Go with gqlgen or graphql-go. Use for schemas, resolvers, subscriptions, authorization, and API tests."
-user-invocable: false
 license: MIT
-compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
-metadata:
-  author: samber
-  version: "0.2.2"
-  openclaw:
-    emoji: "🔮"
-    homepage: https://github.com/samber/cc-skills-golang
-    requires:
-      bins:
-        - go
-    install: []
-    skill-library-version: "0.17.89"
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch Bash(curl:*) Bash(gopls:*) LSP mcp__gopls__*
-paths:
-  - "**/*.go"
 ---
 
 Inspect existing resolver patterns and naming conventions before adding GraphQL code.
 
-> **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-graphql` skill takes precedence.
-
 # Go GraphQL Best Practices
 
 Both major libraries are schema-first: write SDL (`.graphql` files), bind Go resolvers. Choose based on project size and team preferences.
-
-This skill is not exhaustive — refer to each library's official documentation and code examples for current API signatures:
-
-- Consult `go doc` for the resolved package API; see `golang-go-doc` for lookup guidance.
-- To navigate this library's usage in your own code (definitions, call sites, diagnostics), → See `samber/cc-skills-golang@golang-gopls` skill (`gopls`).
 
 ## Library Choice
 
@@ -190,7 +167,7 @@ For graph-gophers, implement the `ResolverError` interface to attach `Extensions
 
 Use `graphql.AddError(ctx, err)` in gqlgen for non-fatal field errors where the resolver can still return partial data.
 
-For error wrapping patterns, see the `samber/cc-skills-golang@golang-error-handling` skill.
+For error wrapping patterns, see the `golang` skill.
 
 ## Subscriptions
 
@@ -279,12 +256,12 @@ For graph-gophers: `graphql.MaxDepth(10)` and `graphql.MaxParallelism(10)` optio
 
 ## Cross-References
 
-- → See `samber/cc-skills-golang@golang-context` skill for context propagation in resolvers and subscriptions
-- → See `samber/cc-skills-golang@golang-error-handling` skill for error wrapping and sentinel patterns
-- → See `samber/cc-skills-golang@golang-testing` skill for table-driven and integration test patterns
-- → See `samber/cc-skills-golang@golang-observability` skill for tracing and metrics in resolvers
-- → See `samber/cc-skills-golang@golang-security` skill for input validation and injection prevention
-- → See `samber/cc-skills-golang@golang-database` skill for N+1 query patterns and DataLoader database batching
+- → See `golang-concurrency` skill for context propagation in resolvers and subscriptions
+- → See `golang` skill for error wrapping and sentinel patterns
+- → See `golang-testing` skill for table-driven and integration test patterns
+- → See `golang-observability` skill for tracing and metrics in resolvers
+- → See `golang-security` skill for input validation and injection prevention
+- → See `golang-database` skill for N+1 query patterns and DataLoader database batching
 
 ## References
 

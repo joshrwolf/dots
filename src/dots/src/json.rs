@@ -8,7 +8,11 @@ pub(crate) fn render(mut value: Value) -> String {
 
 fn commands(value: &mut Value) {
     match value {
-        Value::Array(items) => items.iter_mut().for_each(commands),
+        Value::Array(items) => {
+            for item in items {
+                commands(item);
+            }
+        }
         Value::Object(fields) => {
             for (key, value) in fields {
                 if (key == "command" || key.ends_with("_command"))

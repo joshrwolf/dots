@@ -1,6 +1,6 @@
 # Structured Logging with `slog`
 
-→ See `samber/cc-skills-golang@golang-error-handling` skill for the single handling rule.
+→ See `golang` skill for the single handling rule.
 
 ## Table of Contents
 

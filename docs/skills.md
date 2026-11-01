@@ -1,42 +1,36 @@
 # Skills in dots
 
-Skills live flat in `skills/<name>/`, each with a `SKILL.md` and relative
-supporting files. Codex, Pi and Claude all read that directory directly: the
-`skills` Stow package links `~/.agents/skills` (Codex, Pi) and
-`~/.claude/skills` (Claude) to it. Edits in the stowed checkout are live; a
-running harness may need a reload or a new session.
+Public skills live flat in `skills/<name>/`, each with a `SKILL.md` and
+relative supporting files. Private skills stay canonical in their private
+repository. Native mise groups deploy tracked files into the shared installed
+namespace at `~/.local/share/dots/skills`.
 
-The `golang-*` skills are adapted from
-[samber/cc-skills-golang](https://github.com/samber/cc-skills-golang) and
-maintained here without upstream sync; `skills/LICENSE-cc-skills-golang` keeps
-its MIT notice.
+Two directory links expose that namespace: `~/.agents/skills` for Codex/Pi and
+`~/.claude/skills` for Claude. Configuration never creates per-agent per-skill
+links. Existing file edits follow their source links; new deployment paths
+appear on apply/update. A running harness may need a reload or a new session.
 
-## Setup
+## Setup and authoring
 
-```sh
-mise run //home:check      # skill frontmatter, generated CLI skill, links, Stow simulation
-mise run install           # restow the base packages, including skills
-```
+Use [machine setup](../bootstrap/README.md); select private source explicitly.
+Unmanaged discovery directories stop setup rather than merging unknown files.
+Native groups leave unrelated installed content alone; pruning is deliberate.
 
-`~/.agents/skills` and `~/.claude/skills` must be absent or links before
-installation; given an existing directory, Stow would link its contents file by
-file, so `install` refuses. Move any unmanaged entries into `skills/` first.
+Create `skills/example/SKILL.md` with `name` and `description` frontmatter,
+add its supporting files to Git, then check and apply the selected source.
+Machine-local skills and mod links use `local-<name>`; never force-add private
+workflows or machine captures to public Git. Generated host-owned skills, such
+as Rex's guide, belong to that host's native setup.
 
-## Add a skill
+Personal Go defaults live in standing instructions and apply without loading a
+skill. The `golang` reference and focused `golang-*` skills are adapted from
+[samber/cc-skills-golang](https://github.com/samber/cc-skills-golang), maintained
+here without upstream sync. `skills/LICENSE-cc-skills-golang` keeps its MIT notice.
 
-Create `skills/example/SKILL.md` with `name: example` and a useful `description`
-in YAML frontmatter, then run `mise run //home:check`. No link or restow is needed.
-
-Everything in `skills/` is visible to every tool. Tools ignore entries without a
-`SKILL.md`, so the license file is harmless there. Claude also loads plugin
-directories: Claude mods appear as links such as
-`skills/codex-agent -> ../src/claude/codex-agent` (see
-[Claude mods](claude-mods.md)); Codex and Pi skip them.
-
-Machine-local skills and mod links use `local-<name>`, which Git ignores.
-Never force-add private workflows or machine captures.
+To measure whether guidance helps, use
+[skill evaluation](../skills/skill-evaluation/SKILL.md).
 
 ## Generated CLI skill
 
-`mise run //src/dots:skills` generates the `dots` skill and reference from its Rust
-command tree; `dots skills check` validates them. See [the CLI home](../src/dots/README.md).
+`mise run //src/dots:skills` generates the CLI skill/reference.
+`dots skills check` validates them; see [the CLI](../src/dots/README.md).

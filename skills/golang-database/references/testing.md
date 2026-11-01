@@ -95,5 +95,5 @@ and run with `go test -tags=integration ./...`. For container-backed fixtures,
 register termination immediately after successful startup, wait for readiness,
 and fail setup on errors. Avoid fixed sleeps and shared mutable test data.
 
-See `golang-testing` for fixture organization and `golang-go-cmp` for structured
+See `golang-testing` for fixture organization and `golang-testing` for structured
 result comparisons.

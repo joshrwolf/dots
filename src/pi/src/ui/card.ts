@@ -1,28 +1,58 @@
-import { displayLimits } from "./policy.ts";
-import type { Theme } from "@earendil-works/pi-coding-agent";
-import { VStack, stripTerminalSequences, visibleWidth, type Component } from "@earendil-works/pi-tui";
-import { PriorityRow, type RowModel, type Segment } from "./row.ts";
-import { StateGutter, type ActivityState } from "./state.ts";
-import { DetailView } from "./details.ts";
-import { labelText, layoutText, plainLines, sourceText } from "./text.ts";
+import {
+  displayLimits,
+  PriorityRow,
+  type RowModel,
+  type Segment,
+  labelText,
+  layoutText,
+  plainLines,
+  sourceText,
+} from '@joshrwolf/pi-kit/ui';
+import type {Theme} from '@earendil-works/pi-coding-agent';
+import {
+  VStack,
+  stripTerminalSequences,
+  visibleWidth,
+  type Component,
+} from '@earendil-works/pi-tui';
+import {StateGutter, type ActivityState} from './state.ts';
+import {DetailView} from './details.ts';
 
-export interface Notice { readonly text: string; readonly severity: "warning" | "error" | "dim" }
+export interface Notice {
+  readonly text: string;
+  readonly severity: 'warning' | 'error' | 'dim';
+}
 
 export class Notices implements Component {
   private theme: Theme | undefined;
   private values: readonly Notice[] = [];
   update(values: readonly Notice[], theme: Theme): void {
-    this.values = values; this.theme = theme;
+    this.values = values;
+    this.theme = theme;
   }
   invalidate(): void {}
   render(width: number): string[] {
     const theme = this.theme;
     if (!theme || width <= 0) return [];
-    const inset = width >= 20 ? "  " : "";
+    const inset = width >= 20 ? '  ' : '';
     const room = width - inset.length;
-    return this.values.flatMap((notice) => {
-      const mark = room >= 8 ? notice.severity === "error" ? "↳ " : notice.severity === "warning" ? "! " : "· " : "";
-      return plainLines(notice.text, room - mark.length).map((line, index) => inset + theme.fg(notice.severity, (index === 0 ? mark : " ".repeat(mark.length)) + line));
+    return this.values.flatMap(notice => {
+      const mark =
+        room >= 8
+          ? notice.severity === 'error'
+            ? '↳ '
+            : notice.severity === 'warning'
+              ? '! '
+              : '· '
+          : '';
+      return plainLines(notice.text, room - mark.length).map(
+        (line, index) =>
+          inset +
+          theme.fg(
+            notice.severity,
+            (index === 0 ? mark : ' '.repeat(mark.length)) + line,
+          ),
+      );
     });
   }
 }
@@ -30,11 +60,19 @@ export class Notices implements Component {
 /** Bounded recorded output, with tail diagnostics retained when the head is cut. */
 export class OutputView implements Component {
   private readonly text: string;
-  private cache: { width: number; lines: string[] } | undefined;
+  private cache: {width: number; lines: string[]} | undefined;
   constructor(text: string) {
-    this.text = sourceText(text.length <= displayLimits.sourceCodeUnits ? text : text.slice(0, displayLimits.sourceCodeUnits / 2) + "\n… output display limited …\n" + text.slice(-displayLimits.sourceCodeUnits / 2));
+    this.text = sourceText(
+      text.length <= displayLimits.sourceCodeUnits
+        ? text
+        : text.slice(0, displayLimits.sourceCodeUnits / 2) +
+            '\n… output display limited …\n' +
+            text.slice(-displayLimits.sourceCodeUnits / 2),
+    );
   }
-  invalidate(): void { this.cache = undefined; }
+  invalidate(): void {
+    this.cache = undefined;
+  }
   render(width: number): string[] {
     if (width <= 0) return [];
     if (this.cache?.width === width) return this.cache.lines;
@@ -43,11 +81,21 @@ export class OutputView implements Component {
     if (prepared.limited) {
       // Work is bounded before wrapping. The suffix is intentionally small so
       // even one-column output retains the final diagnostic.
-      const tail = plainLines(this.text.slice(-Math.max(1, Math.min(displayLimits.outputRows, width * 20))), width, displayLimits.outputRows).slice(-Math.floor(displayLimits.outputRows / 4));
+      const tail = plainLines(
+        this.text.slice(
+          -Math.max(1, Math.min(displayLimits.outputRows, width * 20)),
+        ),
+        width,
+        displayLimits.outputRows,
+      ).slice(-Math.floor(displayLimits.outputRows / 4));
       const marker = lines.at(-1)!;
-      lines = [...lines.slice(0, displayLimits.outputRows - tail.length - 1), marker, ...tail];
+      lines = [
+        ...lines.slice(0, displayLimits.outputRows - tail.length - 1),
+        marker,
+        ...tail,
+      ];
     }
-    this.cache = { width, lines };
+    this.cache = {width, lines};
     return lines;
   }
 }
@@ -57,36 +105,89 @@ export class PreviewView implements Component {
   private readonly output: OutputView;
   private readonly theme: Theme;
   private readonly rows: number;
-  constructor(text: string, theme: Theme, rows = 3) { this.output = new OutputView(text); this.theme = theme; this.rows = rows; }
-  invalidate(): void { this.output.invalidate(); }
+  constructor(text: string, theme: Theme, rows = 3) {
+    this.output = new OutputView(text);
+    this.theme = theme;
+    this.rows = rows;
+  }
+  invalidate(): void {
+    this.output.invalidate();
+  }
   render(width: number): string[] {
     if (width <= 0) return [];
     const lines = this.output.render(width);
-    return lines.length <= this.rows ? lines : [...lines.slice(0, this.rows), ...plainLines("… Ctrl+O to expand", width, 1).map((line) => this.theme.fg("dim", line))];
+    return lines.length <= this.rows
+      ? lines
+      : [
+          ...lines.slice(0, this.rows),
+          ...plainLines('… Ctrl+O to expand', width, 1).map(line =>
+            this.theme.fg('dim', line),
+          ),
+        ];
   }
 }
 
 export interface ActivityCardModel {
   /** Optional static decoration; the caller supplies the semantic state. */
   readonly state?: ActivityState;
+  /** Native disclosure state; omitted on non-expandable surfaces. */
+  readonly expanded?: boolean;
   readonly notices: readonly Notice[];
   readonly body: Component | undefined;
   readonly caption: string;
   /** Default always; omit a redundant caption only when its full text appears in the rendered header. */
-  readonly captionPolicy?: "always" | "when-not-in-header";
+  readonly captionPolicy?: 'always' | 'when-not-in-header';
   readonly header: RowModel;
 }
 
 /** Outcomes stay beside the subject; only explicitly secondary metadata spans
  * to the trailing edge. Shrink priorities still protect outcomes in narrow panes. */
-export function activityHeader(kind: string, subject: string, status: readonly Segment[], clip: NonNullable<Segment["clip"]> = "middle", secondary: readonly Segment[] = []): RowModel {
+export function activityHeader(
+  kind: string,
+  subject: string,
+  status: readonly Segment[],
+  clip: NonNullable<Segment['clip']> = 'middle',
+  secondary: readonly Segment[] = [],
+): RowModel {
+  // Bound preparation independently of terminal width; PriorityRow owns clipping.
+  const maxUnits = 8192;
+  const end =
+    subject.length > maxUnits && /[\uD800-\uDBFF]/.test(subject[maxUnits - 1]!)
+      ? maxUnits - 1
+      : maxUnits;
+  const heading =
+    labelText(subject.slice(0, end)) +
+    (subject.length > maxUnits ? '… [display limited]' : '');
   return {
-    layout: "edges", separator: "  ", groupSeparator: "  ", endSeparator: " · ",
+    layout: 'edges',
+    separator: '  ',
+    groupSeparator: '  ',
+    endSeparator: ' · ',
     start: [
-      { text: kind, tone: "accent", bold: true, priority: 90, shrink: "clip", padTo: 8, minWidth: Math.min(5, visibleWidth(kind)) },
-      { text: subject, tone: "text", priority: 40, shrink: "clip", clip, minWidth: 8 },
-      ...status.map((segment, index) => ({ ...segment, separatorBefore: segment.separatorBefore ?? (index === 0 ? "  " : " · ") })),
-    ], end: secondary,
+      {
+        text: kind,
+        tone: 'accent',
+        bold: true,
+        priority: 90,
+        shrink: 'clip',
+        padTo: 8,
+        minWidth: Math.min(5, visibleWidth(kind)),
+      },
+      {
+        text: heading,
+        tone: 'text',
+        priority: 40,
+        shrink: 'clip',
+        clip,
+        minWidth: 8,
+      },
+      ...status.map((segment, index) => ({
+        ...segment,
+        separatorBefore:
+          segment.separatorBefore ?? (index === 0 ? '  ' : ' · '),
+      })),
+    ],
+    end: secondary,
   };
 }
 
@@ -98,15 +199,33 @@ export class ActivityCard extends VStack {
     this.row.update(model.header, theme);
     this.notices.update(model.notices, theme);
     this.clear();
-    const decorated = new StateGutter(this.row, model.state ?? "done", theme);
+    const header: Component = {
+      render: width =>
+        this.row.render(width - Math.min(4, Math.floor(width / 10))),
+      invalidate: () => this.row.invalidate(),
+    };
+    const decorated = new StateGutter(
+      header,
+      model.state ?? 'done',
+      theme,
+      model.expanded,
+    );
     this.addChild(decorated);
     this.addChild(this.notices);
     if (model.body) {
-      const caption = model.captionPolicy === "when-not-in-header"
-        ? (width: number) => stripTerminalSequences(decorated.render(width).join("")).includes(labelText(model.caption)) ? "" : model.caption
-        : model.caption;
+      const caption =
+        model.captionPolicy === 'when-not-in-header'
+          ? (width: number) =>
+              stripTerminalSequences(decorated.render(width).join('')).includes(
+                labelText(model.caption),
+              )
+                ? ''
+                : model.caption
+          : model.caption;
       this.addChild(new DetailView(model.body, caption, theme));
     }
   }
-  override render(width: number): string[] { return width > 0 ? super.render(width) : []; }
+  override render(width: number): string[] {
+    return width > 0 ? super.render(width) : [];
+  }
 }

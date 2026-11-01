@@ -22,6 +22,11 @@ func newRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true, // main prints returned errors exactly once
 	}
+	// Mark flag-parse errors as usage errors. Child commands inherit this
+	// function. It does not see Args, required-flag or unknown-command errors.
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return &ExitError{Code: exitUsage, Err: err}
+	})
 	root.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default $HOME/.myapp.yaml)")
 	root.PersistentFlags().String("log-level", "info", "log level (debug, info, warn, error)")
 	// These flags are registered directly above; a binding error is a programmer error.

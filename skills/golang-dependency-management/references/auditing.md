@@ -50,7 +50,7 @@ govulncheck -test ./...
 
 Source output can include call paths to vulnerable symbols and summaries of affected packages or modules without detected calls. Binary analysis has less call-graph detail. Results depend on build configuration, analysis limits, and the vulnerability database.
 
-For CI pipeline integration, see the `samber/cc-skills-golang@golang-continuous-integration` skill.
+For CI pipeline integration, see the `golang-continuous-integration` skill.
 
 ## Available dependency updates
 

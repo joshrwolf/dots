@@ -1,6 +1,6 @@
 # Go Tooling for Refactoring
 
-This file is the tool reference for `samber/cc-skills-golang@golang-refactoring`: semantic editing, bulk rewrites, and reachability analysis, with the capabilities and limitations that distinguish them. See [catalog.md](catalog.md) for which tool maps to which Fowler refactoring.
+This file covers semantic editing, bulk rewrites, and reachability analysis, with the capabilities and limitations that distinguish them. See [catalog.md](catalog.md) for which tool maps to which Fowler refactoring.
 
 ## Table of Contents
 
@@ -18,8 +18,8 @@ This file is the tool reference for `samber/cc-skills-golang@golang-refactoring`
 ## 1. gopls — the Primary Actuator
 
 - gopls performs most of this skill's Low- and Medium-risk transforms — Rename, Inline, Extract, and the `refactor.rewrite.*` family.
-- See the Risk Stratification table in [SKILL.md](../SKILL.md) and the `Tool:` line on each entry in [catalog.md](catalog.md) for which gopls action maps to which refactoring.
-- The full code-action reference, CLI invocation, safety behavior, and MCP server setup belong to `samber/cc-skills-golang@golang-gopls` — this file covers the tools that skill doesn't.
+- See the Risk table in [SKILL.md](../SKILL.md) and the `Tool:` line on each entry in [catalog.md](catalog.md) for which gopls action maps to which refactoring.
+- The gopls code-action reference, CLI invocation and MCP setup are in [gopls.md](gopls.md).
 
 ## 2. Bulk Mechanical Rewrite Tools
 
@@ -64,7 +64,6 @@ eg -t template.go -w ./...
 - Matching is semantic, not textual — `func(x int)` in the template also matches `func(y int)` at the call site, since `eg` matches by type and structure.
 - Limits: expressions only, no statements or function-literal patterns; a rewrite can't change the expression's type; imports are added but never removed (run `goimports` afterward); and duplicating a wildcard variable in the `after` template duplicates whatever side effect the matched expression had.
 
-
 ### `go/analysis` + SuggestedFixes — bespoke, testable
 
 - For a rewrite that needs custom type-aware matching, write an `analysis.Analyzer`. Its `Run(pass)` walks the type-checked AST and reports `analysis.Diagnostic{SuggestedFixes: [...]}` at each match.
@@ -72,7 +71,7 @@ eg -t template.go -w ./...
 
 ### `go fix` — the `go/analysis`-based fixer suite
 
-- As of Go 1.26, `go fix` is rewritten onto the `go/analysis` framework and has converged with `go vet` — this is where the `modernize` fixer suite lives (`rangeint`, `mapsloop`, `minmax`, `any`, `stringscut`, `omitzero`, and more). Coverage keeps shifting release to release — Go 1.27 added `atomictypes`, `embedlit`, `slicesbackward`, `unsafefuncs`, removed `fmtappendf`, and renamed `waitgroup` to `waitgroupgo`; → See `samber/cc-skills-golang@golang-modernize` skill for the idiom-by-idiom breakdown.
+- As of Go 1.26, `go fix` is rewritten onto the `go/analysis` framework and has converged with `go vet` — this is where the `modernize` fixer suite lives (`rangeint`, `mapsloop`, `minmax`, `any`, `stringscut`, `omitzero`, and more). Coverage keeps shifting release to release — Go 1.27 added `atomictypes`, `embedlit`, `slicesbackward`, `unsafefuncs`, removed `fmtappendf`, and renamed `waitgroup` to `waitgroupgo`; → See `golang-modernize` skill for the idiom-by-idiom breakdown.
 - On an older toolchain without this convergence, run the equivalent analyzers through `singlechecker`/`multichecker -fix` instead of `go fix`.
 - The `//go:fix inline` directive marks a function or constant so that `go fix` inlines every call site into its replacement — a machine-executable way to complete a deprecation migration once the replacement exists:
 

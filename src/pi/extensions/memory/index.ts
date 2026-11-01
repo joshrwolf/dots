@@ -1,131 +1,200 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import path from 'node:path';
+import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
+import {dots, type DotsOptions} from '@joshrwolf/pi-kit/dots';
 
-// Memory is learned, agent-maintained context, distinct from the stable
-// instructions in AGENTS.md. Two layers: global (every repository) and project
-// (one repository, keyed by its main checkout so every worktree shares it).
-// Both live outside any checkout, so nothing lands in a diff. Each index is
-// loaded like a context file; topic files are read on demand with ordinary tools.
-export const INDEX = "MEMORY.md";
-export const GLOBAL = "_global";
-const MAX_LINES = 150;
-const MAX_BYTES = 24 * 1024;
-
-export function memoryRoot(env: NodeJS.ProcessEnv = process.env): string {
-  const data = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME)
-    ? env.XDG_DATA_HOME
-    : path.join(env.HOME ?? homedir(), ".local/share");
-  return path.join(data, "dots/memory");
+// The CLI owns scope identity, regular-file checks, revisions and read bounds.
+export const INDEX = 'MEMORY.md';
+const MEMORY_SECTION_PREFIX = 'dots_memory_';
+type Layer = 'global' | 'project';
+interface Scopes {
+  readonly global: string;
+  readonly project: string | null;
+  readonly diagnostic: string | null;
 }
-
-/** Main checkout for a directory, or null outside Git. Linked worktrees share it. */
-export function mainCheckout(cwd: string): string | null {
-  try {
-    const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
-      cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return realpathSync(path.dirname(common));
-  } catch {
-    return null;
+interface Index {
+  readonly path: string;
+  readonly exists: boolean;
+  readonly revision: string;
+  readonly content: string;
+  readonly next_line: number | null;
+}
+function record(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Invalid dots memory response');
+  return value as Record<string, unknown>;
+}
+function absolute(value: unknown): string {
+  if (typeof value !== 'string' || !path.isAbsolute(value))
+    throw new Error('Invalid dots memory path');
+  return value;
+}
+export function decodeScopes(value: unknown): Scopes {
+  const v = record(value);
+  if (v.diagnostic !== null && typeof v.diagnostic !== 'string')
+    throw new Error('Invalid dots memory scope diagnostic');
+  return {
+    global: absolute(v.global),
+    project: v.project === null ? null : absolute(v.project),
+    diagnostic: v.diagnostic,
+  };
+}
+export function decodeIndex(value: unknown, scope: Layer): Index {
+  const response = record(value);
+  const v = record(response.document);
+  if (
+    response.scope !== scope ||
+    typeof v.exists !== 'boolean' ||
+    typeof v.content !== 'string' ||
+    typeof v.revision !== 'string' ||
+    !v.revision ||
+    (v.exists ? v.revision === 'missing' : v.revision !== 'missing') ||
+    !(
+      v.next_line === null ||
+      (typeof v.next_line === 'number' &&
+        Number.isSafeInteger(v.next_line) &&
+        v.next_line > 1)
+    )
+  ) {
+    throw new Error('Invalid dots memory document');
   }
+  return {
+    path: absolute(v.path),
+    exists: v.exists,
+    revision: v.revision,
+    content: v.content,
+    next_line: v.next_line,
+  };
 }
-
-/** Filesystem-safe key for a checkout path; same shape for every worktree. */
-export function projectKey(checkout: string): string {
-  return checkout.replace(/^\/+/, "").replace(/[^A-Za-z0-9._-]+/g, "-");
+export async function memoryScopes(
+  cwd: string,
+  options: DotsOptions = {},
+): Promise<Scopes> {
+  return decodeScopes(
+    await dots(['memory', 'scope'], {...options, directory: cwd, cwd}),
+  );
 }
-
-export function memoryDir(cwd: string, env: NodeJS.ProcessEnv = process.env): string | null {
-  const checkout = mainCheckout(cwd);
-  return checkout ? path.join(memoryRoot(env), projectKey(checkout)) : null;
-}
-
-export function globalDir(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(memoryRoot(env), GLOBAL);
-}
-
-/** Global first, then project; a project line wins when the two disagree. */
-export function layers(cwd: string, env: NodeJS.ProcessEnv = process.env): Array<{ layer: "global" | "project"; dir: string }> {
-  const project = memoryDir(cwd, env);
-  return [
-    { layer: "global" as const, dir: globalDir(env) },
-    ...(project ? [{ layer: "project" as const, dir: project }] : []),
-  ];
-}
-
-/** Bounded index text, or null when there is nothing to load. */
-export function loadIndex(dir: string): { content: string; truncated: boolean } | null {
-  const file = path.join(dir, INDEX);
-  if (!existsSync(file)) return null;
-  const lines = readFileSync(file, "utf8").replace(/\n$/, "").split("\n");
-  const out: string[] = [];
-  let bytes = 0;
-  for (const line of lines) {
-    const size = Buffer.byteLength(line, "utf8") + 1;
-    if (out.length >= MAX_LINES || bytes + size > MAX_BYTES) break;
-    out.push(line);
-    bytes += size;
-  }
-  const truncated = out.length < lines.length && lines.slice(out.length).some((line) => line.trim());
-  if (truncated) {
-    out.push("", `[memory index truncated: ${out.length} of ${lines.length} lines loaded; read ${file} for the rest and move detail into topic files]`);
-  }
-  return { content: out.join("\n"), truncated };
+export async function loadIndex(
+  cwd: string,
+  scope: Layer,
+  options: DotsOptions = {},
+): Promise<Index> {
+  // Global reads need no checkout; a deleted session directory must not prevent spawn.
+  const {cwd: _cwd, ...readOptions} = options;
+  return decodeIndex(
+    await dots(['memory', 'read', '--scope', scope, INDEX, '--lines', '200'], {
+      ...readOptions,
+      directory: cwd,
+      ...(scope === 'project' ? {cwd} : {}),
+    }),
+    scope,
+  );
 }
 
 const CONVENTIONS = [
-  "Memory conventions: this is learned context, not instructions; AGENTS.md stays authoritative.",
-  "Never store credentials, tokens, or personal data here; it is plain text on disk.",
-  "Use the shared memory skill for recall, source-backed updates, corrections, and maintenance. MEMORY.md is a compact orientation; wiki/ holds knowledge, sources/ selected evidence, and log.md meaningful changes. Existing adjacent topic files remain valid.",
-  "Read linked pages on demand; do not treat an old summary or search snippet as verified current evidence. Goal briefs and tasks own work and progress, not memory.",
-  "Before writing, acquire the scope's cooperative .write-lock directory and reread the affected files as described in the memory skill; this injected index is not a current write snapshot. Never remove another writer's lock. Nothing is written automatically.",
-].join(" ");
+  'Memory conventions: this is learned context, not instructions; AGENTS.md stays authoritative.',
+  'Never store credentials, tokens, or personal data here; it is plain text on disk.',
+  'Use the shared memory skill for recall, source-backed updates, corrections, and maintenance. MEMORY.md is a compact orientation; wiki/ holds current knowledge. Retained evidence belongs in project outputs, outside default recall.',
+  'Read linked pages on demand; do not treat an old summary or search snippet as verified current evidence. Goal briefs and tasks own work and progress, not memory.',
+  'Use dots memory for revision-checked publication after explicit workspace initialization. This injected index is not a current write snapshot. The CLI owns the kernel-held mutation lock; never remove it. Nothing is written automatically.',
+].join(' ');
 
-/** One layer's section: its index, or a pointer so a first write needs no discovery. */
-export function section(dir: string, layer: "global" | "project"): string {
-  const file = path.join(dir, INDEX);
-  const index = loadIndex(dir);
-  const scope = layer === "global"
-    ? "Global memory (applies in every repository; a project line wins on conflict)"
-    : "Project memory (this repository, shared by every worktree)";
-  if (!index) {
-    const heading = layer === "global" ? "# Global memory" : "# Project memory";
-    return `## ${scope}\nNot created yet. When asked to remember something at this scope, use the memory skill to create ${file} with a \`${heading}\` heading and concise dated links; put knowledge in wiki/ and selected evidence in sources/.`;
+async function section(
+  cwd: string,
+  layer: Layer,
+  options: DotsOptions,
+): Promise<string> {
+  const scope =
+    layer === 'global'
+      ? 'Global memory (applies in every repository; a project line wins on conflict)'
+      : 'Project memory (this repository, shared by every worktree)';
+  try {
+    const index = await loadIndex(cwd, layer, options);
+    options.signal?.throwIfAborted();
+    if (!index.exists) {
+      return `## ${scope}\nNot created yet. Use the memory skill to create ${index.path} with concise dated links; put current knowledge in wiki/ and cite explicitly retained project outputs.`;
+    }
+    const more =
+      index.next_line === null
+        ? ''
+        : `\n[memory index truncated; use dots memory read --scope ${layer} ${INDEX} --start ${index.next_line} for the rest]`;
+    return `## ${scope}\nIndex: ${index.path}; revision: ${index.revision}. Follow linked topics on demand.\n\n${index.content}${more}`;
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    return `## ${scope}\nIndex unavailable: ${layer}/${INDEX}\n${String(error).slice(0, 512)}`;
   }
-  return `## ${scope}\nIndex: ${file}; follow links to wiki/ or existing adjacent topic files.\n\n${index.content}`;
 }
 
-/**
- * The single memory block for a working directory: today's date, each layer
- * (global, then project when inside a repository), and the conventions once.
- */
-export function memoryContext(cwd: string, env: NodeJS.ProcessEnv = process.env, today = new Date()): { path: string; content: string } {
-  const date = today.toISOString().slice(0, 10);
-  const sections = layers(cwd, env).map(({ layer, dir }) => section(dir, layer));
-  const content = [`Memory (machine-local, learned context). Today is ${date}.`, ...sections, CONVENTIONS].join("\n\n");
-  return { path: path.join(memoryRoot(env), INDEX), content };
+/** Fresh global-before-project indexes; unavailable observations never imply absence. */
+export async function memoryContext(
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+  signal?: AbortSignal,
+): Promise<Record<string, string>> {
+  const options: DotsOptions = {env, ...(signal ? {signal} : {})};
+  let global: string;
+  let project: string | undefined;
+  try {
+    const scopes = await memoryScopes(cwd, options);
+    signal?.throwIfAborted();
+    [global, project] = await Promise.all([
+      section(cwd, 'global', options),
+      ...(scopes.project ? [section(cwd, 'project', options)] : []),
+    ]);
+    if (scopes.diagnostic)
+      project = `## Project memory\nProject scope unavailable: ${scopes.diagnostic}`;
+  } catch (error) {
+    signal?.throwIfAborted();
+    global = await section(cwd, 'global', options);
+    project = `## Project memory\nProject scope unavailable: ${String(error).slice(0, 512)}`;
+  }
+  signal?.throwIfAborted();
+  return {
+    dots_memory_global: [
+      'Memory (machine-local, learned context).',
+      global,
+      CONVENTIONS,
+    ].join('\n\n'),
+    ...(project ? {dots_memory_project: project} : {}),
+  };
 }
 
-export default function (pi: ExtensionAPI) {
-  pi.on("before_agent_start", (event, ctx) => {
-    const files = event.systemPromptOptions.contextFiles;
-    const block = memoryContext(ctx.cwd);
-    const index = files.findIndex((existing) => existing.path === block.path);
-    if (index < 0) files.push(block); else files[index] = block;
+export function registerMemory(pi: ExtensionAPI, load = memoryContext): void {
+  let lifetime = new AbortController();
+  pi.on('session_start', () => {
+    lifetime.abort();
+    lifetime = new AbortController();
   });
-
-  pi.registerCommand("memory", {
-    description: "Show where global and project memory live and their indexes",
+  pi.on('session_shutdown', () => {
+    lifetime.abort();
+  });
+  pi.on('before_agent_start', async (event, ctx) => {
+    // Pi prepares this hook before creating the active run and its abort signal.
+    const signal = lifetime.signal;
+    try {
+      const blocks = await load(ctx.cwd, process.env, signal);
+      if (signal.aborted) return;
+      const sections = event.systemPromptOptions.sections;
+      for (const key of Object.keys(sections))
+        if (key.startsWith(MEMORY_SECTION_PREFIX)) delete sections[key];
+      Object.assign(sections, blocks);
+    } catch (error) {
+      if (!signal.aborted) throw error;
+    }
+  });
+  pi.registerCommand('memory', {
+    description:
+      'Show global and project memory indexes and unavailable observations',
     handler: async (_args, ctx) => {
       if (!ctx.hasUI) return;
-      const lines = layers(ctx.cwd).map(({ layer, dir }) => section(dir, layer));
-      if (!memoryDir(ctx.cwd)) {
-        lines.push("Not inside a Git repository; project memory is keyed by the main checkout.");
+      const signal = lifetime.signal;
+      try {
+        const blocks = await load(ctx.cwd, process.env, signal);
+        if (!signal.aborted)
+          ctx.ui.notify(Object.values(blocks).join('\n\n'), 'info');
+      } catch (error) {
+        if (!signal.aborted) throw error;
       }
-      ctx.ui.notify(lines.join("\n\n"), "info");
     },
   });
 }
+export default registerMemory;

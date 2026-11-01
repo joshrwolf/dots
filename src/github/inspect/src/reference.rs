@@ -1,8 +1,11 @@
 //! Exact Actions job identity with optional observation provenance.
-use crate::target::{Resource, id, invalid, sha};
-use crate::{Error, Repository, Result, Subject};
+use std::fmt;
+use std::str::FromStr;
+
 use serde::{Deserialize, Serialize};
-use std::{fmt, str::FromStr};
+
+use crate::target::{self, Resource};
+use crate::{Error, Repository, Result, Subject};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -50,7 +53,7 @@ impl CheckRef {
         Some(Self {
             repository,
             pr: subject.pr().map(|pr| pr.number),
-            head: sha(subject.head()).ok()?,
+            head: target::sha(subject.head()).ok()?,
             run,
             attempt: match subject {
                 Subject::Run { attempt, .. } => Some(*attempt),
@@ -63,10 +66,12 @@ impl CheckRef {
         self.repository
             .endpoint(&format!("actions/jobs/{}", self.job))
     }
+    #[must_use]
     pub fn pull_request_url(&self) -> Option<String> {
         self.pr
             .map(|pr| format!("{}/pull/{pr}", self.repository.url()))
     }
+    #[must_use]
     pub fn job_url(&self) -> String {
         format!(
             "{}/actions/runs/{}/job/{}",
@@ -75,6 +80,7 @@ impl CheckRef {
             self.job
         )
     }
+    #[must_use]
     pub fn command(&self) -> String {
         format!("dots github ci logs {self}")
     }
@@ -87,12 +93,12 @@ impl FromStr for CheckRef {
             ["job", repo, pr, head, run, attempt, job] => Ok(Self {
                 repository: repo.parse()?,
                 pr: optional_id(pr)?,
-                head: sha(head)?,
-                run: id(run)?,
+                head: target::sha(head)?,
+                run: target::id(run)?,
                 attempt: optional_id(attempt)?,
-                job: id(job)?,
+                job: target::id(job)?,
             }),
-            _ => Err(invalid()),
+            _ => Err(target::invalid()),
         }
     }
 }
@@ -100,7 +106,7 @@ pub(crate) fn optional_id(value: &str) -> Result<Option<u64>> {
     if value == "-" {
         Ok(None)
     } else {
-        id(value).map(Some)
+        target::id(value).map(Some)
     }
 }
 impl fmt::Display for CheckRef {

@@ -1,2 +1,0 @@
-[tasks.check]
-run = ["claude plugin validate .", "claude plugin test ."]

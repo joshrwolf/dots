@@ -192,7 +192,7 @@ func handleRequest(data []byte) []byte {
 - Pooling has no 32 KiB size limit. Bound retained buffer sizes according to the workload; large idle objects can increase memory usage, and the GC may discard pooled objects at any time.
 - Don't pool infrequently used objects — pool overhead exceeds benefit when allocations are rare
 
-→ See `samber/cc-skills-golang@golang-concurrency` skill for `sync.Pool` API reference and basic usage patterns.
+→ See `golang-concurrency` skill for `sync.Pool` API reference and basic usage patterns.
 
 ## Memory Layout
 

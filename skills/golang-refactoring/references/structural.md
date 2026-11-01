@@ -96,7 +96,7 @@ order/
 - **Caveat: this is a heuristic, not dogma.**
   - Don't mechanically split every struct into an interface-plus-implementation pair on the theory that it's "more testable" — a concrete struct with no interface is simpler to read, and an interface with exactly one implementation and no test-double need is pure indirection.
   - Don't return an interface from a constructor just because "it might be more flexible later" — that flexibility has a name (YAGNI) and a cost (the caller loses type information it might have wanted).
-  - → See `samber/cc-skills-golang@golang-project-layout` skill for the directory/package layout conventions this section assumes, and `samber/cc-skills-golang@golang-design-patterns` skill for judging when introducing an interface is the right call versus premature abstraction.
+  - → See `golang-project-layout` skill for the directory/package layout conventions this section assumes, and `golang` skill for judging when introducing an interface is the right call versus premature abstraction.
 
 ### Splitting a god package
 
@@ -141,7 +141,7 @@ retract (
 - That coupling doesn't show up in a signature, so it doesn't show up in a diff, and it's exactly the kind of dependency that makes a piece of code unsafe to move or test in isolation.
 - The refactor is toward explicit construction: a constructor function that returns a struct, with dependencies passed in as parameters rather than reached for through a package-level variable or `init()`-populated singleton.
   - This doesn't remove the dependency — the code still needs what it needed before — it makes the dependency an explicit, visible seam in the function signature instead of an implicit one buried in the package's `init()`.
-  - → See `samber/cc-skills-golang@golang-design-patterns` skill for constructor and dependency-injection patterns, and [safety-net.md](safety-net.md) in this skill for how this same seam is what a Feathers-style characterization test exploits to get coverage before a risky change.
+  - → See `golang-project-layout` for dependency-injection patterns, and [safety-net.md](safety-net.md) in this skill for how this same seam is what a Feathers-style characterization test exploits to get coverage before a risky change.
 
 ## Generics — When a Refactor Toward Them Is Warranted
 
@@ -164,6 +164,6 @@ retract (
 
 ## Cross-References
 
-- → See `samber/cc-skills-golang@golang-project-layout` skill for directory/package layout conventions.
-- → See `samber/cc-skills-golang@golang-design-patterns` skill for when an interface is the right design choice versus premature abstraction, and for constructor/DI patterns.
+- → See `golang-project-layout` skill for directory/package layout conventions.
+- → See `golang` skill for when an interface is the right design choice versus premature abstraction, and for constructor/DI patterns.
 - → See [catalog.md](catalog.md) in this skill for the Fowler catalog entries (Extract Interface, Change Function Declaration, Move Function) these structural moves build on.

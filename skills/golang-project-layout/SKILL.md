@@ -1,101 +1,59 @@
 ---
 name: golang-project-layout
-description: "Organize Go projects and workspaces. Use for new project setup, package boundaries, cmd/internal conventions, module layout, and repository configuration."
-user-invocable: true
+description: "Structure Go projects and application wiring. Use for new project setup, module paths, cmd/internal package boundaries, multi-module repositories and workspaces, dependency injection and service wiring (including samber/do), and architecture choices such as clean, hexagonal, or DDD."
 license: MIT
-compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
-metadata:
-  author: samber
-  version: "1.4.2"
-  openclaw:
-    emoji: "📁"
-    homepage: https://github.com/samber/cc-skills-golang
-    requires:
-      bins:
-        - go
-    install: []
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent AskUserQuestion
 ---
 
-# Go Project Layout
+# Go project layout and wiring
 
-## Choose structure and wiring
+Follow the requested architecture and the repository's existing layout. For a new
+project, start with the simplest structure that works. A small CLI needs no
+layers and no DI framework. Ask only when missing requirements would materially
+change the architecture or lifecycle design.
 
-Follow the requested architecture and existing repository conventions. For a new
-project, start with the simplest structure that meets its needs; a small CLI does
-not need layers or a DI framework. Use ordinary constructors where wiring is needed
-and retain an established DI library when appropriate. Ask only when missing
-requirements would materially change the architecture or lifecycle design.
+## Layout
 
-See `golang-design-patterns` for architectural tradeoffs and
-`golang-dependency-injection` for wiring choices when the task needs them.
+- A small command can be a root `main` package. Use `cmd/<name>/` when separating
+  several binaries is useful. Entry points parse, wire and run; substantial logic
+  lives in testable packages.
+- Use `internal/` for packages not meant for outside import. Public packages need
+  no `pkg/` wrapper.
+- Name packages for their purpose, not `util`, `common` or `models`. A package
+  that exists only to hold types or interfaces for others usually belongs with
+  its consumer.
+- Within a package, extend the file that owns the behavior. Adding a type, helper
+  or feature does not by itself justify a new file or package. Add one for a
+  distinct responsibility or a technical constraint.
+- Module paths resolve to their published source, including any `/vN` major
+  version suffix. Keep the repository's real case and path.
+- One `go.mod` usually suffices for a monorepo. Use `go.work` for local
+  development across modules that are versioned separately.
+- Services follow 12-factor conventions: config from the environment, logs to
+  stdout, graceful shutdown, and one-off admin commands as their own binaries.
+- Reuse the existing build and lint setup. [assets/Makefile](assets/Makefile) is
+  a template to use on request, not a required scaffold.
 
-## 12-Factor App
+## Wiring
 
-For applications (services, APIs, workers), follow [12-Factor App](https://12factor.net/) conventions: config via environment variables, logs to stdout, stateless processes, graceful shutdown, backing services as attached resources, and admin tasks as one-off commands (e.g., `cmd/migrate/`).
+Wire dependencies explicitly at the application root. Use constructors with
+concrete parameters, plus consumer-owned interfaces where a real seam exists.
+Adopt a container only when it removes a concrete wiring or lifecycle cost. Read
+[dependency-injection.md](references/dependency-injection.md) before changing how
+a program is wired.
 
-## Quick Start: Choose Your Project Type
+## References
 
-| Project Type | Use When | Key Directories |
-| --- | --- | --- |
-| **CLI Tool** | Building a command-line application | `cmd/{name}/`, `internal/`, optional `pkg/` |
-| **Library** | Creating reusable code for others | Root package or named subpackages, `internal/` for private code |
-| **Service** | HTTP API, microservice, or web app | `cmd/{service}/`, `internal/`, `api/`, `web/` |
-| **Monorepo** | Multiple related packages or independently versioned modules | One go.mod often suffices; go.work only for local multi-module work |
-| **Workspace** | Developing multiple local modules | `go.work`, replace directives |
+- [directory-layouts.md](references/directory-layouts.md): layout examples for
+  commands, services and libraries, with common mistakes.
+- [testing-layout.md](references/testing-layout.md): test packages, `testdata/`,
+  shared test helpers.
+- [workspaces.md](references/workspaces.md): setting up `go.work` across modules.
+- [manual-di.md](references/manual-di.md): a complete hand-wired application with
+  shutdown order.
+- [samber-do.md](references/samber-do.md): only when the project uses samber/do.
+- [architecture.md](references/architecture.md): choosing how much architecture a
+  project needs, and for the chosen style [clean-architecture.md](references/clean-architecture.md),
+  [hexagonal-architecture.md](references/hexagonal-architecture.md) or
+  [ddd.md](references/ddd.md).
 
-## Module Naming Conventions
-
-### Module Name (go.mod)
-
-Choose a module path that resolves to its published source, including any subdirectory and major-version suffix. Vanity domains are valid. Uppercase letters and underscores are allowed; preserve the repository's real case and path rather than silently renaming it. Local-only main modules can use a path without a domain, but that path is unsuitable for normal remote dependency discovery.
-
-```go
-module github.com/jdoe/my-project
-module example.com/tools/parser/v2
-```
-
-### Package Naming
-
-Package names conventionally use concise lowercase words; they need not be singular or match the final path segment (notably main and versioned module paths). → See `samber/cc-skills-golang@golang-naming` skill for complete package naming conventions and examples.
-
-## Directory Layout
-
-Preserve existing layout unless restructuring is requested. A small command can have a root `main` package; use `cmd/<name>` when separating binaries is useful. Keep entrypoints focused and extract substantial reusable or testable logic as needed. Prefer `internal/` for implementation packages not intended for external import. Public packages need no `pkg/` wrapper.
-
-Within a package, extend the file that already owns the behavior. Keep related
-types and operations together. A new file needs a distinct logical responsibility
-or a technical reason, such as build constraints or generated code boundaries.
-File size alone is not a smell, and adding a feature, helper, or type does not by
-itself justify another file. Follow established boundaries instead of creating
-small parallel files merely to avoid editing existing code.
-
-See [directory layout examples](references/directory-layouts.md) for universal, small project, and library layouts, plus common mistakes.
-
-## Essential Configuration Files
-
-Follow project requirements, including required package documentation and examples. Reuse existing build and lint configuration; add files where they serve the task. These are available templates, not a mandatory scaffold:
-
-- **Makefile** — build automation. See [Makefile template](assets/Makefile)
-- **.gitignore** — git ignore patterns. See [.gitignore template](assets/.gitignore)
-- **.golangci.yml** — linter config. See the `samber/cc-skills-golang@golang-lint` skill for the recommended configuration
-
-For application configuration with Cobra + Viper, see [config reference](references/config.md).
-
-## Tests, Benchmarks, and Examples
-
-Co-locate tests with the code they test and extend the corresponding existing `_test.go` file. `golang-testing` owns test-file naming and justified separation; a large file alone does not justify a split. Use `testdata/` for fixtures. See [testing layout](references/testing-layout.md) for placement and test-package choices.
-
-## Go Workspaces
-
-Use `go.work` when developing multiple related modules in a monorepo. See [workspaces](references/workspaces.md) for setup, structure, and commands.
-
-## Related Skills
-
-- → See `samber/cc-skills-golang@golang-cli` skill for CLI tool structure and Cobra/Viper patterns.
-- → See `samber/cc-skills-golang@golang-dependency-injection` skill for DI approach comparison and wiring.
-- → See `samber/cc-skills-golang@golang-lint` skill for golangci-lint configuration.
-- → See `samber/cc-skills-golang@golang-continuous-integration` skill for CI/CD pipeline setup.
-- → See `samber/cc-skills-golang@golang-design-patterns` skill for architectural patterns.
-- → See `samber/cc-skills-golang@golang-refactoring` skill for safely moving or splitting existing code into the layout above by updating affected callers and verifying the resulting dependency graph.
-- → Use the project configuration guidance in `golang-how-to` only when requested.
+Moving existing code into a new layout is `golang-refactoring` work.

@@ -25,7 +25,7 @@ vim.pack.add({
   { src = "https://github.com/nvim-treesitter/nvim-treesitter", version = "main" },
 })
 
--- theme.lua links through the shared selector used by Ghostty.
+-- theme.lua links through the shared theme selector.
 -- Apply after packages are available and before setting up UI plugins.
 dofile(vim.fn.stdpath("config") .. "/theme.lua")
 
@@ -80,6 +80,7 @@ require("which-key").setup({
     { "<leader>c", group = "Code" },
     { "<leader>b", group = "Buffers" },
     { "<leader>g", group = "Git", mode = { "n", "x" } },
+    { "<leader>r", group = "Review", mode = { "n", "x" } },
   },
 })
 
@@ -127,8 +128,7 @@ require("conform").setup({
 require("oil").setup({
   view_options = { show_hidden = true }, -- Toggle with g.
   keymaps = {
-    -- Keep Herdr's prefix and pane navigation keys free.
-    ["<C-s>"] = false,
+    -- Keep pane navigation keys free for Rex.
     ["<C-h>"] = false,
     ["<C-l>"] = false,
     ["<C-v>"] = { "actions.select", opts = { vertical = true } },
@@ -147,17 +147,15 @@ require("snacks").setup({
   words = { enabled = true },
   picker = {
     enabled = true,
-    -- Ctrl+X replaces Ctrl+S (Herdr's prefix); Ctrl+V keeps its vertical split default.
+    -- Ctrl+X splits horizontally, matching Oil.
     win = {
       input = {
         keys = {
-          ["<c-s>"] = false,
           ["<c-x>"] = { "edit_split", mode = { "i", "n" } },
         },
       },
       list = {
         keys = {
-          ["<c-s>"] = false,
           ["<c-x>"] = "edit_split",
         },
       },

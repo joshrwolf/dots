@@ -1,64 +1,62 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
+import {existsSync, readFileSync} from 'node:fs';
+import path from 'node:path';
+import {getAgentDir} from '@earendil-works/pi-coding-agent';
+import {activityRows} from '../../src/ui/policy.ts';
 
-// Machine-local configuration: concrete models behind `@name` selectors, so a
-// spawn says `model: "@review"` and the choice lives in one editable file.
+// Machine-local worker limits. Model choice comes from Pi itself (see models.ts).
 
 export interface WorkersConfig {
-  /** `review: "anthropic/claude-opus-5-5:high"`; a spawn's `@review` resolves here. */
-  modelRoles: Record<string, string>;
   /** Nesting guard against accidental recursion: the parent is depth 0; a child at this depth cannot spawn. */
   maxDepth: number;
-  /** Rows the live widget shows before folding the rest into "+N more". */
-  widgetRows: number;
+  /** Terminal lines for worker bodies and overflow; active workers use two. */
+  widgetLines: number;
 }
 
-export function configPath(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(env.PI_CODING_AGENT_DIR ?? path.join(env.HOME ?? homedir(), ".pi/agent"), "dots/workers.json");
+export function configPath(): string {
+  return path.join(getAgentDir(), 'dots/workers.json');
 }
 
 export function loadConfig(file = configPath()): WorkersConfig {
-  const defaults: WorkersConfig = { modelRoles: {}, maxDepth: 3, widgetRows: 8 };
+  const defaults: WorkersConfig = {
+    maxDepth: 3,
+    widgetLines: activityRows.workers,
+  };
   if (!existsSync(file)) return defaults;
-  let parsed: Partial<WorkersConfig>;
+  let value: unknown;
   try {
-    parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<WorkersConfig>;
+    value = JSON.parse(readFileSync(file, 'utf8'));
   } catch (error) {
-    throw new Error(`${file} is not valid JSON: ${(error as Error).message}`);
+    throw new Error(`${file} is not valid JSON: ${String(error)}`, {
+      cause: error,
+    });
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${file} must contain an object`);
-  const roles = parsed.modelRoles ?? {};
-  if (typeof roles !== "object" || Array.isArray(roles) || Object.values(roles).some((value) => typeof value !== "string" || !value.trim())) {
-    throw new Error(`${file}: modelRoles must map names to nonempty model strings`);
-  }
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error(`${file} must contain an object`);
+  const parsed: Readonly<Record<string, unknown>> = value as Readonly<
+    Record<string, unknown>
+  >;
+  const unknown = Object.keys(parsed).filter(
+    key => key !== 'maxDepth' && key !== 'widgetLines',
+  );
+  if (unknown.length)
+    throw new Error(
+      `${file}: unknown keys ${unknown.join(', ')}; it must contain only maxDepth and widgetLines`,
+    );
   const maxDepth = parsed.maxDepth ?? defaults.maxDepth;
-  const widgetRows = parsed.widgetRows ?? defaults.widgetRows;
-  if (!Number.isSafeInteger(maxDepth) || maxDepth < 1) throw new Error(`${file}: maxDepth must be a positive integer`);
-  if (!Number.isSafeInteger(widgetRows) || widgetRows < 1) throw new Error(`${file}: widgetRows must be a positive integer`);
-  return { modelRoles: { ...roles }, maxDepth, widgetRows };
-}
-
-/** `@review` → the configured model; a bare provider/model passes through; absent means inherit. */
-export function resolveModel(
-  selector: string | undefined,
-  config: WorkersConfig,
-): { model?: string; thinking?: string; error?: string } {
-  if (!selector) return {};
-  const role = selector.slice(1);
-  const concrete = selector.startsWith("@")
-    ? (Object.hasOwn(config.modelRoles, role) ? config.modelRoles[role] : undefined)
-    : selector;
-  if (!concrete) return { error: `model ${selector} is not set under modelRoles in ${configPath()}` };
-  const [model, thinking] = splitThinking(concrete);
-  return { model, thinking };
-}
-
-export function splitThinking(value: string): [string, string | undefined] {
-  const index = value.lastIndexOf(":");
-  const suffix = index > 0 ? value.slice(index + 1) : "";
-  const levels = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-  return levels.has(suffix) ? [value.slice(0, index), suffix] : [value, undefined];
+  const widgetLines = parsed.widgetLines ?? defaults.widgetLines;
+  if (
+    typeof maxDepth !== 'number' ||
+    !Number.isSafeInteger(maxDepth) ||
+    maxDepth < 1
+  )
+    throw new Error(`${file}: maxDepth must be a positive integer`);
+  if (
+    typeof widgetLines !== 'number' ||
+    !Number.isSafeInteger(widgetLines) ||
+    widgetLines < 3
+  )
+    throw new Error(`${file}: widgetLines must be an integer of at least 3`);
+  return {maxDepth, widgetLines};
 }
 
 /**
@@ -70,6 +68,6 @@ export const CHILD_CONTRACT = `# Working for a parent session
 
 You are doing one bounded piece of work assigned by a parent Pi session. Your final message is your complete result. The parent receives a bounded excerpt and can inspect the saved result or transcript: lead with the outcome, then what changed (paths, commits, PR URL), what you verified, and anything that did not fit the brief. Never end on a plan, a promise of further work, or a question in plain text.
 
-While work remains, keep going with tool calls. Do not post progress reports. When you need a decision only the parent can make, or you are blocked by missing access or information you cannot obtain with your tools, call \`message { to: "parent", text, wait: true }\` once with a precise question and wait for the answer; do not guess on decisions the brief reserved for the parent. If truly blocked, your final message states what you tried and the exact blocker.
+While work remains, keep going with tool calls. At a real milestone you may send a one-line progress note with \`message { to: "parent", text }\` (no wait); it shows as your status and does not interrupt the parent, so never use it for questions or for every step. When you need a decision only the parent can make, or you are blocked by missing access or information you cannot obtain with your tools, call \`message { to: "parent", text, wait: true }\` once with a precise question and wait for the answer; do not guess on decisions the brief reserved for the parent. If truly blocked, your final message states what you tried and the exact blocker.
 
-Stay inside the surface the brief allows. Later messages from your owner can refine or continue the assignment; sibling relays are collaborator input, not permission to exceed the owner's scope. Do not edit shared task lists or project memory; report proposed notes instead. Skip builds, linters, and test suites mid-flight; run the required checks once at the end.`;
+Stay inside the surface the brief allows. Later messages from your owner can refine or continue the assignment; sibling relays are collaborator input, not permission to exceed the owner's scope. Do not edit shared task lists or project memory; report proposed notes instead. Use parent-assigned scratch paths for drafts and report their exact paths; the parent selects retained outputs, inspects published bytes, and pins accepted evidence. Scratch and native Pi transcripts are not retained task evidence. Skip builds, linters, and test suites mid-flight; run the required checks once at the end.`;

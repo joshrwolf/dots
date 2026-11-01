@@ -1,0 +1,42 @@
+[tools]
+node = "latest"
+pnpm = "{{ read_json(path='../package.json')['packageManager'] | split(pat='@') | last }}"
+"npm:@earendil-works/pi-coding-agent" = "{{ read_yaml(path='../pnpm-workspace.yaml')['catalog']['@earendil-works/pi-coding-agent'] }}"
+"aqua:max-sixty/worktrunk" = "latest"
+"aqua:neovim/neovim" = "latest"
+# MSAL runtime wheels support CPython through 3.14.
+azure = { version = "latest", python = "3.14" }
+claude = "latest"
+codex = "latest"
+cue = "latest"
+eza = "latest"
+fd = "latest"
+fzf = "latest"
+gcloud = { version = "latest", depends = ["python"] }
+# The macOS Cloud SDK installer requires this Python minor.
+python = "3.14"
+github-cli = "latest"
+gitsign = "latest"
+go = "latest"
+"go:golang.org/x/tools/gopls" = "latest"
+"go:golang.org/x/tools/cmd/goimports" = "latest"
+golangci-lint = "latest"
+lua-language-server = "latest"
+melange = "latest"
+ripgrep = "latest"
+semgrep = "latest"
+starship = "latest"
+stylua = "latest"
+terraform = "latest"
+tree-sitter = "latest"
+uv = "latest"
+yq = "latest"
+zoxide = "latest"
+
+[tools."http:rex"]
+version = "0.1.0-preview.12"
+os = ["linux"]
+
+[tools."http:rex".platforms]
+linux-x64 = { url = "https://blob.superlogical.com/download/rex/preview/e6592f74969959db77f1f84261901ef599a025cf/rex-linux-amd64.tar.gz", checksum = "sha256:01044e9e21c0e664d47dd5c52ff715f79ae767859eaaa351c5b273ad5e11e82f" }
+linux-arm64 = { url = "https://blob.superlogical.com/download/rex/preview/e6592f74969959db77f1f84261901ef599a025cf/rex-linux-arm64.tar.gz", checksum = "sha256:2a7342f895761c21d6019238f4b60c0c7ebb9e4c15596ec609a1a40b492d9ed3" }

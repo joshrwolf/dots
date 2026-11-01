@@ -2,6 +2,17 @@
 
 lockfile_version = 3
 
+[[tools."aqua:max-sixty/worktrunk"]]
+version = "0.81.0"
+backend = "aqua:max-sixty/worktrunk"
+specifiers = ["0.81.0"]
+
+[tools."aqua:max-sixty/worktrunk"."platforms.macos-arm64"]
+checksum = "sha256:b9c3f2f8071554cf88500466d65d35e18ad5edad5762479a1f14bcddd5ab7882"
+url = "https://github.com/max-sixty/worktrunk/releases/download/v0.81.0/worktrunk-aarch64-apple-darwin.tar.xz"
+url_api = "https://api.github.com/repos/max-sixty/worktrunk/releases/assets/660537046"
+provenance = "cosign"
+
 [[tools."aqua:neovim/neovim"]]
 version = "0.12.6"
 backend = "aqua:neovim/neovim"
@@ -34,3 +45,14 @@ specifiers = ["24.22.0"]
 [tools.node."platforms.macos-arm64"]
 checksum = "sha256:6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5"
 url = "https://nodejs.org/dist/v24.22.0/node-v24.22.0-darwin-arm64.tar.gz"
+
+[[tools.pnpm]]
+version = "11.28.6"
+backend = "aqua:pnpm/pnpm"
+specifiers = ["11.28.6"]
+
+[tools.pnpm."platforms.macos-arm64"]
+checksum = "sha256:acf4dd667fbf792e45bc3908be89afda098e2e660132b7731bbade7147b4912b"
+url = "https://github.com/pnpm/pnpm/releases/download/v11.28.6/pnpm-darwin-arm64.tar.gz"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/643978139"
+provenance = "github-attestations"

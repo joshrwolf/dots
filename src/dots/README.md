@@ -12,14 +12,14 @@ dots --help
 
 Installation runs `cargo install`, which places `dots` in `~/.cargo/bin`. Its
 generated skill reaches agents through the [shared skills](../../docs/skills.md)
-links from the base `mise run install`.
+namespace deployed by [machine setup](../../bootstrap/README.md).
 
 ## Use
 
 - [Inspect CI](../../docs/github-ci.md) on PRs, commits, refs, and run attempts.
 - [Read review threads](../../docs/github-reviews.md).
+- [Watch PRs](../../docs/github-watch.md) with cached status.
 - [Track shared project tasks](../../docs/tasks.md).
-- [Associate PRs with Herdr workspaces](../herdr/github/README.md).
 
 Agents should request `--json`; structured follow-ups preserve that mode.
 Commands describe their own effects—there is no blanket read-only guarantee.

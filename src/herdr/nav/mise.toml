@@ -1,8 +1,0 @@
-[tasks.build]
-description = "Stage bin/ in this plugin directory"
-run = "cargo install --locked --path . --root . --force"
-
-[tasks.install]
-description = "Build, then link this plugin directory into Herdr"
-depends = [":build"]
-run = "herdr plugin link ."

@@ -359,13 +359,15 @@ fn strip_sgr(text: &str) -> String {
     while let Some(at) = rest.find("\u{1b}[") {
         let (before, sequence) = rest.split_at(at);
         out.push_str(before);
-        let body = sequence.strip_prefix("\u{1b}[").unwrap_or(sequence);
+        // `find` and `split_at` above prove the escape prefix is present.
+        let body = &sequence["\u{1b}[".len()..];
         let params = body
             .bytes()
             .take_while(|byte| byte.is_ascii_digit() || matches!(byte, b';' | b':'))
             .count();
-        if body.get(params..).is_some_and(|tail| tail.starts_with('m')) {
-            rest = body.get(params + 1..).unwrap_or_default();
+        // `params` counts only ASCII bytes, so this is a character boundary.
+        if let Some(tail) = body[params..].strip_prefix('m') {
+            rest = tail;
         } else {
             out.push_str("\u{1b}[");
             rest = body;
@@ -403,14 +405,15 @@ mod tests {
     fn color_is_removed_but_terminal_commands_remain_visible() {
         assert_eq!(printable("\u{1b}[36;1mcafe\u{301}\u{1b}[0m"), "cafe\u{301}");
         assert_eq!(printable("\u{1b}[2J"), "\\u{1b}[2J");
+        assert_eq!(printable("\u{1b}[31"), "\\u{1b}[31");
         assert!(!printable("\u{1b}]8;;https://example.test\u{7}link").contains('\u{1b}'));
     }
 
     #[test]
     fn controls_cannot_overwrite_evidence_and_unicode_survives() {
-        let text = printable("\u{1b}[2Jcafe\u{301} 👨‍👩‍👧\rhidden\n");
+        let text = printable("\u{1b}[2Jcafe\u{301} 👨\u{200d}👩\u{200d}👧\rhidden\n");
         assert!(!text.contains('\u{1b}') && !text.contains('\r'));
-        assert!(text.contains("cafe\u{301} 👨‍👩‍👧"));
+        assert!(text.contains("cafe\u{301} 👨\u{200d}👩\u{200d}👧"));
         assert!(text.contains("\\rhidden\n"));
     }
 }

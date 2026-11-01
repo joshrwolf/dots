@@ -45,4 +45,4 @@ go test -cover ./internal/store
 - **Generated code skews the denominator.** It can raise or lower coverage; decide explicitly whether it belongs in the reported scope.
 - **A covered line is not an asserted line.** A test that calls a function and ignores its result reports 100% coverage and verifies nothing.
 
-→ See `samber/cc-skills-golang@golang-continuous-integration` skill for wiring coverage reporting into CI.
+→ See `golang-continuous-integration` skill for wiring coverage reporting into CI.

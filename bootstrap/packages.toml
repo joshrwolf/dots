@@ -1,0 +1,49 @@
+[bootstrap.packages]
+"brew:git" = { os = "macos" }
+"brew:coreutils" = { os = "macos" }
+"brew:gnu-tar" = { os = "macos" }
+"brew:e2fsprogs" = { os = "macos" }
+"brew:qemu" = { os = "macos" }
+
+"apt:build-essential" = "latest"
+"apt:libatomic1" = "latest"
+"apt:pkg-config" = "latest"
+"apt:git" = "latest"
+"apt:zsh" = "latest"
+"apt:bash" = "latest"
+"apt:curl" = "latest"
+"apt:ca-certificates" = "latest"
+"apt:unzip" = "latest"
+"apt:xz-utils" = "latest"
+"apt:e2fsprogs" = "latest"
+"apt:qemu-system" = "latest"
+"apt:qemu-utils" = "latest"
+
+"apk:build-base" = "latest"
+"apk:libatomic" = "latest"
+"apk:pkgconf" = "latest"
+"apk:git" = "latest"
+"apk:zsh" = "latest"
+"apk:bash" = "latest"
+"apk:curl" = "latest"
+"apk:ca-certificates" = "latest"
+"apk:unzip" = "latest"
+"apk:xz" = "latest"
+"apk:e2fsprogs" = "latest"
+"apk:qemu" = "latest"
+"apk:qemu-utils" = "latest"
+
+"dnf:gcc" = "latest"
+"dnf:libatomic" = "latest"
+"dnf:gcc-c++" = "latest"
+"dnf:make" = "latest"
+"dnf:pkgconf-pkg-config" = "latest"
+"dnf:git" = "latest"
+"dnf:zsh" = "latest"
+"dnf:bash" = "latest"
+"dnf:curl" = "latest"
+"dnf:ca-certificates" = "latest"
+"dnf:unzip" = "latest"
+"dnf:xz" = "latest"
+"dnf:e2fsprogs" = "latest"
+"dnf:qemu" = "latest"

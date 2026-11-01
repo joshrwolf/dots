@@ -1,0 +1,18 @@
+[Unit]
+Description=Rex login server over existing Tailscale
+After=network.target tailscaled.service
+Requires=tailscaled.service
+
+[Service]
+Type=notify-reload
+NotifyAccess=main
+RuntimeDirectory=rex
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/local/bin/rex login-server --listen unix:///run/rex/login-server.sock --runtime-root /run/rex --accounts /etc/rex/accounts.jsonc --pam-service rex-login-server --extra-listen tailnet-serve:///run/rex/serve.sock --log-format text
+Restart=on-failure
+RestartSec=3
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

@@ -1,26 +1,7 @@
 ---
 name: golang-security
 description: "Review and harden Go code against security threats. Use for injection, authentication, cryptography, unsafe input handling, or vulnerability audits."
-user-invocable: true
 license: MIT
-compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
-metadata:
-  author: samber
-  version: "1.2.2"
-  openclaw:
-    emoji: "🔒"
-    homepage: https://github.com/samber/cc-skills-golang
-    requires:
-      bins:
-        - go
-        - govulncheck
-    install:
-      - kind: go
-        package: golang.org/x/vuln/cmd/govulncheck@latest
-        bins: [govulncheck]
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch Bash(govulncheck:*) WebSearch AskUserQuestion EnterWorktree ExitWorktree
-paths:
-  - "**/*.go"
 ---
 
 When reviewing a change, trace affected call sites and data flows into adjacent code;
@@ -28,15 +9,7 @@ a vulnerability may live outside the diff but be triggered by it. Report finding
 for an audit request; implement fixes when authorized, grouping related changes
 for review.
 
-**Dependencies:**
-
-- govulncheck: `go install golang.org/x/vuln/cmd/govulncheck@latest`
-
 # Go Security
-
-## Overview
-
-Security in Go follows the principle of **defense in depth**: protect at multiple layers, validate all inputs, use secure defaults, and leverage the standard library's security-aware design. Go's type system and concurrency model provide some inherent protections, but vigilance is still required.
 
 ## Findings and Severity
 
@@ -89,7 +62,7 @@ For the full security review checklist organized by domain (input handling, data
 
 ### Static Analysis & Linting
 
-Security-relevant linters: `bodyclose`, `sqlclosecheck`, `nilerr`, `errcheck`, `govet`, `staticcheck`. See the `samber/cc-skills-golang@golang-lint` skill for configuration and usage.
+Security-relevant linters: `bodyclose`, `sqlclosecheck`, `nilerr`, `errcheck`, `govet`, `staticcheck`. See the `golang-continuous-integration` skill for configuration and usage.
 
 For deeper security-specific analysis:
 
@@ -146,9 +119,7 @@ See **[Security Architecture](./references/architecture.md)** for detailed anti-
 
 ## Cross-References
 
-See `samber/cc-skills-golang@golang-database`, `samber/cc-skills-golang@golang-safety`, `samber/cc-skills-golang@golang-observability`, `samber/cc-skills-golang@golang-continuous-integration` skills.
-
-- → See `samber/cc-skills-golang@golang-continuous-integration` skill for automated AI-driven code review in CI using these guidelines
+See `golang-database`, `golang`, `golang-observability`, `golang-continuous-integration` skills.
 
 ## Additional Resources
 

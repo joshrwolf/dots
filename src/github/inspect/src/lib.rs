@@ -1,7 +1,7 @@
 //! Read-only GitHub inspection shared by local commands and integration adapters.
 //!
-//! No Herdr invocation, agent lifecycle, output formatting, or persistent service
-//! belongs here. References pin jobs; querying a newer PR never redirects logs.
+//! Agent lifecycle, output formatting, and persistent services belong to callers.
+//! References pin jobs; querying a newer PR never redirects logs.
 
 mod cache;
 mod checks;
@@ -13,11 +13,11 @@ mod provider;
 mod reference;
 pub mod reviews;
 mod snapshot;
-pub mod status;
 mod subjects;
 mod target;
 
 pub use cache::CachedLog;
+pub use checks::CheckBucket;
 pub use evidence::{Evidence, LogMatch, LogOptions, LogPage, LogSource, Step, job_logs};
 pub use inspect::{
     Check, InspectOptions, Inspection, ObservationSource, PullRequest, Summary, inspect,
@@ -33,7 +33,6 @@ pub use subjects::inspect_target;
 pub use target::{Repository, Subject, Target};
 
 #[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
 pub enum Error {
     #[error("could not read or store GitHub evidence")]
     LogIo(#[from] std::io::Error),
@@ -53,6 +52,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 impl Error {
     /// Preserve the cause when a query failure is returned as partial evidence.
+    #[must_use]
     pub fn diagnostic(&self) -> String {
         use std::error::Error as _;
         let mut text = self.to_string();

@@ -1,0 +1,40 @@
+[package]
+name = "dots-pick"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+dots-process.workspace = true
+nucleo.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+nix = { workspace = true, features = ["term"] }
+
+[features]
+# Builds the terminal fixture for this crate's own tests. Off by default.
+testing = []
+
+[[bin]]
+name = "dots-pick-panic-fixture"
+path = "tests/fixtures/panic.rs"
+required-features = ["testing"]
+
+[[bin]]
+name = "dots-pick-act-fixture"
+path = "tests/fixtures/act.rs"
+required-features = ["testing"]
+
+[lints]
+workspace = true

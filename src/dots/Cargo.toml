@@ -2,32 +2,28 @@
 name = "dots-cli"
 version = "0.1.0"
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 publish = false
-autobins = false
-
-[lib]
-path = "src/lib.rs"
 
 [[bin]]
 name = "dots"
 path = "src/main.rs"
 
 [dependencies]
-herdr-prs.workspace = true
 dots-tasks.workspace = true
+dots-process.workspace = true
+dots-review.workspace = true
 dots-memory.workspace = true
-herdrkit.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 github-inspect.workspace = true
+github-watch.workspace = true
+nix = { workspace = true, features = ["poll"] }
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true
-
-[dev-dependencies]
-herdrkit = { workspace = true, features = ["testing"] }
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
 
 [lints]
 workspace = true

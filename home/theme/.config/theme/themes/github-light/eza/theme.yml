@@ -1,4 +1,4 @@
-# Named colors inherit Ghostty's GitHub Light ANSI palette.
+# Named colors inherit the terminal's GitHub Light ANSI palette.
 # Avoid eza's extended-palette defaults, which can be faint on a white background.
 filekinds:
   normal: {foreground: Black}

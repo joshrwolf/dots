@@ -1,87 +1,76 @@
 ---
 name: golang-performance
-description: "Optimize Go code after identifying a bottleneck. Use for allocations, memory layout, GC pressure, caching, CPU efficiency, and hot-path tradeoffs."
-user-invocable: true
+description: "Measure and optimize Go performance. Use for writing and running benchmarks, pprof CPU/heap/block profiles, execution traces, benchstat comparisons, escape analysis, allocation and GC pressure, caching, runtime tuning, and CI regression gates."
 license: MIT
-compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
-metadata:
-  author: samber
-  version: "1.3.2"
-  openclaw:
-    emoji: "🏎"
-    homepage: https://github.com/samber/cc-skills-golang
-    requires:
-      bins:
-        - go
-        - benchstat
-    install:
-      - kind: go
-        package: golang.org/x/perf/cmd/benchstat@latest
-        bins: [benchstat]
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch Bash(benchstat:*) Bash(fieldalignment:*) Bash(staticcheck:*) Bash(curl:*) Bash(fgprof:*) Bash(perf:*) WebSearch AskUserQuestion EnterWorktree ExitWorktree
-paths:
-  - "**/*.go"
 ---
 
-# Go Performance Optimization
+# Go performance
 
-## Measurement constraints
+Measure before optimizing and report what was measured. Explain any optimization
+that would otherwise look needlessly complicated.
 
-Use representative workloads and compare against a baseline; microbenchmarks and
-end-to-end measurements answer different questions. Concurrent benchmark runs on
-shared hardware contaminate comparisons. See `golang-benchmark` for pprof,
-benchstat, and measurement controls.
+## Measure
 
-Explain non-obvious performance tradeoffs where the optimized code would otherwise
-look needlessly complicated.
+- First rule out external bottlenecks. If off-CPU time dominates (fgprof,
+  goroutines blocked in `net` or `database/sql`, slow spans in traces), tune that
+  dependency, not the Go code.
+- Use `b.Loop()` (Go 1.24+) for new and changed benchmarks. It keeps setup out of
+  the timing and the work alive, so neither `ResetTimer` nor sink variables are
+  needed. Keep `b.N` only for older targets. Use one `b.Run` sub-benchmark per
+  variant or size; that name is what benchstat compares.
+- Follow the repository's benchmark file convention. Otherwise put benchmarks in
+  the source file's `_test.go`, or in a `foo_bench_test.go` beside it when the
+  measurement fixtures are substantial.
+- Run `go test -run='^$' -bench=X -benchmem -count=10 ./pkg | tee new.txt`, then
+  `benchstat old.txt new.txt`. A `~` result is inconclusive; say so rather than
+  claiming a win. Report the workload, hardware and toolchain with the numbers.
+- Run benchmarks serially. Concurrent runs on shared CPUs contaminate each other.
+  Implementation variants can be built in parallel; measurements cannot.
+- Compare on one toolchain. Go 1.27's size-specialized allocator shifts
+  allocation-heavy baselines, so a comparison across 1.26→1.27 measures the
+  toolchain.
+- Profile from the benchmark: `-cpuprofile`, `-memprofile`, then `go tool pprof`;
+  or `-trace` with `go tool trace`.
 
-## Rule Out External Bottlenecks First
+## Optimize by signal
 
-Before optimizing Go code, verify the bottleneck is in your process — if 90% of latency is a slow DB query or API call, reducing allocations won't help.
-
-**Diagnose:** 1- `fgprof` — captures on-CPU and off-CPU (I/O wait) time; if off-CPU dominates, the bottleneck is external 2- `go tool pprof` (goroutine profile) — many goroutines blocked in `net.(*conn).Read` or `database/sql` = external wait 3- Distributed tracing (OpenTelemetry) — span breakdown shows which upstream is slow
-
-**When external:** optimize that component instead — query tuning, caching, connection pools, circuit breakers (→ See `samber/cc-skills-golang@golang-database` skill, [Caching Patterns](references/caching.md)).
-
-## Profiles and relevant references
-
-| Bottleneck | Signal (from pprof) | Action |
-| --- | --- | --- |
-| Too many allocations | `alloc_objects` high in heap profile | [Memory optimization](references/memory.md) |
-| CPU-bound hot loop | function dominates CPU profile | [CPU optimization](references/cpu.md) |
-| GC pauses / OOM | high GC%, container limits | [Runtime tuning](references/runtime.md) |
-| Network / I/O latency | goroutines blocked on I/O | [I/O & networking](references/io-networking.md) |
-| Repeated expensive work | same computation/fetch multiple times | [Caching patterns](references/caching.md) |
-| Wrong algorithm | O(n²) where O(n) exists | [Algorithmic complexity](references/caching.md#algorithmic-complexity) |
-| Lock contention | mutex/block profile hot | → See `samber/cc-skills-golang@golang-concurrency` skill |
-| Slow queries | DB time dominates traces | → See `samber/cc-skills-golang@golang-database` skill |
-
-## Common Mistakes
-
-| Mistake | Fix |
+| Signal | Read |
 | --- | --- |
-| Default `http.Client` without Transport | `MaxIdleConnsPerHost` defaults to 2; set to match your concurrency level |
-| Logging in hot loops | Arguments are evaluated even for disabled levels; guard expensive construction and measure handler/attribute costs |
-| `panic`/`recover` as control flow | panic unwinds deferred calls; use error returns for expected failures |
-| `unsafe` without benchmark proof | Require a measured benefit that justifies the safety and maintenance cost |
-| No GC tuning in containers | Set `GOMEMLIMIT` with headroom for non-Go memory; it is a soft runtime limit, not an OOM guarantee |
-| `reflect.DeepEqual` in production | Consider typed comparisons such as `slices.Equal`, `maps.Equal`, or `bytes.Equal`; preserve equality semantics and measure the actual workload |
+| High `alloc_objects`, GC churn | [memory.md](references/memory.md) |
+| A function dominates CPU | [cpu.md](references/cpu.md) |
+| GC pauses, OOM, container limits | [runtime.md](references/runtime.md) (GOGC, GOMEMLIMIT, PGO) |
+| Goroutines blocked on I/O | [io-networking.md](references/io-networking.md) |
+| Repeated work, wrong complexity | [caching.md](references/caching.md) |
+| Hot mutex or block profile | `golang-concurrency` |
+| DB time dominates | `golang-database` |
 
-## Deep Dives
+## Gotchas
 
-- [Memory Optimization](references/memory.md) — allocation patterns, backing array leaks, sync.Pool, struct alignment
-- [CPU Optimization](references/cpu.md) — inlining, cache locality, false sharing, ILP, reflection avoidance
-- [I/O & Networking](references/io-networking.md) — HTTP transport config, streaming, JSON performance, cgo, batch operations
-- [Runtime Tuning](references/runtime.md) — GOGC, GOMEMLIMIT, GC diagnostics, GOMAXPROCS, PGO
-- [Caching Patterns](references/caching.md) — algorithmic complexity, compiled patterns, singleflight, work avoidance
-- [Production Observability](references/observability.md) — Prometheus metrics, PromQL queries, continuous profiling, alerting rules
+- `http.Transport` keeps only 2 idle connections per host by default
+  (`MaxIdleConnsPerHost`); raise it to match real concurrency.
+- Logging arguments are evaluated even for disabled levels. Guard expensive
+  attribute construction in hot paths.
+- `GOMEMLIMIT` is a soft limit. Leave headroom for non-Go memory.
+- `unsafe` and hand-rolled pooling need a measured benefit that justifies their
+  maintenance and safety cost.
 
-## Cross-References
+## References
 
-- → See `samber/cc-skills-golang@golang-benchmark` skill for benchmarking methodology, `benchstat`, and `b.Loop()` (Go 1.24+)
-- → See `samber/cc-skills-golang@golang-benchmark` skill for pprof workflow, escape analysis diagnostics, and performance debugging
-- → See `samber/cc-skills-golang@golang-data-structures` skill for slice/map preallocation and `strings.Builder`
-- → See `samber/cc-skills-golang@golang-concurrency` skill for worker pools, `sync.Pool` API, goroutine lifecycle, and lock contention
-- → See `samber/cc-skills-golang@golang-safety` skill for defer in loops, slice backing array aliasing
-- → See `samber/cc-skills-golang@golang-database` skill for connection pool tuning and batch processing
-- → See `samber/cc-skills-golang@golang-observability` skill for continuous profiling in production
+- [pprof.md](references/pprof.md), [trace.md](references/trace.md),
+  [benchstat.md](references/benchstat.md): reading profiles, traces and comparisons.
+- [compiler-analysis.md](references/compiler-analysis.md): unexpected
+  allocations, escape analysis, inlining, assembly.
+- [tools.md](references/tools.md): fieldalignment, GODEBUG, fgprof, other
+  focused diagnostics.
+- [pprof-server.md](references/pprof-server.md): enabling and protecting
+  `net/http/pprof` on a running service.
+- [investigation-session.md](references/investigation-session.md),
+  [prometheus-go-metrics.md](references/prometheus-go-metrics.md),
+  [observability.md](references/observability.md): production runtime metrics
+  and PromQL during an investigation.
+- [ci-regression.md](references/ci-regression.md): benchmark regression gates in CI.
+- [slice-internals.md](references/slice-internals.md),
+  [map-internals.md](references/map-internals.md),
+  [pointers.md](references/pointers.md): growth, retention, escape behavior,
+  `unsafe.Pointer` rules, `weak.Pointer`.
+- [samber-hot.md](references/samber-hot.md): only when the project uses samber/hot.

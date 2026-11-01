@@ -2,18 +2,115 @@
 use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use anyhow::{Context as _, Result, bail, ensure};
-use dots_memory::Store;
-use serde_json::{Value, json};
+use anyhow::{Context as _, Result, ensure};
+use dots_memory::{Document, Search, Store};
+use serde_json::json;
 
 use crate::command::{MemoryCommand, MemoryScope};
 
-pub(crate) fn run(command: MemoryCommand, directory: &Path, json_output: bool) -> Result<String> {
-    // Explicit global operations work even if the current checkout has broken Git metadata.
-    let needs_project = !matches!(
+pub(crate) fn run(
+    command: MemoryCommand,
+    directory: &Path,
+    project: Option<&str>,
+    json_output: bool,
+) -> Result<String> {
+    let needs_project = needs_project(&command);
+    ensure!(
+        project.is_none() || needs_project,
+        "--project cannot be combined with --scope global"
+    );
+    let scopes = Scopes::resolve(directory, needs_project, project)?;
+    if matches!(
         &command,
+        MemoryCommand::Write { .. } | MemoryCommand::Remove { .. }
+    ) {
+        crate::project::open()?;
+    }
+    match command {
+        MemoryCommand::Scope => Ok(crate::json::render(
+            json!({"global": scopes.global, "project": scopes.project, "diagnostic": scopes.diagnostic}),
+        )),
+        MemoryCommand::Read {
+            path,
+            scope,
+            start,
+            lines,
+        } => {
+            let document = scopes
+                .store(scope)?
+                .read(&path, start, usize::from(lines))?;
+            Ok(if json_output {
+                crate::json::render(json!({"scope": label(scope), "document": document}))
+            } else {
+                render_document(&document)
+            })
+        }
+        MemoryCommand::Write {
+            path,
+            scope,
+            expected,
+            content_file,
+        } => {
+            let content = read_input(directory, &content_file)?;
+            let published = scopes
+                .store(scope)?
+                .publish(&path, &expected, Some(&content))?;
+            Ok(crate::json::render(
+                json!({"scope": label(scope), "published": published}),
+            ))
+        }
+        MemoryCommand::Remove {
+            path,
+            scope,
+            expected,
+        } => {
+            let published = scopes.store(scope)?.publish(&path, &expected, None)?;
+            Ok(crate::json::render(
+                json!({"scope": label(scope), "published": published}),
+            ))
+        }
+        MemoryCommand::Search {
+            query,
+            scope,
+            offset,
+            limit,
+        } => {
+            let selected = selected_scopes(&scopes, scope);
+            let results = selected
+                .into_iter()
+                .map(|scope| -> Result<(&'static str, Search)> {
+                    Ok((
+                        label(scope),
+                        scopes
+                            .store(scope)?
+                            .search(&query, offset as usize, usize::from(limit))?,
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(if json_output {
+                let searches = results
+                    .iter()
+                    .map(|(scope, result)| json!({"scope": scope, "result": result}))
+                    .collect::<Vec<_>>();
+                crate::json::render(json!({"searches": searches, "diagnostic": scopes.diagnostic}))
+            } else {
+                let rendered = render_searches(&results);
+                scopes
+                    .diagnostic
+                    .as_ref()
+                    .map_or(rendered.clone(), |diagnostic| {
+                        format!("{diagnostic}\n{rendered}")
+                    })
+            })
+        }
+    }
+}
+
+fn needs_project(command: &MemoryCommand) -> bool {
+    // Explicit global operations work even if the current checkout has broken Git metadata.
+    !matches!(
+        command,
         MemoryCommand::Read {
             scope: MemoryScope::Global,
             ..
@@ -27,82 +124,45 @@ pub(crate) fn run(command: MemoryCommand, directory: &Path, json_output: bool) -
             scope: Some(MemoryScope::Global),
             ..
         }
-    );
-    let scopes = Scopes::resolve(directory, needs_project)?;
-    let value = match command {
-        MemoryCommand::Scope => json!({"global": scopes.global, "project": scopes.project}),
-        MemoryCommand::Read {
-            path,
-            scope,
-            start,
-            lines,
-        } => {
-            json!({"scope": label(scope), "document": scopes.store(scope)?.read(&path, start, usize::from(lines))?})
-        }
-        MemoryCommand::Write {
-            path,
-            scope,
-            expected,
-            content_file,
-        } => {
-            let input = if content_file.is_absolute() {
-                content_file
-            } else {
-                directory.join(content_file)
-            };
-            ensure!(
-                std::fs::metadata(&input)
-                    .context("inspect memory input")?
-                    .is_file(),
-                "memory input must be a regular file"
-            );
-            let mut content = String::new();
-            std::fs::File::open(&input)
-                .context("open memory input file")?
-                .take((dots_memory::MAX_FILE_BYTES + 1) as u64)
-                .read_to_string(&mut content)
-                .context("read UTF-8 memory input")?;
-            ensure!(
-                content.len() <= dots_memory::MAX_FILE_BYTES,
-                "memory input exceeds 256 KiB"
-            );
-            json!({"scope": label(scope), "published": scopes.store(scope)?.publish(&path, &expected, Some(&content))?})
-        }
-        MemoryCommand::Remove {
-            path,
-            scope,
-            expected,
-        } => {
-            json!({"scope": label(scope), "published": scopes.store(scope)?.publish(&path, &expected, None)?})
-        }
-        MemoryCommand::Search {
-            query,
-            scope,
-            include_sources,
-            offset,
-            limit,
-        } => {
-            let selected = scope.map_or_else(
-                || {
-                    let mut selected = vec![MemoryScope::Global];
-                    if scopes.project.is_some() {
-                        selected.push(MemoryScope::Project);
-                    }
-                    selected
-                },
-                |scope| vec![scope],
-            );
-            let results = selected.into_iter().map(|scope| -> Result<Value> {
-                Ok(json!({"scope": label(scope), "result": scopes.store(scope)?.search(&query, include_sources, offset as usize, usize::from(limit))?}))
-            }).collect::<Result<Vec<_>>>()?;
-            json!({"searches": results})
-        }
-    };
-    Ok(if json_output {
-        crate::json::render(value)
+    )
+}
+
+fn read_input(directory: &Path, content_file: &Path) -> Result<String> {
+    let input = if content_file.is_absolute() {
+        content_file.to_path_buf()
     } else {
-        render(&value)
-    })
+        directory.join(content_file)
+    };
+    ensure!(
+        std::fs::metadata(&input)
+            .context("inspect memory input")?
+            .is_file(),
+        "memory input must be a regular file"
+    );
+    let mut content = String::new();
+    std::fs::File::open(&input)
+        .context("open memory input file")?
+        .take((dots_memory::MAX_FILE_BYTES + 1) as u64)
+        .read_to_string(&mut content)
+        .context("read UTF-8 memory input")?;
+    ensure!(
+        content.len() <= dots_memory::MAX_FILE_BYTES,
+        "memory input exceeds 256 KiB"
+    );
+    Ok(content)
+}
+
+fn selected_scopes(scopes: &Scopes, scope: Option<MemoryScope>) -> Vec<MemoryScope> {
+    scope.map_or_else(
+        || {
+            let mut selected = vec![MemoryScope::Global];
+            if scopes.project.is_some() {
+                selected.push(MemoryScope::Project);
+            }
+            selected
+        },
+        |scope| vec![scope],
+    )
 }
 
 fn label(scope: MemoryScope) -> &'static str {
@@ -115,127 +175,88 @@ fn label(scope: MemoryScope) -> &'static str {
 struct Scopes {
     global: PathBuf,
     project: Option<PathBuf>,
+    lock_path: PathBuf,
+    diagnostic: Option<String>,
 }
+
 impl Scopes {
-    fn resolve(directory: &Path, project: bool) -> Result<Self> {
-        let root = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .or_else(|| {
-                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
-            })
-            .context("HOME or absolute XDG_DATA_HOME is required")?
-            .join("dots/memory");
-        ensure!(root.is_absolute(), "memory root must be absolute");
-        let checkout = if project { checkout(directory)? } else { None };
-        let project = checkout
-            .map(|checkout| -> Result<PathBuf> {
-                let key = dots_memory::project_key(&checkout);
-                ensure!(
-                    !key.is_empty() && key != "_global",
-                    "project memory key collides with the root or global scope"
-                );
-                Ok(root.join(key))
-            })
-            .transpose()?;
+    fn resolve(directory: &Path, needs_project: bool, explicit: Option<&str>) -> Result<Self> {
+        let root = crate::project::data_root()?;
+        let workspaces = root.join("workspaces");
+        let mut project = None;
+        let mut diagnostic = None;
+        if needs_project && crate::project::catalog_path()?.try_exists()? {
+            let mut store = crate::project::open()?;
+            match crate::project::resolve_optional(&mut store, directory, explicit)? {
+                crate::project::Resolution::Bound(id) => {
+                    project = Some(workspaces.join(id.as_str()).join("knowledge"));
+                }
+                crate::project::Resolution::Unavailable(message) => {
+                    diagnostic = Some(message.into());
+                }
+            }
+        } else if needs_project {
+            ensure!(
+                explicit.is_none(),
+                "workspace is absent; use dots project init"
+            );
+            diagnostic =
+                Some("Workspace is absent; use dots project init for project memory.".into());
+        }
         Ok(Self {
-            global: root.join("_global"),
+            global: workspaces.join("global/knowledge"),
             project,
+            lock_path: root.join("mutation.lock"),
+            diagnostic,
         })
     }
+
     fn store(&self, scope: MemoryScope) -> Result<Store> {
         let path = match scope {
             MemoryScope::Global => &self.global,
-            MemoryScope::Project => self
-                .project
-                .as_ref()
-                .context("outside Git: project memory is unavailable; select --scope global")?,
+            MemoryScope::Project => self.project.as_ref().with_context(|| {
+                self.diagnostic
+                    .as_deref()
+                    .unwrap_or("project memory is unavailable")
+                    .to_owned()
+            })?,
         };
-        Ok(Store::new(path.clone())?)
+        Ok(Store::try_new(path.clone(), self.lock_path.clone())?)
     }
 }
 
-fn checkout(directory: &Path) -> Result<Option<String>> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .env("LC_ALL", "C")
-        .current_dir(directory)
-        .output()
-        .context("resolve memory checkout with git")?;
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr);
-        if message
-            .starts_with("fatal: not a git repository (or any of the parent directories): .git")
-        {
-            return Ok(None);
-        }
-        bail!("cannot resolve memory checkout: {message}");
+fn render_document(document: &Document) -> String {
+    let mut out = format!("{} · {}\n", document.path.display(), document.revision);
+    out.push_str(&document.content);
+    if let Some(next) = document.next_line {
+        let _ = writeln!(out, "More: repeat read with --start {next}");
     }
-    let common = String::from_utf8(output.stdout).context("Git checkout path is not UTF-8")?;
-    let checkout = Path::new(common.trim_end())
-        .parent()
-        .context("Git common directory has no parent")?
-        .canonicalize()
-        .context("canonicalize memory checkout")?;
-    Ok(Some(
-        checkout
-            .to_str()
-            .context("checkout path is not Unicode")?
-            .to_owned(),
-    ))
+    out
 }
 
-fn render(value: &Value) -> String {
+fn render_searches(searches: &[(&str, Search)]) -> String {
     let mut out = String::new();
-    if let Some(document) = value.get("document") {
-        let _ = writeln!(
-            out,
-            "{} · {}",
-            document["path"].as_str().unwrap_or_default(),
-            document["revision"].as_str().unwrap_or_default()
-        );
-        out.push_str(document["content"].as_str().unwrap_or_default());
-        if let Some(next) = document["next_line"].as_u64() {
-            let _ = writeln!(out, "More: repeat read with --start {next}");
+    for (scope, result) in searches {
+        let _ = writeln!(out, "{scope} · literal");
+        if result.hits.is_empty() {
+            out.push_str("No matches.\n");
         }
-    } else if let Some(searches) = value["searches"].as_array() {
-        for search in searches {
+        for hit in &result.hits {
             let _ = writeln!(
                 out,
-                "{} · literal",
-                search["scope"].as_str().unwrap_or_default()
+                "{}:{}: {}{}",
+                hit.path.display(),
+                hit.line,
+                hit.excerpt,
+                if hit.truncated { " [truncated]" } else { "" }
             );
-            if let Some(hits) = search.pointer("/result/hits").and_then(Value::as_array) {
-                if hits.is_empty() {
-                    out.push_str("No matches.\n");
-                }
-                for hit in hits {
-                    let _ = writeln!(
-                        out,
-                        "{}:{}: {}{}",
-                        hit["path"].as_str().unwrap_or_default(),
-                        hit["line"],
-                        hit["excerpt"].as_str().unwrap_or_default(),
-                        if hit["truncated"] == true {
-                            " [truncated]"
-                        } else {
-                            ""
-                        }
-                    );
-                }
-            }
-            if let Some(next) = search
-                .pointer("/result/next_offset")
-                .and_then(Value::as_u64)
-            {
-                let _ = writeln!(
-                    out,
-                    "More: repeat search for this scope with --offset {next}"
-                );
-            }
         }
-    } else {
-        out = crate::json::render(value.clone());
+        if let Some(next) = result.next_offset {
+            let _ = writeln!(
+                out,
+                "More: repeat search for this scope with --offset {next}"
+            );
+        }
     }
     out
 }

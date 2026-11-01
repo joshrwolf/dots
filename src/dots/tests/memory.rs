@@ -19,7 +19,25 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir_all(root.join("checkout")).unwrap();
-            Self { root }
+            let fixture = Self { root };
+            fs::create_dir_all(fixture.root.join("catalog")).unwrap();
+            fixture.git("catalog", &["init", "-q"]);
+            fixture.init_project("catalog");
+            fixture
+        }
+        fn init_project(&self, directory: &str) {
+            let output = Command::new(env!("CARGO_BIN_EXE_dots"))
+                .args(["--json", "project", "init", "fixture", "--fresh"])
+                .current_dir(self.root.join(directory))
+                .env("XDG_DATA_HOME", self.root.join("data"))
+                .env("XDG_STATE_HOME", self.root.join("state"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         fn run(&self, directory: &str, args: &[&str]) -> Output {
             Command::new(env!("CARGO_BIN_EXE_dots"))
@@ -69,7 +87,7 @@ mod tests {
             ])
         }
         fn global(&self) -> PathBuf {
-            self.root.join("data/dots/memory/_global")
+            self.root.join("data/dots/workspaces/global/knowledge")
         }
         fn git(&self, directory: &str, args: &[&str]) {
             let output = Command::new("git")
@@ -112,7 +130,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(revision.starts_with("sha256:"));
-        assert!(!f.global().join(".write-lock").exists());
+        assert!(f.root.join("data/dots/mutation.lock").is_file());
         fs::write(f.root.join("input.md"), "stale update").unwrap();
         assert!(
             f.fail(&[
@@ -149,15 +167,18 @@ mod tests {
     }
 
     #[test]
-    fn bounded_unicode_search_excludes_sources_and_paginates() {
+    fn bounded_unicode_search_excludes_outputs_and_log_and_paginates() {
         let f = Fixture::new();
-        f.write("wiki/retries.md", "global", "missing", "# Retries\nCurrent: at most three attempts.\nRetries include the first attempt.\nCafe\u{301} 👨‍👩‍👧 — preferred spelling.\n");
-        f.write(
-            "sources/proposal.md",
-            "global",
-            "missing",
-            "Old retries proposal: ten attempts.\n",
-        );
+        f.write("wiki/retries.md", "global", "missing", "# Retries\nCurrent: at most three attempts.\nRetries include the first attempt.\nCafe\u{301} 👨\u{200d}👩\u{200d}👧 — preferred spelling.\n");
+        let outputs = f
+            .root
+            .join("data/dots/workspaces/p-00000000000000000000000000000002/outputs");
+        fs::create_dir_all(&outputs).unwrap();
+        fs::write(
+            outputs.join("report.md"),
+            "Historical retries proposal: ten attempts.\n",
+        )
+        .unwrap();
         f.write("log.md", "global", "missing", "Retries changed.\n");
         let first = f.ok(&["search", "RETRIES", "--limit", "1"]);
         assert_eq!(
@@ -171,17 +192,7 @@ mod tests {
             second.pointer("/searches/0/result/has_more").unwrap(),
             false
         );
-        let sources = f.ok(&["search", "retries", "--include-sources"]);
-        assert_eq!(
-            sources
-                .pointer("/searches/0/result/hits")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .len(),
-            4
-        );
-        let unicode = f.ok(&["search", "👨‍👩‍👧"]);
+        let unicode = f.ok(&["search", "👨\u{200d}👩\u{200d}👧"]);
         assert_eq!(
             unicode.pointer("/searches/0/result/hits/0/line").unwrap(),
             4
@@ -203,8 +214,9 @@ mod tests {
     fn locks_and_unsafe_paths_do_not_clobber_files() {
         let f = Fixture::new();
         f.write("MEMORY.md", "global", "missing", "# Global memory\n");
-        fs::create_dir(f.global().join(".write-lock")).unwrap();
-        fs::write(f.global().join(".write-lock/owner"), "other session").unwrap();
+        let lock_path = f.root.join("data/dots/mutation.lock");
+        let lock = fs::File::open(&lock_path).unwrap();
+        lock.try_lock().unwrap();
         assert!(
             f.fail(&[
                 "remove",
@@ -214,16 +226,14 @@ mod tests {
                 "--expected",
                 "missing"
             ])
-            .contains("acquire memory lock")
+            .contains("workspace mutation is busy")
         );
-        assert_eq!(
-            fs::read_to_string(f.global().join(".write-lock/owner")).unwrap(),
-            "other session"
-        );
+        assert!(lock_path.is_file());
+        drop(lock);
         for path in [
             "../escape.md",
             "/tmp/escape.md",
-            ".write-lock/owner.md",
+            ".hidden/owner.md",
             "not-markdown.txt",
         ] {
             assert!(
@@ -267,6 +277,7 @@ mod tests {
             "checkout",
             &["worktree", "add", "-qb", "slice", "../linked"],
         );
+        f.init_project("checkout");
         let original = f.ok(&["scope"]);
         assert_eq!(original, f.ok_in("linked", &["scope"]));
         #[cfg(unix)]
@@ -291,6 +302,7 @@ mod tests {
         );
         fs::create_dir(f.root.join("other")).unwrap();
         f.git("other", &["init", "-q"]);
+        f.init_project("other");
         let other = f.ok_in("other", &["search", "scoped"]);
         assert_eq!(
             other.pointer("/searches/1/result/hits").unwrap(),
@@ -321,7 +333,7 @@ mod tests {
             "wiki/long.md",
             "global",
             "missing",
-            &format!("{}👨‍👩‍👧 needle\n", "é".repeat(299)),
+            &format!("{}👨\u{200d}👩\u{200d}👧 needle\n", "é".repeat(299)),
         );
         let hits = f.ok(&["search", "needle"]);
         let hit = hits.pointer("/searches/0/result/hits/0").unwrap();
@@ -365,7 +377,7 @@ mod tests {
         assert_eq!(
             result.get("global").unwrap().as_str().unwrap(),
             f.root
-                .join("home/.local/share/dots/memory/_global")
+                .join("home/.local/share/dots/workspaces/global/knowledge")
                 .to_str()
                 .unwrap()
         );
@@ -408,6 +420,6 @@ mod tests {
             fs::read_to_string(f.global().join("MEMORY.md")).unwrap(),
             "after\n"
         );
-        assert!(!f.global().join(".write-lock").exists());
+        assert!(f.root.join("data/dots/mutation.lock").is_file());
     }
 }

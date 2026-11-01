@@ -1,67 +1,106 @@
 //! `dots task`: project resolution, storage location, and presentation.
 use std::fmt::Write as _;
 use std::path::Path;
-use std::process::Command;
-use std::time::Duration;
 
-use anyhow::{Context as _, Result, bail};
-use dots_tasks::{Actor, Filter, NewTask, Owner, Project, Status, Store, Task, Update};
+use crate::goal_brief::{self, Overview, ShownGoal};
+use anyhow::{Context as _, Result};
+use dots_tasks::{
+    Actor, ExternalReference, Filter, NewTask, Owner, Project, Status, Store, Task, Update,
+};
 use time::OffsetDateTime;
+use unicode_segmentation::UnicodeSegmentation as _;
 
-use crate::command::{DepCommand, GoalCommand, TaskCommand, TaskMutation, TaskQuery};
+use crate::command::{
+    DepCommand, GoalCommand, TaskCommand, TaskMutation, TaskQuery, TaskReferenceCommand,
+};
 
-pub(crate) struct Request<'a> {
+pub(crate) struct Request<'request> {
     pub command: TaskCommand,
     pub project: Option<String>,
-    pub owner: Option<&'a str>,
-    pub directory: &'a Path,
+    pub owner: Option<&'request str>,
+    pub directory: &'request Path,
     pub json: bool,
 }
 
 pub(crate) fn run(request: Request<'_>) -> Result<String> {
-    let project = match request.project {
-        Some(key) => Project::new(key)?,
-        None => Project::new(main_checkout(request.directory)?)?,
-    };
-    let path = herdrkit::user_state_directory()?.join(dots_tasks::STORE_PATH);
-    let directory = path.parent().context("task store path has no parent")?;
-    std::fs::create_dir_all(directory).context("create task store directory")?;
-    let mut store = Store::open(&path)?;
+    let mut store = crate::project::open()?;
     let now = OffsetDateTime::now_utc().unix_timestamp();
+    let session_owner = crate::agent::session();
     let actor = Actor {
-        name: request.owner.map(Owner::new).transpose()?,
+        name: request
+            .owner
+            .or(session_owner.as_deref())
+            .map(Owner::try_new)
+            .transpose()?,
         now,
     };
-    let outcome = execute(
-        &mut store,
-        &project,
-        request.command,
-        actor,
-        request.directory,
-    )?;
+    // Owners are unique per session, so releasing them needs no project.
+    if let TaskCommand::Mutation(TaskMutation::Release { id: None, .. }) = request.command {
+        let released = store.release_all(owner(actor)?, now)?;
+        return Ok(if request.json {
+            crate::json::render(serde_json::json!({ "released": released }))
+        } else {
+            format!("Released {}.\n", plural(released.len(), "claim"))
+        });
+    }
+    let project =
+        crate::project::resolve(&mut store, request.directory, request.project.as_deref())?;
+    let outcome = execute(&mut store, &project, request.command, actor)?;
+    let discovery_command = if let Outcome::Task { task, .. } = &outcome {
+        Some(format!(
+            "dots output list --task {} --project {}",
+            task.task.id,
+            project.as_str()
+        ))
+    } else {
+        None
+    };
     if request.json {
         let mut value = serde_json::to_value(&outcome)?;
         if let serde_json::Value::Object(fields) = &mut value {
             fields.insert("project".into(), serde_json::to_value(&project)?);
             fields.insert("now".into(), now.into());
+            if let Some(command) = discovery_command {
+                fields.insert("discovery_command".into(), command.into());
+            }
         }
         Ok(crate::json::render(value))
     } else {
-        Ok(text(&outcome, now))
+        let mut out = text(&outcome, now);
+        if let Some(command) = discovery_command {
+            let _ = writeln!(out, "Reports: {command}");
+        }
+        Ok(out)
+    }
+}
+
+fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
     }
 }
 
 #[derive(Debug, serde::Serialize)]
 #[serde(untagged)]
 enum Outcome {
+    ResultEvent {
+        event: dots_tasks::outcomes::ResultEvent,
+    },
+    Result {
+        #[serde(flatten)]
+        receipt: Box<dots_tasks::outcomes::OutcomeReceipt>,
+    },
     Goal {
-        goal: Box<dots_tasks::Goal>,
+        goal: Box<ShownGoal>,
+        follow_hint: &'static str,
     },
     Goals {
-        goals: Vec<dots_tasks::Goal>,
+        goals: Vec<ShownGoal>,
     },
     Overview {
-        overview: Box<dots_tasks::GoalOverview>,
+        overview: Box<Overview>,
     },
     Detached {
         detached: String,
@@ -81,7 +120,7 @@ enum Outcome {
     },
 }
 
-/// A task plus readiness evaluated with this invocation's clock.
+/// A task plus its derived readiness.
 #[derive(Debug, serde::Serialize)]
 struct Shown {
     #[serde(flatten)]
@@ -92,8 +131,8 @@ struct Shown {
 }
 
 impl Shown {
-    fn new(task: Task, now: i64) -> Self {
-        let not_ready_because = task.not_ready_because(now);
+    fn new(task: Task) -> Self {
+        let not_ready_because = task.not_ready_because();
         Self {
             ready: not_ready_because.is_none(),
             task,
@@ -107,17 +146,10 @@ fn execute(
     project: &Project,
     command: TaskCommand,
     actor: Actor<'_>,
-    directory: &Path,
 ) -> Result<Outcome> {
-    let now = actor.now;
-    let shown = |tasks: Vec<Task>| {
-        tasks
-            .into_iter()
-            .map(|task| Shown::new(task, now))
-            .collect()
-    };
+    let shown = |tasks: Vec<Task>| tasks.into_iter().map(Shown::new).collect();
     match command {
-        TaskCommand::Goal { command } => execute_goal(store, project, command, actor, directory),
+        TaskCommand::Goal { command } => execute_goal(store, project, command, actor),
         TaskCommand::Query(TaskQuery::List {
             parent,
             claimed_by,
@@ -126,10 +158,11 @@ fn execute(
             status,
             all,
         }) => {
-            let owner = claimed_by.as_deref().map(Owner::new).transpose()?;
+            let owner = claimed_by.as_deref().map(Owner::try_new).transpose()?;
             let status = status
                 .map(|value| {
-                    Status::parse(&value).context("status must be open, held, done or dropped")
+                    Status::parse(&value)
+                        .context("status must be open, review, held, done or dropped")
                 })
                 .transpose()?;
             let filter = Filter {
@@ -144,10 +177,13 @@ fn execute(
             })
         }
         TaskCommand::Query(TaskQuery::Ready { parent }) => Ok(Outcome::Tasks {
-            tasks: shown(store.ready(project, parent.as_deref(), now)?),
+            tasks: shown(store.ready(project, parent.as_deref())?),
+        }),
+        TaskCommand::Query(TaskQuery::ResultEvent { id, event }) => Ok(Outcome::ResultEvent {
+            event: store.result_event(project, &id, event)?,
         }),
         TaskCommand::Query(TaskQuery::Show { id }) => {
-            let task = Box::new(Shown::new(store.get(project, &id)?, now));
+            let task = Box::new(Shown::new(store.get(project, &id)?));
             let events = store.events(project, &id, 10)?;
             Ok(Outcome::Task {
                 task,
@@ -166,15 +202,18 @@ fn execute(
                 }
             );
             let holds = matches!(mutation, TaskMutation::Hold { .. });
-            let task =
-                mutate(store, project, mutation, actor)?.context("no ready task to claim")?;
+            let task = match mutate(store, project, mutation, actor)? {
+                MutationResult::Task(task) => task.context("no ready task to claim")?,
+                MutationResult::Result(receipt) => {
+                    return Ok(Outcome::Result {
+                        receipt: Box::new(receipt),
+                    });
+                }
+            };
             let mut warnings = Vec::new();
-            if adds_dependency
-                && let (Some(owner), Some(until)) = (&task.owner, task.lease_until)
-                && until > now
-            {
+            if adds_dependency && let Some(owner) = &task.owner {
                 warnings.push(format!(
-                    "{} is leased to {owner} and is now blocked; tell that session",
+                    "{} is claimed by {owner} and is now blocked; tell that session",
                     task.id
                 ));
             }
@@ -187,7 +226,7 @@ fn execute(
                 }
             }
             Ok(Outcome::Task {
-                task: Box::new(Shown::new(task, now)),
+                task: Box::new(Shown::new(task)),
                 events: Vec::new(),
                 warnings,
             })
@@ -195,26 +234,33 @@ fn execute(
     }
 }
 
+enum MutationResult {
+    Task(Option<Task>),
+    Result(dots_tasks::outcomes::OutcomeReceipt),
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "flat command dispatch keeps mutation variants and their arguments together"
+)]
 fn mutate(
     store: &mut Store,
     project: &Project,
     command: TaskMutation,
     actor: Actor<'_>,
-) -> Result<Option<Task>> {
+) -> Result<MutationResult> {
     let now = actor.now;
     let task = match command {
         TaskMutation::Add {
             title,
             body,
             parent,
-            priority,
             blocked_by,
         } => {
             let task = NewTask {
                 title,
                 body,
                 parent,
-                priority,
                 blocked_by,
             };
             store.add(project, &task, actor)?
@@ -223,49 +269,110 @@ fn mutate(
             id,
             next: _,
             parent,
-            lease,
+            take,
         } => {
             let owner = owner(actor)?;
-            let lease = Duration::from_secs(u64::from(lease) * 60);
-            return Ok(match id {
-                Some(id) => Some(store.claim(project, &id, owner, lease, now)?),
-                None => store.claim_next(project, parent.as_deref(), owner, lease, now)?,
-            });
+            return Ok(MutationResult::Task(match id {
+                Some(id) => Some(store.claim(project, &id, owner, take, now)?),
+                None => store.claim_next(project, parent.as_deref(), owner, now)?,
+            }));
         }
-        TaskMutation::Release { id } => store.release(project, &id, owner(actor)?, now)?,
+        TaskMutation::Release { id, all: _ } => {
+            let id = id.context("release --all is handled before project resolution")?;
+            store.release(project, &id, owner(actor)?, now)?
+        }
         TaskMutation::Update {
             id,
             title,
             body,
-            pr,
+            result,
+            evidence,
             branch,
-            priority,
             parent,
-            note,
             force,
         } => {
+            if let Some(result) = result {
+                return write_result(
+                    store,
+                    project,
+                    actor,
+                    ResultInput {
+                        id: &id,
+                        result: &result,
+                        evidence: &evidence,
+                        operation: dots_tasks::outcomes::Operation::UpdateResult,
+                        force,
+                    },
+                );
+            }
             let update = Update {
                 title,
                 body,
-                pr,
                 branch,
-                priority,
                 parent: parent.map(|value| (!value.is_empty()).then_some(value)),
-                note,
             };
             store.update(project, &id, &update, actor, force)?
         }
-        TaskMutation::Done { id, note, force } => {
-            store.set_status(project, &id, Status::Done, note.as_deref(), actor, force)?
+        TaskMutation::Review {
+            id,
+            result,
+            evidence,
+            force,
+        } => {
+            return write_result(
+                store,
+                project,
+                actor,
+                ResultInput {
+                    id: &id,
+                    result: &result,
+                    evidence: &evidence,
+                    operation: dots_tasks::outcomes::Operation::Review,
+                    force,
+                },
+            );
         }
+        TaskMutation::Done {
+            id,
+            result,
+            evidence,
+            force,
+        } => {
+            return write_result(
+                store,
+                project,
+                actor,
+                ResultInput {
+                    id: &id,
+                    result: &result,
+                    evidence: &evidence,
+                    operation: dots_tasks::outcomes::Operation::Done,
+                    force,
+                },
+            );
+        }
+        TaskMutation::Ref { command } => match command {
+            TaskReferenceCommand::Set {
+                id,
+                url,
+                label,
+                force,
+            } => {
+                let reference = ExternalReference { url, label };
+                store.set_reference(project, &id, &reference, actor, force)?
+            }
+            TaskReferenceCommand::Remove { id, url, force } => {
+                store.remove_reference(project, &id, &url, actor, force)?
+            }
+        },
         TaskMutation::Hold { id, reason, force } => {
             store.set_status(project, &id, Status::Held, Some(&reason), actor, force)?
         }
         TaskMutation::Drop { id, reason, force } => {
             store.set_status(project, &id, Status::Dropped, Some(&reason), actor, force)?
         }
-        TaskMutation::Reopen { id, note, force } => {
-            store.set_status(project, &id, Status::Open, note.as_deref(), actor, force)?
+        TaskMutation::Reopen { id, reason, force } => {
+            store.set_status(project, &id, Status::Open, reason.as_deref(), actor, force)?
         }
         TaskMutation::Dep {
             command: DepCommand::Add { id, blocked_by },
@@ -274,7 +381,43 @@ fn mutate(
             command: DepCommand::Remove { id, blocked_by },
         } => store.remove_dependency(project, &id, &blocked_by, actor)?,
     };
-    Ok(Some(task))
+    Ok(MutationResult::Task(Some(task)))
+}
+
+#[derive(Clone, Copy)]
+struct ResultInput<'input> {
+    id: &'input str,
+    result: &'input str,
+    evidence: &'input [String],
+    operation: dots_tasks::outcomes::Operation,
+    force: bool,
+}
+
+fn write_result(
+    store: &mut Store,
+    project: &Project,
+    actor: Actor<'_>,
+    input: ResultInput<'_>,
+) -> Result<MutationResult> {
+    let evidence = input
+        .evidence
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| dots_tasks::outcomes::Evidence {
+            slug: pair[0].clone(),
+            digest: pair[1].clone(),
+        })
+        .collect::<Vec<_>>();
+    let outcome = dots_tasks::outcomes::Outcome {
+        operation: input.operation,
+        result: input.result,
+        evidence: &evidence,
+        force: input.force,
+    };
+    Ok(MutationResult::Result(
+        store.write_result(project, input.id, &outcome, actor)?,
+    ))
 }
 
 fn execute_goal(
@@ -282,26 +425,40 @@ fn execute_goal(
     project: &Project,
     command: GoalCommand,
     actor: Actor<'_>,
-    directory: &Path,
 ) -> Result<Outcome> {
     match command {
         GoalCommand::Create { title, brief } => {
-            let brief = brief_path(directory, &brief)?;
+            let brief = goal_brief::existing(project, &brief)?;
+            let goal = store.create_goal(project, &title, &brief, actor)?;
             Ok(Outcome::Goal {
-                goal: Box::new(store.create_goal(project, &title, &brief, actor)?),
+                goal: Box::new(goal_brief::show(project, goal)?),
+                follow_hint: "Created the goal; follow it in Pi with goal_focus.",
             })
         }
         GoalCommand::Attach { id, brief } => {
-            let brief = brief_path(directory, &brief)?;
+            let brief = goal_brief::existing(project, &brief)?;
+            let goal = store.attach_goal(project, &id, &brief, actor)?;
             Ok(Outcome::Goal {
-                goal: Box::new(store.attach_goal(project, &id, &brief, actor)?),
+                goal: Box::new(goal_brief::show(project, goal)?),
+                follow_hint: "Attached the brief; follow the goal in Pi with goal_focus.",
             })
         }
-        GoalCommand::List { all } => Ok(Outcome::Goals {
-            goals: store.goals(project, all)?,
+        GoalCommand::List { all, claimed_by } => Ok(Outcome::Goals {
+            goals: store
+                .goals(
+                    project,
+                    all,
+                    claimed_by.as_deref().map(Owner::try_new).transpose()?,
+                )?
+                .into_iter()
+                .map(|goal| goal_brief::reference(project, goal))
+                .collect::<Result<_>>()?,
         }),
         GoalCommand::Show { id, all } => Ok(Outcome::Overview {
-            overview: Box::new(store.goal_overview(project, &id, actor.now, all)?),
+            overview: Box::new(goal_brief::overview(
+                project,
+                store.goal_overview(project, &id, all)?,
+            )?),
         }),
         GoalCommand::Detach { id } => {
             store.detach_goal(project, &id, actor)?;
@@ -310,81 +467,38 @@ fn execute_goal(
     }
 }
 
-fn brief_path(directory: &Path, brief: &Path) -> Result<String> {
-    let path = directory.join(brief);
-    let path = path
-        .canonicalize()
-        .with_context(|| format!("resolve brief {}", path.display()))?;
-    if !path.is_file() {
-        bail!("brief must be a file: {}", path.display());
-    }
-    path.to_str()
-        .map(ToOwned::to_owned)
-        .context("brief path is not Unicode")
-}
-
 fn owner(actor: Actor<'_>) -> Result<Owner<'_>> {
     actor
         .name
-        .context("--owner is required: name the session or agent acting on the task")
-}
-
-/// Linked worktrees share the main checkout, so they share one task list.
-fn main_checkout(directory: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .current_dir(directory)
-        .output()
-        .context("run git to resolve the project")?;
-    if !output.status.success() {
-        bail!(
-            "{} is not inside a Git repository; pass --project KEY to choose a task list",
-            directory.display()
-        );
-    }
-    let common = String::from_utf8(output.stdout).context("git printed a non-UTF-8 path")?;
-    let common = Path::new(common.trim_end());
-    let root = common.parent().context("git common dir has no parent")?;
-    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    root.to_str()
-        .map(ToOwned::to_owned)
-        .context("checkout path is not Unicode")
+        .context("No session identity available; pass --owner to name the session or agent acting on the task")
 }
 
 fn text(outcome: &Outcome, now: i64) -> String {
     match outcome {
-        Outcome::Goal { goal } => goal_text(goal, now),
+        Outcome::ResultEvent { event } => format!(
+            "Result event {} ({})\n{}\n{}",
+            event.seq,
+            event.operation,
+            event.result,
+            evidence_text(&event.evidence, &event.purged_evidence, false)
+        ),
+        Outcome::Result { receipt } => format!(
+            "{}Recorded result event {}\n{}",
+            line(&receipt.task, now),
+            receipt.event.seq,
+            evidence_text(
+                &receipt.event.evidence,
+                &receipt.event.purged_evidence,
+                true
+            )
+        ),
+        Outcome::Goal { goal, follow_hint } => format!("{}{follow_hint}\n", goal_text(goal, now)),
         Outcome::Goals { goals } if goals.is_empty() => "No matching goals.\n".into(),
         Outcome::Goals { goals } => goals.iter().map(|goal| goal_text(goal, now)).collect(),
         Outcome::Detached { detached } => {
-            format!("Detached goal {detached}; tasks and document preserved.\n")
+            format!("Detached the brief from {detached}; its tasks and document remain.\n")
         }
-        Outcome::Overview { overview } => {
-            let mut out = goal_text(&overview.goal, now);
-            let p = &overview.progress;
-            let _ = writeln!(
-                out,
-                "Recorded leaf tasks: {} total · {} done · {} dropped · {} held · {} open",
-                p.total, p.done, p.dropped, p.held, p.open
-            );
-            let _ = writeln!(
-                out,
-                "Open-task facets (may overlap): {} ready · {} claimed · {} with PR recorded",
-                p.ready, p.claimed, p.with_pr
-            );
-            out.push_str("Local records only; reconcile Git/PR state before acting.\n");
-            if overview.hidden_closed > 0 {
-                let _ = writeln!(
-                    out,
-                    "{} closed task details hidden; use dots task goal show {} --all for history.",
-                    overview.hidden_closed, overview.goal.root.id
-                );
-            }
-            for task in &overview.tasks {
-                out.push_str(&line(task, now));
-            }
-            out
-        }
+        Outcome::Overview { overview } => overview_text(overview, now),
         Outcome::Events { events } if events.is_empty() => "No events.\n".to_owned(),
         Outcome::Events { events } => events.iter().map(event_line).collect(),
         Outcome::Tasks { tasks } if tasks.is_empty() => "No matching tasks.\n".to_owned(),
@@ -414,9 +528,25 @@ fn text(outcome: &Outcome, now: i64) -> String {
             if !task.blocked_by.is_empty() {
                 let _ = writeln!(out, "Blocked by: {}", task.blocked_by.join(", "));
             }
-            if let Some(pr) = &task.pr {
-                let _ = writeln!(out, "PR: {pr}");
+            for reference in &task.references {
+                let _ = writeln!(
+                    out,
+                    "Reference: {}{}",
+                    reference
+                        .label
+                        .as_deref()
+                        .map(|label| format!("{label} "))
+                        .unwrap_or_default(),
+                    reference.url
+                );
             }
+            if let Some(body) = &task.body {
+                let _ = writeln!(out, "Description:\n{body}");
+            }
+            if let Some(result) = &task.result {
+                let _ = writeln!(out, "Result:\n{result}");
+            }
+            out.push_str(&evidence_text(&task.evidence, &task.purged_evidence, false));
             if let Some(branch) = &task.branch {
                 let _ = writeln!(out, "Branch: {branch}");
             }
@@ -429,8 +559,8 @@ fn text(outcome: &Outcome, now: i64) -> String {
             if !closed.is_empty() {
                 let _ = writeln!(out, "Satisfied prerequisites: {}", closed.join(", "));
             }
-            if let Some(body) = &task.body {
-                let _ = writeln!(out, "\n{body}\n");
+            if !events.is_empty() {
+                out.push_str("History:\n");
             }
             for event in events {
                 out.push_str(&event_line(event));
@@ -440,8 +570,106 @@ fn text(outcome: &Outcome, now: i64) -> String {
     }
 }
 
-fn goal_text(goal: &dots_tasks::Goal, now: i64) -> String {
-    format!("{}Brief: {}\n", line(&goal.root, now), goal.brief)
+fn evidence_text(
+    evidence: &[dots_tasks::outcomes::Evidence],
+    purged: &[dots_tasks::outcomes::Evidence],
+    verified: bool,
+) -> String {
+    let mut out = String::new();
+    for item in evidence {
+        let state = if purged.contains(item) {
+            " (purged)"
+        } else if verified {
+            " (verified)"
+        } else {
+            ""
+        };
+        let _ = writeln!(out, "Evidence: {} {}{state}", item.slug, item.digest);
+    }
+    out
+}
+
+fn overview_text(overview: &Overview, now: i64) -> String {
+    let mut out = goal_text(&overview.goal, now);
+    if overview.hidden_closed > 0 {
+        let _ = writeln!(
+            out,
+            "{} closed tasks hidden; add --all to show them.",
+            overview.hidden_closed
+        );
+    }
+    for task in &overview.tasks {
+        out.push_str(&line(task, now));
+        if let Some(branch) = task.branch.as_deref().filter(|value| !value.is_empty()) {
+            let _ = writeln!(out, "  Branch: {}", preview(branch));
+        }
+        if let Some(result) = task.result.as_deref().filter(|value| !value.is_empty()) {
+            let _ = writeln!(out, "  Result: {}", preview(result));
+        }
+    }
+    if overview.tasks.iter().any(|task| task.result.is_some()) {
+        out.push_str("dots task show ID shows a task's full result and history.\n");
+    }
+    out
+}
+
+/// First line within a character budget, cut only between grapheme clusters.
+fn preview(value: &str) -> String {
+    const LIMIT: usize = 160;
+    let (first, multiline) = value
+        .split_once(['\r', '\n'])
+        .map_or((value, false), |(first, _)| (first, true));
+    let mut output = String::new();
+    let mut used = 0;
+    let mut shortened = multiline;
+    for cluster in first.graphemes(true) {
+        let width = cluster.chars().count();
+        if used + width > LIMIT {
+            shortened = true;
+            break;
+        }
+        output.push_str(cluster);
+        used += width;
+    }
+    if shortened {
+        output.push('…');
+    }
+    output
+}
+
+fn goal_text(goal: &ShownGoal, now: i64) -> String {
+    let p = &goal.progress;
+    let counts = [
+        (p.open, "open"),
+        (p.review, "in review"),
+        (p.held, "held"),
+        (p.done, "done"),
+        (p.dropped, "dropped"),
+        (p.claimed, "claimed"),
+    ]
+    .iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, label)| format!("{count} {label}"))
+    .collect::<Vec<_>>();
+    let counts = if counts.is_empty() {
+        "no tasks".to_owned()
+    } else {
+        counts.join(" · ")
+    };
+    format!(
+        "{}  {counts} · last activity {} ago\nBrief: {}\n",
+        line(&goal.root, now),
+        age(now - goal.last_activity),
+        goal.brief.text()
+    )
+}
+
+fn age(seconds: i64) -> String {
+    match seconds {
+        ..3600 => "<1h".into(),
+        3600..86_400 => format!("{}h", seconds / 3600),
+        _ => format!("{}d", seconds / 86_400),
+    }
 }
 
 fn event_line(event: &dots_tasks::Event) -> String {
@@ -455,7 +683,14 @@ fn event_line(event: &dots_tasks::Event) -> String {
     if let Some(actor) = &event.actor {
         let _ = write!(out, " by {actor}");
     }
-    if let Some(detail) = &event.detail {
+    // Results can be long; history points at them instead of repeating them.
+    if event.result.is_some() {
+        let _ = write!(
+            out,
+            ": result in dots task result-event {} --event {}",
+            event.task, event.seq
+        );
+    } else if let Some(detail) = &event.detail {
         let _ = write!(out, ": {detail}");
     }
     out.push('\n');
@@ -463,21 +698,12 @@ fn event_line(event: &dots_tasks::Event) -> String {
 }
 
 fn line(task: &Task, now: i64) -> String {
-    let mut out = format!(
-        "{}  {:<7} p{:<3} {}",
-        task.id,
-        task.status.as_str(),
-        task.priority,
-        task.title
-    );
-    match (&task.owner, task.lease_until) {
-        (Some(owner), Some(until)) if until > now => {
-            let _ = write!(out, "  [{owner} until {}]", stamp(until));
-        }
-        (Some(owner), _) => {
-            let _ = write!(out, "  [{owner}, lease expired]");
-        }
-        _ => {}
+    let mut out = format!("{}  {:<7} {}", task.id, task.status.as_str(), task.title);
+    if let Some(owner) = &task.owner {
+        let _ = write!(out, "  [claimed by {owner}]");
+    }
+    if task.status == Status::Review {
+        let _ = write!(out, "  (in review {})", age(now - task.updated_at));
     }
     if task.status == Status::Open && !task.blocked_by.is_empty() {
         out.push_str("  (blocked)");

@@ -1,0 +1,7 @@
+# Selene's view of Rex's embedded Lua: 5.1 plus the `rex` global. Types live in
+# types/rex.lua for the language server.
+base: lua51
+name: rex
+globals:
+  rex:
+    any: true

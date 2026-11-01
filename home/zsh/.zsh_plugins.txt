@@ -1,4 +1,3 @@
-mattmc3/zephyr path:plugins/homebrew
 mattmc3/zephyr path:plugins/color
 mattmc3/zephyr path:plugins/compstyle
 

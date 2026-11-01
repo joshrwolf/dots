@@ -56,7 +56,7 @@ report := NewReport(func(ctx context.Context, query string, args ...any) rowScan
 // A test supplies its own rowScanner implementation through queryRow.
 ```
 
-→ See `samber/cc-skills-golang@golang-design-patterns` for constructor and dependency-injection patterns. [catalog.md](catalog.md) describes optional Sprout/Wrap techniques when a specific testability obstacle justifies them; adding a seam does not itself require another helper or wrapper.
+→ See `golang` for constructor and dependency-injection patterns. [catalog.md](catalog.md) describes optional Sprout/Wrap techniques when a specific testability obstacle justifies them; adding a seam does not itself require another helper or wrapper.
 
 ## Verification Command Reference
 
@@ -67,7 +67,7 @@ go build ./...                              # fastest gate — compile errors
 go vet ./...                                 # correctness checks the compiler doesn't do
 go test ./...                                # full test suite
 go test -run TestName ./pkg/...              # target one test while iterating
-go test -race ./...                          # concurrency changes — see samber/cc-skills-golang@golang-testing for race-detector and testing/synctest mechanics
+go test -race ./...                          # concurrency changes — see golang-testing for race-detector and testing/synctest mechanics
 go test -covermode=atomic -coverpkg=./... -coverprofile=cover.out ./...
 go tool cover -func=cover.out                 # per-function and total statement coverage
 go tool cover -html=cover.out                 # visual red/green source view
@@ -77,6 +77,6 @@ benchstat old.txt new.txt                     # `~` means no statistically signi
 
 ## Cross-References
 
-- → See `samber/cc-skills-golang@golang-testing` skill for general test-writing craft, race-detector mechanics, and `testing/synctest` — this file assumes them as a baseline and only covers when a refactor's safety net needs to reach for them.
-- → See `samber/cc-skills-golang@golang-benchmark` skill for interpreting a `benchstat` delta and the full profiling methodology.
+- → See `golang-testing` skill for general test-writing craft, race-detector mechanics, and `testing/synctest` — this file assumes them as a baseline and only covers when a refactor's safety net needs to reach for them.
+- → See `golang-performance` skill for interpreting a `benchstat` delta and the full profiling methodology.
 - [catalog.md](catalog.md) — the Fowler refactoring catalog mapped to Go, including the Sprout/Wrap entries referenced in the seams section above.

@@ -1,32 +1,18 @@
-[tasks.deps]
-run = "npm ci --ignore-scripts"
-
 [tasks.verify]
 depends = [":check"]
-run = "node --experimental-strip-types --test tests/acceptance/*.test.mjs tests/acceptance/*.test.ts"
+run = 'PATH="$MISE_MONOREPO_ROOT/target/debug:$PATH" node --test "tests/acceptance/*.test.{mjs,ts}"'
 
 [tasks."verify-host"]
 run = "node --test tests/acceptance/host.test.mjs"
 
 # Pi's interactive host in both TUI modes through its public virtual-terminal option.
 [tasks."verify-terminal"]
-run = "node --experimental-strip-types --test tests/acceptance/terminal.test.mjs"
-
-# Pi loads a local package from its path without copying; run only from the
-# primary checkout. Reinstalling is harmless.
-[tasks.install]
-description = "Install dependencies, then register this checkout's companion with Pi; /reload when idle"
-depends = [":deps"]
-run = "pi install '{{ config_root }}'"
-
-# Pi replaces an older registration of the same npm package and keeps its filters.
-[tasks.packages]
-description = "Install pinned third-party Pi packages; /reload when idle"
-run = "pi install npm:pi-web-access@0.41.0"
+run = "node --test tests/acceptance/terminal.test.mjs"
 
 [tasks.workbench]
 description = "Interactive fixture-only Pi UI; disposable home, no providers or installation"
 run = "node dev/run.mjs"
 
 [tasks.check]
-run = "npm run check"
+depends = ["//src/dots:test-cli"]
+run = 'PATH="$MISE_MONOREPO_ROOT/target/debug:$PATH" pnpm run check'

@@ -1,0 +1,29 @@
+{
+  "name": "@joshrwolf/pi-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Foundations shared by the Pi-based packages in dots",
+  "exports": {
+    "./dots": "./src/dots.ts",
+    "./models": "./src/models.ts",
+    "./ui": "./src/ui/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"tests/*.test.{ts,mjs}\"",
+    "check": "pnpm run typecheck && pnpm run test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "catalog:",
+    "@earendil-works/pi-coding-agent": "catalog:",
+    "@earendil-works/pi-tui": "catalog:",
+    "typebox": "catalog:"
+  }
+}

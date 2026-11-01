@@ -12,21 +12,17 @@ Help and skill generation work offline. Commands document their own effects and 
 Usage: dots [OPTIONS] [COMMAND]
 
 Commands:
-  herdr   Register and inspect PR associations in Herdr workspaces
-  github  Inspect GitHub CI evidence and PR review threads
-  task    Track shared, claimable work for a project across concurrent sessions
-  memory  Read, publish, and search scoped Markdown memory without a service
-  skills  Export agent discovery documentation from this command tree
+  output   Publish and inspect immutable project evidence; publication does not accept tasks
+  project  Initialize the workspace catalog and explicitly bind local Git projects
+  github   Inspect GitHub CI evidence and PR review threads, and keep a PR watch list
+  task     Track shared, claimable work for a project across concurrent sessions
+  memory   Read, publish, and search scoped Markdown memory without a service
+  review   Review a repository's changes in threads anchored to exact revisions, across its worktrees
+  skills   Export agent discovery documentation from this command tree
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -38,88 +34,351 @@ Options:
           Print version
 ```
 
-## dots herdr
+## dots output
 
 ```text
-Register and inspect PR associations in Herdr workspaces
+Publish and inspect immutable project evidence; publication does not accept tasks
 
-Usage: dots herdr [OPTIONS] <COMMAND>
+Usage: dots output [OPTIONS] <COMMAND>
 
 Commands:
-  prs  Explicit workspace PR associations; local writes, no GitHub mutations
+  publish    Publish a UTF-8 snapshot (at most 1 MiB); read the published revision before acceptance
+  list       List output slugs, optionally associated with one task; never select implicit latest evidence
+  revisions  List up to 20 exact revisions with metadata and pagination
+  show       Read and verify an exact revision; missing, corrupt and purged never fall back
+  path       Show an exact revision's native path and availability without printing its content
+  attach     Associate output discovery with a task without accepting it
+  detach     Remove discovery only, preserving historical acceptance evidence and bytes
+  integrity  Inspect payloads, orphan/staging files and catalog remnants without repairing them
+  purge      Explicitly erase one project digest; tombstone before unlink, retry interrupted removal
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <PROJECT>
+
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <OWNER>
+
 
   -h, --help
           Print help
 ```
 
-## dots herdr prs
+## dots output publish
 
 ```text
-Register every PR created or worked on in this Herdr workspace. Associations survive branch changes and agent completion. Associations end when their workspace closes; a reopened workspace needs fresh registration. No GitHub publication, CI fixes, or merges. Use a full PR URL; never substitute the focused workspace. Registration is safe to repeat after shipping or resuming work. An explicit --workspace is required. Verify it against the task and live workspace inventory; inherited pane/workspace IDs, current directory, and UI focus are not reliable ownership evidence.
+Publish a UTF-8 snapshot (at most 1 MiB); read the published revision before acceptance
 
-Usage: dots herdr prs [OPTIONS] <COMMAND>
+Usage: dots output publish [OPTIONS] --filename <FILENAME> --media-type <MEDIA_TYPE> --content-file <CONTENT_FILE> <SLUG>
 
-Commands:
-  register    Attach a PR to this workspace; repeat calls are harmless
-  list        List every PR registered in this workspace
-  unregister  Remove this workspace's association without changing the PR
+Arguments:
+  <SLUG>
+
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --filename <FILENAME>
 
-      --workspace <WORKSPACE>
-          Verified workspace handle; required, never inferred from environment or focus
 
       --json
           Return JSON instead of readable output
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <PROJECT>
+
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --media-type <MEDIA_TYPE>
+          [possible values: text/markdown, text/plain, application/json]
+
+      --owner <OWNER>
+
+
+      --content-file <CONTENT_FILE>
+
+
+      --create
+          First publication; only an identical sole revision can retry this operation
+
+      --description <DESCRIPTION>
+          [default: ""]
+
+      --provenance <PROVENANCE>
+          [default: ""]
+
+      --task <TASK>
+          Optional discovery association; does not record acceptance
+
+  -h, --help
+          Print help
+```
+
+## dots output list
+
+```text
+List output slugs, optionally associated with one task; never select implicit latest evidence
+
+Usage: dots output list [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <PROJECT>
+
+
+      --task <TASK>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --offset <OFFSET>
+          [default: 0]
+
+      --owner <OWNER>
+
+
+  -h, --help
+          Print help
+```
+
+## dots output revisions
+
+```text
+List up to 20 exact revisions with metadata and pagination
+
+Usage: dots output revisions [OPTIONS] <SLUG>
+
+Arguments:
+  <SLUG>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --offset <OFFSET>
+          [default: 0]
+
+      --project <PROJECT>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <OWNER>
+
+
+  -h, --help
+          Print help
+```
+
+## dots output show
+
+```text
+Read and verify an exact revision; missing, corrupt and purged never fall back
+
+Usage: dots output show [OPTIONS] --digest <DIGEST> <SLUG>
+
+Arguments:
+  <SLUG>
+
+
+Options:
+      --digest <DIGEST>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <PROJECT>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <OWNER>
+
+
+      --start <START>
+          [default: 1]
+
+      --lines <LINES>
+          [default: 200]
+
+  -h, --help
+          Print help
+```
+
+## dots output path
+
+```text
+Show an exact revision's native path and availability without printing its content
+
+Usage: dots output path [OPTIONS] --digest <DIGEST> <SLUG>
+
+Arguments:
+  <SLUG>
+
+
+Options:
+      --digest <DIGEST>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <PROJECT>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <OWNER>
+
+
+  -h, --help
+          Print help
+```
+
+## dots output attach
+
+```text
+Associate output discovery with a task without accepting it
+
+Usage: dots output attach [OPTIONS] --task <TASK> <SLUG>
+
+Arguments:
+  <SLUG>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <PROJECT>
+
+
+      --task <TASK>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <OWNER>
+
+
+  -h, --help
+          Print help
+```
+
+## dots output detach
+
+```text
+Remove discovery only, preserving historical acceptance evidence and bytes
+
+Usage: dots output detach [OPTIONS] --task <TASK> <SLUG>
+
+Arguments:
+  <SLUG>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <PROJECT>
+
+
+      --task <TASK>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <OWNER>
+
+
+  -h, --help
+          Print help
+```
+
+## dots output integrity
+
+```text
+Inspect payloads, orphan/staging files and catalog remnants without repairing them
+
+Usage: dots output integrity [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <PROJECT>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <OWNER>
+
+
+  -h, --help
+          Print help
+```
+
+## dots output purge
+
+```text
+Use only after an explicit user request to purge this project digest. Marks all matching revisions purged before removing matching managed output bytes, including orphan/staging copies. Sources, scratch, other projects, backups and session copies remain outside this guarantee. No automatic cleanup.
+
+Usage: dots output purge [OPTIONS] --digest <DIGEST>
+
+Options:
+      --digest <DIGEST>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <PROJECT>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <OWNER>
+
 
   -h, --help
           Print help (see a summary with '-h')
 ```
 
-## dots herdr prs register
+## dots project
 
 ```text
-Attach a PR to this workspace; repeat calls are harmless
+Initialize the workspace catalog and explicitly bind local Git projects
 
-Usage: dots herdr prs register [OPTIONS] <URL>
+Usage: dots project [OPTIONS] <COMMAND>
 
-Arguments:
-  <URL>
-
+Commands:
+  init      Initialize a catalog if absent, register a project, and bind this Git common directory
+  register  Register an unbound project for explicit --project use
+  list      List registered projects and their exact common-directory bindings
+  resolve   Show the binding and workspace directory for this checkout; never initialize storage
+  bind      Bind this checkout to a registered project; refuse conflicting ownership
+  unbind    Remove one exact binding, preserving the project and all its work
+  rebind    Move an exact recorded binding to this checkout's common directory
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
-      --workspace <WORKSPACE>
-          Verified workspace handle; required, never inferred from environment or focus
-
       --json
           Return JSON instead of readable output
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -128,25 +387,23 @@ Options:
           Print help
 ```
 
-## dots herdr prs list
+## dots project init
 
 ```text
-List every PR registered in this workspace
+Initialize a catalog if absent, register a project, and bind this Git common directory
 
-Usage: dots herdr prs list [OPTIONS]
+Usage: dots project init [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
-      --workspace <WORKSPACE>
-          Verified workspace handle; required, never inferred from environment or focus
+      --fresh
+          Start a fresh catalog while leaving any old-format data untouched
 
       --json
           Return JSON instead of readable output
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -155,29 +412,128 @@ Options:
           Print help
 ```
 
-## dots herdr prs unregister
+## dots project register
 
 ```text
-Remove this workspace's association without changing the PR
+Register an unbound project for explicit --project use
 
-Usage: dots herdr prs unregister [OPTIONS] <URL>
+Usage: dots project register [OPTIONS] <NAME>
 
 Arguments:
-  <URL>
+  <NAME>
 
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
-      --workspace <WORKSPACE>
-          Verified workspace handle; required, never inferred from environment or focus
-
       --json
           Return JSON instead of readable output
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots project list
+
+```text
+List registered projects and their exact common-directory bindings
+
+Usage: dots project list [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots project resolve
+
+```text
+Show the binding and workspace directory for this checkout; never initialize storage
+
+Usage: dots project resolve [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots project bind
+
+```text
+Bind this checkout to a registered project; refuse conflicting ownership
+
+Usage: dots project bind [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots project unbind
+
+```text
+Remove one exact binding, preserving the project and all its work
+
+Usage: dots project unbind [OPTIONS] --path <PATH> <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --path <PATH>
+          Exact recorded common directory from project list; may no longer exist
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots project rebind
+
+```text
+Move an exact recorded binding to this checkout's common directory
+
+Usage: dots project rebind [OPTIONS] --from <FROM> <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --from <FROM>
+
+
+      --json
+          Return JSON instead of readable output
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -189,26 +545,27 @@ Options:
 ## dots github
 
 ```text
-Inspect GitHub CI evidence and PR review threads
+Inspect GitHub CI evidence and PR review threads, and keep a PR watch list
 
 Usage: dots github [OPTIONS] <COMMAND>
 
 Commands:
   ci       Inspect PR, ref, commit, or workflow-run CI and retrieve failure evidence
   reviews  Inspect unresolved PR review threads and read exact conversations
+  watch    Keep an agent-curated list of PRs with cached status
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
 
   -h, --help
           Print help
@@ -218,7 +575,7 @@ Options:
 
 ```text
 Inspect CI for a PR, remote ref, commit, or exact workflow run/attempt.
-Read-only; uses existing gh authentication and needs no Herdr session.
+Read-only; uses existing gh authentication.
 With no subcommand, inspect the current branch's PR. Use --pr URL for another PR, --ref main or --sha SHA with --repo, or --run RUN_URL [--attempt N].
 A ref selects its current commit, not the latest historical/scheduled run. Use gh run list for run discovery; pass a run URL here for diagnosis.
 Details default to failed, cancelled, unknown and pending checks. --all includes passing/skipped checks; --name TEXT searches check names across all states. Both remain paged; summary always covers every check.
@@ -234,29 +591,29 @@ Commands:
   output   Read GitHub-hosted check output; works for Actions and external-provider checks
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --ref <GIT_REF>
           Remote branch/tag, resolved once to a commit; use refs/heads/NAME to disambiguate
 
       --repo <[HOST/]OWNER/REPO>
           Explicit repository for numeric IDs or refs; URLs must agree with it
 
-      --json
-          Return JSON instead of readable output
-
-      --sha <SHA>
-          Full commit SHA; inspects checks/statuses on that revision, not branch history
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --no-cache
           Bypass log caching and saved observations; fresh inspection always queries status
+
+      --sha <SHA>
+          Full commit SHA; inspects checks/statuses on that revision, not branch history
 
       --run <RUN>
           Workflow run URL or numeric ID; covers all event types without a PR
 
       --attempt <ATTEMPT>
           Exact run attempt; default resolves and pins the current attempt
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
 
       --pr <URL_OR_NUMBER>
           Explicit PR URL or number; URLs work outside a checkout
@@ -295,29 +652,29 @@ Inspect the selected CI target, with bounded evidence and complete scope counts
 Usage: dots github ci inspect [OPTIONS]
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --ref <GIT_REF>
           Remote branch/tag, resolved once to a commit; use refs/heads/NAME to disambiguate
 
       --repo <[HOST/]OWNER/REPO>
           Explicit repository for numeric IDs or refs; URLs must agree with it
 
-      --json
-          Return JSON instead of readable output
-
-      --sha <SHA>
-          Full commit SHA; inspects checks/statuses on that revision, not branch history
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --no-cache
           Bypass log caching and saved observations; fresh inspection always queries status
+
+      --sha <SHA>
+          Full commit SHA; inspects checks/statuses on that revision, not branch history
 
       --run <RUN>
           Workflow run URL or numeric ID; covers all event types without a PR
 
       --attempt <ATTEMPT>
           Exact run attempt; default resolves and pins the current attempt
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
 
       --pr <URL_OR_NUMBER>
           Explicit PR URL or number; URLs work outside a checkout
@@ -367,26 +724,26 @@ Arguments:
           Job URL, numeric ID with --repo, or reference returned by inspection
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --repo <[HOST/]OWNER/REPO>
           Explicit repository for numeric IDs or refs; URLs must agree with it
 
       --snapshot <SNAPSHOT>
           Reuse saved job metadata and logs without GitHub queries; omit to refresh
 
-      --json
-          Return JSON instead of readable output
-
-      --search <SEARCH>
-          Find a literal, case-sensitive string; return a compact match index without context
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --no-cache
           Bypass log caching and saved observations; fresh inspection always queries status
 
+      --search <SEARCH>
+          Find a literal, case-sensitive string; return a compact match index without context
+
       --test <TEST>
           Read output regions for an exact Go test name; preserves original line numbers
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
 
       --start <START>
           First line (one-based), or first eligible search match; default centers near a failure marker
@@ -410,26 +767,26 @@ Arguments:
           Check-run URL, numeric ID with --repo, or reference returned by inspection
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --repo <[HOST/]OWNER/REPO>
           Explicit repository for numeric IDs or refs; URLs must agree with it
 
       --snapshot <SNAPSHOT>
           Read the saved text observation without GitHub queries (five-minute lifetime)
 
-      --json
-          Return JSON instead of readable output
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
 
       --start <START>
           First line (one-based), or first eligible search match
 
       --lines <LINES>
           Maximum lines per window (default 40; search context 20)
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
 
       --search <SEARCH>
           Literal, case-sensitive search; returns at most ten matches and context commands
@@ -458,26 +815,26 @@ Commands:
   thread  Read an exact review thread, its replies, and original reviewed diff context
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --pr <PR>
           PR URL or number; defaults to the current branch's PR
 
       --repo <[HOST/]OWNER/REPO>
           Explicit repository for numeric IDs or refs; URLs must agree with it
 
-      --json
-          Return JSON instead of readable output
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
 
       --snapshot <SNAPSHOT>
           Page a saved thread index without GitHub queries
 
       --all
           Include resolved threads; outdated and resolved are separate states
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
 
       --limit <LIMIT>
           Maximum thread previews to return
@@ -505,14 +862,17 @@ Arguments:
           Exact reference emitted by review-thread discovery
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --repo <[HOST/]OWNER/REPO>
           Explicit repository for numeric IDs or refs; URLs must agree with it
 
       --snapshot <SNAPSHOT>
           Page the saved conversation without GitHub queries
 
-      --json
-          Return JSON instead of readable output
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --limit <LIMIT>
           Maximum comments to return; each body is bounded to 4 KiB
@@ -527,56 +887,250 @@ Options:
 
           [default: 0]
 
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots github watch
+
+```text
+Agent-curated list of pull requests worth following, with cached status for pickers and agents. Add PRs you create or work on; adding records intent only and authorizes no CI fixes, monitoring, or merging. Entries are identified by canonical github.com PR URL.
+No daemon: each row stores its next due check (60s before the first check or while CI is pending, 10 minutes once settled, 5 minutes after an error; merged or closed PRs are never checked again). Refresh fetches only due rows, one GraphQL request per 50 PRs, using existing gh authentication; concurrent refreshers never fetch the same PR twice. A failed check keeps the previous status and records the error. While a picker is open, its follow command refreshes due PRs; nothing runs otherwise.
+The store is $XDG_STATE_HOME/dots/github/watch.sqlite3 (default ~/.local/state/dots/github/watch.sqlite3).
+
+Usage: dots github watch [OPTIONS] <COMMAND>
+
+Commands:
+  add      Add a PR, or update its checkout and sessions; idempotent, then refreshes that PR
+  remove   Remove a PR from the list; an unlisted PR is not an error
+  list     List watched PRs with cached status, newest first; no network
+  show     Show one watched PR's cached status and description; no network
+  follow   Refresh due PRs while a picker reads the output; prints a line when rows change
+  refresh  Fetch status for PRs that are due; --all makes every open PR due first
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
 
   -h, --help
           Print help (see a summary with '-h')
 ```
 
-## dots task
+## dots github watch add
 
 ```text
-Local SQLite work list shared by every session and worktree of one project. Records intent and coordination: open slices, dependencies, atomic claims with leases, and the PR each slice produced. Git and GitHub remain the truth about code; reconcile against them when resuming.
-The project defaults to the main checkout of the Git repository at --directory, so linked worktrees share one list; --project selects an explicit key.
-Parent sessions create, claim, update and close tasks. Delegated workers report results; they do not edit the list. Claims expire so an abandoned session cannot hold work forever; renew by claiming again with the same owner. No network access.
+Add a PR by URL, or update its entry: the original added time is kept, the checkout, agent session, and Rex session become the latest non-empty values, and the PR becomes due. The agent session is the invoking agent's: pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID. The Rex session is the one the work belongs to: $REX_SESSION in a Rex terminal, otherwise $DOTS_REX_SESSION, which Pi workers inherit from the session that started them. Then refreshes this PR only; a GitHub failure is a warning in the result and never fails the add.
 
-Usage: dots task [OPTIONS] <COMMAND>
+Usage: dots github watch add [OPTIONS] <URL>
 
-Commands:
-  goal     Associate durable briefs with task roots; inspect recorded progress without executing work
-  list     List open/held roots by default; use --parent ID to drill down or --flat for every level
-  ready    Fresh leaf work: open, unblocked, childless, no PR recorded, not under a live lease
-  show     Show one task with blockers, children count, and recent events
-  events   Project history after an event seq, oldest first; use the last seen seq as a cursor
-  add      Create an open task; --parent groups slices under a larger goal
-  claim    Atomically claim a task (or the next ready one) for --owner with a lease
-  release  Release --owner's claim without changing status
-  update   Edit fields or append a note; recording the PR URL is the usual update
-  done     Mark done; refuses while blocked, with open children, or leased to another owner unless --force
-  hold     Pause this task with a reason; it is never ready, its claim is cleared; descendants stay claimable (warned)
-  drop     Close a task as not going to happen; dependents are unblocked; same --force rules as done
-  reopen   Return a held, done or dropped task to open; fails if it is already open
-  dep      Manage prerequisites between tasks
+Arguments:
+  <URL>
+          github.com pull request URL
 
 Options:
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --checkout <PATH>
+          Checkout the PR is worked from, stored as an absolute path; defaults to --directory or the current directory (a linked worktree itself, not its main checkout)
 
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --no-cache
           Bypass log caching and saved observations; fresh inspection always queries status
 
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots github watch remove
+
+```text
+Remove a PR from the list; an unlisted PR is not an error
+
+Usage: dots github watch remove [OPTIONS] <URL>
+
+Arguments:
+  <URL>
+          github.com pull request URL
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+  -h, --help
+          Print help
+```
+
+## dots github watch list
+
+```text
+List watched PRs with their cached status, most recently added first, and how many are due for a check. Makes no network requests; run refresh to update. Drops merged or closed PRs a day after their closure was observed.
+
+Usage: dots github watch list [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots github watch show
+
+```text
+Show one watched PR for a preview pane: identity and title, state, review and CI, branch, checkout, Rex session, who added it and when, when it was last checked, the last check error, then the PR description cached by the last successful check. --color adds ANSI styling; COLUMNS wraps visible text to the given width. Makes no network requests. A PR that is not on the watch list is an error. --json returns the entry with its description.
+
+Usage: dots github watch show [OPTIONS] <URL>
+
+Arguments:
+  <URL>
+          github.com pull request URL
+
+Options:
+      --color
+          Style the text with basic ANSI colors; ignored by --json
+
+      --json
+          Return JSON instead of readable output
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots github watch follow
+
+```text
+Meant as a picker's watch command. Prints `ready` at once, then refreshes PRs as they become due, exactly like refresh, and prints `changed` whenever the watched rows differ from what it last saw: a status change, a recorded error, or an entry another session added or removed. It has no effect beyond refreshing due PRs. Sleeps until the earliest due PR (between 1 and 60 seconds, re-checking at least every minute for new entries). Runs only while its reader is alive: it exits 0 when its output is closed or on SIGTERM, SIGINT, or SIGHUP. GitHub failures are recorded on their PRs and never end it; a storage failure does.
+
+Usage: dots github watch follow [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots github watch refresh
+
+```text
+Fetch status for PRs that are due; --all makes every open PR due first
+
+Usage: dots github watch refresh [OPTIONS]
+
+Options:
+      --all
+          Check every PR that is not merged or closed, due or not
+
+      --json
+          Return JSON instead of readable output
+
+      --repo <[HOST/]OWNER/REPO>
+          Explicit repository for numeric IDs or refs; URLs must agree with it
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --no-cache
+          Bypass log caching and saved observations; fresh inspection always queries status
+
+  -h, --help
+          Print help
+```
+
+## dots task
+
+```text
+Local work list shared by every session and worktree of one project: tasks, dependencies, claims, results, and issue/PR references. Git and GitHub remain the source of truth for code.
+The project comes from the Git checkout at --directory, bound with dots project init; --project selects a registered project ID.
+A claim marks which session is working on a task. It lasts until that session releases, hands off, or closes the task; Pi releases a session's claims when the session ends. Workers report results to their parent session, which records them.
+The catalog is $XDG_DATA_HOME/dots/workspace.sqlite3 (default ~/.local/share/dots/workspace.sqlite3).
+
+Usage: dots task [OPTIONS] <COMMAND>
+
+Commands:
+  goal          Create, list, and inspect goals: root tasks with a Markdown brief
+  list          List unfinished root tasks; use --parent ID to drill down or --flat for every level
+  ready         Unclaimed, unblocked open tasks without children
+  show          Show one task with its result, evidence, and recent events
+  result-event  Show an earlier result and its evidence
+  events        Project history after an event seq, oldest first; use the last seen seq as a cursor
+  add           Create an open task; --parent groups it under a larger task or goal
+  claim         Claim a task, or the next ready one, for this session
+  release       Release this session's claim on a task, or every claim it holds with --all
+  update        Edit a task's fields, or replace its current result
+  review        Record a result and move the task to review; clears the claim
+  done          Close a task whose acceptance criteria are met
+  hold          Pause a task with a reason and clear its claim; its descendants stay claimable
+  drop          Close a task that will not be done; its dependents are unblocked
+  reopen        Return a task to open; its result stays
+  ref           Link issues, pull requests, and tickets to a task; nothing is sent to their provider
+  dep           Manage prerequisites between tasks
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help (see a summary with '-h')
@@ -585,35 +1139,29 @@ Options:
 ## dots task goal
 
 ```text
-Optional goal context on existing root tasks. The root task id is the goal id; slices, claims, and status stay in the task store. Briefs remain external Markdown documents, independent of memory storage. These commands neither execute work nor authorize continuation. Overview counts describe local records, not verified GitHub or worker state.
+A goal is a root task with a Markdown brief in the project workspace's briefs/ directory; dots project resolve prints the workspace path. Create briefs/ there if it does not exist yet. The root task ID is the goal ID; its tasks, claims, and results stay in the task list.
 
 Usage: dots task goal [OPTIONS] <COMMAND>
 
 Commands:
-  create  Create a root task and attach its brief atomically; no claims or execution
-  attach  Attach or replace a root's brief reference; never changes the document or executes work
-  list    List explicitly attached goals; open and held by default
-  show    Show open/held descendants and complete progress counts; no network or document reads
-  detach  Remove only the association; keep the document, tasks, and history
+  create  Create a root task with an existing brief
+  attach  Attach or replace a root task's brief
+  list    List unfinished goals with progress, most recently active first
+  show    Show a goal's brief, progress, and unfinished tasks
+  detach  Remove the brief association; the tasks and the document stay
 
 Options:
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help (see a summary with '-h')
@@ -622,7 +1170,7 @@ Options:
 ## dots task goal create
 
 ```text
-Create a root task and attach its brief atomically; no claims or execution
+Create a root task with an existing brief
 
 Usage: dots task goal create [OPTIONS] --brief <PATH> <TITLE>
 
@@ -632,25 +1180,19 @@ Arguments:
 
 Options:
       --brief <PATH>
-          Existing Markdown file; relative to --directory, stored as an absolute path
-
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+          Existing Markdown file, as briefs/<name>.md relative to the project workspace (dots project resolve prints its path)
 
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -659,7 +1201,7 @@ Options:
 ## dots task goal attach
 
 ```text
-Attach or replace a root's brief reference; never changes the document or executes work
+Attach or replace a root task's brief
 
 Usage: dots task goal attach [OPTIONS] --brief <PATH> <ID>
 
@@ -669,25 +1211,19 @@ Arguments:
 
 Options:
       --brief <PATH>
-          Existing Markdown file; relative to --directory (or the current directory), stored as an absolute path
-
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+          Existing Markdown file, as briefs/<name>.md relative to the project workspace (dots project resolve prints its path)
 
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -696,7 +1232,7 @@ Options:
 ## dots task goal list
 
 ```text
-List explicitly attached goals; open and held by default
+List unfinished goals with progress, most recently active first
 
 Usage: dots task goal list [OPTIONS]
 
@@ -704,23 +1240,20 @@ Options:
       --all
           Include done and dropped goals
 
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --claimed-by <NAME>
+          Only goals where NAME claims the root or a descendant
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -729,7 +1262,7 @@ Options:
 ## dots task goal show
 
 ```text
-Show open/held descendants and complete progress counts; no network or document reads
+Show a goal's brief, progress, and unfinished tasks
 
 Usage: dots task goal show [OPTIONS] <ID>
 
@@ -739,25 +1272,19 @@ Arguments:
 
 Options:
       --all
-          Include done/dropped task details; totals always include them
-
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+          Include done and dropped tasks
 
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -766,7 +1293,7 @@ Options:
 ## dots task goal detach
 
 ```text
-Remove only the association; keep the document, tasks, and history
+Remove the brief association; the tasks and the document stay
 
 Usage: dots task goal detach [OPTIONS] <ID>
 
@@ -775,23 +1302,17 @@ Arguments:
 
 
 Options:
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -800,43 +1321,39 @@ Options:
 ## dots task list
 
 ```text
-Project-scoped task overview: open and held root tasks by default, highest priority then oldest first. Child counts keep slices grouped. Use --parent ID for descendants or --flat for every level; --claimed-by also searches every level unless --roots is explicit. --all adds closed history without changing the hierarchy scope. Nothing is deleted or auto-archived.
+Unfinished root tasks by default, oldest first, with child counts. Use --parent ID for descendants or --flat for every level; --claimed-by searches every level unless --roots is given. --all includes closed tasks.
 
 Usage: dots task list [OPTIONS]
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --parent <ID>
           Only tasks anywhere below this one
 
       --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+          Registered project ID instead of the current Git common-directory binding
 
       --claimed-by <NAME>
-          Only tasks whose recorded owner is NAME, live lease or not
-
-      --json
-          Return JSON instead of readable output
-
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
-      --roots
-          Only top-level tasks (the default unless --parent, --flat, or --claimed-by is given)
+          Only tasks claimed by NAME
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --roots
+          Only top-level tasks (the default unless --parent, --flat, or --claimed-by is given)
 
       --flat
           Every task level, rather than the default root overview
 
       --status <STATUS>
-          Exactly one status: open, held, done or dropped
+          Exactly one status: open, review, held, done or dropped
+
+          [possible values: open, review, held, done, dropped]
 
       --all
           Include done and dropped tasks
@@ -848,31 +1365,25 @@ Options:
 ## dots task ready
 
 ```text
-Fresh leaf work: open, unblocked, childless, no PR recorded, not under a live lease
+Unclaimed, unblocked open tasks without children
 
 Usage: dots task ready [OPTIONS]
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --parent <ID>
           Only tasks anywhere below this one
 
       --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
-      --json
-          Return JSON instead of readable output
-
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -881,7 +1392,7 @@ Options:
 ## dots task show
 
 ```text
-Show one task with blockers, children count, and recent events
+Show one task with its result, evidence, and recent events
 
 Usage: dots task show [OPTIONS] <ID>
 
@@ -890,23 +1401,48 @@ Arguments:
 
 
 Options:
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
+      --json
+          Return JSON instead of readable output
 
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help
+```
+
+## dots task result-event
+
+```text
+Show an earlier result and its evidence
+
+Usage: dots task result-event [OPTIONS] --event <EVENT> <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --event <EVENT>
+
 
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -920,19 +1456,19 @@ Project history after an event seq, oldest first; use the last seen seq as a cur
 Usage: dots task events [OPTIONS]
 
 Options:
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
+      --json
+          Return JSON instead of readable output
 
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --since <SINCE>
           Only events with seq greater than this (default 0)
 
           [default: 0]
 
-      --json
-          Return JSON instead of readable output
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --limit <LIMIT>
           Maximum events to return
@@ -940,13 +1476,7 @@ Options:
           [default: 100]
 
       --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -955,7 +1485,7 @@ Options:
 ## dots task add
 
 ```text
-Create an open task; --parent groups slices under a larger goal
+Create an open task; --parent groups it under a larger task or goal
 
 Usage: dots task add [OPTIONS] <TITLE>
 
@@ -965,36 +1495,25 @@ Arguments:
 
 Options:
       --body <BODY>
-          Longer description, pattern reference, or acceptance notes
-
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+          What the task is for and how to tell it is done
 
       --json
           Return JSON instead of readable output
 
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
       --owner <NAME>
-          Session or agent name recorded on claims and events
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
       --parent <ID>
           Parent task ID
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
-      --priority <PRIORITY>
-          Higher runs first among ready tasks (default 0)
-
-          [default: 0]
-
       --blocked-by <ID>
           Prerequisite task IDs; repeatable
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
 
   -h, --help
           Print help
@@ -1003,7 +1522,7 @@ Options:
 ## dots task claim
 
 ```text
-Atomically claim a task for --owner. Fails if another owner holds a live lease, the task is blocked, it has open children, or it is not open. Claiming again with the same owner renews the lease; an expired lease can be taken over. --next claims the highest-priority ready task that has no children, optionally under --parent, and fails with exit 1 when nothing is ready. Claim before delegating a slice; release or close when the work stops.
+Claim a task for this session. Fails if the task is blocked, has unfinished children, is neither open nor in review, or is claimed by another session; --take takes over a claim whose session has stopped working on it. Claiming your own task again changes nothing. Review tasks need an explicit ID. --next claims the oldest ready task without children, optionally under --parent, and exits 1 when nothing is ready.
 
 Usage: dots task claim [OPTIONS] [ID]
 
@@ -1012,34 +1531,26 @@ Arguments:
           Task ID; omit with --next
 
 Options:
-      --next
-          Claim the highest-priority ready task instead of a specific ID
-
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
+      --next
+          Claim the oldest ready task instead of a specific ID
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
       --owner <NAME>
-          Session or agent name recorded on claims and events
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
       --parent <ID>
           With --next, only consider tasks anywhere below this one
 
-      --lease <LEASE>
-          Lease length in minutes, 1 to 10080 (default 120)
-
-          [default: 120]
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
+      --take
+          Take over another session's claim
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1048,32 +1559,29 @@ Options:
 ## dots task release
 
 ```text
-Release --owner's claim without changing status
+Release this session's claim on a task, or every claim it holds with --all
 
-Usage: dots task release [OPTIONS] <ID>
+Usage: dots task release [OPTIONS] [ID]
 
 Arguments:
-  <ID>
+  [ID]
 
 
 Options:
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --all
+          Release every claim this owner holds, in every project
 
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1082,7 +1590,7 @@ Options:
 ## dots task update
 
 ```text
-Edit fields or append a note. Field edits on a task under another owner's live lease are refused unless --force; a --note is always allowed. Once a PR is recorded the slice leaves the ready pool: claim --next skips it even after the lease expires, and picking it up again means claiming it by id.
+Edit the title, body, branch, or parent, or replace the current result with --result; earlier results stay in history. A task claimed by another session needs --force.
 
 Usage: dots task update [OPTIONS] <ID>
 
@@ -1091,87 +1599,112 @@ Arguments:
 
 
 Options:
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
-      --title <TITLE>
-
-
-      --body <BODY>
-
-
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --title <TITLE>
+          New title
 
-      --pr <URL>
-          Full pull/merge request URL produced for this task
-
-      --branch <BRANCH>
-          Branch carrying the work, so another session can find it
+      --body <BODY>
+          New description in Markdown: scope, acceptance criteria, and pointers; replaces the old one
 
       --directory <PATH>
           Working directory for commands that use checkout context
 
-      --priority <PRIORITY>
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --result <RESULT>
+          Current result in Markdown: what changed, where it is, checks run, and what remains
+
+      --evidence <SLUG> <DIGEST>
+          Published output revision the result cites; repeatable
+
+      --branch <BRANCH>
+          Branch carrying the work, so another session can find it
 
       --parent <ID>
           New parent task ID; an empty string detaches
 
-      --note <NOTE>
-          Append a dated note to the task history
-
       --force
-          Edit fields despite another owner's live lease
+          Edit a task claimed by another session
 
   -h, --help
           Print help (see a summary with '-h')
 ```
 
-## dots task done
+## dots task review
 
 ```text
-Mark done; refuses while blocked, with open children, or leased to another owner unless --force
+Record a result and move the task to review; clears the claim
 
-Usage: dots task done [OPTIONS] <ID>
+Usage: dots task review [OPTIONS] --result <RESULT> <ID>
 
 Arguments:
   <ID>
 
 
 Options:
-      --note <NOTE>
-          Outcome, e.g. the merge or verification evidence
-
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
-      --force
-          Close anyway: ignore blockers, open children, and another owner's live lease
-
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --result <RESULT>
+          What changed, where it is, checks run, and what the reviewer should look at
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --evidence <SLUG> <DIGEST>
+          Published output revision the result cites; repeatable
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --force
+          Ignore blockers, unfinished children, and another session's claim
+
+  -h, --help
+          Print help
+```
+
+## dots task done
+
+```text
+Close a task whose acceptance criteria are met
+
+Usage: dots task done [OPTIONS] --result <RESULT> <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --result <RESULT>
+          The outcome and how it was verified
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --evidence <SLUG> <DIGEST>
+          Published output revision the result cites; repeatable
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --force
+          Ignore blockers, unfinished children, and another session's claim
 
   -h, --help
           Print help
@@ -1180,7 +1713,7 @@ Options:
 ## dots task hold
 
 ```text
-Pause this task with a reason; it is never ready, its claim is cleared; descendants stay claimable (warned)
+Pause a task with a reason and clear its claim; its descendants stay claimable
 
 Usage: dots task hold [OPTIONS] --reason <REASON> <ID>
 
@@ -1189,29 +1722,23 @@ Arguments:
 
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --project <KEY>
-          Explicit project key instead of the main Git checkout path
+          Registered project ID instead of the current Git common-directory binding
 
       --reason <REASON>
 
 
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
-      --force
-          Override another owner's live lease
-
-      --json
-          Return JSON instead of readable output
-
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --force
+          Pause a task claimed by another session
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1220,7 +1747,7 @@ Options:
 ## dots task drop
 
 ```text
-Close a task as not going to happen; dependents are unblocked; same --force rules as done
+Close a task that will not be done; its dependents are unblocked
 
 Usage: dots task drop [OPTIONS] --reason <REASON> <ID>
 
@@ -1229,29 +1756,23 @@ Arguments:
 
 
 Options:
+      --json
+          Return JSON instead of readable output
+
       --project <KEY>
-          Explicit project key instead of the main Git checkout path
+          Registered project ID instead of the current Git common-directory binding
 
       --reason <REASON>
 
 
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
-      --force
-          Close anyway: ignore blockers, open children, and another owner's live lease
-
-      --json
-          Return JSON instead of readable output
-
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --force
+          Ignore blockers, unfinished children, and another session's claim
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1260,7 +1781,7 @@ Options:
 ## dots task reopen
 
 ```text
-Return a held, done or dropped task to open; fails if it is already open
+Return a task to open; its result stays
 
 Usage: dots task reopen [OPTIONS] <ID>
 
@@ -1269,29 +1790,122 @@ Arguments:
 
 
 Options:
-      --note <NOTE>
-
+      --json
+          Return JSON instead of readable output
 
       --project <KEY>
-          Explicit project key instead of the main Git checkout path
+          Registered project ID instead of the current Git common-directory binding
 
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --reason <REASON>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --force
-          Override another owner's live lease
+          Reopen a task claimed by another session
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help
+```
+
+## dots task ref
+
+```text
+Link issues, pull requests, and tickets to a task; nothing is sent to their provider
+
+Usage: dots task ref [OPTIONS] <COMMAND>
+
+Commands:
+  set     Link an issue, pull request, or ticket by URL; setting it again replaces the label
+  remove  Remove only this task's association, leaving the external item unchanged
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help
+```
+
+## dots task ref set
+
+```text
+Link an issue, pull request, or ticket by URL; setting it again replaces the label
+
+Usage: dots task ref set [OPTIONS] <ID> <URL>
+
+Arguments:
+  <ID>
+
+
+  <URL>
+          Full URL, such as a GitHub pull request or a Linear issue
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --label <LABEL>
+          Short name to show instead of the URL, such as ENG-123
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --force
+
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help
+```
+
+## dots task ref remove
+
+```text
+Remove only this task's association, leaving the external item unchanged
+
+Usage: dots task ref remove [OPTIONS] <ID> <URL>
+
+Arguments:
+  <ID>
+
+
+  <URL>
+
+
+Options:
+      --force
+
 
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1309,23 +1923,17 @@ Commands:
   remove  Remove a prerequisite
 
 Options:
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1346,23 +1954,17 @@ Options:
       --blocked-by <ID>
 
 
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1383,23 +1985,17 @@ Options:
       --blocked-by <ID>
 
 
-      --project <KEY>
-          Explicit project key instead of the main Git checkout path
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --owner <NAME>
-          Session or agent name recorded on claims and events
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1420,14 +2016,11 @@ Commands:
   search  Case-insensitive literal search of current knowledge; defaults to global plus this project
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -1444,14 +2037,11 @@ Resolve global and current-project locations; creates nothing
 Usage: dots memory scope [OPTIONS]
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -1472,26 +2062,23 @@ Arguments:
 
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
 
       --scope <SCOPE>
           [possible values: global, project]
 
-      --json
-          Return JSON instead of readable output
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --start <START>
           [default: 1]
 
       --lines <LINES>
           [default: 100]
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
 
   -h, --help
           Print help
@@ -1500,7 +2087,7 @@ Options:
 ## dots memory write
 
 ```text
-Publish one file using --expected from memory read (or 'missing' for a new file). Reads at most 256 KiB from --content-file. Creates scope/topic directories on first write. A short cooperative .write-lock covers revision checking and atomic replacement; conflicts change no file contents. Multi-file updates are NOT transactions: write topics before the index, and handle interrupted updates explicitly. No shell commands or model calls run under the lock.
+Publish one file using --expected from memory read (or 'missing' for a new file). Reads at most 256 KiB from --content-file. Creates scope/topic directories on first write. A kernel-held dots/mutation.lock covers revision checking and atomic replacement across scopes; contention returns busy without waiting; conflicts change no file contents. Multi-file updates are NOT transactions: write topics before the index, and handle interrupted updates explicitly. No shell commands or model calls run under the lock.
 
 Usage: dots memory write [OPTIONS] --scope <SCOPE> --expected <EXPECTED> --content-file <CONTENT_FILE> <PATH>
 
@@ -1509,26 +2096,23 @@ Arguments:
 
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
 
       --scope <SCOPE>
           [possible values: global, project]
 
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
       --expected <EXPECTED>
 
 
-      --json
-          Return JSON instead of readable output
-
       --content-file <CONTENT_FILE>
 
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1546,23 +2130,20 @@ Arguments:
 
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
 
       --scope <SCOPE>
           [possible values: global, project]
 
-      --expected <EXPECTED>
-
-
-      --json
-          Return JSON instead of readable output
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
-
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --expected <EXPECTED>
+
 
   -h, --help
           Print help
@@ -1571,7 +2152,7 @@ Options:
 ## dots memory search
 
 ```text
-Search live Markdown files, not a cached index. Default scope is global plus the current project, never unrelated projects. Sources and log.md are excluded unless --include-sources is set. Results are deterministic path/line matches, not semantic ranking; read the source before applying a snippet. Output reports backend, scope, and pagination. QMD is not installed or invoked.
+Search live Markdown files, not a cached index. Default scope is global plus the current project, never unrelated projects. The knowledge change log is excluded. Retained outputs and scratch are outside the searched knowledge roots. Results are deterministic path/line matches, not semantic ranking; read the source before applying a snippet. Output reports backend, scope, and pagination. QMD is not installed or invoked.
 
 Usage: dots memory search [OPTIONS] <QUERY>
 
@@ -1580,28 +2161,22 @@ Arguments:
 
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
 
       --scope <SCOPE>
           [possible values: global, project]
 
-      --include-sources
-
-
-      --json
-          Return JSON instead of readable output
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --offset <OFFSET>
           Skip this many matches in each selected scope
 
           [default: 0]
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
 
       --limit <LIMIT>
           Maximum matches per scope
@@ -1610,6 +2185,248 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+```
+
+## dots review
+
+```text
+Reviews of a repository's changes. A review pins its target to exact content: a base commit and a head tree, with uncommitted work captured as a tree, so threads refer to bytes reviewers can read with `git show HEAD_TREE:PATH`. Each revision also records a snapshot commit whose tree is its head, so viewers can diff base..snapshot. A thread is an agent finding or a comment: an optional anchor validated against the reviewed diff, optional finding fields, a status, and a conversation whose replies and status changes name their author. Refresh carries threads forward when the change moves. Reviews never post anywhere.
+A review belongs to the worktree that started it: its file lives in that worktree's own Git directory ($(git rev-parse --git-dir)/dots/reviews) and disappears with it. A shared ref (refs/dots/reviews/ID) keeps reviewed content safe from garbage collection and makes ids unique across the repository, so any worktree can show or change any review by id; without an id, commands use this worktree's most recently updated review. remove releases the ref, and the next start or remove releases refs whose review is gone from every worktree. Parallel writers to one review are safe.
+
+Usage: dots review [OPTIONS] <COMMAND>
+
+Commands:
+  start    Start a review of one target and print its revision, changed files, and diff command
+  list     List this worktree's reviews, or every worktree's with --all
+  show     Show a review with its worktree, revisions, threads, changed files, and diff command
+  add      Open threads from a JSON file at the current revision; all or none
+  reply    Reply to a thread without changing its status
+  set      Change a thread's status: open, accepted, dismissed, fixed or posted
+  refresh  Re-resolve the target in the review's worktree; carry unchanged threads forward, mark changed ones outdated
+  remove   Delete a review and release its pinned content
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review start
+
+```text
+Start a review. Choose exactly one target: --worktree reviews uncommitted changes (tracked and untracked, not ignored) against HEAD; --base REF reviews everything since the merge base of REF and HEAD, including uncommitted work; --range FROM..TO reviews committed changes only. Refuses an empty change. Reviewers read the patch with the returned diff_command and file content with `git show HEAD:PATH` using the review's head tree, not the live working tree.
+
+Usage: dots review start [OPTIONS] <--worktree|--base <REF>|--range <FROM..TO>>
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --worktree
+          Uncommitted changes against HEAD
+
+      --base <REF>
+          Changes since the merge base with REF, including uncommitted work
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --range <FROM..TO>
+          Committed changes from FROM to TO
+
+      --profile <NAME>
+          Name of the profile running the review, recorded as given
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review list
+
+```text
+List reviews, oldest first: this worktree's, or with --all those of every worktree of the repository. Each entry carries its worktree (path and branch at start), review file, current revision and thread counts by status.
+
+Usage: dots review list [OPTIONS]
+
+Options:
+      --all
+          Reviews of every worktree of the repository
+
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review show
+
+```text
+Show a review: its file, worktree, revisions (each with base, head tree and snapshot, the commit whose tree is that head, so base..snapshot is the reviewed diff), threads with their conversations, the current revision's changed files, and the command that reads its patch. Patches take attributes from the reviewed tree, never from the calling worktree, so they read the same everywhere. ID defaults to this worktree's most recently updated review.
+
+Usage: dots review show [OPTIONS] [ID]
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review add
+
+```text
+Open threads at the review's current revision. The file (or - for stdin) holds {"threads": [...]}, at most 200 per batch. Each thread: body (the opening comment; Markdown, at most 16 KiB), author (who wrote it: a model id, an agent, user), optional anchor {path, side: new|old, start, end} whose lines fall within one hunk of the reviewed diff (omit for a review-level thread), and, for findings, optional title (one line, at most 200 characters), severity (critical, important, minor or nit), pre_existing (bool), confidence (0 to 1), angle (lowercase name like correctness) and rule {path, start, end} citing instruction-file lines in the reviewed head. Unknown fields are refused. Any invalid thread rejects the whole batch, listing every error by index. Pass --revision with the index of the revision the anchors were read against (its position in show's revisions, from zero); if the review has moved to another revision since, the whole batch is refused. ID defaults to this worktree's most recently updated review.
+
+Usage: dots review add [OPTIONS] --threads <PATH> [ID]
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --threads <PATH>
+          JSON file with the threads, or - for stdin
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --revision <N>
+          Revision index the anchors were read against; refuse the batch if the review has moved
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review reply
+
+```text
+Reply to a thread without changing its status
+
+Usage: dots review reply [OPTIONS] --author <NAME> <--body <TEXT>|--body-file <PATH>> [ID] <THREAD>
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+  <THREAD>
+          Thread id, like t1
+
+Options:
+      --author <NAME>
+          Who is replying: a model id, an agent, user
+
+      --json
+          Return JSON instead of readable output
+
+      --body <TEXT>
+          Comment body (Markdown)
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --body-file <PATH>
+          File holding the comment body, or - for stdin
+
+  -h, --help
+          Print help
+```
+
+## dots review set
+
+```text
+Change a thread's status, recorded in its conversation as a comment naming the author and new status, with an optional body giving the evidence. Outdated is set only by refresh. A thread left at an earlier revision cannot be reopened (open or accepted); open a new thread instead. ID defaults to this worktree's most recently updated review.
+
+Usage: dots review set [OPTIONS] --status <STATUS> --author <NAME> [ID] <THREAD>
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+  <THREAD>
+          Thread id, like t1
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --status <STATUS>
+          [possible values: open, accepted, dismissed, fixed, posted]
+
+      --author <NAME>
+          Who decides: a model id, an agent, user
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --body <TEXT>
+          Why, for the record
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review refresh
+
+```text
+Re-resolve the review's target in the worktree the review belongs to, whichever worktree runs the command. When the content moved, append a revision; open and accepted threads whose lines are unchanged and still within the new diff move to their new line numbers, and the rest become outdated through a status comment by dots review refresh. Dismissed, fixed and posted threads follow unchanged lines too but are never outdated; one left at an earlier revision cannot be reopened, so open a new thread instead. Whether a thread was fixed is a judgment for reviewers: compare with the returned delta diff_command. Review-level threads always carry forward.
+
+Usage: dots review refresh [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review remove
+
+```text
+Delete a review and release its pinned content
+
+Usage: dots review remove [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
 ```
 
 ## dots skills
@@ -1625,14 +2442,8 @@ Commands:
   check     Verify generated skill files without changing them
 
 Options:
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
-
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -1649,17 +2460,11 @@ Print the generated skill or its command reference to stdout
 Usage: dots skills render [OPTIONS]
 
 Options:
-      --reference
-          Print the detailed help reference instead of SKILL.md
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --reference
+          Print the detailed help reference instead of SKILL.md
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -1676,17 +2481,11 @@ Write SKILL.md and its command reference to an explicit directory
 Usage: dots skills generate [OPTIONS] --output <DIRECTORY>
 
 Options:
-      --output <DIRECTORY>
-
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --output <DIRECTORY>
+
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -1703,17 +2502,11 @@ Verify generated skill files without changing them
 Usage: dots skills check [OPTIONS] --output <DIRECTORY>
 
 Options:
-      --output <DIRECTORY>
-
-
-      --repo <[HOST/]OWNER/REPO>
-          Explicit repository for numeric IDs or refs; URLs must agree with it
-
       --json
           Return JSON instead of readable output
 
-      --no-cache
-          Bypass log caching and saved observations; fresh inspection always queries status
+      --output <DIRECTORY>
+
 
       --directory <PATH>
           Working directory for commands that use checkout context

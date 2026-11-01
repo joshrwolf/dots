@@ -1,0 +1,103 @@
+{
+  "skill_name": "golang",
+  "evals": [
+    {
+      "id": "catalog-direct",
+      "prompt": "Add Catalog.FindByTags(tags []string) []Item in the catalog package. Return entries containing every requested tag, sorted by Name. Matching is case-sensitive; duplicate requested tags do not change the result. An empty tag list matches every entry. Return nil when there are no matches. Results must be independent of the catalog, including their Tags slices. Add useful tests. Keep the existing public API and the supported Go versions.",
+      "execution": "direct",
+      "target": "catalog",
+      "expected_output": "FindByTags matches all requested tags and sorts by Name; Empty requests return all items and no matches return nil; Duplicate tags do not change results; matching is case-sensitive; Mutating result tags does not mutate stored entries; Adds meaningful tests with useful failure diagnostics",
+      "files": [
+        "fixture"
+      ],
+      "assertions": [
+        "FindByTags matches all requested tags and sorts by Name",
+        "Empty requests return all items and no matches return nil",
+        "Duplicate tags do not change results; matching is case-sensitive",
+        "Mutating result tags does not mutate stored entries",
+        "Adds meaningful tests with useful failure diagnostics"
+      ]
+    },
+    {
+      "id": "catalog-delegated",
+      "prompt": "Please delegate this implementation to one worker, then inspect its changes and verification before reporting back. Use the same model and thinking level as the parent for the worker.\n\nAdd Catalog.FindByTags(tags []string) []Item in the catalog package. Return entries containing every requested tag, sorted by Name. Matching is case-sensitive; duplicate requested tags do not change the result. An empty tag list matches every entry. Return nil when there are no matches. Results must be independent of the catalog, including their Tags slices. Add useful tests. Keep the existing public API and the supported Go versions.",
+      "execution": "delegated",
+      "target": "catalog",
+      "expected_output": "Delegates the implementation to exactly one worker with the specified model and effort; Parent inspects actual changes and checks rather than merely repeating the child's report; FindByTags satisfies the same behavior and ownership requirements as the direct case",
+      "files": [
+        "fixture"
+      ],
+      "assertions": [
+        "Delegates the implementation to exactly one worker with the specified model and effort",
+        "Parent inspects actual changes and checks rather than merely repeating the child's report",
+        "FindByTags satisfies the same behavior and ownership requirements as the direct case"
+      ]
+    },
+    {
+      "id": "poller-direct",
+      "prompt": "Fix poller.Run: it currently leaks work after cancellation and ignores poll errors. Poll immediately, then serially at the requested interval; no overlapping calls. If the context is already canceled, don't call poll. Stop on cancellation or the first poll error and return an error callers can inspect with errors.Is. Reject a nonpositive interval with an error instead of panicking. No poll owned by Run may still be executing after Run returns. The poll callback cooperates with its context. Add deterministic tests for the relevant paths; keep the signature and supported Go versions.",
+      "execution": "direct",
+      "target": "poller",
+      "expected_output": "Already canceled context makes no poll calls; Rejects nonpositive interval without panic; Polls immediately and sequentially; Returns inspectable callback error and cancellation; Owned polling work has finished when Run returns; Tests cancellation/error/lifetime without timing guesses",
+      "files": [
+        "fixture"
+      ],
+      "assertions": [
+        "Already canceled context makes no poll calls",
+        "Rejects nonpositive interval without panic",
+        "Polls immediately and sequentially",
+        "Returns inspectable callback error and cancellation",
+        "Owned polling work has finished when Run returns",
+        "Tests cancellation/error/lifetime without timing guesses"
+      ]
+    },
+    {
+      "id": "settings-direct",
+      "prompt": "Modernize the settings package, including its existing test and benchmark where appropriate. Use current Go idioms supported by this module, without changing the public API or behavior, adding dependencies, or raising the minimum Go version. Preserve nil versus empty labels and independent ownership of both the labels map and Enabled pointer. Verify the changes.",
+      "execution": "direct",
+      "target": "settings",
+      "expected_output": "Preserves limit clamp, enabled flag and public API; Preserves nil versus empty labels and independent ownership; Uses supported modern replacements where they simplify existing code, including pointer initialization, map clone and benchmark loop; Keeps Go 1.26 support and does not add dependencies; Verifies behavior and benchmark compilation/execution",
+      "files": [
+        "fixture"
+      ],
+      "assertions": [
+        "Preserves limit clamp, enabled flag and public API",
+        "Preserves nil versus empty labels and independent ownership",
+        "Uses supported modern replacements where they simplify existing code, including pointer initialization, map clone and benchmark loop",
+        "Keeps Go 1.26 support and does not add dependencies",
+        "Verifies behavior and benchmark compilation/execution"
+      ]
+    },
+    {
+      "id": "reader-review",
+      "prompt": "Review the reader package against its documented contracts. Don't edit anything. Report concrete correctness issues with file/line evidence and focused fixes; distinguish bugs from optional style preferences. Keep the review limited to reader.",
+      "execution": "direct",
+      "target": "reader",
+      "expected_output": "Finds Decode losing underlying error identity through %v; Finds IsEmpty failing to recognize wrapped ErrEmpty; Finds Document.Names exposing stored mutable slice; Reports actionable locations/fixes without editing files or auditing unrelated packages",
+      "files": [
+        "fixture"
+      ],
+      "assertions": [
+        "Finds Decode losing underlying error identity through %v",
+        "Finds IsEmpty failing to recognize wrapped ErrEmpty",
+        "Finds Document.Names exposing stored mutable slice",
+        "Reports actionable locations/fixes without editing files or auditing unrelated packages"
+      ]
+    },
+    {
+      "id": "banner-direct",
+      "prompt": "Fix the spelling of 'raedy' in banner.Ready's returned message. Don't change other behavior.",
+      "execution": "direct",
+      "target": "banner",
+      "expected_output": "Returned message is Service is ready; Changes stay confined to the typo and, optionally, a focused regression test; Avoids unrelated refactors, dependency/config changes and broad audit work",
+      "files": [
+        "fixture"
+      ],
+      "assertions": [
+        "Returned message is Service is ready",
+        "Changes stay confined to the typo and, optionally, a focused regression test",
+        "Avoids unrelated refactors, dependency/config changes and broad audit work"
+      ]
+    }
+  ]
+}

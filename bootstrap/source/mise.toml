@@ -1,0 +1,31 @@
+min_version = "2026.10.25"
+
+[settings]
+task.run_auto_install = false
+dotfiles.root = "{{ config_source | canonicalize | dirname }}"
+
+[vars]
+dots_public_url = { required = "Select a credential-free committed public source with mise vars dots_public_url=URL or mise.local.toml." }
+
+[bootstrap]
+# This project acquires sources; the installed modules own machine groups.
+dotfile_groups = []
+
+[bootstrap.repos."~/.local/share/dots/checkouts/dots"]
+url = "{{ vars.dots_public_url }}"
+
+[bootstrap.hooks.post-repos]
+run = [
+  '"{{ mise_bin }}" vars dots_public_url={{ vars.dots_public_url | quote }}',
+  '{% set modules = mise_env | default(value=[]) %}{% if "private" in modules %}"{{ mise_bin }}" -E private vars dots_private_url={{ vars.dots_private_url | quote }}{% else %}true{% endif %}',
+  '"{{ mise_bin }}" -E {{ mise_env | default(value=[]) | join(sep=",") | quote }} bootstrap repos status --json',
+]
+
+[dotfiles]
+"~/.config/mise/conf.d/dots" = { source = "~/.local/share/dots/checkouts/dots/bootstrap", mode = "symlink" }
+"~/.config/mise/miserc.local.toml/dots-modules" = { source = "modules.toml.tera", merge = true, template = "tera" }
+
+[tasks.bootstrap]
+description = "Apply the installed native machine modules"
+dir = "{{ env.HOME }}"
+run = '"{{ mise_bin }}" bootstrap'

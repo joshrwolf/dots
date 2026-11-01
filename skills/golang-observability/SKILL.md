@@ -1,25 +1,8 @@
 ---
 name: golang-observability
 description: "Instrument Go services for production. Use for structured logs, metrics, tracing, continuous profiling, dashboards, and actionable alerts."
-user-invocable: true
 license: MIT
-compatibility: Designed for Claude Code, Codex or similar harness, and for projects using Golang.
-metadata:
-  author: samber
-  version: "1.3.2"
-  openclaw:
-    emoji: "📡"
-    homepage: https://github.com/samber/cc-skills-golang
-    requires:
-      bins:
-        - go
-    install: []
-allowed-tools: Read Edit Write Glob Grep Bash(go:*) Bash(golangci-lint:*) Bash(git:*) Agent WebFetch WebSearch AskUserQuestion
-paths:
-  - "**/*.go"
 ---
-
-> **Community default.** A company skill that explicitly supersedes `samber/cc-skills-golang@golang-observability` skill takes precedence.
 
 # Go Observability Best Practices
 
@@ -49,14 +32,6 @@ project's resolved API versions.
 - Protect profiling endpoints and measure collection overhead. Environment
   variables read at startup require restart to change configuration.
 
-## Cross-References
-
-- → See `samber/cc-skills-golang@golang-error-handling` skill for the single handling rule.
-- → See `samber/cc-skills-golang@golang-benchmark` skill for using observability signals to diagnose production issues.
-- → See `samber/cc-skills-golang@golang-security` skill for protecting pprof endpoints and avoiding PII in logs.
-- → See `samber/cc-skills-golang@golang-context` skill for propagating trace context across service boundaries.
-- → See `samber/cc-skills@promql-cli` skill for querying and exploring PromQL expressions against Prometheus from the CLI.
-
 ### Go 1.26+: slog multi-handler
 
 For simple fan-out to multiple slog handlers, prefer stdlib `slog.NewMultiHandler` before adding third-party handler-composition dependencies.
@@ -69,6 +44,13 @@ logger := slog.New(slog.NewMultiHandler(
 ```
 
 Use third-party slog handler libraries only when the stdlib handler composition is insufficient.
+
+## Cross-References
+
+- → See `golang` skill for the single handling rule.
+- → See `golang-performance` skill for using observability signals to diagnose production issues.
+- → See `golang-security` skill for protecting pprof endpoints and avoiding PII in logs.
+- → See `golang-concurrency` skill for propagating trace context across service boundaries.
 
 ## Signal Selection
 
@@ -95,6 +77,8 @@ Read only the guides needed for the requested work:
 - **[Real User Monitoring](references/rum.md)** — For requested user monitoring or product analytics work. Covers product analytics (event tracking, funnels), Customer Data Platform integration, and critical compliance: GDPR/CCPA consent checks, data subject rights (user deletion endpoints), and privacy checklist for tracking. Server-side event tracking (PostHog, Segment) and identity key best practices.
 
 - **[Alerting](references/alerting.md)** — Proactive problem detection. Covers the four golden signals (latency, traffic, errors, saturation), [awesome-prometheus-alerts](https://samber.github.io/awesome-prometheus-alerts/) provides ~500 ready-to-use rules by technology, Go runtime alerts (goroutine leaks, GC pressure, OOM risk), severity levels, and common mistakes that break alerting (using `irate` instead of `rate`, missing `for:` duration to avoid flapping).
+
+- **[samber/slog extensions](references/samber-slog.md)** — only when the project uses samber slog handlers, sampling, formatters or middleware.
 
 - **[Grafana Dashboards](references/dashboards.md)** — Prebuilt dashboards for Go runtime monitoring (heap allocation, GC pause frequency, goroutine count, CPU). Explains the standard dashboards to install, how to customize them for your service, and when each dashboard answers a different operational question.
 

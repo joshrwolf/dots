@@ -1,15 +1,14 @@
 //! Status collection for explicit commits and run attempts.
+use std::collections::HashSet;
+
+use serde::Deserialize;
+
+use crate::checks::Row;
+use crate::snapshot::Snapshot;
+use crate::target::{self, Resource};
 use crate::{
     CheckRef, Error, InspectOptions, Inspection, Provider, Repository, Result, Subject, Target,
 };
-use crate::{
-    checks::Row,
-    provider::checked,
-    snapshot::Snapshot,
-    target::{self, Resource},
-};
-use serde::Deserialize;
-use std::collections::HashSet;
 
 pub fn inspect_target(
     provider: &impl Provider,
@@ -99,7 +98,7 @@ fn api(provider: &impl Provider, repo: &Repository, path: &str, paged: bool) -> 
     if paged {
         args.extend(["--paginate", "--slurp"]);
     }
-    checked(provider, &args)
+    crate::provider::checked(provider, &args)
 }
 fn resolve_ref(provider: &impl Provider, repo: &Repository, value: &str) -> Result<String> {
     // GitHub's commit resolver accepts fully qualified refs; use matching-refs to

@@ -8,7 +8,7 @@
 - [Channel Closing](#channel-closing)
 - [Buffer Size](#buffer-size)
 - [Select for Non-Blocking Communication](#select-for-non-blocking-communication)
-- [Avoid Repeated `time.After` in Hot Loops](#avoid-repeated-timeafter-in-hot-loops)
+- [`time.After` and Timer Reuse in Loops](#timeafter-and-timer-reuse-in-loops)
 
 ## Goroutine Lifecycle
 
@@ -136,20 +136,31 @@ func process(ctx context.Context, in <-chan Task, out chan<- Result) {
 }
 ```
 
-## Avoid Repeated `time.After` in Hot Loops
+## `time.After` and Timer Reuse in Loops
+
+Since Go 1.23 the garbage collector reclaims unreferenced, unstopped timers, so
+`time.After` in a `select` loop does not leak and is the clearer default:
 
 ```go
-// ✗ Bad — creates a new timer on every iteration
 for {
     select {
-    case msg := <-ch:
+    case msg, ok := <-ch:
+        if !ok {
+            return
+        }
         handle(msg)
-    case <-time.After(5 * time.Second): // repeated allocation/churn
+    case <-time.After(5 * time.Second):
         handleTimeout()
     }
 }
+```
 
-// ✓ Good (Go 1.23+) — reuse the timer
+Each iteration still allocates a timer. Reuse one only when a profile shows that
+allocation matters on a hot path. With synchronous timer channels, `Reset` alone
+is enough: no `Stop` first and no drain, because no receive after `Reset` returns
+can deliver a value from the previous setting.
+
+```go
 timer := time.NewTimer(5 * time.Second)
 defer timer.Stop()
 for {
@@ -158,14 +169,15 @@ for {
         if !ok {
             return
         }
-        timer.Stop()
-        timer.Reset(5 * time.Second)
         handle(msg)
     case <-timer.C:
         handleTimeout()
-        timer.Reset(5 * time.Second)
     }
+    timer.Reset(5 * time.Second)
 }
 ```
 
-The synchronous timer-channel guarantees apply when the main module declares `go 1.23` or newer and `GODEBUG=asynctimerchan=1` has not restored old behavior. With old semantics, Stop returning false does not prove an unread value exists: it may already have been received. Coordinate ownership and drain only a pending value before Reset; do not blindly block on a drained timer channel.
+Go 1.27 toolchains always use synchronous timer channels, whatever the module's
+`go` directive. Go 1.23–1.26 toolchains use them only when the main module declares
+`go 1.23` or newer and `asynctimerchan=1` is not set; older semantics need the
+`Stop`-and-drain pattern documented in those releases' `time.Timer.Reset`.

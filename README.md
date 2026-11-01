@@ -1,40 +1,39 @@
 # Home sweet $HOME
 
-Personal macOS dotfiles managed with GNU Stow, with mise tasks for development
-and explicit installation.
+Portable workstation configuration and tooling, composed with native mise.
 
 ## Setup
 
-Install Homebrew and Apple Command Line Tools, then run from this checkout:
+Use mise 2026.10.25 or newer. From reviewed source, select the committed
+repository to install:
 
 ```sh
-brew bundle --file=home/brew/.Brewfile
+cd bootstrap/source
 mise trust
-mise install --locked
-mise run install
+mise vars "dots_public_url=$(git rev-parse --show-toplevel)"
+mise bootstrap --only files,repos,dotfiles,task
 ```
 
-Base installation links shell, terminal, theme, and agent configuration. It does
-not install application binaries, activate Herdr plugins, or enable optional
-services. See [build and activation](docs/build.md) for checks and installation
-boundaries.
+The source project clones into persistent home, installs native configuration
+modules, and applies their selected resources. It does not install uncommitted
+changes. Use `-E desktop` for macOS desktop configuration and `-E private` for
+explicit private composition.
 
-Codex settings stay machine-local in `~/.codex/config.toml`. Private Brew additions
-can live in `~/.Brewfile.local`; apply them with
-`brew bundle --file="$HOME/.Brewfile.local"`. Keep credentials and runtime state
-outside this public repository.
+See [machine setup](bootstrap/README.md) for source selection, optional modules
+and SSH setup. Repository
+development and checks have separate [SDK setup](docs/build.md).
+
+Credentials, sessions and device enrollment remain machine-local. No setup
+operation enrolls file synchronization or prunes unrelated packages.
 
 ## Use
 
-- [dots CLI](src/dots/README.md): agent workflows for GitHub, Herdr, and shared tasks.
-- [Pi](docs/pi.md): managed CLI, companion extensions, and themes.
-- [Claude mods](docs/claude-mods.md) and [shared skills](docs/skills.md).
-- [Herdr navigation](src/herdr/nav/README.md),
-  [PR status](src/herdr/github/README.md),
-  [issue workspaces](src/herdr/issue/README.md), and
-  [local review](src/herdr/review/NEOVIM.md).
-- [Neovim](home/nvim/.config/nvim/README.md): independently installed editor config.
+- [dots CLI](src/dots/README.md): GitHub, memory and shared tasks.
+- [Pi](docs/pi.md): managed CLI and companion packages.
+- [Shared skills](docs/skills.md) and [Claude mods](docs/claude-mods.md).
+- [Rex](home/rex/.config/rex/README.md): sessions and fuzzy navigation.
+- [Neovim](home/nvim/.config/nvim/README.md).
 - [Commit signing](docs/gitsign.md) and [Finicky routing](docs/finicky.md).
 
-Shared themes live in `home/theme/.config/theme/themes/`; the `current` symlink
-selects a palette. Applications consume their own adapters from that directory.
+Shared themes live under `home/theme/.config/theme/themes/`; the `current`
+link selects their adapters.

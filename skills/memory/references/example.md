@@ -47,7 +47,7 @@ Buffering the entire export exceeded the agreed memory budget in the large-data
 check. Streaming stayed within that budget. Preview responses remain bounded
 and do not need the additional lifecycle handling.
 
-- [Export checkpoint](../sources/2026-10-19-export-check.md): the observed check
+- [Export checkpoint](../../outputs/export-check/sha256-<digest>/report.md): the observed check
   and the user's accepted decision.
 
 ## Supersession
@@ -60,7 +60,9 @@ recommendation was based on small inputs and did not establish large-input safet
 Client disconnect cleanup has not been verified; do not describe it as solved.
 ```
 
-## sources/2026-10-19-export-check.md
+## Retained output: outputs/export-check/sha256-<digest>/report.md
+
+`<digest>` stands for the actual published revision hash, not a valid selector.
 
 ```markdown
 # Export checkpoint — 2026-10-19

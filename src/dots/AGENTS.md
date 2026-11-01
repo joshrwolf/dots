@@ -1,9 +1,8 @@
 # dots CLI
 
-- Load `idiomatic-rust` for Rust changes. Use the repository-root Cargo workspace.
-- Keep explicit library plus thin binary packages. Applications own argument
-  parsing, host context, rendering, and exit codes; shared behavior lives with its
-  owner under `src/`. Do not depend on a Herdr plugin crate for domain operations.
+- Integration tests drive the library entry point; `main.rs` maps process I/O
+  and exit codes. Applications own argument parsing, host context and rendering;
+  shared behavior lives with its owner under `src/`.
 - `dots` groups operations by integration (`dots github ci`). Add a subcommand
   only for a concrete workflow; avoid generic API passthrough commands.
 - Help must work offline. Commands are noninteractive with bounded output,

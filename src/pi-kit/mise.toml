@@ -1,0 +1,3 @@
+[tasks.check]
+depends = ["//src/dots:test-cli"]
+run = 'PATH="$MISE_MONOREPO_ROOT/target/debug:$PATH" pnpm run check'

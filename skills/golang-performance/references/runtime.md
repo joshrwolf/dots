@@ -129,7 +129,7 @@ Reducing allocations helps more than tuning GOGC — it addresses the root cause
 
 - **Value types over pointer types** where possible — escape analysis decides placement; value types and pointers can both stay on the stack or participate in heap allocations
 - **Pool frequently allocated objects** with `sync.Pool` (see [memory.md](./memory.md))
-- **Preallocate slices and maps** — → See `samber/cc-skills-golang@golang-data-structures` skill
+- **Preallocate slices and maps** when the size is known
 - **Avoid interface boxing** in hot paths — use typed parameters or generics
 
 ## GOMAXPROCS in Containers
@@ -241,4 +241,4 @@ if err != nil { continue }
 ```
 
 Use errors for expected failures. Recovery belongs only at a boundary that can
-safely contain and report a failed operation; see `golang-error-handling`.
+safely contain and report a failed operation.

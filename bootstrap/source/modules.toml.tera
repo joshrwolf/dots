@@ -1,0 +1,3 @@
+env = {{ mise_env | default(value=[]) | json_encode }}
+{% set source_root = (env.HOME ~ '/.local/share/dots/checkouts/dots') | canonicalize %}
+ceiling_paths = {{ [source_root] | json_encode }}

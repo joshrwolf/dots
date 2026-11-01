@@ -4,12 +4,10 @@ A small personal configuration using native packages and documented APIs.
 
 ## Setup
 
-Bob selects the interactive Neovim version; upgrades are manual. Mise pins the
-separate test runtime. From the dots root:
-
-```sh
-mise run nvim:install
-```
+Mise selects the latest interactive Neovim release; upgrades are deliberate.
+The repository SDK selects its test runtime separately. [Machine setup](../../../../bootstrap/README.md)
+deploys this configuration, its language servers and Rustup editor components
+as part of the portable base.
 
 Missing `vim.pack` plugins install on first launch. For updates, run
 `:packupdate`, review changes, then `:write` to apply or `:quit` to discard.
@@ -18,9 +16,8 @@ from editor upgrades.
 
 ## Use
 
-Mapping descriptions document shortcuts. `<leader>fR` opens
-[saved review threads](../../../../src/herdr/review/NEOVIM.md);
-`<leader>fr` remains recent files. Review setup does not launch a bridge until
-requested.
+Mapping descriptions document shortcuts. In Rex terminals, clipboard operations
+use native OSC52 to reach the viewing client rather than the server's desktop
+clipboard. Outside Rex, Neovim selects the host's native clipboard provider.
 
 Contributor guidance lives in [AGENTS.md](AGENTS.md).

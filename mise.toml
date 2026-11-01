@@ -1,4 +1,4 @@
-min_version = "2026.10.12"
+min_version = "2026.10.25"
 monorepo_root = true
 
 [settings]
@@ -12,23 +12,17 @@ locked = true
 # Rustup selects the Rust toolchain from rust-toolchain.toml.
 [tools]
 node = "24.22.0"
+pnpm = "11.28.6"
 "github:nextest-rs/nextest" = { version = "0.9.148", version_prefix = "cargo-nextest-" }
 "aqua:neovim/neovim" = "0.12.6"
-
-[vars]
-stow = "stow --dir=home --no-folding"
-base = "aerospace brew codex ghostty pi skills theme zsh"
+"aqua:max-sixty/worktrunk" = "0.81.0"
 
 [monorepo]
-config_roots = ["home", "src/*", "src/herdr/*", "src/claude/*"]
-
-[tasks.build]
-description = "Build all native deliverables; never activate them"
-depends = ["//src/...:build"]
+config_roots = ["home", "src/*", "src/claude/*", "private/src/*"]
 
 [tasks.check]
 description = "Complete fast gate, without installation or cloud CI"
-depends = ["//src/pi:check", "//src/claude/codex-agent:check", "//home:check"]
+depends = ["check:typescript", "//src/pi:check", "//src/pi-kit:check", "//home:check"]
 run = [
   "cargo fmt --all --check",
   "cargo clippy --locked --workspace --all-features --all-targets -- -D warnings",
@@ -38,40 +32,25 @@ run = [
 ]
 env = { RUSTDOCFLAGS = "-D warnings" }
 
+[tasks."check:typescript"]
+description = "Typecheck tooling and lint/format all owned TypeScript and JavaScript"
+run = ["pnpm run typecheck:tooling", "pnpm run lint", "pnpm run format:check"]
+
 [tasks.verify]
-description = "Complete checks, builds, and isolated process/host acceptance"
-depends = ["check", "build", "//src/pi:verify"]
+description = "Complete checks and isolated process/host acceptance"
+depends = ["check", "//src/pi:verify"]
 run = "cargo nextest run --locked --workspace --all-features --all-targets --profile acceptance"
 
 [tasks.deps]
 description = "Explicitly install locked development and test dependencies"
-depends = ["//src/pi:deps", "//src/herdr:deps"]
-run = "cargo fetch --locked"
+run = ["pnpm install --frozen-lockfile", "cargo fetch --locked"]
 
 [tasks.doctor]
 description = "Native mise diagnostics, selected SDKs, and compiler identity"
 depends = ["doctor:platform"]
-run = ["mise doctor", "mise ls --current", "rustup show active-toolchain", "cargo clippy --version", "cargo fmt --version", "cc --version"]
+# The rustc on PATH must be the one rust-toolchain.toml pins (rustup's proxy).
+run = ["mise doctor", "mise ls --current", "rustup show active-toolchain", 'want=$(sed -n "s/^channel = \"\(.*\)\"/\1/p" rust-toolchain.toml) && have=$(rustc --version | cut -d" " -f2) && test "$have" = "$want" || { echo "rustc $have on PATH ($(command -v rustc)) is not the rust-toolchain.toml pin $want" >&2; exit 1; }', "cargo clippy --version", "cargo fmt --version", "cc --version"]
 
 [tasks."doctor:platform"]
 skip_if = 'test "$(uname -s)" != Darwin'
 run = "xcrun --show-sdk-path"
-
-[tasks.install]
-# Stow unfolds a package link into an existing real directory instead of refusing.
-run = ['for d in .agents/skills .claude/skills; do test -L "$HOME/$d" || test ! -e "$HOME/$d" || { echo "$HOME/$d must be absent or a link; move its entries into skills/ first" >&2; exit 1; }; done', '{{ vars.stow }} --target "$HOME" --simulate --restow {{ vars.base }}', '{{ vars.stow }} --target "$HOME" --restow {{ vars.base }}']
-
-[tasks.unstow]
-run = '{{ vars.stow }} --target "$HOME" --delete {{ vars.base }}'
-
-[tasks."nvim:install"]
-run = ['{{ vars.stow }} --target "$HOME" --simulate --restow nvim', '{{ vars.stow }} --target "$HOME" --restow nvim']
-
-[tasks."finicky:install"]
-run = ['test "$(uname -s)" = Darwin', 'test -x /Applications/Finicky.app/Contents/MacOS/Finicky', '{{ vars.stow }} --target "$HOME" --simulate --restow finicky', '{{ vars.stow }} --target "$HOME" --restow finicky']
-
-[tasks."pi-cli:install"]
-run = "curl -fsSL https://pi.dev/install.sh | sh"
-
-[tasks."pi-cli:update"]
-run = "pi update --self"

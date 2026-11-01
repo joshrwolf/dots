@@ -19,7 +19,7 @@ review module/dependency changes after an upgrade.
 
 ## golangci-lint v2 _(golangci-lint v2.0.0+, March 2025)_
 
-Upgrade to golangci-lint v2. **Migration**: Run `golangci-lint migrate` to convert v1 config to v2. See the `samber/cc-skills-golang@golang-lint` skill for the recommended configuration.
+Upgrade to golangci-lint v2. **Migration**: Run `golangci-lint migrate` to convert v1 config to v2. See the `golang-continuous-integration` skill for the recommended configuration.
 
 ## govulncheck _(works best with Go 1.22+)_
 
@@ -81,9 +81,3 @@ go doc -ex net/http.Client
 `go test -json` output gained an optional `OutputType` field (`"error"`, `"error-continue"`, `"frame"`) for consumers that need to distinguish test-output kinds programmatically.
 
 `go tool trace -http` now binds to localhost by default; pass `-http=0.0.0.0:6060` explicitly to expose the trace viewer beyond the local machine (relevant when tracing inside a container or remote dev environment).
-
-## AI-Driven Code Review in CI
-
-Add an AI agent as a PR reviewer alongside traditional static analysis. When configured with this skill plugin, the agent loads the relevant Go skills — `golang-security` for security review, `golang-concurrency` for concurrency issues, `golang-error-handling` for error handling, and so on — providing project-specific context. It may find issues beyond linting, but can miss bugs or produce false positives; it is optional and does not replace tests or review.
-
-See the `samber/cc-skills-golang@golang-continuous-integration` skill for ready-to-use GitHub Actions assets for both Claude Code and GitHub Copilot.

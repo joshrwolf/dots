@@ -2,40 +2,37 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
-
-use sha2::{Digest as _, Sha256};
 use std::process::Output;
 use std::time::{Duration, Instant};
 
-use crate::{CachedLog, CheckRef, Error, Result, SnapshotRef};
+use sha2::{Digest as _, Sha256};
+
+use crate::cache::{self, Cache};
+use crate::{CachedLog, CheckRef, Error, Repository, Result, SnapshotRef};
 
 /// Query boundary for live GitHub access and deterministic, hand-authored tests.
 pub trait Provider {
-    fn repository(&self) -> Result<crate::Repository> {
+    fn repository(&self) -> Result<Repository> {
         Err(Error::InvalidReference(
             "supply --repo HOST/OWNER/REPO or a full URL".into(),
         ))
     }
     fn gh(&self, args: &[&str]) -> Result<Output>;
-    fn gh_log(&self, args: &[&str], destination: &mut std::fs::File) -> Result<Output> {
+    fn gh_log(&self, args: &[&str], destination: &mut File) -> Result<Output> {
         use std::io::Write as _;
         let mut output = self.gh(args)?;
         destination.write_all(&output.stdout)?;
         output.stdout.clear();
         Ok(output)
     }
-    fn cached_log_file(
-        &self,
-        _reference: &CheckRef,
-        _attempt: u64,
-    ) -> Option<(std::fs::File, u64)> {
+    fn cached_log_file(&self, _reference: &CheckRef, _attempt: u64) -> Option<(File, u64)> {
         None
     }
     fn cache_log_file(
         &self,
         _reference: &CheckRef,
         _attempt: u64,
-        _file: &mut std::fs::File,
+        _file: &mut File,
         _time: u64,
     ) -> bool {
         false
@@ -116,8 +113,8 @@ pub struct GitHub<'a> {
     directory: &'a Path,
     transport: &'a dyn Transport,
     started: Instant,
-    cache: Option<crate::cache::Cache>,
-    snapshots: Option<crate::cache::Cache>,
+    cache: Option<Cache>,
+    snapshots: Option<Cache>,
     credentials: RefCell<HashMap<String, Option<Vec<u8>>>>,
 }
 
@@ -146,8 +143,8 @@ impl<'a> GitHub<'a> {
     /// The host adapter chooses cache location; status and job metadata stay fresh.
     #[must_use]
     pub fn with_cache(mut self, directory: &Path) -> Self {
-        self.cache = Some(crate::cache::Cache::new(directory.join("logs")));
-        self.snapshots = Some(crate::cache::Cache::new(directory.join("snapshots")).with_ttl(300));
+        self.cache = Some(Cache::new(directory.join("logs")));
+        self.snapshots = Some(Cache::new(directory.join("snapshots")).with_ttl(300));
         self
     }
 
@@ -182,12 +179,12 @@ impl<'a> GitHub<'a> {
                 Some(Sha256::digest(token.as_bytes()).to_vec())
             })
             .as_deref()?;
-        Some(crate::cache::key(digest, host, endpoint, attempt))
+        Some(cache::key(digest, host, endpoint, attempt))
     }
 }
 
 impl Provider for GitHub<'_> {
-    fn repository(&self) -> Result<crate::Repository> {
+    fn repository(&self) -> Result<Repository> {
         let repositories = self.repositories()?;
         if let [repository] = repositories.as_slice() {
             return repository.display().parse();
@@ -208,7 +205,7 @@ impl Provider for GitHub<'_> {
         Ok(self.transport.gh(self.directory, args, remaining)?)
     }
 
-    fn gh_log(&self, args: &[&str], destination: &mut std::fs::File) -> Result<Output> {
+    fn gh_log(&self, args: &[&str], destination: &mut File) -> Result<Output> {
         let remaining = Duration::from_secs(45)
             .checked_sub(self.started.elapsed())
             .filter(|duration| !duration.is_zero())
@@ -220,7 +217,7 @@ impl Provider for GitHub<'_> {
             .gh_log(self.directory, args, remaining, destination.try_clone()?)?)
     }
 
-    fn cached_log_file(&self, reference: &CheckRef, attempt: u64) -> Option<(std::fs::File, u64)> {
+    fn cached_log_file(&self, reference: &CheckRef, attempt: u64) -> Option<(File, u64)> {
         self.cache.as_ref()?.get_file(&self.credential_key(
             &reference.repository.host,
             &reference.endpoint(),
@@ -231,7 +228,7 @@ impl Provider for GitHub<'_> {
         &self,
         reference: &CheckRef,
         attempt: u64,
-        file: &mut std::fs::File,
+        file: &mut File,
         time: u64,
     ) -> bool {
         if let (Some(cache), Some(key)) = (
@@ -244,7 +241,7 @@ impl Provider for GitHub<'_> {
     }
 
     fn local_head_for(&self, url: &str) -> Result<Option<String>> {
-        let target = crate::Repository::from_url(url)?.0;
+        let target = Repository::from_url(url)?.0;
         let checkout = self
             .transport
             .git(self.directory, &["rev-parse", "--is-inside-work-tree"])?;

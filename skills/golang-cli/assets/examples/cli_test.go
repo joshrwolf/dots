@@ -60,6 +60,40 @@ func TestServeCommand(t *testing.T) {
 	}
 }
 
+func TestExitCode(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MYAPP_PORT", "")
+	t.Chdir(t.TempDir())
+	tests := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{name: "success", args: []string{"serve"}, want: 0},
+		{name: "unknown flag", args: []string{"serve", "--nope"}, want: exitUsage},
+		{name: "malformed flag value", args: []string{"serve", "--port", "x"}, want: exitUsage},
+		{name: "invalid value", args: []string{"serve", "--port", "0"}, want: exitFailure},
+		// Not routed through SetFlagErrorFunc; this example leaves them unclassified.
+		{name: "built-in Args validator", args: []string{"serve", "extra"}, want: exitFailure},
+		{name: "unknown command", args: []string{"nope"}, want: exitFailure},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := executeCommand(newRootCommand(), tt.args...)
+			if got := exitCode(err); got != tt.want {
+				t.Errorf("exitCode(%v) = %d, want %d", err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCustomArgsValidatorExitCode(t *testing.T) {
+	_, err := executeCommand(deployWithValidationCmd, "qa")
+	if got := exitCode(err); got != exitUsage {
+		t.Errorf("exitCode(%v) = %d, want %d", err, got, exitUsage)
+	}
+}
+
 func TestFlagExampleValidation(t *testing.T) {
 	for _, args := range [][]string{
 		{"--stdout"},

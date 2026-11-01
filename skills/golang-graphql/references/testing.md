@@ -214,4 +214,4 @@ func TestUserQueries(t *testing.T) {
 }
 ```
 
-For testing patterns across the codebase, see the `samber/cc-skills-golang@golang-testing` skill.
+For testing patterns across the codebase, see the `golang-testing` skill.

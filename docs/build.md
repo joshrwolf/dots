@@ -1,10 +1,10 @@
 # Build and activation
 
-Mise selects tools and orders tasks; Cargo and npm own their dependency graphs.
+Mise selects tools and orders tasks; Cargo and pnpm own their dependency graphs.
 
 ## Setup
 
-Use mise 2026.10.14 or newer with Homebrew and Apple Command Line Tools:
+Use mise 2026.10.25 or newer with the platform build prerequisites:
 
 ```sh
 mise trust
@@ -12,16 +12,14 @@ mise install --locked
 mise run doctor
 mise run deps
 mise run check
-mise run build
 mise run verify
 ```
 
-The SDK lock supports macOS arm64. Checks need rustup, Stow, and the installed
-Claude host; full acceptance also needs Herdr and a Pi host matching the
-companion's exact development SDK. Host applications keep their own installers and runtime state.
+The SDK lock supports macOS arm64. Checks need rustup and the installed
+Claude host; full acceptance also needs a Pi host matching the Pi release pinned
+in `src/pi-kit`. Host applications keep their own installers and runtime state.
 
-`build` stages Herdr plugin binaries in each plugin's `bin/`; user commands
-have no build step. Check, build, and verify never activate against your real home; provider-free tests do not prove live-model compatibility.
+User commands have no build step. Check and verify never activate against your real home; provider-free tests do not prove live-model compatibility.
 
 ## Check and verify
 
@@ -29,7 +27,7 @@ have no build step. Check, build, and verify never activate against your real ho
 and tests that spawn only short-lived real dependencies such as Git in a
 temporary repository. Agents run it routinely.
 
-`verify` runs `check` and `build`, then acceptance: process lifecycle (deadlines,
+`verify` runs `check`, then acceptance: process lifecycle (deadlines,
 kills, detached or cross-process children), PTYs, and host applications in
 disposable homes. Use it at integration checkpoints.
 
@@ -40,13 +38,30 @@ Place each test by structure, not by a list of names:
   [`.config/nextest.toml`](../.config/nextest.toml) excludes both from the
   default profile and selects only them in the `acceptance` profile.
   `check` uses the default profile; `verify` uses `acceptance`.
-- Node: acceptance lives in the Pi package's `tests/acceptance/`, which only
-  its `verify` task runs.
-- Stow: `//home:check` simulates every package into an empty temporary target,
-  so conflicts between packages surface without touching `$HOME`.
+- Node: unit tests live at `tests/*.test.{ts,mjs}`; acceptance lives in a
+  package's `tests/acceptance/`, which only its `verify` task runs. TypeScript
+  in both is checked statically, along with fixtures and examples.
+- Configuration: native source/file acceptance lives in `src/bootstrap/tests/acceptance.rs`,
+  using temporary homes and committed Git sources. It never applies to `$HOME`.
 
-Host acceptance uses the installed application, such as the `herdr` on `PATH`,
+Host acceptance uses the installed application, such as the `pi` on `PATH`,
 in an isolated temporary home and session; it never contacts the live server.
+Pi SDK fixtures also check that the selected host matches the workspace pin.
+To test a candidate Pi release without switching the live installation, install
+its dependencies in an isolated checkout and run from that checkout's root:
+
+```sh
+PATH="$PWD/node_modules/.bin:$PATH" PI_TEST_HOST_ROOT="$PWD/node_modules/@earendil-works" mise run //src/pi:verify
+```
+
+`PI_TEST_HOST_ROOT` selects the SDK installation; `PATH` selects the CLI and
+its worker children. Both must target the same pinned release.
+
+Cross-package check and verify tasks build the candidate dots CLI through
+`//src/dots:test-cli` and put `target/debug` first on their test processes' PATH.
+They never install it. For direct, focused Node tests, run that prerequisite and
+select the same candidate path explicitly. Test fixtures isolate `HOME`,
+`XDG_DATA_HOME` and `XDG_STATE_HOME` before catalog mutations.
 
 ## Development
 
@@ -56,58 +71,59 @@ tasks such as build, install, deps, or non-Cargo checks. Scope focused work with
 the native tools:
 
 ```sh
-cargo nextest run -p herdr-nav
+cargo nextest run -p dots-pick
 cargo nextest run -p dots-process --profile acceptance
 mise run //src/pi:check
 ```
 
-Code lives under named owners in `src/`, Stow payloads in `home/`, and canonical
+Code lives under named owners in `src/`, configuration trees in `home/`, and canonical
 skills in `skills/`.
 
+TypeScript packages run directly on Node 24 or their Pi host; checks do not emit
+JavaScript. Their shared [compiler contract](../tsconfig.base.json) uses Node
+APIs, not browser globals. `mise run check:typescript` checks tooling types,
+ESLint safety rules, and Prettier formatting without modifying files. Scope a
+check with `pnpm exec eslint <paths>` or `pnpm exec prettier --check <paths>`;
+use `pnpm --filter <package> run typecheck` for a package's complete program.
+Pi's MJS unit tests, acceptance tests, fixtures and dev runner receive type-aware
+safety linting; full JS typechecking is opt-in with `// @ts-check`. Tooling JS is
+typechecked. Finicky configuration receives syntax/style checks only:
+`pnpm run check:finicky` parses it without evaluating it or opening a browser.
+These checks do not validate Finicky's host API or URL behavior.
+
 Rustup selects Rust from `rust-toolchain.toml`; mise pins the other SDKs in
-`mise.toml`. After editing `mise.toml`, run
+`mise.toml`. Install rustup with its own installer (rustup.rs), not Homebrew or
+mise: its proxies in `~/.cargo/bin` come first on `PATH` (the zsh config puts
+them there), and `mise run doctor` fails if the `rustc` it finds is not the pin.
+After editing `mise.toml`, run
 `MISE_LOCKED=false mise lock --platform macos-arm64`, review the lock, install,
-and verify. Cargo's MSRV is a separate compatibility requirement.
+and verify. Rust builds use the pinned toolchain; no older compiler support is
+promised.
 
 ## Machine setup
 
-[Machine setup](../bootstrap/README.md) applies a selected configuration,
-portable agent instructions or the macOS desktop, without this checkout's
-development SDKs or host packages.
+[Machine setup](../bootstrap/README.md) applies selected native configuration
+modules separately from this checkout's development SDK. Its [Rust acceptance suite](../src/bootstrap/README.md)
+runs under `verify`, using disposable source trees as well as homes.
 
 ## Activation
 
 Run installation only when ready to change the live setup:
 
 ```sh
-mise run install                    # base Stow packages
 mise run //src/dots:install         # dots CLI
-mise run //src/herdr:install        # Herdr plugins, CLIs, and configuration
-mise run //src/herdr/nav:install    # navigation plugin only
-mise run //src/pi:packages          # pinned third-party Pi packages
-mise run //src/pi:install           # register the companion from this checkout
+mise run //src/pick:install         # dots-pick, for Rex views
+mise run pi:packages               # selected third-party Pi resources, from HOME
+mise run pi:install                # register the installed module's durable source, from HOME
 ```
 
-Base Stow packages are listed in root `mise.toml`; `unstow` removes only those
-links. Neovim and Finicky have separate `<name>:install` tasks.
-Stow uses `--no-folding` to keep runtime directories out of the checkout.
+Use [machine setup](../bootstrap/README.md) to deploy native home groups,
+including Neovim and selected desktop configuration. Runtime directories stay
+outside source. Native status and explicit unapply/prune own removal.
 
-Stow carries configuration only. `dots`, `herdr-issue`, and `herdr-review`
-install with `cargo install --locked --path .` into Cargo's bin directory
+Cargo owns executable installation. `dots` and `dots-pick` install with `cargo install --locked --path .` into Cargo's bin directory
 (`~/.cargo/bin`, on `PATH` through mise and the zsh configuration); Cargo
 owns their tracking and replacement.
-
-`mise run //src/herdr:install` links all Herdr plugins, installs the
-`herdr-issue` and `herdr-review` commands, then stows the Herdr/Neovim
-configuration, for stock Herdr 0.9.1 or newer. To use only some plugins,
-install them individually and configure only their bindings.
-
-A plugin's `install` runs its `build`, which stages `bin/` in the plugin
-directory, then `herdr plugin link` on that directory. Relinking is harmless
-and replaces any earlier registration of the same plugin. A linked plugin runs
-from the checkout, so every later `build` there, including `mise run build`
-and `verify`, changes the live plugin. Link only from the primary checkout,
-never from an agent worktree.
 
 [Pi installation](pi.md#setup) works the same way: `pi install` registers
 `src/pi` by path, so sessions load the checkout's files on their next `/reload`

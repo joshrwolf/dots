@@ -11,28 +11,16 @@
 # Private skills and Claude mod links stay machine-local.
 /skills/local-*
 
+# `rex skill setup` installs and updates its own skill stub.
+/skills/rex/
+
 **/*.old
 **/*hide.lua
 **/keys/
 
-# Game audio; this repo is public
-home/herdr/.config/herdr/sounds/*.mp3
-
-# Plugin builds stage bin/ and Cargo install records beside manifests; the
-# review plugin's locked Neovim test dependencies go to src/herdr/target/.
-src/herdr/target/
-src/herdr/*/bin/
-src/herdr/*/.crates.toml
-src/herdr/*/.crates2.json
-
-# Pi companion dependencies and local runtime data.
-src/pi/**/node_modules/
+# pnpm workspace dependencies and Pi companion runtime data.
+node_modules/
 src/pi/**/.pi/
-
-# Runtime data must never be captured through a folded Stow directory.
-/home/herdr/.config/herdr/plugins.json
-/home/herdr/.config/herdr/.plugins.lock
-/home/herdr/.config/herdr/plugins/
 
 # Shared Rust workspace build output.
 /target/
