@@ -1,6 +1,7 @@
 import {
   getSelectListTheme,
   UserMessageComponent,
+  type KeybindingHints,
   type KeybindingsManager,
   type Theme,
 } from '@earendil-works/pi-coding-agent';
@@ -10,6 +11,7 @@ import {
   Spacer,
   VStack,
   type Component,
+  type Keybinding,
   type TUI,
 } from '@earendil-works/pi-tui';
 import {
@@ -59,11 +61,25 @@ const animationFrame = () => Math.floor(Date.now() / WORKER_FRAME_MS);
 export interface ScenarioContext {
   readonly syntax: SyntaxService;
   readonly tui: TUI;
-  readonly bindings: Pick<KeybindingsManager, 'matches'>;
+  readonly bindings: Pick<KeybindingsManager, 'matches' | 'getKeys'>;
   readonly close: () => void;
   readonly redraw: () => void;
   readonly height?: () => number;
   readonly createEditor?: (theme: Theme) => Component;
+}
+/** Renderer hints from the overlay's own bindings; fixtures have no render context. */
+function rendererHints(
+  bindings: Pick<KeybindingsManager, 'getKeys'>,
+  theme: Theme,
+): KeybindingHints {
+  const keyText = (keybinding: Keybinding) =>
+    bindings.getKeys(keybinding).join('/');
+  return {
+    keyText,
+    keyHint: (keybinding, description) =>
+      theme.fg('dim', keyText(keybinding)) +
+      theme.fg('muted', ` ${description}`),
+  };
 }
 export interface ScenarioView {
   readonly component: Component;
@@ -131,7 +147,10 @@ function tool<Model>(
         component: inspector,
         update(phase, expanded, theme) {
           const frame = frames[phase]!;
-          view.update(spec.project(frame.observation), theme, expanded);
+          view.update(spec.project(frame.observation), theme, {
+            expanded,
+            ...rendererHints(context.bindings, theme),
+          });
           inspector.setContent(
             {
               title,
@@ -917,7 +936,11 @@ export const scenarios: readonly Scenario[] = [
                       'Worker question\n\nWhich comparison should I use?\nThe saved observation differs from the current checkout.',
                     details: {id: 'w-example', kind: 'asking', label: 'review'},
                   },
-                  {expanded, outputPad: 0},
+                  {
+                    expanded,
+                    outputPad: 0,
+                    ...rendererHints(context.bindings, theme),
+                  },
                   theme,
                 )
               : createWidget(() => rows, theme, undefined, animationFrame);
@@ -970,7 +993,11 @@ export const scenarios: readonly Scenario[] = [
                 text: 'Inspect the latest test result',
               },
             },
-            {expanded, outputPad: 0},
+            {
+              expanded,
+              outputPad: 0,
+              ...rendererHints(context.bindings, theme),
+            },
             theme,
           );
           inspector.setContent(

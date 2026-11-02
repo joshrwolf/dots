@@ -1,6 +1,7 @@
 import type {Theme} from '@earendil-works/pi-coding-agent';
 import {VStack, type Component} from '@earendil-works/pi-tui';
 import type {
+  PresentationOptions,
   PresentationView,
   ToolObservation,
   ToolPresentation,
@@ -10,6 +11,7 @@ import {
   OutputView,
   PreviewView,
   activityHeader,
+  expandCue,
   type Notice,
 } from '../../ui/card.ts';
 import {PriorityRow} from '@joshrwolf/pi-kit/ui';
@@ -115,7 +117,12 @@ const firstLine = (value: string) =>
 
 class ActivityView implements PresentationView<ActivityModel> {
   private view: Component = new VStack();
-  update(model: ActivityModel, theme: Theme, expanded: boolean): void {
+  update(
+    model: ActivityModel,
+    theme: Theme,
+    options: PresentationOptions,
+  ): void {
+    const {expanded} = options;
     const result = model.outcome;
     if (
       result.kind === 'result' &&
@@ -231,7 +238,9 @@ class ActivityView implements PresentationView<ActivityModel> {
                     one.state === 'completed' ? one.result : one.activity,
                   ) ?? '')
                 : result.text;
-            body = preview ? new PreviewView(preview, theme) : undefined;
+            body = preview
+              ? new PreviewView(preview, theme, options)
+              : undefined;
           }
           // Spawn/status acknowledgements are redundant with the facts above;
           // messages and wait results contain useful replies, so keep a preview.
@@ -246,7 +255,12 @@ class ActivityView implements PresentationView<ActivityModel> {
           ) {
             body = undefined;
             notices.push({
-              text: 'Result available · Ctrl+O to inspect report and transcript',
+              text: [
+                'Result available',
+                expandCue(options, 'to inspect report and transcript'),
+              ]
+                .filter(Boolean)
+                .join(' · '),
               severity: 'dim',
             });
           }
@@ -374,7 +388,9 @@ class ActivityView implements PresentationView<ActivityModel> {
               if (items.length > 8)
                 rows.addChild(
                   new OutputView(
-                    `+${items.length - 8} more · Ctrl+O to expand`,
+                    [`+${items.length - 8} more`, expandCue(options)]
+                      .filter(Boolean)
+                      .join(' · '),
                   ),
                 );
               body = items.length ? rows : undefined;

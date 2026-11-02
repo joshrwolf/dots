@@ -1,6 +1,7 @@
 import type {Theme} from '@earendil-works/pi-coding-agent';
 import {VStack, type Component} from '@earendil-works/pi-tui';
 import type {
+  PresentationOptions,
   PresentationView,
   ToolObservation,
   ToolPresentation,
@@ -309,7 +310,12 @@ class CodemodeView implements PresentationView<CodemodeModel> {
     this.syntax = syntax;
     this.notify = notify;
   }
-  update(model: CodemodeModel, theme: Theme, expanded: boolean): void {
+  update(
+    model: CodemodeModel,
+    theme: Theme,
+    options: PresentationOptions,
+  ): void {
+    const {expanded} = options;
     const state = model.outcome;
     const notices: Notice[] = [];
     if (state.kind === 'result' && !model.available)
@@ -518,7 +524,7 @@ class CodemodeView implements PresentationView<CodemodeModel> {
               ].includes(call.name),
           ))
       ) {
-        details.addChild(new PreviewView(model.output, theme, 2));
+        details.addChild(new PreviewView(model.output, theme, options, 2));
       }
       if (notices.length) {
         const warnings = new Notices();

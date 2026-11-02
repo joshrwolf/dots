@@ -1,5 +1,6 @@
 import type {
   AgentToolResult,
+  KeybindingHints,
   Theme,
   ToolRenderers,
   ToolRendererResolver,
@@ -31,8 +32,12 @@ export type ToolObservation =
       readonly showImages: boolean;
     };
 
+/** A row's disclosure state and the host's keybinding formatters, as Pi passes them to renderers. */
+export interface PresentationOptions extends KeybindingHints {
+  readonly expanded: boolean;
+}
 export interface PresentationView<Model> extends Component {
-  update(model: Model, theme: Theme, expanded: boolean): void;
+  update(model: Model, theme: Theme, options: PresentationOptions): void;
 }
 export interface ToolPresentation<Model> {
   readonly shell: 'self' | 'default';
@@ -103,7 +108,11 @@ export function createToolRenderers<Model>(
           executionStarted: context.executionStarted,
         }),
         theme,
-        context.expanded,
+        {
+          expanded: context.expanded,
+          keyText: context.keyText,
+          keyHint: context.keyHint,
+        },
       );
       return row.call;
     },
@@ -123,7 +132,11 @@ export function createToolRenderers<Model>(
           showImages: context.showImages,
         }),
         theme,
-        options.expanded,
+        {
+          expanded: options.expanded,
+          keyText: context.keyText,
+          keyHint: context.keyHint,
+        },
       );
       return row.result;
     },

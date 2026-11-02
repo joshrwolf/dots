@@ -20,6 +20,7 @@ const run = (command, args, options) =>
       {
         cwd: options.cwd,
         timeout: options.timeout,
+        maxBuffer: options.maxBuffer,
         signal: options.signal,
         encoding: 'utf8',
       },
@@ -27,6 +28,7 @@ const run = (command, args, options) =>
         resolve({
           code: error ? (typeof error.code === 'number' ? error.code : -1) : 0,
           killed: Boolean(error?.killed),
+          truncated: error?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
           stdout,
           stderr,
         }),

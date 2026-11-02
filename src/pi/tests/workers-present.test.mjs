@@ -16,6 +16,12 @@ import {renderWake} from '../extensions/wake/present.ts';
 initTheme('dark', false);
 const theme = getThemeByName('dark');
 const plain = lines => stripTerminalSequences(lines.join('\n'));
+// A remapped expand key proves renderers use the host's injected formatters.
+const hints = {
+  keyText: keybinding => (keybinding === 'app.tools.expand' ? 'alt+x' : ''),
+  keyHint: (keybinding, description) =>
+    `${hints.keyText(keybinding)} ${description}`,
+};
 
 const completed = {
   role: 'custom',
@@ -45,7 +51,7 @@ test('worker event projects to a card: outcome first, pointer to the full text, 
 
   const collapsedLines = renderEvent(
     completed,
-    {expanded: false, outputPad: 1},
+    {expanded: false, outputPad: 1, ...hints},
     theme,
   ).render(100);
   const collapsed = plain(collapsedLines);
@@ -61,11 +67,15 @@ test('worker event projects to a card: outcome first, pointer to the full text, 
   );
   assert.match(
     collapsed,
-    /Ctrl\+O to expand/,
+    /alt\+x to expand/,
     'long results advertise expansion',
   );
   const expanded = plain(
-    renderEvent(completed, {expanded: true, outputPad: 1}, theme).render(100),
+    renderEvent(
+      completed,
+      {expanded: true, outputPad: 1, ...hints},
+      theme,
+    ).render(100),
   );
   assert.match(expanded, /commit 0fabb23/);
   assert.match(expanded, /session \/tmp\/s\.jsonl/);
@@ -73,7 +83,7 @@ test('worker event projects to a card: outcome first, pointer to the full text, 
   for (const width of [12, 20, 24, 40]) {
     const lines = renderEvent(
       completed,
-      {expanded: false, outputPad: 0},
+      {expanded: false, outputPad: 0, ...hints},
       theme,
     ).render(width);
     assert.ok(lines.length > 0);
@@ -88,9 +98,11 @@ test('worker event projects to a card: outcome first, pointer to the full text, 
   // At hopeless widths, the outcome takes priority over identity.
   assert.match(
     stripTerminalSequences(
-      renderEvent(completed, {expanded: false, outputPad: 0}, theme).render(
-        12,
-      )[0],
+      renderEvent(
+        completed,
+        {expanded: false, outputPad: 0, ...hints},
+        theme,
+      ).render(12)[0],
     ),
     /completed/,
   );
@@ -103,7 +115,11 @@ test('asking and undeliverable events carry their recovery notice; control chara
     details: {id: 'w-9', kind: 'asking', label: 'x\x1b[2Jbad'},
   };
   const out = plain(
-    renderEvent(asking, {expanded: false, outputPad: 0}, theme).render(80),
+    renderEvent(
+      asking,
+      {expanded: false, outputPad: 0, ...hints},
+      theme,
+    ).render(80),
   );
   assert.match(out, /answer with message \{ to: "w-9"/);
   assert.match(out, /Which base\?/);
@@ -113,7 +129,13 @@ test('asking and undeliverable events carry their recovery notice; control chara
     details: {id: 'w-9', kind: 'undeliverable', label: 'x'},
   };
   assert.match(
-    plain(renderEvent(lost, {expanded: false, outputPad: 0}, theme).render(80)),
+    plain(
+      renderEvent(
+        lost,
+        {expanded: false, outputPad: 0, ...hints},
+        theme,
+      ).render(80),
+    ),
     /could not be routed/,
   );
 });
@@ -321,15 +343,19 @@ test('wake fire renders note, cadence, exit code, and lateness; failed checks pr
     },
   };
   const collapsed = plain(
-    renderWake(fire, {expanded: false, outputPad: 0}, theme).render(100),
+    renderWake(fire, {expanded: false, outputPad: 0, ...hints}, theme).render(
+      100,
+    ),
   );
   assert.match(collapsed, /wake +CI changed; inspect/);
   assert.match(collapsed, /2\/4 · every 1m/);
   assert.match(collapsed, /exit 1/);
   assert.match(collapsed, /late by 5m/);
-  assert.match(collapsed, /Ctrl\+O to expand/);
+  assert.match(collapsed, /alt\+x to expand/);
   const expanded = plain(
-    renderWake(fire, {expanded: true, outputPad: 0}, theme).render(100),
+    renderWake(fire, {expanded: true, outputPad: 0, ...hints}, theme).render(
+      100,
+    ),
   );
   assert.match(expanded, /check: gh run list/);
   assert.match(expanded, /failure/);
@@ -503,7 +529,7 @@ test('worker cards report context and cost beside tokens', () => {
     details: {...completed.details, context: 86.4, cost: 0.1834},
   });
   const texts = model.status.map(segment => segment.text);
-  assert.ok(texts.includes('━━━━━━━━━─ 86%') && texts.includes('$0.18'));
+  assert.ok(texts.includes('━━━━━━━━━─ 86%') && texts.includes('~$0.18'));
   assert.equal(
     model.status.find(segment => segment.text === '━━━━━━━━━─ 86%').tone,
     'warning',
@@ -512,7 +538,15 @@ test('worker cards report context and cost beside tokens', () => {
     projectEvent({
       ...completed,
       details: {...completed.details, cost: 0.004},
-    }).status.some(s => s.text === '$0.004'),
+    }).status.some(s => s.text === '~$0.004'),
+    'a total without the billed flag reads as an estimate',
+  );
+  assert.ok(
+    projectEvent({
+      ...completed,
+      details: {...completed.details, cost: 0.1834, costBilled: true},
+    }).status.some(s => s.text === '$0.18'),
+    'a provider-billed total is unmarked',
   );
 });
 

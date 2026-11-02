@@ -1,4 +1,3 @@
-import {execFile} from 'node:child_process';
 import path from 'node:path';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
 
@@ -13,24 +12,23 @@ import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
 /** Runs a program and resolves with its stdout; the test seam for the Rex invocation. */
 export type Run = (file: string, args: readonly string[]) => Promise<string>;
 
-const runFile: Run = (file, args) =>
-  new Promise((resolve, reject) => {
-    execFile(
-      file,
-      [...args],
-      {timeout: 5000, maxBuffer: 256 * 1024, encoding: 'utf8'},
-      (error, stdout, stderr) => {
-        if (error)
-          reject(new Error(stderr.trim() || error.message, {cause: error}));
-        else resolve(stdout);
-      },
-    );
-  });
+/** The host's process runner owns the deadline, output cap and kill escalation. */
+const hostRun =
+  (pi: ExtensionAPI): Run =>
+  async (file, args) => {
+    const result = await pi.exec(file, [...args], {
+      timeout: 5000,
+      maxBuffer: 256 * 1024,
+    });
+    if (result.killed || result.code !== 0)
+      throw new Error(result.stderr.trim() || `${file} failed`);
+    return result.stdout;
+  };
 
 /** Rex's orientation for this terminal, or undefined outside Rex or on any failure. */
 export async function rexContext(
-  env: NodeJS.ProcessEnv = process.env,
-  run: Run = runFile,
+  env: NodeJS.ProcessEnv,
+  run: Run,
 ): Promise<string | undefined> {
   // A worker is not the session's owner; the orientation (naming the session,
   // and so on) is for the agent the user talks to.
@@ -50,7 +48,7 @@ export async function rexContext(
 export default function (
   pi: ExtensionAPI,
   env: NodeJS.ProcessEnv = process.env,
-  run: Run = runFile,
+  run: Run = hostRun(pi),
 ) {
   let context: string | undefined;
   pi.on('session_start', async () => {

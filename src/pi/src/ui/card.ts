@@ -8,7 +8,7 @@ import {
   plainLines,
   sourceText,
 } from '@joshrwolf/pi-kit/ui';
-import type {Theme} from '@earendil-works/pi-coding-agent';
+import type {KeybindingHints, Theme} from '@earendil-works/pi-coding-agent';
 import {
   VStack,
   stripTerminalSequences,
@@ -17,6 +17,19 @@ import {
 } from '@earendil-works/pi-tui';
 import {StateGutter, type ActivityState} from './state.ts';
 import {DetailView} from './details.ts';
+
+/**
+ * A disclosure cue in the host's configured expand keys, such as `ctrl+o to
+ * expand`. Use the formatters Pi injects into renderers; an imported copy may
+ * not see the user's keybindings. Empty when the action has no key.
+ */
+export function expandCue(
+  hints: Pick<KeybindingHints, 'keyText'>,
+  action = 'to expand',
+): string {
+  const key = hints.keyText('app.tools.expand');
+  return key ? `${key} ${action}` : '';
+}
 
 export interface Notice {
   readonly text: string;
@@ -105,10 +118,17 @@ export class PreviewView implements Component {
   private readonly output: OutputView;
   private readonly theme: Theme;
   private readonly rows: number;
-  constructor(text: string, theme: Theme, rows = 3) {
+  private readonly cue: string;
+  constructor(
+    text: string,
+    theme: Theme,
+    hints: Pick<KeybindingHints, 'keyText'>,
+    rows = 3,
+  ) {
     this.output = new OutputView(text);
     this.theme = theme;
     this.rows = rows;
+    this.cue = expandCue(hints);
   }
   invalidate(): void {
     this.output.invalidate();
@@ -120,7 +140,7 @@ export class PreviewView implements Component {
       ? lines
       : [
           ...lines.slice(0, this.rows),
-          ...plainLines('… Ctrl+O to expand', width, 1).map(line =>
+          ...plainLines(`… ${this.cue}`.trimEnd(), width, 1).map(line =>
             this.theme.fg('dim', line),
           ),
         ];

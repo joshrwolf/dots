@@ -74,7 +74,8 @@ opened in a Rex pane is independent, not a managed worker.
 Use `/workers` to inspect progress, transcripts and results; M messages an owned
 worker and X offers stop confirmation. Descendants are read-only. Completion
 means a result is ready, not that its process exited or its work was accepted.
-Worker costs are shown separately from the parent's session cost.
+Worker costs are shown separately from the parent's session cost. A `~` marks a
+catalog estimate; an unmarked total is provider-billed for every response.
 
 Workers belong to a session, not a conversation branch. `/tree` preserves them;
 `/fork` and `/clone` copy only read-only history. Reload/exit stops owned workers;

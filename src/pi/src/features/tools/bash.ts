@@ -2,6 +2,7 @@ import {displayLimits} from '@joshrwolf/pi-kit/ui';
 import type {Theme} from '@earendil-works/pi-coding-agent';
 import {Spacer, VStack, type Component} from '@earendil-works/pi-tui';
 import type {
+  PresentationOptions,
   PresentationView,
   ToolObservation,
   ToolPresentation,
@@ -81,7 +82,11 @@ class BashView implements PresentationView<BashModel> {
     this.syntax = syntax;
     this.notify = notify;
   }
-  update(model: BashModel, theme: Theme, expanded: boolean): void {
+  update(
+    model: BashModel,
+    theme: Theme,
+    {expanded}: PresentationOptions,
+  ): void {
     const segments = [];
     const notices: Notice[] = [];
     const state = model.outcome;

@@ -77,7 +77,10 @@ export const WorkerRecordSchema = Type.Object(
     finishedAt: Type.Optional(count),
     calls: count,
     tokens: count,
+    /** Pi's reported cost total for the worker's responses, in dollars. */
     cost: Type.Optional(amount),
+    /** Set only when every counted response reported a provider-billed total; absent means an estimate. */
+    costBilled: Type.Optional(Type.Literal(true)),
     /** Unknown (null) right after compaction until the next response reports usage. */
     contextTokens: Type.Optional(Type.Union([count, Type.Null()])),
     contextWindow: Type.Optional(amount),
@@ -103,8 +106,10 @@ export const EventDetailsSchema = Type.Object({
   /** Share of the displayed budget, with capacity as the default basis. */
   context: Type.Optional(amount),
   contextBasis: Type.Optional(Type.Literal('compact')),
-  /** Provider cost of the worker's session so far, in dollars. */
+  /** Pi's reported cost total for the worker's session so far, in dollars. */
   cost: Type.Optional(amount),
+  /** Set only when that total is provider-billed throughout; absent means an estimate. */
+  costBilled: Type.Optional(Type.Literal(true)),
   session: Type.Optional(text(4096)),
   /** Set when the completion was journaled on another branch of this session. */
   origin: Type.Optional(Type.Literal('other-branch')),

@@ -106,7 +106,7 @@ export function renderWake(
           !d.text)
           ? options.expanded
             ? new OutputView(body)
-            : new PreviewView(body, theme)
+            : new PreviewView(body, theme, options)
           : undefined,
       caption: options.expanded && d.check ? `check: ${d.check}` : '',
     },

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  addCost,
   assistantResponse,
   settledOutcome,
 } from '../extensions/workers/outcome.ts';
@@ -697,4 +698,36 @@ test('a malformed record that names no key is diagnosed and changes nothing else
   );
   assert.deepEqual(restored.draft().details.deliveryIds, ['w-one:1']);
   restored.close();
+});
+
+test('cost totals are provider-billed only while every counted part is', () => {
+  const reading = cost =>
+    assistantResponse({
+      role: 'assistant',
+      stopReason: 'stop',
+      content: [],
+      usage: {totalTokens: 10, cost},
+    });
+  const billed = reading({total: 0.5, totalFromProvider: true});
+  const estimate = reading({total: 0.25, totalFromProvider: false});
+  assert.equal(billed.costBilled, true);
+  assert.equal(estimate.costBilled, undefined);
+  assert.equal(reading({total: 0.25}).costBilled, undefined);
+
+  assert.deepEqual(addCost({}, billed), {cost: 0.5, costBilled: true});
+  assert.deepEqual(addCost({cost: 0.5, costBilled: true}, billed), {
+    cost: 1,
+    costBilled: true,
+  });
+  assert.deepEqual(addCost({cost: 0.5, costBilled: true}, estimate), {
+    cost: 0.75,
+    costBilled: undefined,
+  });
+  // An earlier estimate, or a record that predates the flag, stays an estimate.
+  assert.deepEqual(addCost({cost: 0.75}, billed), {
+    cost: 1.25,
+    costBilled: undefined,
+  });
+  const unpriced = {cost: 0.5, costBilled: true};
+  assert.equal(addCost(unpriced, reading(undefined)), unpriced);
 });

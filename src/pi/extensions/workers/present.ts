@@ -37,8 +37,14 @@ import {runtimeMetadata} from '../../src/ui/runtime-metadata.ts';
 
 export type {EventDetails} from './record.ts';
 
-export const costText = (dollars: number) =>
+const dollarsText = (dollars: number) =>
   '$' + (dollars < 0.01 ? dollars.toFixed(3) : dollars.toFixed(2));
+/** Compact cost: `~` marks a catalog estimate; an unmarked total is provider-billed. */
+const costText = (dollars: number, billed?: boolean) =>
+  (billed ? '' : '~') + dollarsText(dollars);
+/** Cost with its basis spelled out, for inspection and model-facing summaries. */
+export const costDetail = (dollars: number, billed?: boolean) =>
+  `${costText(dollars, billed)} (${billed ? 'provider-billed' : 'estimate'})`;
 
 export interface EventModel {
   heading: Segment[];
@@ -132,7 +138,7 @@ export function projectEvent(message: CustomMessage<EventDetails>): EventModel {
     });
   if (typeof details.cost === 'number')
     status.push({
-      text: costText(details.cost),
+      text: costText(details.cost, details.costBilled),
       tone: 'dim',
       priority: 15,
       shrink: 'omit',
@@ -196,7 +202,9 @@ export function renderEvent(
           : notice,
       ),
       body: model.body
-        ? new MarkdownView(model.body, theme, options.expanded ? undefined : 3)
+        ? options.expanded
+          ? new MarkdownView(model.body, theme)
+          : new MarkdownView(model.body, theme, 3, options)
         : undefined,
       caption: options.expanded ? model.caption : '',
       ...(state ? {state} : {}),

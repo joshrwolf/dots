@@ -71,3 +71,35 @@ test('each run carries the orientation in an independent section', async () => {
   assert.deepEqual(fresh.systemPromptOptions.contextFiles, []);
   assert.deepEqual(fresh.systemPromptOptions.sections, {});
 });
+
+test('by default Rex runs through the host process runner with its own bounds', async () => {
+  const calls = [];
+  const results = [
+    {stdout: orientation, stderr: '', code: 0, killed: false, truncated: false},
+    {stdout: 'partial', stderr: '', code: 1, killed: true, truncated: true},
+  ];
+  const handlers = new Map();
+  const pi = {
+    on: (name, handler) => handlers.set(name, handler),
+    exec: async (file, args, options) => {
+      calls.push({file, args, options});
+      return results.shift();
+    },
+  };
+  register(pi, {REX_SESSION: 'session:a'});
+  const sections = () => {
+    const event = {systemPromptOptions: {contextFiles: [], sections: {}}};
+    handlers.get('before_agent_start')(event, {cwd: '/repo'});
+    return event.systemPromptOptions.sections;
+  };
+  await handlers.get('session_start')({type: 'session_start'}, {});
+  assert.deepEqual(sections(), {dots_rex: orientation.trim()});
+  assert.deepEqual(calls[0], {
+    file: 'rex',
+    args: ['__internal', 'session-start', '--agent', 'pi'],
+    options: {timeout: 5000, maxBuffer: 256 * 1024},
+  });
+  // Output over the cap is incomplete; it adds nothing rather than a fragment.
+  await handlers.get('session_start')({type: 'session_start'}, {});
+  assert.deepEqual(sections(), {});
+});

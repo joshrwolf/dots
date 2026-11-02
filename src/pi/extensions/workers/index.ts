@@ -38,7 +38,7 @@ import {
   STALL_MS,
   attentionOrder,
   compact,
-  costText,
+  costDetail,
   createWidget,
   describeActivity,
   describeText,
@@ -82,6 +82,7 @@ import {createCheckoutResolver} from './checkout.ts';
 import {type WorkerInspectionSource, type WorkerListItem} from './inspector.ts';
 import {transcriptTail, transcriptWindow} from './tail.ts';
 import {
+  addCost,
   assistantResponse,
   settledOutcome,
   type AssistantResponse,
@@ -146,8 +147,10 @@ interface Worker {
   finishedAt?: number | undefined;
   calls: number;
   tokens: number;
-  /** Provider cost of its responses so far, in dollars. */
+  /** Pi's reported cost total for its responses so far, in dollars. */
   cost?: number | undefined;
+  /** Set only while every counted response was provider-billed; otherwise the total is an estimate. */
+  costBilled?: true | undefined;
   /** Tokens its last response used, as an estimate of its context; null right after compaction. */
   contextTokens?: number | null | undefined;
   /** The chosen model's context window. */
@@ -355,6 +358,7 @@ function persisted(worker: Worker): WorkerRecord {
       skills: worker.skills,
       finishedAt: worker.finishedAt,
       cost: worker.cost,
+      costBilled: worker.costBilled,
       contextTokens: worker.contextTokens,
       contextWindow: worker.contextWindow,
       compactAt: worker.compactAt,
@@ -806,6 +810,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         assignment: worker.assignment,
         ...meter,
         cost: worker.cost,
+        costBilled: worker.costBilled,
         session: worker.sessionFile,
       }),
     };
@@ -1016,8 +1021,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
             response.stopReason !== 'aborted'
           )
             worker.tokens = worker.contextTokens = response.tokens;
-          if (response.cost !== undefined)
-            worker.cost = (worker.cost ?? 0) + response.cost;
+          Object.assign(worker, addCost(worker, response));
           // A heading also arrives with the final message, for a run with no streamed thinking_end.
           for (const thinking of response.thinking) {
             const heading = thinkingHeading(thinking);
@@ -1625,6 +1629,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     contextTokens: worker.contextTokens,
     compactAt: worker.compactAt,
     cost: worker.cost,
+    costBilled: worker.costBilled,
     result: worker.result,
     partial: worker.partial,
     error: worker.error,
@@ -2169,7 +2174,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       `${w.calls} call${w.calls === 1 ? '' : 's'}`,
     ];
     parts.push(contextLabel(w));
-    if (w.cost !== undefined) parts.push(costText(w.cost));
+    if (w.cost !== undefined) parts.push(costDetail(w.cost, w.costBilled));
     if (!owned(w))
       parts.push(`read-only: owned by session ${label(w.owner, 80)}`);
     if (w.phase) parts.push(w.phase);
@@ -2458,7 +2463,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         const git = checkoutResolver.branch(own.cwd);
         return {
           worker: listItem(own),
-          detail: `${id} · ${own.state} · ${own.calls} calls · ${own.tokens} tok\nContext: ${contextLabel(own)} · Cost: ${own.cost === undefined ? 'unknown' : costText(own.cost)}\nDirectory: ${own.cwd}${git?.kind === 'branch' ? `\nGit ${git.detached ? 'HEAD' : 'branch'}: ${git.label}` : ''}${own.skills ? `\nSkills: ${own.skills.map(skill => `${skill.name} (${skill.path})`).join(', ')}` : ''}${own.error ? `\nError: ${own.error}` : ''}${own.partial ? `\nPartial response (not final): ${own.partial}` : ''}${own.result ? `\nLast retained final text: ${own.result}` : own.state === 'completed' ? '\nFinal response had no text.' : ''}`,
+          detail: `${id} · ${own.state} · ${own.calls} calls · ${own.tokens} tok\nContext: ${contextLabel(own)} · Cost: ${own.cost === undefined ? 'unknown' : costDetail(own.cost, own.costBilled)}\nDirectory: ${own.cwd}${git?.kind === 'branch' ? `\nGit ${git.detached ? 'HEAD' : 'branch'}: ${git.label}` : ''}${own.skills ? `\nSkills: ${own.skills.map(skill => `${skill.name} (${skill.path})`).join(', ')}` : ''}${own.error ? `\nError: ${own.error}` : ''}${own.partial ? `\nPartial response (not final): ${own.partial}` : ''}${own.result ? `\nLast retained final text: ${own.result}` : own.state === 'completed' ? '\nFinal response had no text.' : ''}`,
           ...(own.sessionFile === undefined
             ? {}
             : {sessionFile: own.sessionFile}),

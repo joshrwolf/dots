@@ -1,5 +1,6 @@
 import type {Theme} from '@earendil-works/pi-coding-agent';
 import type {
+  PresentationOptions,
   PresentationView,
   ToolObservation,
   ToolPresentation,
@@ -59,7 +60,11 @@ class EditView implements PresentationView<EditModel> {
     this.syntax = syntax;
     this.notify = notify;
   }
-  update(model: EditModel, theme: Theme, expanded: boolean): void {
+  update(
+    model: EditModel,
+    theme: Theme,
+    {expanded}: PresentationOptions,
+  ): void {
     const segments = [];
     const state = model.outcome;
     const notices: Notice[] = [];

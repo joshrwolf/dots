@@ -18,6 +18,8 @@ type Probe =
 type Entry = {value: Probe | undefined; expires: number; pending: boolean};
 
 const TIMEOUT_MS = 1200;
+// Each probe prints one path, ref or hash; more output is not a Git answer.
+const MAX_OUTPUT_BYTES = 64 * 1024;
 const CACHE_MS = 10_000;
 const MAX_DIRS = 64;
 const MAX_PROBES = 2;
@@ -30,14 +32,20 @@ const branchCue = (git: Extract<Probe, {kind: 'git'}>): CheckoutCue => ({
 });
 
 /** Git facts come from the host's bounded process runner, never from a renderer.
- * An ambiguous failure has no cue; only Git's explicit non-repository error is a folder. */
+ * An ambiguous failure has no cue; only Git's explicit non-repository error is a folder.
+ * A killed run (deadline, abort or output cap) is ambiguous. */
 async function probe(
   cwd: string,
   exec: ExtensionAPI['exec'],
   signal: AbortSignal,
 ): Promise<Probe | undefined> {
   const run = (args: string[]) =>
-    exec('git', args, {cwd, timeout: TIMEOUT_MS, signal});
+    exec('git', args, {
+      cwd,
+      timeout: TIMEOUT_MS,
+      maxBuffer: MAX_OUTPUT_BYTES,
+      signal,
+    });
   try {
     const root = await run(['rev-parse', '--show-toplevel']);
     if (root.killed || signal.aborted) return undefined;

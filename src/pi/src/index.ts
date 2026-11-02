@@ -31,12 +31,14 @@ export {SoftEditor} from './features/editor.ts';
 export {
   createToolRenderers,
   selectToolRenderers,
+  type PresentationOptions,
   type PresentationView,
   type ToolObservation,
   type ToolPresentation,
 } from './host/tools.ts';
 export {
   activityHeader,
+  expandCue,
   Notices,
   OutputView,
   PreviewView,

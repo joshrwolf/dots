@@ -13,8 +13,10 @@ export interface AssistantResponse {
 export interface AssistantReading extends AssistantResponse {
   /** Total tokens the response reported, when positive. */
   tokens?: number;
-  /** Provider cost of this response, in dollars. */
+  /** Pi's best cost total for this response, in dollars. */
   cost?: number;
+  /** Set when that total is the provider's billed cost rather than a catalog estimate. */
+  costBilled?: true;
   /** Completed reasoning blocks, in order. */
   thinking: string[];
 }
@@ -28,7 +30,8 @@ export function assistantResponse(
   const parts = Array.isArray(record.content) ? record.content.map(fields) : [];
   const usage = fields(record.usage);
   const tokens = usage?.totalTokens;
-  const cost = fields(usage?.cost)?.total;
+  const costs = fields(usage?.cost);
+  const cost = costs?.total;
   return {
     stopReason: record.stopReason,
     text: parts
@@ -50,7 +53,7 @@ export function assistantResponse(
       ? {tokens}
       : {}),
     ...(typeof cost === 'number' && Number.isFinite(cost) && cost >= 0
-      ? {cost}
+      ? {cost, ...(costs?.totalFromProvider === true ? {costBilled: true} : {})}
       : {}),
   };
 }
@@ -85,5 +88,25 @@ export function settledOutcome(
     text: response
       ? `Last assistant response ended with ${response.stopReason}; no final answer was confirmed`
       : 'No assistant response was recorded for this run',
+  };
+}
+
+/** A worker's running cost total; `costBilled` absent means an estimate. */
+export interface CostTotal {
+  cost?: number | undefined;
+  costBilled?: true | undefined;
+}
+
+/** Add one response's cost. The total stays provider-billed only while every part is. */
+export function addCost(
+  total: CostTotal,
+  response: Pick<AssistantReading, 'cost' | 'costBilled'>,
+): CostTotal {
+  if (response.cost === undefined) return total;
+  const billed =
+    (total.cost === undefined || total.costBilled) && response.costBilled;
+  return {
+    cost: (total.cost ?? 0) + response.cost,
+    costBilled: billed ? true : undefined,
   };
 }

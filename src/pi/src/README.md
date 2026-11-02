@@ -56,8 +56,8 @@ when details are collapsed, and metadata yields before important outcomes.
 - Bound preparation and rendering. Omission markers distinguish display limits
   from truncated tool results.
 - Inspectors set explicit viewport bounds with the public `ScrollView` API.
-  In Pi 1.4, overlays render the custom component directly and still do not pass
-  a viewport height into a nested `ScrollView`; keep the explicit bound. Verify
+  Overlays render the custom component at a width only and pass no viewport
+  height into a nested `ScrollView`; keep the explicit bound. Verify
   scrolling in the host, not just component snapshots. Inspection bodies are read-only.
 - Native HTML exports and TUI rendering have different paths; test both. Pi does
   not record nested codemode results, so child source/diff views are unavailable.

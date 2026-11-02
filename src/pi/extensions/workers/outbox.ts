@@ -344,7 +344,7 @@ function receiptKey(data: unknown): string | undefined {
   return typeof key === 'string' ? key : undefined;
 }
 
-/** Pi 1.4 boundaries own continuations; an idle hold coalesces nearby results. */
+/** Pi's turn and settle boundaries own continuations; an idle hold coalesces nearby results. */
 export class WorkerDelivery {
   readonly outbox: CompletionOutbox;
   private readonly live: () => boolean;

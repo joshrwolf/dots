@@ -1,6 +1,7 @@
 import {displayLimits} from '@joshrwolf/pi-kit/ui';
 import type {Theme} from '@earendil-works/pi-coding-agent';
 import type {
+  PresentationOptions,
   PresentationView,
   ToolObservation,
   ToolPresentation,
@@ -54,7 +55,11 @@ class WriteView implements PresentationView<WriteModel> {
     this.syntax = syntax;
     this.notify = notify;
   }
-  update(model: WriteModel, theme: Theme, expanded: boolean): void {
+  update(
+    model: WriteModel,
+    theme: Theme,
+    {expanded}: PresentationOptions,
+  ): void {
     const {outcome: state} = model;
     const segments = [];
     const notices: Notice[] = [];
