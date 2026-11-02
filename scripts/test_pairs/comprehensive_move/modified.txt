@@ -1,0 +1,404 @@
+-- Module: data_processor.lua
+-- A comprehensive data processing library (refactored)
+
+local M = {}
+
+-- ============================================================================
+-- Section 1: Configuration (unchanged between versions)
+-- ============================================================================
+
+M.VERSION = "2.0.0"
+M.MAX_RETRIES = 5
+M.TIMEOUT_MS = 10000
+
+local default_config = {
+    debug = false,
+    verbose = false,
+    log_level = "info",
+    output_format = "json",
+    max_batch_size = 100,
+    retry_delay_ms = 1000,
+}
+
+function M.create_config(overrides)
+    local config = {}
+    for k, v in pairs(default_config) do
+        config[k] = v
+    end
+    if overrides then
+        for k, v in pairs(overrides) do
+            config[k] = v
+        end
+    end
+    return config
+end
+
+-- ============================================================================
+-- Section 2: Output formatting (MOVED HERE from Section 4)
+-- ============================================================================
+
+local function format_json(data)
+    if type(data) == "string" then
+        return '"' .. data:gsub('"', '\\"') .. '"'
+    elseif type(data) == "number" then
+        return tostring(data)
+    elseif type(data) == "boolean" then
+        return data and "true" or "false"
+    elseif type(data) == "table" then
+        local parts = {}
+        local is_array = #data > 0
+        if is_array then
+            for _, v in ipairs(data) do
+                table.insert(parts, format_json(v))
+            end
+            return "[" .. table.concat(parts, ",") .. "]"
+        else
+            for k, v in pairs(data) do
+                table.insert(parts, '"' .. k .. '":' .. format_json(v))
+            end
+            return "{" .. table.concat(parts, ",") .. "}"
+        end
+    end
+    return "null"
+end
+
+local function format_csv(data, headers)
+    local lines = {}
+    if headers then
+        table.insert(lines, table.concat(headers, ","))
+    end
+    for _, record in ipairs(data) do
+        local values = {}
+        for _, h in ipairs(headers or {}) do
+            local val = record[h]
+            if type(val) == "string" then
+                table.insert(values, '"' .. val .. '"')
+            else
+                table.insert(values, tostring(val or ""))
+            end
+        end
+        table.insert(lines, table.concat(values, ","))
+    end
+    return table.concat(lines, "\n")
+end
+
+local function format_plain(data)
+    local lines = {}
+    for _, record in ipairs(data) do
+        local parts = {}
+        for k, v in pairs(record) do
+            table.insert(parts, k .. "=" .. tostring(v))
+        end
+        table.insert(lines, table.concat(parts, " | "))
+    end
+    return table.concat(lines, "\n")
+end
+
+function M.format_output(data, format_type)
+    if format_type == "json" then
+        return format_json(data)
+    elseif format_type == "csv" then
+        return format_csv(data, { "id", "name", "value", "processed" })
+    elseif format_type == "plain" then
+        return format_plain(data)
+    else
+        error("Unknown format: " .. tostring(format_type))
+    end
+end
+
+-- ============================================================================
+-- Section 3: Data transformation (modified — added new field)
+-- ============================================================================
+
+function M.transform_record(record, options)
+    options = options or {}
+    local result = {
+        id = record.id,
+        name = record.name,
+        value = record.value,
+        processed = true,
+        timestamp = os.time(),
+        version = M.VERSION,
+    }
+
+    if options.uppercase_name then
+        result.name = string.upper(result.name)
+    end
+
+    if options.multiply_value then
+        result.value = result.value * (options.multiply_value or 1)
+    end
+
+    if options.round_value then
+        result.value = math.floor(result.value + 0.5)
+    end
+
+    if record.tags then
+        result.tags = {}
+        for i, tag in ipairs(record.tags) do
+            result.tags[i] = string.lower(tag)
+        end
+    end
+
+    if record.metadata then
+        result.metadata = record.metadata
+    end
+
+    return result
+end
+
+function M.batch_transform(records, options)
+    local results = {}
+    local errors = {}
+
+    for i, record in ipairs(records) do
+        local ok, err = validate_record(record)
+        if ok then
+            local transformed = M.transform_record(record, options)
+            table.insert(results, transformed)
+        else
+            table.insert(errors, { index = i, error = err })
+        end
+    end
+
+    return results, errors
+end
+
+-- ============================================================================
+-- Section 4: NEW — Caching layer (entirely new section)
+-- ============================================================================
+
+local cache = {}
+
+function M.cache_get(key)
+    local entry = cache[key]
+    if entry and entry.expires > os.time() then
+        return entry.value
+    end
+    cache[key] = nil
+    return nil
+end
+
+function M.cache_set(key, value, ttl_seconds)
+    cache[key] = {
+        value = value,
+        expires = os.time() + (ttl_seconds or 300),
+    }
+end
+
+function M.cache_clear()
+    cache = {}
+end
+
+function M.cache_size()
+    local count = 0
+    for _ in pairs(cache) do
+        count = count + 1
+    end
+    return count
+end
+
+-- ============================================================================
+-- Section 5: Validation utilities (MOVED HERE from Section 2)
+-- ============================================================================
+
+local function validate_string(value, field_name)
+    if type(value) ~= "string" then
+        return false, field_name .. " must be a string, got " .. type(value)
+    end
+    if #value == 0 then
+        return false, field_name .. " cannot be empty"
+    end
+    if #value > 1024 then
+        return false, field_name .. " exceeds maximum length of 1024"
+    end
+    return true
+end
+
+local function validate_number(value, field_name, min_val, max_val)
+    if type(value) ~= "number" then
+        return false, field_name .. " must be a number, got " .. type(value)
+    end
+    if min_val and value < min_val then
+        return false, field_name .. " must be >= " .. min_val
+    end
+    if max_val and value > max_val then
+        return false, field_name .. " must be <= " .. max_val
+    end
+    return true
+end
+
+local function validate_table(value, field_name)
+    if type(value) ~= "table" then
+        return false, field_name .. " must be a table, got " .. type(value)
+    end
+    return true
+end
+
+local function validate_record(record)
+    local ok, err
+    ok, err = validate_string(record.id, "id")
+    if not ok then return false, err end
+    ok, err = validate_string(record.name, "name")
+    if not ok then return false, err end
+    ok, err = validate_number(record.value, "value", 0, 999999)
+    if not ok then return false, err end
+    if record.tags then
+        ok, err = validate_table(record.tags, "tags")
+        if not ok then return false, err end
+    end
+    return true
+end
+
+-- ============================================================================
+-- Section 6: Statistics and aggregation (unchanged)
+-- ============================================================================
+
+function M.compute_stats(records)
+    if #records == 0 then
+        return { count = 0, sum = 0, avg = 0, min = 0, max = 0 }
+    end
+
+    local sum = 0
+    local min_val = math.huge
+    local max_val = -math.huge
+
+    for _, record in ipairs(records) do
+        local v = record.value or 0
+        sum = sum + v
+        if v < min_val then min_val = v end
+        if v > max_val then max_val = v end
+    end
+
+    return {
+        count = #records,
+        sum = sum,
+        avg = sum / #records,
+        min = min_val,
+        max = max_val,
+    }
+end
+
+function M.group_by(records, key)
+    local groups = {}
+    for _, record in ipairs(records) do
+        local group_key = record[key]
+        if group_key then
+            if not groups[group_key] then
+                groups[group_key] = {}
+            end
+            table.insert(groups[group_key], record)
+        end
+    end
+    return groups
+end
+
+function M.filter(records, predicate)
+    local result = {}
+    for _, record in ipairs(records) do
+        if predicate(record) then
+            table.insert(result, record)
+        end
+    end
+    return result
+end
+
+function M.sort_by(records, key, descending)
+    local sorted = {}
+    for i, r in ipairs(records) do
+        sorted[i] = r
+    end
+    table.sort(sorted, function(a, b)
+        if descending then
+            return (a[key] or 0) > (b[key] or 0)
+        else
+            return (a[key] or 0) < (b[key] or 0)
+        end
+    end)
+    return sorted
+end
+
+-- ============================================================================
+-- Section 7: Pipeline processing (unchanged)
+-- ============================================================================
+
+function M.create_pipeline(steps)
+    return {
+        steps = steps or {},
+        add = function(self, step)
+            table.insert(self.steps, step)
+            return self
+        end,
+        run = function(self, data)
+            local result = data
+            for _, step in ipairs(self.steps) do
+                result = step(result)
+            end
+            return result
+        end,
+    }
+end
+
+-- ============================================================================
+-- Section 8: Error handling utilities (unchanged)
+-- ============================================================================
+
+local function create_error(code, message, details)
+    return {
+        code = code,
+        message = message,
+        details = details,
+        timestamp = os.time(),
+    }
+end
+
+function M.safe_call(fn, ...)
+    local ok, result = pcall(fn, ...)
+    if ok then
+        return result, nil
+    else
+        return nil, create_error("RUNTIME_ERROR", tostring(result))
+    end
+end
+
+function M.retry(fn, max_attempts, delay_fn)
+    max_attempts = max_attempts or M.MAX_RETRIES
+    local last_error
+    for attempt = 1, max_attempts do
+        local result, err = M.safe_call(fn)
+        if not err then
+            return result
+        end
+        last_error = err
+        if delay_fn and attempt < max_attempts then
+            delay_fn(attempt)
+        end
+    end
+    return nil, last_error
+end
+
+-- ============================================================================
+-- Section 9: Logging (unchanged)
+-- ============================================================================
+
+local log_levels = { debug = 1, info = 2, warn = 3, error = 4 }
+
+function M.create_logger(config)
+    local level = log_levels[config.log_level or "info"] or 2
+    return {
+        debug = function(msg)
+            if level <= 1 then print("[DEBUG] " .. msg) end
+        end,
+        info = function(msg)
+            if level <= 2 then print("[INFO] " .. msg) end
+        end,
+        warn = function(msg)
+            if level <= 3 then print("[WARN] " .. msg) end
+        end,
+        error = function(msg)
+            if level <= 4 then print("[ERROR] " .. msg) end
+        end,
+    }
+end
+
+return M

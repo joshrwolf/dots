@@ -1,0 +1,11 @@
+function second()
+    return 2
+end
+
+function first()
+    return 1
+end
+
+function third()
+    return 3
+end

@@ -1,0 +1,9 @@
+# Mark CMake-generated files with explicit line endings
+# build.sh must have LF (Unix) on all platforms
+build.sh text eol=lf linguist-generated=true
+# build.cmd must have CRLF (Windows) on all platforms
+build.cmd text eol=crlf linguist-generated=true
+
+# Force LF line endings for generated Makefiles to avoid spurious diffs
+Makefile text eol=lf linguist-generated=true
+Makefile.win text eol=lf linguist-generated=true
