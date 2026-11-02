@@ -1,7 +1,7 @@
 # Pi
 
 The companion adds workers, finite background jobs, wakes, memory, goal
-inspection, review reply notices and Rex status to stock Pi.
+inspection, review submission notices and Rex status to stock Pi.
 
 ## Setup
 
@@ -137,15 +137,16 @@ an instruction override, task list or transcript archive. Nothing is written
 automatically. The [memory skill](../skills/memory/SKILL.md) owns upkeep through
 revision-checked `dots memory` commands.
 
-## Review replies
+## Review submissions
 
 A review records the session that started it (`dots review start --owner`
 defaults to the invoking agent session). That session watches the reviews it
-owns across the repository's worktrees and, when the user comments or changes a
-status, receives one batched notice. Like a wake fire, it waits until the
-session is idle and does not restart a cancelled run. Notices on the current branch are the receipts, so
-reload and resume neither repeat a reply nor lose one that arrived while Pi was
-closed.
+owns across the repository's worktrees. The user's comments stay private drafts
+until the user submits them; each submission reaches the owner as one notice
+with its summary and comments. Like a wake fire, a notice waits until the
+session is idle and does not restart a cancelled run. Notices on the current
+branch are the receipts, so reload and resume neither repeat a submission nor
+lose one that arrived while Pi was closed.
 
 ## Anthropic request guard
 

@@ -6,7 +6,7 @@ Fill in the fields and pass the whole file as the verifier's task.
 Review:      <review id>
 Checkout:    <absolute path>
 Intent:      <what the change is meant to do>
-Threads:     <ids to verify, or "all open">
+Threads:     <ids to verify, or "all open" (threads the user started are the user's to settle; skip them)>
 Author:      <your model id>
 Scratch:     <a directory only you write to>
 ```

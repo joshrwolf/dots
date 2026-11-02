@@ -55,8 +55,9 @@ Pass `--revision N`, the index (from zero) of the revision you read, so a
 review that moved meanwhile refuses the batch instead of misplacing it.
 Each finding is one thread with a title, severity and
 confidence. Set `author` to your model id and `angle` to the angle's name. Anchor to the reviewed side within a diff hunk (the command rejects
-other lines and reports the hunk ranges); omit the anchor for an issue that
-spans files or is about the change as a whole. Cite a rule with `rule` when
+other lines and reports the hunk ranges); anchor to a path alone for an issue
+about a whole changed file, and omit the anchor for an issue that spans files
+or is about the change as a whole. Cite a rule with `rule` when
 one applies. In the body, state the scenario, how you verified it, and the
 fix. Set `confidence` honestly. If the batch is rejected, fix it and resubmit.
 
