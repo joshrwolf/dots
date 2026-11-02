@@ -110,7 +110,7 @@ function M.get_file_content(revision, git_root, rel_path, callback)
   -- Cache miss or mutable revision - fetch from git
   local git_object = revision .. ":" .. rel_path
 
-  run_git_async({ "show", git_object }, { cwd = git_root }, function(err, output)
+  run_git_async({ "show", git_object }, { cwd = git_root, raw = true }, function(err, output)
     if err then
       if err:match("does not exist") or err:match("exists on disk, but not in") or err:match("is in the index, but not at stage") then
         callback(string.format("File '%s' not found in revision '%s'", rel_path, revision), nil)

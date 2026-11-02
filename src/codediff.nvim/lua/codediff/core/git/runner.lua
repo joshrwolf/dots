@@ -37,7 +37,9 @@ function M.run_async(args, opts, callback)
 
     vim.system(argv, {
       cwd = opts.cwd,
-      text = true,
+      -- `raw` keeps the bytes as Git wrote them, for callers that normalize
+      -- line endings themselves.
+      text = not opts.raw,
     }, function(result)
       if result.code == 0 then
         callback(nil, result.stdout or "")

@@ -280,3 +280,39 @@ describe("Git output is free of line-ending warnings (#494)", function()
     assert.equals("false", vim.trim(repo.command({ "config", "--get", "core.autocrlf" })))
   end)
 end)
+
+describe("Git file content line endings", function()
+  local dir
+
+  before_each(function()
+    dir = h.create_temp_dir()
+    local function run(args)
+      local out = vim.fn.system(vim.list_extend({ "git", "-C", dir }, args))
+      assert.equals(0, vim.v.shell_error, out)
+    end
+    run({ "init", "-q" })
+    run({ "config", "core.autocrlf", "false" })
+    -- A literal CR before a CRLF line ending must survive: only the line
+    -- ending itself is normalized, and only once.
+    local file = assert(io.open(dir .. "/cr.txt", "wb"))
+    file:write("text\r\r\nplain\r\n")
+    file:close()
+    run({ "add", "cr.txt" })
+    run({ "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "cr" })
+  end)
+
+  after_each(function()
+    vim.fn.delete(dir, "rf")
+  end)
+
+  it("reads a revision alike asynchronously and synchronously", function()
+    local want = { "text\r", "plain" }
+    local err, lines = await(function(done)
+      git.get_file_content("HEAD", dir, "cr.txt", done)
+    end)
+    assert.is_nil(err)
+    assert.same(want, lines)
+    require("codediff.core.git.content").clear_cache()
+    assert.same(want, require("codediff.core.git.content").get_file_content_sync("HEAD", dir, "cr.txt"))
+  end)
+end)
