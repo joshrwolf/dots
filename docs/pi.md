@@ -15,8 +15,18 @@ pi list
 
 Keep one companion registration. Pi identifies local packages by path, so
 registering another checkout loads a second copy. Remove the old path before
-registering a replacement. Credentials, models, settings and sessions stay in
-`~/.pi/agent/`; skills use the shared [skill namespace](skills.md).
+registering a replacement. Skills use the shared [skill namespace](skills.md).
+
+## Preferences
+
+Machine setup merges the [public preferences](../home/pi/.pi/agent/settings.json)
+into `~/.pi/agent/settings.json`, leaving other fields untouched. Credentials,
+last-selected model/provider, device identity, package registrations and sessions
+stay machine-local.
+
+Pi saves preference edits locally, not back to dots. Change the tracked file to
+make a preference portable; explicit machine apply restores its owned values.
+Restart idle Pi sessions to use the applied preferences.
 
 ## Updates
 

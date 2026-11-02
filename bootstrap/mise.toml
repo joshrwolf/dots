@@ -21,6 +21,9 @@ root = "codex"
 [dotfile_groups.pi]
 root = "pi"
 
+[dotfile_groups.pi.entries]
+"~/.pi/agent/settings.json/preferences" = { merge = true, permissions = "0600" }
+
 [dotfile_groups.worktrunk]
 root = "worktrunk"
 

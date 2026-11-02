@@ -8,6 +8,8 @@ use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use serde_json::Value;
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -427,6 +429,93 @@ fn public_source_deploys_native_modules_and_shared_skill_discovery() -> Result {
         !env.contains("PARENT_DEVELOPMENT_CONFIG"),
         "development config leaked: {env}"
     );
+    Ok(())
+}
+
+#[test]
+fn pi_preferences_merge_without_replacing_machine_state() -> Result {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let f = Fixture::new()?;
+    let settings = f.home.join(".pi/agent/settings.json");
+    let auth = f.home.join(".pi/agent/auth.json");
+    let expected: Value =
+        serde_json::from_slice(&fs::read(f.source.join("home/pi/.pi/agent/settings.json"))?)?;
+    assert!(
+        expected["enabledModels"]
+            .as_array()
+            .is_some_and(|models| !models.is_empty()),
+        "portable preferences need a model shortlist"
+    );
+    let local = serde_json::json!({
+        "deviceId": "neutral-device",
+        "packages": ["./local-runtime"],
+        "defaultProvider": "example-provider",
+        "defaultModel": "host-model",
+        "lastChangelogVersion": "0.0.0",
+        "theme": "host-theme",
+        "compaction": {"reserveTokens": 16384},
+        "unowned": {"keep": true}
+    });
+    f.write(&settings, &serde_json::to_string_pretty(&local)?)?;
+    f.write(&auth, "{\"fixture\":true}\n")?;
+    f.apply(&[], &[])?;
+    assert!(!settings.is_symlink(), "Pi must own a writable local file");
+    let configured: Value = serde_json::from_slice(&fs::read(&settings)?)?;
+    for key in ["theme", "defaultTools", "enabledModels"] {
+        assert_eq!(configured[key], expected[key], "deployed preference: {key}");
+    }
+    assert_eq!(
+        configured["compaction"]["modelOverrides"],
+        expected["compaction"]["modelOverrides"]
+    );
+    assert_eq!(configured["compaction"]["reserveTokens"], 16384);
+    for key in [
+        "deviceId",
+        "packages",
+        "defaultProvider",
+        "defaultModel",
+        "lastChangelogVersion",
+        "unowned",
+    ] {
+        assert_eq!(configured[key], local[key], "machine-local setting: {key}");
+    }
+    let before = fs::read(&settings)?;
+    let modified = fs::metadata(&settings)?.modified()?;
+    f.apply(&[], &[])?;
+    assert_eq!(fs::read(&settings)?, before, "repeat changed settings");
+    assert_eq!(
+        fs::metadata(&settings)?.modified()?,
+        modified,
+        "repeat rewrote satisfied settings"
+    );
+
+    let mut edited = configured;
+    edited["theme"] = "local-edit".into();
+    edited["deviceId"] = "new-neutral-device".into();
+    f.write(&settings, &serde_json::to_string_pretty(&edited)?)?;
+    f.apply(&[], &[])?;
+    let reapplied: Value = serde_json::from_slice(&fs::read(&settings)?)?;
+    assert_eq!(reapplied["theme"], expected["theme"]);
+    assert_eq!(reapplied["deviceId"], edited["deviceId"]);
+
+    f.write(&settings, "{invalid json\n")?;
+    let refused = f.bootstrap(&[], &[])?;
+    assert!(
+        !refused.status.success(),
+        "invalid settings accepted: {refused:?}"
+    );
+    assert_eq!(fs::read_to_string(&settings)?, "{invalid json\n");
+    fs::remove_file(&settings)?;
+    f.apply(&[], &[])?;
+    let fresh: Value = serde_json::from_slice(&fs::read(&settings)?)?;
+    assert_eq!(
+        fresh, expected,
+        "fresh settings differ from owned preferences"
+    );
+    assert_eq!(fs::metadata(&settings)?.permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::read_to_string(&auth)?, "{\"fixture\":true}\n");
+    assert_eq!(f.git(&f.checkout(), &["status", "--porcelain"])?, "");
     Ok(())
 }
 
