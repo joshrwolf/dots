@@ -209,6 +209,54 @@ function Controller:run()
   end
 end
 
+-- The path a session displays: its panel selection, else a bare diff's file.
+local function displayed_path(session)
+  local panel = session.panel
+  if panel then
+    local selection = panel.data.current_selection
+    return selection and selection.path
+  end
+  for _, side in ipairs({ "modified", "original" }) do
+    local ref = session[side]
+    if ref and ref.relative and ref.relative ~= "" then
+      return ref.relative
+    end
+  end
+end
+
+-- Announce CodeDiffFileShown once per selection, when its diff is rendered
+-- and both panes hold their content. Revision buffers that are still loading
+-- announce from CodeDiffVirtualFileLoaded instead.
+function Controller:announce()
+  local session = self.session
+  if self.shown == self.generation or self.loading or not self:valid() or not session.stored_diff_result then
+    return
+  end
+  local virtual_file = require("codediff.core.virtual_file")
+  for _, buf in ipairs({ session.original_bufnr, session.modified_bufnr }) do
+    if not buf or not vim.api.nvim_buf_is_valid(buf) or virtual_file.is_loading(buf) then
+      return
+    end
+  end
+  local path = displayed_path(session)
+  if not path then
+    return
+  end
+  self.shown = self.generation
+  vim.api.nvim_exec_autocmds("User", {
+    pattern = "CodeDiffFileShown",
+    modeline = false,
+    data = { tabpage = self.tabpage, path = path, original_buf = session.original_bufnr, modified_buf = session.modified_bufnr },
+  })
+end
+
+-- Whether the current selection has been announced and nothing replaced it since.
+function M.shown(tabpage)
+  local session = session_for(tabpage)
+  local self = session and session.refresh
+  return self ~= nil and not self.closed and not self.loading and self.shown == self.generation
+end
+
 function Controller:start_polling()
   if self.polling or self.closed then
     return
@@ -322,6 +370,18 @@ function M.attach(tabpage)
       end
     end,
   })
+  vim.api.nvim_create_autocmd("User", {
+    group = self.group,
+    pattern = "CodeDiffVirtualFileLoaded",
+    callback = function(event)
+      local buf = event.data and event.data.buf
+      if buf and (buf == session.original_bufnr or buf == session.modified_bufnr) then
+        vim.schedule(function()
+          self:announce()
+        end)
+      end
+    end,
+  })
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = self.group,
     callback = function(event)
@@ -388,6 +448,7 @@ function M.ready(tabpage)
     if next(self.pending) or #self.callbacks > 0 then
       self:schedule()
     end
+    self:announce()
   end)
 end
 

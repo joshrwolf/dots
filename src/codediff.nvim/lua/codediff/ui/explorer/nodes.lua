@@ -323,7 +323,7 @@ local function folder_context(node, data, explorer_config)
   }
 end
 
-local function file_context(node, data, explorer_config)
+local function file_context(node, data, explorer_config, decoration)
   local indent, indent_hl = get_indent(node, data, explorer_config)
   local full_path = data.path or node.text
   local filename = full_path:match("([^/]+)$") or full_path
@@ -342,6 +342,7 @@ local function file_context(node, data, explorer_config)
     indent_hl = indent_hl,
     icon = data.icon or "",
     icon_hl = data.icon_color,
+    decoration = decoration and { text = decoration.text, hl = decoration.hl } or nil,
   }
 end
 
@@ -352,8 +353,9 @@ local function selected_background(is_selected)
   return vim.api.nvim_get_hl(0, { name = "CodeDiffExplorerSelected", link = false }).bg
 end
 
--- Prepare node for rendering (format display)
-function M.prepare_node(node, max_width, selected_path, selected_group)
+-- Prepare node for rendering (format display). `decorations` maps a file path
+-- to the caller's { text, hl } (codediff.api.set_decorations).
+function M.prepare_node(node, max_width, selected_path, selected_group, decorations)
   local data = node.data or {}
   local explorer_config = config.options.explorer
   -- Formatters are pluggable per node type; nil in config means "use the
@@ -370,7 +372,8 @@ function M.prepare_node(node, max_width, selected_path, selected_group)
 
   local is_selected = data.path == selected_path and data.group == selected_group
   local fmt = user_formatters.file or default_formatters.file
-  return line_layout.render(fmt(file_context(node, data, explorer_config)), max_width, selected_background(is_selected), explorer_config.ellipsis)
+  local decoration = decorations and decorations[data.path]
+  return line_layout.render(fmt(file_context(node, data, explorer_config, decoration)), max_width, selected_background(is_selected), explorer_config.ellipsis)
 end
 
 return M

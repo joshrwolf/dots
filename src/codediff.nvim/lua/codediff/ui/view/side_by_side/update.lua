@@ -23,13 +23,15 @@ local setup_all_keymaps = view_keymaps.setup_all_keymaps
 
 --- Put one side's content into `win` during an update, reusing the buffer when
 --- it is still alive. Unlike load_side, this has to cope with the buffer having
---- been wiped since the session was built.
+--- been wiped since it was prepared: showing the other side can wipe a buffer
+--- that only that window displayed.
 --- @param win number
 --- @param info table From prepare_buffer; info.bufnr is updated in place
 --- @param is_virtual boolean
+--- @return boolean loading Whether a revision load started that must be awaited
 local function reload_side(win, info, is_virtual)
   if not vim.api.nvim_win_is_valid(win) then
-    return
+    return false
   end
 
   local function edit_in_place()
@@ -41,13 +43,14 @@ local function reload_side(win, info, is_virtual)
   if info.needs_edit then
     if not is_virtual then
       info.bufnr = open_real_file(win, info.target)
+      return false
     elseif info.bufnr and vim.api.nvim_buf_is_valid(info.bufnr) then
       vim.api.nvim_win_set_buf(win, info.bufnr)
       virtual_file.refresh_buffer(info.bufnr)
     else
       edit_in_place()
     end
-    return
+    return true
   end
 
   if vim.api.nvim_buf_is_valid(info.bufnr) then
@@ -56,11 +59,13 @@ local function reload_side(win, info, is_virtual)
     else
       show_real_file_buffer(win, info.bufnr)
     end
+    return false
   elseif is_virtual then
     edit_in_place()
-  else
-    info.bufnr = open_real_file(win, info.target)
+    return true
   end
+  info.bufnr = open_real_file(win, info.target)
+  return false
 end
 
 --- Run `render` once every side that needs loading has loaded.
@@ -191,12 +196,6 @@ function M.update(tabpage, session_config, auto_scroll_to_first_hunk)
   local original_info = prepare_buffer(original_is_virtual, session_config.git_root, session_config.original_revision, session_config.original)
   local modified_info = prepare_buffer(modified_is_virtual, session_config.git_root, session_config.modified_revision, session_config.modified)
 
-  -- Determine if we need to wait for virtual file content
-  local wait_state = {
-    original = original_is_virtual and original_info.needs_edit,
-    modified = modified_is_virtual and modified_info.needs_edit,
-  }
-
   local render_everything = function()
     if not current() then
       return
@@ -282,10 +281,13 @@ function M.update(tabpage, session_config, auto_scroll_to_first_hunk)
     end
   end
 
-  -- Wait for virtual content before rendering; real files are ready already.
+  -- Wait for the virtual content these loads start; real files are ready
+  -- already. Loads complete on a later tick, so waiting after starting is safe.
+  local wait_state = {
+    original = reload_side(original_win, original_info, original_is_virtual),
+    modified = reload_side(modified_win, modified_info, modified_is_virtual),
+  }
   render_when_reloaded(tabpage, original_info, modified_info, wait_state, render_everything)
-  reload_side(original_win, original_info, original_is_virtual)
-  reload_side(modified_win, modified_info, modified_is_virtual)
 
   welcome_window.sync(original_win)
   welcome_window.sync(modified_win)

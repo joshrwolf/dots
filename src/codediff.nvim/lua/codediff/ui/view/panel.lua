@@ -22,6 +22,9 @@ function M.setup_explorer(tabpage, session_config, original_win, modified_win)
     return
   end
 
+  -- Explorer tabs follow quickfix and other native jumps into their revision buffers.
+  require("codediff.ui.explorer.navigate")
+
   local explorer_config = config.options.explorer or {}
   local data = lifecycle.get_panel(tabpage).data
   local explorer_obj = explorer_module.create(data, tabpage)

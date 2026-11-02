@@ -65,7 +65,11 @@ function M.prepare_buffer(is_virtual, git_root, revision, ref)
     -- when user runs git add/reset. For commits (immutable), we can cache.
     local is_mutable_revision = revision == ":0" or revision == ":1" or revision == ":2" or revision == ":3"
 
-    if existing_buf ~= -1 and not is_mutable_revision then
+    -- A buffer added elsewhere (a quickfix entry, a caller's diagnostics) may
+    -- be unloaded or still loading; only a buffer holding content is ready.
+    local ready = existing_buf ~= -1 and vim.api.nvim_buf_is_loaded(existing_buf) and not virtual_file.is_loading(existing_buf)
+
+    if ready and not is_mutable_revision then
       -- Buffer exists for immutable revision, reuse it
       return {
         bufnr = existing_buf,

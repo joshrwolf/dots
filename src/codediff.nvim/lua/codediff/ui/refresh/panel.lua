@@ -88,6 +88,12 @@ function M.read(session, done)
     return
   end
 
+  -- A caller-supplied file set (codediff.api.open) is the list; Git status never replaces it.
+  if data.fixed_files then
+    done(nil, next_data)
+    return
+  end
+
   local function fetch_status()
     if not data.git_root then
       status_result(nil, require("codediff.core.dir").diff_directories(data.dir1, data.dir2).status_result)

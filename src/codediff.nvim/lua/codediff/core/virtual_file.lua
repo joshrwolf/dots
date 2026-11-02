@@ -1,11 +1,14 @@
 -- Virtual file scheme for git revisions
 -- Inspired by vim-fugitive's fugitive:// URL scheme
--- LSP attachment is prevented so revision buffers use Tree-sitter highlighting only.
+-- Revision buffers have no 'filetype' and a codediff:// name, so LSP clients
+-- and filetype-triggered linters never attach; they use Tree-sitter
+-- highlighting only. Diagnostics stay enabled for callers that set them.
 
 local M = {}
 
 local api = vim.api
-local loads = {}
+local loads = {} -- buf -> generation of its latest content load
+local loading = {} -- buf -> true while that load is in flight
 
 -- Populate revision buffers consistently whether opening or refreshing a view.
 function M.set_content(buf, lines, filepath)
@@ -30,14 +33,22 @@ function M.set_content(buf, lines, filepath)
       vim.bo[buf].syntax = ft
     end
   end
-  vim.diagnostic.enable(false, { bufnr = buf })
   return true
+end
+
+--- Whether `buf` is waiting for its revision content. A loading buffer holds
+--- one empty placeholder line; CodeDiffVirtualFileLoaded ends the wait.
+---@param buf integer
+---@return boolean
+function M.is_loading(buf)
+  return loading[buf] == true
 end
 
 -- Helper function to load content into a virtual buffer and fire the loaded event
 local function load_virtual_buffer_content(buf, git_root, commit, filepath)
   local git = require("codediff.core.git")
   loads[buf] = (loads[buf] or 0) + 1
+  loading[buf] = true
   local generation = loads[buf]
 
   git.get_file_content(commit, git_root, filepath, function(err, lines)
@@ -46,6 +57,7 @@ local function load_virtual_buffer_content(buf, git_root, commit, filepath)
       if not api.nvim_buf_is_valid(buf) or loads[buf] ~= generation then
         return
       end
+      loading[buf] = nil
 
       if err then
         -- File doesn't exist in this revision (added/deleted file)
@@ -59,7 +71,6 @@ local function load_virtual_buffer_content(buf, git_root, commit, filepath)
         api.nvim_buf_call(buf, function()
           vim.cmd("noautocmd setlocal filetype=")
         end)
-        vim.diagnostic.enable(false, { bufnr = buf })
 
         -- Fire loaded event so diff rendering proceeds
         api.nvim_exec_autocmds("User", {
@@ -177,7 +188,7 @@ function M.setup()
   api.nvim_create_autocmd("BufWipeout", {
     group = group,
     callback = function(event)
-      loads[event.buf] = nil
+      loads[event.buf], loading[event.buf] = nil, nil
     end,
   })
 

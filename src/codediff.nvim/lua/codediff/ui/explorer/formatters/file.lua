@@ -1,4 +1,5 @@
--- Default file row: `[indent] [icon] filename [directory] [stats] [status]`.
+-- Default file row: `[indent] [icon] filename [directory] [decoration] [stats] [status]`.
+-- The `[decoration]` segment is the caller's text from codediff.api.set_decorations.
 -- The `[stats]` segment renders only when `explorer.line_stats.enabled = true`.
 
 local common = require("codediff.ui.explorer.formatters.common")
@@ -23,6 +24,12 @@ return function(ctx)
   end
 
   local right = {}
+  if ctx.decoration and ctx.decoration.text ~= "" then
+    right[#right + 1] = {
+      segments = { { text = ctx.decoration.text, hl = ctx.decoration.hl or "Normal" }, { text = " ", hl = "Normal" } },
+      truncate_priority = 4,
+    }
+  end
   local file_stats = stats.file_segments(ctx.stats)
   if #file_stats > 0 then
     file_stats[#file_stats + 1] = { text = " ", hl = "Normal" }
