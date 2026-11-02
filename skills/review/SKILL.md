@@ -30,15 +30,19 @@ one is available, with both angle files.
 
 ## Run a review
 
-1. **Target and intent.** Map the request to a `dots review start` target:
-   your uncommitted work is `--worktree`; a branch or PR is `--base <base
-   ref>` from a checkout of its head. For a PR URL, read `gh pr view <url>
-   --json title,body,baseRefName,headRefOid`, fetch the base, and confirm
-   `HEAD` is the PR head before starting. Intent is the PR description, the
-   task, or the user's request; write it down in a sentence or two. If the
-   target is ambiguous, ask.
-2. **Start.** `dots --json review start <target> --profile <name>`. Keep the
-   review id.
+1. **Target and intent.** Each worktree has one living review: its branch,
+   through the working tree, against the base `dots review open` chooses and
+   reports. That is the target for your own work and for a branch or PR checked
+   out in a worktree. For a PR URL, read `gh pr view <url> --json
+   title,body,baseRefName,headRefOid`, fetch the base, confirm `HEAD` is the PR
+   head, and pass `--base <remote>/<baseRefName>` when the chosen base differs.
+   Use `dots review start --uncommitted` or `--base REF` only for an ad hoc
+   review beside the living one. Intent is the PR description, the task, or
+   the user's request; write it down in a sentence or two. If the target is
+   ambiguous, ask.
+2. **Open.** `dots --json review open`, from your own session rather than a
+   worker. Check the reported base, and keep the review id for the commands
+   below.
 3. **Reviewers.** For each reviewer in the profile, fill in
    [reviewer.md](reviewer.md) and give it one angle file from `angles/`
    ([correctness](angles/correctness.md), [guidance](angles/guidance.md)).
@@ -53,29 +57,33 @@ one is available, with both angle files.
    severe first, each with `path:line`, the failing scenario, and the fix;
    then one line on what was dismissed and why. Say plainly when nothing
    blocks. Do not post to GitHub.
+6. **Hand over.** In Rex, open the review beside your pane:
+   `rex split -s "" -b "" --cwd <worktree> --label
+   review -- nvim +Review`.
 
 ## After fixes
 
-When the change moves (fixes, new commits), run `dots review refresh <id>`. It
-re-anchors threads and returns a delta `diff_command`. Continue the same
+When the change moves (fixes, new commits), run `dots review open` again. It
+follows the worktree, re-anchors threads, and returns a delta `diff_command`
+(`dots review refresh <id>` does the same for an ad hoc review). Continue the same
 reviewer sessions when the host allows it (in Pi, `message` to the finished
 worker): give them the delta, ask them to confirm which of their findings are
 fixed and to review only the delta. Mark verified fixes `fixed` with a body
 giving the evidence.
 Re-review until a round adds nothing new, or the user stops it.
 
-`dots review remove <id>` deletes a review once the user is done with it;
-reviews also disappear with their worktree.
+`dots review remove <id>` deletes an ad hoc review once the user is done with
+it; reviews also disappear with their worktree.
 
 ## Submission notices
 
-The session that runs `dots review start` owns the review; start it yourself
-(or pass `--owner`) rather than from a worker. The user's comments stay private
-drafts until the user submits them. In Pi, each submission reaches the owner as
-one notice with its summary and each comment's thread and location. Read the
-threads with `dots review show`, then decide: answer them yourself, fix the
-change, or resume the worker that owns that change or finding with `message`
-and give it the threads. Reply on each thread with the outcome
-(`dots review reply`, or `dots review set` with evidence on threads agents
-started), so the user sees it in the review. Only the user settles a thread the
-user started; the CLI refuses an agent status there.
+The agent session that last opened the worktree's review (or started an ad
+hoc one) owns it; open it yourself, or pass `--owner`, rather than from a
+worker. The user's comments stay private drafts until the user submits them. In
+Pi, each submission reaches the owner as one notice with its summary and each
+comment's thread and location. Read the threads with `dots review show`, then
+decide: answer them yourself, fix the change, or resume the worker that owns
+that change or finding with `message` and give it the threads. Reply on each
+thread with the outcome (`dots review reply`, or `dots review set` with evidence
+on threads agents started), so the user sees it in the review. Only the user
+settles a thread the user started; the CLI refuses an agent status there.
