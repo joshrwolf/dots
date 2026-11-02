@@ -56,7 +56,10 @@ selection and unavailable-host handling belong to Rex; switching hosts leaves
 the picker, and Cmd+P opens it on the selected host.
 
 Go also starts work. Paste a GitHub PR URL and press Ctrl+R to review it
-with Pi in the PR's worktree, in the checkout whose GitHub remote matches.
+with Pi in the PR's worktree, in the checkout whose GitHub remote matches:
+the current repo, one zoxide knows, or the one at the repository's checkout
+path. When none exists, the new session first clones the repository to that
+path with `gh repo clone`; Go refuses when the path holds anything else.
 Type or paste a Linear issue ID or URL and press Ctrl+T to start Pi on it in
 a worktree whose branch is the lowercase ID, in the one repo with a branch
 for it, else the repo with the most branches for its team; when neither
@@ -74,6 +77,28 @@ worktree. A malformed line, or Ctrl+O without a repo row, starts nothing:
 the popup says why until you press Enter. When worktrunk fails, its error
 stays in the session. The keys are the `KEYS` table at the top of
 `dots/go.lua`.
+
+### Checkout paths
+
+JSON files in `~/.config/rex/checkouts/` say where a repository's primary
+checkout lives. Each has a version and rules from a key to a path, which
+starts with `~/` or `/` and may use `{owner}` and `{name}`:
+
+```json
+{
+  "version": 1,
+  "rules": {
+    "*": "~/dev/personal/{owner}/{name}",
+    "example-org/*": "~/dev/work/{name}",
+    "example-org/side-project": "~/dev/personal/example-org/side-project"
+  }
+}
+```
+
+An `owner/name` key beats an `owner/*` key, which beats `*`, whichever file
+holds them. Keys ignore case. Two files giving one key different paths is an
+error naming both. This configuration ships only the `*` rule, in
+`checkouts/default.json`; other machine setup can add files beside it.
 
 A jump is a move to another tab through Go, the PR view, or Cmd+O. Cmd+O
 also counts the tab you press it in, so a second press returns there even if

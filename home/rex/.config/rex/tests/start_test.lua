@@ -10,6 +10,12 @@ local SHELL_ONLY = "zsh -i; " .. LEAVE
 local DOTS = "/home/me/src/dots"
 local API = "/home/me/src/api"
 local ZOXIDE = "zoxide query --list"
+local HOME = "/home/me"
+local RULES = HOME .. "/.config/rex/checkouts"
+local CLONE = 'gh repo clone "$1" "$2" && cd "$2" && shift 2 && exec "$@"'
+-- Where the rules below place example/web and work-org/api.
+local WEB = HOME .. "/dev/personal/example/web"
+local WORK_API = HOME .. "/dev/work/api"
 
 ---@type dots.Repo[]
 local REPOS = {
@@ -87,16 +93,34 @@ local function switch(args, prompt, script)
   return argv
 end
 
+---The `.git` files of a checkout whose origin is GitHub's `slug`.
+---@param dir string
+---@param slug string
+---@return table<string, string>
+local function checkout(dir, slug)
+  return {
+    [dir .. "/.git/HEAD"] = "ref: refs/heads/main\n",
+    [dir .. "/.git/config"] = '[remote "origin"]\n\turl = https://github.com/' .. slug .. "\n",
+  }
+end
+
 ---Stand in for the filesystem: DOTS and API are checkouts with GitHub
----remotes; anything else is not a repo.
+---remotes, and `more` adds files; anything else is not a repo. The rule
+---directory has the default rule and one for work-org.
 ---@param t tests.T
-local function checkouts_on_disk(t)
+---@param more? table<string, string>
+local function checkouts_on_disk(t, more)
   local files = {
+    [RULES .. "/default.json"] = '{ "version": 1, "rules": { "*": "~/dev/personal/{owner}/{name}" } }',
+    [RULES .. "/work.json"] = '{ "version": 1, "rules": { "work-org/*": "~/dev/work/{name}" } }',
     [DOTS .. "/.git/HEAD"] = "ref: refs/heads/main\n",
     [DOTS .. "/.git/config"] = '[remote "origin"]\n\turl = git@github.com:example/dots.git\n',
     [API .. "/.git/HEAD"] = "ref: refs/heads/main\n",
     [API .. "/.git/config"] = '[remote "origin"]\n\turl = https://github.com/example/api\n',
   }
+  for path, text in pairs(more or {}) do
+    files[path] = text
+  end
   t.stub(start, "read", function(path)
     return files[path]
   end)
@@ -133,6 +157,7 @@ local function rex_with_picker()
       [git_dir(DOTS .. "/docs")] = { stdout = DOTS .. "/.git\n" },
       [git_dir("/tmp")] = { ok = false },
       [ZOXIDE] = { stdout = API .. "\n" .. DOTS .. "/docs\n" .. DOTS .. "\n" },
+      ["ls -1 " .. RULES] = { stdout = "default.json\nwork.json\n" },
     },
   }
 end
@@ -331,7 +356,7 @@ return {
 
   ["a PR goes to the one repo with its remote, whatever the case"] = function()
     expect.equal(
-      start.plan_pr(assert(start.pr("https://github.com/Fork/API/pull/9/files")), REPOS),
+      start.plan_pr(assert(start.pr("https://github.com/Fork/API/pull/9/files")), REPOS, nil, HOME),
       {
         repo = API,
         label = "API#9",
@@ -343,21 +368,20 @@ return {
 
   ["a PR without one matching repo lists the candidates"] = function()
     expect.equal(
-      { start.plan_pr(assert(start.pr("https://github.com/example/web/pull/1")), REPOS) },
+      { start.plan_pr(assert(start.pr("https://github.com/example/web/pull/1")), REPOS, nil, HOME) },
       {
         nil,
-        "no known repo has the GitHub remote example/web; known: "
-          .. "dots (example/dots), api (example/api), café-notes (no GitHub remote)",
+        "no known repo has the GitHub remote example/web, and no rule in ~/.config/rex/checkouts "
+          .. "places it; known: dots (example/dots), api (example/api), café-notes (no GitHub remote)",
       }
     )
     local twice = { REPOS[1], { path = "/home/me/other/dots", remotes = { "example/dots" } } }
-    expect.equal(
-      { start.plan_pr(assert(start.pr("https://github.com/example/dots/pull/1")), twice) },
-      {
-        nil,
-        "example/dots is the remote of several repos: dots (example/dots), dots (example/dots)",
-      }
-    )
+    expect.equal({
+      start.plan_pr(assert(start.pr("https://github.com/example/dots/pull/1")), twice, nil, HOME),
+    }, {
+      nil,
+      "example/dots is the remote of several repos: dots (example/dots), dots (example/dots)",
+    })
   end,
 
   ["a branch is for an issue or a team only as a whole word"] = function()
@@ -502,8 +526,137 @@ return {
     fake.commands[ZOXIDE] = { stdout = "" }
     fake_rex.install(t, fake)
     expect.equal(
-      assert(start.plan("pr", "https://github.com/example/dots/pull/3", DOTS .. "/docs")).repo,
+      assert(start.plan("pr", "https://github.com/example/dots/pull/3", DOTS .. "/docs", HOME)).repo,
       DOTS
+    )
+  end,
+
+  ["a PR's checkout at its rule path is found though zoxide does not list it"] = function(t)
+    checkouts_on_disk(t, checkout(WORK_API, "work-org/api"))
+    local fake = rex_with_picker()
+    fake.commands[ZOXIDE] = { stdout = "" }
+    fake_rex.install(t, fake)
+    local url = "https://github.com/work-org/api/pull/5"
+    expect.equal(start.plan("pr", url, "/tmp", HOME), {
+      repo = WORK_API,
+      label = "api#5",
+      argv = switch({ "pr:5" }, "/skill:review " .. url),
+      pr = url,
+    })
+  end,
+
+  ["a checkout with the PR's remote elsewhere is used, not cloned beside"] = function(t)
+    checkouts_on_disk(t)
+    local fake = fake_rex.install(t, rex_with_picker())
+    expect.equal(
+      assert(start.plan("pr", "https://github.com/example/api/pull/5", "/tmp", HOME)).repo,
+      API
+    )
+    -- Nothing asks whether its rule path is free to clone into.
+    for _, call in ipairs(fake.only("exec")) do
+      expect.equal({ call.args[1], call.args[2] == "-A" }, { call.args[1], false })
+    end
+  end,
+
+  ["of several checkouts with the PR's remote, the one at its rule path wins"] = function(t)
+    local other = "/home/me/old/web"
+    local files = checkout(WEB, "example/web")
+    for path, text in pairs(checkout(other, "example/web")) do
+      files[path] = text
+    end
+    checkouts_on_disk(t, files)
+    local fake = rex_with_picker()
+    fake.commands[ZOXIDE] = { stdout = other .. "\n" }
+    fake_rex.install(t, fake)
+    expect.equal(
+      assert(start.plan("pr", "https://github.com/example/web/pull/1", "/tmp", HOME)).repo,
+      WEB
+    )
+  end,
+
+  ["a PR without a checkout clones its repo at the rule path, then reviews it"] = function(t)
+    checkouts_on_disk(t)
+    local url = "https://github.com/example/web/pull/1"
+    local review = switch({ "pr:1" }, "/skill:review " .. url)
+    local clone = { "zsh", "-c", CLONE, "zsh", "example/web", WEB }
+    for _, arg in ipairs(review) do
+      clone[#clone + 1] = arg
+    end
+    -- Absent, or an empty directory.
+    for _, listed in ipairs({ { ok = false }, { stdout = "" } }) do
+      local fake = rex_with_picker()
+      fake.commands["ls -A " .. WEB] = listed
+      fake_rex.install(t, fake)
+      expect.equal(start.plan("pr", url, "/tmp", HOME), {
+        repo = WEB,
+        label = "web#1",
+        argv = clone,
+        pr = url,
+        clone = "example/web",
+        cwd = HOME,
+      })
+    end
+  end,
+
+  ["a PR's rule path that holds something else is not cloned into"] = function(t)
+    checkouts_on_disk(t)
+    local fake = rex_with_picker()
+    fake.commands["ls -A " .. WEB] = { stdout = "notes.txt\n" }
+    fake_rex.install(t, fake)
+    expect.equal({ start.plan("pr", "https://github.com/example/web/pull/1", "/tmp", HOME) }, {
+      nil,
+      "no known repo has the GitHub remote example/web; not cloning into its checkout path "
+        .. "~/dev/personal/example/web (rule * in ~/.config/rex/checkouts/default.json), "
+        .. "which is not empty and not a checkout; known: api (example/api), dots (example/dots)",
+    })
+  end,
+
+  ["a PR's rule path that is another repo's checkout is not used"] = function(t)
+    checkouts_on_disk(t, checkout(WORK_API, "someone/api"))
+    fake_rex.install(t, rex_with_picker())
+    expect.equal({ start.plan("pr", "https://github.com/work-org/api/pull/5", "/tmp", HOME) }, {
+      nil,
+      "no known repo has the GitHub remote work-org/api; its checkout path "
+        .. "~/dev/work/api (rule work-org/* in ~/.config/rex/checkouts/work.json) "
+        .. "is a checkout of someone/api; known: api (someone/api), api (example/api), dots (example/dots)",
+    })
+  end,
+
+  ["a broken rule file stops a PR start"] = function(t)
+    checkouts_on_disk(
+      t,
+      { [RULES .. "/work.json"] = '{ "version": 1, "rules": { "work-org/*": "dev/{name}" } }' }
+    )
+    fake_rex.install(t, rex_with_picker())
+    expect.equal(
+      { start.plan("pr", "https://github.com/example/dots/pull/3", DOTS .. "/docs", HOME) },
+      {
+        nil,
+        RULES
+          .. "/work.json: rule work-org/* must be a path starting with ~/ or / that uses only {owner} and {name}",
+      }
+    )
+  end,
+
+  ["a start that clones runs from home and skips looking for a worktree"] = function(t)
+    t.stub(jumps, "recent", {})
+    local installed = fake_rex.install(t, rex_with_picker())
+    local argv = { "zsh", "-c", CLONE, "zsh", "example/web", WEB, "wt" }
+    start.open(picker, {
+      repo = WEB,
+      label = "web#1",
+      argv = argv,
+      pr = "https://github.com/example/web/pull/1",
+      clone = "example/web",
+      cwd = HOME,
+    }, snap)
+    expect.equal(installed.only("exec"), {})
+    expect.equal(
+      installed.only("session.create")[1].args.initial_windows[1].layout,
+      rex.layout.block({
+        flavor = "com.superlogical.terminal.shell",
+        options = { command = argv, cwd = HOME, exit = { quick_exit_threshold_ms = 300000 } },
+      })
     )
   end,
 

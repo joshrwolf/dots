@@ -256,7 +256,7 @@ end
 function M.start(ctx, kind, args)
   local snap = snapshot.collect({ exclude = ctx.block_id })
   local here = ctx.session_id and ctx.block_id and sessions.cwd(ctx.session_id, ctx.block_id)
-  local plan, err = start.plan(kind, args.query, here or nil)
+  local plan, err = start.plan(kind, args.query, here or nil, snap.home)
   if not plan then
     error(err, 0)
   end

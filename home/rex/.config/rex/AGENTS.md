@@ -81,9 +81,9 @@ memory or older notes.
 - Only `dots.views` decides how a view is placed and where focus goes when
   it closes. It also registers `views_dismiss`, which `dots-pick` runs on
   Esc.
-- Dependencies point from features to shared modules (`dots.result`,
-  `dots.process`, `dots.sessions`, `dots.snapshot`, `dots.start`,
-  `dots.views`), never back.
+- Dependencies point from features to shared modules (`dots.checkouts`,
+  `dots.result`, `dots.process`, `dots.sessions`, `dots.snapshot`,
+  `dots.start`, `dots.views`), never back.
   `dots.jumps` is shared too: it owns the jump list that navigating features
   record into, and also binds the toggle.
 - Prefer Rex's built-in client actions over custom ones.
@@ -102,7 +102,12 @@ memory or older notes.
   `zoxide query`); larger domain data belongs in Rust behind a `dots` command.
 - `dots.start` plans from the selected host's git and files alone. Only finding an existing
   PR session asks the network: `gh pr view` for the head branch, bounded to
-  10 seconds; without an answer, the start creates a session.
+  10 seconds; without an answer, the start creates a session. A clone runs
+  in the new session's terminal, before worktrunk, so it is visible and its
+  failure stays on screen; the action never blocks on it.
+- Checkout rules are data (`checkouts/*.json`, read by `dots.checkouts`).
+  Public files ship only the default rule; employer and personal rules
+  belong to private setup.
 
 ## Style
 

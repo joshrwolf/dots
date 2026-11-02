@@ -2,11 +2,13 @@
 -- repo for a new session. Input is parsed deterministically and a wrong shape
 -- is an error that lists the valid forms. The repo is chosen from local git
 -- alone; a session already at the worktree is shown instead of a second one.
+-- A PR whose repo has no checkout is cloned where `dots.checkouts` places it.
 -- A new session's one terminal runs worktrunk, which creates or reuses the
 -- worktree (hooks and approvals included) and starts Pi there; when Pi exits,
 -- the terminal becomes a shell in the worktree, and when worktrunk fails, its
 -- error stays on screen.
 local app = require("dots.app")
+local checkouts = require("dots.checkouts")
 local jumps = require("dots.jumps")
 local must = require("dots.result").must
 local process = require("dots.process")
@@ -31,6 +33,9 @@ local SCRIPTS = {
 -- approvals, a missing PR) keeps its terminal open to show why; any other
 -- exit, such as leaving the shell after Pi, closes it and with it the session.
 local FAILURE_WINDOW_MS = 300000
+-- Clones `$1` into `$2`, then runs the rest there. gh uses its own
+-- authentication and the user's preferred Git protocol on every host.
+local CLONE = 'gh repo clone "$1" "$2" && cd "$2" && shift 2 && exec "$@"'
 
 -- The valid forms of each start's line. Errors name them briefly, because the
 -- picker shows them in a few lines above its list.
@@ -154,13 +159,15 @@ local M = {}
 
 ---What a start opens: the worktree for `branch` in `repo`, or the one for
 ---the PR at `pr`, and failing that a session labelled `label` whose terminal
----runs `argv` in `repo`.
+---runs `argv` in `repo`, or in `cwd` while it clones `repo` first.
 ---@class dots.StartPlan
 ---@field repo string
 ---@field label string
 ---@field argv string[]
 ---@field branch? string
 ---@field pr? string The PR's URL, when its branch is not known locally.
+---@field clone? string The GitHub `owner/name` that `argv` clones into `repo` before starting.
+---@field cwd? string Where the terminal starts when `repo` does not exist yet.
 
 ---@alias dots.StartKind "pr"|"issue"
 
@@ -193,6 +200,20 @@ function M.argv(target, create, run, prompt)
     argv[#argv + 1] = prompt
   end
   return argv
+end
+
+---`argv` run in `path` after cloning GitHub's `slug` there, as one command
+---whose parts are all arguments.
+---@param slug string
+---@param path string Absolute.
+---@param argv string[]
+---@return string[]
+function M.clone_argv(slug, path, argv)
+  local out = { "zsh", "-c", CLONE, "zsh", slug, path }
+  for _, arg in ipairs(argv) do
+    out[#out + 1] = arg
+  end
+  return out
 end
 
 ---The `owner/name` a GitHub remote URL names, or nil for any other remote.
@@ -465,12 +486,14 @@ function M.repo_of(dir)
   return result and result.ok and M.checkout(result.stdout) or nil
 end
 
----The one known repo with the GitHub remote `slug`, ignoring case.
+---The known repo with the GitHub remote `slug`, ignoring case: the only
+---one, or the one at `at` among several. Nil with no error when none has it.
 ---@param repos dots.Repo[]
 ---@param slug string
+---@param at? string The checkout path to prefer.
 ---@return dots.Repo?
 ---@return string? err
-function M.match(repos, slug)
+function M.match(repos, slug, at)
   local found = {}
   for _, repo in ipairs(repos) do
     for _, remote in ipairs(repo.remotes) do
@@ -480,13 +503,23 @@ function M.match(repos, slug)
       end
     end
   end
-  if #found == 1 then
+  if #found <= 1 then
     return found[1]
   end
-  if #found == 0 then
-    return nil, "no known repo has the GitHub remote " .. slug .. "; known: " .. M.describe(repos)
+  for _, repo in ipairs(found) do
+    if repo.path == at then
+      return repo
+    end
   end
   return nil, slug .. " is the remote of several repos: " .. M.describe(found)
+end
+
+---Whether `path` exists as anything but an empty directory.
+---@param path string
+---@return boolean
+function M.occupied(path)
+  local listed = process.run({ "ls", "-A", path }, { timeout = 5 })
+  return listed ~= nil and listed.ok and listed.stdout ~= ""
 end
 
 ---@param repo string
@@ -496,21 +529,67 @@ local function label(repo, what)
   return snapshot.basename(repo) .. ":" .. what
 end
 
----Review a PR in its repo's worktree.
+---Review a PR in its repo's worktree: in the known repo with its remote,
+---preferring the checkout at its placement, else in a clone made there.
+---Refuses to clone where something else already is.
 ---@param pr { slug: string, repo: string, number: string, url: string }
----@param repos dots.Repo[]
+---@param repos dots.Repo[] Including the placement's checkout, if there is one.
+---@param placement? dots.Placement
+---@param home string
 ---@return dots.StartPlan?
 ---@return string? err
-function M.plan_pr(pr, repos)
-  local repo, unmatched = M.match(repos, pr.slug)
-  if not repo then
-    return nil, unmatched
+function M.plan_pr(pr, repos, placement, home)
+  local repo, several = M.match(repos, pr.slug, placement and placement.path)
+  if several then
+    return nil, several
+  end
+  local title = pr.repo .. "#" .. pr.number
+  local review = M.argv("pr:" .. pr.number, false, "pi", "/skill:review " .. pr.url)
+  if repo then
+    return { repo = repo.path, label = title, argv = review, pr = pr.url }
+  end
+  local unmatched = "no known repo has the GitHub remote " .. pr.slug
+  local known = "; known: " .. M.describe(repos)
+  if not placement then
+    return nil,
+      unmatched
+        .. ", and no rule in "
+        .. snapshot.tilde(home .. checkouts.DIR, home)
+        .. " places it"
+        .. known
+  end
+  local where = snapshot.tilde(placement.path, home)
+    .. " (rule "
+    .. placement.key
+    .. " in "
+    .. snapshot.tilde(placement.file, home)
+    .. ")"
+  for _, other in ipairs(repos) do
+    if other.path == placement.path then
+      return nil,
+        unmatched
+          .. "; its checkout path "
+          .. where
+          .. " is a checkout of "
+          .. (other.remotes[1] or "no GitHub remote")
+          .. known
+    end
+  end
+  if M.occupied(placement.path) then
+    return nil,
+      unmatched
+        .. "; not cloning into its checkout path "
+        .. where
+        .. ", which is not empty and not a checkout"
+        .. known
   end
   return {
-    repo = repo.path,
-    label = pr.repo .. "#" .. pr.number,
-    argv = M.argv("pr:" .. pr.number, false, "pi", "/skill:review " .. pr.url),
+    repo = placement.path,
+    label = title,
+    argv = M.clone_argv(pr.slug, placement.path, review),
     pr = pr.url,
+    clone = pr.slug,
+    cwd = home,
   }
 end
 
@@ -585,18 +664,31 @@ end
 ---@param kind dots.StartKind
 ---@param line string
 ---@param here? string The directory of the terminal Go was opened from, whose repo is known even if zoxide does not list it.
+---@param home? string Where checkout rules and their `~` are.
 ---@return dots.StartPlan?
 ---@return string? err
-function M.plan(kind, line, here)
-  local function known()
-    return M.repos({ here and M.repo_of(here) or nil })
+function M.plan(kind, line, here, home)
+  local function known(extra)
+    local dirs = { here and M.repo_of(here) or nil }
+    if extra then
+      dirs[#dirs + 1] = extra
+    end
+    return M.repos(dirs)
   end
   if kind == "pr" then
     local pr, err = M.pr(line)
     if not pr then
       return nil, err
     end
-    return M.plan_pr(pr, known())
+    if not home or home == "" then
+      return nil, "HOME is not set, so checkout rules cannot be read"
+    end
+    local rules, rules_err = checkouts.load(home, M.read)
+    if not rules then
+      return nil, rules_err
+    end
+    local placement = checkouts.resolve(rules, pr.slug, home)
+    return M.plan_pr(pr, known(placement and placement.path), placement, home)
   end
   local issue, err = M.issue(line)
   if not issue then
@@ -676,7 +768,7 @@ function M.session(plan)
           flavor = SHELL,
           options = {
             command = plan.argv,
-            cwd = plan.repo,
+            cwd = plan.cwd or plan.repo,
             exit = { quick_exit_threshold_ms = FAILURE_WINDOW_MS },
           },
         }),
@@ -692,7 +784,8 @@ end
 ---@param snap dots.Snapshot Without the picker.
 function M.open(ctx, plan, snap)
   local from = jumps.here(ctx)
-  local branch = plan.branch or (plan.pr and M.pr_branch(plan.pr))
+  -- A repo still to be cloned has no worktrees.
+  local branch = plan.branch or (plan.pr and not plan.clone and M.pr_branch(plan.pr))
   local path = branch and M.worktree(plan.repo, branch)
   local session, block
   if path then
