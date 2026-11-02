@@ -7,6 +7,7 @@
 
 "apt:build-essential" = "latest"
 "apt:libatomic1" = "latest"
+"apt:libgomp1" = "latest"
 "apt:pkg-config" = "latest"
 "apt:git" = "latest"
 "apt:zsh" = "latest"
@@ -35,6 +36,7 @@
 
 "dnf:gcc" = "latest"
 "dnf:libatomic" = "latest"
+"dnf:libgomp" = "latest"
 "dnf:gcc-c++" = "latest"
 "dnf:make" = "latest"
 "dnf:pkgconf-pkg-config" = "latest"

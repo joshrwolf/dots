@@ -9,7 +9,7 @@ local group = vim.api.nvim_create_augroup("dots.review", { clear = true })
 local views = {} -- tabpage -> open review view
 local pending = {} -- "base..snapshot" -> view waiting for its CodeDiff tab
 
--- CodeDiff internals, checked against codediff.nvim v4.0.5. Its supported API
+-- CodeDiff internals from the in-tree fork (src/codediff.nvim). Its supported API
 -- covers only hunk/file navigation and lifecycle events; everything else this
 -- module needs from CodeDiff is here.
 local codediff = {}

@@ -1,5 +1,5 @@
 min_version = "2026.10.25"
-include = ["tools.toml", "packages.toml"]
+include = ["tools.toml", "packages.toml", "../src/codediff.nvim/tools.toml"]
 
 [settings]
 lockfile = false
@@ -33,6 +33,13 @@ root = "zsh"
 [dotfile_groups.editor]
 root = "nvim"
 exclude = ["README.md", "AGENTS.md"]
+
+# An owned in-tree plugin, loaded as a native start package.
+[dotfile_groups.codediff]
+root = "../src/codediff.nvim"
+target = "~/.local/share/nvim/site/pack/dots/start/codediff.nvim"
+manifest = "git"
+exclude = ["AGENTS.md", "mise.toml", "mise.lock", "tools.toml", ".stylua.toml", ".luarc.json", "tests/**"]
 
 [dotfile_groups.rex]
 root = "rex"

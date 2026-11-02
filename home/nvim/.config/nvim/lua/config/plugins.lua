@@ -19,7 +19,6 @@ vim.pack.add({
   "https://github.com/folke/lazydev.nvim",
   "https://github.com/stevearc/conform.nvim",
   "https://github.com/lewis6991/gitsigns.nvim",
-  "https://github.com/esmuellert/codediff.nvim",
   "https://github.com/MeanderingProgrammer/render-markdown.nvim",
   { src = "https://github.com/saghen/blink.cmp", version = "v1.10.2" },
   { src = "https://github.com/nvim-treesitter/nvim-treesitter", version = "main" },
@@ -47,8 +46,10 @@ require("gitsigns").setup({
   end,
 })
 
--- Full reviews use ordinary split windows. Colors come from the shared theme;
--- stronger text highlights distinguish changed characters within tinted lines.
+-- CodeDiff is the owned fork in src/codediff.nvim, deployed by machine setup as
+-- a start package. Full reviews use ordinary split windows. Colors come from
+-- the shared theme; stronger text highlights distinguish changed characters
+-- within tinted lines.
 require("codediff").setup({
   diff = {
     filler_text = " ", -- Quiet shaded gaps instead of diagonal stripes.

@@ -14,6 +14,9 @@ Missing `vim.pack` plugins install on first launch. For updates, run
 Review the committed `nvim-pack-lock.json` diff. Keep plugin updates separate
 from editor upgrades.
 
+CodeDiff is an owned fork in [src/codediff.nvim](../../../../src/codediff.nvim/README.md);
+machine setup deploys it as a start package with its native tools.
+
 ## Use
 
 Mapping descriptions document shortcuts. In Rex terminals, clipboard operations
