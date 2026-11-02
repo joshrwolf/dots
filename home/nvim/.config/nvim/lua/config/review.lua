@@ -250,7 +250,7 @@ local function render(view)
   for buf, list in pairs(diagnostics) do
     vim.diagnostic.set(ns, buf, list)
   end
-  if view.qf and vim.fn.getqflist({ id = view.qf }).id == view.qf then
+  if vim.fn.getqflist({ id = view.qf }).id == view.qf then
     vim.fn.setqflist({}, "u", { id = view.qf, items = items })
   end
   local decorations = {}
@@ -270,6 +270,19 @@ local function render_current()
   local view = views[vim.api.nvim_get_current_tabpage()]
   if view then
     render(view)
+  end
+end
+
+-- Make view's quickfix list the current one, recreating it if the quickfix
+-- stack has dropped it, so native list commands (:cc, :cnext) jump into this
+-- tab's revisions rather than another review's.
+local function select_list(view)
+  local nr = vim.fn.getqflist({ id = view.qf or 0, nr = 0 }).nr
+  if not view.qf or nr == 0 then
+    vim.fn.setqflist({}, " ", { title = "Review " .. view.id, context = { dots_review = view.id } })
+    view.qf = vim.fn.getqflist({ id = 0 }).id
+  elseif nr ~= vim.fn.getqflist({ nr = 0 }).nr then
+    vim.cmd("silent " .. nr .. "chistory")
   end
 end
 
@@ -592,8 +605,7 @@ function M.open(id, cwd)
         generation = 0,
       }
       views[tab] = view
-      vim.fn.setqflist({}, " ", { title = "Review " .. review.id, context = { dots_review = review.id } })
-      view.qf = vim.fn.getqflist({ id = 0 }).id
+      select_list(view)
       watch(view)
       render_current()
     end)
@@ -711,7 +723,13 @@ vim.api.nvim_create_autocmd({ "BufWinEnter", "BufWipeout" }, {
 })
 vim.api.nvim_create_autocmd("TabEnter", {
   group = group,
-  callback = render_current,
+  callback = function()
+    local view = views[vim.api.nvim_get_current_tabpage()]
+    if view then
+      select_list(view)
+      render(view)
+    end
+  end,
 })
 
 return M
