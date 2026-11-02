@@ -326,7 +326,7 @@ pub(crate) fn key(credential_digest: &[u8], host: &str, endpoint: &str, attempt:
     digest.update([0]);
     digest.update(endpoint.as_bytes());
     digest.update(attempt.to_be_bytes());
-    format!("{:x}", digest.finalize())
+    hex::encode(digest.finalize())
 }
 
 /// Anonymous private spool, removed from the filesystem immediately after opening.

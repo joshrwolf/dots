@@ -531,7 +531,7 @@ pub(crate) fn sleep_while_read(duration: Duration) -> bool {
         match poll(&mut fds, timeout) {
             Ok(0) | Err(Errno::EINTR) => {}
             Ok(_) => {
-                let events = fds.first().and_then(|fd| fd.revents());
+                let events = fds.first().and_then(nix::poll::PollFd::revents);
                 if events.is_some_and(|events| {
                     events.intersects(PollFlags::POLLHUP | PollFlags::POLLERR)
                 }) {

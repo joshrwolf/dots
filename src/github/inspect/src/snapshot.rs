@@ -50,7 +50,7 @@ impl SnapshotRef {
         Some(Self {
             repository,
             path,
-            digest: format!("{:x}", Sha256::digest(bytes)),
+            digest: hex::encode(Sha256::digest(bytes)),
         })
     }
 }
@@ -119,7 +119,7 @@ pub(crate) fn load(provider: &impl Provider, reference: &SnapshotRef) -> Result<
             reference.refresh_command()
         ))
     })?;
-    if format!("{:x}", Sha256::digest(&cached.bytes)) != reference.digest {
+    if hex::encode(Sha256::digest(&cached.bytes)) != reference.digest {
         return Err(invalid());
     }
     let snapshot: Snapshot = serde_json::from_slice(&cached.bytes).map_err(|_| invalid())?;

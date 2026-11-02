@@ -58,7 +58,7 @@ pub fn revision(content: Option<&str>) -> String {
 
 #[must_use]
 pub fn bytes_revision(content: &[u8]) -> String {
-    format!("sha256:{:x}", Sha256::digest(content))
+    format!("sha256:{}", hex::encode(Sha256::digest(content)))
 }
 
 pub fn validate_page(start: usize, lines: usize) -> Result<()> {
