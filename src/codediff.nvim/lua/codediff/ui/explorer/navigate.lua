@@ -7,6 +7,7 @@ local lifecycle = require("codediff.ui.lifecycle")
 local virtual_file = require("codediff.core.virtual_file")
 
 local SIDES = { "original", "modified" }
+
 local pending = {} -- tabpage -> { path, side, line, callback } waiting for CodeDiffFileShown
 
 local function explorer_session(tabpage)
@@ -123,26 +124,6 @@ function M.show(tabpage, target, callback)
   return true
 end
 
--- The line a native jump asked for. A loaded buffer already has the cursor
--- on it; a buffer that was still loading clamped the cursor to its empty
--- placeholder, so read the current quickfix or location-list entry instead.
-local function requested_line(win, buf, loaded)
-  if loaded and api.nvim_win_is_valid(win) and api.nvim_win_get_buf(win) == buf then
-    return api.nvim_win_get_cursor(win)[1]
-  end
-  local lists = { vim.fn.getqflist({ idx = 0, items = 0 }) }
-  if api.nvim_win_is_valid(win) then
-    table.insert(lists, 1, vim.fn.getloclist(win, { idx = 0, items = 0 }))
-  end
-  for _, list in ipairs(lists) do
-    local item = list.items and list.items[list.idx]
-    if item and item.bufnr == buf and item.lnum > 0 then
-      return item.lnum
-    end
-  end
-  return 1
-end
-
 -- A revision buffer of an explorer tab entering one of its windows, other than
 -- CodeDiff placing its own selection, is navigation: select that file and land
 -- on the requested line. A window the jump opened (quickfix splits rather than
@@ -171,15 +152,20 @@ local function follow(event)
   if pane and selection and selection.path == at.path and (pane == at.side or loading) then
     return
   end
-  local loaded = api.nvim_buf_is_loaded(event.buf) and not virtual_file.is_loading(event.buf)
   -- The jump may have wiped the buffer this window showed; a selection in
   -- progress keeps the session from being torn down for it.
   require("codediff.ui.refresh").begin(tabpage)
+  -- The jump positions the cursor right after this (a list entry's line,
+  -- `:edit +N`, a picker's position); give it the real content to land in.
+  virtual_file.load_now(event.buf)
   vim.schedule(function()
     if not explorer_session(tabpage) then
       return
     end
-    local line = requested_line(win, event.buf, loaded)
+    local line = 1
+    if api.nvim_win_is_valid(win) and api.nvim_win_get_buf(win) == event.buf then
+      line = api.nvim_win_get_cursor(win)[1]
+    end
     local explorer = session.panel.view
     if not pane and api.nvim_win_is_valid(win) then
       if explorer and win == explorer.winid then

@@ -557,14 +557,14 @@ The navigation functions return `true` when navigation succeeds and `false` othe
 
 | Function | Description |
 |----------|-------------|
-| `open({ root, base, head, files })` | Open an Explorer tab comparing commits `base` and `head` (full ids) in `root` over `files`, a list of `{ path, status }` with status `A`, `M` or `D`. Git status never replaces the list. Returns the tabpage |
+| `open({ root, base, head, files })` | Open an Explorer tab comparing commits `base` and `head` (full ids) in `root` over `files`, a list of `{ path, status }` with status `A`, `M`, `D` or `T` (type change, shown two-sided like `M`). Git status never replaces the list. Returns the tabpage |
 | `revisions(tabpage?)` | `{ root, base, head }` the tab compares; `base`/`head` are `nil` for the working tree or a status view |
 | `buffer(buf, tabpage?)` | `{ path, revision, side }` when `buf` is one of the tab's revision buffers, else `nil` |
 | `revision_buffer(tabpage, path, side)` | The revision buffer for one side of a file, created unloaded when missing; CodeDiff loads it when shown |
 | `show(tabpage, { path, side, line }, callback?)` | Select the file and put the cursor on `line` of `side` once its content has loaded and its diff rendered, then call `callback(win, buf)`. A newer call for the tab supersedes a pending one |
 | `set_decorations(tabpage, decorations)` | Draw `decorations[path] = { text, hl }` on Explorer file rows; an empty table clears them |
 
-Explorer tabs follow native jumps into their revision buffers: a quickfix or location-list entry, or `:edit`, that opens a revision buffer of the tab's two revisions selects that file and lands on the requested line. A window the jump split off is closed again. CodeDiff wipes revision buffers it stops showing, so lists that refer to them by buffer number need rebuilding when `BufWipeout` fires; content loads do not move their line numbers. Revision buffers have no `filetype`, so LSP clients and filetype-triggered linters do not attach, but diagnostics a caller sets on them display.
+Explorer tabs follow native jumps into their revision buffers: a quickfix or location-list entry, or `:edit`, that opens a revision buffer of the tab's two revisions selects that file and lands on the requested line. The jump reads the revision synchronously, so its position (a list entry, `:edit +N`, a picker's cursor) applies to the real content; `CodeDiffVirtualFileLoaded` for that buffer fires after the jump has finished. A window the jump split off is closed again. CodeDiff wipes revision buffers it stops showing, so lists that refer to them by buffer number need rebuilding when `BufWipeout` fires; content loads do not move their line numbers. Revision buffers have no `filetype`, so LSP clients and filetype-triggered linters do not attach, but diagnostics a caller sets on them display.
 
 #### User Autocmd Events
 

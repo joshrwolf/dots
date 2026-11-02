@@ -8,11 +8,13 @@ local lifecycle = require("codediff.ui.lifecycle")
 local path = require("codediff.core.path")
 local virtual_file = require("codediff.core.virtual_file")
 
-local STATUSES = { A = true, M = true, D = true }
+-- Git name-status letters without renames or copies: added, modified,
+-- deleted, and type changed (file to symlink, say), which has both sides like M.
+local STATUSES = { A = true, M = true, D = true, T = true }
 
 --- Open an explorer tab comparing two exact commits over a caller-supplied
 --- file set. The list stays as given: Git status never replaces it.
----@param opts { root: string, base: string, head: string, files: { path: string, status: "A"|"M"|"D" }[] }
+---@param opts { root: string, base: string, head: string, files: { path: string, status: "A"|"M"|"D"|"T" }[] }
 ---@return integer? tabpage, string? err
 function M.open(opts)
   if type(opts) ~= "table" then
@@ -32,7 +34,7 @@ function M.open(opts)
   local files = {}
   for i, file in ipairs(opts.files) do
     if type(file.path) ~= "string" or file.path == "" or not STATUSES[file.status] then
-      return nil, ("files[%d] needs a path and a status of A, M or D"):format(i)
+      return nil, ("files[%d] needs a path and a status of A, M, D or T"):format(i)
     end
     files[i] = { path = file.path, status = file.status }
   end

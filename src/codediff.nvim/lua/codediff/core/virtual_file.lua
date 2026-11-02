@@ -52,6 +52,33 @@ function M.is_loading(buf)
   return loading[buf] == true
 end
 
+-- Put a finished load's content into buf: the file's lines, or one empty line
+-- when the file is not in the revision (an added or deleted file), so the diff
+-- can still highlight the change.
+local function finish_load(buf, lines, filepath)
+  loading[buf] = nil
+  if lines then
+    M.set_content(buf, lines, filepath)
+    return
+  end
+  vim.bo[buf].modifiable = true
+  vim.bo[buf].readonly = false
+  replace_lines(buf, { "" })
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].readonly = true
+  -- Clear filetype without firing FileType autocmd (see issue #323; matches setup_buffer below).
+  api.nvim_buf_call(buf, function()
+    vim.cmd("noautocmd setlocal filetype=")
+  end)
+end
+
+local function announce_loaded(buf)
+  api.nvim_exec_autocmds("User", {
+    pattern = "CodeDiffVirtualFileLoaded",
+    data = { buf = buf },
+  })
+end
+
 -- Helper function to load content into a virtual buffer and fire the loaded event
 local function load_virtual_buffer_content(buf, git_root, commit, filepath)
   local git = require("codediff.core.git")
@@ -65,36 +92,32 @@ local function load_virtual_buffer_content(buf, git_root, commit, filepath)
       if not api.nvim_buf_is_valid(buf) or loads[buf] ~= generation then
         return
       end
-      loading[buf] = nil
-
-      if err then
-        -- File doesn't exist in this revision (added/deleted file)
-        -- Show empty buffer so diff can highlight the change
-        vim.bo[buf].modifiable = true
-        vim.bo[buf].readonly = false
-        replace_lines(buf, { "" })
-        vim.bo[buf].modifiable = false
-        vim.bo[buf].readonly = true
-        -- Clear filetype without firing FileType autocmd (see issue #323; matches setup_buffer below).
-        api.nvim_buf_call(buf, function()
-          vim.cmd("noautocmd setlocal filetype=")
-        end)
-
-        -- Fire loaded event so diff rendering proceeds
-        api.nvim_exec_autocmds("User", {
-          pattern = "CodeDiffVirtualFileLoaded",
-          data = { buf = buf },
-        })
-        return
-      end
-
-      M.set_content(buf, lines, filepath)
-
-      api.nvim_exec_autocmds("User", {
-        pattern = "CodeDiffVirtualFileLoaded",
-        data = { buf = buf },
-      })
+      finish_load(buf, not err and lines or nil, filepath)
+      announce_loaded(buf)
     end)
+  end)
+end
+
+--- Finish `buf`'s pending content load now, blocking on Git. A native jump
+--- positions the cursor as soon as the buffer is in its window; with the
+--- content present, that position applies to it instead of clamping to the
+--- placeholder. Nothing else runs meanwhile, and CodeDiffVirtualFileLoaded
+--- follows once the current command has finished.
+---@param buf integer
+function M.load_now(buf)
+  if not loading[buf] then
+    return
+  end
+  local git_root, commit, filepath = M.parse_url(api.nvim_buf_get_name(buf))
+  if not git_root then
+    return
+  end
+  loads[buf] = loads[buf] + 1 -- The pending asynchronous result is superseded.
+  finish_load(buf, require("codediff.core.git.content").get_file_content_sync(commit, git_root, filepath), filepath)
+  vim.schedule(function()
+    if api.nvim_buf_is_valid(buf) then
+      announce_loaded(buf)
+    end
   end)
 end
 

@@ -2,6 +2,7 @@
 local M = {}
 
 local run_git_async = require("codediff.core.git.runner").run_async
+local run_git_sync = require("codediff.core.git.runner").run_sync
 
 -- LRU Cache for git file content
 -- Stores recently fetched file content to avoid redundant git calls
@@ -120,6 +121,24 @@ function M.get_file_content(revision, git_root, rel_path, callback)
 
     callback(nil, lines)
   end)
+end
+
+-- Read a file at a revision synchronously, sharing get_file_content's cache.
+-- For content that must be present before the current command continues.
+-- Returns nil when the file is not in the revision or Git fails.
+function M.get_file_content_sync(revision, git_root, rel_path)
+  local is_mutable = not require("codediff.core.git.revision").is_fixed(revision)
+  if not is_mutable then
+    local cached_lines = file_content_cache:get(revision, git_root, rel_path)
+    if cached_lines then
+      return cached_lines
+    end
+  end
+  local lines = run_git_sync({ "-C", git_root, "show", revision .. ":" .. rel_path })
+  if lines and not is_mutable then
+    file_content_cache:put(revision, git_root, rel_path, lines)
+  end
+  return lines
 end
 
 return M

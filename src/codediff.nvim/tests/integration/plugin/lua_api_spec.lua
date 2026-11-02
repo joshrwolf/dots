@@ -24,6 +24,7 @@ describe("codediff.api", function()
     repo.write_file("f.txt", numbered("line", 30))
     repo.write_file("gone.txt", numbered("gone", 30))
     repo.write_file("other.txt", { "other" })
+    repo.write_file("kind.txt", { "regular file" })
     base = repo.commit("base")
     local changed = numbered("line", 30)
     changed[25] = "CHANGED 25"
@@ -31,6 +32,9 @@ describe("codediff.api", function()
     repo.write_file("added.txt", numbered("added", 30))
     vim.fn.delete(repo.path("gone.txt"))
     repo.write_file("other.txt", { "other changed" })
+    -- A regular file becomes a symlink: Git reports a type change (T).
+    vim.fn.delete(repo.path("kind.txt"))
+    assert(vim.uv.fs_symlink("f.txt", repo.path("kind.txt")))
     head = repo.commit("head")
     -- A dirty working tree must not leak into a revision explorer.
     repo.write_file("dirty.txt", { "untracked" })
@@ -100,6 +104,14 @@ describe("codediff.api", function()
       return refreshed
     end, 20))
     assert.same({ "added.txt", "f.txt", "gone.txt" }, explorer_paths(tab), "Git status must not replace the file set")
+  end)
+
+  it("shows a type change with both sides", function()
+    local tab = assert(api.open({ root = repo.dir, base = base, head = head, files = { { path = "kind.txt", status = "T" } } }))
+    local old = show(tab, { path = "kind.txt", side = "original", line = 1 })
+    assert.same({ "regular file" }, vim.api.nvim_buf_get_lines(old.buf, 0, -1, false))
+    local new = show(tab, { path = "kind.txt", side = "modified", line = 1 })
+    assert.same({ "f.txt" }, vim.api.nvim_buf_get_lines(new.buf, 0, -1, false), "the new side is the link target")
   end)
 
   it("refuses incomplete open requests", function()
@@ -249,6 +261,15 @@ describe("codediff.api", function()
       })
     end
 
+    -- Callers redraw their lists when content loads; a jump in progress must
+    -- not see that (E925: Current quickfix list was changed).
+    local redraws = vim.api.nvim_create_autocmd("User", {
+      pattern = "CodeDiffVirtualFileLoaded",
+      callback = function()
+        vim.fn.setqflist({}, "u", { items = vim.fn.getqflist() })
+      end,
+    })
+
     -- From a diff pane, :cc reuses the pane; CodeDiff takes the file over.
     vim.api.nvim_set_current_win(session.modified_win)
     vim.cmd("cc 1")
@@ -270,5 +291,20 @@ describe("codediff.api", function()
     assert.equals(true, at("f.txt", "original", 5), "the old-side entry should land on f.txt:5 (original)")
     assert.equals(session.original_win, vim.api.nvim_get_current_win())
     assert.is_not_nil(lifecycle.get_session(tab), "the session must survive the jumps")
+    vim.api.nvim_del_autocmd(redraws)
+  end)
+
+  it("follows :edit +N into an unloaded revision buffer", function()
+    local tab = open()
+    show(tab, { path = "f.txt", side = "modified", line = 1 })
+    local gone = assert(api.revision_buffer(tab, "gone.txt", "original"))
+    assert.is_false(vim.api.nvim_buf_is_loaded(gone))
+    vim.api.nvim_set_current_win(lifecycle.get_session(tab).modified_win)
+    vim.cmd("edit +17 " .. vim.fn.fnameescape(vim.api.nvim_buf_get_name(gone)))
+    local landed = vim.wait(5000, function()
+      local where = api.buffer(vim.api.nvim_get_current_buf(), tab)
+      return where ~= nil and where.path == "gone.txt" and vim.fn.line(".") == 17 and require("codediff.ui.refresh").shown(tab)
+    end, 10)
+    assert.equals(true, landed or vim.inspect({ api.buffer(0, tab), vim.fn.line("."), vim.api.nvim_buf_line_count(0) }), ":edit +17 should land on gone.txt:17")
   end)
 end)

@@ -28,6 +28,7 @@ local MERGE_ARTIFACT_PATTERNS = {
 -- Status symbols and colors
 local STATUS_SYMBOLS = {
   M = { symbol = "M", color = "CodeDiffStatusModified" },
+  T = { symbol = "T", color = "CodeDiffStatusModified" },
   A = { symbol = "A", color = "CodeDiffStatusAdded" },
   D = { symbol = "D", color = "CodeDiffStatusDeleted" },
   ["??"] = { symbol = "??", color = "CodeDiffStatusUntracked" },
