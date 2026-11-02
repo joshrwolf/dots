@@ -54,7 +54,9 @@ when details are collapsed, and metadata yields before important outcomes.
 - Apply theme changes through the component lifecycle. Keep original records apart
   from sanitized display text, and do not retain stale styled output.
 - Bound preparation and rendering. Omission markers distinguish display limits
-  from truncated tool results.
+  from truncated tool results. Pi can render a row on every frame: reuse styled
+  rows until their content, width or theme changes, and show source that is
+  still streaming as plain text (`highlight: false`) until its arguments complete.
 - Inspectors set explicit viewport bounds with the public `ScrollView` API.
   Overlays render the custom component at a width only and pass no viewport
   height into a nested `ScrollView`; keep the explicit bound. Verify

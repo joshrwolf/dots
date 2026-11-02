@@ -467,3 +467,63 @@ test('only the exact native header block is removed; existing explicit preferenc
     'codemode',
   ]);
 });
+
+test('a streamed script is highlighted once, when complete, and never again for progress or idle frames', async () => {
+  const highlighted: string[] = [];
+  const counting = createSyntaxService(async () => ({
+    async load() {},
+    tokenize(source) {
+      highlighted.push(source);
+      return source.split('\n').map(content => [{content, offset: 0}]);
+    },
+    dispose() {},
+  }));
+  after(() => counting.dispose());
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  const script = Array.from(
+    {length: 40},
+    (_, i) => `const value${i} = ${i};`,
+  ).join('\n');
+  const component = new ToolExecutionComponent(
+    'codemode',
+    'fixture',
+    {code: ''},
+    {outputPad: 1},
+    toolRenderers(counting).get('codemode'),
+    new TuiMainScreen(new ProcessTerminal()),
+    '/workspace',
+  );
+  component.setExpanded(true);
+  for (let end = 20; end < script.length; end += 20) {
+    component.updateArgs({code: script.slice(0, end)});
+    component.render(100);
+    await settle();
+  }
+  component.updateArgs({code: script});
+  assert.match(plain(component.render(100)), /const value39 = 39;/);
+  await settle();
+  assert.equal(highlighted.length, 0);
+  component.setArgsComplete();
+  component.markExecutionStarted();
+  component.render(100);
+  await settle();
+  assert.deepEqual(highlighted, [script]);
+  for (let i = 0; i < 5; i++) {
+    component.updateResult(
+      {
+        content: [],
+        details: {calls: [call('read', i < 4 ? 'running' : 'ok')]},
+        isError: false,
+      },
+      i < 4,
+    );
+    component.render(100);
+    component.setExpanded(i % 2 === 0);
+    component.render(100);
+    await settle();
+  }
+  component.setExpanded(true);
+  component.render(100);
+  await settle();
+  assert.equal(highlighted.length, 1);
+});

@@ -19,6 +19,18 @@ export function record(value: unknown): Record<string, unknown> | undefined {
 export function string(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
+/**
+ * A recorded number argument as execute() received it. Rows see the model's raw
+ * arguments, while Pi's schema coercion converts numeric strings and booleans
+ * first; other values stay unconverted and read as absent here.
+ */
+export function numberArgument(value: unknown): number | undefined {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value !== 'string' || value.trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 export function positive(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
     ? value

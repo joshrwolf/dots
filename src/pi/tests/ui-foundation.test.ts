@@ -15,8 +15,11 @@ import {
   visibleWidth,
 } from '@earendil-works/pi-tui';
 import {
+  ActivityCard,
+  activityHeader,
   createSyntaxService,
   createToolRenderers,
+  DetailView,
   OutputView,
   selectToolRenderers,
   SourceView,
@@ -510,4 +513,42 @@ test('preferences allow independent ownership and reject malformed configuration
     null,
   ])
     assert.throws(() => parsePreferences(value));
+});
+
+test('detail frames reuse framed rows until content, width or styling changes', () => {
+  let rows = ['first', 'second'];
+  const child = {render: () => rows, invalidate() {}};
+  const detail = new DetailView(child, 'caption', dark);
+  const framed = detail.render(40);
+  assert.equal(detail.render(40), framed);
+  assert.notEqual(detail.render(30), framed);
+  rows = ['first', 'third'];
+  assert.match(plain(detail.render(40)), /third/);
+  const settled = detail.render(40);
+  detail.invalidate();
+  const restyled = detail.render(40);
+  assert.notEqual(restyled, settled);
+  assert.deepEqual(restyled, settled);
+});
+
+test('a card keeps its detail frame across body-less updates and still invalidates it', () => {
+  let invalidated = 0;
+  const body = {
+    render: () => ['recorded'],
+    invalidate() {
+      invalidated++;
+    },
+  };
+  const card = new ActivityCard();
+  const model = {
+    header: activityHeader('write', 'a.ts', []),
+    notices: [],
+    caption: '',
+  };
+  card.update({...model, body}, dark);
+  card.update({...model, body: undefined}, dark);
+  card.invalidate();
+  assert.equal(invalidated, 1);
+  card.update({...model, body}, dark);
+  assert.match(plain(card.render(40)), /recorded/);
 });

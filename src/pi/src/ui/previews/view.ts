@@ -169,6 +169,8 @@ export interface SourceViewOptions {
   readonly startLine?: number;
   /** A selected excerpt can end with a real blank row, not an EOF newline. */
   readonly preserveTrailingEmptyLine?: boolean;
+  /** False shows plain text and prepares no syntax, e.g. while source still streams. */
+  readonly highlight?: boolean;
 }
 
 export class DiffView implements Component {
@@ -419,6 +421,7 @@ export class SourceView implements Component {
   failure: unknown;
   private readonly startLine: number;
   private readonly preserveTrailingEmptyLine: boolean;
+  private readonly highlight: boolean;
   private readonly source: string;
   private readonly truncated: boolean;
   private readonly path: string;
@@ -440,7 +443,9 @@ export class SourceView implements Component {
     invalidate: notify = () => {},
     startLine = 1,
     preserveTrailingEmptyLine = false,
+    highlight = true,
   }: SourceViewOptions) {
+    this.highlight = highlight;
     this.startLine =
       Number.isSafeInteger(startLine) && startLine > 0 ? startLine : 1;
     const bounded = clean(source.slice(0, displayLimits.sourceCodeUnits));
@@ -473,6 +478,7 @@ export class SourceView implements Component {
     this.colored = undefined;
   }
   async prepare(): Promise<void> {
+    if (!this.highlight) return;
     const appearance = this.theme.appearance;
     if (this.appearance === appearance && this.pending) return this.pending;
     const generation = ++this.generation;

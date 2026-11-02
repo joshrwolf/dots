@@ -215,6 +215,11 @@ export function activityHeader(
 export class ActivityCard extends VStack {
   private readonly row = new PriorityRow();
   private readonly notices = new Notices();
+  // One detail frame per card; it reuses rows already framed at this width.
+  // A row's call slot updates without a body before its result slot restores
+  // it, so the frame survives detachment and still receives invalidation.
+  private detail: DetailView | undefined;
+  private detached = false;
   update(model: ActivityCardModel, theme: Theme): void {
     this.row.update(model.header, theme);
     this.notices.update(model.notices, theme);
@@ -242,8 +247,15 @@ export class ActivityCard extends VStack {
                 ? ''
                 : model.caption
           : model.caption;
-      this.addChild(new DetailView(model.body, caption, theme));
+      if (this.detail) this.detail.update(model.body, caption, theme);
+      else this.detail = new DetailView(model.body, caption, theme);
+      this.addChild(this.detail);
     }
+    this.detached = !model.body;
+  }
+  override invalidate(): void {
+    super.invalidate();
+    if (this.detached) this.detail?.invalidate();
   }
   override render(width: number): string[] {
     return width > 0 ? super.render(width) : [];

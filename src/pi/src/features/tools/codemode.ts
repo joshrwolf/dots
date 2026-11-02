@@ -305,6 +305,7 @@ class CodemodeView implements PresentationView<CodemodeModel> {
   private readonly syntax: SyntaxService;
   private readonly notify: () => void;
   private code = '';
+  private highlighted = false;
   private preview: SourceView | undefined;
   constructor(syntax: SyntaxService, notify: () => void) {
     this.syntax = syntax;
@@ -390,8 +391,11 @@ class CodemodeView implements PresentationView<CodemodeModel> {
       );
       body.addChild(notice);
     }
-    if (model.code !== this.code) {
+    // A streaming script changes every frame; highlight it once it is complete.
+    const highlighted = state.kind === 'result' || state.argsComplete;
+    if (model.code !== this.code || highlighted !== this.highlighted) {
       this.code = model.code;
+      this.highlighted = highlighted;
       this.preview = undefined;
     }
     if (expanded && model.code) {
@@ -401,6 +405,7 @@ class CodemodeView implements PresentationView<CodemodeModel> {
         theme,
         syntax: this.syntax,
         invalidate: this.notify,
+        highlight: highlighted,
       });
       this.preview.setTheme(theme);
       body.addChild(this.preview);

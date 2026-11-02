@@ -20,6 +20,7 @@ import {
   errorNotice,
   pathLabel,
   lines,
+  numberArgument,
   outcome,
   positive,
   record,
@@ -33,7 +34,7 @@ export function readExcerpt(
   args: Record<string, unknown>,
   details: unknown,
 ): {source: string; notice: string; start: number; count: number} {
-  const start = positive(args.offset) ?? 1;
+  const start = positive(numberArgument(args.offset)) ?? 1;
   const truncation = record(record(details)?.truncation);
   if (truncation?.firstLineExceedsLimit)
     return {source: '', notice: text, start, count: 0};
@@ -48,7 +49,7 @@ export function readExcerpt(
       start,
       count: lines(truncation.content),
     };
-  const limit = positive(args.limit);
+  const limit = positive(numberArgument(args.limit));
   const suffix =
     /\n\n\[(\d+) more lines in file\. Use offset=(\d+) to continue\.\]$/.exec(
       text,

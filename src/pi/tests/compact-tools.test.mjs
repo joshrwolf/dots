@@ -9,6 +9,7 @@ import {
   initTheme,
   ToolExecutionComponent,
 } from '@earendil-works/pi-coding-agent';
+import {validateToolArguments} from '@earendil-works/pi-ai';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
 import {registerUI as register} from '../extensions/ui/index.ts';
 import {compactRenderers} from './ui-fixture.mjs';
@@ -152,6 +153,43 @@ test('user-limited reads separate verified continuation notices and retain file 
   assert.match(output, /20  const one/);
   assert.match(output, /21  const two/);
   assert.equal(output.match(/offset=22/g).length, 1);
+});
+
+test('read rows label the lines execute() read when Pi coerced loosely typed arguments', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'dots-read-coerced-'));
+  try {
+    await writeFile(
+      path.join(dir, 'example.ts'),
+      Array.from({length: 60}, (_, i) => `const line${i + 1} = ${i + 1};`).join(
+        '\n',
+      ) + '\n',
+    );
+    const tool = createReadToolDefinition(dir);
+    // The transcript keeps the model's raw arguments; execute() gets Pi's coerced copy.
+    const raw = {path: 'example.ts', offset: '50', limit: ' 2 '};
+    const coerced = validateToolArguments(tool, {
+      type: 'toolCall',
+      id: 'fixture',
+      name: 'read',
+      arguments: raw,
+    });
+    assert.deepEqual(coerced, {path: 'example.ts', offset: 50, limit: 2});
+    const response = await tool.execute(
+      'fixture',
+      coerced,
+      undefined,
+      undefined,
+      {},
+    );
+    const component = row('read', raw);
+    component.updateResult({...response, isError: false});
+    assert.match(plain(component.render(120)), /lines 50–51/);
+    assert.match(plain(component.render(120)), /more available/);
+    component.setExpanded(true);
+    assert.match(plain(component.render(120)), /50 {2}const line50 = 50;/);
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
 });
 
 test('real partial reads preserve a selected blank final line, including blank-only excerpts', async () => {
