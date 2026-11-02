@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "description": "pnpm workspace for the TypeScript packages in dots",
-  "packageManager": "pnpm@11.28.6",
+  "packageManager": "pnpm@12.16.1",
   "scripts": {
     "typecheck:tooling": "tsc --noEmit",
     "lint": "eslint \"src/{pi,pi-kit}/**/*.{ts,mjs,js}\" eslint.config.mjs home/finicky/.config/finicky/finicky.js --max-warnings 0",
@@ -11,11 +11,11 @@
     "check:finicky": "node --check home/finicky/.config/finicky/finicky.js"
   },
   "devDependencies": {
-    "@types/node": "24.19.2",
-    "eslint": "10.13.0",
+    "@types/node": "26.6.6",
+    "eslint": "10.14.0",
     "prettier": "3.9.10",
-    "typescript": "5.9.3",
-    "typescript-eslint": "8.72.0",
-    "yaml": "2.9.0"
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "yaml": "2.9.1"
   }
 }
