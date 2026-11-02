@@ -102,8 +102,8 @@ local function commit_update(tabpage, session_config, orig_buf, mod_buf, lines_d
   setup_keymaps(tabpage, orig_buf, mod_buf)
   layout.arrange(tabpage)
 
-  if saved_current_win and vim.api.nvim_win_is_valid(saved_current_win) then
-    vim.api.nvim_set_current_win(saved_current_win)
+  if saved_current_win then
+    helpers.focus(saved_current_win)
   end
 end
 

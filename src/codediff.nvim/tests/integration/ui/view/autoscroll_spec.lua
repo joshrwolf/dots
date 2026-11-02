@@ -201,4 +201,46 @@ describe("Auto-scroll to first hunk", function()
     vim.fn.delete(left_path)
     vim.fn.delete(right_path)
   end)
+
+  -- Test 6: A render that completes in a background tab keeps the user's tab
+  it("Scrolls a background tab without switching to it", function()
+    local original = {}
+    local modified = {}
+    for i = 1, 30 do
+      original[i] = "Line " .. i
+      modified[i] = "Line " .. i
+    end
+    modified[20] = "NEW line 20"
+
+    local left_path = get_temp_path("autoscroll_test6_left.txt")
+    local right_path = get_temp_path("autoscroll_test6_right.txt")
+    vim.fn.writefile(original, left_path)
+    vim.fn.writefile(original, right_path)
+
+    local result = create_test_diff_view(original, original, left_path, right_path)
+    assert(result, "create_test_diff_view should succeed")
+    vim.cmd("tabnew")
+    local user_tab, user_win = vim.api.nvim_get_current_tabpage(), vim.api.nvim_get_current_win()
+
+    -- Late content arrives for the hidden view and it renders with auto-scroll.
+    require("codediff.ui.view.render").compute_and_render(
+      vim.api.nvim_win_get_buf(result.original_win),
+      vim.api.nvim_win_get_buf(result.modified_win),
+      original,
+      modified,
+      false,
+      false,
+      result.original_win,
+      result.modified_win,
+      true
+    )
+
+    assert(vim.api.nvim_get_current_tabpage() == user_tab, "Render should not switch to the background tab")
+    assert(vim.api.nvim_get_current_win() == user_win, "Render should keep the user's window")
+    local cursor = vim.api.nvim_win_get_cursor(result.modified_win)
+    assert(20 == cursor[1], "Background modified cursor should be at line 20, got " .. cursor[1])
+
+    vim.fn.delete(left_path)
+    vim.fn.delete(right_path)
+  end)
 end)

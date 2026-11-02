@@ -29,8 +29,7 @@ function M.compute_and_render_inline(modified_buf, original_buf, original_lines,
       local target_line = landing == "last" and lines_diff.changes[#lines_diff.changes].modified.start_line or lines_diff.changes[1].modified.start_line
       target_line = cursor_util.clamp_window_line(modified_win, target_line)
       pcall(vim.api.nvim_win_set_cursor, modified_win, { target_line, 0 })
-      vim.api.nvim_set_current_win(modified_win)
-      vim.cmd("normal! zz")
+      require("codediff.ui.view.helpers").focus(modified_win, true)
     end
   end
 

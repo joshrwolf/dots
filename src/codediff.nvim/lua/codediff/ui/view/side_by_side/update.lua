@@ -277,9 +277,7 @@ function M.update(tabpage, session_config, auto_scroll_to_first_hunk)
         setup_all_keymaps(tabpage, original_info.bufnr, modified_info.bufnr, is_explorer_mode)
 
         -- Restore focus to the window that was active before update
-        if saved_current_win and vim.api.nvim_win_is_valid(saved_current_win) then
-          vim.api.nvim_set_current_win(saved_current_win)
-        end
+        helpers.focus(saved_current_win)
       end
     end
   end

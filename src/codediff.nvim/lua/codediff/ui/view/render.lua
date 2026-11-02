@@ -171,10 +171,7 @@ function M.compute_and_render(
 
     -- Step 4: Center view on first hunk for initial open
     if auto_scroll_to_first_hunk and #lines_diff.changes > 0 then
-      if vim.api.nvim_win_is_valid(modified_win) then
-        vim.api.nvim_set_current_win(modified_win)
-        vim.cmd("normal! zz")
-      end
+      require("codediff.ui.view.helpers").focus(modified_win, true)
     end
   end
 

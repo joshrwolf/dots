@@ -102,6 +102,26 @@ function M.prepare_buffer(is_virtual, git_root, revision, ref)
   end
 end
 
+--- Focus `win` and center its cursor line. Renders can finish after the user
+--- has moved to another tab (late virtual-file content, a refresh of a hidden
+--- view); those must not pull the user back, so only a window in the current
+--- tab takes focus.
+---@param win number Window handle
+---@param center boolean? Center the cursor line with `zz`
+function M.focus(win, center)
+  if not vim.api.nvim_win_is_valid(win) then
+    return
+  end
+  if vim.api.nvim_win_get_tabpage(win) == vim.api.nvim_get_current_tabpage() then
+    vim.api.nvim_set_current_win(win)
+  end
+  if center then
+    vim.api.nvim_win_call(win, function()
+      vim.cmd("normal! zz")
+    end)
+  end
+end
+
 --- Display a real-file buffer in a window, re-syncing it with disk first.
 ---
 --- Neovim runs a timestamp check whenever a buffer becomes visible. When the
