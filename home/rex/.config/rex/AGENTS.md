@@ -53,6 +53,12 @@ memory or older notes.
   one and write it back.
 - Rex answers a connection only for sessions it has attached, and each
   `rex do` is a new connection. Reach other sessions through `dots.sessions`.
+- An app action's `ctx.server` can name a remote session while its Lua and
+  `rex.exec` still run in the configuration's owner. Go and jump-back delegate
+  through `dots.hosts` to the owning server's configuration before reading
+  files, resolving commands or updating host-local jump state. Native session
+  routing alone does not move filesystem work. Host switching uses Rex's
+  client action, not another host registry or command transport.
 - Actions inherit the server's environment, terminals the login shell's.
   `dots.process` resolves the selected machine environment with `mise env`
   from HOME, without loading a repository's development SDK. Mise must be on
@@ -94,7 +100,7 @@ memory or older notes.
   groups, so a view's other groups put matching values at the same position.
 - `dots.snapshot` runs two bounded commands for places (`git worktree list`,
   `zoxide query`); larger domain data belongs in Rust behind a `dots` command.
-- `dots.start` plans from local git and files alone. Only finding an existing
+- `dots.start` plans from the selected host's git and files alone. Only finding an existing
   PR session asks the network: `gh pr view` for the head branch, bounded to
   10 seconds; without an answer, the start creates a session.
 
@@ -122,7 +128,7 @@ tracked files; apply the selected machine setup to introduce a new path.
 - The runner finds every `tests/<name>_test.lua`. A suite returns a table of
   `function(t)` keyed by name; assert with `tests/expect.lua`.
 - `tests/isolate.lua` makes every `rex.call`, `rex.session.*`,
-  `rex.block.call`, and `rex.invoke` fail unless a test replaces it, because `rex do` reaches the
+  `rex.block.call`, `rex.invoke`, `rex.server`, and `rex.servers` fail unless a test replaces it, because `rex do` reaches the
   live server. It is not a sandbox: `rex.exec` still runs real commands, so
   stub `dots.process` where code shells out.
 - Replace anything a test needs with `t.stub(tbl, key, value)`; the runner

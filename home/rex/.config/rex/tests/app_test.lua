@@ -8,6 +8,15 @@ local clients = {
 }
 
 return {
+  ["the opening app wins over another app attached to the same session"] = function()
+    expect.equal(app.choose(clients, "s2", "mac"), "mac")
+    expect.equal(app.choose(clients, "s1", "cli"), "mac")
+  end,
+
+  ["a disappeared opening app never sends its action to another device"] = function()
+    expect.equal(app.choose(clients, "s2", "gone"), nil)
+  end,
+
   ["prefers the app showing the session"] = function()
     expect.equal(app.choose(clients, "s1"), "mac")
     expect.equal(app.choose(clients, "s2"), "phone")

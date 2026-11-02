@@ -1,6 +1,7 @@
 local expect = require("tests.expect")
 local fake_rex = require("tests.fake_rex")
 local go = require("dots.go")
+local hosts = require("dots.hosts")
 local jumps = require("dots.jumps")
 local process = require("dots.process")
 local snapshot_module = require("dots.snapshot")
@@ -127,6 +128,92 @@ local function shows(session_id, window_id)
 end
 
 return {
+  ["the destination host is visible without changing fuzzy groups"] = function()
+    local view = go.view(snapshot, nil, "studio")
+    expect.equal(view.prompt, "go [studio]› ")
+    expect.equal(ids(view, "tabs"), { "tab|s1|w1" })
+  end,
+
+  ["all Go actions delegate before reading caller-local state"] = function(t)
+    local actions = fake_rex.registered(t, go)
+    local called = {}
+    t.stub(hosts, "forward", function(context, name, args)
+      expect.equal(context.server, "studio")
+      called[#called + 1] = { name, args }
+      return true, { owner = "studio" }
+    end)
+    for _, name in ipairs({
+      "go",
+      "go_view",
+      "go_to",
+      "go_start_pr",
+      "go_start_issue",
+      "go_start_new",
+      "go_switch_host",
+    }) do
+      local args = { query = "ABC-123" }
+      expect.equal(actions[name].run({ server = "studio" }, args), { owner = "studio" })
+      expect.equal(called[#called], { name, args })
+    end
+  end,
+
+  ["host switching asks the app that opened the picker"] = function(t)
+    local world = rex_at_work()
+    world.clients[1].session_ids = { "s1" }
+    local fake = fake_rex.install(t, world)
+    t.stub(views, "open_views", {
+      picker = {
+        title = "go",
+        session_id = "s1",
+        layer_id = "layer",
+        origin = "shell",
+        zoomed = false,
+        client_id = "mine",
+      },
+    })
+    local actions = fake_rex.registered(t, go)
+    actions.go_switch_host.run({ session_id = "s1", block_id = "picker", client_id = "cli" }, {})
+    expect.equal(fake.only("client.perform"), {
+      {
+        method = "client.perform",
+        args = { client_id = "mine", action = "client.host.switch", args = {} },
+      },
+    })
+  end,
+
+  ["failed host switching leaves the picker and its origin intact"] = function(t)
+    local fake = fake_rex.install(t, rex_at_work())
+    fake.errors["client.perform"] = "remote control is disabled"
+    t.stub(views, "open_views", {})
+    local actions = fake_rex.registered(t, go)
+    expect.fails(function()
+      actions.go_switch_host.run(ctx, {})
+    end, "remote control is disabled")
+    expect.equal(fake.only("session.close_layer", "session.create"), {})
+  end,
+
+  ["navigation keeps the app that opened the picker"] = function(t)
+    local world = rex_at_work()
+    world.clients[1].session_ids = { "s1" }
+    local fake = fake_rex.install(t, world)
+    t.stub(views, "open_views", {
+      picker = {
+        title = "go",
+        session_id = "s1",
+        layer_id = "layer",
+        origin = "shell",
+        zoomed = false,
+        client_id = "mine",
+      },
+    })
+    local actions = fake_rex.registered(t, go)
+    actions.go_to.run(
+      { session_id = "s1", block_id = "picker", client_id = "cli" },
+      { id = "tab|s2|w7" }
+    )
+    expect.equal(fake.only("client.perform"), { shows("s2", "w7") })
+  end,
+
   ["groups rows by what wants the user"] = function()
     local view = go.view(snapshot)
     expect.equal(ids(view, "attention"), { "block|s2|b3" })
@@ -372,6 +459,7 @@ return {
       go_start_pr = { "r", "review PR", true, "URL" },
       go_start_issue = { "t", "start issue", true, "ID or URL" },
       go_start_new = { "o", "new session" },
+      go_switch_host = { "y", "switch host" },
     })
   end,
 
