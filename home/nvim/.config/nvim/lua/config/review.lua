@@ -438,8 +438,10 @@ local function reload(view)
         view.stale = true
         notify(view.id .. " moved to a new revision; reopen it to see its current threads", vim.log.levels.WARN)
       end
-      -- Placements describe the new revision; keep the ones this view shows.
+      -- Placements and files describe the new revision; keep the ones this
+      -- view shows.
       out.view = view.layout
+      out.files = vim.tbl_values(view.files)
     end
     absorb(view, out)
     if view.tab == vim.api.nvim_get_current_tabpage() then
@@ -465,11 +467,10 @@ local function watch(view)
   end)
 end
 
--- Record that the user looked at the view's revision.
+-- Record that the user looked at the revision this view shows; the core
+-- keeps a newer look.
 local function look(view)
-  if not view.stale then
-    dots({ "look", view.id }, { cwd = view.cwd }, function() end)
-  end
+  dots({ "look", view.id, "--revision", tostring(view.revision) }, { cwd = view.cwd }, function() end)
 end
 
 local function close(view)
@@ -583,14 +584,15 @@ local function compose(title, on_submit, text, opts)
 end
 
 -- Lines of an older snapshot cannot anchor at the review's current revision.
-local function refuse_stale(view, body)
+local function refuse_stale(view, body, what)
   view.stale = true
   if body then
     vim.fn.setreg('"', body)
   end
   notify(
     view.id
-      .. " has moved past the revision shown here; reopen it (<leader>gr or <leader>fR) to comment"
+      .. " has moved past the revision shown here; reopen it (<leader>gr or <leader>fR) to "
+      .. (what or "comment")
       .. (body and '. Your draft is in the " register.' or "."),
     vim.log.levels.ERROR
   )
@@ -703,6 +705,7 @@ function M.submit()
       notify(("submitted %d comment%s"):format(#out.submission.comments, #out.submission.comments == 1 and "" or "s"))
       reload(view)
     end, function()
+      notify("<leader>rl lists every draft, including stale ones, to discard", vim.log.levels.WARN)
       reload(view)
     end)
   end
@@ -751,11 +754,17 @@ function M.toggle_reviewed()
     return notify("not in a review diff buffer", vim.log.levels.WARN)
   end
   local file = view.files[path]
-  if not file then
+  if view.stale then
+    return refuse_stale(view, nil, "mark files")
+  elseif not file then
     return notify(path .. " is not changed in this review", vim.log.levels.WARN)
   end
-  dots({ file.reviewed and "unmark" or "mark", view.id, path }, { cwd = view.cwd }, function(out)
+  -- The core refuses if the review moved past what this view shows.
+  local args = { file.reviewed and "unmark" or "mark", view.id, path, "--revision", tostring(view.revision) }
+  dots(args, { cwd = view.cwd }, function(out)
     notify(path .. (out.file.reviewed and " marked reviewed" or " no longer marked reviewed"))
+    reload(view)
+  end, function()
     reload(view)
   end)
 end
@@ -867,6 +876,7 @@ function setup_buffer(buf)
   map("n", "<leader>rd", at_cursor(M.discard, true), "Discard draft on line")
   map("n", "<leader>rD", M.discard_all, "Discard every draft")
   map("n", "<leader>rS", M.submit, "Submit drafts")
+  map("n", "<leader>rl", M.pick_drafts, "List pending drafts")
   map("n", "<leader>rm", M.toggle_reviewed, "Toggle file reviewed")
   map("n", "<leader>rp", M.next_preset, "Next review view (everything/uncommitted/committed)")
 end
@@ -1012,6 +1022,92 @@ function M.pick_threads()
         jump_to(view, at)
       else
         M.show_thread(view, item.thread)
+      end
+    end,
+  })
+end
+
+-- Every pending draft, wherever it stands: placed in this view, outside it,
+-- or left behind at an older revision by a refresh (which blocks submit).
+-- <c-x> (or dd in the list) discards the selected draft.
+function M.pick_drafts()
+  local view = views[vim.api.nvim_get_current_tabpage()]
+  if not view then
+    return notify("no review in this tab", vim.log.levels.WARN)
+  end
+  local current = #view.review.revisions - 1
+  local items = {}
+  for _, draft in ipairs(view.review.drafts or {}) do
+    local state
+    if draft.thread then
+      state = "reply to " .. draft.thread
+    elseif draft.revision ~= current then
+      state = ("stale at revision %d; cannot be submitted"):format(draft.revision)
+    elseif draft.anchor and draft.revision == view.revision and not placed(view, draft.id) then
+      state = "not in the " .. view.preset .. " view"
+    end
+    local text = where(draft.anchor)
+    table.insert(items, {
+      text = table.concat({ draft.id, text, state or "", first_line(draft.body) }, " "),
+      draft = draft,
+      where = text,
+      state = state,
+      preview = {
+        text = table.concat(
+          vim.list_extend(
+            { "# " .. draft.id .. " · " .. text, state and "_" .. state .. "_" or "", "" },
+            vim.split(draft.body, "\n")
+          ),
+          "\n"
+        ),
+        ft = "markdown",
+      },
+    })
+  end
+  if #items == 0 then
+    return notify("no drafts")
+  end
+  return Snacks.picker.pick({
+    title = "Review drafts · <c-x> discard",
+    items = items,
+    preview = "preview",
+    format = function(item)
+      return {
+        { draft_icon .. " " .. ("%-4s"):format(item.draft.id), "DiagnosticHint" },
+        { item.where .. "  ", "Directory" },
+        item.state and { item.state .. "  ", item.state:find("^stale") and "DiagnosticError" or "Comment" } or { "" },
+        { first_line(item.draft.body) },
+      }
+    end,
+    actions = {
+      discard = function(picker, item)
+        picker:close()
+        if item then
+          M.discard(view, item.draft)
+        end
+      end,
+    },
+    win = {
+      input = { keys = { ["<c-x>"] = { "discard", mode = { "n", "i" } } } },
+      list = { keys = { ["dd"] = "discard" } },
+    },
+    confirm = function(picker, item)
+      picker:close()
+      if not item then
+        return
+      end
+      local draft = item.draft
+      local at = draft.thread and nil or (draft.revision == view.revision and placed(view, draft.id))
+      local thread = draft.thread
+        and vim.iter(view.review.threads):find(function(thread)
+          return thread.id == draft.thread
+        end)
+      if at then
+        jump_to(view, at)
+      elseif thread then
+        M.show_thread(view, thread)
+      else
+        notify(draft.id .. (item.state and ": " .. item.state or " is not placed in this view"))
       end
     end,
   })
