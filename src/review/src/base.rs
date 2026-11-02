@@ -11,7 +11,7 @@
 //! unpushed commits of a local `main` out of the branches built on it. Ties
 //! prefer `upstream`, then `origin`, then other remotes, then the local
 //! branch.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::git::Git;
 use crate::{BaseReason, Basis, Candidate, Result};
@@ -40,7 +40,11 @@ struct Upstream {
 /// The refs every worktree of a repository chooses its base from.
 #[derive(Debug)]
 pub(crate) struct Refs {
+    /// The candidates whose distance from HEAD is measured.
     defaults: Vec<DefaultRef>,
+    /// The default branch names: those remotes name as theirs, or the local
+    /// one when no remote names one. Pruning candidates leaves them whole.
+    default_branches: BTreeSet<String>,
     upstreams: BTreeMap<String, Upstream>,
 }
 
@@ -115,16 +119,23 @@ impl Refs {
                 priority: (3, String::new()),
             });
         }
+        let remote = defaults.iter().any(|default| default.priority.0 < 3);
+        let default_branches = defaults
+            .iter()
+            .filter(|default| !remote || default.priority.0 < 3)
+            .map(|default| default.branch.clone())
+            .collect();
         Ok(Self {
             defaults,
+            default_branches,
             upstreams,
         })
     }
 
     /// Drop the candidates that can never be nearest: those whose commit an
     /// earlier-preferred candidate's commit contains, so HEAD is at least as
-    /// far from them. The base chosen stays the same; only the runners-up
-    /// that could not win go unmeasured.
+    /// far from them. The base chosen stays the same, and so do the default
+    /// branches; only the runners-up that could not win go unmeasured.
     pub(crate) fn prune(&mut self, git: &Git) -> Result<()> {
         let mut kept: Vec<DefaultRef> = Vec::with_capacity(self.defaults.len());
         let mut defaults = std::mem::take(&mut self.defaults);
@@ -191,15 +202,8 @@ impl Refs {
                 .unwrap_or(&upstream.reference);
             return merged(short.to_owned(), &commit, BaseReason::Upstream);
         }
-        // The default branch is what remotes name as theirs, or the local
-        // one when no remote names one.
-        let remote = self.defaults.iter().any(|default| default.priority.0 < 3);
         if let Some(branch) = branch
-            && self
-                .defaults
-                .iter()
-                .filter(|default| !remote || default.priority.0 < 3)
-                .any(|default| default.branch == branch)
+            && self.default_branches.contains(branch)
         {
             return Ok(at_head(BaseReason::DefaultBranch));
         }

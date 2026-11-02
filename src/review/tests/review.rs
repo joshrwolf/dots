@@ -2474,4 +2474,44 @@ mod tests {
             refs
         );
     }
+
+    fn inbox_entry(repo: &Repo, path: &Path) -> dots_review::InboxEntry {
+        let inbox = dots_review::inbox(&[repo.path().to_owned()], true);
+        assert!(inbox.skipped.is_empty(), "{:?}", inbox.skipped);
+        inbox
+            .worktrees
+            .into_iter()
+            .find(|entry| entry.path == path)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_inbox_keeps_every_default_branch_when_pruning_candidates() {
+        let repo = Repo::new();
+        let ancestor = repo.git(&["rev-parse", "HEAD"]);
+        repo.write("landed.txt", "landed\n");
+        let landed = repo.commit("landed");
+        repo.remote_default("upstream", "main", &landed);
+        // origin's default, master, is behind upstream's and could never be
+        // the nearest candidate, yet it is still a default branch.
+        repo.remote_default("origin", "master", &ancestor);
+        repo.git(&["switch", "-q", "--no-track", "-c", "master", &ancestor]);
+        repo.write("master.txt", "local master\n");
+        repo.commit("local master");
+
+        let refused = Reviews::open(repo.path()).unwrap().open_worktree(
+            BaseChoice::Keep,
+            None,
+            ShowOptions::default(),
+            1,
+        );
+        assert!(
+            matches!(refused, Err(Error::NothingToReview(_))),
+            "{refused:?}"
+        );
+        let entry = inbox_entry(&repo, repo.path());
+        assert_eq!(entry.basis.reason, BaseReason::DefaultBranch);
+        assert_eq!(entry.diff.files, 0);
+    }
+
 }
