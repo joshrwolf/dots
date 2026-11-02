@@ -1,20 +1,24 @@
--- `dots review` in CodeDiff: open a review on its exact revisions, show its
--- threads as diagnostics and in the quickfix list, and write comments,
--- replies and statuses through the CLI, which owns the review files. Agent
--- changes appear live.
+-- `dots review` in CodeDiff: open a review on the exact revisions of one of
+-- its presets, show its threads and the user's drafts as diagnostics and in the
+-- quickfix list, and write drafts, submissions, statuses and reviewed marks
+-- through the CLI, which owns the review files and every rule about them,
+-- including where anchors fall in each preset. Agent changes appear live.
 local M = {}
 
 local codediff = require("codediff.api")
 
 local author = "user"
 local ns = vim.api.nvim_create_namespace("dots.review")
+local draft_ns = vim.api.nvim_create_namespace("dots.review.drafts")
 local group = vim.api.nvim_create_augroup("dots.review", { clear = true })
 local views = {} -- tabpage -> open review view
-local drafts = 0
+local buffers = 0
 
 -- Review anchors name sides old/new; CodeDiff names them original/modified.
 local to_codediff = { old = "original", new = "modified" }
 local from_codediff = { original = "old", modified = "new" }
+-- Core file statuses as CodeDiff's Git letters.
+local letters = { added = "A", modified = "M", deleted = "D", type_changed = "T" }
 
 local function notify(message, level)
   vim.notify("Review: " .. message, level or vim.log.levels.INFO)
@@ -49,23 +53,13 @@ local function dots(args, opts, on_done, on_error)
   end
 end
 
--- The files a revision changes, with the status CodeDiff needs to show one-sided
--- files. Matches the review's own patch, which also ignores renames.
-local function changed_files(cwd, base, snapshot, on_done)
-  vim.system(
-    { "git", "diff", "--no-renames", "--name-status", "-z", base, snapshot },
-    { cwd = cwd, text = true },
-    vim.schedule_wrap(function(result)
-      if result.code ~= 0 then
-        return notify(vim.trim(result.stderr or "git diff failed"), vim.log.levels.ERROR)
-      end
-      local fields, files = vim.split(result.stdout, "\0", { trimempty = true }), {}
-      for i = 1, #fields - 1, 2 do
-        table.insert(files, { status = fields[i]:sub(1, 1), path = fields[i + 1] })
-      end
-      on_done(files)
-    end)
-  )
+-- `show` as the viewer needs it: with drafts and one preset's view.
+local function show_args(id, preset)
+  local args = { "show", "--drafts", "--preset", preset }
+  if id then
+    table.insert(args, 2, id)
+  end
+  return args
 end
 
 -- Where repository commands run: the current file's directory or the cwd.
@@ -102,6 +96,7 @@ local styles = {
   posted = { "↗", "DiagnosticHint" },
   outdated = { "○", "Comment" },
 }
+local draft_icon = "✎"
 
 local function style(thread)
   return unpack(styles[thread.status] or { "●", "Comment" })
@@ -133,22 +128,55 @@ vim.diagnostic.config({
     end,
   },
 }, ns)
+-- Drafts are the user's pending comments: one quiet style, apart from threads.
+vim.diagnostic.config({
+  underline = false,
+  signs = { text = { draft_icon, draft_icon, draft_icon, draft_icon } },
+  virtual_text = { spacing = 2, prefix = draft_icon },
+}, draft_ns)
 
-local function summary(thread)
+local function first_line(body)
+  return vim.split(body or "", "\n")[1]
+end
+
+-- The user's draft replies to each thread, by thread id.
+local function draft_replies(view)
+  local replies = {}
+  for _, draft in ipairs(view.review.drafts or {}) do
+    if draft.thread then
+      replies[draft.thread] = (replies[draft.thread] or 0) + 1
+    end
+  end
+  return replies
+end
+
+local function summary(view, thread)
   local first = thread.comments[1] or {}
   local replies = 0
   for i = 2, #thread.comments do
     replies = replies + (thread.comments[i].body and 1 or 0)
   end
-  local text = thread.title or vim.split(first.body or "", "\n")[1]
+  local text = thread.title or first_line(first.body)
   local count = replies > 0 and (" · %d repl%s"):format(replies, replies == 1 and "y" or "ies") or ""
+  local pending = view and draft_replies(view)[thread.id]
+  if pending then
+    count = count .. (" · %d draft repl%s"):format(pending, pending == 1 and "y" or "ies")
+  end
   return text .. " — " .. (first.author or "?") .. count
 end
 
+local function where(anchor)
+  if not anchor then
+    return "review"
+  elseif not anchor.start then
+    return anchor.path .. " (file)"
+  end
+  return ("%s:%d-%d %s"):format(anchor.path, anchor.start, anchor["end"], anchor.side)
+end
+
 local function location(view, thread)
-  local a = thread.anchor
-  local where = a and ("%s:%d-%d %s"):format(a.path, a.start, a["end"], a.side) or "review"
-  return thread.revision == view.revision and where or where .. " (revision " .. thread.revision .. ")"
+  local text = where(thread.anchor)
+  return thread.revision == view.revision and text or text .. " (revision " .. thread.revision .. ")"
 end
 
 local function markdown(view, thread)
@@ -167,6 +195,12 @@ local function markdown(view, thread)
     end
     if comment.body then
       vim.list_extend(lines, vim.split(comment.body, "\n"))
+    end
+  end
+  for _, draft in ipairs(view.review.drafts or {}) do
+    if draft.thread == thread.id then
+      vim.list_extend(lines, { "", "_" .. draft_icon .. " draft reply " .. draft.id .. " (not submitted)_" })
+      vim.list_extend(lines, vim.split(draft.body, "\n"))
     end
   end
   return lines
@@ -200,64 +234,154 @@ local function before(a, b)
   return a.side == "old" and b.side == "new"
 end
 
--- Anchored threads at the viewed revision, in navigation order.
-local function anchored(view)
-  local threads = vim.tbl_filter(function(thread)
-    return thread.anchor ~= nil and thread.revision == view.revision
-  end, view.review.threads)
-  table.sort(threads, function(a, b)
-    return before(a.anchor, b.anchor)
+-- Where the core placed `id` in this view, in the view's own lines; a
+-- whole-file anchor lands on line 1 of the side that has the file.
+local function placed(view, id)
+  local at = view.layout.anchors[id]
+  if not at then
+    return nil
+  end
+  if at.start then
+    return { path = at.path, side = at.side, start = at.start, ["end"] = at["end"] }
+  end
+  local file = view.layout_files[at.path]
+  local side = file and file.status == "deleted" and "old" or "new"
+  return { path = at.path, side = side, start = 1, ["end"] = 1, file = true }
+end
+
+-- Threads and new-thread drafts this view shows, in navigation order:
+-- { at, thread } or { at, draft }.
+local function shown(view)
+  local items = {}
+  for _, thread in ipairs(view.review.threads) do
+    local at = thread.anchor and thread.revision == view.revision and placed(view, thread.id)
+    if at then
+      table.insert(items, { at = at, thread = thread })
+    end
+  end
+  for _, draft in ipairs(view.review.drafts or {}) do
+    local at = not draft.thread and draft.anchor and draft.revision == view.revision and placed(view, draft.id)
+    if at then
+      table.insert(items, { at = at, draft = draft })
+    end
+  end
+  table.sort(items, function(a, b)
+    return before(a.at, b.at)
   end)
-  return threads
+  return items
+end
+
+local function pending(view)
+  return #(view.review.drafts or {})
+end
+
+local function list_title(view)
+  local count = pending(view)
+  return ("Review %s · %s%s"):format(
+    view.id,
+    view.preset,
+    count > 0 and (" · %d draft%s"):format(count, count == 1 and "" or "s") or ""
+  )
+end
+
+-- Per-file marks in the file list: open threads, drafts, reviewed (✓, with
+-- the name dimmed) and changed since the user last looked (Δ).
+local function decorations(view)
+  local open, drafted = {}, {}
+  for _, thread in ipairs(view.review.threads) do
+    if thread.anchor and thread.status == "open" then
+      open[thread.anchor.path] = (open[thread.anchor.path] or 0) + 1
+    end
+  end
+  for _, draft in ipairs(view.review.drafts or {}) do
+    if draft.anchor then
+      drafted[draft.anchor.path] = (drafted[draft.anchor.path] or 0) + 1
+    end
+  end
+  local out = {}
+  for path in pairs(view.layout_files) do
+    local file = view.files[path] or {}
+    local parts, hl = {}, nil
+    if open[path] then
+      table.insert(parts, "● " .. open[path])
+      hl = "DiagnosticWarn"
+    end
+    if drafted[path] then
+      table.insert(parts, draft_icon .. " " .. drafted[path])
+      hl = hl or "DiagnosticHint"
+    end
+    if view.changed[path] then
+      table.insert(parts, "Δ")
+      hl = hl or "DiagnosticInfo"
+    end
+    if file.reviewed then
+      table.insert(parts, "✓")
+      hl = hl or "DiagnosticOk"
+    end
+    if #parts > 0 then
+      out[path] = { text = table.concat(parts, " "), hl = hl, name_hl = file.reviewed and "Comment" or nil }
+    end
+  end
+  return out
 end
 
 local setup_buffer
 
--- Draw view's threads: diagnostics on its revision buffers (shown or not), its
--- quickfix list, and open-thread counts in the file list. Reviews sharing a
--- base share CodeDiff's buffers, so only the current tab's review is drawn.
+-- Draw view's threads and drafts: diagnostics on its revision buffers (shown or
+-- not), its quickfix list, and per-file marks in the file list. Reviews sharing
+-- a revision share CodeDiff's buffers, so only the current tab's review is drawn.
 local function render(view)
-  local diagnostics, items, open = {}, {}, {}
-  for _, thread in ipairs(anchored(view)) do
-    local a = thread.anchor
-    local buf = codediff.revision_buffer(view.tab, a.path, to_codediff[a.side])
+  local diagnostics, items = { [ns] = {}, [draft_ns] = {} }, {}
+  for _, item in ipairs(shown(view)) do
+    local at = item.at
+    local buf = codediff.revision_buffer(view.tab, at.path, to_codediff[at.side])
     if buf then
-      local message = thread.status .. " · " .. summary(thread)
-      diagnostics[buf] = diagnostics[buf] or {}
-      table.insert(diagnostics[buf], {
-        lnum = a.start - 1,
-        end_lnum = a["end"] - 1,
-        col = 0,
-        severity = severity(thread),
-        message = message,
-        source = "review",
-        code = thread.id,
-        user_data = { thread = thread.id, status = thread.status },
-      })
+      local namespace, entry, text
+      if item.thread then
+        local thread = item.thread
+        text = (at.file and "file · " or "") .. thread.status .. " · " .. summary(view, thread)
+        namespace = ns
+        entry = {
+          severity = severity(thread),
+          code = thread.id,
+          user_data = { thread = thread.id, status = thread.status },
+        }
+      else
+        text = (at.file and "file · " or "") .. "draft · " .. first_line(item.draft.body)
+        namespace = draft_ns
+        entry = { severity = vim.diagnostic.severity.HINT, code = item.draft.id, user_data = { draft = item.draft.id } }
+      end
+      diagnostics[namespace][buf] = diagnostics[namespace][buf] or {}
+      table.insert(
+        diagnostics[namespace][buf],
+        vim.tbl_extend("force", entry, {
+          lnum = at.start - 1,
+          end_lnum = at["end"] - 1,
+          col = 0,
+          message = text,
+          source = "review",
+        })
+      )
       table.insert(items, {
         bufnr = buf,
-        lnum = a.start,
-        end_lnum = a["end"],
-        text = ("%s %s (%s)"):format(thread.id, message, a.side),
-        type = ({ "E", "W", "I", "N" })[severity(thread)],
+        lnum = at.start,
+        end_lnum = at["end"],
+        text = ("%s %s (%s)"):format(entry.code, text, at.side),
+        type = ({ "E", "W", "I", "N" })[entry.severity],
       })
     end
-    if thread.status == "open" then
-      open[a.path] = (open[a.path] or 0) + 1
+  end
+  for namespace, by_buffer in pairs(diagnostics) do
+    vim.diagnostic.reset(namespace)
+    for buf, list in pairs(by_buffer) do
+      vim.diagnostic.set(namespace, buf, list)
     end
   end
-  vim.diagnostic.reset(ns)
-  for buf, list in pairs(diagnostics) do
-    vim.diagnostic.set(ns, buf, list)
-  end
+  vim.t[view.tab].dots_review_drafts = pending(view)
   if vim.fn.getqflist({ id = view.qf }).id == view.qf then
-    vim.fn.setqflist({}, "u", { id = view.qf, items = items })
+    vim.fn.setqflist({}, "u", { id = view.qf, items = items, title = list_title(view) })
   end
-  local decorations = {}
-  for path, count in pairs(open) do
-    decorations[path] = { text = "● " .. count, hl = "DiagnosticWarn" }
-  end
-  codediff.set_decorations(view.tab, decorations)
+  codediff.set_decorations(view.tab, decorations(view))
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(view.tab)) do
     local buf = vim.api.nvim_win_get_buf(win)
     if side_of(view, buf) then
@@ -279,25 +403,45 @@ end
 local function select_list(view)
   local nr = vim.fn.getqflist({ id = view.qf or 0, nr = 0 }).nr
   if not view.qf or nr == 0 then
-    vim.fn.setqflist({}, " ", { title = "Review " .. view.id, context = { dots_review = view.id } })
+    vim.fn.setqflist({}, " ", { title = list_title(view), context = { dots_review = view.id } })
     view.qf = vim.fn.getqflist({ id = 0 }).id
   elseif nr ~= vim.fn.getqflist({ nr = 0 }).nr then
     vim.cmd("silent " .. nr .. "chistory")
   end
 end
 
+local function by_path(files)
+  local out = {}
+  for _, file in ipairs(files or {}) do
+    out[file.path] = file
+  end
+  return out
+end
+
+-- Take in a `show` result: the review, its files and the preset's placements.
+local function absorb(view, out)
+  view.review = out.review
+  view.files = by_path(out.files)
+  view.layout = out.view
+  view.layout_files = by_path(out.view.files)
+end
+
 local function reload(view)
   view.generation = view.generation + 1
   local generation = view.generation
-  dots({ "show", view.id }, { cwd = view.cwd }, function(out)
+  dots(show_args(view.id, view.preset), { cwd = view.cwd }, function(out)
     if views[view.tab] ~= view or generation ~= view.generation then
       return
     end
-    view.review = out.review
-    if #out.review.revisions - 1 ~= view.revision and not view.stale then
-      view.stale = true
-      notify(view.id .. " moved to a new revision; reopen it to see its current threads", vim.log.levels.WARN)
+    if #out.review.revisions - 1 ~= view.revision then
+      if not view.stale then
+        view.stale = true
+        notify(view.id .. " moved to a new revision; reopen it to see its current threads", vim.log.levels.WARN)
+      end
+      -- Placements describe the new revision; keep the ones this view shows.
+      out.view = view.layout
     end
+    absorb(view, out)
     if view.tab == vim.api.nvim_get_current_tabpage() then
       render(view)
     end
@@ -321,6 +465,13 @@ local function watch(view)
   end)
 end
 
+-- Record that the user looked at the view's revision.
+local function look(view)
+  if not view.stale then
+    dots({ "look", view.id }, { cwd = view.cwd }, function() end)
+  end
+end
+
 local function close(view)
   views[view.tab] = nil
   for _, handle in ipairs({ view.watcher, view.timer }) do
@@ -328,17 +479,22 @@ local function close(view)
       handle:close()
     end
   end
+  look(view)
   vim.diagnostic.reset(ns)
+  vim.diagnostic.reset(draft_ns)
   render_current()
 end
 
-local function jump_to(view, thread)
-  local a = thread.anchor
-  local ok, err = codediff.show(view.tab, { path = a.path, side = to_codediff[a.side], line = a.start }, function(win)
-    vim.api.nvim_win_call(win, function()
-      vim.cmd("normal! zz")
-    end)
-  end)
+local function jump_to(view, at)
+  local ok, err = codediff.show(
+    view.tab,
+    { path = at.path, side = to_codediff[at.side], line = at.start },
+    function(win)
+      vim.api.nvim_win_call(win, function()
+        vim.cmd("normal! zz")
+      end)
+    end
+  )
   if not ok then
     notify(err, vim.log.levels.WARN)
   end
@@ -349,19 +505,20 @@ function M.next_thread(direction)
   if not view then
     return notify("no review in this tab", vim.log.levels.WARN)
   end
-  local threads = anchored(view)
-  if #threads == 0 then
-    return notify("no threads at this revision")
+  local items = shown(view)
+  if #items == 0 then
+    return notify("no threads in this view")
   end
   local cursor = { path = path or "", start = vim.fn.line("."), side = side }
-  local ahead = vim.tbl_filter(function(thread)
+  local ahead = vim.tbl_filter(function(item)
     if direction > 0 then
-      return before(cursor, thread.anchor)
+      return before(cursor, item.at)
     end
-    return before(thread.anchor, cursor)
-  end, threads)
+    return before(item.at, cursor)
+  end, items)
   -- Wrap around at either end.
-  jump_to(view, direction > 0 and (ahead[1] or threads[1]) or (ahead[#ahead] or threads[#threads]))
+  local item = direction > 0 and (ahead[1] or items[1]) or (ahead[#ahead] or items[#items])
+  jump_to(view, item.at)
 end
 
 local function open_float(buf, opts)
@@ -379,13 +536,14 @@ local function open_float(buf, opts)
   )
 end
 
--- A Markdown draft that submits on write (:w, :x, ZZ) and is discarded by
--- closing it unwritten (ZQ, :q!); plain :q asks first ('confirm'). An
--- empty draft submits nothing.
-local function compose(title, on_submit, text)
-  drafts = drafts + 1
+-- A Markdown buffer that submits on write (:w, :x, ZZ) and is dropped by
+-- closing it unwritten (ZQ, :q!); plain :q asks first ('confirm'). An empty
+-- body is dropped unless `opts.empty` allows it.
+local function compose(title, on_submit, text, opts)
+  opts = opts or {}
+  buffers = buffers + 1
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(buf, ("dots-review://draft/%d"):format(drafts))
+  vim.api.nvim_buf_set_name(buf, ("dots-review://draft/%d"):format(buffers))
   vim.bo[buf].buftype = "acwrite"
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "markdown"
@@ -402,7 +560,7 @@ local function compose(title, on_submit, text)
         if win ~= -1 then
           vim.api.nvim_win_close(win, true)
         end
-        if body == "" then
+        if body == "" and not opts.empty then
           return notify("empty comment discarded")
         end
         on_submit(body)
@@ -413,12 +571,12 @@ local function compose(title, on_submit, text)
     buffer = buf,
     callback = function()
       if vim.bo[buf].modified then
-        notify("comment discarded")
+        notify(opts.dropped or "comment discarded")
       end
     end,
   })
-  local win =
-    open_float(buf, { width = 80, height = 10, title = " " .. title .. " ", footer = " :w submit · ZQ discard " })
+  local footer = opts.footer or " :w save draft · ZQ discard "
+  local win = open_float(buf, { width = 80, height = 10, title = " " .. title .. " ", footer = footer })
   vim.wo[win].wrap = true
   vim.cmd.startinsert()
   return buf
@@ -438,25 +596,30 @@ local function refuse_stale(view, body)
   )
 end
 
-function M.comment(line1, line2)
-  local view, path, side = context()
-  if not side then
-    return notify("not in a review diff buffer", vim.log.levels.WARN)
-  elseif view.stale then
-    return refuse_stale(view)
-  end
-  local anchor = { path = path, side = side, start = math.min(line1, line2), ["end"] = math.max(line1, line2) }
-  local title = ("Comment on %s:%d-%d (%s)"):format(path, anchor.start, anchor["end"], side)
+local function drafted(view, out)
+  local count = pending(view) + 1
+  notify(("drafted %s · %d pending; <leader>rS submits"):format(out.draft.id, count))
+  reload(view)
+end
+
+-- Draft a new thread at `anchor` (view lines; nil lines for the whole file).
+local function draft_thread(view, anchor, title)
   local function submit(body)
     if view.stale then
       return refuse_stale(view, body)
     end
-    local stdin = vim.json.encode({ threads = { { body = body, author = author, anchor = anchor } } })
-    -- The CLI refuses the batch if the review moved since this view's revision.
-    local args = { "add", view.id, "--threads", "-", "--revision", tostring(view.revision) }
-    dots(args, { cwd = view.cwd, stdin = stdin }, function(out)
-      notify("opened " .. out.added[1].id)
-      reload(view)
+    -- The CLI maps the view's lines into the review's and refuses the draft
+    -- if the review moved since this view's revision.
+    local args = { "draft", view.id, "--path", anchor.path, "--preset", view.preset }
+    if anchor.start then
+      vim.list_extend(
+        args,
+        { "--side", anchor.side, "--start", tostring(anchor.start), "--end", tostring(anchor["end"]) }
+      )
+    end
+    vim.list_extend(args, { "--revision", tostring(view.revision), "--body-file", "-" })
+    dots(args, { cwd = view.cwd, stdin = body }, function(out)
+      drafted(view, out)
     end, function()
       -- A moved review cannot take this draft; any other refusal can be edited.
       dots({ "show", view.id }, { cwd = view.cwd }, function(out)
@@ -472,14 +635,35 @@ function M.comment(line1, line2)
   return compose(title, submit)
 end
 
+function M.comment(line1, line2)
+  local view, path, side = context()
+  if not side then
+    return notify("not in a review diff buffer", vim.log.levels.WARN)
+  elseif view.stale then
+    return refuse_stale(view)
+  end
+  local anchor = { path = path, side = side, start = math.min(line1, line2), ["end"] = math.max(line1, line2) }
+  return draft_thread(view, anchor, ("Comment on %s:%d-%d (%s)"):format(path, anchor.start, anchor["end"], side))
+end
+
+function M.comment_file()
+  local view, path = context()
+  if not path then
+    return notify("not in a review diff buffer", vim.log.levels.WARN)
+  elseif view.stale then
+    return refuse_stale(view)
+  end
+  return draft_thread(view, { path = path }, "Comment on " .. path)
+end
+
 function M.reply(view, thread)
   local title = "Reply to " .. thread.id
   local function submit(body)
     dots(
-      { "reply", view.id, thread.id, "--author", author, "--body-file", "-" },
+      { "draft", view.id, "--thread", thread.id, "--body-file", "-" },
       { cwd = view.cwd, stdin = body },
-      function()
-        reload(view)
+      function(out)
+        drafted(view, out)
       end,
       function()
         compose(title, submit, body)
@@ -489,6 +673,7 @@ function M.reply(view, thread)
   return compose(title, submit)
 end
 
+-- Status changes take effect at once; only comments wait for a submission.
 function M.set_status(view, thread)
   vim.ui.select({ "open", "accepted", "dismissed", "fixed" }, { prompt = "Status of " .. thread.id }, function(status)
     if status then
@@ -497,6 +682,102 @@ function M.set_status(view, thread)
       end)
     end
   end)
+end
+
+-- Publish every draft at once, with an optional summary written in a buffer.
+function M.submit()
+  local view = views[vim.api.nvim_get_current_tabpage()]
+  if not view then
+    return notify("no review in this tab", vim.log.levels.WARN)
+  end
+  local count = pending(view)
+  local function submit(body)
+    if body == "" and count == 0 then
+      return notify("nothing to submit: no drafts and no summary")
+    end
+    local args = { "submit", view.id }
+    if body ~= "" then
+      vim.list_extend(args, { "--body-file", "-" })
+    end
+    dots(args, { cwd = view.cwd, stdin = body ~= "" and body or nil }, function(out)
+      notify(("submitted %d comment%s"):format(#out.submission.comments, #out.submission.comments == 1 and "" or "s"))
+      reload(view)
+    end, function()
+      reload(view)
+    end)
+  end
+  return compose(
+    ("Submit %d draft%s · summary (optional)"):format(count, count == 1 and "" or "s"),
+    submit,
+    nil,
+    { empty = true, footer = " :w submit · ZQ cancel ", dropped = "submission cancelled" }
+  )
+end
+
+function M.discard(view, draft)
+  dots({ "discard", view.id, "--draft", draft.id }, { cwd = view.cwd }, function()
+    notify("discarded " .. draft.id)
+    reload(view)
+  end)
+end
+
+function M.discard_all()
+  local view = views[vim.api.nvim_get_current_tabpage()]
+  if not view then
+    return notify("no review in this tab", vim.log.levels.WARN)
+  end
+  local count = pending(view)
+  if count == 0 then
+    return notify("no drafts")
+  end
+  vim.ui.select(
+    { "Discard", "Keep" },
+    { prompt = ("Discard %d draft%s?"):format(count, count == 1 and "" or "s") },
+    function(choice)
+      if choice == "Discard" then
+        dots({ "discard", view.id, "--all" }, { cwd = view.cwd }, function()
+          notify("discarded every draft")
+          reload(view)
+        end)
+      end
+    end
+  )
+end
+
+-- Mark the current file reviewed, or clear its mark.
+function M.toggle_reviewed()
+  local view, path = context()
+  if not path then
+    return notify("not in a review diff buffer", vim.log.levels.WARN)
+  end
+  local file = view.files[path]
+  if not file then
+    return notify(path .. " is not changed in this review", vim.log.levels.WARN)
+  end
+  dots({ file.reviewed and "unmark" or "mark", view.id, path }, { cwd = view.cwd }, function(out)
+    notify(path .. (out.file.reviewed and " marked reviewed" or " no longer marked reviewed"))
+    reload(view)
+  end)
+end
+
+-- Reopen this tab's review in the next preset the core offers.
+function M.next_preset()
+  local view = views[vim.api.nvim_get_current_tabpage()]
+  if not view then
+    return notify("no review in this tab", vim.log.levels.WARN)
+  end
+  local available = view.layout.available
+  local index = 1
+  for i, preset in ipairs(available) do
+    if preset == view.preset then
+      index = i
+    end
+  end
+  local next = available[index % #available + 1]
+  if next == view.preset then
+    return notify("only the " .. view.preset .. " view has changes")
+  end
+  M.open(view.id, view.cwd, next)
 end
 
 function M.show_thread(view, thread)
@@ -516,35 +797,42 @@ function M.show_thread(view, thread)
     end
   end
   vim.keymap.set("n", "q", act(function() end), { buffer = buf, desc = "Close thread" })
-  vim.keymap.set("n", "r", act(M.reply), { buffer = buf, desc = "Reply to thread" })
+  vim.keymap.set("n", "r", act(M.reply), { buffer = buf, desc = "Reply to thread (draft)" })
   vim.keymap.set("n", "s", act(M.set_status), { buffer = buf, desc = "Set thread status" })
 end
 
--- Run action on the thread under the cursor, choosing when several overlap.
-local function at_cursor(action)
+-- Run action on the thread (or, with `drafts`, the draft) under the cursor,
+-- choosing when several overlap.
+local function at_cursor(action, drafts)
   return function()
     local view, path, side = context()
     if not side then
       return notify("not in a review diff buffer", vim.log.levels.WARN)
     end
     local line = vim.fn.line(".")
-    local here = vim.tbl_filter(function(thread)
-      local a = thread.anchor
-      return a.path == path and a.side == side and a.start <= line and line <= a["end"]
-    end, anchored(view))
+    local here = vim.tbl_filter(function(item)
+      local at = item.at
+      return (drafts and item.draft or item.thread)
+        and at.path == path
+        and at.side == side
+        and at.start <= line
+        and line <= at["end"]
+    end, shown(view))
+    local kind = drafts and "draft" or "thread"
     if #here == 0 then
-      return notify("no thread on this line")
+      return notify("no " .. kind .. " on this line")
     elseif #here == 1 then
-      return action(view, here[1])
+      return action(view, here[1].thread or here[1].draft)
     end
     vim.ui.select(here, {
-      prompt = "Thread",
-      format_item = function(thread)
-        return thread.id .. " " .. summary(thread)
+      prompt = drafts and "Draft" or "Thread",
+      format_item = function(item)
+        return item.thread and item.thread.id .. " " .. summary(view, item.thread)
+          or item.draft.id .. " " .. first_line(item.draft.body)
       end,
-    }, function(thread)
-      if thread then
-        action(view, thread)
+    }, function(item)
+      if item then
+        action(view, item.thread or item.draft)
       end
     end)
   end
@@ -560,60 +848,89 @@ function setup_buffer(buf)
   end
   map("n", "]r", function()
     M.next_thread(1)
-  end, "Next review thread")
+  end, "Next review thread or draft")
   map("n", "[r", function()
     M.next_thread(-1)
-  end, "Previous review thread")
+  end, "Previous review thread or draft")
   map("n", "<leader>rc", function()
     M.comment(vim.fn.line("."), vim.fn.line("."))
-  end, "Comment on line")
+  end, "Comment on line (draft)")
   map("x", "<leader>rc", function()
     local start, finish = vim.fn.line("v"), vim.fn.line(".")
     vim.cmd("normal! \27")
     M.comment(start, finish)
-  end, "Comment on selection")
-  map("n", "<leader>rr", at_cursor(M.reply), "Reply to thread")
+  end, "Comment on selection (draft)")
+  map("n", "<leader>rf", M.comment_file, "Comment on file (draft)")
+  map("n", "<leader>rr", at_cursor(M.reply), "Reply to thread (draft)")
   map("n", "<leader>rs", at_cursor(M.set_status), "Set thread status")
   map("n", "<leader>rv", at_cursor(M.show_thread), "View thread")
+  map("n", "<leader>rd", at_cursor(M.discard, true), "Discard draft on line")
+  map("n", "<leader>rD", M.discard_all, "Discard every draft")
+  map("n", "<leader>rS", M.submit, "Submit drafts")
+  map("n", "<leader>rm", M.toggle_reviewed, "Toggle file reviewed")
+  map("n", "<leader>rp", M.next_preset, "Next review view (everything/uncommitted/committed)")
 end
 
--- Open review ID (default: this worktree's latest) on its newest revision.
-function M.open(id, cwd)
-  dots({ "show", id }, { cwd = cwd or checkout() }, function(out)
+-- Open review ID (default: this worktree's latest) on its newest revision, in
+-- `preset` (default everything). A tab showing that review on another preset
+-- is replaced.
+function M.open(id, cwd, preset)
+  preset = preset or "everything"
+  dots(show_args(id, preset), { cwd = cwd or checkout() }, function(out)
     local review = out.review
     local revision = review.revisions[#review.revisions]
+    local replaced
     for tab, view in pairs(views) do
       if view.id == review.id and view.snapshot == revision.snapshot and vim.api.nvim_tabpage_is_valid(tab) then
-        return vim.api.nvim_set_current_tabpage(tab)
+        if view.preset == preset then
+          return vim.api.nvim_set_current_tabpage(tab)
+        end
+        replaced = tab
       end
     end
+    local files = {}
+    for _, file in ipairs(out.view.files) do
+      table.insert(files, { path = file.path, status = letters[file.status] })
+    end
     local root = review.worktree.path
-    changed_files(root, revision.base, revision.snapshot, function(files)
-      local tab, err = codediff.open({ root = root, base = revision.base, head = revision.snapshot, files = files })
-      if not tab then
-        return notify(err, vim.log.levels.ERROR)
-      end
-      local view = {
-        id = review.id,
-        tab = tab,
-        cwd = root,
-        file = out.file,
-        revision = #review.revisions - 1,
-        base = revision.base,
-        snapshot = revision.snapshot,
-        review = review,
-        generation = 0,
-      }
-      views[tab] = view
-      select_list(view)
-      watch(view)
-      render_current()
-    end)
+    local tab, err = codediff.open({ root = root, base = out.view.base, head = out.view.head, files = files })
+    if not tab then
+      return notify(err, vim.log.levels.ERROR)
+    end
+    local changed = {}
+    for _, file in ipairs(out.files) do
+      changed[file.path] = file.changed_since_looked or nil
+    end
+    local view = {
+      id = review.id,
+      tab = tab,
+      cwd = root,
+      file = out.file,
+      revision = #review.revisions - 1,
+      snapshot = revision.snapshot,
+      preset = preset,
+      -- What changed since the user last looked, as of opening: looking now
+      -- moves the mark, so the view keeps this set.
+      changed = changed,
+      generation = 0,
+    }
+    absorb(view, out)
+    views[tab] = view
+    select_list(view)
+    watch(view)
+    look(view)
+    render_current()
+    if replaced then
+      local current = vim.api.nvim_get_current_tabpage()
+      vim.api.nvim_set_current_tabpage(replaced)
+      vim.cmd.tabclose()
+      vim.api.nvim_set_current_tabpage(current)
+    end
   end)
 end
 
 function M.pick_reviews()
-  dots({ "list", "--all" }, { cwd = checkout() }, function(out)
+  dots({ "list", "--all", "--drafts" }, { cwd = checkout() }, function(out)
     if #out.reviews == 0 then
       return notify("no reviews in this repository")
     end
@@ -637,11 +954,13 @@ function M.pick_reviews()
       layout = "select",
       format = function(item)
         local open = item.review.threads.open or 0
+        local drafts = item.review.drafts or 0
         return {
           { ("%-12s"):format(item.review.id), "Comment" },
           { ("%-24s"):format(item.worktree), "Directory" },
           { ("%-28s"):format(item.target) },
           { ("%3d open "):format(open), open > 0 and "DiagnosticWarn" or "Comment" },
+          { ("%2d %s "):format(drafts, draft_icon), drafts > 0 and "DiagnosticHint" or "Comment" },
           { ("%4s"):format(age(item.review.updated_at)), "Comment" },
         }
       end,
@@ -662,11 +981,11 @@ function M.pick_threads()
   end
   local items = {}
   for _, thread in ipairs(view.review.threads) do
-    local where = location(view, thread)
+    local text = location(view, thread)
     table.insert(items, {
-      text = table.concat({ thread.id, thread.status, where, summary(thread) }, " "),
+      text = table.concat({ thread.id, thread.status, text, summary(view, thread) }, " "),
       thread = thread,
-      where = where,
+      where = text,
       preview = { text = table.concat(markdown(view, thread), "\n"), ft = "markdown" },
     })
   end
@@ -680,7 +999,7 @@ function M.pick_threads()
         { icon .. " " .. ("%-4s"):format(item.thread.id), hl },
         { ("%-10s"):format(item.thread.status), hl },
         { item.where .. "  ", "Directory" },
-        { summary(item.thread) },
+        { summary(view, item.thread) },
       }
     end,
     confirm = function(picker, item)
@@ -688,8 +1007,9 @@ function M.pick_threads()
       if not item then
         return
       end
-      if item.thread.anchor and item.thread.revision == view.revision then
-        jump_to(view, item.thread)
+      local at = item.thread.anchor and item.thread.revision == view.revision and placed(view, item.thread.id)
+      if at then
+        jump_to(view, at)
       else
         M.show_thread(view, item.thread)
       end
