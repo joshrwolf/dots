@@ -32,17 +32,47 @@ impl Store {
         })
     }
 
-    /// Write `review` under a fresh id, replacing whatever id it carries, as
-    /// this directory's most recent change.
-    /// `pin` publishes the review's content under its id, under the same lock
-    /// that `remove` takes, and records the pinned revision in the review; it
-    /// returns false when the id is taken elsewhere.
-    pub(crate) fn create(
+    /// Write the review `make` returns, with what it returns beside it, under
+    /// a fresh id, replacing whatever id it carries, as this directory's most
+    /// recent change. `pin` publishes the review's content under its id, under
+    /// the same lock that `remove` takes, and records the pinned revision in
+    /// the review; it returns false when the id is taken elsewhere.
+    pub(crate) fn create<T>(
         &self,
-        mut review: Review,
-        mut pin: impl FnMut(&mut Review) -> Result<bool>,
-    ) -> Result<Review> {
+        make: impl FnOnce() -> Result<(Review, T)>,
+        pin: impl FnMut(&mut Review, &T) -> Result<bool>,
+    ) -> Result<(Review, T)> {
         let _lock = self.lock()?;
+        self.create_locked(make, pin)
+    }
+
+    /// The id of the most recent review `matches` accepts or, when there is
+    /// none, the review [`Store::create`] makes, under one hold of the lock.
+    pub(crate) fn find_or_create<T>(
+        &self,
+        matches: impl Fn(&Review) -> bool,
+        make: impl FnOnce() -> Result<(Review, T)>,
+        pin: impl FnMut(&mut Review, &T) -> Result<bool>,
+    ) -> Result<Found<T>> {
+        let _lock = self.lock()?;
+        if let Some(review) = self
+            .all()?
+            .into_iter()
+            .filter(|review| matches(review))
+            .max_by_key(|review| review.sequence)
+        {
+            return Ok(Found::Existing(review.id));
+        }
+        let (review, extra) = self.create_locked(make, pin)?;
+        Ok(Found::Created(Box::new(review), extra))
+    }
+
+    fn create_locked<T>(
+        &self,
+        make: impl FnOnce() -> Result<(Review, T)>,
+        mut pin: impl FnMut(&mut Review, &T) -> Result<bool>,
+    ) -> Result<(Review, T)> {
+        let (mut review, extra) = make()?;
         review.sequence = self.next_sequence()?;
         for _ in 0..8 {
             let id = format!("r-{:08x}", git::random()? >> 32);
@@ -50,7 +80,7 @@ impl Store {
             match OpenOptions::new().write(true).create_new(true).open(&path) {
                 Ok(_) => {
                     review.id = id;
-                    let pinned = pin(&mut review);
+                    let pinned = pin(&mut review, &extra);
                     if !matches!(pinned, Ok(true)) {
                         let _ = fs::remove_file(&path);
                         pinned?;
@@ -60,7 +90,7 @@ impl Store {
                         let _ = fs::remove_file(&path);
                         return Err(error);
                     }
-                    return Ok(review);
+                    return Ok((review, extra));
                 }
                 Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
                 Err(source) => {
@@ -289,6 +319,15 @@ impl Store {
     pub(crate) fn path(&self, id: &str) -> PathBuf {
         self.directory.join(format!("{id}.json"))
     }
+}
+
+/// What [`Store::find_or_create`] found.
+#[derive(Debug)]
+pub(crate) enum Found<T> {
+    /// The id of a review that was there.
+    Existing(String),
+    /// A review it created, with what its maker returned.
+    Created(Box<Review>, T),
 }
 
 #[derive(Deserialize)]

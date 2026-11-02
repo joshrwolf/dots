@@ -7,9 +7,10 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use dots_review::{
-        Anchor, AuthorKind, Comment, Error, FileStatus, Looked, NewDraft, NewThread, Preset,
-        Published, REFRESH_AUTHOR, Reviews, RuleCitation, SCHEMA, Severity, ShowOptions, Side,
-        Status, Submission, TargetSpec, USER, View,
+        Anchor, AuthorKind, BaseChoice, BaseReason, Basis, Candidate, Comment, Error, FileStatus,
+        Looked, NewDraft, NewThread, Overview, Preset, Published, REFRESH_AUTHOR, Reviews,
+        RuleCitation, SCHEMA, Severity, ShowOptions, Side, Status, Submission, TargetSpec, USER,
+        View,
     };
 
     struct Repo {
@@ -156,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn worktree_review_pins_tracked_and_untracked_content_but_not_ignored_files() {
+    fn uncommitted_review_pins_tracked_and_untracked_content_but_not_ignored_files() {
         let repo = Repo::new();
         change_line_ten(&repo);
         repo.write("notes/new.md", "new file\n");
@@ -164,7 +165,7 @@ mod tests {
         let overview = repo
             .reviews()
             .start(
-                TargetSpec::Worktree,
+                TargetSpec::Uncommitted,
                 Some("standard".into()),
                 Some("pi-session".into()),
                 100,
@@ -179,7 +180,7 @@ mod tests {
         assert_eq!(paths, ["notes/new.md", "src/lib.rs"]);
         let revision = overview.review.current();
         assert_eq!(revision.base, repo.git(&["rev-parse", "HEAD"]));
-        assert!(revision.includes_worktree);
+        assert_eq!(revision.basis.reason, BaseReason::Head);
         assert_eq!(
             repo.git(&["show", &format!("{}:src/lib.rs", revision.head)])
                 .lines()
@@ -218,11 +219,18 @@ mod tests {
         let repo = Repo::new();
         let reviews = repo.reviews();
         assert!(matches!(
-            reviews.start(TargetSpec::Worktree, None, None, 1),
+            reviews.start(TargetSpec::Uncommitted, None, None, 1),
             Err(Error::NothingToReview(_))
         ));
-        assert!(matches!(TargetSpec::range("main"), Err(Error::Invalid(_))));
-        assert!(matches!(TargetSpec::range("a...b"), Err(Error::Invalid(_))));
+        repo.write("new.txt", "new\n");
+        assert!(
+            matches!(
+                reviews.start(TargetSpec::Worktree { base: None }, None, None, 1),
+                Err(Error::Invalid(_))
+            ),
+            "the worktree review is opened, never started"
+        );
+        fs::remove_file(repo.path().join("new.txt")).unwrap();
         assert!(matches!(
             reviews.start(
                 TargetSpec::Base {
@@ -235,11 +243,11 @@ mod tests {
             Err(Error::Invalid(_))
         ));
         assert!(matches!(
-            reviews.start(TargetSpec::Worktree, Some("Not A Name".into()), None, 1),
+            reviews.start(TargetSpec::Uncommitted, Some("Not A Name".into()), None, 1),
             Err(Error::Invalid(_))
         ));
         assert!(matches!(
-            reviews.start(TargetSpec::Worktree, None, Some("two\nlines".into()), 1),
+            reviews.start(TargetSpec::Uncommitted, None, Some("two\nlines".into()), 1),
             Err(Error::Invalid(_))
         ));
         assert!(
@@ -249,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn base_and_range_targets_compare_exact_revisions() {
+    fn base_and_uncommitted_targets_compare_exact_revisions() {
         let repo = Repo::new();
         let initial = repo.git(&["rev-parse", "HEAD"]);
         repo.git(&["switch", "-q", "-c", "feature"]);
@@ -276,26 +284,34 @@ mod tests {
             .collect();
         assert_eq!(paths, ["later.txt", "src/lib.rs"]);
 
-        let range = reviews
-            .start(TargetSpec::range("main..feature").unwrap(), None, None, 2)
+        assert_eq!(base.review.current().head_commit, feature);
+        assert_eq!(
+            base.review.current().basis,
+            Basis {
+                reference: "main".into(),
+                reason: BaseReason::Given,
+                candidates: Vec::new(),
+            }
+        );
+
+        let uncommitted = reviews
+            .start(TargetSpec::Uncommitted, None, None, 2)
             .unwrap();
-        let revision = range.review.current();
-        assert_eq!(revision.base, initial);
-        assert_eq!(revision.head_commit.as_deref(), Some(feature.as_str()));
-        assert!(!revision.includes_worktree);
-        let paths: Vec<_> = range
+        let revision = uncommitted.review.current();
+        assert_eq!(revision.base, feature);
+        let paths: Vec<_> = uncommitted
             .files
             .iter()
             .map(|file| file.change.path.as_str())
             .collect();
-        assert_eq!(paths, ["src/lib.rs"]);
+        assert_eq!(paths, ["later.txt"]);
         let listed: Vec<_> = reviews
             .list(false, false)
             .unwrap()
             .into_iter()
             .map(|summary| summary.id)
             .collect();
-        assert_eq!(listed, [base.review.id, range.review.id]);
+        assert_eq!(listed, [base.review.id, uncommitted.review.id]);
     }
 
     #[test]
@@ -304,7 +320,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -407,7 +423,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -471,7 +487,7 @@ mod tests {
         repo.write("src/lib.rs", &(lines.join("\n") + "\n"));
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -573,7 +589,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -666,7 +682,7 @@ mod tests {
         // changes, not of timestamps or ids.
         let start = || {
             reviews
-                .start(TargetSpec::Worktree, None, None, 1)
+                .start(TargetSpec::Uncommitted, None, None, 1)
                 .unwrap()
                 .review
                 .id
@@ -711,7 +727,7 @@ mod tests {
         fs::write(linked.join("src/lib.rs"), numbered(1..=21)).unwrap();
         let other = Reviews::open(&linked).unwrap();
         let id = other
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -753,7 +769,7 @@ mod tests {
         repo.write("notes/new.md", "new file\n");
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -786,7 +802,7 @@ mod tests {
         change_line_ten(&repo);
         let primary = repo.reviews();
         let own = primary
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -794,7 +810,7 @@ mod tests {
         fs::write(linked.join("src/lib.rs"), "replaced\n").unwrap();
         let other = Reviews::open(&linked).unwrap();
         let theirs = other
-            .start(TargetSpec::Worktree, None, None, 2)
+            .start(TargetSpec::Uncommitted, None, None, 2)
             .unwrap()
             .review
             .id;
@@ -841,7 +857,7 @@ mod tests {
         fs::write(linked.join("src/lib.rs"), numbered(1..=21)).unwrap();
         let other = Reviews::open(&linked).unwrap();
         let id = other
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -914,7 +930,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -952,7 +968,7 @@ mod tests {
         fs::write(linked.join("src/lib.rs"), "replaced\n").unwrap();
         let reviews = Reviews::open(&linked).unwrap();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -964,7 +980,7 @@ mod tests {
         change_line_ten(&repo);
         let primary = repo.reviews();
         let own = primary
-            .start(TargetSpec::Worktree, None, None, 2)
+            .start(TargetSpec::Uncommitted, None, None, 2)
             .unwrap()
             .review
             .id;
@@ -982,7 +998,7 @@ mod tests {
         change_line_ten(&repo);
         let id = repo
             .reviews()
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1014,7 +1030,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1095,7 +1111,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1153,7 +1169,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1292,7 +1308,7 @@ mod tests {
         repo.write("src/lib.rs", &(lines.join("\n") + "\n"));
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1370,7 +1386,7 @@ mod tests {
         repo.write("notes.md", "new\n");
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1426,7 +1442,7 @@ mod tests {
         repo.write("notes.md", "new\n");
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1481,7 +1497,7 @@ mod tests {
         repo.write("notes.md", "new\n");
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1753,7 +1769,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let worktree = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1781,9 +1797,11 @@ mod tests {
         ));
 
         let feature = repo.commit("ten");
-        let range = reviews
+        let committed = reviews
             .start(
-                TargetSpec::range(&format!("HEAD~1..{feature}")).unwrap(),
+                TargetSpec::Base {
+                    reference: format!("{feature}~1"),
+                },
                 None,
                 None,
                 2,
@@ -1791,10 +1809,13 @@ mod tests {
             .unwrap()
             .review
             .id;
-        let Err(Error::Invalid(message)) = view(&range, Preset::Uncommitted) else {
-            panic!("a range review has no uncommitted view");
+        let Err(Error::Invalid(message)) = view(&committed, Preset::Uncommitted) else {
+            panic!("a clean working tree has no uncommitted view");
         };
-        assert!(message.contains("available: everything"), "{message}");
+        assert!(
+            message.contains("available: everything, committed"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -1837,10 +1858,7 @@ mod tests {
         let refreshed = reviews.refresh(&id, 2).unwrap();
         assert!(refreshed.changed, "a new HEAD commit is a new revision");
         assert_eq!(refreshed.review.revisions.len(), 2);
-        assert_eq!(
-            refreshed.review.current().head_commit.as_deref(),
-            Some(commit.as_str())
-        );
+        assert_eq!(refreshed.review.current().head_commit, commit);
         assert_eq!(available(), [Preset::Everything, Preset::Committed]);
         assert!(!reviews.refresh(&id, 3).unwrap().changed);
     }
@@ -1851,7 +1869,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1882,7 +1900,7 @@ mod tests {
         change_line_ten(&repo);
         let reviews = repo.reviews();
         let id = reviews
-            .start(TargetSpec::Worktree, None, None, 1)
+            .start(TargetSpec::Uncommitted, None, None, 1)
             .unwrap()
             .review
             .id;
@@ -1912,5 +1930,540 @@ mod tests {
             reviews.look(&id, Some(2), 6),
             Err(Error::Invalid(_))
         ));
+    }
+    /// Open the worktree review of the checkout at `directory`.
+    fn open_at(directory: &Path, base: BaseChoice, owner: Option<&str>, now: i64) -> Overview {
+        Reviews::open(directory)
+            .unwrap()
+            .open_worktree(base, owner.map(Into::into), ShowOptions::default(), now)
+            .unwrap()
+    }
+
+    impl Repo {
+        /// Make `commit` the default branch `branch` of remote `remote`, as a
+        /// fetch from a clone would leave it.
+        fn remote_default(&self, remote: &str, branch: &str, commit: &str) {
+            let tracking = format!("refs/remotes/{remote}/{branch}");
+            self.git(&["update-ref", &tracking, commit]);
+            self.git(&[
+                "symbolic-ref",
+                &format!("refs/remotes/{remote}/HEAD"),
+                &tracking,
+            ]);
+        }
+
+        fn open(&self, base: BaseChoice, owner: Option<&str>, now: i64) -> Overview {
+            open_at(&self.root, base, owner, now)
+        }
+    }
+
+    fn candidate(reference: &str, commits: u64) -> Candidate {
+        Candidate {
+            reference: reference.into(),
+            commits,
+        }
+    }
+
+    #[test]
+    fn the_worktree_review_compares_with_the_nearest_default_branch() {
+        let repo = Repo::new();
+        let stale = repo.git(&["rev-parse", "HEAD"]);
+        repo.write("upstream.txt", "landed upstream\n");
+        let landed = repo.commit("landed upstream");
+        // Local main is behind the remote's default.
+        repo.git(&["reset", "-q", "--hard", &stale]);
+        repo.remote_default("origin", "main", &landed);
+        repo.git(&["switch", "-q", "--no-track", "-c", "feature", &landed]);
+        change_line_ten(&repo);
+        repo.commit("feature");
+        repo.write("notes.md", "uncommitted\n");
+
+        let overview = repo.open(BaseChoice::Keep, None, 1);
+        let revision = overview.review.current();
+        assert_eq!(revision.base, landed);
+        assert_eq!(
+            revision.basis,
+            Basis {
+                reference: "origin/main".into(),
+                reason: BaseReason::Default,
+                candidates: vec![candidate("origin/main", 1), candidate("main", 2)],
+            }
+        );
+        let paths: Vec<_> = overview
+            .files
+            .iter()
+            .map(|file| file.change.path.as_str())
+            .collect();
+        assert_eq!(paths, ["notes.md", "src/lib.rs"]);
+
+        // A local main ahead of the remote, unpushed, is nearer for the
+        // branches built on it; at equal distance a remote wins.
+        repo.git(&["update-ref", "refs/remotes/origin/main", &stale]);
+        repo.git(&["branch", "-f", "main", &landed]);
+        let revision = repo
+            .open(BaseChoice::Keep, None, 2)
+            .review
+            .current()
+            .clone();
+        assert_eq!(revision.base, landed);
+        assert_eq!(
+            revision.basis.candidates,
+            [candidate("main", 1), candidate("origin/main", 2)]
+        );
+        repo.git(&["update-ref", "refs/remotes/origin/main", &landed]);
+        repo.remote_default("upstream", "main", &landed);
+        let basis = repo
+            .open(BaseChoice::Keep, None, 3)
+            .review
+            .current()
+            .basis
+            .clone();
+        assert_eq!(basis.reference, "upstream/main");
+        assert_eq!(
+            basis.candidates,
+            [
+                candidate("upstream/main", 1),
+                candidate("origin/main", 1),
+                candidate("main", 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_remote_the_local_default_branch_is_the_base() {
+        let repo = Repo::new();
+        let main = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["switch", "-q", "-c", "feature"]);
+        change_line_ten(&repo);
+        repo.commit("feature");
+        let revision = repo
+            .open(BaseChoice::Keep, None, 1)
+            .review
+            .current()
+            .clone();
+        assert_eq!(revision.base, main);
+        assert_eq!(
+            revision.basis,
+            Basis {
+                reference: "main".into(),
+                reason: BaseReason::Default,
+                candidates: vec![candidate("main", 1)],
+            }
+        );
+    }
+
+    #[test]
+    fn a_branchs_own_upstream_is_ignored_and_another_branch_upstream_is_the_base() {
+        let repo = Repo::new();
+        let main = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["switch", "-q", "-c", "feature"]);
+        change_line_ten(&repo);
+        let feature = repo.commit("feature");
+        // Pushed: the upstream is the same branch on the remote.
+        repo.git(&["update-ref", "refs/remotes/origin/feature", &feature]);
+        repo.git(&["config", "branch.feature.remote", "origin"]);
+        repo.git(&["config", "branch.feature.merge", "refs/heads/feature"]);
+        let overview = repo.open(BaseChoice::Keep, None, 1);
+        assert_eq!(overview.review.current().base, main);
+        assert_eq!(overview.review.current().basis.reason, BaseReason::Default);
+
+        // A stacked branch tracks the branch it builds on.
+        let child = repo.path().with_extension("child");
+        let _ = fs::remove_dir_all(&child);
+        repo.git(&[
+            "worktree",
+            "add",
+            "-q",
+            "--track",
+            "-b",
+            "child",
+            child.to_str().unwrap(),
+            "feature",
+        ]);
+        fs::write(child.join("child.txt"), "stacked\n").unwrap();
+        let revision = open_at(&child, BaseChoice::Keep, None, 2)
+            .review
+            .current()
+            .clone();
+        fs::remove_dir_all(&child).unwrap();
+        assert_eq!(revision.base, feature);
+        assert_eq!(
+            revision.basis,
+            Basis {
+                reference: "feature".into(),
+                reason: BaseReason::Upstream,
+                candidates: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_explicit_base_is_kept_across_refreshes_until_dropped() {
+        let repo = Repo::new();
+        let main = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["switch", "-q", "-c", "feature"]);
+        change_line_ten(&repo);
+        let feature = repo.commit("feature");
+        repo.git(&["switch", "-q", "--no-track", "-c", "child"]);
+        repo.write("child.txt", "stacked\n");
+
+        let opened = repo.open(BaseChoice::Reference("feature".into()), None, 1);
+        let id = opened.review.id.clone();
+        assert_eq!(
+            opened.review.target,
+            TargetSpec::Worktree {
+                base: Some("feature".into())
+            }
+        );
+        assert_eq!(opened.review.current().base, feature);
+        assert_eq!(opened.review.current().basis.reason, BaseReason::Override);
+        assert!(matches!(
+            repo.reviews().open_worktree(
+                BaseChoice::Reference("missing".into()),
+                None,
+                ShowOptions::default(),
+                2
+            ),
+            Err(Error::Invalid(_))
+        ));
+
+        repo.commit("child");
+        let kept = repo.open(BaseChoice::Keep, None, 3);
+        assert_eq!(kept.review.id, id);
+        assert_eq!(kept.review.revisions.len(), 2);
+        assert_eq!(kept.review.current().base, feature);
+        assert_eq!(kept.review.current().basis.reason, BaseReason::Override);
+        let refreshed = repo.reviews().refresh(&id, 4).unwrap();
+        assert_eq!(
+            refreshed.review.target,
+            TargetSpec::Worktree {
+                base: Some("feature".into())
+            }
+        );
+
+        let dropped = repo.open(BaseChoice::Default, None, 5);
+        assert_eq!(dropped.review.target, TargetSpec::Worktree { base: None });
+        assert_eq!(dropped.review.current().base, main);
+        assert_eq!(dropped.review.current().basis.reason, BaseReason::Default);
+    }
+
+    #[test]
+    fn on_the_default_branch_the_review_covers_uncommitted_changes() {
+        let repo = Repo::new();
+        let pushed = repo.git(&["rev-parse", "HEAD"]);
+        repo.remote_default("origin", "main", &pushed);
+        repo.write("unpushed.txt", "committed, not pushed\n");
+        let head = repo.commit("unpushed");
+        assert!(matches!(
+            repo.reviews()
+                .open_worktree(BaseChoice::Keep, None, ShowOptions::default(), 1),
+            Err(Error::NothingToReview(_))
+        ));
+        change_line_ten(&repo);
+        let overview = repo.open(BaseChoice::Keep, None, 2);
+        let revision = overview.review.current();
+        assert_eq!(revision.base, head);
+        assert_eq!(
+            revision.basis,
+            Basis {
+                reference: "HEAD".into(),
+                reason: BaseReason::DefaultBranch,
+                candidates: Vec::new(),
+            }
+        );
+        assert_eq!(overview.files.len(), 1);
+        assert_eq!(overview.files[0].change.path, "src/lib.rs");
+    }
+
+    #[test]
+    fn opening_creates_the_worktree_review_once_and_reuses_it() {
+        let repo = Repo::new();
+        repo.git(&["switch", "-q", "-c", "feature"]);
+        let reviews = repo.reviews();
+        let Err(Error::NothingToReview(message)) =
+            reviews.open_worktree(BaseChoice::Keep, None, ShowOptions::default(), 1)
+        else {
+            panic!("a clean worktree has nothing to review");
+        };
+        assert!(
+            message.contains("main (nearest default branch"),
+            "{message}"
+        );
+        assert!(reviews.list(false, false).unwrap().is_empty());
+
+        change_line_ten(&repo);
+        let created = repo.open(BaseChoice::Keep, Some("pi-first"), 2);
+        let opened = created.opened.as_ref().unwrap();
+        assert!(opened.created);
+        assert_eq!(created.review.owner.as_deref(), Some("pi-first"));
+        assert_eq!(created.review.target, TargetSpec::Worktree { base: None });
+
+        // Another review of this worktree is not its own review.
+        let other = reviews
+            .start(TargetSpec::Uncommitted, None, None, 3)
+            .unwrap()
+            .review
+            .id;
+        let reused = repo.open(BaseChoice::Keep, None, 4);
+        assert_eq!(reused.review.id, created.review.id);
+        let opened = reused.opened.as_ref().unwrap();
+        assert!(!opened.created && !opened.changed);
+        assert_eq!(reused.review.revisions.len(), 1);
+        assert_eq!(
+            reused.review.owner.as_deref(),
+            Some("pi-first"),
+            "the user opening it keeps its owner"
+        );
+        let taken = repo.open(BaseChoice::Keep, Some("pi-second"), 5);
+        assert_eq!(taken.review.owner.as_deref(), Some("pi-second"));
+        assert_eq!(taken.review.id, created.review.id);
+        assert_eq!(
+            reviews.latest().unwrap(),
+            created.review.id,
+            "taking ownership is a change"
+        );
+        let mut ids: Vec<_> = reviews
+            .list(false, false)
+            .unwrap()
+            .into_iter()
+            .map(|summary| summary.id)
+            .collect();
+        ids.sort();
+        let mut want = vec![created.review.id.clone(), other];
+        want.sort();
+        assert_eq!(ids, want);
+    }
+
+    #[test]
+    fn the_worktree_review_follows_new_commits_and_carries_threads() {
+        let repo = Repo::new();
+        repo.git(&["switch", "-q", "-c", "feature"]);
+        change_line_ten(&repo);
+        let first = repo.open(BaseChoice::Keep, None, 1);
+        let id = first.review.id.clone();
+        let reviews = repo.reviews();
+        reviews
+            .add(
+                &id,
+                vec![finding(Some(("src/lib.rs", Side::New, 10, 10)))],
+                Some(0),
+                2,
+            )
+            .unwrap();
+
+        let fixed = repo.commit("feature");
+        repo.write("fix.txt", "the fix\n");
+        let fix = repo.commit("fix");
+        let moved = repo.open(BaseChoice::Keep, None, 3);
+        assert_eq!(moved.review.id, id);
+        let opened = moved.opened.as_ref().unwrap();
+        assert!(opened.changed);
+        assert_eq!(opened.carried, ["t1"]);
+        assert_eq!(opened.outdated, Vec::<String>::new());
+        let delta = opened.delta.as_ref().unwrap();
+        let delta_paths: Vec<_> = delta.files.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(delta_paths, ["fix.txt"]);
+        let revision = moved.review.current();
+        assert_eq!(revision.head_commit, fix);
+        assert_ne!(revision.head_commit, fixed);
+        assert_eq!(moved.review.threads[0].revision, 1);
+        assert_eq!(moved.review.threads[0].status, Status::Open);
+        let paths: Vec<_> = moved
+            .files
+            .iter()
+            .map(|file| file.change.path.as_str())
+            .collect();
+        assert_eq!(paths, ["fix.txt", "src/lib.rs"]);
+    }
+
+    /// Two repositories with linked worktrees: repository one's has a review
+    /// asking things of the user, repository two's only an untracked file.
+    struct Fleet {
+        one: Repo,
+        two: Repo,
+        id: String,
+    }
+
+    fn fleet() -> Fleet {
+        let one = Repo::new();
+        let linked = one.linked();
+        let reviews = Reviews::open(&linked).unwrap();
+        let mut lines: Vec<String> = (1..=20).map(|line| format!("line {line}")).collect();
+        lines[2] = "line three, changed".into();
+        lines[9] = "line ten, changed".into();
+        fs::write(linked.join("src/lib.rs"), lines.join("\n") + "\n").unwrap();
+        fs::write(linked.join("seen.md"), "seen\n").unwrap();
+        let id = open_at(&linked, BaseChoice::Keep, Some("pi-agent"), 1)
+            .review
+            .id;
+        // t1 and t2, an agent's findings; it dismisses t2.
+        reviews
+            .add(
+                &id,
+                vec![
+                    finding(Some(("src/lib.rs", Side::New, 10, 10))),
+                    finding(None),
+                ],
+                None,
+                2,
+            )
+            .unwrap();
+        // t3, the user's question an agent answers, and t4, unanswered.
+        for body in ["Why this?", "And this?"] {
+            reviews
+                .draft(&id, draft(None, None, body), Preset::Everything, None, 3)
+                .unwrap();
+        }
+        reviews.submit(&id, None, 4).unwrap();
+        reviews
+            .reply(&id, "t3", "agent".into(), "Because.".into(), 5)
+            .unwrap();
+        reviews
+            .set(&id, "t2", Status::Dismissed, "agent".into(), None, 5)
+            .unwrap();
+        reviews
+            .draft(
+                &id,
+                draft(Some("t3"), None, "Thanks"),
+                Preset::Everything,
+                None,
+                6,
+            )
+            .unwrap();
+        reviews.look(&id, None, 7).unwrap();
+        // After the look: an edit, a new untracked file, and an untracked
+        // file the user saw, unchanged.
+        fs::write(
+            linked.join("src/lib.rs"),
+            numbered(1..=20).replace("line 3\n", "line 3 again\n"),
+        )
+        .unwrap();
+        fs::write(linked.join("new.md"), "one\ntwo\n").unwrap();
+
+        let two = Repo::new();
+        let other = two.linked();
+        fs::write(other.join("draft.txt"), "a\nb\nc").unwrap();
+        Fleet { one, two, id }
+    }
+
+    #[test]
+    fn the_inbox_summarises_worktrees_across_repositories() {
+        let fleet = fleet();
+        let one_linked = fleet.one.path().with_extension("linked");
+        let two_linked = fleet.two.path().with_extension("linked");
+        let missing = fleet.one.path().with_extension("missing");
+        let inbox = dots_review::inbox(
+            &[
+                one_linked.clone(),
+                fleet.one.path().join(".git"),
+                fleet.two.path().to_owned(),
+                missing.clone(),
+            ],
+            false,
+        );
+        assert_eq!(inbox.schema, SCHEMA);
+        let paths: Vec<_> = inbox
+            .worktrees
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect();
+        assert_eq!(
+            paths,
+            [one_linked.clone(), two_linked.clone()],
+            "clean worktrees without reviews are left out; the one waiting on the user leads"
+        );
+        let skipped: Vec<_> = inbox
+            .skipped
+            .iter()
+            .map(|skipped| skipped.path.clone())
+            .collect();
+        assert_eq!(skipped, [missing]);
+
+        let first = &inbox.worktrees[0];
+        assert_eq!(first.repository, fleet.one.path().join(".git"));
+        assert_eq!(first.branch.as_deref(), Some("linked"));
+        assert_eq!(first.basis.reference, "main");
+        assert_eq!(first.base, fleet.one.git(&["rev-parse", "main"]));
+        assert_eq!(first.diff.files, 3, "src/lib.rs, seen.md and new.md");
+        assert_eq!((first.diff.added, first.diff.removed), (4, 1));
+        let review = first.review.as_ref().unwrap();
+        assert_eq!(review.id, fleet.id);
+        assert_eq!(review.owner.as_deref(), Some("pi-agent"));
+        assert_eq!(review.waiting, ["t1", "t3"]);
+        assert_eq!(review.drafts, 1);
+        assert_eq!(
+            review.changed_since_looked.as_deref(),
+            Some(&["new.md".to_owned(), "src/lib.rs".to_owned()][..])
+        );
+        assert_eq!(first.other_reviews, 0);
+
+        let second = &inbox.worktrees[1];
+        assert!(second.review.is_none());
+        assert_eq!(
+            (second.diff.files, second.diff.added, second.diff.removed),
+            (1, 3, 0)
+        );
+
+        let everything = dots_review::inbox(
+            &[fleet.one.path().to_owned(), fleet.two.path().to_owned()],
+            true,
+        );
+        assert_eq!(everything.worktrees.len(), 4);
+        assert!(everything.skipped.is_empty());
+    }
+
+    /// Every file under `roots` with its size and modification time, and the
+    /// refs of each repository.
+    fn state(roots: &[&Path]) -> Vec<String> {
+        fn walk(path: &Path, out: &mut Vec<String>) {
+            let metadata = fs::symlink_metadata(path).unwrap();
+            out.push(format!(
+                "{} {} {:?}",
+                path.display(),
+                metadata.len(),
+                metadata.modified().unwrap()
+            ));
+            if metadata.is_dir() {
+                let mut entries: Vec<_> = fs::read_dir(path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .collect();
+                entries.sort();
+                for entry in entries {
+                    walk(&entry, out);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for root in roots {
+            walk(root, &mut out);
+        }
+        out
+    }
+
+    #[test]
+    fn the_inbox_writes_nothing() {
+        let fleet = fleet();
+        let one_linked = fleet.one.path().with_extension("linked");
+        let two_linked = fleet.two.path().with_extension("linked");
+        let roots = [fleet.one.path(), &one_linked, fleet.two.path(), &two_linked];
+        let before = state(&roots);
+        let refs = (
+            fleet.one.git(&["for-each-ref"]),
+            fleet.two.git(&["for-each-ref"]),
+        );
+        let inbox = dots_review::inbox(
+            &[fleet.one.path().to_owned(), fleet.two.path().to_owned()],
+            true,
+        );
+        assert_eq!(inbox.worktrees.len(), 4);
+        assert_eq!(state(&roots), before);
+        assert_eq!(
+            (
+                fleet.one.git(&["for-each-ref"]),
+                fleet.two.git(&["for-each-ref"])
+            ),
+            refs
+        );
     }
 }

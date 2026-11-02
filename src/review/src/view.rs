@@ -55,14 +55,12 @@ pub(crate) struct Frame<'a> {
 /// The presets with changes to show at `revision`.
 pub(crate) fn available(git: &Git, revision: &Revision) -> Result<Vec<Preset>> {
     let mut presets = vec![Preset::Everything];
-    if let (true, Some(commit)) = (revision.includes_worktree, &revision.head_commit) {
-        let committed = git.object(commit, "tree")?;
-        if committed != revision.head {
-            presets.push(Preset::Uncommitted);
-        }
-        if git.object(&revision.base, "tree")? != committed {
-            presets.push(Preset::Committed);
-        }
+    let committed = git.object(&revision.head_commit, "tree")?;
+    if committed != revision.head {
+        presets.push(Preset::Uncommitted);
+    }
+    if git.object(&revision.base, "tree")? != committed {
+        presets.push(Preset::Committed);
     }
     Ok(presets)
 }
@@ -79,26 +77,15 @@ impl<'a> Frame<'a> {
         if !available.contains(&preset) {
             let names: Vec<&str> = available.iter().map(|preset| preset.name()).collect();
             return Err(Error::Invalid(format!(
-                "the {} view shows nothing at this revision{}; available: {}",
+                "the {} view shows nothing at this revision; available: {}",
                 preset.name(),
-                if revision.includes_worktree {
-                    ""
-                } else {
-                    " (it covers committed changes only)"
-                },
                 names.join(", ")
             )));
         }
-        // Availability beyond `everything` implies a head commit.
-        let commit = || {
-            revision.head_commit.clone().ok_or_else(|| {
-                Error::Invalid("this revision has no head commit to view against".into())
-            })
-        };
+        let commit = revision.head_commit.clone();
         let (base, head, own, replaced) = match preset {
             Preset::Everything => (revision.base.clone(), revision.snapshot.clone(), None, None),
             Preset::Uncommitted => {
-                let commit = commit()?;
                 let change = Change::read(git, &commit, &revision.head, 3)?;
                 let replaced = (Side::Old, revision.base.clone(), commit.clone());
                 (
@@ -109,7 +96,6 @@ impl<'a> Frame<'a> {
                 )
             }
             Preset::Committed => {
-                let commit = commit()?;
                 let change = Change::read(git, &revision.base, &commit, 3)?;
                 let replaced = (Side::New, revision.head.clone(), commit.clone());
                 (revision.base.clone(), commit, Some(change), Some(replaced))

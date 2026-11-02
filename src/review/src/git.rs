@@ -50,6 +50,113 @@ impl Git {
         }
     }
 
+    /// The canonical common Git directory of the repository containing
+    /// `directory`, which may be a Git directory itself.
+    pub(crate) fn common_dir(directory: &Path) -> Result<PathBuf> {
+        let output = run(
+            directory,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            &[],
+            SMALL,
+            "resolve repository",
+        )?;
+        let common = PathBuf::from(utf8(output, "repository path")?.trim_end_matches('\n'));
+        std::fs::canonicalize(&common).map_err(|source| Error::Io {
+            operation: "resolve repository",
+            path: common,
+            source,
+        })
+    }
+
+    /// The worktrees of the repository whose common Git directory is
+    /// `common`, the primary one first; bare and prunable entries are left
+    /// out.
+    pub(crate) fn worktrees(common: &Path) -> Result<Vec<Listed>> {
+        let output = run(
+            common,
+            &["worktree", "list", "--porcelain", "-z"],
+            &[],
+            DIFF_LIMIT,
+            "list worktrees",
+        )?;
+        let text = utf8(output, "worktree list")?;
+        let mut listed = Vec::new();
+        let mut current: Option<(Listed, bool)> = None;
+        for field in text.split('\0') {
+            if field.is_empty() {
+                if let Some((entry, true)) = current.take() {
+                    listed.push(entry);
+                }
+                continue;
+            }
+            let (key, value) = field.split_once(' ').unwrap_or((field, ""));
+            if key == "worktree" {
+                if let Some((entry, true)) = current.take() {
+                    listed.push(entry);
+                }
+                let entry = Listed {
+                    path: PathBuf::from(value),
+                    head: None,
+                    branch: None,
+                };
+                current = Some((entry, true));
+                continue;
+            }
+            let Some((entry, usable)) = current.as_mut() else {
+                continue;
+            };
+            match key {
+                // Git's all-zero id: a branch with no commits yet.
+                "HEAD" if !value.bytes().all(|byte| byte == b'0') => {
+                    entry.head = Some(value.to_owned());
+                }
+                "branch" => {
+                    entry.branch = Some(
+                        value
+                            .strip_prefix("refs/heads/")
+                            .unwrap_or(value)
+                            .to_owned(),
+                    );
+                }
+                "bare" | "prunable" => *usable = false,
+                _ => {}
+            }
+        }
+        if let Some((entry, true)) = current {
+            listed.push(entry);
+        }
+        Ok(listed)
+    }
+
+    /// The checkout whose working tree is `toplevel`, without asking Git: its
+    /// own Git directory is `toplevel/.git`, or the one a linked worktree's
+    /// `.git` file names.
+    pub(crate) fn checkout(toplevel: &Path, shared_dir: &Path) -> Result<Self> {
+        let dot_git = toplevel.join(".git");
+        let own_dir = if dot_git.is_dir() {
+            dot_git
+        } else {
+            let text = std::fs::read_to_string(&dot_git).map_err(|source| Error::Io {
+                operation: "read worktree link",
+                path: dot_git.clone(),
+                source,
+            })?;
+            let named = text
+                .strip_prefix("gitdir: ")
+                .map(str::trim_end)
+                .ok_or_else(|| Error::Git {
+                    operation: "read worktree link",
+                    message: format!("{} does not name a Git directory", dot_git.display()),
+                })?;
+            toplevel.join(named)
+        };
+        Ok(Self {
+            toplevel: toplevel.to_owned(),
+            own_dir,
+            shared_dir: shared_dir.to_owned(),
+        })
+    }
+
     /// The object id `spec` names, peeled to `kind` (`commit` or `tree`).
     pub(crate) fn object(&self, spec: &str, kind: &str) -> Result<String> {
         if spec.starts_with('-') {
@@ -103,6 +210,180 @@ impl Git {
             Err(Error::Git { message, .. }) if message.is_empty() => Ok(None),
             Err(error) => Err(error),
         }
+    }
+
+    /// Each local branch's upstream and each remote's default branch: one
+    /// line per ref of `refname NUL symref NUL objectname NUL upstream NUL
+    /// upstream:remoteref`.
+    pub(crate) fn base_refs(&self) -> Result<String> {
+        let output = self.git(
+            &[
+                "for-each-ref",
+                "--format=%(refname)%00%(symref)%00%(objectname)%00%(upstream)%00%(upstream:remoteref)",
+                "refs/heads/",
+                "refs/remotes/*/HEAD",
+            ],
+            DIFF_LIMIT,
+            "read branches",
+        )?;
+        utf8(output, "branches")
+    }
+
+    /// How many commits `to` reaches that `from` does not.
+    pub(crate) fn commits_between(&self, from: &str, to: &str) -> Result<u64> {
+        let output = self.git(
+            &["rev-list", "--count", &format!("{from}..{to}")],
+            SMALL,
+            "count commits",
+        )?;
+        utf8(output, "commit count")?
+            .trim()
+            .parse()
+            .map_err(|_| Error::Git {
+                operation: "count commits",
+                message: "rev-list printed no count".into(),
+            })
+    }
+
+    /// `git diff --numstat -z` from `commit` to the working tree's tracked
+    /// files, renames off.
+    pub(crate) fn numstat(&self, commit: &str) -> Result<Vec<u8>> {
+        self.git(
+            &[
+                "diff",
+                "--numstat",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                commit,
+                "--",
+            ],
+            DIFF_LIMIT,
+            "measure changes",
+        )
+    }
+
+    /// Untracked paths that are not ignored, every file listed: `git status`
+    /// names untracked directories whole and quickly, and only those are
+    /// listed file by file.
+    pub(crate) fn untracked(&self) -> Result<Vec<String>> {
+        let status = self.git(
+            &[
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--untracked-files=normal",
+                "--ignore-submodules=all",
+            ],
+            DIFF_LIMIT,
+            "list untracked files",
+        )?;
+        let mut files = Vec::new();
+        let mut directories = Vec::new();
+        for entry in status.split(|byte| *byte == 0) {
+            let Some(path) = entry.strip_prefix(b"? ") else {
+                continue;
+            };
+            let path = String::from_utf8(path.to_vec()).map_err(|_| Error::Git {
+                operation: "list untracked files",
+                message: "path is not UTF-8".into(),
+            })?;
+            if path.ends_with('/') {
+                directories.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+        if !directories.is_empty() {
+            let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z", "--"];
+            args.extend(directories.iter().map(String::as_str));
+            let listed = self.git(&args, DIFF_LIMIT, "list untracked files")?;
+            files.extend(paths(&listed)?);
+        }
+        files.sort();
+        Ok(files)
+    }
+
+    /// Tracked paths whose working-tree content differs from `commit`'s.
+    /// A path of `commit` that is untracked in the working tree counts as
+    /// removed.
+    pub(crate) fn changed_since(&self, commit: &str) -> Result<Vec<String>> {
+        let output = self.git(
+            &[
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                commit,
+                "--",
+            ],
+            DIFF_LIMIT,
+            "compare with the working tree",
+        )?;
+        paths(&output)
+    }
+
+    /// Paths that differ between two trees.
+    pub(crate) fn changed_between(&self, from: &str, to: &str) -> Result<Vec<String>> {
+        let output = self.git(
+            &[
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                from,
+                to,
+                "--",
+            ],
+            DIFF_LIMIT,
+            "diff revisions",
+        )?;
+        paths(&output)
+    }
+
+    /// The blob id of each of `files` in `tree`, by path; absent paths are
+    /// missing from the map.
+    pub(crate) fn blobs(
+        &self,
+        tree: &str,
+        files: &[String],
+    ) -> Result<std::collections::BTreeMap<String, String>> {
+        let mut blobs = std::collections::BTreeMap::new();
+        for chunk in files.chunks(256) {
+            let mut args = vec!["ls-tree", "-r", "-z", "--full-tree", tree, "--"];
+            args.extend(chunk.iter().map(String::as_str));
+            let output = self.git(&args, DIFF_LIMIT, "read tree")?;
+            for entry in output.split(|byte| *byte == 0) {
+                let Some(tab) = entry.iter().position(|byte| *byte == b'\t') else {
+                    continue;
+                };
+                let (Ok(info), Ok(path)) = (
+                    std::str::from_utf8(&entry[..tab]),
+                    std::str::from_utf8(&entry[tab + 1..]),
+                ) else {
+                    continue;
+                };
+                if let Some(id) = info.split(' ').nth(2) {
+                    blobs.insert(path.to_owned(), id.to_owned());
+                }
+            }
+        }
+        Ok(blobs)
+    }
+
+    /// The blob id each of `files` in the working tree would get, without
+    /// writing it.
+    pub(crate) fn hash_files(&self, files: &[String]) -> Result<Vec<String>> {
+        let mut ids = Vec::with_capacity(files.len());
+        for chunk in files.chunks(256) {
+            let mut args = vec!["hash-object", "--"];
+            args.extend(chunk.iter().map(String::as_str));
+            let output = self.git(&args, SMALL, "hash files")?;
+            ids.extend(utf8(output, "object ids")?.lines().map(str::to_owned));
+        }
+        Ok(ids)
     }
 
     /// The working tree, tracked and untracked files that are not ignored, as
@@ -167,7 +448,7 @@ impl Git {
         id: &str,
         base: &str,
         head: &str,
-        head_commit: Option<&str>,
+        head_commit: &str,
     ) -> Result<Option<String>> {
         if self.object(&pin_ref(id), "commit").is_ok() {
             return Ok(None);
@@ -182,7 +463,7 @@ impl Git {
         id: &str,
         base: &str,
         head: &str,
-        head_commit: Option<&str>,
+        head_commit: &str,
     ) -> Result<String> {
         let previous = self.object(&pin_ref(id), "commit").ok();
         self.commit_pin(id, previous.as_deref(), base, head, head_commit)
@@ -194,10 +475,10 @@ impl Git {
         previous: Option<&str>,
         base: &str,
         head: &str,
-        head_commit: Option<&str>,
+        head_commit: &str,
     ) -> Result<String> {
         let mut args = vec!["commit-tree", "--no-gpg-sign", head];
-        for parent in previous.into_iter().chain([base]).chain(head_commit) {
+        for parent in previous.into_iter().chain([base, head_commit]) {
             args.extend(["-p", parent]);
         }
         // A nonce keeps every pin commit distinct, so a conditional release
@@ -343,6 +624,16 @@ impl Git {
     }
 }
 
+/// One worktree as `git worktree list` names it.
+#[derive(Debug)]
+pub(crate) struct Listed {
+    pub(crate) path: PathBuf,
+    /// Its HEAD commit; `None` before the first commit.
+    pub(crate) head: Option<String>,
+    /// `None` when HEAD is detached.
+    pub(crate) branch: Option<String>,
+}
+
 const PIN_NAMESPACE: &str = "refs/dots/reviews/";
 
 fn pin_ref(id: &str) -> String {
@@ -376,6 +667,20 @@ fn run(
         });
     }
     Ok(output.stdout)
+}
+
+/// NUL-separated UTF-8 paths.
+fn paths(bytes: &[u8]) -> Result<Vec<String>> {
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            String::from_utf8(path.to_vec()).map_err(|_| Error::Git {
+                operation: "read paths",
+                message: "path is not UTF-8".into(),
+            })
+        })
+        .collect()
 }
 
 fn utf8(bytes: Vec<u8>, what: &str) -> Result<String> {

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// Version of the review file and of the JSON this crate emits.
-pub const SCHEMA: u32 = 3;
+pub const SCHEMA: u32 = 4;
 
 /// The author name reserved for the human reviewing in the viewer.
 pub const USER: &str = "user";
@@ -36,17 +36,66 @@ impl AuthorKind {
 }
 
 /// What a review covers, as the user or agent asked for it. Re-resolving it
-/// later yields the revision a refresh compares against.
+/// later yields the revision a refresh compares against. Every target runs
+/// through the working tree, tracked and untracked files that are not
+/// ignored, over the HEAD commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TargetSpec {
-    /// Uncommitted changes, tracked and untracked, against HEAD.
-    Worktree,
-    /// Everything since the merge base of `reference` and HEAD, through the
-    /// working tree.
+    /// The worktree's own review: its branch against its base, chosen again
+    /// at every refresh by the rule [`BaseReason`] describes, or against the
+    /// merge base with `base` when the user or agent named one.
+    Worktree { base: Option<String> },
+    /// Uncommitted changes against HEAD.
+    Uncommitted,
+    /// Everything since the merge base of `reference` and HEAD.
     Base { reference: String },
-    /// Committed changes from `from` to `to`.
-    Range { from: String, to: String },
+}
+
+/// Why a revision's base is what it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BaseReason {
+    /// An uncommitted-changes review compares with HEAD.
+    Head,
+    /// The review was started against this reference.
+    Given,
+    /// The worktree review's base was set explicitly.
+    Override,
+    /// The branch's upstream, which is another branch than its own name on
+    /// a remote, such as the branch a stacked branch builds on.
+    Upstream,
+    /// The default-branch candidate nearest HEAD: each remote's default
+    /// branch (its `HEAD`) and the local `main`, else `master`.
+    Default,
+    /// HEAD is on the default branch, so the review covers uncommitted
+    /// changes against HEAD.
+    DefaultBranch,
+    /// No default branch was found, so the review covers uncommitted
+    /// changes against HEAD.
+    NoDefault,
+}
+
+/// How a revision's base was chosen: the merge base of HEAD and `reference`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Basis {
+    /// A ref such as `upstream/main`, a revision as given, or `HEAD`.
+    pub reference: String,
+    pub reason: BaseReason,
+    /// Every default-branch candidate considered, nearest first; empty
+    /// unless the default rule ran.
+    pub candidates: Vec<Candidate>,
+}
+
+/// One default-branch candidate and how far HEAD is from it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Candidate {
+    /// Such as `upstream/main`, `origin/main` or `main`.
+    pub reference: String,
+    /// Commits reachable from HEAD but not from the candidate.
+    pub commits: u64,
 }
 
 /// The worktree a review belongs to, as it was when the review started.
@@ -65,12 +114,12 @@ pub struct Worktree {
 pub struct Revision {
     /// Commit the change is compared against.
     pub base: String,
-    /// Tree object holding the reviewed content.
+    /// How `base` was chosen.
+    pub basis: Basis,
+    /// Tree object holding the reviewed content: the working tree.
     pub head: String,
-    /// Commit at the head, when the head is a commit or a working tree over one.
-    pub head_commit: Option<String>,
-    /// Whether `head` includes uncommitted working-tree content.
-    pub includes_worktree: bool,
+    /// The HEAD commit the working tree was over.
+    pub head_commit: String,
     /// Pin commit whose tree is `head`, so viewers can diff `base..snapshot`.
     pub snapshot: String,
     pub at: i64,
@@ -316,6 +365,23 @@ impl Thread {
             .first()
             .is_some_and(|comment| AuthorKind::of(&comment.author) == AuthorKind::User)
     }
+
+    /// Whether the thread waits on the user: it is not settled (it is open,
+    /// accepted or outdated, not dismissed, fixed or posted) and its latest
+    /// comment other than refresh's own is not the user's. An agent's new
+    /// finding waits on the user, and so does a user's thread an agent has
+    /// answered; a user's comment nobody has answered yet does not.
+    pub fn waits_on_user(&self) -> bool {
+        matches!(
+            self.status,
+            Status::Open | Status::Accepted | Status::Outdated
+        ) && self
+            .comments
+            .iter()
+            .rev()
+            .find(|comment| AuthorKind::of(&comment.author) != AuthorKind::Refresh)
+            .is_some_and(|comment| AuthorKind::of(&comment.author) == AuthorKind::Agent)
+    }
 }
 
 /// One of the user's pending comments: a new thread, or a reply to a thread
@@ -467,7 +533,7 @@ pub struct ReviewedFile {
 pub enum Preset {
     /// Base to head: the whole change.
     Everything,
-    /// The HEAD commit to the working tree; only when the revision includes it.
+    /// The HEAD commit to the working tree.
     Uncommitted,
     /// Base to the HEAD commit.
     Committed,

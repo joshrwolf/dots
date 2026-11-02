@@ -1,6 +1,11 @@
 //! Reviews of a repository's changes: exact revisions, threads anchored to
 //! the reviewed diff, and carry-forward when the change moves.
 //!
+//! Each worktree has one living review of its branch against its base,
+//! found or created and refreshed by [`Reviews::open_worktree`]; agents may
+//! also start reviews of other targets. [`inbox`] summarises the worktrees
+//! of many repositories without changing anything.
+//!
 //! A review names its content by object id: a base commit and a head tree,
 //! with uncommitted work captured as a tree, so every thread's lines refer
 //! to bytes that can be read back with `git show HEAD_TREE:PATH`. Review
@@ -18,8 +23,10 @@
 //! viewer's ways of looking at the current revision.
 //! Callers pass the time explicitly.
 
+mod base;
 mod diff;
 mod git;
+mod inbox;
 mod model;
 mod store;
 mod view;
@@ -30,10 +37,12 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+pub use inbox::{DiffSize, Inbox, InboxEntry, ReviewSignals, Skipped, inbox};
 pub use model::{
-    Anchor, AuthorKind, ChangedFile, Comment, Draft, FileStatus, Identity, Lines, Looked,
-    NewThread, Preset, Published, REFRESH_AUTHOR, Review, ReviewedFile, Revision, RuleCitation,
-    SCHEMA, Severity, Side, Status, Submission, TargetSpec, Thread, USER, Worktree,
+    Anchor, AuthorKind, BaseReason, Basis, Candidate, ChangedFile, Comment, Draft, FileStatus,
+    Identity, Lines, Looked, NewThread, Preset, Published, REFRESH_AUTHOR, Review, ReviewedFile,
+    Revision, RuleCitation, SCHEMA, Severity, Side, Status, Submission, TargetSpec, Thread, USER,
+    Worktree,
 };
 pub use view::View;
 
@@ -51,7 +60,7 @@ pub enum Error {
     #[error("no review {0} in this repository; dots review list --all shows every review")]
     NotFound(String),
     #[error(
-        "no reviews in this worktree; start one with dots review start or name a review id from dots review list --all"
+        "no reviews in this worktree; open its review with dots review open or name a review id from dots review list --all"
     )]
     NoReviews,
     #[error("review {id} has no thread {thread}")]
@@ -146,6 +155,34 @@ pub struct Overview {
     /// The preset asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub view: Option<View>,
+    /// What opening the worktree's review did; only from
+    /// [`Reviews::open_worktree`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opened: Option<Opened>,
+}
+
+/// What [`Reviews::open_worktree`] did before showing the review.
+#[derive(Debug, Serialize)]
+pub struct Opened {
+    /// The review did not exist and was created.
+    pub created: bool,
+    /// An existing review moved to a new revision.
+    pub changed: bool,
+    /// As for [`Refreshed`].
+    pub carried: Vec<String>,
+    pub outdated: Vec<String>,
+    pub delta: Option<Delta>,
+}
+
+/// How [`Reviews::open_worktree`] chooses the worktree review's base.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BaseChoice {
+    /// Whatever the review already uses; the default rule for a new one.
+    Keep,
+    /// The default rule, dropping a base set earlier.
+    Default,
+    /// The merge base with this reference, from now on.
+    Reference(String),
 }
 
 /// What [`Reviews::show`] includes beyond the review itself.
@@ -220,51 +257,64 @@ pub struct Delta {
     pub diff_command: String,
 }
 
-impl TargetSpec {
-    /// `FROM..TO`, both non-empty; `...` is refused because a range review
-    /// compares exactly `FROM` with `TO`.
-    pub fn range(value: &str) -> Result<Self> {
-        match value.split_once("..") {
-            Some((from, to)) if !from.is_empty() && !to.is_empty() && !to.starts_with('.') => {
-                Ok(Self::Range {
-                    from: from.to_owned(),
-                    to: to.to_owned(),
-                })
+impl fmt::Display for TargetSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Worktree { base: None } => f.write_str("this worktree's branch against its base"),
+            Self::Worktree {
+                base: Some(reference),
+            } => write!(f, "this worktree's branch against {reference}"),
+            Self::Uncommitted => f.write_str("uncommitted changes against HEAD"),
+            Self::Base { reference } => {
+                write!(f, "changes since {reference}, with uncommitted work")
             }
-            _ => Err(Error::Invalid(format!(
-                "range {value:?} must be FROM..TO with both revisions named"
-            ))),
         }
     }
 }
 
-impl fmt::Display for TargetSpec {
+impl fmt::Display for Basis {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Worktree => f.write_str("uncommitted changes against HEAD"),
-            Self::Base { reference } => {
-                write!(f, "changes since {reference}, with uncommitted work")
-            }
-            Self::Range { from, to } => write!(f, "{from}..{to}"),
+        let reason = match self.reason {
+            BaseReason::Head => "uncommitted changes",
+            BaseReason::Given => "as given",
+            BaseReason::Override => "set for this review",
+            BaseReason::Upstream => "the branch's upstream",
+            BaseReason::Default => "nearest default branch",
+            BaseReason::DefaultBranch => "on the default branch: uncommitted changes",
+            BaseReason::NoDefault => "no default branch found: uncommitted changes",
+        };
+        write!(f, "{} ({reason}", self.reference)?;
+        for (position, candidate) in self.candidates.iter().enumerate() {
+            let (label, unit) = if position == 0 {
+                ("; HEAD is ", " commit(s)")
+            } else {
+                (", ", "")
+            };
+            write!(
+                f,
+                "{label}{}{unit} past {}",
+                candidate.commits, candidate.reference
+            )?;
         }
+        f.write_str(")")
     }
 }
 
 /// The content a target resolves to, before it is pinned.
 struct Resolved {
     base: String,
+    basis: Basis,
     head: String,
-    head_commit: Option<String>,
-    includes_worktree: bool,
+    head_commit: String,
 }
 
 impl Resolved {
     fn revision(&self, snapshot: String, at: i64) -> Revision {
         Revision {
             base: self.base.clone(),
+            basis: self.basis.clone(),
             head: self.head.clone(),
             head_commit: self.head_commit.clone(),
-            includes_worktree: self.includes_worktree,
             snapshot,
             at,
         }
@@ -295,8 +345,9 @@ impl Reviews {
         self.store.directory()
     }
 
-    /// Start a review of `target` in this worktree on behalf of `owner`, the
-    /// session to tell about replies. Refuses an empty change.
+    /// Start a review of `target`, another than the worktree's own, in this
+    /// worktree on behalf of `owner`, the session to tell about submissions.
+    /// Refuses an empty change.
     pub fn start(
         &self,
         target: TargetSpec,
@@ -304,6 +355,11 @@ impl Reviews {
         owner: Option<String>,
         now: i64,
     ) -> Result<Overview> {
+        if matches!(target, TargetSpec::Worktree { .. }) {
+            return Err(Error::Invalid(
+                "the worktree's own review is opened with dots review open, never started".into(),
+            ));
+        }
         if let Some(profile) = &profile {
             name("profile", profile).map_err(Error::Invalid)?;
         }
@@ -311,56 +367,161 @@ impl Reviews {
             text("owner", owner, 200, false).map_err(Error::Invalid)?;
         }
         self.store.prepare()?;
+        let (review, (_, change)) = self.store.create(
+            || self.new_review(target, profile, owner, now),
+            |review, (resolved, _)| self.pin_first(review, resolved, now),
+        )?;
+        self.release_orphans()?;
+        let file = self.store.path(&review.id);
+        self.overview(review, file, &change, ShowOptions::default())
+    }
+
+    /// Find this worktree's own review, or create it, and bring it to the
+    /// working tree as it is now, as [`Reviews::refresh`] does; then show it
+    /// as [`Reviews::show`] does. `base` sets or drops the base the review
+    /// compares against, kept for later refreshes. An `owner` becomes the
+    /// review's owner: the session working in the worktree now. Refuses to
+    /// create a review of an empty change.
+    pub fn open_worktree(
+        &self,
+        base: BaseChoice,
+        owner: Option<String>,
+        options: ShowOptions,
+        now: i64,
+    ) -> Result<Overview> {
+        if let Some(owner) = &owner {
+            text("owner", owner, 200, false).map_err(Error::Invalid)?;
+        }
+        if let BaseChoice::Reference(reference) = &base {
+            self.git.object(reference, "commit")?;
+        }
+        self.store.prepare()?;
+        let found = self.store.find_or_create(
+            |review| matches!(review.target, TargetSpec::Worktree { .. }),
+            || {
+                let base = match &base {
+                    BaseChoice::Reference(reference) => Some(reference.clone()),
+                    BaseChoice::Keep | BaseChoice::Default => None,
+                };
+                self.new_review(TargetSpec::Worktree { base }, None, owner.clone(), now)
+            },
+            |review, (resolved, _)| self.pin_first(review, resolved, now),
+        )?;
+        let (review, change, opened) = match found {
+            store::Found::Created(review, (_, change)) => {
+                self.release_orphans()?;
+                let opened = Opened {
+                    created: true,
+                    changed: false,
+                    carried: Vec::new(),
+                    outdated: Vec::new(),
+                    delta: None,
+                };
+                (*review, change, opened)
+            }
+            store::Found::Existing(id) => self.store.update(&id, |review, sequence| {
+                let TargetSpec::Worktree { base: kept } = &mut review.target else {
+                    unreachable!("found by its worktree target");
+                };
+                let mut adjusted = match base {
+                    BaseChoice::Keep => false,
+                    BaseChoice::Default => kept.take().is_some(),
+                    BaseChoice::Reference(reference) => {
+                        kept.replace(reference.clone()) != Some(reference)
+                    }
+                };
+                // The review follows its worktree wherever it moves and
+                // whichever branch it has checked out.
+                let worktree = Worktree {
+                    path: self.git.toplevel.clone(),
+                    branch: self.git.branch()?,
+                };
+                adjusted |= review.worktree != worktree;
+                review.worktree = worktree;
+                if owner.is_some() && review.owner != owner {
+                    review.owner = owner;
+                    adjusted = true;
+                }
+                let (refreshed, change) =
+                    Self::advance(&self.git, self.store.directory(), review, sequence, now)?;
+                if adjusted && !refreshed.changed {
+                    review.touch(now, sequence);
+                }
+                let opened = Opened {
+                    created: false,
+                    changed: refreshed.changed,
+                    carried: refreshed.carried,
+                    outdated: refreshed.outdated,
+                    delta: refreshed.delta,
+                };
+                Ok((review.clone(), change, opened))
+            })?,
+        };
+        let file = self.store.path(&review.id);
+        let mut overview = self.overview(review, file, &change, options)?;
+        overview.opened = Some(opened);
+        Ok(overview)
+    }
+
+    /// A new review of `target` in this worktree at its first revision, not
+    /// yet pinned, with the change it covers; refuses an empty change.
+    fn new_review(
+        &self,
+        target: TargetSpec,
+        profile: Option<String>,
+        owner: Option<String>,
+        now: i64,
+    ) -> Result<(Review, (Resolved, Change))> {
         let resolved = resolve(&self.git, self.store.directory(), &target)?;
         let change = Change::read(&self.git, &resolved.base, &resolved.head, 3)?;
         if change.raw.is_empty() {
             return Err(Error::NothingToReview(format!(
-                "{target} resolves to no changes ({}..{})",
+                "{target} resolves to no changes ({}..{}); base {}",
                 short(&resolved.base),
-                short(&resolved.head)
+                short(&resolved.head),
+                resolved.basis
             )));
         }
         let worktree = Worktree {
             path: self.git.toplevel.clone(),
             branch: self.git.branch()?,
         };
-        let review = self.store.create(
-            Review {
-                schema: SCHEMA,
-                id: String::new(),
-                target,
-                profile,
-                owner,
-                worktree,
-                created_at: now,
-                updated_at: now,
-                sequence: 0,
-                revisions: Vec::new(),
-                threads: Vec::new(),
-                next_thread: 1,
-                drafts: Vec::new(),
-                next_draft: 1,
-                submissions: Vec::new(),
-                reviewed: BTreeMap::new(),
-                looked: None,
-            },
-            |review| {
-                let Some(snapshot) = self.git.pin_new(
-                    &review.id,
-                    &resolved.base,
-                    &resolved.head,
-                    resolved.head_commit.as_deref(),
-                )?
-                else {
-                    return Ok(false);
-                };
-                review.revisions = vec![resolved.revision(snapshot, now)];
-                Ok(true)
-            },
-        )?;
-        self.release_orphans()?;
-        let file = self.store.path(&review.id);
-        self.overview(review, file, &change, ShowOptions::default())
+        let review = Review {
+            schema: SCHEMA,
+            id: String::new(),
+            target,
+            profile,
+            owner,
+            worktree,
+            created_at: now,
+            updated_at: now,
+            sequence: 0,
+            revisions: Vec::new(),
+            threads: Vec::new(),
+            next_thread: 1,
+            drafts: Vec::new(),
+            next_draft: 1,
+            submissions: Vec::new(),
+            reviewed: BTreeMap::new(),
+            looked: None,
+        };
+        Ok((review, (resolved, change)))
+    }
+
+    /// Pin new review `review`'s first revision, `resolved`, under its id;
+    /// false when another review owns the id.
+    fn pin_first(&self, review: &mut Review, resolved: &Resolved, now: i64) -> Result<bool> {
+        let Some(snapshot) = self.git.pin_new(
+            &review.id,
+            &resolved.base,
+            &resolved.head,
+            &resolved.head_commit,
+        )?
+        else {
+            return Ok(false);
+        };
+        review.revisions = vec![resolved.revision(snapshot, now)];
+        Ok(true)
     }
 
     /// The id of this worktree's most recently updated review.
@@ -782,92 +943,117 @@ impl Reviews {
         let store = self.locate(id)?;
         store.update(id, |review, sequence| {
             let git = worktree_git(review, &store)?;
-            let previous = review.current().clone();
-            let next = resolve(&git, store.directory(), &review.target)?;
-            // The HEAD commit bounds the presets, so committing the captured
-            // bytes as they are is a new revision too.
-            if next.base == previous.base
-                && next.head == previous.head
-                && next.head_commit == previous.head_commit
-            {
-                let change = Change::read(&git, &previous.base, &previous.head, 3)?;
-                return Ok(Refreshed {
-                    review: public(review.clone()),
-                    changed: false,
-                    carried: Vec::new(),
-                    outdated: Vec::new(),
-                    delta: None,
-                    files: change.files(),
-                });
-            }
-            let heads = Change::read(&git, &previous.head, &next.head, 0)?;
-            let bases = if next.base == previous.base {
-                Patch::default()
-            } else {
-                Patch::parse(&git.diff(&previous.base, &next.base, 0)?)?
-            };
-            let change = Change::read(&git, &next.base, &next.head, 3)?;
-            let snapshot = git.pin_next(id, &next.base, &next.head, next.head_commit.as_deref())?;
-            let next = next.revision(snapshot, now);
-            let current = review.revisions.len() - 1;
-            review.revisions.push(next.clone());
-            let carry = |anchor: &Option<Anchor>| match anchor {
-                None => Some(None),
-                Some(anchor) => carry(anchor, &heads.patch, &bases, &change).map(Some),
-            };
-            // A draft whose lines changed stays behind; submit refuses it.
-            for draft in &mut review.drafts {
-                if draft.thread.is_none()
-                    && draft.revision == current
-                    && let Some(anchor) = carry(&draft.anchor)
-                {
-                    draft.anchor = anchor;
-                    draft.revision = current + 1;
-                }
-            }
-            let (mut carried, mut outdated) = (Vec::new(), Vec::new());
-            for thread in &mut review.threads {
-                if thread.revision != current {
-                    continue;
-                }
-                let moved = carry(&thread.anchor);
-                // Dispositions follow their lines when they can; only live
-                // threads become outdated or count as carried.
-                let live = thread.status.live();
-                if let Some(anchor) = moved {
-                    thread.anchor = anchor;
-                    thread.revision = current + 1;
-                    if live {
-                        thread.updated_at = now;
-                        carried.push(thread.id.clone());
-                    }
-                } else if live {
-                    thread.updated_at = now;
-                    thread.status = Status::Outdated;
-                    thread.comments.push(Comment {
-                        author: REFRESH_AUTHOR.to_owned(),
-                        at: now,
-                        body: None,
-                        status: Some(Status::Outdated),
-                    });
-                    outdated.push(thread.id.clone());
-                }
-            }
-            review.touch(now, sequence);
-            Ok(Refreshed {
-                review: public(review.clone()),
-                changed: true,
-                carried,
-                outdated,
-                delta: Some(Delta {
-                    diff_command: Git::diff_command(&previous.head, &next.head),
-                    files: heads.files(),
-                    from: previous,
-                    to: next,
-                }),
-                files: change.files(),
-            })
+            Self::advance(&git, store.directory(), review, sequence, now)
+                .map(|(refreshed, _)| refreshed)
         })
+    }
+
+    /// Refresh `review`, taking `sequence` if it moves, in the worktree of
+    /// `git`, capturing the working tree under `scratch`; also returns the
+    /// change of its current revision.
+    fn advance(
+        git: &Git,
+        scratch: &Path,
+        review: &mut Review,
+        sequence: u64,
+        now: i64,
+    ) -> Result<(Refreshed, Change)> {
+        let id = review.id.clone();
+        let previous = review.current().clone();
+        let next = resolve(git, scratch, &review.target)?;
+        // The HEAD commit bounds the presets, so committing the captured
+        // bytes as they are is a new revision too.
+        if next.base == previous.base
+            && next.head == previous.head
+            && next.head_commit == previous.head_commit
+        {
+            // The same content, its base chosen for another reason now (a
+            // candidate moved): the current revision explains it so.
+            if next.basis != previous.basis {
+                if let Some(current) = review.revisions.last_mut() {
+                    current.basis = next.basis;
+                }
+                review.touch(now, sequence);
+            }
+            let change = Change::read(git, &previous.base, &previous.head, 3)?;
+            let refreshed = Refreshed {
+                review: public(review.clone()),
+                changed: false,
+                carried: Vec::new(),
+                outdated: Vec::new(),
+                delta: None,
+                files: change.files(),
+            };
+            return Ok((refreshed, change));
+        }
+        let heads = Change::read(git, &previous.head, &next.head, 0)?;
+        let bases = if next.base == previous.base {
+            Patch::default()
+        } else {
+            Patch::parse(&git.diff(&previous.base, &next.base, 0)?)?
+        };
+        let change = Change::read(git, &next.base, &next.head, 3)?;
+        let snapshot = git.pin_next(&id, &next.base, &next.head, &next.head_commit)?;
+        let next = next.revision(snapshot, now);
+        let current = review.revisions.len() - 1;
+        review.revisions.push(next.clone());
+        let carry = |anchor: &Option<Anchor>| match anchor {
+            None => Some(None),
+            Some(anchor) => carry(anchor, &heads.patch, &bases, &change).map(Some),
+        };
+        // A draft whose lines changed stays behind; submit refuses it.
+        for draft in &mut review.drafts {
+            if draft.thread.is_none()
+                && draft.revision == current
+                && let Some(anchor) = carry(&draft.anchor)
+            {
+                draft.anchor = anchor;
+                draft.revision = current + 1;
+            }
+        }
+        let (mut carried, mut outdated) = (Vec::new(), Vec::new());
+        for thread in &mut review.threads {
+            if thread.revision != current {
+                continue;
+            }
+            let moved = carry(&thread.anchor);
+            // Dispositions follow their lines when they can; only live
+            // threads become outdated or count as carried.
+            let live = thread.status.live();
+            if let Some(anchor) = moved {
+                thread.anchor = anchor;
+                thread.revision = current + 1;
+                if live {
+                    thread.updated_at = now;
+                    carried.push(thread.id.clone());
+                }
+            } else if live {
+                thread.updated_at = now;
+                thread.status = Status::Outdated;
+                thread.comments.push(Comment {
+                    author: REFRESH_AUTHOR.to_owned(),
+                    at: now,
+                    body: None,
+                    status: Some(Status::Outdated),
+                });
+                outdated.push(thread.id.clone());
+            }
+        }
+        review.touch(now, sequence);
+        let refreshed = Refreshed {
+            review: public(review.clone()),
+            changed: true,
+            carried,
+            outdated,
+            delta: Some(Delta {
+                diff_command: Git::diff_command(&previous.head, &next.head),
+                files: heads.files(),
+                from: previous,
+                to: next,
+            }),
+            files: change.files(),
+        };
+        Ok((refreshed, change))
     }
 
     /// Delete a review and release its pinned content.
@@ -973,6 +1159,7 @@ impl Reviews {
             files,
             diff_command,
             view,
+            opened: None,
         })
     }
 
@@ -1062,9 +1249,6 @@ impl Reviews {
 /// Largest comment body.
 const BODY_LIMIT: usize = 16 * 1024;
 
-/// Git for the worktree that owns `review`, whose files are in `store`. The
-/// worktree is found where the review recorded it and must still be the
-/// checkout whose Git directory holds the store.
 /// The current revision index of `review`, or [`Error::Moved`] when it is not
 /// `expected`, the revision a caller read.
 fn moved(id: &str, review: &Review, expected: Option<usize>) -> Result<usize> {
@@ -1079,6 +1263,9 @@ fn moved(id: &str, review: &Review, expected: Option<usize>) -> Result<usize> {
     }
 }
 
+/// Git for the worktree that owns `review`, whose files are in `store`. The
+/// worktree is found where the review recorded it and must still be the
+/// checkout whose Git directory holds the store.
 fn worktree_git(review: &Review, store: &Store) -> Result<Git> {
     let gone = || {
         Error::Invalid(format!(
@@ -1099,37 +1286,38 @@ fn worktree_git(review: &Review, store: &Store) -> Result<Git> {
 /// What `target` names now in the worktree of `git`, capturing uncommitted
 /// work with a temporary index under `scratch`.
 fn resolve(git: &Git, scratch: &Path, target: &TargetSpec) -> Result<Resolved> {
-    let head_commit = || {
-        git.head_commit()?.ok_or_else(|| {
-            Error::Invalid("HEAD has no commit yet; commit once before reviewing".into())
-        })
+    let head_commit = git.head_commit()?.ok_or_else(|| {
+        Error::Invalid("HEAD has no commit yet; commit once before reviewing".into())
+    })?;
+    let basis = |reference: &str, reason| Basis {
+        reference: reference.to_owned(),
+        reason,
+        candidates: Vec::new(),
     };
-    Ok(match target {
-        TargetSpec::Worktree => {
-            let head = head_commit()?;
-            Resolved {
-                base: head.clone(),
-                head: git.capture_worktree(scratch)?,
-                head_commit: Some(head),
-                includes_worktree: true,
-            }
+    let (base, basis) = match target {
+        TargetSpec::Worktree { base } => {
+            let chosen = base::Refs::read(git)?.choose(
+                git,
+                &head_commit,
+                git.branch()?.as_deref(),
+                base.as_deref(),
+            )?;
+            (chosen.base, chosen.basis)
         }
+        TargetSpec::Uncommitted => (head_commit.clone(), basis("HEAD", BaseReason::Head)),
         TargetSpec::Base { reference } => {
-            let reference = git.object(reference, "commit")?;
-            let head = head_commit()?;
-            Resolved {
-                base: git.merge_base(&reference, &head)?,
-                head: git.capture_worktree(scratch)?,
-                head_commit: Some(head),
-                includes_worktree: true,
-            }
+            let commit = git.object(reference, "commit")?;
+            (
+                git.merge_base(&commit, &head_commit)?,
+                basis(reference, BaseReason::Given),
+            )
         }
-        TargetSpec::Range { from, to } => Resolved {
-            base: git.object(from, "commit")?,
-            head: git.object(to, "tree")?,
-            head_commit: Some(git.object(to, "commit")?),
-            includes_worktree: false,
-        },
+    };
+    Ok(Resolved {
+        base,
+        basis,
+        head: git.capture_worktree(scratch)?,
+        head_commit,
     })
 }
 
@@ -1335,7 +1523,7 @@ fn hunk_list(patch: &Patch, changed: &str, side: Side) -> String {
     }
 }
 
-fn line_count(bytes: &[u8]) -> u32 {
+pub(crate) fn line_count(bytes: &[u8]) -> u32 {
     let newlines = bytes.split(|byte| *byte == b'\n').count() - 1;
     let trailing = usize::from(!bytes.is_empty() && !bytes.ends_with(b"\n"));
     u32::try_from(newlines + trailing).unwrap_or(u32::MAX)
