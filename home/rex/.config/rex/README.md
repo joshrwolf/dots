@@ -60,6 +60,9 @@ with Pi in the PR's worktree, in the checkout whose GitHub remote matches:
 the current repo, one zoxide knows, or the one at the repository's checkout
 path. When none exists, the new session first clones the repository to that
 path with `gh repo clone`; Go refuses when the path holds anything else.
+Worktrunk finds the PR in gh's default repository, so when that is another
+repository, such as a fork's parent, the start first makes the PR's
+repository the default with `gh repo set-default`.
 Type or paste a Linear issue ID or URL and press Ctrl+T to start Pi on it in
 a worktree whose branch is the lowercase ID, in the one repo with a branch
 for it, else the repo with the most branches for its team; when neither

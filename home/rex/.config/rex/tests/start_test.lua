@@ -12,7 +12,9 @@ local API = "/home/me/src/api"
 local ZOXIDE = "zoxide query --list"
 local HOME = "/home/me"
 local RULES = HOME .. "/.config/rex/checkouts"
-local CLONE = 'gh repo clone "$1" "$2" && cd "$2" && shift 2 && exec "$@"'
+local SET_DEFAULT = 'gh repo set-default "$1" && shift && exec "$@"'
+local CLONE =
+  'gh repo clone "$1" "$2" && cd "$2" && gh repo set-default "$1" && shift 2 && exec "$@"'
 -- Where the rules below place example/web and work-org/api.
 local WEB = HOME .. "/dev/personal/example/web"
 local WORK_API = HOME .. "/dev/work/api"
@@ -23,6 +25,21 @@ local REPOS = {
   { path = API, remotes = { "example/api", "fork/api" } },
   { path = "/home/me/src/café-notes", remotes = {} },
 }
+
+---`argv` run by `script` with `args` before it, as a PR start wraps worktrunk.
+---@param script string
+---@param args string[]
+---@param argv string[]
+---@return string[]
+local function wrapped(script, args, argv)
+  local out = { "zsh", "-c", script, "zsh" }
+  for _, list in ipairs({ args, argv }) do
+    for _, arg in ipairs(list) do
+      out[#out + 1] = arg
+    end
+  end
+  return out
+end
 
 ---@param dir string
 ---@return string
@@ -339,6 +356,72 @@ return {
     expect.equal(start.config_remotes(config), { "example/tool", "upstream/tool" })
   end,
 
+  ["gh's default repo is the remote it marked, or the repo it names"] = function()
+    -- As `gh repo clone` leaves a fork: its parent is the default.
+    local fork = table.concat({
+      '[remote "origin"]',
+      "\turl = git@github.com:me/project.git",
+      '[remote "upstream"]',
+      "\turl = https://github.com/parent/project.git",
+      "\tgh-resolved = base",
+      '[branch "main"]',
+      "\tremote = origin",
+    }, "\n")
+    expect.equal(start.config_default(fork), "parent/project")
+    -- The mark may come before the URL, and on the last section.
+    expect.equal(
+      start.config_default(
+        '[remote "origin"]\n\tgh-resolved = base\n\turl = https://github.com/me/project\n'
+      ),
+      "me/project"
+    )
+    -- A default that is no remote's repo is named.
+    expect.equal(
+      start.config_default(
+        '[remote "origin"]\n\turl = https://github.com/me/project\n\tgh-resolved = other/project\n'
+      ),
+      "other/project"
+    )
+    expect.equal(
+      start.config_default('[remote "origin"]\n\turl = https://github.com/me/project\n'),
+      nil
+    )
+    expect.equal(
+      start.config_default(
+        '[remote "origin"]\n\turl = https://other.example/me/project\n\tgh-resolved = base\n'
+      ),
+      nil
+    )
+  end,
+
+  ["a PR in a fork's checkout makes its repo gh's default unless it is already"] = function(t)
+    local fork = HOME .. "/dev/personal/me/project"
+    checkouts_on_disk(t, {
+      [fork .. "/.git/HEAD"] = "ref: refs/heads/main\n",
+      [fork .. "/.git/config"] = table.concat({
+        '[remote "origin"]',
+        "\turl = https://github.com/me/project.git",
+        '[remote "upstream"]',
+        "\turl = https://github.com/parent/project.git",
+        "\tgh-resolved = base",
+      }, "\n"),
+    })
+    local fake = rex_with_picker()
+    fake.commands[ZOXIDE] = { stdout = fork .. "\n" }
+    fake_rex.install(t, fake)
+    local url = "https://github.com/me/project/pull/4"
+    local review = switch({ "pr:4" }, "/skill:review " .. url)
+    expect.equal(
+      assert(start.plan("pr", url, "/tmp", HOME)).argv,
+      wrapped(SET_DEFAULT, { "me/project" }, review)
+    )
+    url = "https://github.com/parent/project/pull/4"
+    expect.equal(
+      assert(start.plan("pr", url, "/tmp", HOME)).argv,
+      switch({ "pr:4" }, "/skill:review " .. url)
+    )
+  end,
+
   ["known repos are the directories with a .git directory, once each"] = function()
     local files = {
       ["/src/a/.git/HEAD"] = "ref: refs/heads/main\n",
@@ -360,7 +443,12 @@ return {
       {
         repo = API,
         label = "API#9",
-        argv = switch({ "pr:9" }, "/skill:review https://github.com/Fork/API/pull/9"),
+        -- Without a gh default, worktrunk would pick one of its two remotes.
+        argv = wrapped(
+          SET_DEFAULT,
+          { "Fork/API" },
+          switch({ "pr:9" }, "/skill:review https://github.com/Fork/API/pull/9")
+        ),
         pr = "https://github.com/Fork/API/pull/9",
       }
     )
@@ -578,10 +666,8 @@ return {
     checkouts_on_disk(t)
     local url = "https://github.com/example/web/pull/1"
     local review = switch({ "pr:1" }, "/skill:review " .. url)
-    local clone = { "zsh", "-c", CLONE, "zsh", "example/web", WEB }
-    for _, arg in ipairs(review) do
-      clone[#clone + 1] = arg
-    end
+    -- The clone makes example/web gh's default even when it is a fork.
+    local clone = wrapped(CLONE, { "example/web", WEB }, review)
     -- Absent, or an empty directory.
     for _, listed in ipairs({ { ok = false }, { stdout = "" } }) do
       local fake = rex_with_picker()

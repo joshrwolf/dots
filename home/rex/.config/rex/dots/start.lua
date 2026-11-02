@@ -33,9 +33,13 @@ local SCRIPTS = {
 -- approvals, a missing PR) keeps its terminal open to show why; any other
 -- exit, such as leaving the shell after Pi, closes it and with it the session.
 local FAILURE_WINDOW_MS = 300000
--- Clones `$1` into `$2`, then runs the rest there. gh uses its own
+-- Worktrunk looks up `pr:N` in gh's default repo, so a PR start makes `$1`
+-- the default before running the rest. Cloning a fork makes its parent the
+-- default, so a clone of `$1` into `$2` does too. gh uses its own
 -- authentication and the user's preferred Git protocol on every host.
-local CLONE = 'gh repo clone "$1" "$2" && cd "$2" && shift 2 && exec "$@"'
+local SET_DEFAULT = 'gh repo set-default "$1" && shift && exec "$@"'
+local CLONE =
+  'gh repo clone "$1" "$2" && cd "$2" && gh repo set-default "$1" && shift 2 && exec "$@"'
 
 -- The valid forms of each start's line. Errors name them briefly, because the
 -- picker shows them in a few lines above its list.
@@ -156,6 +160,7 @@ local M = {}
 ---@class dots.Repo
 ---@field path string
 ---@field remotes string[] GitHub `owner/name` of each remote, in config order.
+---@field default? string gh's default repo, if `gh repo set-default` chose one.
 
 ---What a start opens: the worktree for `branch` in `repo`, or the one for
 ---the PR at `pr`, and failing that a session labelled `label` whose terminal
@@ -202,14 +207,15 @@ function M.argv(target, create, run, prompt)
   return argv
 end
 
----`argv` run in `path` after cloning GitHub's `slug` there, as one command
----whose parts are all arguments.
+---`argv` run after making GitHub's `slug` gh's default repo, first cloning
+---it to `path` when given, as one command whose parts are all arguments.
 ---@param slug string
----@param path string Absolute.
+---@param path? string Absolute.
 ---@param argv string[]
 ---@return string[]
-function M.clone_argv(slug, path, argv)
-  local out = { "zsh", "-c", CLONE, "zsh", slug, path }
+function M.default_argv(slug, path, argv)
+  local out = path and { "zsh", "-c", CLONE, "zsh", slug, path }
+    or { "zsh", "-c", SET_DEFAULT, "zsh", slug }
   for _, arg in ipairs(argv) do
     out[#out + 1] = arg
   end
@@ -255,6 +261,43 @@ function M.config_remotes(config)
   return remotes
 end
 
+---gh's default repo in a repo's `.git/config`: the remote `gh repo
+---set-default` marked `gh-resolved = base`, or the `owner/name` it names.
+---@param config string
+---@return string?
+function M.config_default(config)
+  local in_remote, remote, resolved = false, nil, nil
+  -- A final section header ends the last remote like any other.
+  for line in (config .. "\n[end]"):gmatch("[^\n]+") do
+    local section = line:match("^%s*%[(.-)%]")
+    if section then
+      if resolved == "base" then
+        return remote
+      elseif resolved then
+        return resolved
+      end
+      in_remote, remote, resolved = section:match('^remote%s+"') ~= nil, nil, nil
+    elseif in_remote then
+      local url = line:match("^%s*url%s*=%s*(.-)%s*$")
+      remote = url and M.github_remote((url:gsub('^"(.*)"$', "%1"))) or remote
+      resolved = line:match("^%s*gh%-resolved%s*=%s*(%S+)%s*$") or resolved
+    end
+  end
+  return nil
+end
+
+---Whether worktrunk looks up the repo's `pr:N` on GitHub's `slug`: gh's
+---default repo, or without one the repo's only GitHub remote.
+---@param repo dots.Repo
+---@param slug string
+---@return boolean
+function M.resolves_to(repo, slug)
+  if repo.default then
+    return repo.default:lower() == slug:lower()
+  end
+  return #repo.remotes == 1 and repo.remotes[1]:lower() == slug:lower()
+end
+
 ---The contents of a file, or nil when it cannot be read.
 ---@param path string
 ---@return string?
@@ -281,8 +324,9 @@ function M.known(dirs, read)
     end
     -- HEAD is readable only when .git is a directory.
     if not seen[dir] and read(dir .. "/.git/HEAD") then
+      local config = read(dir .. "/.git/config") or ""
       repos[#repos + 1] =
-        { path = dir, remotes = M.config_remotes(read(dir .. "/.git/config") or "") }
+        { path = dir, remotes = M.config_remotes(config), default = M.config_default(config) }
     end
     seen[dir] = true
   end
@@ -546,7 +590,8 @@ function M.plan_pr(pr, repos, placement, home)
   local title = pr.repo .. "#" .. pr.number
   local review = M.argv("pr:" .. pr.number, false, "pi", "/skill:review " .. pr.url)
   if repo then
-    return { repo = repo.path, label = title, argv = review, pr = pr.url }
+    local argv = M.resolves_to(repo, pr.slug) and review or M.default_argv(pr.slug, nil, review)
+    return { repo = repo.path, label = title, argv = argv, pr = pr.url }
   end
   local unmatched = "no known repo has the GitHub remote " .. pr.slug
   local known = "; known: " .. M.describe(repos)
@@ -586,7 +631,7 @@ function M.plan_pr(pr, repos, placement, home)
   return {
     repo = placement.path,
     label = title,
-    argv = M.clone_argv(pr.slug, placement.path, review),
+    argv = M.default_argv(pr.slug, placement.path, review),
     pr = pr.url,
     clone = pr.slug,
     cwd = home,
