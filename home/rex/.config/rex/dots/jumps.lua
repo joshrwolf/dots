@@ -5,6 +5,7 @@
 -- dots. Stepping through tabs is not a jump. The list is module state, so it
 -- starts empty after a reload.
 local app = require("dots.app")
+local hosts = require("dots.hosts")
 local must = require("dots.result").must
 local sessions = require("dots.sessions")
 
@@ -195,6 +196,9 @@ end
 ---do not.
 ---@param ctx rex.Context
 function M.toggle(ctx)
+  if hosts.forward(ctx, "jump_back") then
+    return
+  end
   local here = M.here(ctx)
   if here and not (M.recent[1] and M.key(M.recent[1]) == M.key(here)) then
     M.recent = M.push(M.recent, here)
@@ -204,7 +208,7 @@ function M.toggle(ctx)
   if not target then
     return
   end
-  app.show(target.session_id, target.window_id, ctx.session_id)
+  app.show(target.session_id, target.window_id, ctx.session_id, ctx.client_id)
   M.record(here, target)
 end
 

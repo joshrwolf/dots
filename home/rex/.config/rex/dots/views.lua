@@ -21,6 +21,7 @@ local root = (debug.getinfo(1, "S").source:gsub("^@", "")):match("^(.*)/dots/vie
 ---@field layer_id string
 ---@field origin string The block the user was in when the first view opened.
 ---@field zoomed boolean Whether `origin` was zoomed; focusing the view ended the zoom.
+---@field client_id? string The app that opened the view; CLI connections are transient.
 
 ---Open views by their picker's block id. Module state, so a reload forgets
 ---them: a view opened before it still works, but Esc leaves focus to Rex.
@@ -84,6 +85,16 @@ function M.open(spec)
   local window = locate(view, here) or error("opening " .. spec.title .. ": its pane is gone", 0)
 
   local from = M.open_views[here]
+  local client_id = from and from.client_id
+  if not client_id and spec.at.client_id then
+    local clients = must("identifying the opening app", rex.call("client.list"))
+    for _, client in ipairs(clients.clients or {}) do
+      if client.client_id == spec.at.client_id and client.info and client.info.kind == "app" then
+        client_id = client.client_id
+        break
+      end
+    end
+  end
   local origin = from and from.origin or here
   local zoomed = from and from.zoomed or window.zoomed_block_id == here
   local toggled = from ~= nil and from.title == spec.title
@@ -129,8 +140,25 @@ function M.open(spec)
     layer_id = created.layer_id,
     origin = origin,
     zoomed = zoomed,
+    client_id = client_id,
   }
   return created.layer_id
+end
+
+---Keep the opening app when a picker invokes its next action through a CLI.
+---@param ctx rex.Context
+---@return rex.Context
+function M.context(ctx)
+  local entry = ctx.block_id and M.open_views[ctx.block_id]
+  if not entry or not entry.client_id then
+    return ctx
+  end
+  local origin = {}
+  for key, value in pairs(ctx) do
+    origin[key] = value
+  end
+  origin.client_id = entry.client_id
+  return origin
 end
 
 ---Show a clickable URL on the viewing client, without opening a server browser.

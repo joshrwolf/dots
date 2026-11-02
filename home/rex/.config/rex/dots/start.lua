@@ -705,7 +705,7 @@ function M.open(ctx, plan, snap)
       must("creating a session for " .. plan.label, rex.call("session.create", M.session(plan)))
     session = created.session_id
   end
-  app.show(session, nil, ctx.session_id)
+  app.show(session, nil, ctx.session_id, ctx.client_id)
   jumps.record(from, { session_id = session })
 end
 

@@ -16,7 +16,8 @@ the app.
 
 | Key | Does |
 | --- | --- |
-| Cmd+P | Go: agents needing you, every other tab, worktrees (`@`), directories (`/`) |
+| Cmd+P | Go on the current host: agents needing you, tabs, worktrees (`@`), directories (`/`) |
+| In Go: Ctrl+Y | Switch host with Rex's host selector; Cmd+P opens Go there |
 | In Go: Ctrl+R / Ctrl+T / Ctrl+O | Start Pi in a worktree: review the typed PR, work on the typed Linear issue, or a new session in the selected row's repo |
 | Cmd+O | Back to the last tab you jumped from; again to return |
 | Cmd+Shift+R | PRs: the watch list agents keep, with review and CI status |
@@ -48,6 +49,12 @@ opens a session for a worktree or directory, creating one if needed. Rows
 follow sessions and status as they change, and the preview shows the
 selected terminal's screen. Tabs you jumped to recently come first.
 
+Go names its destination host in the prompt. Sessions, directories, Git lookups
+and starts stay on that host; it does not combine hosts' files or fall back to
+another machine. Install this configuration and `dots-pick` on each host. Host
+selection and unavailable-host handling belong to Rex; switching hosts leaves
+the picker, and Cmd+P opens it on the selected host.
+
 Go also starts work. Paste a GitHub PR URL and press Ctrl+R to review it
 with Pi in the PR's worktree, in the checkout whose GitHub remote matches.
 Type or paste a Linear issue ID or URL and press Ctrl+T to start Pi on it in
@@ -71,7 +78,7 @@ stays in the session. The keys are the `KEYS` table at the top of
 A jump is a move to another tab through Go, the PR view, or Cmd+O. Cmd+O
 also counts the tab you press it in, so a second press returns there even if
 you arrived another way, such as from the sidebar. Stepping through tabs with
-Cmd+H/J/K/L is not a jump. Reloading the configuration forgets the jumps.
+Cmd+H/J/K/L is not a jump. The jump history belongs to the selected host. Reloading its configuration forgets the jumps.
 
 The PR view lists only PRs agents added with `dots github watch add` (see
 [GitHub watch list](../../../../docs/github-watch.md)); it opens from cached

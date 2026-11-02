@@ -63,6 +63,65 @@ local function changes(fake)
 end
 
 return {
+  ["a picker keeps the opening app without replacing its current pane context"] = function(t)
+    t.stub(views, "open_views", {
+      picker = {
+        title = "go",
+        session_id = "s",
+        layer_id = "layer",
+        origin = "pane",
+        zoomed = false,
+        client_id = "phone",
+      },
+    })
+    local current = { session_id = "s", block_id = "picker", client_id = "cli", origin = "api" }
+    local context = views.context(current)
+    expect.equal(
+      context,
+      { session_id = "s", block_id = "picker", client_id = "phone", origin = "api" }
+    )
+    expect.equal(current.client_id, "cli")
+    expect.equal(views.context({ block_id = "other", client_id = "cli" }).client_id, "cli")
+  end,
+
+  ["open remembers app origins but not short-lived CLI connections"] = function(t)
+    local fake = world({})
+    fake.clients = {
+      { client_id = "phone", info = { kind = "app" } },
+      { client_id = "cli", info = { kind = "cli" } },
+    }
+    fake_rex.install(t, fake)
+    for _, client_id in ipairs({ "phone", "cli" }) do
+      t.stub(views, "open_views", {})
+      views.open({
+        title = "go",
+        view = "go_view",
+        at = { session_id = "s", block_id = "pane", client_id = client_id },
+      })
+      expect.equal(views.open_views.picker.client_id, client_id == "phone" and "phone" or nil)
+    end
+  end,
+
+  ["replacement pickers retain the original app"] = function(t)
+    t.stub(views, "open_views", {
+      go = {
+        title = "go",
+        session_id = "s",
+        layer_id = "old",
+        origin = "pane",
+        zoomed = false,
+        client_id = "phone",
+      },
+    })
+    fake_rex.install(t, world({ open = true }))
+    views.open({
+      title = "prs",
+      view = "prs_view",
+      at = { session_id = "s", block_id = "go", client_id = "cli" },
+    })
+    expect.equal(views.open_views.picker.client_id, "phone")
+  end,
+
   ["a link is clickable and remains visible after its command exits"] = function(t)
     local fake = fake_rex.install(t, {})
     t.stub(process, "which", function(name)

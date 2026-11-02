@@ -17,7 +17,7 @@ local views = require("dots.views")
 
 local out = {}
 for name, snap in pairs(snapshots) do
-  out["go/" .. name] = views.live(go.view(snap), snapshot.events({ places = true }))
+  out["go/" .. name] = views.live(go.view(snap, nil, "studio"), snapshot.events({ places = true }))
   out["attention/" .. name] = views.live(attention.view(snap), snapshot.events())
   for list_name, list in pairs(watch) do
     out["prs/" .. list_name .. "/" .. name] = prs.view(list, snap, "dots")
