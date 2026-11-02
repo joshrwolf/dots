@@ -1,5 +1,6 @@
--- `dots review` in CodeDiff: open a review on the exact revisions of one of
--- its presets, show its threads and the user's drafts as diagnostics and in the
+-- `dots review` in CodeDiff: open a worktree's review (found or created and
+-- brought up to date by the CLI) on the exact revisions of one of its presets,
+-- find worktrees needing attention in an inbox across repositories, show its threads and the user's drafts as diagnostics and in the
 -- quickfix list, and write drafts, submissions, statuses and reviewed marks
 -- through the CLI, which owns the review files and every rule about them,
 -- including where anchors fall in each preset. Agent changes appear live.
@@ -77,15 +78,6 @@ local function age(at)
     return math.floor(seconds / 3600) .. "h"
   end
   return math.floor(seconds / 86400) .. "d"
-end
-
-local function target_text(target)
-  if target.kind == "base" then
-    return "base " .. target.reference
-  elseif target.kind == "range" then
-    return target.from .. ".." .. target.to
-  end
-  return target.kind
 end
 
 local styles = {
@@ -325,7 +317,7 @@ local function decorations(view)
   return out
 end
 
-local setup_buffer
+local setup_buffer, reopen
 
 -- Draw view's threads and drafts: diagnostics on its revision buffers (shown or
 -- not), its quickfix list, and per-file marks in the file list. Reviews sharing
@@ -786,7 +778,7 @@ function M.next_preset()
   if next == view.preset then
     return notify("only the " .. view.preset .. " view has changes")
   end
-  M.open(view.id, view.cwd, next)
+  reopen(view.id, view.cwd, next)
 end
 
 function M.show_thread(view, thread)
@@ -881,103 +873,155 @@ function setup_buffer(buf)
   map("n", "<leader>rp", M.next_preset, "Next review view (everything/uncommitted/committed)")
 end
 
--- Open review ID (default: this worktree's latest) on its newest revision, in
--- `preset` (default everything). A tab showing that review on another preset
--- is replaced.
-function M.open(id, cwd, preset)
-  preset = preset or "everything"
-  dots(show_args(id, preset), { cwd = cwd or checkout() }, function(out)
-    local review = out.review
-    local revision = review.revisions[#review.revisions]
-    local replaced
-    for tab, view in pairs(views) do
-      if view.id == review.id and view.snapshot == revision.snapshot and vim.api.nvim_tabpage_is_valid(tab) then
-        if view.preset == preset then
-          return vim.api.nvim_set_current_tabpage(tab)
-        end
-        replaced = tab
+-- Show `out`, a show or open result with a view of `preset`, in a new tab
+-- whose working directory is the review's worktree. A tab already showing
+-- that revision in `preset` is reused; one showing it in another preset is
+-- replaced.
+local function present(out, preset)
+  local review = out.review
+  local revision = review.revisions[#review.revisions]
+  if #out.view.files == 0 then
+    return notify("nothing to review in " .. review.worktree.path .. " against " .. revision.basis.reference)
+  end
+  local replaced
+  for tab, view in pairs(views) do
+    if view.id == review.id and view.snapshot == revision.snapshot and vim.api.nvim_tabpage_is_valid(tab) then
+      if view.preset == preset then
+        return vim.api.nvim_set_current_tabpage(tab)
       end
+      replaced = tab
     end
-    local files = {}
-    for _, file in ipairs(out.view.files) do
-      table.insert(files, { path = file.path, status = letters[file.status] })
-    end
-    local root = review.worktree.path
-    local tab, err = codediff.open({ root = root, base = out.view.base, head = out.view.head, files = files })
-    if not tab then
-      return notify(err, vim.log.levels.ERROR)
-    end
-    local changed = {}
-    for _, file in ipairs(out.files) do
-      changed[file.path] = file.changed_since_looked or nil
-    end
-    local view = {
-      id = review.id,
-      tab = tab,
-      cwd = root,
-      file = out.file,
-      revision = #review.revisions - 1,
-      snapshot = revision.snapshot,
-      preset = preset,
-      -- What changed since the user last looked, as of opening: looking now
-      -- moves the mark, so the view keeps this set.
-      changed = changed,
-      generation = 0,
-    }
-    absorb(view, out)
-    views[tab] = view
-    select_list(view)
-    watch(view)
-    look(view)
-    render_current()
-    if replaced then
-      local current = vim.api.nvim_get_current_tabpage()
-      vim.api.nvim_set_current_tabpage(replaced)
-      vim.cmd.tabclose()
-      vim.api.nvim_set_current_tabpage(current)
-    end
+  end
+  local files = {}
+  for _, file in ipairs(out.view.files) do
+    table.insert(files, { path = file.path, status = letters[file.status] })
+  end
+  local root = review.worktree.path
+  local tab, err = codediff.open({ root = root, base = out.view.base, head = out.view.head, files = files })
+  if not tab then
+    return notify(err, vim.log.levels.ERROR)
+  end
+  if vim.api.nvim_get_current_tabpage() == tab then
+    vim.cmd.tcd(vim.fn.fnameescape(root))
+  end
+  local changed = {}
+  for _, file in ipairs(out.files) do
+    changed[file.path] = file.changed_since_looked or nil
+  end
+  local view = {
+    id = review.id,
+    tab = tab,
+    cwd = root,
+    file = out.file,
+    revision = #review.revisions - 1,
+    snapshot = revision.snapshot,
+    preset = preset,
+    -- What changed since the user last looked, as of opening: looking now
+    -- moves the mark, so the view keeps this set.
+    changed = changed,
+    generation = 0,
+  }
+  absorb(view, out)
+  views[tab] = view
+  select_list(view)
+  watch(view)
+  look(view)
+  render_current()
+  if replaced then
+    local current = vim.api.nvim_get_current_tabpage()
+    vim.api.nvim_set_current_tabpage(replaced)
+    vim.cmd.tabclose()
+    vim.api.nvim_set_current_tabpage(current)
+  end
+end
+
+-- Reopen review `id` on its newest revision in `preset`.
+function reopen(id, cwd, preset)
+  dots(show_args(id, preset), { cwd = cwd }, function(out)
+    present(out, preset)
   end)
 end
 
-function M.pick_reviews()
-  dots({ "list", "--all", "--drafts" }, { cwd = checkout() }, function(out)
-    if #out.reviews == 0 then
-      return notify("no reviews in this repository")
+-- Open the review of the worktree containing `path` (default: the current
+-- file's or the working directory), creating it or bringing it up to date.
+function M.open(path)
+  dots({ "open", "--drafts", "--preset", "everything" }, { cwd = path or checkout() }, function(out)
+    present(out, "everything")
+  end)
+end
+
+-- Every known repository's worktrees with changes or reviews, most in need of
+-- attention first; choosing one opens its review.
+function M.inbox()
+  dots({ "inbox" }, { cwd = checkout() }, function(out)
+    for _, skipped in ipairs(out.skipped) do
+      notify(("skipped %s: %s"):format(skipped.path, skipped.reason), vim.log.levels.WARN)
     end
-    table.sort(out.reviews, function(a, b)
-      return a.updated_at > b.updated_at
-    end)
+    if #out.worktrees == 0 then
+      return notify("no worktrees with changes or reviews")
+    end
     local items = {}
-    for _, review in ipairs(out.reviews) do
-      local worktree = review.worktree.branch or vim.fs.basename(review.worktree.path)
-      local target = target_text(review.target)
+    for _, entry in ipairs(out.worktrees) do
+      local review = entry.review
+      local name = entry.branch or vim.fs.basename(entry.path)
+      local repository = vim.fs.basename(vim.fs.dirname(entry.repository))
+      local lines = {
+        "# " .. name,
+        "`" .. entry.path .. "`",
+        "",
+        ("Base **%s** (%s)"):format(entry.basis.reference, entry.basis.reason),
+        ("%d files · +%d −%d"):format(entry.diff.files, entry.diff.added, entry.diff.removed),
+      }
+      if review then
+        vim.list_extend(lines, {
+          "",
+          ("Review %s · owner %s"):format(review.id, review.owner or "none"),
+          "Waiting on you: " .. (#review.waiting > 0 and table.concat(review.waiting, ", ") or "nothing"),
+          ("Drafts: %d"):format(review.drafts),
+        })
+        if review.changed_since_looked then
+          table.insert(lines, "Changed since you looked:")
+          for _, path in ipairs(review.changed_since_looked) do
+            table.insert(lines, "- " .. path)
+          end
+        else
+          table.insert(lines, "Not looked at yet")
+        end
+      else
+        vim.list_extend(lines, { "", "No review yet; opening creates it" })
+      end
       table.insert(items, {
-        text = table.concat({ review.id, worktree, target, review.profile or "" }, " "),
-        review = review,
-        worktree = worktree,
-        target = target,
+        text = table.concat({ repository, name, entry.path, review and review.owner or "" }, " "),
+        entry = entry,
+        name = name,
+        repository = repository,
+        preview = { text = table.concat(lines, "\n"), ft = "markdown" },
       })
     end
     Snacks.picker.pick({
-      title = "Reviews",
+      title = "Review inbox",
       items = items,
-      layout = "select",
+      preview = "preview",
       format = function(item)
-        local open = item.review.threads.open or 0
-        local drafts = item.review.drafts or 0
+        local entry, review = item.entry, item.entry.review
+        local waiting = review and #review.waiting or 0
+        local drafts = review and review.drafts or 0
+        local changed = review and review.changed_since_looked
+        local delta = not review and "" or changed and (#changed > 0 and "Δ " .. #changed or "") or "new"
         return {
-          { ("%-12s"):format(item.review.id), "Comment" },
-          { ("%-24s"):format(item.worktree), "Directory" },
-          { ("%-28s"):format(item.target) },
-          { ("%3d open "):format(open), open > 0 and "DiagnosticWarn" or "Comment" },
+          { ("%-10s "):format(item.repository), "Comment" },
+          { ("%-32s "):format(item.name), "Directory" },
+          { ("%2d ● "):format(waiting), waiting > 0 and "DiagnosticWarn" or "Comment" },
           { ("%2d %s "):format(drafts, draft_icon), drafts > 0 and "DiagnosticHint" or "Comment" },
-          { ("%4s"):format(age(item.review.updated_at)), "Comment" },
+          { ("%-5s "):format(delta), "DiagnosticInfo" },
+          { ("%3d files +%-5d -%-5d "):format(entry.diff.files, entry.diff.added, entry.diff.removed), "Comment" },
+          { review and review.owner or "" },
         }
       end,
       confirm = function(picker, item)
         picker:close()
         if item then
-          M.open(item.review.id, item.review.worktree.path)
+          M.open(item.entry.path)
         end
       end,
     })

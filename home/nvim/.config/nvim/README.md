@@ -19,7 +19,8 @@ machine setup deploys it as a start package with its native tools.
 
 ## Use
 
-Mapping descriptions document shortcuts. In Rex terminals, clipboard operations
+Mapping descriptions document shortcuts. `:Review [PATH]` opens a worktree's
+dots review, and `<leader>fR` lists the review inbox across repositories. In Rex terminals, clipboard operations
 use native OSC52 to reach the viewing client rather than the server's desktop
 clipboard. Outside Rex, Neovim selects the host's native clipboard provider.
 
