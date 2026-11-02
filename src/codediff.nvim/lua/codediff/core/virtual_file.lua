@@ -10,6 +10,14 @@ local api = vim.api
 local loads = {} -- buf -> generation of its latest content load
 local loading = {} -- buf -> true while that load is in flight
 
+-- Replacing a placeholder with content must not move marks: Neovim would shift
+-- quickfix and location-list entries that already point into this buffer.
+local function replace_lines(buf, lines)
+  vim._with({ lockmarks = true }, function()
+    api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  end)
+end
+
 -- Populate revision buffers consistently whether opening or refreshing a view.
 function M.set_content(buf, lines, filepath)
   if not api.nvim_buf_is_valid(buf) then
@@ -19,7 +27,7 @@ function M.set_content(buf, lines, filepath)
   if not vim.deep_equal(api.nvim_buf_get_lines(buf, 0, -1, false), value) then
     vim.bo[buf].modifiable = true
     vim.bo[buf].readonly = false
-    api.nvim_buf_set_lines(buf, 0, -1, false, value)
+    replace_lines(buf, value)
   end
   vim.bo[buf].modifiable = false
   vim.bo[buf].readonly = true
@@ -64,7 +72,7 @@ local function load_virtual_buffer_content(buf, git_root, commit, filepath)
         -- Show empty buffer so diff can highlight the change
         vim.bo[buf].modifiable = true
         vim.bo[buf].readonly = false
-        api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+        replace_lines(buf, { "" })
         vim.bo[buf].modifiable = false
         vim.bo[buf].readonly = true
         -- Clear filetype without firing FileType autocmd (see issue #323; matches setup_buffer below).

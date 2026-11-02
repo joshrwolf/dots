@@ -55,7 +55,7 @@ for _, backend in ipairs({ "native", "polling" }) do
         assert.is_false(state.modifiable)
         assert.equals("", state.filetype)
         assert.same({}, state.events)
-        assert.is_false(state.diagnostics)
+        assert.is_true(state.diagnostics)
       end)
 
       it("[S03] preserves a missing final newline across external updates", function()

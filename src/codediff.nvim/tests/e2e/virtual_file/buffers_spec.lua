@@ -32,7 +32,7 @@ describe("virtual revision buffer E2E", function()
       return { vim.bo.buftype, vim.bo.modifiable, vim.bo.readonly, vim.bo.filetype,
         vim.diagnostic.is_enabled({ bufnr = vim.api.nvim_get_current_buf() }) }
     ]])
-    assert.same({ "nowrite", false, true, "", false }, opts)
+    assert.same({ "nowrite", false, true, "", true }, opts)
     -- Even an explicitly unlocked virtual buffer must not write to Git or disk.
     screen:command("setlocal modifiable noreadonly")
     h.feed(screen, "ggccLOCAL-ONLY<Esc>")

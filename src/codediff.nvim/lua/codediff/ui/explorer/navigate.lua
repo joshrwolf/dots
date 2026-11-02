@@ -135,7 +135,7 @@ local function requested_line(win, buf, loaded)
     table.insert(lists, 1, vim.fn.getloclist(win, { idx = 0, items = 0 }))
   end
   for _, list in ipairs(lists) do
-    local item = list.items and list.items[1]
+    local item = list.items and list.items[list.idx]
     if item and item.bufnr == buf and item.lnum > 0 then
       return item.lnum
     end

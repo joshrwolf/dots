@@ -220,4 +220,55 @@ describe("codediff.api", function()
     assert.is_true(api.set_decorations(tab, {}))
     assert.is_nil(row("f.txt"):find("●", 1, true))
   end)
+
+  it("follows quickfix jumps into its revision buffers", function()
+    local tab = open()
+    show(tab, { path = "f.txt", side = "modified", line = 1 })
+    local added = assert(api.revision_buffer(tab, "added.txt", "modified"))
+    local gone = assert(api.revision_buffer(tab, "gone.txt", "original"))
+    vim.fn.setqflist({
+      { bufnr = added, lnum = 15, text = "added" },
+      { bufnr = gone, lnum = 10, text = "gone" },
+    })
+    local session = lifecycle.get_session(tab)
+    local function at(path, side, line)
+      return vim.wait(5000, function()
+        local where = api.buffer(vim.api.nvim_get_current_buf(), tab)
+        return where ~= nil
+          and where.path == path
+          and where.side == side
+          and vim.fn.line(".") == line
+          and vim.api.nvim_buf_line_count(0) > 1
+          and require("codediff.ui.refresh").shown(tab)
+      end, 10) or vim.inspect({
+        api.buffer(vim.api.nvim_get_current_buf(), tab),
+        vim.fn.line("."),
+        vim.api.nvim_buf_line_count(0),
+        require("codediff.ui.refresh").shown(tab),
+        vim.api.nvim_buf_get_name(0),
+      })
+    end
+
+    -- From a diff pane, :cc reuses the pane; CodeDiff takes the file over.
+    vim.api.nvim_set_current_win(session.modified_win)
+    vim.cmd("cc 1")
+    assert.equals(true, at("added.txt", "modified", 15), "cc 1 should land on added.txt:15")
+    assert.equals("added.txt", lifecycle.get_panel(tab).data.current_selection.path)
+
+    -- From the quickfix window, the jump splits; the split is closed again.
+    vim.cmd("copen")
+    vim.cmd("cc 2")
+    assert.equals(true, at("gone.txt", "original", 10), "cc 2 should land on gone.txt:10")
+    -- A deleted file shows one pane: that pane, the explorer and the quickfix window.
+    assert.equals(3, #vim.api.nvim_tabpage_list_wins(tab), "the split the jump opened is closed")
+
+    -- An old-side entry of a two-sided file lands in the original pane. CodeDiff
+    -- wipes revision buffers it stops showing, so callers rebuild their lists.
+    vim.fn.setqflist({ { bufnr = assert(api.revision_buffer(tab, "f.txt", "original")), lnum = 5, text = "f old" } })
+    vim.cmd("copen")
+    vim.cmd("cc 1")
+    assert.equals(true, at("f.txt", "original", 5), "the old-side entry should land on f.txt:5 (original)")
+    assert.equals(session.original_win, vim.api.nvim_get_current_win())
+    assert.is_not_nil(lifecycle.get_session(tab), "the session must survive the jumps")
+  end)
 end)

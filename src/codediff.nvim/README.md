@@ -263,7 +263,7 @@ A layout contains `left` and `right` lists of regions and an optional `min_gap` 
 
 Each segment is `{ text = string, hl? = highlight }`. `hl` accepts a Neovim highlight group, a `#RGB`/`#RRGGBB` foreground color, or a highlight definition such as `{ fg = "#3fb950", bold = true }`. Omitted highlights use `Normal`; selected file rows retain their selection background.
 
-File contexts contain `path`, `filename`, `directory`, `old_path`, `group`, `stats`, `status`, `status_hl`, `status_right_margin`, `indent`, `indent_hl`, `icon`, and `icon_hl`. Folder contexts contain `name`, `path`, `group`, `file_count`, `stats`, `files`, `indent`, `indent_hl`, `icon`, `icon_hl`, and `expanded`. Group contexts contain `name`, `label`, `file_count`, `stats`, `files`, and `expanded`. `stats` is `nil` when line statistics are disabled.
+File contexts contain `path`, `filename`, `directory`, `old_path`, `group`, `stats`, `status`, `status_hl`, `status_right_margin`, `indent`, `indent_hl`, `icon`, `icon_hl`, and `decoration` (`{ text, hl }` from `codediff.api.set_decorations`, or `nil`). Folder contexts contain `name`, `path`, `group`, `file_count`, `stats`, `files`, `indent`, `indent_hl`, `icon`, `icon_hl`, and `expanded`. Group contexts contain `name`, `label`, `file_count`, `stats`, `files`, and `expanded`. `stats` is `nil` when line statistics are disabled.
 
 Folder and group `files` contain `{ path, old_path, group, status, stats }` entries for every represented file. The built-in callbacks are exported by `codediff.ui.explorer.formatters` and return fresh layouts that can be assigned directly or wrapped.
 
@@ -553,6 +553,19 @@ git difftool main feature-branch
 
 The navigation functions return `true` when navigation succeeds and `false` otherwise. Modules under `codediff.core` and `codediff.ui` are internal and are not part of the supported API.
 
+`require("codediff.api")` serves tools that build on CodeDiff views, such as a review layer. Sides are `"original"` and `"modified"`; functions that can fail return `nil` and an error message.
+
+| Function | Description |
+|----------|-------------|
+| `open({ root, base, head, files })` | Open an Explorer tab comparing commits `base` and `head` (full ids) in `root` over `files`, a list of `{ path, status }` with status `A`, `M` or `D`. Git status never replaces the list. Returns the tabpage |
+| `revisions(tabpage?)` | `{ root, base, head }` the tab compares; `base`/`head` are `nil` for the working tree or a status view |
+| `buffer(buf, tabpage?)` | `{ path, revision, side }` when `buf` is one of the tab's revision buffers, else `nil` |
+| `revision_buffer(tabpage, path, side)` | The revision buffer for one side of a file, created unloaded when missing; CodeDiff loads it when shown |
+| `show(tabpage, { path, side, line }, callback?)` | Select the file and put the cursor on `line` of `side` once its content has loaded and its diff rendered, then call `callback(win, buf)`. A newer call for the tab supersedes a pending one |
+| `set_decorations(tabpage, decorations)` | Draw `decorations[path] = { text, hl }` on Explorer file rows; an empty table clears them |
+
+Explorer tabs follow native jumps into their revision buffers: a quickfix or location-list entry, or `:edit`, that opens a revision buffer of the tab's two revisions selects that file and lands on the requested line. A window the jump split off is closed again. CodeDiff wipes revision buffers it stops showing, so lists that refer to them by buffer number need rebuilding when `BufWipeout` fires; content loads do not move their line numbers. Revision buffers have no `filetype`, so LSP clients and filetype-triggered linters do not attach, but diagnostics a caller sets on them display.
+
 #### User Autocmd Events
 
 CodeDiff emits `User` autocmd events for view lifecycle changes:
@@ -562,6 +575,8 @@ CodeDiff emits `User` autocmd events for view lifecycle changes:
 | `CodeDiffOpen` | When a CodeDiff view opens | `tabpage`, `mode` |
 | `CodeDiffClose` | Before cleanup starts | `tabpage`, `mode` |
 | `CodeDiffFileSelect` | When a file is selected in the Explorer | `tabpage`, `path`, `status` |
+| `CodeDiffFileShown` | Once per selected or displayed file, when its diff has rendered and both panes hold their content | `tabpage`, `path`, `original_buf`, `modified_buf` |
+| `CodeDiffVirtualFileLoaded` | When a revision buffer's content has loaded | `buf` |
 
 `mode` is one of `"explorer"`, `"standalone"`, or `"history"`.
 

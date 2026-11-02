@@ -5,6 +5,15 @@ brought in at v4.0.6 with `git subtree add --squash`. It is ours to change
 freely; it takes no upstream pulls. Port a later upstream fix by hand when one
 is worth having. Upstream's MIT `LICENSE` and `ATTRIBUTION.md` stay.
 
+## Lua API
+
+`lua/codediff/api.lua` is the public surface for callers such as the Neovim
+review layer in `home/nvim`; the README documents it and
+`tests/integration/plugin/lua_api_spec.lua` covers each entry point. It knows
+diffs, files and lines only: keep review concepts in the caller. Callers use
+this module and the documented `User` events, never `codediff.ui` or
+`codediff.core` internals; add an entry point here when one is missing.
+
 ## Binaries
 
 The plugin is Lua only. Its native pieces are upstream release binaries,
