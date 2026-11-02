@@ -42,19 +42,15 @@ describe("Explorer toggle visibility", function()
     -- Hide → the explorer window disappears and the tab has fewer windows.
     actions.toggle_visibility(explorer_obj)
     vim.wait(500)
-    assert.is_nil(h.find_window_by_filetype("codediff-explorer"),
-      "explorer window should be gone after hiding")
-    assert.is_true(#vim.api.nvim_tabpage_list_wins(tabpage) < initial_win_count,
-      "window count should decrease after hide")
+    assert.is_nil(h.find_window_by_filetype("codediff-explorer"), "explorer window should be gone after hiding")
+    assert.is_true(#vim.api.nvim_tabpage_list_wins(tabpage) < initial_win_count, "window count should decrease after hide")
 
     -- Restore → the explorer reappears with the same window count and column 0.
     actions.toggle_visibility(explorer_obj)
     vim.wait(500)
     local restored_win = h.find_window_by_filetype("codediff-explorer")
     assert.is_not_nil(restored_win, "explorer should be restored after second toggle")
-    assert.equal(initial_win_count, #vim.api.nvim_tabpage_list_wins(tabpage),
-      "window count should match the original after restore")
-    assert.equal(0, vim.api.nvim_win_get_position(restored_win)[2],
-      "restored explorer should still be at column 0 (leftmost)")
+    assert.equal(initial_win_count, #vim.api.nvim_tabpage_list_wins(tabpage), "window count should match the original after restore")
+    assert.equal(0, vim.api.nvim_win_get_position(restored_win)[2], "restored explorer should still be at column 0 (leftmost)")
   end)
 end)

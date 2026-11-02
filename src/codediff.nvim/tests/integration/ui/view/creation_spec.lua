@@ -242,7 +242,9 @@ describe("Render View", function()
     -- A side-by-side view was actually created: new tab + registered session.
     assert.equal(pre_tabs + 1, vim.fn.tabpagenr("$"), "a new tab should exist for the diff view")
     assert.is_not_nil(tabpage)
-    vim.wait(2000, function() return lifecycle.get_session(tabpage) ~= nil end, 25)
+    vim.wait(2000, function()
+      return lifecycle.get_session(tabpage) ~= nil
+    end, 25)
     local sess = lifecycle.get_session(tabpage)
     assert.is_not_nil(sess, "empty-file diff view must still register a session")
     assert.is_true(vim.api.nvim_buf_is_valid(sess.original_bufnr))
@@ -301,7 +303,9 @@ describe("Render View", function()
     assert.is_true(success, "Should create view even with no changes")
     assert.is_not_nil(result, "view.create should return non-nil for identical files")
     -- Session exists and both panes show the shared content.
-    vim.wait(2000, function() return lifecycle.get_session(tabpage) ~= nil end, 25)
+    vim.wait(2000, function()
+      return lifecycle.get_session(tabpage) ~= nil
+    end, 25)
     local sess = lifecycle.get_session(tabpage)
     assert.is_not_nil(sess)
     local orig = table.concat(vim.api.nvim_buf_get_lines(sess.original_bufnr, 0, -1, false), "\n")
@@ -391,13 +395,13 @@ describe("Render View", function()
     assert.is_true(success, "Should handle single-line files")
 
     -- The rendered content on each pane matches the source lines.
-    vim.wait(2000, function() return lifecycle.get_session(tabpage) ~= nil end, 25)
+    vim.wait(2000, function()
+      return lifecycle.get_session(tabpage) ~= nil
+    end, 25)
     local sess = lifecycle.get_session(tabpage)
     assert.is_not_nil(sess)
-    assert.equal("single line",
-      table.concat(vim.api.nvim_buf_get_lines(sess.original_bufnr, 0, -1, false), "\n"))
-    assert.equal("different line",
-      table.concat(vim.api.nvim_buf_get_lines(sess.modified_bufnr, 0, -1, false), "\n"))
+    assert.equal("single line", table.concat(vim.api.nvim_buf_get_lines(sess.original_bufnr, 0, -1, false), "\n"))
+    assert.equal("different line", table.concat(vim.api.nvim_buf_get_lines(sess.modified_bufnr, 0, -1, false), "\n"))
 
     vim.fn.delete(left_path)
     vim.fn.delete(right_path)
@@ -422,7 +426,9 @@ describe("Render View", function()
 
     -- Each special character survives round-tripping through the diff render
     -- into the pane buffers (regression guard for shell-escape / quote-eating).
-    vim.wait(2000, function() return lifecycle.get_session(tabpage) ~= nil end, 25)
+    vim.wait(2000, function()
+      return lifecycle.get_session(tabpage) ~= nil
+    end, 25)
     local sess = lifecycle.get_session(tabpage)
     assert.is_not_nil(sess)
     local orig = table.concat(vim.api.nvim_buf_get_lines(sess.original_bufnr, 0, -1, false), "\n")
@@ -493,13 +499,14 @@ describe("Render View", function()
     -- The rendered diff carries at least as many hunks as we injected — the
     -- upstream diff engine can merge adjacent changes, so accept "many" (>= 10)
     -- rather than exactly 25.
-    vim.wait(2000, function() return lifecycle.get_session(tabpage) ~= nil end, 25)
+    vim.wait(2000, function()
+      return lifecycle.get_session(tabpage) ~= nil
+    end, 25)
     local sess = lifecycle.get_session(tabpage)
     assert.is_not_nil(sess)
     assert.is_not_nil(sess.stored_diff_result)
     local changes = sess.stored_diff_result.changes or {}
-    assert.is_true(#changes >= 10,
-      "expected many change hunks in a 25-mod file; got " .. tostring(#changes))
+    assert.is_true(#changes >= 10, "expected many change hunks in a 25-mod file; got " .. tostring(#changes))
 
     vim.fn.delete(left_path)
     vim.fn.delete(right_path)
@@ -525,12 +532,13 @@ describe("Render View", function()
 
       -- Each iteration must produce its OWN session (not silently reuse a stale
       -- one) — check that the session's content matches THIS iteration's input.
-      vim.wait(2000, function() return lifecycle.get_session(tabpage) ~= nil end, 25)
+      vim.wait(2000, function()
+        return lifecycle.get_session(tabpage) ~= nil
+      end, 25)
       local sess = lifecycle.get_session(tabpage)
       assert.is_not_nil(sess, "iteration " .. i .. " should register its own session")
       local mod = table.concat(vim.api.nvim_buf_get_lines(sess.modified_bufnr, 0, -1, false), "\n")
-      assert.is_true(mod:find("changed " .. i, 1, true) ~= nil,
-        "iteration " .. i .. " modified pane should show 'changed " .. i .. "', got: " .. mod)
+      assert.is_true(mod:find("changed " .. i, 1, true) ~= nil, "iteration " .. i .. " modified pane should show 'changed " .. i .. "', got: " .. mod)
 
       vim.fn.delete(left_path)
       vim.fn.delete(right_path)

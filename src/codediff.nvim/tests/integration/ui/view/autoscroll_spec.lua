@@ -3,7 +3,7 @@
 
 local render = require("codediff.ui")
 local view = require("codediff.ui.view")
-local diff = require('codediff.core.diff')
+local diff = require("codediff.core.diff")
 local lifecycle = require("codediff.ui.lifecycle")
 local path = require("codediff.core.path")
 
@@ -27,10 +27,10 @@ local function create_test_diff_view(left_lines, right_lines, left_path, right_p
     git_root = nil,
     original = path.make_ref(left_path, nil),
     modified = path.make_ref(right_path, nil),
-    original_revision = nil,  -- Real files, not virtual
+    original_revision = nil, -- Real files, not virtual
     modified_revision = nil,
   }
-  
+
   local result = view.create(session_config)
   local tabpage = vim.api.nvim_get_current_tabpage()
   return result, tabpage
@@ -45,8 +45,8 @@ describe("Auto-scroll to first hunk", function()
 
   after_each(function()
     -- Clean up any lingering tabs
-    while vim.fn.tabpagenr('$') > 1 do
-      vim.cmd('tabclose!')
+    while vim.fn.tabpagenr("$") > 1 do
+      vim.cmd("tabclose!")
     end
   end)
 
@@ -92,8 +92,8 @@ describe("Auto-scroll to first hunk", function()
 
   -- Test 2: Change at beginning
   it("Scrolls to change at beginning", function()
-    local original_lines = {"old line 1", "unchanged 2", "unchanged 3"}
-    local modified_lines = {"new line 1", "unchanged 2", "unchanged 3"}
+    local original_lines = { "old line 1", "unchanged 2", "unchanged 3" }
+    local modified_lines = { "new line 1", "unchanged 2", "unchanged 3" }
 
     -- Write files to disk with unique names
     local left_path = get_temp_path("autoscroll_test2_left.txt")
@@ -145,7 +145,7 @@ describe("Auto-scroll to first hunk", function()
     vim.cmd("redraw")
     vim.wait(100)
     assert(result, "create_test_diff_view should succeed")
-    
+
     -- windows are in result
     local cursor = vim.api.nvim_win_get_cursor(result.modified_win)
     assert(51 == cursor[1], "Cursor should be at line 51")
@@ -156,14 +156,14 @@ describe("Auto-scroll to first hunk", function()
 
   -- Test 4: No changes
   it("Handles no changes gracefully", function()
-    local lines = {"line 1", "line 2", "line 3"}
+    local lines = { "line 1", "line 2", "line 3" }
     local left_path = get_temp_path("autoscroll_test4_left.txt")
     local right_path = get_temp_path("autoscroll_test4_right.txt")
 
     local result, tabpage = create_test_diff_view(lines, lines, left_path, right_path)
     vim.cmd("redraw")
     assert(result, "create_test_diff_view should succeed")
-    
+
     -- windows are in result
     local cursor = vim.api.nvim_win_get_cursor(result.modified_win)
     assert(1 == cursor[1], "Cursor should be at line 1 when no changes")
@@ -192,7 +192,7 @@ describe("Auto-scroll to first hunk", function()
     local result, tabpage = create_test_diff_view(original, modified, left_path, right_path)
     vim.cmd("redraw")
     assert(result, "create_test_diff_view should succeed")
-    
+
     -- windows are in result
     local current_win = vim.api.nvim_get_current_win()
     assert(result.modified_win == current_win, "Modified window should be active for scroll sync")

@@ -61,9 +61,12 @@ describe("toggle_staged_view (issue #352)", function()
   it("swaps a dual-group file from unstaged to staged", function()
     local ready, explorer = open_status_explorer("both.txt")
     assert.is_true(ready, "explorer opens with a selection")
-    assert.is_true(vim.wait(3000, function()
-      return explorer.data.current_file_path == "both.txt" and explorer.data.current_file_group == "unstaged"
-    end, 50), "initial selection is both.txt/unstaged")
+    assert.is_true(
+      vim.wait(3000, function()
+        return explorer.data.current_file_path == "both.txt" and explorer.data.current_file_group == "unstaged"
+      end, 50),
+      "initial selection is both.txt/unstaged"
+    )
 
     local ok = actions.toggle_staged_view(explorer)
     assert.is_true(ok, "toggle succeeds when file exists in both groups")

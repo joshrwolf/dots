@@ -105,7 +105,9 @@ end
 local installed = false
 
 function M.install()
-  if installed then return end
+  if installed then
+    return
+  end
   installed = true
 
   _G.describe = do_describe

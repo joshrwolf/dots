@@ -9,16 +9,16 @@
 -- auto-merged content (BASE + every non-conflicting change from both sides)
 -- and only true two-sided conflicts are left as BASE for the user to resolve.
 
-local h = require('tests.support')
-local diff_module = require('codediff.core.diff')
-local merge_alignment = require('codediff.ui.conflict.merge')
+local h = require("tests.support")
+local diff_module = require("codediff.core.diff")
+local merge_alignment = require("codediff.ui.conflict.merge")
 
-describe('Issue #353 regression - 3-way merge auto-merge', function()
+describe("Issue #353 regression - 3-way merge auto-merge", function()
   before_each(function()
     h.ensure_plugin_loaded()
   end)
 
-  it('keeps both sides one-sided insertions inside the Result buffer', function()
+  it("keeps both sides one-sided insertions inside the Result buffer", function()
     -- BASE: an opening brace, two items, closing brace.
     -- OURS  inserts "ours_new" after the first item.
     -- THEIRS inserts "theirs_new" after the last item.
@@ -58,12 +58,10 @@ describe('Issue #353 regression - 3-way merge auto-merge', function()
     local base_to_ours = diff_module.compute_diff(base, ours, diff_opts)
     local base_to_theirs = diff_module.compute_diff(base, theirs, diff_opts)
 
-    assert.is_not_nil(base_to_ours, 'base->ours diff must compute')
-    assert.is_not_nil(base_to_theirs, 'base->theirs diff must compute')
+    assert.is_not_nil(base_to_ours, "base->ours diff must compute")
+    assert.is_not_nil(base_to_theirs, "base->theirs diff must compute")
 
-    local merged, conflict_blocks = merge_alignment.compute_auto_merged_result(
-      base_to_ours, base_to_theirs, base, ours, theirs
-    )
+    local merged, conflict_blocks = merge_alignment.compute_auto_merged_result(base_to_ours, base_to_theirs, base, ours, theirs)
 
     -- The user-visible failure mode of #353 is: the Result buffer shows just
     -- BASE, missing both branches' additions. The fix must:
@@ -71,27 +69,18 @@ describe('Issue #353 regression - 3-way merge auto-merge', function()
     --   (2) include "theirs_new"
     --   (3) emit no conflict markers, because both additions are at disjoint
     --       base positions — there is nothing for the user to resolve.
-    local merged_text = table.concat(merged, '\n')
-    assert.is_true(
-      merged_text:find('ours_new', 1, true) ~= nil,
-      "Result must contain OURS' insertion. Got:\n" .. merged_text
-    )
-    assert.is_true(
-      merged_text:find('theirs_new', 1, true) ~= nil,
-      "Result must contain THEIRS' insertion. Got:\n" .. merged_text
-    )
-    assert.equal(
-      0, #conflict_blocks,
-      'Non-overlapping insertions at disjoint base positions must not be flagged as conflicts'
-    )
+    local merged_text = table.concat(merged, "\n")
+    assert.is_true(merged_text:find("ours_new", 1, true) ~= nil, "Result must contain OURS' insertion. Got:\n" .. merged_text)
+    assert.is_true(merged_text:find("theirs_new", 1, true) ~= nil, "Result must contain THEIRS' insertion. Got:\n" .. merged_text)
+    assert.equal(0, #conflict_blocks, "Non-overlapping insertions at disjoint base positions must not be flagged as conflicts")
 
     -- And the original BASE structure is preserved around them.
     assert.is_true(merged_text:find('"a"', 1, true) ~= nil)
     assert.is_true(merged_text:find('"b"', 1, true) ~= nil)
-    assert.is_true(merged_text:find('return M', 1, true) ~= nil)
+    assert.is_true(merged_text:find("return M", 1, true) ~= nil)
   end)
 
-  it('keeps a true two-sided conflict as BASE and exposes a result_range', function()
+  it("keeps a true two-sided conflict as BASE and exposes a result_range", function()
     -- Both sides edit the same line differently -> real conflict.
     local base = { "a", "b", "c" }
     local ours = { "a", "OURS", "c" }
@@ -101,21 +90,19 @@ describe('Issue #353 regression - 3-way merge auto-merge', function()
     local base_to_ours = diff_module.compute_diff(base, ours, diff_opts)
     local base_to_theirs = diff_module.compute_diff(base, theirs, diff_opts)
 
-    local merged, conflict_blocks = merge_alignment.compute_auto_merged_result(
-      base_to_ours, base_to_theirs, base, ours, theirs
-    )
+    local merged, conflict_blocks = merge_alignment.compute_auto_merged_result(base_to_ours, base_to_theirs, base, ours, theirs)
 
     -- Conflict region must be left as BASE for the user to resolve.
     assert.are.same({ "a", "b", "c" }, merged)
     assert.equal(1, #conflict_blocks)
     local b = conflict_blocks[1]
-    assert.is_table(b.result_range, 'conflict block must carry result_range')
+    assert.is_table(b.result_range, "conflict block must carry result_range")
     -- The conflict lives at line 2 of the Result.
     assert.equal(2, b.result_range.start_line)
     assert.equal(3, b.result_range.end_line)
   end)
 
-  it('applies a one-sided insertion that lives entirely outside any conflict', function()
+  it("applies a one-sided insertion that lives entirely outside any conflict", function()
     -- OURS inserts a brand-new line; THEIRS does nothing.
     local base = { "x", "y" }
     local ours = { "x", "new", "y" }
@@ -125,9 +112,7 @@ describe('Issue #353 regression - 3-way merge auto-merge', function()
     local base_to_ours = diff_module.compute_diff(base, ours, diff_opts)
     local base_to_theirs = diff_module.compute_diff(base, theirs, diff_opts)
 
-    local merged, conflict_blocks = merge_alignment.compute_auto_merged_result(
-      base_to_ours, base_to_theirs, base, ours, theirs
-    )
+    local merged, conflict_blocks = merge_alignment.compute_auto_merged_result(base_to_ours, base_to_theirs, base, ours, theirs)
 
     assert.are.same({ "x", "new", "y" }, merged)
     assert.equal(0, #conflict_blocks)
@@ -137,7 +122,7 @@ end)
 -- End-to-end-ish test: stand up a real merge-conflicted git repo, mirror how
 -- the conflict view seeds the Result buffer, and assert the Result content.
 -- This catches wiring regressions, not just auto-merge algorithm regressions.
-describe('Issue #353 regression - end-to-end with a real git merge', function()
+describe("Issue #353 regression - end-to-end with a real git merge", function()
   local repo
 
   before_each(function()
@@ -146,10 +131,12 @@ describe('Issue #353 regression - end-to-end with a real git merge', function()
   end)
 
   after_each(function()
-    if repo then repo.cleanup() end
+    if repo then
+      repo.cleanup()
+    end
   end)
 
-  it('Result buffer contains both sides for the canonical #353 scenario', function()
+  it("Result buffer contains both sides for the canonical #353 scenario", function()
     -- Build the exact scenario from the bug report: a list both branches
     -- extend, where git emits a conflict because the additions are adjacent.
     --
@@ -174,7 +161,7 @@ describe('Issue #353 regression - end-to-end with a real git merge', function()
       "}",
       "return M",
     }
-    repo.write_file('deps.lua', base)
+    repo.write_file("deps.lua", base)
     repo.git("add deps.lua")
     repo.git("commit -m base")
 
@@ -189,7 +176,7 @@ describe('Issue #353 regression - end-to-end with a real git merge', function()
       "return M",
       "-- ours_only",
     }
-    repo.write_file('deps.lua', ours)
+    repo.write_file("deps.lua", ours)
     repo.git("commit -am ours")
 
     -- THEIRS: replaces "  a" with "  a_other" (conflicts with OURS' edit)
@@ -202,7 +189,7 @@ describe('Issue #353 regression - end-to-end with a real git merge', function()
       "}",
       "return M",
     }
-    repo.write_file('deps.lua', theirs)
+    repo.write_file("deps.lua", theirs)
     repo.git("commit -am theirs")
 
     repo.git("checkout ours")
@@ -217,7 +204,9 @@ describe('Issue #353 regression - end-to-end with a real git merge', function()
         table.insert(lines, line)
       end
       -- Strip trailing empty line introduced by the splitter.
-      if #lines > 0 and lines[#lines] == "" then table.remove(lines) end
+      if #lines > 0 and lines[#lines] == "" then
+        table.remove(lines)
+      end
       return lines
     end
 
@@ -225,13 +214,13 @@ describe('Issue #353 regression - end-to-end with a real git merge', function()
     local ours_lines = git_show(":2")
     local theirs_lines = git_show(":3")
 
-    assert.is_true(#base_lines > 0, 'BASE (:1) must exist for a content conflict')
-    assert.is_true(#ours_lines > 0, 'OURS (:2) must exist')
-    assert.is_true(#theirs_lines > 0, 'THEIRS (:3) must exist')
+    assert.is_true(#base_lines > 0, "BASE (:1) must exist for a content conflict")
+    assert.is_true(#ours_lines > 0, "OURS (:2) must exist")
+    assert.is_true(#theirs_lines > 0, "THEIRS (:3) must exist")
 
     -- Sanity-check that this scenario actually produced a conflict.
     local status = repo.git("status --porcelain deps.lua")
-    assert.is_true(status:find("UU", 1, true) ~= nil, 'deps.lua should be in UU state')
+    assert.is_true(status:find("UU", 1, true) ~= nil, "deps.lua should be in UU state")
 
     -- Reproduce the conflict view's seed computation.
     local diff_opts = { max_computation_time_ms = 2000 }
@@ -239,47 +228,29 @@ describe('Issue #353 regression - end-to-end with a real git merge', function()
     -- modified=:2 (current/ours) in the default conflict_ours_position="right".
     local base_to_original = diff_module.compute_diff(base_lines, theirs_lines, diff_opts)
     local base_to_modified = diff_module.compute_diff(base_lines, ours_lines, diff_opts)
-    local merged, conflict_blocks = merge_alignment.compute_auto_merged_result(
-      base_to_original, base_to_modified, base_lines, theirs_lines, ours_lines
-    )
+    local merged, conflict_blocks = merge_alignment.compute_auto_merged_result(base_to_original, base_to_modified, base_lines, theirs_lines, ours_lines)
 
-    local merged_text = table.concat(merged, '\n')
+    local merged_text = table.concat(merged, "\n")
 
     -- The one-sided "ours_only" trailing line must be in Result. Pre-fix this
     -- was the whole bug: the Result was wiped back to BASE so this kind of
     -- one-sided change vanished whenever any conflict existed in the same
     -- file.
-    assert.is_true(
-      merged_text:find("ours_only", 1, true) ~= nil,
-      "Result must contain OURS' one-sided change. Pre-fix: Result was just BASE.\nGot:\n" .. merged_text
-    )
+    assert.is_true(merged_text:find("ours_only", 1, true) ~= nil, "Result must contain OURS' one-sided change. Pre-fix: Result was just BASE.\nGot:\n" .. merged_text)
 
     -- The true conflict region must still be BASE for the user to resolve.
-    assert.is_true(
-      merged_text:find("a_modified", 1, true) == nil,
-      "Two-sided conflict must NOT be auto-resolved to one side"
-    )
-    assert.is_true(
-      merged_text:find("a_other", 1, true) == nil,
-      "Two-sided conflict must NOT be auto-resolved to the other side"
-    )
-    assert.is_true(
-      merged_text:find('"a"', 1, true) ~= nil,
-      "Two-sided conflict must be left as BASE for the user to resolve"
-    )
+    assert.is_true(merged_text:find("a_modified", 1, true) == nil, "Two-sided conflict must NOT be auto-resolved to one side")
+    assert.is_true(merged_text:find("a_other", 1, true) == nil, "Two-sided conflict must NOT be auto-resolved to the other side")
+    assert.is_true(merged_text:find('"a"', 1, true) ~= nil, "Two-sided conflict must be left as BASE for the user to resolve")
 
     -- There must be exactly one conflict block (the "a" line modification).
-    assert.equal(1, #conflict_blocks,
-      "There should be exactly one true conflict (the modification of 'a')")
+    assert.equal(1, #conflict_blocks, "There should be exactly one true conflict (the modification of 'a')")
 
     -- The Result must never contain raw `git merge` conflict markers — those
     -- are the on-disk representation, not what the merge tool's Result pane
     -- should show.
     for _, marker in ipairs({ "<<<<<<<", "=======", ">>>>>>>" }) do
-      assert.is_true(
-        merged_text:find(marker, 1, true) == nil,
-        "Result buffer must not contain raw conflict markers: " .. marker
-      )
+      assert.is_true(merged_text:find(marker, 1, true) == nil, "Result buffer must not contain raw conflict markers: " .. marker)
     end
   end)
 end)

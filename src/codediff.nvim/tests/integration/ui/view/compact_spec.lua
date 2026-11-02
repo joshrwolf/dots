@@ -29,20 +29,28 @@ local function create_session(original, modified)
   vim.fn.writefile(modified, right)
 
   local ready = false
-  view.create({
-    git_root = nil,
-    original = path.make_ref(left, nil),
-    modified = path.make_ref(right, nil),
-    original_revision = nil,
-    modified_revision = nil,
-  }, "", function() ready = true end)
+  view.create(
+    {
+      git_root = nil,
+      original = path.make_ref(left, nil),
+      modified = path.make_ref(right, nil),
+      original_revision = nil,
+      modified_revision = nil,
+    },
+    "",
+    function()
+      ready = true
+    end
+  )
 
   local tabpage = vim.api.nvim_get_current_tabpage()
 
   -- view.create for real files schedules its render asynchronously; wait
   -- for the on_ready callback OR the session to gain windows.
   vim.wait(5000, function()
-    if ready then return true end
+    if ready then
+      return true
+    end
     local s = lifecycle.get_session(tabpage)
     return s ~= nil and s.original_win ~= nil and s.modified_win ~= nil
   end, 20)
@@ -253,20 +261,17 @@ describe("compact mode (#344)", function()
       assert.is_true(session.compact_mode)
       for _, win in ipairs({ session.original_win, session.modified_win }) do
         assert.equal("expr", vim.wo[win].foldmethod)
-        assert.is_true(vim.wo[win].foldexpr:find("compact", 1, true) ~= nil,
-          "foldexpr should reference the compact module")
+        assert.is_true(vim.wo[win].foldexpr:find("compact", 1, true) ~= nil, "foldexpr should reference the compact module")
         assert.is_true(vim.wo[win].foldenable)
       end
 
       assert.is_true(compact.disable(tabpage))
-      assert.is_false(session.compact_mode == true,
-        "session.compact_mode should be cleared on disable")
+      assert.is_false(session.compact_mode == true, "session.compact_mode should be cleared on disable")
 
       -- Every pre-compact fold setting must be restored exactly.
       for _, win in ipairs({ session.original_win, session.modified_win }) do
         for opt, expected in pairs(pre[win]) do
-          assert.equal(expected, vim.wo[win][opt],
-            opt .. " should be restored on disable (win " .. win .. ")")
+          assert.equal(expected, vim.wo[win][opt], opt .. " should be restored on disable (win " .. win .. ")")
         end
       end
     end)
@@ -298,16 +303,14 @@ describe("compact mode (#344)", function()
       local saved_state_first = session.compact_saved_fold_state
       -- Second call should still return true without overwriting saved state.
       assert.is_true(compact.enable(tabpage))
-      assert.equal(saved_state_first, session.compact_saved_fold_state,
-        "second enable must not overwrite the saved fold state")
+      assert.equal(saved_state_first, session.compact_saved_fold_state, "second enable must not overwrite the saved fold state")
     end)
 
     it("returns false when there are no changes to compact", function()
       -- Identical files → no hunks.
       local lines = { "a", "b", "c" }
       local tabpage, session = create_session(lines, lines)
-      assert.equal(0, #(session.stored_diff_result.changes or {}),
-        "sanity: identical files should produce zero changes")
+      assert.equal(0, #(session.stored_diff_result.changes or {}), "sanity: identical files should produce zero changes")
       assert.is_false(compact.enable(tabpage))
       assert.is_true(session.compact_mode, "enabling compact records the session preference even without hunks")
       assert.is_nil(session.compact_saved_fold_state)
@@ -354,7 +357,7 @@ describe("compact mode (#344)", function()
 
     it("accumulates delta across multiple changes", function()
       local changes = {
-        make_change(5, 6, 5, 7),    -- +1
+        make_change(5, 6, 5, 7), -- +1
         make_change(15, 16, 16, 19), -- +2 more -> cumulative +3
       }
       assert.equal(53, compact.compute_corresponding_lnum(changes, "original", "modified", 50))
@@ -404,8 +407,12 @@ describe("compact mode (#344)", function()
         local maps = vim.api.nvim_buf_get_keymap(buf, "n")
         local found_zo, found_zc = false, false
         for _, m in ipairs(maps) do
-          if m.lhs == "zo" and (m.desc or ""):find("synced fold") then found_zo = true end
-          if m.lhs == "zc" and (m.desc or ""):find("synced fold") then found_zc = true end
+          if m.lhs == "zo" and (m.desc or ""):find("synced fold") then
+            found_zo = true
+          end
+          if m.lhs == "zc" and (m.desc or ""):find("synced fold") then
+            found_zc = true
+          end
         end
         assert.is_true(found_zo, "buffer should have synced 'zo' keymap")
         assert.is_true(found_zc, "buffer should have synced 'zc' keymap")
@@ -423,8 +430,7 @@ describe("compact mode (#344)", function()
       for _, buf in ipairs({ session.original_bufnr, session.modified_bufnr }) do
         local maps = vim.api.nvim_buf_get_keymap(buf, "n")
         for _, m in ipairs(maps) do
-          assert.is_nil(((m.desc or ""):find("codediff: synced fold")),
-            "no synced-fold keymap should be installed when option is false")
+          assert.is_nil(((m.desc or ""):find("codediff: synced fold")), "no synced-fold keymap should be installed when option is false")
         end
       end
     end)
@@ -438,8 +444,7 @@ describe("compact mode (#344)", function()
         if vim.api.nvim_buf_is_valid(buf) then
           local maps = vim.api.nvim_buf_get_keymap(buf, "n")
           for _, m in ipairs(maps) do
-            assert.is_nil((m.desc or ""):find("codediff: synced fold"),
-              "synced-fold keymap should be gone after disable")
+            assert.is_nil((m.desc or ""):find("codediff: synced fold"), "synced-fold keymap should be gone after disable")
           end
         end
       end
@@ -459,8 +464,7 @@ describe("compact mode (#344)", function()
       if buf and vim.api.nvim_buf_is_valid(buf) then
         local maps = vim.api.nvim_buf_get_keymap(buf, "n")
         for _, m in ipairs(maps) do
-          assert.is_nil((m.desc or ""):find("codediff: synced fold"),
-            "no synced-fold keymap in inline mode")
+          assert.is_nil((m.desc or ""):find("codediff: synced fold"), "no synced-fold keymap in inline mode")
         end
       end
     end)
@@ -472,7 +476,9 @@ describe("compact mode (#344)", function()
       -- Sanity: keymap is installed (otherwise sync can't fire).
       local found = false
       for _, m in ipairs(vim.api.nvim_buf_get_keymap(session.original_bufnr, "n")) do
-        if m.lhs == "zc" and (m.desc or ""):find("synced fold") then found = true end
+        if m.lhs == "zc" and (m.desc or ""):find("synced fold") then
+          found = true
+        end
       end
       assert.is_true(found, "synced-fold zc keymap must be installed on original pane")
 
@@ -496,17 +502,13 @@ describe("compact mode (#344)", function()
       --   * original pane: line 20 should be inside a closed fold
       --   * modified pane: corresponding line should also be inside a closed fold
       local orig_after = vim.fn.foldclosed(20)
-      local mod_target = compact.compute_corresponding_lnum(
-        session.stored_diff_result.changes, "original", "modified", 20
-      )
+      local mod_target = compact.compute_corresponding_lnum(session.stored_diff_result.changes, "original", "modified", 20)
       local mod_after = vim.api.nvim_win_call(session.modified_win, function()
         return vim.fn.foldclosed(mod_target)
       end)
 
-      assert.is_true(orig_after > 0,
-        "original pane: line 20 should be inside a closed fold after zc, got foldclosed=" .. orig_after)
-      assert.is_true(mod_after > 0,
-        "modified pane: corresponding line " .. mod_target .. " should also be inside a closed fold (synced), got " .. mod_after)
+      assert.is_true(orig_after > 0, "original pane: line 20 should be inside a closed fold after zc, got foldclosed=" .. orig_after)
+      assert.is_true(mod_after > 0, "modified pane: corresponding line " .. mod_target .. " should also be inside a closed fold (synced), got " .. mod_after)
     end)
   end)
 
@@ -700,26 +702,17 @@ describe("compact mode (#344)", function()
       vim.fn.writefile(original, empty_left)
       vim.fn.writefile(original, empty_right)
 
-      assert.is_true(
-        side_by_side_update.update(
-          tabpage,
-          {
-            git_root = nil,
-            original = path.make_ref(empty_left, nil),
-            modified = path.make_ref(empty_right, nil),
-            original_revision = nil,
-            modified_revision = nil,
-          },
-          false
-        )
-      )
+      assert.is_true(side_by_side_update.update(tabpage, {
+        git_root = nil,
+        original = path.make_ref(empty_left, nil),
+        modified = path.make_ref(empty_right, nil),
+        original_revision = nil,
+        modified_revision = nil,
+      }, false))
       assert.is_true(
         vim.wait(3000, function()
           local current = lifecycle.get_session(tabpage)
-          return current
-            and current.stored_diff_result
-            and current.stored_diff_result.changes
-            and #current.stored_diff_result.changes == 0
+          return current and current.stored_diff_result and current.stored_diff_result.changes and #current.stored_diff_result.changes == 0
         end, 20),
         "empty diff did not finish updating"
       )
@@ -728,26 +721,17 @@ describe("compact mode (#344)", function()
       assert.equals(0, folded_lines(session.original_win))
       assert.equals(0, folded_lines(session.modified_win))
 
-      assert.is_true(
-        side_by_side_update.update(
-          tabpage,
-          {
-            git_root = nil,
-            original = path.make_ref(left_path, nil),
-            modified = path.make_ref(right_path, nil),
-            original_revision = nil,
-            modified_revision = nil,
-          },
-          false
-        )
-      )
+      assert.is_true(side_by_side_update.update(tabpage, {
+        git_root = nil,
+        original = path.make_ref(left_path, nil),
+        modified = path.make_ref(right_path, nil),
+        original_revision = nil,
+        modified_revision = nil,
+      }, false))
       assert.is_true(
         vim.wait(3000, function()
           local current = lifecycle.get_session(tabpage)
-          return current
-            and current.stored_diff_result
-            and current.stored_diff_result.changes
-            and #current.stored_diff_result.changes > 0
+          return current and current.stored_diff_result and current.stored_diff_result.changes and #current.stored_diff_result.changes > 0
         end, 20),
         "changed diff did not finish updating"
       )

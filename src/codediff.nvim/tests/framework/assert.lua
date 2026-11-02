@@ -16,7 +16,9 @@ local M = {}
 
 local function fmt(v)
   local ok, s = pcall(vim.inspect, v)
-  if ok then return s end
+  if ok then
+    return s
+  end
   return tostring(v)
 end
 
@@ -30,9 +32,15 @@ end
 -- ---------------------------------------------------------------------------
 
 local function deep_equal(a, b)
-  if a == b then return true end
-  if type(a) ~= type(b) then return false end
-  if type(a) ~= "table" then return false end
+  if a == b then
+    return true
+  end
+  if type(a) ~= type(b) then
+    return false
+  end
+  if type(a) ~= "table" then
+    return false
+  end
   return vim.deep_equal(a, b)
 end
 
@@ -51,74 +59,44 @@ end
 
 function M.equals(expected, actual, msg)
   if not strict_equal(expected, actual) then
-    fail(string.format(
-      "%s\nExpected: %s\nActual:   %s",
-      msg or "Values are not equal",
-      fmt(expected),
-      fmt(actual)
-    ), 2)
+    fail(string.format("%s\nExpected: %s\nActual:   %s", msg or "Values are not equal", fmt(expected), fmt(actual)), 2)
   end
 end
 M.equal = M.equals
 
 function M.same(expected, actual, msg)
   if not deep_equal(expected, actual) then
-    fail(string.format(
-      "%s\nExpected: %s\nActual:   %s",
-      msg or "Values are not the same",
-      fmt(expected),
-      fmt(actual)
-    ), 2)
+    fail(string.format("%s\nExpected: %s\nActual:   %s", msg or "Values are not the same", fmt(expected), fmt(actual)), 2)
   end
 end
 
 function M.not_equal(a, b, msg)
   if strict_equal(a, b) then
-    fail(string.format(
-      "%s\nExpected values to differ, both were:\n  %s",
-      msg or "Values are equal but should differ",
-      fmt(a)
-    ), 2)
+    fail(string.format("%s\nExpected values to differ, both were:\n  %s", msg or "Values are equal but should differ", fmt(a)), 2)
   end
 end
 
 function M.not_same(a, b, msg)
   if deep_equal(a, b) then
-    fail(string.format(
-      "%s\nExpected values to differ, both were:\n  %s",
-      msg or "Values are the same but should differ",
-      fmt(a)
-    ), 2)
+    fail(string.format("%s\nExpected values to differ, both were:\n  %s", msg or "Values are the same but should differ", fmt(a)), 2)
   end
 end
 
 function M.is_true(v, msg)
   if v ~= true then
-    fail(string.format(
-      "%s\nExpected: true\nActual:   %s",
-      msg or "Expected value to be true",
-      fmt(v)
-    ), 2)
+    fail(string.format("%s\nExpected: true\nActual:   %s", msg or "Expected value to be true", fmt(v)), 2)
   end
 end
 
 function M.is_false(v, msg)
   if v ~= false then
-    fail(string.format(
-      "%s\nExpected: false\nActual:   %s",
-      msg or "Expected value to be false",
-      fmt(v)
-    ), 2)
+    fail(string.format("%s\nExpected: false\nActual:   %s", msg or "Expected value to be false", fmt(v)), 2)
   end
 end
 
 function M.is_nil(v, msg)
   if v ~= nil then
-    fail(string.format(
-      "%s\nExpected: nil\nActual:   %s",
-      msg or "Expected value to be nil",
-      fmt(v)
-    ), 2)
+    fail(string.format("%s\nExpected: nil\nActual:   %s", msg or "Expected value to be nil", fmt(v)), 2)
   end
 end
 
@@ -130,34 +108,20 @@ end
 
 function M.is_truthy(v, msg)
   if not v then
-    fail(string.format(
-      "%s\nExpected truthy value, got: %s",
-      msg or "Expected value to be truthy",
-      fmt(v)
-    ), 2)
+    fail(string.format("%s\nExpected truthy value, got: %s", msg or "Expected value to be truthy", fmt(v)), 2)
   end
 end
 
 function M.is_falsy(v, msg)
   if v then
-    fail(string.format(
-      "%s\nExpected falsy value, got: %s",
-      msg or "Expected value to be falsy",
-      fmt(v)
-    ), 2)
+    fail(string.format("%s\nExpected falsy value, got: %s", msg or "Expected value to be falsy", fmt(v)), 2)
   end
 end
 
 local function type_check(expected_type)
   return function(v, msg)
     if type(v) ~= expected_type then
-      fail(string.format(
-        "%s\nExpected type: %s\nActual type:   %s\nValue: %s",
-        msg or ("Expected value to be a " .. expected_type),
-        expected_type,
-        type(v),
-        fmt(v)
-      ), 2)
+      fail(string.format("%s\nExpected type: %s\nActual type:   %s\nValue: %s", msg or ("Expected value to be a " .. expected_type), expected_type, type(v), fmt(v)), 2)
     end
   end
 end
@@ -170,23 +134,14 @@ M.is_boolean = type_check("boolean")
 
 function M.matches(pattern, s, msg)
   if type(s) ~= "string" or not s:find(pattern) then
-    fail(string.format(
-      "%s\nExpected string matching: %s\nActual: %s",
-      msg or "Value does not match pattern",
-      fmt(pattern),
-      fmt(s)
-    ), 2)
+    fail(string.format("%s\nExpected string matching: %s\nActual: %s", msg or "Value does not match pattern", fmt(pattern), fmt(s)), 2)
   end
 end
 
 function M.has_no_errors(fn, msg)
   local ok, err = pcall(fn)
   if not ok then
-    fail(string.format(
-      "%s\nExpected no error, got: %s",
-      msg or "Function raised an error",
-      tostring(err)
-    ), 2)
+    fail(string.format("%s\nExpected no error, got: %s", msg or "Function raised an error", tostring(err)), 2)
   end
 end
 
@@ -197,12 +152,7 @@ function M.has_error(fn, expected, msg)
   end
   if expected ~= nil and not deep_equal(expected, err) then
     if type(expected) ~= "string" or type(err) ~= "string" or not err:find(expected, 1, true) then
-      fail(string.format(
-        "%s\nExpected error: %s\nActual error:  %s",
-        msg or "Error did not match expected",
-        fmt(expected),
-        fmt(err)
-      ), 2)
+      fail(string.format("%s\nExpected error: %s\nActual error:  %s", msg or "Error did not match expected", fmt(expected), fmt(err)), 2)
     end
   end
 end

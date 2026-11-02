@@ -45,16 +45,20 @@ describe("conflict editor layout", function()
     vim.cmd("edit " .. vim.fn.fnameescape(repo.path("file.txt")))
 
     local ready = false
-    require("codediff.ui.view").create({
-      git_root = repo.dir,
-      original = path.make_ref("file.txt", repo.dir),
-      modified = path.make_ref("file.txt", repo.dir),
-      original_revision = ":3",
-      modified_revision = ":2",
-      conflict = true,
-    }, nil, function()
-      ready = true
-    end)
+    require("codediff.ui.view").create(
+      {
+        git_root = repo.dir,
+        original = path.make_ref("file.txt", repo.dir),
+        modified = path.make_ref("file.txt", repo.dir),
+        original_revision = ":3",
+        modified_revision = ":2",
+        conflict = true,
+      },
+      nil,
+      function()
+        ready = true
+      end
+    )
 
     local lifecycle = require("codediff.ui.lifecycle")
     local tabpage = vim.api.nvim_get_current_tabpage()

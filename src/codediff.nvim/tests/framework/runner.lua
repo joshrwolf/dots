@@ -19,7 +19,9 @@ end
 
 local function traceback(e)
   -- Preserve pending sentinel intact so the runner can detect it.
-  if e == busted.PENDING_SENTINEL then return e end
+  if e == busted.PENDING_SENTINEL then
+    return e
+  end
   return debug.traceback(tostring(e), 2)
 end
 
@@ -106,8 +108,7 @@ local function run_test(test)
   end
 
   if #after_errs > 0 then
-    reporter.print_test(desc, test.name, "fail",
-      "[after_each] " .. table.concat(after_errs, "\n[after_each] "), duration_ms)
+    reporter.print_test(desc, test.name, "fail", "[after_each] " .. table.concat(after_errs, "\n[after_each] "), duration_ms)
     return "fail"
   end
 

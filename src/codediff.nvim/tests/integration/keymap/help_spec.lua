@@ -143,16 +143,19 @@ local function open_explorer(opts)
   commands.vscode_diff({ fargs = {} })
 
   local tabpage
-  assert.is_true(vim.wait(15000, function()
-    for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
-      local session = lifecycle.get_session(tp)
-      if session and (session.panel or {}).view and (session.panel or {}).view.bufnr then
-        tabpage = tp
-        return true
+  assert.is_true(
+    vim.wait(15000, function()
+      for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
+        local session = lifecycle.get_session(tp)
+        if session and (session.panel or {}).view and (session.panel or {}).view.bufnr then
+          tabpage = tp
+          return true
+        end
       end
-    end
-    return false
-  end, 50), "explorer session should be created")
+      return false
+    end, 50),
+    "explorer session should be created"
+  )
 
   local explorer = (lifecycle.get_session(tabpage).panel or {}).view
   explorer.on_file_select({ path = "t.txt", group = "unstaged", status = "M", git_root = repo.dir })
@@ -176,16 +179,19 @@ local function open_history()
   commands.vscode_diff({ fargs = { "history" } })
 
   local tabpage
-  assert.is_true(vim.wait(15000, function()
-    for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
-      local session = lifecycle.get_session(tp)
-      if session and session.panel and session.panel.name == "history" and (session.panel or {}).view and (session.panel or {}).view.bufnr then
-        tabpage = tp
-        return true
+  assert.is_true(
+    vim.wait(15000, function()
+      for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
+        local session = lifecycle.get_session(tp)
+        if session and session.panel and session.panel.name == "history" and (session.panel or {}).view and (session.panel or {}).view.bufnr then
+          tabpage = tp
+          return true
+        end
       end
-    end
-    return false
-  end, 50), "history session should be created")
+      return false
+    end, 50),
+    "history session should be created"
+  )
 
   return tabpage, function()
     repo.cleanup()
@@ -209,19 +215,26 @@ local function open_conflict()
   vim.cmd("edit " .. vim.fn.fnameescape(repo.path("conf.txt")))
 
   local ready = false
-  view.create({
-    git_root = repo.dir,
-    original = path.make_ref("conf.txt", repo.dir),
-    modified = path.make_ref("conf.txt", repo.dir),
-    original_revision = ":3",
-    modified_revision = ":2",
-    conflict = true,
-  }, "", function()
-    ready = true
-  end)
-  assert.is_true(vim.wait(15000, function()
-    return ready
-  end, 50), "conflict view should become ready")
+  view.create(
+    {
+      git_root = repo.dir,
+      original = path.make_ref("conf.txt", repo.dir),
+      modified = path.make_ref("conf.txt", repo.dir),
+      original_revision = ":3",
+      modified_revision = ":2",
+      conflict = true,
+    },
+    "",
+    function()
+      ready = true
+    end
+  )
+  assert.is_true(
+    vim.wait(15000, function()
+      return ready
+    end, 50),
+    "conflict view should become ready"
+  )
 
   local tabpage
   for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
@@ -317,16 +330,44 @@ describe("keymap help popup", function()
     -- help ~= false must be discoverable through g?. This covers every buffer
     -- role and every mode, in each shape codediff can produce.
     local shapes = {
-      { "standalone side-by-side", function() return open_standalone({ diff = { layout = "side-by-side" } }) end },
-      { "standalone inline", function() return open_standalone({ diff = { layout = "inline" } }) end },
-      { "standalone + compute_moves", function() return open_standalone({ diff = { compute_moves = true } }) end },
-      { "standalone + compact", function()
-        local tabpage, cleanup = open_standalone({ diff = { layout = "side-by-side" } })
-        require("codediff.ui.view.compact").enable(tabpage)
-        return tabpage, cleanup
-      end },
-      { "explorer", function() return open_explorer({}) end },
-      { "explorer + auto_open_on_cursor", function() return open_explorer({ explorer = { auto_open_on_cursor = true } }) end },
+      {
+        "standalone side-by-side",
+        function()
+          return open_standalone({ diff = { layout = "side-by-side" } })
+        end,
+      },
+      {
+        "standalone inline",
+        function()
+          return open_standalone({ diff = { layout = "inline" } })
+        end,
+      },
+      {
+        "standalone + compute_moves",
+        function()
+          return open_standalone({ diff = { compute_moves = true } })
+        end,
+      },
+      {
+        "standalone + compact",
+        function()
+          local tabpage, cleanup = open_standalone({ diff = { layout = "side-by-side" } })
+          require("codediff.ui.view.compact").enable(tabpage)
+          return tabpage, cleanup
+        end,
+      },
+      {
+        "explorer",
+        function()
+          return open_explorer({})
+        end,
+      },
+      {
+        "explorer + auto_open_on_cursor",
+        function()
+          return open_explorer({ explorer = { auto_open_on_cursor = true } })
+        end,
+      },
       { "history", open_history },
       { "conflict", open_conflict },
     }

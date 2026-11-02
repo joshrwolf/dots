@@ -253,8 +253,8 @@ describe("Inline standalone view", function()
 
   -- Test 8: Diff view persists when switching tabs
   it("Diff view persists when switching tabs", function()
-    local original = {"line 1", "line 2"}
-    local modified = {"line 1", "CHANGED"}
+    local original = { "line 1", "line 2" }
+    local modified = { "line 1", "CHANGED" }
 
     local left_path = get_temp_path("inline_t8_left.txt")
     local right_path = get_temp_path("inline_t8_right.txt")
@@ -288,16 +288,16 @@ describe("Inline standalone view", function()
     local left2 = get_temp_path("inline_t9_left2.txt")
     local right2 = get_temp_path("inline_t9_right2.txt")
 
-    vim.fn.writefile({"aaa"}, left1)
-    vim.fn.writefile({"bbb"}, right1)
-    vim.fn.writefile({"xxx"}, left2)
-    vim.fn.writefile({"yyy"}, right2)
+    vim.fn.writefile({ "aaa" }, left1)
+    vim.fn.writefile({ "bbb" }, right1)
+    vim.fn.writefile({ "xxx" }, left2)
+    vim.fn.writefile({ "yyy" }, right2)
 
-    local _, tab1 = create_inline_view({"aaa"}, {"bbb"}, left1, right1)
+    local _, tab1 = create_inline_view({ "aaa" }, { "bbb" }, left1, right1)
     vim.cmd("redraw")
     vim.wait(200)
 
-    local _, tab2 = create_inline_view({"xxx"}, {"yyy"}, left2, right2)
+    local _, tab2 = create_inline_view({ "xxx" }, { "yyy" }, left2, right2)
     vim.cmd("redraw")
     vim.wait(200)
 
@@ -318,8 +318,8 @@ describe("Inline standalone view", function()
 
   -- Test 10: Handles single-line files correctly
   it("Handles single-line files correctly", function()
-    local original = {"only line"}
-    local modified = {"changed line"}
+    local original = { "only line" }
+    local modified = { "changed line" }
 
     local left_path = get_temp_path("inline_t10_left.txt")
     local right_path = get_temp_path("inline_t10_right.txt")
@@ -343,8 +343,8 @@ describe("Inline standalone view", function()
 
   -- Test 11: Handles files with special characters in content
   it("Handles files with special characters in content", function()
-    local original = {"hello 世界", "tab\there", "émojis 🎉"}
-    local modified = {"hello 世界", "tab\tCHANGED", "émojis 🎉"}
+    local original = { "hello 世界", "tab\there", "émojis 🎉" }
+    local modified = { "hello 世界", "tab\tCHANGED", "émojis 🎉" }
 
     local left_path = get_temp_path("inline_t11_left.txt")
     local right_path = get_temp_path("inline_t11_right.txt")
@@ -368,11 +368,11 @@ describe("Inline standalone view", function()
   it("View creation doesn't modify other open buffers", function()
     -- Create a buffer with known content before diff
     local pre_buf = vim.api.nvim_create_buf(true, false)
-    vim.api.nvim_buf_set_lines(pre_buf, 0, -1, false, {"pre-existing", "content"})
+    vim.api.nvim_buf_set_lines(pre_buf, 0, -1, false, { "pre-existing", "content" })
     local pre_tick = vim.api.nvim_buf_get_changedtick(pre_buf)
 
-    local original = {"line 1"}
-    local modified = {"CHANGED"}
+    local original = { "line 1" }
+    local modified = { "CHANGED" }
 
     local left_path = get_temp_path("inline_t12_left.txt")
     local right_path = get_temp_path("inline_t12_right.txt")
@@ -385,7 +385,7 @@ describe("Inline standalone view", function()
 
     -- Pre-existing buffer should be untouched
     local post_lines = vim.api.nvim_buf_get_lines(pre_buf, 0, -1, false)
-    assert.are.same({"pre-existing", "content"}, post_lines, "Pre-existing buffer should be unchanged")
+    assert.are.same({ "pre-existing", "content" }, post_lines, "Pre-existing buffer should be unchanged")
     assert.are.equal(pre_tick, vim.api.nvim_buf_get_changedtick(pre_buf), "Changedtick should be unchanged")
 
     pcall(vim.api.nvim_buf_delete, pre_buf, { force = true })
@@ -434,10 +434,10 @@ describe("Inline standalone view", function()
     local right_path = get_temp_path("inline_t14_right.txt")
 
     for i = 1, 3 do
-      vim.fn.writefile({"original " .. i}, left_path)
-      vim.fn.writefile({"modified " .. i}, right_path)
+      vim.fn.writefile({ "original " .. i }, left_path)
+      vim.fn.writefile({ "modified " .. i }, right_path)
 
-      local result, tabpage = create_inline_view({"original " .. i}, {"modified " .. i}, left_path, right_path)
+      local result, tabpage = create_inline_view({ "original " .. i }, { "modified " .. i }, left_path, right_path)
       vim.cmd("redraw")
       vim.wait(200)
 

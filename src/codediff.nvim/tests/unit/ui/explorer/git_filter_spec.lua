@@ -44,7 +44,7 @@ describe("Explorer File Filter - .git filtering", function()
     }
     local patterns = { ".git/**" }
     local filtered = filter.apply(files, patterns)
-    
+
     assert.equals(2, #filtered)
     assert.equals("src/main.lua", filtered[1].path)
     assert.equals("README.md", filtered[2].path)

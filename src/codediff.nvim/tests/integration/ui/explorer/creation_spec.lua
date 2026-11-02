@@ -1,9 +1,9 @@
 -- Test: Explorer Mode
 -- Validates git status explorer functionality, window management, and file selection
 
-local git = require('codediff.core.git')
+local git = require("codediff.core.git")
 local config = require("codediff.config")
-local h = require('tests.support')
+local h = require("tests.support")
 
 -- Setup CodeDiff command for tests
 local function setup_command()
@@ -36,9 +36,7 @@ local function open_explorer(temp_dir, focus_file)
   local ready = vim.wait(6000, function()
     for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
       local e = lifecycle.get_panel_view(tp)
-      if e and e.winid and vim.api.nvim_win_is_valid(e.winid)
-          and e.bufnr and vim.api.nvim_buf_is_valid(e.bufnr)
-          and e.data.current_file_path ~= nil then
+      if e and e.winid and vim.api.nvim_win_is_valid(e.winid) and e.bufnr and vim.api.nvim_buf_is_valid(e.bufnr) and e.data.current_file_path ~= nil then
         -- Pick the explorer wired with the auto-open j/k keymap; leftover
         -- explorers from prior tests (default config) lack it.
         local maps = vim.api.nvim_buf_get_keymap(e.bufnr, "n")
@@ -129,31 +127,31 @@ describe("Explorer Mode", function()
     })
     -- Setup command
     setup_command()
-    
+
     -- Save original working directory
     original_cwd = vim.fn.getcwd()
-    
+
     repo = h.create_temp_git_repo()
     temp_dir = repo.dir
     vim.fn.chdir(temp_dir)
-    
+
     -- Create and commit initial file
-    vim.fn.writefile({"line 1", "line 2"}, temp_dir .. "/file1.txt")
+    vim.fn.writefile({ "line 1", "line 2" }, temp_dir .. "/file1.txt")
     vim.fn.mkdir(temp_dir .. "/nested", "p")
     vim.fn.writefile({ "original nested" }, temp_dir .. "/nested/deep.txt")
     h.git_cmd(temp_dir, "add file1.txt nested/deep.txt")
     local commit_result = h.git_cmd(temp_dir, 'commit -m "Initial commit"')
     assert(vim.v.shell_error == 0, "git commit failed: " .. commit_result)
-    
+
     -- Modify file (unstaged)
-    vim.fn.writefile({"line 1", "line 2 modified", "line 3"}, temp_dir .. "/file1.txt")
-    
+    vim.fn.writefile({ "line 1", "line 2 modified", "line 3" }, temp_dir .. "/file1.txt")
+
     -- Create new file (staged)
-    vim.fn.writefile({"new file"}, temp_dir .. "/file2.txt")
+    vim.fn.writefile({ "new file" }, temp_dir .. "/file2.txt")
     h.git_cmd(temp_dir, "add file2.txt")
-    
+
     -- Create untracked file
-    vim.fn.writefile({"untracked"}, temp_dir .. "/file3.txt")
+    vim.fn.writefile({ "untracked" }, temp_dir .. "/file3.txt")
   end)
 
   after_each(function()
@@ -162,13 +160,13 @@ describe("Explorer Mode", function()
     vim.cmd("tabnew")
     -- Close all other tabs (including any diff tabs)
     vim.cmd("tabonly")
-    
+
     -- Clean up and restore
     vim.fn.chdir(original_cwd)
-    
+
     -- Wait for async operations to complete before deleting temp directory
     vim.wait(200)
-    
+
     if repo then
       repo.cleanup()
       repo = nil
@@ -179,24 +177,26 @@ describe("Explorer Mode", function()
   it("Parses git status correctly", function()
     local callback_called = false
     local status_result = nil
-    
+
     git.get_status(temp_dir, function(err, result)
       callback_called = true
       if not err then
         status_result = result
       end
     end)
-    
-    vim.wait(2000, function() return callback_called end)
+
+    vim.wait(2000, function()
+      return callback_called
+    end)
     assert.is_true(callback_called, "Callback should be invoked")
     assert.is_not_nil(status_result, "Status result should not be nil")
     assert.is_table(status_result.unstaged, "Should have unstaged table")
     assert.is_table(status_result.staged, "Should have staged table")
     assert.is_table(status_result.conflicts, "Should have conflicts table")
-    
+
     -- Should have at least one unstaged file (file1.txt modified)
     assert.is_true(#status_result.unstaged >= 1, "Should have unstaged changes")
-    
+
     -- Should have at least one staged file (file2.txt added)
     assert.is_true(#status_result.staged >= 1, "Should have staged changes")
   end)
@@ -205,15 +205,17 @@ describe("Explorer Mode", function()
   it("Detects modified, added, and untracked files", function()
     local callback_called = false
     local status_result = nil
-    
+
     git.get_status(temp_dir, function(err, result)
       callback_called = true
       status_result = result
     end)
-    
-    vim.wait(2000, function() return callback_called end)
+
+    vim.wait(2000, function()
+      return callback_called
+    end)
     assert.is_true(callback_called)
-    
+
     -- Check for modified file in unstaged
     local has_modified = false
     for _, file in ipairs(status_result.unstaged) do
@@ -222,7 +224,7 @@ describe("Explorer Mode", function()
       end
     end
     assert.is_true(has_modified, "Should detect modified file")
-    
+
     -- Check for added file in staged
     local has_added = false
     for _, file in ipairs(status_result.staged) do
@@ -231,7 +233,7 @@ describe("Explorer Mode", function()
       end
     end
     assert.is_true(has_added, "Should detect added file")
-    
+
     -- Check for untracked file
     local has_untracked = false
     for _, file in ipairs(status_result.unstaged) do
@@ -246,29 +248,31 @@ describe("Explorer Mode", function()
   it("Detects merge conflicts", function()
     -- Create a branch and make conflicting changes
     h.git_cmd(temp_dir, "checkout -b feature")
-    vim.fn.writefile({"feature line 1", "line 2"}, temp_dir .. "/file1.txt")
+    vim.fn.writefile({ "feature line 1", "line 2" }, temp_dir .. "/file1.txt")
     h.git_cmd(temp_dir, "add file1.txt")
     h.git_cmd(temp_dir, 'commit -m "Feature change"')
-    
+
     h.git_cmd(temp_dir, "checkout main")
-    vim.fn.writefile({"master line 1", "line 2"}, temp_dir .. "/file1.txt")
+    vim.fn.writefile({ "master line 1", "line 2" }, temp_dir .. "/file1.txt")
     h.git_cmd(temp_dir, "add file1.txt")
     h.git_cmd(temp_dir, 'commit -m "Master change"')
-    
+
     -- Attempt merge (will fail with conflict)
     h.git_cmd(temp_dir, "merge feature")
-    
+
     local callback_called = false
     local status_result = nil
-    
+
     git.get_status(temp_dir, function(err, result)
       callback_called = true
       status_result = result
     end)
-    
-    vim.wait(2000, function() return callback_called end)
+
+    vim.wait(2000, function()
+      return callback_called
+    end)
     assert.is_true(callback_called)
-    
+
     -- Check for conflict file
     local has_conflict = false
     for _, file in ipairs(status_result.conflicts) do
@@ -277,31 +281,31 @@ describe("Explorer Mode", function()
       end
     end
     assert.is_true(has_conflict, "Should detect merge conflict")
-    
+
     -- Abort merge to clean up
     h.git_cmd(temp_dir, "merge --abort")
   end)
 
   -- Test 3: Explorer creates proper window layout
   it("Creates correct window layout", function()
-    local initial_tabs = vim.fn.tabpagenr('$')
-    
+    local initial_tabs = vim.fn.tabpagenr("$")
+
     -- Open explorer
     vim.cmd("edit " .. temp_dir .. "/file1.txt")
     vim.cmd("CodeDiff")
-    
+
     -- Wait for async operations
     vim.wait(3000, function()
-      return vim.fn.tabpagenr('$') > initial_tabs
+      return vim.fn.tabpagenr("$") > initial_tabs
     end)
-    
+
     -- Should create new tab
-    assert.is_true(vim.fn.tabpagenr('$') > initial_tabs, "Should create new tab")
-    
+    assert.is_true(vim.fn.tabpagenr("$") > initial_tabs, "Should create new tab")
+
     -- Should have 3 windows (explorer + 2 diff panes)
-    local wincount = vim.fn.winnr('$')
+    local wincount = vim.fn.winnr("$")
     assert.equal(3, wincount, "Should have 3 windows")
-    
+
     -- Check for explorer window
     local has_explorer = false
     for i = 1, wincount do
@@ -317,16 +321,18 @@ describe("Explorer Mode", function()
 
   -- Test 4: Window widths are properly distributed
   it("Distributes window widths correctly", function()
-    vim.o.columns = 160  -- Set known terminal width
-    
+    vim.o.columns = 160 -- Set known terminal width
+
     vim.cmd("edit " .. temp_dir .. "/file1.txt")
     vim.cmd("CodeDiff")
-    
+
     -- Wait longer and check for explorer specifically
     local has_explorer = false
     vim.wait(5000, function()
-      if vim.fn.winnr('$') ~= 3 then return false end
-      for i = 1, vim.fn.winnr('$') do
+      if vim.fn.winnr("$") ~= 3 then
+        return false
+      end
+      for i = 1, vim.fn.winnr("$") do
         local winid = vim.fn.win_getid(i)
         local bufnr = vim.api.nvim_win_get_buf(winid)
         if vim.bo[bufnr].filetype == "codediff-explorer" then
@@ -336,32 +342,31 @@ describe("Explorer Mode", function()
       end
       return false
     end)
-    
+
     if not has_explorer then
       pending("Explorer not created in time")
       return
     end
-    
+
     local explorer_width = nil
     local diff_widths = {}
-    
-    for i = 1, vim.fn.winnr('$') do
+
+    for i = 1, vim.fn.winnr("$") do
       local winid = vim.fn.win_getid(i)
       local bufnr = vim.api.nvim_win_get_buf(winid)
       local width = vim.api.nvim_win_get_width(winid)
-      
+
       if vim.bo[bufnr].filetype == "codediff-explorer" then
         explorer_width = width
       elseif vim.bo[bufnr].filetype ~= "" then
         table.insert(diff_widths, width)
       end
     end
-    
+
     -- Explorer should be 20-35 columns
     assert.is_not_nil(explorer_width, "Explorer should have width")
-    assert.is_true(explorer_width >= 15 and explorer_width <= 40, 
-      "Explorer width should be reasonable (got " .. tostring(explorer_width) .. ")")
-    
+    assert.is_true(explorer_width >= 15 and explorer_width <= 40, "Explorer width should be reasonable (got " .. tostring(explorer_width) .. ")")
+
     -- Diff panes should be roughly equal
     if #diff_widths == 2 then
       local diff = math.abs(diff_widths[1] - diff_widths[2])
@@ -373,11 +378,11 @@ describe("Explorer Mode", function()
   it("Shows correct explorer content structure", function()
     vim.cmd("edit " .. temp_dir .. "/file1.txt")
     vim.cmd("CodeDiff")
-    
+
     -- Wait for explorer to be created
     local explorer_buf = nil
     vim.wait(5000, function()
-      for i = 1, vim.fn.winnr('$') do
+      for i = 1, vim.fn.winnr("$") do
         local winid = vim.fn.win_getid(i)
         local bufnr = vim.api.nvim_win_get_buf(winid)
         if vim.bo[bufnr].filetype == "codediff-explorer" then
@@ -387,29 +392,35 @@ describe("Explorer Mode", function()
       end
       return false
     end)
-    
+
     if not explorer_buf then
       pending("Explorer buffer not created in time")
       return
     end
-    
+
     local lines = vim.api.nvim_buf_get_lines(explorer_buf, 0, -1, false)
-    
+
     -- Should have group headers
     local has_changes_group = false
     local has_staged_group = false
     local has_file_count = false
     local has_status_symbol = false
-    
+
     for _, line in ipairs(lines) do
-      if line:match("Changes") then has_changes_group = true end
-      if line:match("Staged") then has_staged_group = true end
-      if line:match("%(%d+%)") then has_file_count = true end
-      if line:match("[MAD]%s*$") or line:match("??%s*$") then 
-        has_status_symbol = true 
+      if line:match("Changes") then
+        has_changes_group = true
+      end
+      if line:match("Staged") then
+        has_staged_group = true
+      end
+      if line:match("%(%d+%)") then
+        has_file_count = true
+      end
+      if line:match("[MAD]%s*$") or line:match("??%s*$") then
+        has_status_symbol = true
       end
     end
-    
+
     assert.is_true(has_changes_group, "Should show Changes group")
     assert.is_true(has_staged_group, "Should show Staged Changes group")
     assert.is_true(has_file_count, "Should show file counts")
@@ -445,10 +456,7 @@ describe("Explorer Mode", function()
 
     assert.equals("list", before_mode)
     assert.equals("tree", after_mode)
-    assert.is_false(
-      vim.deep_equal(before_lines, after_lines),
-      "Explorer buffer must re-render when view_mode flips (bug: skip check swallowed the rebuild)"
-    )
+    assert.is_false(vim.deep_equal(before_lines, after_lines), "Explorer buffer must re-render when view_mode flips (bug: skip check swallowed the rebuild)")
   end)
 
   it("Does not select files excluded from the explorer", function()
@@ -460,20 +468,20 @@ describe("Explorer Mode", function()
   it("Creates lifecycle session with explorer mode", function()
     vim.cmd("edit " .. temp_dir .. "/file1.txt")
     vim.cmd("CodeDiff")
-    
+
     vim.wait(3000, function()
-      return vim.fn.winnr('$') == 3
+      return vim.fn.winnr("$") == 3
     end)
-    
+
     local tabpage = vim.api.nvim_get_current_tabpage()
-    local has_lifecycle, lifecycle = pcall(require, 'codediff.ui.lifecycle')
+    local has_lifecycle, lifecycle = pcall(require, "codediff.ui.lifecycle")
     if not has_lifecycle then
       pending("lifecycle module not available in test context")
       return
     end
-    
+
     local session = lifecycle.get_session(tabpage)
-    
+
     assert.is_not_nil(session, "Should have lifecycle session")
     assert.equal("explorer", session.panel and session.panel.name, "Session panel should be explorer")
     assert.is_not_nil(session.git_root, "Should have git_root")
@@ -484,7 +492,7 @@ describe("Explorer Mode", function()
     -- Commit all changes to have clean working tree
     h.git_cmd(temp_dir, "add -A")
     h.git_cmd(temp_dir, 'commit -m "Clean"')
-    
+
     local notified = false
     local original_notify = vim.notify
     vim.notify = function(msg, level)
@@ -493,12 +501,14 @@ describe("Explorer Mode", function()
       end
       original_notify(msg, level)
     end
-    
+
     vim.cmd("edit " .. temp_dir .. "/file1.txt")
     vim.cmd("CodeDiff")
-    
-    vim.wait(2000, function() return notified end)
-    
+
+    vim.wait(2000, function()
+      return notified
+    end)
+
     vim.notify = original_notify
     assert.is_true(notified, "Should notify when no changes")
   end)
@@ -507,15 +517,15 @@ describe("Explorer Mode", function()
   it("Shows error for non-git directory", function()
     local non_git_dir = vim.fn.tempname()
     vim.fn.mkdir(non_git_dir, "p")
-    
+
     -- Create a dummy file so we have something to edit
     local dummy_file = non_git_dir .. "/dummy.txt"
-    vim.fn.writefile({"test"}, dummy_file)
-    
-    -- Change to non-git directory  
+    vim.fn.writefile({ "test" }, dummy_file)
+
+    -- Change to non-git directory
     local saved_cwd = vim.fn.getcwd()
     vim.fn.chdir(non_git_dir)
-    
+
     local notified = false
     local original_notify = vim.notify
     vim.notify = function(msg, level)
@@ -524,18 +534,20 @@ describe("Explorer Mode", function()
       end
       original_notify(msg, level)
     end
-    
+
     vim.cmd("edit " .. dummy_file)
     vim.cmd("CodeDiff")
-    
-    vim.wait(2000, function() return notified end)
-    
+
+    vim.wait(2000, function()
+      return notified
+    end)
+
     vim.notify = original_notify
-    
+
     -- Restore directory before cleanup
     vim.fn.chdir(saved_cwd)
     vim.fn.delete(non_git_dir, "rf")
-    
+
     assert.is_true(notified, "Should notify for non-git directory")
   end)
 
@@ -599,8 +611,7 @@ describe("Explorer Mode", function()
     vim.api.nvim_feedkeys(string.rep(motion, count), "tx", false)
 
     local opened = vim.wait(2000, function()
-      return explorer.data.current_file_path == target_path
-        and explorer.data.current_file_group == target_group
+      return explorer.data.current_file_path == target_path and explorer.data.current_file_group == target_group
     end, 20)
     assert.is_true(opened, "j/k on a file node should auto-open its diff")
   end)
@@ -616,7 +627,7 @@ describe("Explorer Mode", function()
 
     -- Add a nested file so the tree has a directory node
     vim.fn.mkdir(temp_dir .. "/nested", "p")
-    vim.fn.writefile({"deep"}, temp_dir .. "/nested/deep.txt")
+    vim.fn.writefile({ "deep" }, temp_dir .. "/nested/deep.txt")
 
     local ready, tabpage, explorer = open_explorer(temp_dir, "file1.txt")
     assert.is_true(ready, "Explorer should be ready")
@@ -650,10 +661,8 @@ describe("Explorer Mode", function()
     vim.wait(150)
     -- After landing on a group/dir, current_file_path must not have changed
     -- from before the j keypress.
-    assert.equals(before_path, explorer.data.current_file_path,
-      "Group/directory nodes should not trigger auto-open")
-    assert.equals(before_group, explorer.data.current_file_group,
-      "Group/directory nodes should not change current group")
+    assert.equals(before_path, explorer.data.current_file_path, "Group/directory nodes should not trigger auto-open")
+    assert.equals(before_group, explorer.data.current_file_group, "Group/directory nodes should not change current group")
   end)
 
   -- Test 10: Commands.lua simplicity (no callbacks in commands)
@@ -664,4 +673,3 @@ describe("Explorer Mode", function()
     assert.is_nil(content:match("local%s+function%s+on_file_select"), "commands must not define panel selection callbacks")
   end)
 end)
-

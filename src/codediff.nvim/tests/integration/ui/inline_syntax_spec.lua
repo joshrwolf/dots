@@ -77,8 +77,7 @@ describe("Inline virt_lines syntax highlighting", function()
     -- With syntax highlighting, there should be more than 2 chunks
     -- (without syntax: just {text, CodeDiffLineDelete} + {padding, CodeDiffLineDelete})
     -- (with syntax: {local, merged_keyword_hl}, { , CodeDiffLineDelete}, {x, merged_var_hl}, ...)
-    assert.is_true(#virt_chunks > 2,
-      "With syntax highlighting, should have more than 2 chunks, got " .. #virt_chunks)
+    assert.is_true(#virt_chunks > 2, "With syntax highlighting, should have more than 2 chunks, got " .. #virt_chunks)
 
     -- At least one chunk should have a merged highlight (not plain CodeDiffLineDelete)
     local has_merged = false
@@ -121,10 +120,7 @@ describe("Inline virt_lines syntax highlighting", function()
     -- Without syntax, chunks should only use CodeDiffLineDelete/CodeDiffCharDelete
     for _, chunk in ipairs(virt_chunks) do
       local hl = chunk[2]
-      assert.is_true(
-        hl == "CodeDiffLineDelete" or hl == "CodeDiffCharDelete",
-        "Without syntax, should only use diff highlights, got: " .. tostring(hl)
-      )
+      assert.is_true(hl == "CodeDiffLineDelete" or hl == "CodeDiffCharDelete", "Without syntax, should only use diff highlights, got: " .. tostring(hl))
     end
 
     vim.api.nvim_buf_delete(buf, { force = true })
@@ -178,7 +174,7 @@ describe("Inline virt_lines syntax highlighting", function()
     local buf = vim.api.nvim_create_buf(false, true)
     vim.bo[buf].filetype = "lua"
 
-    local original = { 'local function hello()', '  print("world")', "end" }
+    local original = { "local function hello()", '  print("world")', "end" }
     local modified = { "local function goodbye()", "end" }
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, modified)
@@ -208,13 +204,19 @@ describe("Inline virt_lines syntax highlighting", function()
     local has_string = false
     local has_function = false
     for hl, text in pairs(all_hls) do
-      if hl:match("keyword") and text:match("local") then has_keyword = true end
-      if hl:match("string") and text:match("world") then has_string = true end
-      if hl:match("function") and text:match("print") then has_function = true end
+      if hl:match("keyword") and text:match("local") then
+        has_keyword = true
+      end
+      if hl:match("string") and text:match("world") then
+        has_string = true
+      end
+      if hl:match("function") and text:match("print") then
+        has_function = true
+      end
     end
 
     assert.is_true(has_keyword, "'local' should have a keyword-merged highlight")
-    assert.is_true(has_string, '\"world\" should have a string-merged highlight')
+    assert.is_true(has_string, '"world" should have a string-merged highlight')
     assert.is_true(has_function, "'print' should have a function-merged highlight")
 
     vim.api.nvim_buf_delete(buf, { force = true })

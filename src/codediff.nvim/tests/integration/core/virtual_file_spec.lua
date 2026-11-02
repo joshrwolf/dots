@@ -8,7 +8,7 @@
 -- and PASS when TreeSitter is started directly without setting filetype.
 
 local virtual_file = require("codediff.core.virtual_file")
-local h = require('tests.support')
+local h = require("tests.support")
 
 describe("Virtual buffer LSP prevention", function()
   it("prevents LSP attachment while keeping TreeSitter active", function()
@@ -56,40 +56,36 @@ describe("Virtual buffer LSP prevention", function()
 
     -- Wait for async content loading
     vim.wait(3000, function()
-      if not vim.api.nvim_buf_is_valid(buf) then return false end
+      if not vim.api.nvim_buf_is_valid(buf) then
+        return false
+      end
       local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
       return #lines > 0 and lines[1] ~= ""
     end)
 
     -- 1. Mock LSP should NOT have been triggered for virtual buffers
-    local virtual_attempts = vim.tbl_filter(
-      function(a) return a.is_virtual end,
-      mock_lsp_attach_attempts
-    )
-    assert.are.equal(0, #virtual_attempts,
-      "Mock LSP should NOT have been triggered for virtual buffers (FileType should not fire)")
+    local virtual_attempts = vim.tbl_filter(function(a)
+      return a.is_virtual
+    end, mock_lsp_attach_attempts)
+    assert.are.equal(0, #virtual_attempts, "Mock LSP should NOT have been triggered for virtual buffers (FileType should not fire)")
 
     -- 2. No LSP clients should be attached to the virtual buffer
     local clients = vim.lsp.get_clients({ bufnr = buf })
-    assert.are.equal(0, #clients,
-      "No LSP clients should be attached to virtual buffer")
+    assert.are.equal(0, #clients, "No LSP clients should be attached to virtual buffer")
 
     -- 3. filetype should be empty (prevents FileType autocmd)
-    assert.are.equal("", vim.bo[buf].filetype,
-      "filetype should be empty on virtual buffer")
+    assert.are.equal("", vim.bo[buf].filetype, "filetype should be empty on virtual buffer")
 
     -- 4. TreeSitter should be active if parser is available
     -- (CI environments may not have all TreeSitter parsers installed)
     local has_parser = pcall(vim.treesitter.language.inspect, "javascript")
     if has_parser then
       local ok, parser = pcall(vim.treesitter.get_parser, buf)
-      assert.is_true(ok and parser ~= nil,
-        "TreeSitter parser should be active on virtual buffer")
+      assert.is_true(ok and parser ~= nil, "TreeSitter parser should be active on virtual buffer")
     end
 
     -- 5. buftype should be nowrite
-    assert.are.equal("nowrite", vim.bo[buf].buftype,
-      "buftype should be nowrite")
+    assert.are.equal("nowrite", vim.bo[buf].buftype, "buftype should be nowrite")
 
     -- Cleanup: stop any mock LSP clients that might have started
     for _, client in ipairs(vim.lsp.get_clients({ name = "mock-eslint" })) do
@@ -141,21 +137,22 @@ describe("Virtual buffer LSP prevention", function()
     -- Wait for async load_virtual_buffer_content to complete; we know it
     -- completed when the "missing file" placeholder is in place.
     vim.wait(2000, function()
-      if not vim.api.nvim_buf_is_valid(buf) then return false end
+      if not vim.api.nvim_buf_is_valid(buf) then
+        return false
+      end
       return vim.bo[buf].modifiable == false
     end)
 
     -- No FileType event should have fired on the codediff:// buffer with an
     -- empty filetype (that's the crash trigger).
-    local empty_ones = vim.tbl_filter(function(e) return e.ft == "" end, empty_ft_events)
-    assert.are.equal(0, #empty_ones,
-      "FileType autocmd fired with empty filetype on virtual buffer (issue #323): " ..
-      vim.inspect(empty_ones))
+    local empty_ones = vim.tbl_filter(function(e)
+      return e.ft == ""
+    end, empty_ft_events)
+    assert.are.equal(0, #empty_ones, "FileType autocmd fired with empty filetype on virtual buffer (issue #323): " .. vim.inspect(empty_ones))
 
     -- The filetype is still empty (still preventing LSP attachment), the event
     -- just wasn't broadcast.
-    assert.are.equal("", vim.bo[buf].filetype,
-      "filetype should still be empty on the missing-file virtual buffer")
+    assert.are.equal("", vim.bo[buf].filetype, "filetype should still be empty on the missing-file virtual buffer")
 
     vim.api.nvim_del_autocmd(autocmd_id)
     pcall(vim.api.nvim_buf_delete, buf, { force = true })

@@ -217,16 +217,20 @@ do
   local cb = vim.api.nvim_get_current_buf()
   vim.keymap.set("n", "do", "<Cmd>echo 1<CR>", { buffer = cb, desc = "USER-DO" })
   local ready = false
-  view.create({
-    git_root = repo.dir,
-    original = path.make_ref("c.txt", repo.dir),
-    modified = path.make_ref("c.txt", repo.dir),
-    original_revision = ":3",
-    modified_revision = ":2",
-    conflict = true,
-  }, "", function()
-    ready = true
-  end)
+  view.create(
+    {
+      git_root = repo.dir,
+      original = path.make_ref("c.txt", repo.dir),
+      modified = path.make_ref("c.txt", repo.dir),
+      original_revision = ":3",
+      modified_revision = ":2",
+      conflict = true,
+    },
+    "",
+    function()
+      ready = true
+    end
+  )
   vim.wait(15000, function()
     return ready
   end, 50)
@@ -321,7 +325,12 @@ reset()
 do
   -- #412 / #415: cross-file hunk navigation must stay off by default
   record("#412", "cycle_hunks_across_files defaults to false", config.options.diff.cycle_hunks_across_files == false, tostring(config.options.diff.cycle_hunks_across_files))
-  record("#276", "close_on_open_in_prev_tab defaults to false", config.options.keymaps.view.close_on_open_in_prev_tab == false, tostring(config.options.keymaps.view.close_on_open_in_prev_tab))
+  record(
+    "#276",
+    "close_on_open_in_prev_tab defaults to false",
+    config.options.keymaps.view.close_on_open_in_prev_tab == false,
+    tostring(config.options.keymaps.view.close_on_open_in_prev_tab)
+  )
 end
 
 do
@@ -363,19 +372,9 @@ do
   local leader_e = vim.api.nvim_replace_termcodes("<leader>e", true, true, true)
   local leader_b = vim.api.nvim_replace_termcodes("<leader>b", true, true, true)
 
-  record(
-    "#357",
-    "the user's key runs the action they asked for",
-    effective(panel, leader_e) == "Toggle explorer visibility",
-    effective(panel, leader_e)
-  )
+  record("#357", "the user's key runs the action they asked for", effective(panel, leader_e) == "Toggle explorer visibility", effective(panel, leader_e))
   record("#357", "the displaced default is not bound", effective(panel, leader_b) == "NONE", effective(panel, leader_b))
-  record(
-    "#357",
-    "g? no longer advertises the action that lost the key",
-    resolve.keymaps_for("view").focus_explorer == false,
-    tostring(resolve.keymaps_for("view").focus_explorer)
-  )
+  record("#357", "g? no longer advertises the action that lost the key", resolve.keymaps_for("view").focus_explorer == false, tostring(resolve.keymaps_for("view").focus_explorer))
   repo.cleanup()
   lifecycle.cleanup_all()
   h.close_extra_tabs()
@@ -398,7 +397,12 @@ do
   -- older version -- must never take a key away from a real action.
   reset({ keymaps = { explorer = { refres = "R" } } })
   local resolve = require("codediff.keymap.resolve")
-  record("#357", "a typo'd config key does not disable a real default", vim.deep_equal(resolve.keymaps_for("explorer").refresh, { "R" }), vim.inspect(resolve.keymaps_for("explorer").refresh))
+  record(
+    "#357",
+    "a typo'd config key does not disable a real default",
+    vim.deep_equal(resolve.keymaps_for("explorer").refresh, { "R" }),
+    vim.inspect(resolve.keymaps_for("explorer").refresh)
+  )
 
   -- ...while a deprecated spelling the code still honours does take part.
   reset({ keymaps = { explorer = { toggle_stage = "q" } } })
@@ -430,7 +434,12 @@ do
   s = lifecycle.get_session(tp)
   local second = s and s.modified_bufnr
   record("#407", "a file switch really does rebuild the buffer", second ~= first, tostring(second) .. " vs " .. tostring(first))
-  record("#407", "both keys survive a file switch", effective(second, "q") == "Close codediff tab" and effective(second, "<Esc>") == "Close codediff tab", effective(second, "<Esc>"))
+  record(
+    "#407",
+    "both keys survive a file switch",
+    effective(second, "q") == "Close codediff tab" and effective(second, "<Esc>") == "Close codediff tab",
+    effective(second, "<Esc>")
+  )
 
   repo.cleanup()
   lifecycle.cleanup_all()
@@ -445,7 +454,12 @@ do
 
   reset({})
   record("#407", "a single key reads back as a one-item list", vim.deep_equal(resolve.keymaps_for("view").quit, { "q" }), vim.inspect(resolve.keymaps_for("view").quit))
-  record("#407", "a setting among the keymaps is left alone", resolve.keymaps_for("view").close_on_open_in_prev_tab == false, tostring(resolve.keymaps_for("view").close_on_open_in_prev_tab))
+  record(
+    "#407",
+    "a setting among the keymaps is left alone",
+    resolve.keymaps_for("view").close_on_open_in_prev_tab == false,
+    tostring(resolve.keymaps_for("view").close_on_open_in_prev_tab)
+  )
 
   reset({ keymaps = { view = { quit = { "q", "q", "<Esc>" } } } })
   record("#407", "duplicate keys collapse", vim.deep_equal(resolve.keymaps_for("view").quit, { "q", "<Esc>" }), vim.inspect(resolve.keymaps_for("view").quit))

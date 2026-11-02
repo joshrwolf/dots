@@ -87,8 +87,7 @@ local function warn_user_keys_clash(key, action_names)
 
   vim.schedule(function()
     vim.notify(
-      ("[codediff] %s are mapped to the same key %s. Only one of them can work; give the others different keys.")
-        :format(table.concat(action_names, ", "), key),
+      ("[codediff] %s are mapped to the same key %s. Only one of them can work; give the others different keys."):format(table.concat(action_names, ", "), key),
       vim.log.levels.WARN
     )
   end)

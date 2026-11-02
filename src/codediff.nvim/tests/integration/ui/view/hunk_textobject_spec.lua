@@ -46,10 +46,7 @@ describe("Hunk Textobject", function()
     local session
     vim.wait(3000, function()
       session = lifecycle.get_session(tabpage)
-      return session
-        and session.stored_diff_result
-        and session.stored_diff_result.changes
-        and #session.stored_diff_result.changes > 0
+      return session and session.stored_diff_result and session.stored_diff_result.changes and #session.stored_diff_result.changes > 0
     end)
     assert.is_not_nil(session, "Session should exist")
     assert.is_not_nil(session.stored_diff_result, "Diff result should exist")

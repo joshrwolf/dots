@@ -141,19 +141,14 @@ describe("move detection", function()
     local result_with = diff.compute_diff(orig, mod, { compute_moves = true })
     local result_without = diff.compute_diff(orig, mod, { compute_moves = false })
 
-    assert.are.equal(#result_with.changes, #result_without.changes,
-      "number of changes should be the same")
+    assert.are.equal(#result_with.changes, #result_without.changes, "number of changes should be the same")
 
     for i, change_with in ipairs(result_with.changes) do
       local change_without = result_without.changes[i]
-      assert.are.equal(change_with.original.start_line, change_without.original.start_line,
-        "original start_line should match for change " .. i)
-      assert.are.equal(change_with.original.end_line, change_without.original.end_line,
-        "original end_line should match for change " .. i)
-      assert.are.equal(change_with.modified.start_line, change_without.modified.start_line,
-        "modified start_line should match for change " .. i)
-      assert.are.equal(change_with.modified.end_line, change_without.modified.end_line,
-        "modified end_line should match for change " .. i)
+      assert.are.equal(change_with.original.start_line, change_without.original.start_line, "original start_line should match for change " .. i)
+      assert.are.equal(change_with.original.end_line, change_without.original.end_line, "original end_line should match for change " .. i)
+      assert.are.equal(change_with.modified.start_line, change_without.modified.start_line, "modified start_line should match for change " .. i)
+      assert.are.equal(change_with.modified.end_line, change_without.modified.end_line, "modified end_line should match for change " .. i)
     end
   end)
 
@@ -166,7 +161,9 @@ describe("move detection", function()
     local tested = 0
     while true do
       local name, ftype = vim.loop.fs_scandir_next(handle)
-      if not name then break end
+      if not name then
+        break
+      end
       if ftype == "directory" then
         local orig_path = pairs_dir .. "/" .. name .. "/original.txt"
         local mod_path = pairs_dir .. "/" .. name .. "/modified.txt"

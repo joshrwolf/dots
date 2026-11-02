@@ -32,7 +32,9 @@ describe("resolve_path_at_revision", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done, "Callback should complete")
     assert.equal("old.lua", resolved, "Should resolve to old path before rename")
 
@@ -60,11 +62,12 @@ describe("resolve_path_at_revision", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done, "Callback should complete")
     assert.equal("stable.lua", resolved, "Should return same path when no rename")
 
     cleanup()
   end)
-
 end)

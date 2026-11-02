@@ -220,14 +220,7 @@ describe("Gutter signs", function()
 
     local original_lines = vim.api.nvim_buf_get_lines(session.original_bufnr, 0, -1, false)
     local modified_lines = vim.api.nvim_buf_get_lines(session.modified_bufnr, 0, -1, false)
-    local ok = pcall(
-      core.render_diff,
-      session.original_bufnr,
-      session.modified_bufnr,
-      original_lines,
-      modified_lines,
-      { changes = changed_ranges, moves = {} }
-    )
+    local ok = pcall(core.render_diff, session.original_bufnr, session.modified_bufnr, original_lines, modified_lines, { changes = changed_ranges, moves = {} })
 
     assert.is_true(ok)
     local rendered = vim.api.nvim_buf_get_extmarks(session.modified_bufnr, highlights.ns_highlight, 0, -1, {})

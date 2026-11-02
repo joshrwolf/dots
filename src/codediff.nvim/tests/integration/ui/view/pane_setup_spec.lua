@@ -54,10 +54,7 @@ describe("diff pane setup", function()
     config.options.diff.original_position = "left"
     local session = open_diff()
 
-    assert.is_true(
-      col_of(session.original_win) < col_of(session.modified_win),
-      "original pane should sit left of the modified pane"
-    )
+    assert.is_true(col_of(session.original_win) < col_of(session.modified_win), "original pane should sit left of the modified pane")
   end)
 
   it("honours original_position = 'right'", function()
@@ -66,10 +63,7 @@ describe("diff pane setup", function()
     config.options.diff.original_position = "right"
     local session = open_diff()
 
-    assert.is_true(
-      col_of(session.original_win) > col_of(session.modified_win),
-      "original pane should sit right of the modified pane"
-    )
+    assert.is_true(col_of(session.original_win) > col_of(session.modified_win), "original pane should sit right of the modified pane")
   end)
 
   it("applies the diff window options to both panes", function()

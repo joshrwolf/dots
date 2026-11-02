@@ -227,16 +227,19 @@ describe("keymap lifecycle", function()
       commands.vscode_diff({ fargs = {} })
 
       local tabpage
-      assert.is_true(vim.wait(15000, function()
-        for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
-          local session = lifecycle.get_session(tp)
-          if session and (session.panel or {}).view and (session.panel or {}).view.bufnr then
-            tabpage = tp
-            return true
+      assert.is_true(
+        vim.wait(15000, function()
+          for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
+            local session = lifecycle.get_session(tp)
+            if session and (session.panel or {}).view and (session.panel or {}).view.bufnr then
+              tabpage = tp
+              return true
+            end
           end
-        end
-        return false
-      end, 50), "explorer session should be created")
+          return false
+        end, 50),
+        "explorer session should be created"
+      )
 
       local explorer = (lifecycle.get_session(tabpage).panel or {}).view
       explorer.on_file_select({ path = "one.txt", group = "unstaged", status = "M", git_root = repo.dir })
@@ -245,10 +248,13 @@ describe("keymap lifecycle", function()
       assert.is_not_nil(matrix.map_index(first_buf, "n")["q"], "first file should be mapped while displayed")
 
       explorer.on_file_select({ path = "two.txt", group = "unstaged", status = "M", git_root = repo.dir })
-      assert.is_true(vim.wait(10000, function()
-        local session = lifecycle.get_session(tabpage)
-        return session and session.modified_bufnr ~= first_buf and session.stored_diff_result ~= nil
-      end, 50), "second file diff should be ready")
+      assert.is_true(
+        vim.wait(10000, function()
+          local session = lifecycle.get_session(tabpage)
+          return session and session.modified_bufnr ~= first_buf and session.stored_diff_result ~= nil
+        end, 50),
+        "second file diff should be ready"
+      )
 
       assert.is_nil(matrix.map_index(first_buf, "n")["q"], "the previous file's buffer must be detached on file switch")
 
@@ -286,10 +292,13 @@ describe("keymap lifecycle", function()
       assert.is_not_nil(matrix.map_index(session.modified_bufnr, "n")["gm"], "gm should be bound in side-by-side")
 
       view.toggle_layout(tabpage)
-      assert.is_true(vim.wait(10000, function()
-        local s = lifecycle.get_session(tabpage)
-        return s and s.layout == "inline" and s.stored_diff_result ~= nil
-      end, 50), "layout should toggle to inline")
+      assert.is_true(
+        vim.wait(10000, function()
+          local s = lifecycle.get_session(tabpage)
+          return s and s.layout == "inline" and s.stored_diff_result ~= nil
+        end, 50),
+        "layout should toggle to inline"
+      )
 
       session = lifecycle.get_session(tabpage)
       assert.is_nil(matrix.map_index(session.modified_bufnr, "n")["gm"], "gm applies only to side-by-side and must be retired")
@@ -333,19 +342,26 @@ describe("keymap lifecycle", function()
       vim.keymap.set("n", "do", "<Cmd>echo 'user-do'<CR>", { buffer = conflict_buf, desc = "user-do" })
 
       local ready = false
-      view.create({
-        git_root = repo.dir,
-        original = path.make_ref("conf.txt", repo.dir),
-        modified = path.make_ref("conf.txt", repo.dir),
-        original_revision = ":3",
-        modified_revision = ":2",
-        conflict = true,
-      }, "", function()
-        ready = true
-      end)
-      assert.is_true(vim.wait(15000, function()
-        return ready
-      end, 50), "conflict view should become ready")
+      view.create(
+        {
+          git_root = repo.dir,
+          original = path.make_ref("conf.txt", repo.dir),
+          modified = path.make_ref("conf.txt", repo.dir),
+          original_revision = ":3",
+          modified_revision = ":2",
+          conflict = true,
+        },
+        "",
+        function()
+          ready = true
+        end
+      )
+      assert.is_true(
+        vim.wait(15000, function()
+          return ready
+        end, 50),
+        "conflict view should become ready"
+      )
 
       assert.equals("user-do", matrix.map_index(conflict_buf, "n")["do"], "conflict mode must not destroy the user's own do mapping")
 

@@ -1,7 +1,7 @@
 -- Test: Line-range history (git log -L) for issue #220
 -- Validates git log -L argument building, output parsing, and command-level integration
 
-local git = require('codediff.core.git')
+local git = require("codediff.core.git")
 
 -- Helper: create a temp git repo with multiple commits affecting different line ranges
 local function create_test_repo()
@@ -82,7 +82,9 @@ describe("Line-range History - get_commit_list with line_range", function()
   end)
 
   after_each(function()
-    if repo then repo.cleanup() end
+    if repo then
+      repo.cleanup()
+    end
   end)
 
   it("filters commits to only those touching the line range", function()
@@ -100,7 +102,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done, "Callback should complete")
     assert.is_nil(result_err, "Should not error")
     assert.is_not_nil(result_commits)
@@ -122,7 +126,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done)
     assert.equals(4, #result_commits, "Should have all 4 commits without line_range")
   end)
@@ -140,7 +146,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done)
     assert.is_not_nil(result_commits)
     -- Lines 7-9 (bar function): touched by 'initial commit' and 'update bar' only
@@ -162,7 +170,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done)
     assert.is_not_nil(result_commits)
     -- Lines 1-3 (header): touched by 'initial commit' and 'update header' only
@@ -184,7 +194,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done)
     assert.is_not_nil(result_commits)
     -- The 'update foo' commit changed 1 line (return 1 -> return 42)
@@ -207,7 +219,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done)
     for _, commit in ipairs(result_commits) do
       assert.equals("test.lua", commit.file_path, "file_path should be set")
@@ -228,7 +242,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done)
     assert.equals(2, #result_commits)
     -- With reverse, oldest first
@@ -250,7 +266,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done)
     assert.equals(1, #result_commits, "Should respect limit=1")
     assert.matches("update foo", result_commits[1].subject)
@@ -261,12 +279,13 @@ describe("Line-range History - get_commit_list with line_range", function()
     local result_commits = nil
 
     -- Get the hash of the 'update foo' commit to use as range boundary
-    local log_output = vim.fn.system(string.format(
-      'git -C "%s" log --oneline --reverse', repo.dir))
+    local log_output = vim.fn.system(string.format('git -C "%s" log --oneline --reverse', repo.dir))
     local hashes = {}
     for line in log_output:gmatch("[^\n]+") do
       local hash = line:match("^(%S+)")
-      if hash then table.insert(hashes, hash) end
+      if hash then
+        table.insert(hashes, hash)
+      end
     end
     -- hashes: [1]=initial, [2]=update foo, [3]=update bar, [4]=update header
     -- Range from 'update foo' to HEAD should only include 'update foo' for lines 4-6
@@ -281,7 +300,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done)
     assert.is_not_nil(result_commits)
     assert.equals(1, #result_commits, "Range should limit to 1 commit")
@@ -301,7 +322,9 @@ describe("Line-range History - get_commit_list with line_range", function()
       done = true
     end)
 
-    vim.wait(5000, function() return done end)
+    vim.wait(5000, function()
+      return done
+    end)
     assert.is_true(done)
     assert.is_not_nil(result_commits)
     -- Without path, should return all repo commits (not filtered by line range)

@@ -80,12 +80,28 @@ describe("Inline diff mode interactions", function()
   it("next_hunk moves cursor to the first hunk from before any hunk", function()
     -- Three separated hunks: changes at lines 2, 5, 8
     local original = {
-      "line1", "orig2", "line3", "line4", "orig5",
-      "line6", "line7", "orig8", "line9", "line10",
+      "line1",
+      "orig2",
+      "line3",
+      "line4",
+      "orig5",
+      "line6",
+      "line7",
+      "orig8",
+      "line9",
+      "line10",
     }
     local modified = {
-      "line1", "mod2", "line3", "line4", "mod5",
-      "line6", "line7", "mod8", "line9", "line10",
+      "line1",
+      "mod2",
+      "line3",
+      "line4",
+      "mod5",
+      "line6",
+      "line7",
+      "mod8",
+      "line9",
+      "line10",
     }
 
     local ctx = create_inline_view(original, modified)
@@ -102,8 +118,7 @@ describe("Inline diff mode interactions", function()
 
     local cursor = vim.api.nvim_win_get_cursor(0)
     local first_hunk = ctx.session.stored_diff_result.changes[1]
-    assert.equal(first_hunk.modified.start_line, cursor[1],
-      "Cursor should be on the first hunk's modified start_line")
+    assert.equal(first_hunk.modified.start_line, cursor[1], "Cursor should be on the first hunk's modified start_line")
 
     vim.fn.delete(ctx.left_path)
     vim.fn.delete(ctx.right_path)
@@ -114,12 +129,28 @@ describe("Inline diff mode interactions", function()
   -- =========================================================================
   it("prev_hunk moves cursor to the last hunk from after all hunks", function()
     local original = {
-      "line1", "orig2", "line3", "line4", "orig5",
-      "line6", "line7", "orig8", "line9", "line10",
+      "line1",
+      "orig2",
+      "line3",
+      "line4",
+      "orig5",
+      "line6",
+      "line7",
+      "orig8",
+      "line9",
+      "line10",
     }
     local modified = {
-      "line1", "mod2", "line3", "line4", "mod5",
-      "line6", "line7", "mod8", "line9", "line10",
+      "line1",
+      "mod2",
+      "line3",
+      "line4",
+      "mod5",
+      "line6",
+      "line7",
+      "mod8",
+      "line9",
+      "line10",
     }
 
     local ctx = create_inline_view(original, modified)
@@ -136,8 +167,7 @@ describe("Inline diff mode interactions", function()
 
     local cursor = vim.api.nvim_win_get_cursor(0)
     local last_hunk = changes[#changes]
-    assert.equal(last_hunk.modified.start_line, cursor[1],
-      "Cursor should be on the last hunk's modified start_line")
+    assert.equal(last_hunk.modified.start_line, cursor[1], "Cursor should be on the last hunk's modified start_line")
 
     vim.fn.delete(ctx.left_path)
     vim.fn.delete(ctx.right_path)
@@ -163,21 +193,16 @@ describe("Inline diff mode interactions", function()
     -- Read original lines for this hunk
     local orig_start = hunk.original.start_line
     local orig_end = hunk.original.end_line
-    local orig_hunk_lines = vim.api.nvim_buf_get_lines(
-      ctx.original_bufnr, orig_start - 1, orig_end - 1, false
-    )
+    local orig_hunk_lines = vim.api.nvim_buf_get_lines(ctx.original_bufnr, orig_start - 1, orig_end - 1, false)
 
     -- Replace the modified lines with original content (simulating diff-get)
     local mod_start = hunk.modified.start_line
     local mod_end = hunk.modified.end_line
     vim.bo[ctx.modified_bufnr].modifiable = true
-    vim.api.nvim_buf_set_lines(
-      ctx.modified_bufnr, mod_start - 1, mod_end - 1, false, orig_hunk_lines
-    )
+    vim.api.nvim_buf_set_lines(ctx.modified_bufnr, mod_start - 1, mod_end - 1, false, orig_hunk_lines)
 
     local result_lines = vim.api.nvim_buf_get_lines(ctx.modified_bufnr, 0, -1, false)
-    assert.are.same(original, result_lines,
-      "After diff-get, modified buffer should match original content")
+    assert.are.same(original, result_lines, "After diff-get, modified buffer should match original content")
 
     vim.fn.delete(ctx.left_path)
     vim.fn.delete(ctx.right_path)
@@ -218,8 +243,7 @@ describe("Inline diff mode interactions", function()
     local updated_session = lifecycle.get_session(ctx.tabpage)
     assert.is_truthy(updated_session, "Session should still exist")
     assert.is_truthy(updated_session.stored_diff_result, "Diff result should exist")
-    assert.is_not.equal(initial_change_count, #updated_session.stored_diff_result.changes,
-      "Change count should differ after buffer modification")
+    assert.is_not.equal(initial_change_count, #updated_session.stored_diff_result.changes, "Change count should differ after buffer modification")
 
     vim.fn.delete(ctx.left_path)
     vim.fn.delete(ctx.right_path)
@@ -263,9 +287,7 @@ describe("Inline diff mode interactions", function()
     local inline_ns = require("codediff.ui.inline").ns_inline
 
     -- Count extmarks after initial render
-    local initial_extmarks = vim.api.nvim_buf_get_extmarks(
-      ctx.modified_bufnr, inline_ns, 0, -1, {}
-    )
+    local initial_extmarks = vim.api.nvim_buf_get_extmarks(ctx.modified_bufnr, inline_ns, 0, -1, {})
     assert.is_true(#initial_extmarks > 0, "Should have extmarks after initial render")
 
     -- Modify buffer to remove the change (make it identical to original)
@@ -280,12 +302,11 @@ describe("Inline diff mode interactions", function()
     vim.wait(100)
 
     -- After re-render with identical content, there should be no diff extmarks
-    local updated_extmarks = vim.api.nvim_buf_get_extmarks(
-      ctx.modified_bufnr, inline_ns, 0, -1, {}
+    local updated_extmarks = vim.api.nvim_buf_get_extmarks(ctx.modified_bufnr, inline_ns, 0, -1, {})
+    assert.is_true(
+      #updated_extmarks < #initial_extmarks,
+      "Extmark count should decrease after removing the change (was " .. #initial_extmarks .. ", now " .. #updated_extmarks .. ")"
     )
-    assert.is_true(#updated_extmarks < #initial_extmarks,
-      "Extmark count should decrease after removing the change (was "
-        .. #initial_extmarks .. ", now " .. #updated_extmarks .. ")")
 
     vim.fn.delete(ctx.left_path)
     vim.fn.delete(ctx.right_path)
@@ -311,8 +332,7 @@ describe("Inline diff mode interactions", function()
 
     -- With jump_to_first_change=true (default), cursor should be near the change
     local cursor = vim.api.nvim_win_get_cursor(0)
-    assert.is_true(cursor[1] >= 14 and cursor[1] <= 16,
-      "Cursor should be near line 15 (first change), got line " .. cursor[1])
+    assert.is_true(cursor[1] >= 14 and cursor[1] <= 16, "Cursor should be near line 15 (first change), got line " .. cursor[1])
 
     vim.fn.delete(ctx.left_path)
     vim.fn.delete(ctx.right_path)
@@ -320,8 +340,8 @@ describe("Inline diff mode interactions", function()
 
   -- Test 8: Autoscroll to change at beginning
   it("Autoscroll jumps to change at beginning of file", function()
-    local original = {"original first", "line 2", "line 3", "line 4", "line 5"}
-    local modified = {"modified first", "line 2", "line 3", "line 4", "line 5"}
+    local original = { "original first", "line 2", "line 3", "line 4", "line 5" }
+    local modified = { "modified first", "line 2", "line 3", "line 4", "line 5" }
 
     local ctx = create_inline_view(original, modified)
     assert.is_truthy(ctx.session, "Session should exist")
@@ -335,7 +355,7 @@ describe("Inline diff mode interactions", function()
 
   -- Test 9: Autoscroll handles no changes
   it("Autoscroll handles no changes gracefully", function()
-    local lines = {"line 1", "line 2", "line 3"}
+    local lines = { "line 1", "line 2", "line 3" }
 
     local ctx = create_inline_view(lines, lines)
     assert.is_truthy(ctx.session, "Session should exist")
@@ -375,14 +395,14 @@ describe("Inline diff mode interactions", function()
 
   -- Test 11: yih yanks a multi-line hunk in inline mode
   it("Textobject yih yanks a multi-line hunk", function()
-    local original = {"line 1", "line 2", "line 3", "line 4", "line 5"}
-    local modified = {"line 1", "CHANGED 2", "CHANGED 3", "line 4", "line 5"}
+    local original = { "line 1", "line 2", "line 3", "line 4", "line 5" }
+    local modified = { "line 1", "CHANGED 2", "CHANGED 3", "line 4", "line 5" }
 
     local ctx = create_inline_view(original, modified)
     assert.is_truthy(ctx.session, "Session should exist")
     assert.is_truthy(ctx.session.stored_diff_result, "Diff result should exist")
 
-    vim.api.nvim_win_set_cursor(0, {2, 0})
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
     vim.fn.setreg("a", "")
     vim.cmd('normal "ayih')
 
@@ -397,13 +417,13 @@ describe("Inline diff mode interactions", function()
 
   -- Test 12: yih does nothing outside a hunk in inline mode
   it("Textobject yih does nothing outside a hunk", function()
-    local original = {"line 1", "line 2", "line 3", "line 4"}
-    local modified = {"line 1", "CHANGED 2", "line 3", "line 4"}
+    local original = { "line 1", "line 2", "line 3", "line 4" }
+    local modified = { "line 1", "CHANGED 2", "line 3", "line 4" }
 
     local ctx = create_inline_view(original, modified)
     assert.is_truthy(ctx.session, "Session should exist")
 
-    vim.api.nvim_win_set_cursor(0, {4, 0})
+    vim.api.nvim_win_set_cursor(0, { 4, 0 })
     vim.fn.setreg("a", "")
     vim.cmd('normal "ayih')
 

@@ -58,11 +58,7 @@ end)
 
 describe("argparse.parser: positionals and flags", function()
   local function app()
-    return Command.new("prog")
-      :arg(Arg.new("a"))
-      :arg(Arg.new("b"))
-      :arg(Arg.flag("verbose"):long("--verbose"):short("-v"))
-      :arg(Arg.new("out"):long("--out"):short("-o"))
+    return Command.new("prog"):arg(Arg.new("a")):arg(Arg.new("b")):arg(Arg.flag("verbose"):long("--verbose"):short("-v")):arg(Arg.new("out"):long("--out"):short("-o"))
   end
 
   it("parses no args", function()
@@ -173,9 +169,7 @@ describe("argparse.parser: actions and defaults", function()
   end)
 
   it("applies a global default visible from a subcommand", function()
-    local c = Command.new("root")
-      :arg(Arg.new("layout"):long("--layout"):global(true):default("side-by-side"))
-      :subcommand(Command.new("sub"))
+    local c = Command.new("root"):arg(Arg.new("layout"):long("--layout"):global(true):default("side-by-side")):subcommand(Command.new("sub"))
     local _, sub = assert(c:parse({ "sub" })):subcommand()
     assert.equals("side-by-side", sub:get_one("layout"))
   end)
@@ -245,10 +239,7 @@ describe("argparse.parser: validation errors", function()
   end)
 
   it("errors on unmet requirement", function()
-    local ok, err = Command.new("p")
-      :arg(Arg.new("name"):long("--name"))
-      :arg(Arg.flag("c"):long("--ccc"):requires("name"))
-      :parse({ "--ccc" })
+    local ok, err = Command.new("p"):arg(Arg.new("name"):long("--name")):arg(Arg.flag("c"):long("--ccc"):requires("name")):parse({ "--ccc" })
     assert.is_nil(ok)
     assert.equals(ap.errors.KIND.MISSING_REQUIREMENT, err.kind)
   end)
@@ -340,12 +331,7 @@ describe("argparse.complete", function()
       :arg(Arg.new("rev"):completor(function()
         return { "main", "develop", "HEAD" }
       end))
-      :subcommand(
-        Command.new("history")
-          :arg(Arg.new("range"))
-          :arg(Arg.flag("reverse"):long("--reverse"):short("-r"))
-          :arg(Arg.new("base"):long("--base"):short("-b"))
-      )
+      :subcommand(Command.new("history"):arg(Arg.new("range")):arg(Arg.flag("reverse"):long("--reverse"):short("-r")):arg(Arg.new("base"):long("--base"):short("-b")))
       :subcommand(Command.new("merge"))
       :trailing(Arg.new("path"):completor(function()
         return { "src/a.txt", "src/b.txt", "README.md" }
@@ -449,7 +435,8 @@ describe("argparse: CodeDiff grammar (use cases)", function()
         last = { where = where, m = m }
       end
     end
-    return Command.new("CodeDiff")
+    return Command
+      .new("CodeDiff")
       -- global flags, valid for every mode
       :arg(Arg.flag("inline"):long("--inline"):global(true))
       :arg(Arg.flag("side_by_side"):long("--side-by-side"):global(true))

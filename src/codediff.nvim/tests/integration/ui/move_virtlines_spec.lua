@@ -118,15 +118,16 @@ describe("Move annotation virt_lines", function()
           break
         end
       end
-      if found then break end
+      if found then
+        break
+      end
     end
 
     assert.is_not_nil(found, "Should find an annotation virt_line with '⇄ moved' on left buffer")
 
     -- Anchor should be move.original.start_line - 1 (0-indexed)
     local expected_row = math.max(move.original.start_line - 1, 0)
-    assert.are.equal(expected_row, found.row,
-      string.format("Annotation should be anchored at row %d (0-indexed), got %d", expected_row, found.row))
+    assert.are.equal(expected_row, found.row, string.format("Annotation should be anchored at row %d (0-indexed), got %d", expected_row, found.row))
 
     -- Must be above the line
     assert.is_true(found.above, "Annotation virt_line should have virt_lines_above = true")
@@ -150,14 +151,15 @@ describe("Move annotation virt_lines", function()
           break
         end
       end
-      if found then break end
+      if found then
+        break
+      end
     end
 
     assert.is_not_nil(found, "Should find an annotation virt_line with '⇄ moved' on right buffer")
 
     local expected_row = math.max(move.modified.start_line - 1, 0)
-    assert.are.equal(expected_row, found.row,
-      string.format("Annotation should be anchored at row %d (0-indexed), got %d", expected_row, found.row))
+    assert.are.equal(expected_row, found.row, string.format("Annotation should be anchored at row %d (0-indexed), got %d", expected_row, found.row))
 
     assert.is_true(found.above, "Annotation virt_line should have virt_lines_above = true")
 
@@ -179,8 +181,7 @@ describe("Move annotation virt_lines", function()
           if t:find("⇄ moved") then
             -- Pattern: "⇄ moved: L<d>-<d> → L<d>-<d>"
             local pat = "⇄ moved: L%d+-%d+ → L%d+-%d+"
-            assert.is_truthy(t:match(pat),
-              string.format("Label %q should match pattern %q", t, pat))
+            assert.is_truthy(t:match(pat), string.format("Label %q should match pattern %q", t, pat))
           end
         end
       end
@@ -213,8 +214,7 @@ describe("Move annotation virt_lines", function()
     end
 
     -- When annotations are inside changes, fillers are skipped
-    assert.is_true(move_filler_count >= 0,
-      "Filler count depends on annotation position")
+    assert.is_true(move_filler_count >= 0, "Filler count depends on annotation position")
 
     vim.api.nvim_buf_delete(left_buf, { force = true })
     vim.api.nvim_buf_delete(right_buf, { force = true })
@@ -236,8 +236,7 @@ describe("Move annotation virt_lines", function()
         end
       end
     end
-    assert.are.equal(2, annotation_count,
-      string.format("Expected 2 annotation virt_lines (one per side), got %d", annotation_count))
+    assert.are.equal(2, annotation_count, string.format("Expected 2 annotation virt_lines (one per side), got %d", annotation_count))
 
     vim.api.nvim_buf_delete(left_buf, { force = true })
     vim.api.nvim_buf_delete(right_buf, { force = true })
@@ -270,35 +269,41 @@ describe("Move annotation virt_lines", function()
 
     for _, ns in ipairs({ ns_filler, ns_highlight }) do
       for _, m in ipairs(vim.api.nvim_buf_get_extmarks(session.original_bufnr, ns, 0, -1, { details = true })) do
-        if m[4].virt_lines then left_virt = left_virt + #m[4].virt_lines end
+        if m[4].virt_lines then
+          left_virt = left_virt + #m[4].virt_lines
+        end
       end
       for _, m in ipairs(vim.api.nvim_buf_get_extmarks(session.modified_bufnr, ns, 0, -1, { details = true })) do
-        if m[4].virt_lines then right_virt = right_virt + #m[4].virt_lines end
+        if m[4].virt_lines then
+          right_virt = right_virt + #m[4].virt_lines
+        end
       end
     end
 
     local left_total = left_real + left_virt
     local right_total = right_real + right_virt
-    assert.are.equal(left_total, right_total,
-      string.format("Visual lines must balance: LEFT=%d+%d=%d, RIGHT=%d+%d=%d",
-        left_real, left_virt, left_total, right_real, right_virt, right_total))
+    assert.are.equal(
+      left_total,
+      right_total,
+      string.format("Visual lines must balance: LEFT=%d+%d=%d, RIGHT=%d+%d=%d", left_real, left_virt, left_total, right_real, right_virt, right_total)
+    )
 
     -- Verify move filler positions: for empty range changes, fillers use above=false
     for _, m in ipairs(vim.api.nvim_buf_get_extmarks(session.original_bufnr, ns_filler, 0, -1, { details = true })) do
       if m[4].virt_lines and #m[4].virt_lines == 1 then
         -- Move filler (1 line) should be above=false when in diff filler area
-        assert.is_false(m[4].virt_lines_above,
-          "Move filler on LEFT should be above=false (in diff filler area)")
+        assert.is_false(m[4].virt_lines_above, "Move filler on LEFT should be above=false (in diff filler area)")
       end
     end
     for _, m in ipairs(vim.api.nvim_buf_get_extmarks(session.modified_bufnr, ns_filler, 0, -1, { details = true })) do
       if m[4].virt_lines and #m[4].virt_lines == 1 then
-        assert.is_false(m[4].virt_lines_above,
-          "Move filler on RIGHT should be above=false (in diff filler area)")
+        assert.is_false(m[4].virt_lines_above, "Move filler on RIGHT should be above=false (in diff filler area)")
       end
     end
 
-    while vim.fn.tabpagenr("$") > 1 do vim.cmd("tabclose!") end
+    while vim.fn.tabpagenr("$") > 1 do
+      vim.cmd("tabclose!")
+    end
   end)
 
   -- 7. Visual line balance using simple_swap test pair
@@ -325,20 +330,28 @@ describe("Move annotation virt_lines", function()
 
     for _, ns in ipairs({ ns_filler, ns_highlight }) do
       for _, m in ipairs(vim.api.nvim_buf_get_extmarks(session.original_bufnr, ns, 0, -1, { details = true })) do
-        if m[4].virt_lines then left_virt = left_virt + #m[4].virt_lines end
+        if m[4].virt_lines then
+          left_virt = left_virt + #m[4].virt_lines
+        end
       end
       for _, m in ipairs(vim.api.nvim_buf_get_extmarks(session.modified_bufnr, ns, 0, -1, { details = true })) do
-        if m[4].virt_lines then right_virt = right_virt + #m[4].virt_lines end
+        if m[4].virt_lines then
+          right_virt = right_virt + #m[4].virt_lines
+        end
       end
     end
 
     local left_total = left_real + left_virt
     local right_total = right_real + right_virt
-    assert.are.equal(left_total, right_total,
-      string.format("Visual lines must balance: LEFT=%d+%d=%d, RIGHT=%d+%d=%d",
-        left_real, left_virt, left_total, right_real, right_virt, right_total))
+    assert.are.equal(
+      left_total,
+      right_total,
+      string.format("Visual lines must balance: LEFT=%d+%d=%d, RIGHT=%d+%d=%d", left_real, left_virt, left_total, right_real, right_virt, right_total)
+    )
 
-    while vim.fn.tabpagenr("$") > 1 do vim.cmd("tabclose!") end
+    while vim.fn.tabpagenr("$") > 1 do
+      vim.cmd("tabclose!")
+    end
   end)
 
   -- 8. All test pairs in tests/fixtures/move_pairs/ produce balanced visual lines
@@ -353,7 +366,9 @@ describe("Move annotation virt_lines", function()
     local tested = 0
     while true do
       local name, type = vim.loop.fs_scandir_next(handle)
-      if not name then break end
+      if not name then
+        break
+      end
       if type == "directory" then
         local orig = pairs_dir .. "/" .. name .. "/original.txt"
         local mod = pairs_dir .. "/" .. name .. "/modified.txt"
@@ -377,22 +392,30 @@ describe("Move annotation virt_lines", function()
 
             for _, ns in ipairs({ ns_filler, ns_highlight }) do
               for _, m in ipairs(vim.api.nvim_buf_get_extmarks(session.original_bufnr, ns, 0, -1, { details = true })) do
-                if m[4].virt_lines then left_virt = left_virt + #m[4].virt_lines end
+                if m[4].virt_lines then
+                  left_virt = left_virt + #m[4].virt_lines
+                end
               end
               for _, m in ipairs(vim.api.nvim_buf_get_extmarks(session.modified_bufnr, ns, 0, -1, { details = true })) do
-                if m[4].virt_lines then right_virt = right_virt + #m[4].virt_lines end
+                if m[4].virt_lines then
+                  right_virt = right_virt + #m[4].virt_lines
+                end
               end
             end
 
             local left_total = left_real + left_virt
             local right_total = right_real + right_virt
-            assert.are.equal(left_total, right_total,
-              string.format("%s: visual lines unbalanced LEFT=%d+%d=%d, RIGHT=%d+%d=%d",
-                name, left_real, left_virt, left_total, right_real, right_virt, right_total))
+            assert.are.equal(
+              left_total,
+              right_total,
+              string.format("%s: visual lines unbalanced LEFT=%d+%d=%d, RIGHT=%d+%d=%d", name, left_real, left_virt, left_total, right_real, right_virt, right_total)
+            )
             tested = tested + 1
           end
 
-          while vim.fn.tabpagenr("$") > 1 do vim.cmd("tabclose!") end
+          while vim.fn.tabpagenr("$") > 1 do
+            vim.cmd("tabclose!")
+          end
         end
       end
     end

@@ -61,8 +61,7 @@ describe("Explorer tree render", function()
     -- Only one changed file? Then next_file is a no-op by design (cycle over
     -- a single item), and asserting a change would be wrong. Guard.
     local all_files = require("codediff.ui.explorer.tree").get_all_files(explorer.tree)
-    assert.is_true(#all_files >= 2,
-      "test setup should produce >= 2 changed files, got " .. #all_files)
+    assert.is_true(#all_files >= 2, "test setup should produce >= 2 changed files, got " .. #all_files)
 
     navigation.next_file()
     -- next_file updates the session selection synchronously, but the
@@ -70,14 +69,17 @@ describe("Explorer tree render", function()
     -- Wait for BOTH the explorer selection AND the modified buffer name to
     -- catch up, so the assertions below verify the full end-to-end path.
     vim.wait(5000, function()
-      if explorer.data.current_file_path == before then return false end
+      if explorer.data.current_file_path == before then
+        return false
+      end
       local _, buf = lifecycle.get_buffers(tabpage)
-      if not buf or not vim.api.nvim_buf_is_valid(buf) then return false end
+      if not buf or not vim.api.nvim_buf_is_valid(buf) then
+        return false
+      end
       return vim.api.nvim_buf_get_name(buf):find(explorer.data.current_file_path, 1, true) ~= nil
     end, 25)
 
-    assert.are_not.equal(before, explorer.data.current_file_path,
-      "next_file must select a different file; still on '" .. tostring(before) .. "'")
+    assert.are_not.equal(before, explorer.data.current_file_path, "next_file must select a different file; still on '" .. tostring(before) .. "'")
 
     -- And the modified pane must show that new file's content, not stale
     -- data from the previous selection.
@@ -86,7 +88,7 @@ describe("Explorer tree render", function()
     local mod_name = vim.api.nvim_buf_get_name(mod_buf)
     assert.is_true(
       mod_name:find(explorer.data.current_file_path, 1, true) ~= nil,
-      "modified buffer name '" .. mod_name .. "' should match the newly-selected file '" .. explorer.data.current_file_path .. "'")
+      "modified buffer name '" .. mod_name .. "' should match the newly-selected file '" .. explorer.data.current_file_path .. "'"
+    )
   end)
 end)
-

@@ -4,7 +4,7 @@
 local config = require("codediff.config")
 local core = require("codediff.ui.core")
 local highlights = require("codediff.ui.highlights")
-local diff = require('codediff.core.diff')
+local diff = require("codediff.core.diff")
 
 local function assert_ranged_line_highlight(bufnr, expected)
   local marks = vim.api.nvim_buf_get_extmarks(bufnr, highlights.ns_highlight, 0, -1, { details = true })
@@ -45,8 +45,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1", "line 2"}
-    local modified = {"line 1", "line 2", "line 3"}
+    local original = { "line 1", "line 2" }
+    local modified = { "line 1", "line 2", "line 3" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -58,8 +58,8 @@ describe("Render Core", function()
     local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, highlights.ns_highlight, 0, -1, {})
     assert.is_true(#right_marks > 0, "Added line should have highlight extmark")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 2: Basic deleted lines rendering
@@ -67,8 +67,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1", "line 2", "line 3"}
-    local modified = {"line 1", "line 2"}
+    local original = { "line 1", "line 2", "line 3" }
+    local modified = { "line 1", "line 2" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -80,8 +80,8 @@ describe("Render Core", function()
     local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_highlight, 0, -1, {})
     assert.is_true(#left_marks > 0, "Deleted line should have highlight extmark")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 3: Basic modified lines rendering
@@ -89,8 +89,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1", "old content", "line 3"}
-    local modified = {"line 1", "new content", "line 3"}
+    local original = { "line 1", "old content", "line 3" }
+    local modified = { "line 1", "new content", "line 3" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -101,12 +101,12 @@ describe("Render Core", function()
     -- Both sides should have highlights for modified line
     local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_highlight, 0, -1, {})
     local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, highlights.ns_highlight, 0, -1, {})
-    
+
     assert.is_true(#left_marks > 0, "Left buffer should have highlight for modified line")
     assert.is_true(#right_marks > 0, "Right buffer should have highlight for modified line")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 4: Filler lines inserted for alignment
@@ -114,8 +114,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1"}
-    local modified = {"line 1", "added 1", "added 2", "added 3"}
+    local original = { "line 1" }
+    local modified = { "line 1", "added 1", "added 2", "added 3" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -127,8 +127,8 @@ describe("Render Core", function()
     local left_fillers = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_filler, 0, -1, {})
     assert.is_true(#left_fillers > 0, "Left buffer should have filler lines")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 5: Character-level diff highlights
@@ -136,8 +136,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"The quick brown fox"}
-    local modified = {"The quick red fox"}
+    local original = { "The quick brown fox" }
+    local modified = { "The quick red fox" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -146,15 +146,15 @@ describe("Render Core", function()
     core.render_diff(left_buf, right_buf, original, modified, lines_diff)
 
     -- Should have character-level highlights
-    local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_highlight, 0, -1, {details = true})
-    local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, highlights.ns_highlight, 0, -1, {details = true})
+    local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_highlight, 0, -1, { details = true })
+    local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, highlights.ns_highlight, 0, -1, { details = true })
 
     -- Check that we have highlights (character diffs create multiple extmarks)
     assert.is_true(#left_marks > 0, "Left should have character-level highlights")
     assert.is_true(#right_marks > 0, "Right should have character-level highlights")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 6: Empty diff (no changes)
@@ -162,7 +162,7 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local lines = {"line 1", "line 2", "line 3"}
+    local lines = { "line 1", "line 2", "line 3" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, lines)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, lines)
@@ -181,8 +181,8 @@ describe("Render Core", function()
     assert.equal(0, #left_fillers, "No fillers in left buffer")
     assert.equal(0, #right_fillers, "No fillers in right buffer")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 7: Multiple consecutive added lines
@@ -190,8 +190,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1", "line 5"}
-    local modified = {"line 1", "line 2", "line 3", "line 4", "line 5"}
+    local original = { "line 1", "line 5" }
+    local modified = { "line 1", "line 2", "line 3", "line 4", "line 5" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -210,8 +210,8 @@ describe("Render Core", function()
     local left_fillers = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_filler, 0, -1, {})
     assert.is_true(#left_fillers > 0, "Left should have fillers for alignment")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 8: Multiple consecutive deleted lines
@@ -219,8 +219,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1", "line 2", "line 3", "line 4", "line 5"}
-    local modified = {"line 1", "line 5"}
+    local original = { "line 1", "line 2", "line 3", "line 4", "line 5" }
+    local modified = { "line 1", "line 5" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -239,8 +239,8 @@ describe("Render Core", function()
     local right_fillers = vim.api.nvim_buf_get_extmarks(right_buf, highlights.ns_filler, 0, -1, {})
     assert.is_true(#right_fillers > 0, "Right should have fillers for alignment")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 9: Mixed changes (add, delete, modify in one diff)
@@ -248,8 +248,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"keep", "delete this", "modify me", "keep"}
-    local modified = {"keep", "modified", "add this", "keep"}
+    local original = { "keep", "delete this", "modify me", "keep" }
+    local modified = { "keep", "modified", "add this", "keep" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -264,8 +264,8 @@ describe("Render Core", function()
     assert.is_true(#left_marks > 0, "Left should have highlights for changes")
     assert.is_true(#right_marks > 0, "Right should have highlights for changes")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 10: Re-render clears previous extmarks
@@ -273,8 +273,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original_v1 = {"line 1", "line 2"}
-    local modified_v1 = {"line 1", "line 2", "added"}
+    local original_v1 = { "line 1", "line 2" }
+    local modified_v1 = { "line 1", "line 2", "added" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original_v1)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified_v1)
@@ -287,8 +287,8 @@ describe("Render Core", function()
     local first_count = #marks_after_first
 
     -- Second render with different content
-    local original_v2 = {"line 1"}
-    local modified_v2 = {"line 1"}
+    local original_v2 = { "line 1" }
+    local modified_v2 = { "line 1" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original_v2)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified_v2)
@@ -302,8 +302,8 @@ describe("Render Core", function()
     assert.equal(0, #marks_after_second, "Old extmarks should be cleared on re-render")
     assert.is_true(first_count > 0, "First render had extmarks")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 11: Large number of filler lines
@@ -311,8 +311,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1"}
-    local modified = {"line 1"}
+    local original = { "line 1" }
+    local modified = { "line 1" }
     -- Add 50 lines to right side
     for i = 2, 51 do
       table.insert(modified, "added line " .. i)
@@ -322,7 +322,7 @@ describe("Render Core", function()
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
 
     local lines_diff = diff.compute_diff(original, modified)
-    
+
     -- Should not crash or timeout
     local success = pcall(function()
       core.render_diff(left_buf, right_buf, original, modified, lines_diff)
@@ -334,8 +334,8 @@ describe("Render Core", function()
     local left_fillers = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_filler, 0, -1, {})
     assert.is_true(#left_fillers > 0, "Should create filler extmarks")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 12: Change at beginning of file
@@ -343,8 +343,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"old first line", "line 2", "line 3"}
-    local modified = {"new first line", "line 2", "line 3"}
+    local original = { "old first line", "line 2", "line 3" }
+    local modified = { "new first line", "line 2", "line 3" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -353,14 +353,14 @@ describe("Render Core", function()
     core.render_diff(left_buf, right_buf, original, modified, lines_diff)
 
     -- First line should have highlights
-    local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_highlight, {0, 0}, {0, -1}, {})
-    local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, highlights.ns_highlight, {0, 0}, {0, -1}, {})
+    local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_highlight, { 0, 0 }, { 0, -1 }, {})
+    local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, highlights.ns_highlight, { 0, 0 }, { 0, -1 }, {})
 
     assert.is_true(#left_marks > 0, "First line in left should have highlight")
     assert.is_true(#right_marks > 0, "First line in right should have highlight")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 13: Change at end of file
@@ -368,8 +368,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1", "line 2", "old last line"}
-    local modified = {"line 1", "line 2", "new last line"}
+    local original = { "line 1", "line 2", "old last line" }
+    local modified = { "line 1", "line 2", "new last line" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -378,14 +378,14 @@ describe("Render Core", function()
     core.render_diff(left_buf, right_buf, original, modified, lines_diff)
 
     -- Last line should have highlights
-    local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_highlight, {2, 0}, {2, -1}, {})
-    local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, highlights.ns_highlight, {2, 0}, {2, -1}, {})
+    local left_marks = vim.api.nvim_buf_get_extmarks(left_buf, highlights.ns_highlight, { 2, 0 }, { 2, -1 }, {})
+    local right_marks = vim.api.nvim_buf_get_extmarks(right_buf, highlights.ns_highlight, { 2, 0 }, { 2, -1 }, {})
 
     assert.is_true(#left_marks > 0, "Last line in left should have highlight")
     assert.is_true(#right_marks > 0, "Last line in right should have highlight")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 14: Whitespace-only changes
@@ -393,8 +393,8 @@ describe("Render Core", function()
     local left_buf = vim.api.nvim_create_buf(false, true)
     local right_buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line1", "  indented", "line3"}
-    local modified = {"line1", "    indented", "line3"}
+    local original = { "line1", "  indented", "line3" }
+    local modified = { "line1", "    indented", "line3" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
@@ -409,8 +409,8 @@ describe("Render Core", function()
     assert.is_true(#left_marks > 0, "Whitespace changes should create highlights in left")
     assert.is_true(#right_marks > 0, "Whitespace changes should create highlights in right")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 15: Empty file vs file with content
@@ -419,13 +419,13 @@ describe("Render Core", function()
     local right_buf = vim.api.nvim_create_buf(false, true)
 
     local original = {}
-    local modified = {"line 1", "line 2", "line 3"}
+    local modified = { "line 1", "line 2", "line 3" }
 
     vim.api.nvim_buf_set_lines(left_buf, 0, -1, false, original)
     vim.api.nvim_buf_set_lines(right_buf, 0, -1, false, modified)
 
     local lines_diff = diff.compute_diff(original, modified)
-    
+
     -- Should not crash with empty file
     local success = pcall(function()
       core.render_diff(left_buf, right_buf, original, modified, lines_diff)
@@ -438,22 +438,23 @@ describe("Render Core", function()
     -- content or destroy the buffers.
     assert.is_true(vim.api.nvim_buf_is_valid(left_buf), "Left buffer should remain valid")
     assert.is_true(vim.api.nvim_buf_is_valid(right_buf), "Right buffer should remain valid")
-    assert.equal(0, vim.api.nvim_buf_line_count(left_buf) == 1 and #vim.api.nvim_buf_get_lines(left_buf, 0, 1, false)[1] or 1,
-      "left buffer must still be empty (an empty buffer reads as {\"\"}, line_count=1)")
-    assert.equal("line 1\nline 2\nline 3",
-      table.concat(vim.api.nvim_buf_get_lines(right_buf, 0, -1, false), "\n"),
-      "right buffer must still hold its source content")
+    assert.equal(
+      0,
+      vim.api.nvim_buf_line_count(left_buf) == 1 and #vim.api.nvim_buf_get_lines(left_buf, 0, 1, false)[1] or 1,
+      'left buffer must still be empty (an empty buffer reads as {""}, line_count=1)'
+    )
+    assert.equal("line 1\nline 2\nline 3", table.concat(vim.api.nvim_buf_get_lines(right_buf, 0, -1, false), "\n"), "right buffer must still hold its source content")
 
-    vim.api.nvim_buf_delete(left_buf, {force = true})
-    vim.api.nvim_buf_delete(right_buf, {force = true})
+    vim.api.nvim_buf_delete(left_buf, { force = true })
+    vim.api.nvim_buf_delete(right_buf, { force = true })
   end)
 
   -- Test 16: render_single_buffer with modified side
   it("render_single_buffer renders modified side with insert highlights", function()
     local buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1", "line 2"}
-    local modified = {"line 1", "line 2", "line 3"}
+    local original = { "line 1", "line 2" }
+    local modified = { "line 1", "line 2", "line 3" }
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, modified)
 
@@ -464,15 +465,15 @@ describe("Render Core", function()
     local marks = vim.api.nvim_buf_get_extmarks(buf, highlights.ns_highlight, 0, -1, {})
     assert.is_true(#marks > 0, "Modified side should have highlight extmarks")
 
-    vim.api.nvim_buf_delete(buf, {force = true})
+    vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
   -- Test 17: render_single_buffer with original side
   it("render_single_buffer renders original side with delete highlights", function()
     local buf = vim.api.nvim_create_buf(false, true)
 
-    local original = {"line 1", "line 2", "line 3"}
-    local modified = {"line 1", "line 2"}
+    local original = { "line 1", "line 2", "line 3" }
+    local modified = { "line 1", "line 2" }
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, original)
 
@@ -483,15 +484,15 @@ describe("Render Core", function()
     local marks = vim.api.nvim_buf_get_extmarks(buf, highlights.ns_highlight, 0, -1, {})
     assert.is_true(#marks > 0, "Original side should have highlight extmarks")
 
-    vim.api.nvim_buf_delete(buf, {force = true})
+    vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
   -- Test 18: render_single_buffer clears previous highlights
   it("render_single_buffer clears previous highlights on re-render", function()
     local buf = vim.api.nvim_create_buf(false, true)
 
-    local original_v1 = {"line 1"}
-    local modified_v1 = {"line 1", "added"}
+    local original_v1 = { "line 1" }
+    local modified_v1 = { "line 1", "added" }
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, modified_v1)
 
@@ -503,7 +504,7 @@ describe("Render Core", function()
     local first_count = #marks_after_first
 
     -- Second render with no changes
-    local no_change = {"same"}
+    local no_change = { "same" }
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, no_change)
     local lines_diff_v2 = diff.compute_diff(no_change, no_change)
     core.render_single_buffer(buf, lines_diff_v2, "modified")
@@ -513,18 +514,18 @@ describe("Render Core", function()
     assert.is_true(first_count > 0, "First render had extmarks")
     assert.equal(0, #marks_after_second, "Old extmarks should be cleared on re-render")
 
-    vim.api.nvim_buf_delete(buf, {force = true})
+    vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
   -- Test 19: render_single_buffer with no changes
   it("render_single_buffer handles no changes gracefully", function()
     local buf = vim.api.nvim_create_buf(false, true)
 
-    local content = {"line 1", "line 2"}
+    local content = { "line 1", "line 2" }
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, content)
 
     local lines_diff = diff.compute_diff(content, content)
-    
+
     local success = pcall(function()
       core.render_single_buffer(buf, lines_diff, "modified")
     end)
@@ -534,7 +535,7 @@ describe("Render Core", function()
     local marks = vim.api.nvim_buf_get_extmarks(buf, highlights.ns_highlight, 0, -1, {})
     assert.equal(0, #marks, "No changes should mean no highlights")
 
-    vim.api.nvim_buf_delete(buf, {force = true})
+    vim.api.nvim_buf_delete(buf, { force = true })
   end)
 
   it("renders whole files with the highlight for their side", function()

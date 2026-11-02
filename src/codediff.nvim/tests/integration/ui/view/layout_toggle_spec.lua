@@ -793,7 +793,9 @@ describe("Layout toggle", function()
     -- that returns 0 (no user input). Stub it to auto-select "Discard" (the
     -- 1st option in "&Discard\n&Cancel") so the async chain proceeds unattended.
     local old_confirm = vim.fn.confirm
-    vim.fn.confirm = function() return 1 end
+    vim.fn.confirm = function()
+      return 1
+    end
 
     local discard_cb = get_buffer_mapping_callback(vim.api.nvim_win_get_buf(session.modified_win), "K")
     assert.is_function(discard_cb, "discard_hunk mapping should exist after toggle")
@@ -806,21 +808,16 @@ describe("Layout toggle", function()
     -- out in the previous `pending` comment).
     local welcome_ready = vim.wait(15000, function()
       local s = lifecycle.get_session(tabpage)
-      return s
-        and s.modified_bufnr
-        and vim.api.nvim_buf_is_valid(s.modified_bufnr)
-        and welcome.is_welcome_buffer(s.modified_bufnr)
+      return s and s.modified_bufnr and vim.api.nvim_buf_is_valid(s.modified_bufnr) and welcome.is_welcome_buffer(s.modified_bufnr)
     end, 100)
 
     vim.fn.confirm = old_confirm
 
-    assert.is_true(welcome_ready,
-      "discard_hunk after layout toggle should end in the welcome buffer once the async chain completes")
+    assert.is_true(welcome_ready, "discard_hunk after layout toggle should end in the welcome buffer once the async chain completes")
     -- Sanity: the working tree really does match HEAD again (git-level check
     -- so we don't confuse a stale UI with actual discard success).
     local worktree = table.concat(vim.fn.readfile(repo.path("file.txt")), "\n")
-    assert.equal("line 1\nline 2\nline 3", worktree,
-      "working-tree file must be restored to its HEAD content after discard_hunk")
+    assert.equal("line 1\nline 2\nline 3", worktree, "working-tree file must be restored to its HEAD content after discard_hunk")
   end)
 
   it("does not persist the layout override across separate CodeDiff runs", function()

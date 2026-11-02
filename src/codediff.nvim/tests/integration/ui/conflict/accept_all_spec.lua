@@ -1,6 +1,6 @@
-local conflict = require('codediff.ui.conflict')
-local lifecycle = require('codediff.ui.lifecycle')
-local assert = require('luassert')
+local conflict = require("codediff.ui.conflict")
+local lifecycle = require("codediff.ui.lifecycle")
+local assert = require("luassert")
 
 describe("Conflict Accept All Actions", function()
   local tabpage
@@ -16,43 +16,43 @@ describe("Conflict Accept All Actions", function()
     -- Lines 3-4, 7-8, 11-12 are conflicts
     result_bufnr = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(result_bufnr, 0, -1, false, {
-      "Line 1",                    -- 1
-      "Line 2",                    -- 2
-      "Base Conflict 1a",          -- 3  (conflict 1)
-      "Base Conflict 1b",          -- 4
-      "Line 5",                    -- 5
-      "Line 6",                    -- 6
-      "Base Conflict 2a",          -- 7  (conflict 2)
-      "Base Conflict 2b",          -- 8
-      "Line 9",                    -- 9
-      "Line 10",                   -- 10
-      "Base Conflict 3a",          -- 11 (conflict 3)
-      "Base Conflict 3b",          -- 12
-      "Line 13",                   -- 13
+      "Line 1", -- 1
+      "Line 2", -- 2
+      "Base Conflict 1a", -- 3  (conflict 1)
+      "Base Conflict 1b", -- 4
+      "Line 5", -- 5
+      "Line 6", -- 6
+      "Base Conflict 2a", -- 7  (conflict 2)
+      "Base Conflict 2b", -- 8
+      "Line 9", -- 9
+      "Line 10", -- 10
+      "Base Conflict 3a", -- 11 (conflict 3)
+      "Base Conflict 3b", -- 12
+      "Line 13", -- 13
     })
 
     -- Create incoming (left/theirs) buffer
     original_bufnr = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_name(original_bufnr, "AcceptAllOriginal")
     vim.api.nvim_buf_set_lines(original_bufnr, 0, -1, false, {
-      "Incoming 1a",  -- 1
-      "Incoming 1b",  -- 2
-      "Incoming 2a",  -- 3
-      "Incoming 2b",  -- 4
-      "Incoming 3a",  -- 5
-      "Incoming 3b",  -- 6
+      "Incoming 1a", -- 1
+      "Incoming 1b", -- 2
+      "Incoming 2a", -- 3
+      "Incoming 2b", -- 4
+      "Incoming 3a", -- 5
+      "Incoming 3b", -- 6
     })
 
     -- Create current (right/ours) buffer
     modified_bufnr = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_name(modified_bufnr, "AcceptAllModified")
     vim.api.nvim_buf_set_lines(modified_bufnr, 0, -1, false, {
-      "Current 1a",  -- 1
-      "Current 1b",  -- 2
-      "Current 2a",  -- 3
-      "Current 2b",  -- 4
-      "Current 3a",  -- 5
-      "Current 3b",  -- 6
+      "Current 1a", -- 1
+      "Current 1b", -- 2
+      "Current 2a", -- 3
+      "Current 2b", -- 4
+      "Current 3a", -- 5
+      "Current 3b", -- 6
     })
 
     -- Define 3 conflict blocks
@@ -80,18 +80,26 @@ describe("Conflict Accept All Actions", function()
       original_bufnr = original_bufnr,
       modified_bufnr = modified_bufnr,
       result_base_lines = {
-        "Line 1", "Line 2",
-        "Base Conflict 1a", "Base Conflict 1b",
-        "Line 5", "Line 6",
-        "Base Conflict 2a", "Base Conflict 2b",
-        "Line 9", "Line 10",
-        "Base Conflict 3a", "Base Conflict 3b",
+        "Line 1",
+        "Line 2",
+        "Base Conflict 1a",
+        "Base Conflict 1b",
+        "Line 5",
+        "Line 6",
+        "Base Conflict 2a",
+        "Base Conflict 2b",
+        "Line 9",
+        "Line 10",
+        "Base Conflict 3a",
+        "Base Conflict 3b",
         "Line 13",
-      }
+      },
     }
 
     lifecycle.get_session = function(tp)
-      if tp == tabpage then return session end
+      if tp == tabpage then
+        return session
+      end
       return nil
     end
 
@@ -132,7 +140,9 @@ describe("Conflict Accept All Actions", function()
     end)
 
     it("should return false when no session exists", function()
-      lifecycle.get_session = function() return nil end
+      lifecycle.get_session = function()
+        return nil
+      end
       local success = conflict.accept_all_incoming(tabpage)
       assert.is_false(success)
     end)
@@ -240,7 +250,9 @@ describe("Conflict Accept All Actions", function()
     end)
 
     it("should return false when no session exists", function()
-      lifecycle.get_session = function() return nil end
+      lifecycle.get_session = function()
+        return nil
+      end
       local success = conflict.discard_all(tabpage)
       assert.is_false(success)
     end)

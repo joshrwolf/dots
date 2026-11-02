@@ -137,19 +137,26 @@ local function scenario_conflict()
   vim.cmd("edit " .. vim.fn.fnameescape(repo.path("conf.txt")))
 
   local ready = false
-  view.create({
-    git_root = repo.dir,
-    original = path.make_ref("conf.txt", repo.dir),
-    modified = path.make_ref("conf.txt", repo.dir),
-    original_revision = ":3",
-    modified_revision = ":2",
-    conflict = true,
-  }, "", function()
-    ready = true
-  end)
-  assert.is_true(vim.wait(15000, function()
-    return ready
-  end, 50), "conflict view should become ready")
+  view.create(
+    {
+      git_root = repo.dir,
+      original = path.make_ref("conf.txt", repo.dir),
+      modified = path.make_ref("conf.txt", repo.dir),
+      original_revision = ":3",
+      modified_revision = ":2",
+      conflict = true,
+    },
+    "",
+    function()
+      ready = true
+    end
+  )
+  assert.is_true(
+    vim.wait(15000, function()
+      return ready
+    end, 50),
+    "conflict view should become ready"
+  )
 
   local tabpage
   for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
@@ -198,10 +205,30 @@ describe("keymap golden matrix", function()
 
   it("matches the committed fixture for every session shape", function()
     local scenarios = {
-      { "standalone side-by-side", function() return scenario_standalone("side-by-side") end },
-      { "standalone inline", function() return scenario_standalone("inline") end },
-      { "explorer side-by-side", function() return scenario_explorer("side-by-side") end },
-      { "explorer inline", function() return scenario_explorer("inline") end },
+      {
+        "standalone side-by-side",
+        function()
+          return scenario_standalone("side-by-side")
+        end,
+      },
+      {
+        "standalone inline",
+        function()
+          return scenario_standalone("inline")
+        end,
+      },
+      {
+        "explorer side-by-side",
+        function()
+          return scenario_explorer("side-by-side")
+        end,
+      },
+      {
+        "explorer inline",
+        function()
+          return scenario_explorer("inline")
+        end,
+      },
       { "conflict", scenario_conflict },
       { "compact side-by-side", scenario_compact },
     }
@@ -240,13 +267,7 @@ describe("keymap golden matrix", function()
       if expected[i] ~= rendered[i] then
         assert.is_true(
           false,
-          string.format(
-            "keymap matrix drifted from %s\nfirst difference at line %d:\n  expected: %s\n  actual:   %s",
-            FIXTURE,
-            i,
-            expected[i] or "<eof>",
-            rendered[i] or "<eof>"
-          )
+          string.format("keymap matrix drifted from %s\nfirst difference at line %d:\n  expected: %s\n  actual:   %s", FIXTURE, i, expected[i] or "<eof>", rendered[i] or "<eof>")
         )
       end
     end

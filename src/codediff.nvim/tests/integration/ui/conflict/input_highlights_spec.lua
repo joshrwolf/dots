@@ -5,10 +5,10 @@
 -- TextChanged-like event without being overwritten by the normal diff
 -- renderer's red/green scheme.
 
-local h = require('tests.support')
+local h = require("tests.support")
 local path = require("codediff.core.path")
 
-describe('Issue #387 regression — conflict-mode input panes stay green on TextChanged', function()
+describe("Issue #387 regression — conflict-mode input panes stay green on TextChanged", function()
   local repo
 
   before_each(function()
@@ -17,23 +17,25 @@ describe('Issue #387 regression — conflict-mode input panes stay green on Text
   end)
 
   after_each(function()
-    if repo then repo.cleanup() end
-    while vim.fn.tabpagenr('$') > 1 do
-      vim.cmd('tabclose')
+    if repo then
+      repo.cleanup()
+    end
+    while vim.fn.tabpagenr("$") > 1 do
+      vim.cmd("tabclose")
     end
   end)
 
-  it('both input panes use LineInsert (green) and survive TextChanged', function()
-    repo.write_file('file.txt', { "line 1", "line 2", "line 3", "line 4", "line 5" })
+  it("both input panes use LineInsert (green) and survive TextChanged", function()
+    repo.write_file("file.txt", { "line 1", "line 2", "line 3", "line 4", "line 5" })
     repo.git("add file.txt")
     repo.git("commit -m c0")
 
     repo.git("checkout -b feature")
-    repo.write_file('file.txt', { "line 1", "line 2", "line 3 (feature)", "line 4", "line 5" })
+    repo.write_file("file.txt", { "line 1", "line 2", "line 3 (feature)", "line 4", "line 5" })
     repo.git("commit -am feature")
 
     repo.git("checkout main")
-    repo.write_file('file.txt', { "line 1", "line 2", "line 3 (main)", "line 4", "line 5" })
+    repo.write_file("file.txt", { "line 1", "line 2", "line 3 (main)", "line 4", "line 5" })
     repo.git("commit -am main")
 
     local merge_out = repo.git("merge feature --no-edit")
@@ -44,23 +46,36 @@ describe('Issue #387 regression — conflict-mode input panes stay green on Text
     vim.cmd("edit " .. repo.dir .. "/file.txt")
     local view = require("codediff.ui.view")
     local ready = false
-    view.create({
-      git_root = repo.dir,
-      original = path.make_ref("file.txt", repo.dir),
-      modified = path.make_ref("file.txt", repo.dir),
-      original_revision = ":3",
-      modified_revision = ":2",
-      conflict = true,
-    }, "", function() ready = true end)
+    view.create(
+      {
+        git_root = repo.dir,
+        original = path.make_ref("file.txt", repo.dir),
+        modified = path.make_ref("file.txt", repo.dir),
+        original_revision = ":3",
+        modified_revision = ":2",
+        conflict = true,
+      },
+      "",
+      function()
+        ready = true
+      end
+    )
 
-    assert.is_true(vim.wait(15000, function() return ready end, 50),
-      "view.create did not become ready")
+    assert.is_true(
+      vim.wait(15000, function()
+        return ready
+      end, 50),
+      "view.create did not become ready"
+    )
 
     local lifecycle = require("codediff.ui.lifecycle")
     local sess
     for _, tp in ipairs(vim.api.nvim_list_tabpages()) do
       local s = lifecycle.get_session(tp)
-      if s and s.result_bufnr then sess = s; break end
+      if s and s.result_bufnr then
+        sess = s
+        break
+      end
     end
     assert.is_not_nil(sess)
 
@@ -70,19 +85,17 @@ describe('Issue #387 regression — conflict-mode input panes stay green on Text
       local g = {}
       for _, m in ipairs(marks) do
         local d = m[4] or {}
-        if d.hl_group then g[d.hl_group] = (g[d.hl_group] or 0) + 1 end
+        if d.hl_group then
+          g[d.hl_group] = (g[d.hl_group] or 0) + 1
+        end
       end
       return g
     end
 
     local function assert_green_only(g, label)
-      assert.is_true((g.CodeDiffLineInsert or 0) > 0,
-        label .. " must have CodeDiffLineInsert highlights, got: " .. vim.inspect(g))
-      assert.equal(0, g.CodeDiffLineDelete or 0,
-        label .. " must NOT have CodeDiffLineDelete (red); VSCode uses one color for both inputs. Got: "
-          .. vim.inspect(g))
-      assert.equal(0, g.CodeDiffCharDelete or 0,
-        label .. " must NOT have CodeDiffCharDelete. Got: " .. vim.inspect(g))
+      assert.is_true((g.CodeDiffLineInsert or 0) > 0, label .. " must have CodeDiffLineInsert highlights, got: " .. vim.inspect(g))
+      assert.equal(0, g.CodeDiffLineDelete or 0, label .. " must NOT have CodeDiffLineDelete (red); VSCode uses one color for both inputs. Got: " .. vim.inspect(g))
+      assert.equal(0, g.CodeDiffCharDelete or 0, label .. " must NOT have CodeDiffCharDelete. Got: " .. vim.inspect(g))
     end
 
     -- Initial render must paint both panes green (matches VSCode).
