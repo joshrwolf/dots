@@ -136,7 +136,9 @@ Applies to Pi extensions, Claude mods, skills, and `AGENTS.md` files.
   readiness, claims transactionally, and accepts project key and time explicitly.
 - Pi uses pinned stock npm releases and a companion in `src/pi/`. Consume public
   APIs; never patch managed caches, vendor upstream packages, or register duplicate
-  copies. Settings and runtime state remain machine-local.
+  copies. Native Pi groups merge tracked preferences from `home/pi/` into the
+  user settings file. Authentication, last-selected model/provider, device
+  identity, package registrations and runtime state remain machine-local.
 - Pi-based packages share one pnpm workspace and lockfile at the root, with
   optional private packages under `private/src/`. The native workspace catalog
   owns exact Pi release pins; `src/pi-kit/` owns shared APIs. Move common code
