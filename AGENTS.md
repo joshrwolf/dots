@@ -64,9 +64,23 @@ Applies to Pi extensions, Claude mods, skills, and `AGENTS.md` files.
   commands, metadata, or permissions portable.
 - Keep upstream licenses for adapted skills, such as
   `skills/LICENSE-cc-skills-golang`.
-- Check upstream before compatibility patches. Prefer upstream releases, keep
-  local patches minimal, and remove superseded patches. Personal features stay
-  outside vendored code.
+
+## Upstream code
+
+- Consume upstream by default: pinned releases through their native manager and
+  public APIs, unedited. Check upstream before working around a defect, and
+  remove workarounds once upstream makes them unnecessary.
+- Forking is the user's decision. Never fork, vendor, or copy upstream code into
+  dots without the user's explicit approval for that project; propose it with
+  the reason and the kind of fork.
+- An approved fork lives in-tree under `src/<name>/`, brought in with
+  `git subtree add --squash`, keeps upstream's license, and has an `AGENTS.md`
+  naming its upstream and kind:
+  - tracked: keeps upstream's layout and formatting, carries minimal changes,
+    and takes upstream releases with `git subtree pull --squash`;
+  - owned: ours to change freely, with no upstream pulls.
+- A fork installs through bootstrap like any other source. Binaries it needs
+  come from pinned mise tools, never from downloads at runtime.
 
 ## Tooling
 
