@@ -16,6 +16,8 @@ function M.install()
   rex.call = refuse("rex.call")
   rex.block.call = refuse("rex.block.call")
   rex.invoke = refuse("rex.invoke")
+  rex.server = refuse("rex.server")
+  rex.servers = refuse("rex.servers")
   for name, value in pairs(rex.session) do
     if type(value) == "function" then
       rex.session[name] = refuse("rex.session." .. name)

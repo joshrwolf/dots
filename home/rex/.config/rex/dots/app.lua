@@ -8,8 +8,23 @@ local M = {}
 ---the first app connected.
 ---@param clients table[] `client.list` entries.
 ---@param session_id? string
+---@param preferred? string The app that opened the view, not its CLI connection.
 ---@return string? client_id
-function M.choose(clients, session_id)
+function M.choose(clients, session_id, preferred)
+  if preferred then
+    local found = false
+    for _, client in ipairs(clients) do
+      if client.client_id == preferred then
+        found = true
+        if client.info and client.info.kind == "app" then
+          return preferred
+        end
+      end
+    end
+    if not found then
+      return nil
+    end
+  end
   local first
   for _, client in ipairs(clients) do
     if client.info and client.info.kind == "app" then
@@ -28,11 +43,12 @@ end
 ---@param action string Such as `session.select`.
 ---@param args? table
 ---@param near_session? string Prefer the app showing this session.
-function M.perform(action, args, near_session)
+---@param preferred? string
+function M.perform(action, args, near_session, preferred)
   local listed = must("listing clients", rex.call("client.list"))
-  local client = M.choose(listed.clients or {}, near_session)
+  local client = M.choose(listed.clients or {}, near_session, preferred)
   if not client then
-    error("no Rex app is connected", 0)
+    error("no target Rex app is connected", 0)
   end
   must(
     action,
@@ -44,8 +60,14 @@ end
 ---@param session_id string
 ---@param window_id? string
 ---@param near_session? string
-function M.show(session_id, window_id, near_session)
-  M.perform("session.select", { session_id = session_id, window_id = window_id }, near_session)
+---@param preferred? string
+function M.show(session_id, window_id, near_session, preferred)
+  M.perform(
+    "session.select",
+    { session_id = session_id, window_id = window_id },
+    near_session,
+    preferred
+  )
 end
 
 return M

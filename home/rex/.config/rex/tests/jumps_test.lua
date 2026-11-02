@@ -1,6 +1,7 @@
 local expect = require("tests.expect")
 local fake_rex = require("tests.fake_rex")
 local jumps = require("dots.jumps")
+local hosts = require("dots.hosts")
 
 local TERMINAL = "com.superlogical.terminal"
 
@@ -54,6 +55,17 @@ local function shows(session_id, window_id)
 end
 
 return {
+  ["jump back uses the selected host's history without touching this host's"] = function(t)
+    t.stub(jumps, "recent", { at("local-session", "local-window") })
+    t.stub(hosts, "forward", function(ctx, action)
+      expect.equal(ctx.server, "studio")
+      expect.equal(action, "jump_back")
+      return true
+    end)
+    jumps.toggle({ server = "studio", session_id = "remote-session" })
+    expect.equal(jumps.recent, { at("local-session", "local-window") })
+  end,
+
   ["push puts a location first, once, and keeps fifty"] = function()
     local list = jumps.push({ at("s", "a"), at("s", "b") }, at("s", "b"))
     expect.equal(keys(list), { "s|b", "s|a" })

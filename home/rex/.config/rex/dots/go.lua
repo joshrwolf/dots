@@ -7,6 +7,7 @@
 -- repo (see `dots.start`).
 local agents = require("dots.agents")
 local app = require("dots.app")
+local hosts = require("dots.hosts")
 local jumps = require("dots.jumps")
 local must = require("dots.result").must
 local sessions = require("dots.sessions")
@@ -19,7 +20,7 @@ local views = require("dots.views")
 -- n, p, q, u, and w for editing and movement, Rex takes h, j, k, and l for
 -- panes and s for splits, and i and m arrive as Tab and Enter; d, o, r, t, v,
 -- x, y, and z are free.
-local KEYS = { pr = "r", issue = "t", new = "o" }
+local KEYS = { pr = "r", issue = "t", new = "o", host = "y" }
 
 local SHELL = "com.superlogical.terminal.shell"
 
@@ -120,8 +121,9 @@ end
 ---and the jumps that order tabs come from `dots.jumps`.
 ---@param snap dots.Snapshot
 ---@param recent? dots.Location[] Tabs most recently jumped to first; they lead the tabs.
+---@param host? string The owning host's display name.
 ---@return pick.View view
-function M.view(snap, recent)
+function M.view(snap, recent, host)
   local items = {} ---@type dots.AgentRow[]
 
   for _, entry in ipairs((agents.split(snap))) do
@@ -182,7 +184,7 @@ function M.view(snap, recent)
   -- Lined up with the agent columns: no status, the name where the session goes.
   local place = { { width = { cells = 1 } }, { width = { content = 32 } }, { width = "fill" } } ---@type pick.Column[]
   return {
-    prompt = "go› ",
+    prompt = host and ("go [" .. host .. "]› ") or "go› ",
     accept = "go_to",
     shortcuts = {
       { key = KEYS.pr, label = "review PR", action = "go_start_pr", query = true, hint = "URL" },
@@ -194,6 +196,7 @@ function M.view(snap, recent)
         hint = "ID or URL",
       },
       { key = KEYS.new, label = "new session", action = "go_start_new" },
+      { key = KEYS.host, label = "switch host", action = "go_switch_host" },
     },
     groups = {
       { id = "attention", label = "needs attention", columns = agents.columns },
@@ -216,13 +219,13 @@ function M.go_to(ctx, args)
   end
   local from = jumps.here(ctx)
   if target.kind == "tab" then
-    app.show(target.session, target.window, ctx.session_id)
+    app.show(target.session, target.window, ctx.session_id, ctx.client_id)
     jumps.record(from, { session_id = target.session, window_id = target.window })
   elseif target.kind == "block" then
     must("focusing the terminal", sessions.focus(target.session, target.block))
     -- Name the window, so the app shows the one the server just made active.
     local window = sessions.window_of(target.session, target.block)
-    app.show(target.session, window, ctx.session_id)
+    app.show(target.session, window, ctx.session_id, ctx.client_id)
     jumps.record(from, { session_id = target.session, window_id = window })
   else
     local path = target.path --[[@as string]]
@@ -240,7 +243,7 @@ function M.go_to(ctx, args)
       )
       session = created.session_id
     end
-    app.show(session, nil, ctx.session_id)
+    app.show(session, nil, ctx.session_id, ctx.client_id)
     jumps.record(from, { session_id = session })
   end
 end
@@ -274,6 +277,21 @@ function M.start_new(ctx, args, random)
   start.open(ctx, plan, snap)
 end
 
+-- Session RPC routing alone does not move Git, files, or executables. Every
+-- Go action runs in the configuration on the session's own host.
+---@param name string
+---@param run fun(ctx: rex.Context, args: table): any
+---@return fun(ctx: rex.Context, args: table): any
+local function on_owner(name, run)
+  return function(ctx, args)
+    local forwarded, result = hosts.forward(ctx, name, args)
+    if forwarded then
+      return result
+    end
+    return run(views.context(ctx), args)
+  end
+end
+
 local LINE = { id = "string?", query = "string" }
 
 function M.install()
@@ -283,54 +301,67 @@ function M.install()
     description = "Find a session, agent, worktree, or directory, or start work",
     category = "Navigation",
     keywords = "find jump switch session agent worktree directory start pr issue new",
-    run = function(ctx)
+    run = on_owner("go", function(ctx)
       -- The picker runs where the user was, so a start knows that repo.
       views.open({ title = "go", view = "go_view", at = ctx })
-    end,
+    end),
   })
   rex.action({
     name = "go_view",
     title = "Go: view",
     description = "The Go picker's rows, for dots-pick",
     category = "Navigation",
-    run = function(ctx)
+    run = on_owner("go_view", function(ctx)
+      local host = hosts.current()
       local opts = { exclude = ctx.block_id, places = true }
-      return views.live(M.view(snapshot.collect(opts), jumps.recent), snapshot.events(opts))
-    end,
+      return views.live(
+        M.view(snapshot.collect(opts), jumps.recent, host.label),
+        snapshot.events(opts)
+      )
+    end),
   })
   rex.action({
     name = "go_to",
     title = "Go: open a row",
     category = "Navigation",
     args = { id = "string" },
-    run = M.go_to,
+    run = on_owner("go_to", M.go_to),
   })
   rex.action({
     name = "go_start_pr",
     title = "Go: review the PR",
     category = "Navigation",
     args = LINE,
-    run = function(ctx, args)
+    run = on_owner("go_start_pr", function(ctx, args)
       M.start(ctx, "pr", args)
-    end,
+    end),
   })
   rex.action({
     name = "go_start_issue",
     title = "Go: work on the issue",
     category = "Navigation",
     args = LINE,
-    run = function(ctx, args)
+    run = on_owner("go_start_issue", function(ctx, args)
       M.start(ctx, "issue", args)
-    end,
+    end),
   })
   rex.action({
     name = "go_start_new",
     title = "Go: start a new session",
     category = "Navigation",
     args = { id = "string?" },
-    run = function(ctx, args)
+    run = on_owner("go_start_new", function(ctx, args)
       M.start_new(ctx, args)
-    end,
+    end),
+  })
+  rex.action({
+    name = "go_switch_host",
+    title = "Go: switch host",
+    category = "Navigation",
+    args = { id = "string?" },
+    run = on_owner("go_switch_host", function(ctx)
+      app.perform("client.host.switch", nil, ctx.session_id, ctx.client_id)
+    end),
   })
   rex.bind("cmd+p", "go")
 end
