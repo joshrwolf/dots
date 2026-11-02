@@ -58,8 +58,9 @@ one is available, with both angle files.
    then one line on what was dismissed and why. Say plainly when nothing
    blocks. Do not post to GitHub.
 6. **Hand over.** In Rex, open the review beside your pane:
-   `rex split -s "" -b "" --cwd <worktree> --label
-   review -- nvim +Review`.
+   `rex split -s "$REX_SESSION" -b "$REX_BLOCK" --cwd <worktree> --label
+   review -- nvim +Review`. Without those variables, find your pane as the
+   rex skill describes.
 
 ## After fixes
 
