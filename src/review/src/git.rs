@@ -229,6 +229,20 @@ impl Git {
         utf8(output, "branches")
     }
 
+    /// Whether commit `ancestor` is `descendant` or one of its ancestors.
+    pub(crate) fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
+        match self.git(
+            &["merge-base", "--is-ancestor", ancestor, descendant],
+            SMALL,
+            "compare commits",
+        ) {
+            Ok(_) => Ok(true),
+            // Exit status 1 without a message: not an ancestor.
+            Err(Error::Git { message, .. }) if message.is_empty() => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// How many commits `to` reaches that `from` does not.
     pub(crate) fn commits_between(&self, from: &str, to: &str) -> Result<u64> {
         let output = self.git(

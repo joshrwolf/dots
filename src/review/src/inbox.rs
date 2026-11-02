@@ -44,6 +44,9 @@ pub struct InboxEntry {
     /// The commit the worktree's review compares against, chosen as opening
     /// the review would choose it now.
     pub base: String,
+    /// As opening the review records it, except that `candidates` leaves out
+    /// those that could not be nearest: an earlier-preferred candidate
+    /// contains their commit.
     pub basis: Basis,
     /// The working tree against `base`.
     pub diff: DiffSize,
@@ -159,7 +162,9 @@ fn repository(common: &Path) -> Result<Option<(Refs, Vec<Listed>)>> {
     let Some(first) = listed.first() else {
         return Ok(None);
     };
-    let refs = Refs::read(&Git::checkout(&first.path, common)?)?;
+    let git = Git::checkout(&first.path, common)?;
+    let mut refs = Refs::read(&git)?;
+    refs.prune(&git)?;
     Ok(Some((refs, listed)))
 }
 
@@ -167,7 +172,7 @@ fn repository(common: &Path) -> Result<Option<(Refs, Vec<Listed>)>> {
 fn parallel<J: Sync, T: Send>(jobs: &[J], work: impl Fn(&J) -> T + Sync) -> Vec<T> {
     let threads = std::thread::available_parallelism()
         .map_or(4, usize::from)
-        .clamp(1, 8)
+        .clamp(1, 4)
         .min(jobs.len().max(1));
     let next = AtomicUsize::new(0);
     let mut results: Vec<(usize, T)> = std::thread::scope(|scope| {

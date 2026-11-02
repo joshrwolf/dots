@@ -121,6 +121,32 @@ impl Refs {
         })
     }
 
+    /// Drop the candidates that can never be nearest: those whose commit an
+    /// earlier-preferred candidate's commit contains, so HEAD is at least as
+    /// far from them. The base chosen stays the same; only the runners-up
+    /// that could not win go unmeasured.
+    pub(crate) fn prune(&mut self, git: &Git) -> Result<()> {
+        let mut kept: Vec<DefaultRef> = Vec::with_capacity(self.defaults.len());
+        let mut defaults = std::mem::take(&mut self.defaults);
+        defaults.sort_by(|left, right| left.priority.cmp(&right.priority));
+        for default in defaults {
+            let mut dominated = false;
+            for preferred in &kept {
+                if preferred.commit == default.commit
+                    || git.is_ancestor(&default.commit, &preferred.commit)?
+                {
+                    dominated = true;
+                    break;
+                }
+            }
+            if !dominated {
+                kept.push(default);
+            }
+        }
+        self.defaults = kept;
+        Ok(())
+    }
+
     /// The base for HEAD commit `head` on `branch` (`None` when detached),
     /// with `base` set explicitly or not.
     pub(crate) fn choose(
