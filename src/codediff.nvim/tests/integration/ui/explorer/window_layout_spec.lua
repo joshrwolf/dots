@@ -61,3 +61,75 @@ describe("Explorer window layout", function()
     end
   end)
 end)
+
+describe("Explorer on the right", function()
+  local repo
+  local width = 30
+
+  local function explorer_win()
+    return h.find_window_by_filetype("codediff-explorer")
+  end
+
+  -- The explorer spans the rightmost columns at its configured width, and every
+  -- diff pane lies to its left.
+  local function assert_right_sidebar(label)
+    local win = explorer_win()
+    assert.is_not_nil(win, label .. ": explorer window not found")
+    local col = vim.api.nvim_win_get_position(win)[2]
+    assert.equal(vim.o.columns, col + vim.api.nvim_win_get_width(win), label .. ": explorer should end at the last column")
+    assert.equal(width, vim.api.nvim_win_get_width(win), label .. ": explorer width")
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if w ~= win then
+        assert.is_true(vim.api.nvim_win_get_position(w)[2] < col, label .. ": diff pane should be left of the explorer")
+      end
+    end
+  end
+
+  before_each(function()
+    require("codediff").setup({ explorer = { position = "right", width = width } })
+    repo = h.create_temp_git_repo()
+    repo.write_file("file1.txt", { "line 1", "line 2" })
+    repo.git("add .")
+    repo.git("commit -m initial")
+    repo.write_file("file1.txt", { "line 1", "line 2 modified" })
+    vim.cmd("edit " .. repo.path("file1.txt"))
+  end)
+
+  after_each(function()
+    require("codediff").setup({})
+    h.close_extra_tabs()
+    if repo then
+      repo.cleanup()
+    end
+  end)
+
+  it("keeps the explorer on the right through hiding and layout changes", function()
+    vim.cmd("CodeDiff")
+    assert.is_true(h.wait_for_explorer(5000), "explorer window should appear")
+    assert.is_true(h.wait_for_diff_ready(5000), "diff session should register")
+    local tabpage = vim.api.nvim_get_current_tabpage()
+    assert_right_sidebar("opened")
+
+    local explorer = require("codediff.ui.explorer")
+    local panel = require("codediff.ui.lifecycle").get_panel_view(tabpage)
+    explorer.toggle_visibility(panel)
+    vim.wait(100)
+    assert.is_nil(explorer_win(), "explorer should be hidden")
+    explorer.toggle_visibility(panel)
+    vim.wait(100)
+    assert_right_sidebar("shown again")
+
+    local view = require("codediff.ui.view")
+    for _, layout in ipairs({ "inline", "side-by-side" }) do
+      assert.is_true(view.toggle_layout(tabpage))
+      assert.is_true(
+        vim.wait(5000, function()
+          return require("codediff.ui.lifecycle").get_session(tabpage).layout == layout
+        end),
+        "layout should become " .. layout
+      )
+      vim.wait(100)
+      assert_right_sidebar(layout)
+    end
+  end)
+end)

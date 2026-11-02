@@ -55,7 +55,7 @@ require("codediff").setup({
     filler_text = " ", -- Quiet shaded gaps instead of diagonal stripes.
   },
   explorer = {
-    position = "left", -- The right-sidebar workaround retains upstream's width sizing.
+    position = "right",
     view_mode = "tree",
   },
   highlights = {
@@ -70,8 +70,6 @@ require("codediff").setup({
     },
   },
 })
-
-require("config.codediff-sidebar")
 
 -- Discover mappings from their desc fields; only group names belong here.
 -- The default 200ms delay shows hints after pausing on a prefix such as Space.

@@ -26,11 +26,12 @@ function M.arrange(tabpage)
   -- Panel config lives under the panel's own name in the user config
   local panel_name = session.panel and session.panel.name or "explorer"
   local panel_config = config.options[panel_name] or {}
-  local panel_position = panel_config.position or "left"
+  -- "left" and "right" are sidebars with a fixed width; "bottom" has a fixed height.
+  local panel_is_sidebar = (panel_config.position or "left") ~= "bottom"
 
   -- Step 1: Pin panel size (fixed element)
   if panel_visible then
-    if panel_position == "left" then
+    if panel_is_sidebar then
       vim.api.nvim_win_set_width(panel_win, panel_config.width)
     else
       vim.api.nvim_win_set_height(panel_win, panel_config.height)
@@ -46,7 +47,7 @@ function M.arrange(tabpage)
     local sole_win = orig_valid and original_win or (mod_valid and modified_win or nil)
     if sole_win then
       if panel_visible then
-        if panel_position == "left" then
+        if panel_is_sidebar then
           vim.api.nvim_win_set_width(panel_win, panel_config.width)
           -- Explicitly set diff window to fill remainder
           local remainder = vim.o.columns - panel_config.width - 1
@@ -112,7 +113,7 @@ function M.arrange(tabpage)
 
   -- Step 5: Re-pin panel size (undo disturbance from step 4)
   if panel_visible then
-    if panel_position == "left" then
+    if panel_is_sidebar then
       vim.api.nvim_win_set_width(panel_win, panel_config.width)
     else
       vim.api.nvim_win_set_height(panel_win, panel_config.height)

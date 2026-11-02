@@ -94,9 +94,9 @@ require("codediff").setup({
 
   -- Explorer panel configuration
   explorer = {
-    position = "left",  -- "left" or "bottom"
+    position = "left",  -- "left", "right" or "bottom"
     hidden = false,  -- Initial visibility state
-    width = 40,         -- Width when position is "left" (columns)
+    width = 40,         -- Width when position is "left" or "right" (columns)
     height = 15,        -- Height when position is "bottom" (lines)
     auto_refresh = true,  -- Native file watching with polling fallback (R still refreshes manually)
     indent_markers = true,  -- Show indent markers in tree view (│, ├, └)
@@ -134,8 +134,8 @@ require("codediff").setup({
 
   -- History panel configuration (for :CodeDiff history)
   history = {
-    position = "bottom",  -- "left" or "bottom" (default: bottom)
-    width = 40,           -- Width when position is "left" (columns)
+    position = "bottom",  -- "left", "right" or "bottom" (default: bottom)
+    width = 40,           -- Width when position is "left" or "right" (columns)
     height = 15,          -- Height when position is "bottom" (lines)
     initial_focus = "history",  -- Initial focus: "history", "original", or "modified"
     view_mode = "list",   -- "list" or "tree" for files under commits
