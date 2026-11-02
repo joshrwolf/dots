@@ -7,7 +7,7 @@
 //! signals therefore describe the working tree as it is now, while a
 //! review's threads stay at the review's current revision until something
 //! opens or refreshes it.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -268,6 +268,9 @@ fn measure(
 ) -> Result<(DiffSize, BTreeSet<String>)> {
     let mut size = DiffSize::default();
     let mut changed = BTreeSet::new();
+    // An untracked path the base has shows in numstat as deleted; it is
+    // compared with the base below instead.
+    let in_base = git.blobs(base, &status.untracked)?;
     let numstat = git.numstat(base, &candidates(git, base, head, status)?)?;
     for record in numstat.split(|byte| *byte == 0) {
         let Ok(record) = std::str::from_utf8(record) else {
@@ -279,18 +282,55 @@ fn measure(
         else {
             continue;
         };
+        if in_base.contains_key(path) {
+            continue;
+        }
         // Binary files count "-" lines.
         size.added += added.parse::<u64>().unwrap_or(0);
         size.removed += removed.parse::<u64>().unwrap_or(0);
         changed.insert(path.to_owned());
     }
-    for path in &status.untracked {
-        size.added += lines(&git.toplevel.join(path));
+    let restored: Vec<String> = status
+        .untracked
+        .iter()
+        .filter(|path| in_base.contains_key(*path))
+        .cloned()
+        .collect();
+    let hashes = git.hash_worktree(&restored)?;
+    for (path, now) in restored.iter().zip(hashes) {
+        let then = &in_base[path];
+        if *then == now {
+            continue;
+        }
+        let (added, removed) = if then.mode == LINK || now.mode == LINK {
+            // Whole-file counts: a link's target is one line.
+            (
+                lines(&git.toplevel.join(path)),
+                if then.mode == LINK {
+                    1
+                } else {
+                    u64::from(crate::line_count(&git.blob(&then.id)?))
+                },
+            )
+        } else {
+            git.numstat_against_blob(&then.id, path)?
+        };
+        size.added += added;
+        size.removed += removed;
         changed.insert(path.clone());
+    }
+    for path in &status.untracked {
+        if !in_base.contains_key(path) {
+            size.added += lines(&git.toplevel.join(path));
+            changed.insert(path.clone());
+        }
     }
     size.files = changed.len();
     Ok((size, changed))
 }
+
+/// The mode of a symbolic link in a tree.
+const LINK: &str = "120000";
 
 /// Most bytes of an untracked file read to count its lines.
 const LINE_LIMIT: u64 = 8 * 1024 * 1024;
@@ -380,13 +420,13 @@ fn since(
         .filter(|path| !untracked_set.contains(path.as_str()))
         .collect();
     if !untracked.is_empty() {
-        let then: BTreeMap<String, String> = git.blobs(&looked.head, untracked)?;
+        let then = git.blobs(&looked.head, untracked)?;
         let present: Vec<String> = untracked
             .iter()
             .filter(|path| then.contains_key(*path))
             .cloned()
             .collect();
-        let hashes = git.hash_files(&present)?;
+        let hashes = git.hash_worktree(&present)?;
         for path in untracked {
             if !then.contains_key(path) {
                 paths.insert(path.clone());

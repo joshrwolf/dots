@@ -1,4 +1,5 @@
 //! The Git queries reviews depend on, each bounded in time and output.
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -398,14 +399,10 @@ impl Git {
         paths(&output)
     }
 
-    /// The blob id of each of `files` in `tree`, by path; absent paths are
+    /// The blob of each of `files` in `tree`, by path; absent paths are
     /// missing from the map.
-    pub(crate) fn blobs(
-        &self,
-        tree: &str,
-        files: &[String],
-    ) -> Result<std::collections::BTreeMap<String, String>> {
-        let mut blobs = std::collections::BTreeMap::new();
+    pub(crate) fn blobs(&self, tree: &str, files: &[String]) -> Result<BTreeMap<String, Blob>> {
+        let mut blobs = BTreeMap::new();
         for chunk in files.chunks(256) {
             let mut args = vec!["ls-tree", "-r", "-z", "--full-tree", tree, "--"];
             args.extend(chunk.iter().map(String::as_str));
@@ -420,25 +417,143 @@ impl Git {
                 ) else {
                     continue;
                 };
-                if let Some(id) = info.split(' ').nth(2) {
-                    blobs.insert(path.to_owned(), id.to_owned());
+                let mut fields = info.split(' ');
+                if let (Some(mode), Some("blob"), Some(id)) =
+                    (fields.next(), fields.next(), fields.next())
+                {
+                    blobs.insert(
+                        path.to_owned(),
+                        Blob {
+                            mode: mode.to_owned(),
+                            id: id.to_owned(),
+                        },
+                    );
                 }
             }
         }
         Ok(blobs)
     }
 
-    /// The blob id each of `files` in the working tree would get, without
-    /// writing it.
-    pub(crate) fn hash_files(&self, files: &[String]) -> Result<Vec<String>> {
-        let mut ids = Vec::with_capacity(files.len());
-        for chunk in files.chunks(256) {
+    /// The blob each of `files` in the working tree would get, as capturing
+    /// the working tree stores it, without writing it: a symbolic link's
+    /// blob holds its target, unfollowed.
+    pub(crate) fn hash_worktree(&self, files: &[String]) -> Result<Vec<Blob>> {
+        let io = |path: &Path| {
+            let path = path.to_owned();
+            move |source| Error::Io {
+                operation: "hash files",
+                path,
+                source,
+            }
+        };
+        // Links are hashed by target here; ordinary files by Git, in batches.
+        let mut blobs: Vec<Option<Blob>> = Vec::with_capacity(files.len());
+        let mut regular = Vec::new();
+        for file in files {
+            let path = self.toplevel.join(file);
+            let metadata = std::fs::symlink_metadata(&path).map_err(io(&path))?;
+            if metadata.file_type().is_symlink() {
+                let target = std::fs::read_link(&path).map_err(io(&path))?;
+                blobs.push(Some(Blob {
+                    mode: "120000".into(),
+                    id: self.hash_bytes(target.as_os_str().as_encoded_bytes())?,
+                }));
+            } else {
+                regular.push(file.as_str());
+                blobs.push(None);
+            }
+        }
+        let mut ids = Vec::with_capacity(regular.len());
+        for chunk in regular.chunks(256) {
             let mut args = vec!["hash-object", "--"];
-            args.extend(chunk.iter().map(String::as_str));
+            args.extend(chunk);
             let output = self.git(&args, SMALL, "hash files")?;
             ids.extend(utf8(output, "object ids")?.lines().map(str::to_owned));
         }
-        Ok(ids)
+        if ids.len() != regular.len() {
+            return Err(Error::Git {
+                operation: "hash files",
+                message: format!(
+                    "hash-object printed {} ids for {} files",
+                    ids.len(),
+                    regular.len()
+                ),
+            });
+        }
+        let mut ids = ids.into_iter();
+        files
+            .iter()
+            .zip(blobs)
+            .map(|(file, blob)| {
+                if let Some(blob) = blob {
+                    return Ok(blob);
+                }
+                Ok(Blob {
+                    mode: file_mode(&self.toplevel.join(file))?.into(),
+                    id: ids.next().unwrap_or_default(),
+                })
+            })
+            .collect()
+    }
+
+    /// The blob id of `bytes`, unfiltered, without writing it.
+    fn hash_bytes(&self, bytes: &[u8]) -> Result<String> {
+        with_temporary(bytes, |path| {
+            let output = self.git(
+                &["hash-object", "--no-filters", "--", &path.to_string_lossy()],
+                SMALL,
+                "hash files",
+            )?;
+            Ok(utf8(output, "object id")?.trim().to_owned())
+        })
+    }
+
+    /// The content of blob `id`.
+    pub(crate) fn blob(&self, id: &str) -> Result<Vec<u8>> {
+        self.git(&["cat-file", "blob", id], DIFF_LIMIT, "read blob")
+    }
+
+    /// `git diff --numstat` from blob `base` to the working-tree file `file`,
+    /// both ordinary files.
+    pub(crate) fn numstat_against_blob(&self, base: &str, file: &str) -> Result<(u64, u64)> {
+        let content = self.blob(base)?;
+        with_temporary(&content, |path| {
+            let mut command = Command::new("git");
+            command
+                .args([
+                    "diff",
+                    "--no-index",
+                    "--numstat",
+                    "-z",
+                    "--no-ext-diff",
+                    "--",
+                ])
+                .arg(path)
+                .arg(self.toplevel.join(file))
+                .current_dir(&self.toplevel)
+                .env("LC_ALL", "C")
+                .env("GIT_OPTIONAL_LOCKS", "0");
+            let output = dots_process::Runner::new(DEADLINE, SMALL)
+                .stdout_limit(SMALL)
+                .output(command)
+                .map_err(|source| Error::Process {
+                    operation: "measure changes",
+                    source,
+                })?;
+            // Without --exit-code, --no-index still exits 1 when the files differ.
+            if !matches!(output.status.code(), Some(0 | 1)) {
+                return Err(Error::Git {
+                    operation: "measure changes",
+                    message: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                });
+            }
+            let text = utf8(output.stdout, "numstat")?;
+            let mut fields = text.split('\t');
+            Ok((
+                fields.next().and_then(|n| n.parse().ok()).unwrap_or(0),
+                fields.next().and_then(|n| n.parse().ok()).unwrap_or(0),
+            ))
+        })
     }
 
     /// The working tree, tracked and untracked files that are not ignored, as
@@ -698,6 +813,14 @@ impl Git {
     }
 }
 
+/// A file as Git stores it in a tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Blob {
+    /// Such as `100644`, `100755` or `120000`.
+    pub(crate) mode: String,
+    pub(crate) id: String,
+}
+
 /// What `git status` reports of a working tree against HEAD.
 #[derive(Debug)]
 pub(crate) struct Status {
@@ -775,4 +898,33 @@ fn utf8(bytes: Vec<u8>, what: &str) -> Result<String> {
 
 pub(crate) fn random() -> Result<u64> {
     getrandom::u64().map_err(|error| Error::Invalid(format!("no randomness available: {error}")))
+}
+
+/// The mode Git records for the ordinary file at `path`.
+fn file_mode(path: &Path) -> Result<&'static str> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let metadata = std::fs::metadata(path).map_err(|source| Error::Io {
+        operation: "hash files",
+        path: path.to_owned(),
+        source,
+    })?;
+    Ok(if metadata.permissions().mode() & 0o100 == 0 {
+        "100644"
+    } else {
+        "100755"
+    })
+}
+
+/// Run `work` on a temporary file holding `bytes`, outside any repository,
+/// and remove it afterwards.
+fn with_temporary<T>(bytes: &[u8], work: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
+    let path = std::env::temp_dir().join(format!("dots-review-{:016x}", random()?));
+    std::fs::write(&path, bytes).map_err(|source| Error::Io {
+        operation: "write temporary file",
+        path: path.clone(),
+        source,
+    })?;
+    let result = work(&path);
+    let _ = std::fs::remove_file(&path);
+    result
 }

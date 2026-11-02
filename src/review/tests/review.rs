@@ -2486,6 +2486,23 @@ mod tests {
     }
 
     #[test]
+    fn the_inbox_compares_untracked_symbolic_links_by_their_targets() {
+        let repo = Repo::new();
+        repo.git(&["switch", "-q", "-c", "feature"]);
+        std::os::unix::fs::symlink("src/lib.rs", repo.path().join("linked")).unwrap();
+        std::os::unix::fs::symlink("missing-target", repo.path().join("dangling")).unwrap();
+        let id = repo.open(BaseChoice::Keep, None, 1).review.id;
+        repo.reviews().look(&id, None, 2).unwrap();
+
+        let entry = inbox_entry(&repo, repo.path());
+        assert_eq!(
+            entry.review.unwrap().changed_since_looked,
+            Some(Vec::new()),
+            "unchanged links, dangling or not, are not changed since looked"
+        );
+    }
+
+    #[test]
     fn the_inbox_keeps_every_default_branch_when_pruning_candidates() {
         let repo = Repo::new();
         let ancestor = repo.git(&["rev-parse", "HEAD"]);
@@ -2514,4 +2531,29 @@ mod tests {
         assert_eq!(entry.diff.files, 0);
     }
 
+    #[test]
+    fn the_inbox_omits_untracked_files_that_match_the_base() {
+        let repo = Repo::new();
+        repo.write("f.txt", "one\n");
+        repo.commit("f");
+        repo.git(&["switch", "-q", "-c", "feature"]);
+        repo.git(&["rm", "-q", "f.txt"]);
+        repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "drop f"]);
+        repo.write("f.txt", "one\n");
+
+        let entry = inbox_entry(&repo, repo.path());
+        assert_eq!(
+            (entry.diff.files, entry.diff.added, entry.diff.removed),
+            (0, 0, 0),
+            "restored with the base's content"
+        );
+
+        repo.write("f.txt", "one\ntwo\n");
+        let entry = inbox_entry(&repo, repo.path());
+        assert_eq!(
+            (entry.diff.files, entry.diff.added, entry.diff.removed),
+            (1, 1, 0),
+            "restored with a change counts the change against the base"
+        );
+    }
 }
