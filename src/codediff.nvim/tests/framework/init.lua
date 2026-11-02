@@ -56,7 +56,7 @@ function M.run_all(opts)
 end
 
 --- Run every discovered spec file and exit with the appropriate exit code.
---- This is the single entry point used by tests/run_tests.{sh,cmd}.
+--- This is the single entry point used by the mise test tasks.
 function M.run_all_and_exit(opts)
   return require("tests.framework.supervisor").run_and_exit(opts)
 end

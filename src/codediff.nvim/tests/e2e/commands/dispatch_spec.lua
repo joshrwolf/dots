@@ -442,7 +442,7 @@ describe("Command E2E (real dispatch + render)", function()
       return vim.fn.getcompletion(line, "cmdline")
     end
     local cands = complete("CodeDiff ")
-    for _, name in ipairs({ "file", "dir", "history", "pr", "merge", "install" }) do
+    for _, name in ipairs({ "file", "dir", "history", "pr", "merge" }) do
       assert.is_true(vim.tbl_contains(cands, name), "offers subcommand " .. name)
     end
     assert.is_true(vim.tbl_contains(cands, "HEAD"), "offers HEAD ref")

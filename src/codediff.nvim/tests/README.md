@@ -1,26 +1,26 @@
 # Test suite
 
 The Lua suite runs in Neovim with the in-tree framework; no Plenary/Busted
-installation is needed. Build the native library first (`make build`). Native
-algorithm tests remain in `c-diff-core/tests/` and run with `make test-c`.
+installation is needed. The native library and watcher come from the mise tools
+in `../tools.toml`; their own algorithm tests live upstream.
 
 ## Directory contract
 
 ```text
 tests/
 ├── unit/              isolated logic and controlled collaborators
-│   ├── core/          argparse, paths, installer policy, watcher protocol/manager
+│   ├── core/          argparse, paths, watcher protocol/manager
 │   └── ui/            filters, tree data, merge alignment, refresh policy, readiness
 ├── integration/       component boundaries with Neovim, Git or the native library
 │   ├── commands/      completion queries
-│   ├── core/          Git, filesystem, FFI, installer and virtual-buffer integration
+│   ├── core/          Git, filesystem, FFI and virtual-buffer integration
 │   ├── framework/     runner and discovery self-tests
 │   ├── keymap/        real buffer mappings, ownership and golden captures
-│   ├── plugin/        public exports, module loading and setup compatibility
+│   ├── plugin/        public exports, module loading and setup
 │   ├── support/       fixture-factory isolation and cleanup tests
 │   └── ui/            rendering, windows, sessions and panel/controller integration
 ├── e2e/               public commands/keys through the complete application
-│   ├── commands/      dispatch, completion, merge commands, standalone-build smoke
+│   ├── commands/      dispatch, completion, merge commands, smoke
 │   ├── conflict/      resolution actions and refresh protection
 │   ├── explorer/      file actions and navigation
 │   ├── history/       commit/file operations
@@ -30,8 +30,7 @@ tests/
 ├── fixtures/          deterministic repository profiles and hand-authored golden data
 ├── support/           shared Git factory, plugin helpers and UI drivers
 ├── framework/         collector, assertions, reporter, runner and RPC screen transport
-├── init.lua           shared Neovim/Git sandbox bootstrap
-└── run_tests.{sh,cmd}  equivalent POSIX/Windows entry points
+└── init.lua           shared Neovim/Git sandbox bootstrap
 ```
 
 **The first directory defines the test level; the next directories define the
@@ -57,42 +56,31 @@ Extend an existing spec when it covers the same responsibility.
 
 ## Running tests
 
-```bash
-./tests/run_tests.sh                                      # all layers; same as make test-lua
-./tests/run_tests.sh unit
-./tests/run_tests.sh integration
-./tests/run_tests.sh e2e
-./tests/run_tests.sh tests/e2e/conflict                    # one feature
-./tests/run_tests.sh tests/unit/core/path_spec.lua         # one file
-./tests/run_tests.sh --help
-```
-
-Use `tests\run_tests.cmd` with the same arguments on Windows. Targets may be
-layer names, directories or individual specs. Paths are resolved from the
-checkout root, regardless of the shell's starting directory. Missing targets
-and selections containing no specs fail rather than reporting a green empty run.
-
-For direct Neovim use:
+`mise run check` runs the unit and integration layers; `mise run verify` adds
+E2E. Select a layer, directory or spec with `CODEDIFF_TEST_TARGET`:
 
 ```bash
-nvim --headless --noplugin -u tests/init.lua \
-  -c "lua require('tests.framework').run_all_and_exit({ dir = 'e2e' })"
+mise run test                                              # all layers
+CODEDIFF_TEST_TARGET=e2e mise run test
+CODEDIFF_TEST_TARGET=tests/e2e/conflict mise run test       # one feature
+CODEDIFF_TEST_TARGET=tests/unit/core/path_spec.lua mise run test
 ```
+
+Paths are relative to the plugin root. Missing targets and selections containing
+no specs fail rather than reporting a green empty run.
 
 Each spec gets its own child Neovim process. The supervisor discovers files
 recursively, runs a bounded worker pool and prints each child's output as one
 block. Start messages and a 30-second active-worker heartbeat distinguish long
 specs from a stalled runner. New specs need no manifest or CI enumeration changes.
-Windows CI uses four workers and a 15-minute per-spec budget for large E2E
-matrices; individual asynchronous assertions retain their own bounded waits.
+Individual asynchronous assertions retain their own bounded waits.
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
-| `CODEDIFF_TEST_TARGET` | `all` | Same selector as the positional argument; an explicit argument wins |
+| `CODEDIFF_TEST_TARGET` | `all` | Layer, directory or spec to run |
 | `CODEDIFF_TEST_JOBS` | 2× CPUs, capped at 16 | Concurrent spec workers; `1` runs sequentially |
 | `CODEDIFF_TEST_TIMEOUT` | `300000` | Per-spec timeout in milliseconds |
 | `NO_COLOR` / `CODEDIFF_TEST_NO_COLOR` | unset | Disable ANSI output |
-| `CODEDIFF_WATCHER_PATH` | installer default | Existing native watcher executable for offline E2Es |
 | `CODEDIFF_TEST_UPSTREAM_SCROLLBIND` | unset | Opt into the strict tall-virtual-line regression on a Neovim build carrying the upstream fix |
 
 ## Fixtures and shared support
@@ -125,9 +113,9 @@ factory options, cleanup guarantees and interactive reproduction commands.
 
 ## Environment and observable behavior
 
-`init.lua` disables auto-installation, ShaDa and swap files, isolates Git config,
+`init.lua` disables ShaDa and swap files, isolates Git config,
 and removes inherited repository/index overrides. It pins `core.autocrlf=false`
-for all Git children, including on Windows. Neovim's per-buffer autoread watcher
+for all Git children. Neovim's per-buffer autoread watcher
 is disabled to avoid watching deleted fixture paths, while `autoread` itself
 remains available to `:checktime`.
 
@@ -139,7 +127,7 @@ separate `nvim --embed` for those observations. Always close the screen in
 
 Native refresh E2Es require a real watcher and verify that it became ready;
 silent fallback is not a native-test pass. Polling cases disable native startup
-and exercise the 500 ms fallback. Android skips native cases only. Race tests
+and exercise the 500 ms fallback. Race tests
 may delay delivery of real Git results, but do not fabricate their contents.
 
 The tall-virtual-line monotonicity check is an upstream Neovim probe, not a

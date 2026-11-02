@@ -3,6 +3,13 @@ local gutter = require("tests.support.gutter")
 local cases = require("tests.fixtures.conflict_gutter")
 
 describe("conflict block gutter on the screen grid", function()
+  -- Filler markers follow Neovim 0.13 numbering of v:virtnum, which counts
+  -- virtual lines downward from the buffer line; 0.12 counts up to it.
+  if vim.fn.has("nvim-0.13") == 0 then
+    pending("needs Neovim 0.13 v:virtnum numbering", function() end)
+    return
+  end
+
   local screen
 
   after_each(function()

@@ -1,4 +1,4 @@
--- vscode-diff main API
+-- codediff main API
 local M = {}
 
 -- Configuration setup

@@ -6,9 +6,8 @@
 -- process isolation is byte-for-byte what the old shell loop provided. What
 -- changes is that the *parent* owns discovery, concurrency and output:
 --
---   * Concurrency lives here, not in the shell, so `run_tests.sh` and
---     `run_tests.cmd` become identical thin wrappers and Windows gets the same
---     behavior as POSIX without needing `xargs -P` or GNU parallel.
+--   * Concurrency lives here, not in the shell, so callers need no
+--     `xargs -P` or GNU parallel.
 --
 --   * Output is grouped. Children never inherit this process's stdout; their
 --     output is buffered in full and emitted as one contiguous block when they
@@ -264,7 +263,7 @@ function M.run(opts)
 end
 
 --- Run every spec file and exit Neovim with the appropriate exit code.
---- Used by tests/run_tests.{sh,cmd}.
+--- Used by the mise test tasks.
 function M.run_and_exit(opts)
   local ok = M.run(opts)
   if ok then

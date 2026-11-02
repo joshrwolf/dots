@@ -200,9 +200,9 @@ describe("Move rendering (side-by-side)", function()
 
   -- Test 4: All test pairs — moved lines get correct highlights
   it("renders correct highlights for ALL test pairs", function()
-    local pairs_dir = "scripts/test_pairs"
+    local pairs_dir = "tests/fixtures/move_pairs"
     local handle = vim.loop.fs_scandir(pairs_dir)
-    assert.is_truthy(handle, "test_pairs directory should exist")
+    assert.is_truthy(handle, "move_pairs directory should exist")
 
     local tested = 0
     while true do

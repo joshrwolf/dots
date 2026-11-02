@@ -98,10 +98,11 @@ describe("FFI Integration", function()
     end
   end)
 
-  -- Test 10: Native and Lua versions agree
-  it("Embeds the plugin version", function()
-    local version = diff.get_version()
-    local expected = require("codediff.version").VERSION
-    assert.equal(expected, version, "Native library version should match VERSION")
+  -- The FFI declarations follow the library release pinned in tools.toml.
+  it("Loads the pinned library release", function()
+    local tools = table.concat(vim.fn.readfile("tools.toml"), "\n")
+    local pinned = tools:match('%[tools%."github:esmuellert%/codediff%.nvim"%]\nversion = "([^"]+)"')
+    assert.is_not_nil(pinned, "tools.toml pins github:esmuellert/codediff.nvim")
+    assert.equal(pinned, diff.get_version())
   end)
 end)

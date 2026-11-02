@@ -22,8 +22,13 @@ local function close_pipe(pipe)
   pipe:close()
 end
 
-function M.start(binary, repository, handlers)
+-- The watcher comes from the pinned mise tool in tools.toml, which installs it on PATH.
+function M.start(repository, handlers)
   handlers = handlers or {}
+  local binary = vim.fn.exepath("codediff-watcher")
+  if binary == "" then
+    return nil, "codediff-watcher is not on PATH; install the mise tool github:esmuellert/codediff"
+  end
   local stdout = uv.new_pipe(false)
   local stderr = uv.new_pipe(false)
   local ready_timer = uv.new_timer()

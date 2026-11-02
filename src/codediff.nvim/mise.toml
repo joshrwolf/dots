@@ -1,0 +1,22 @@
+include = ["tools.toml"]
+
+[tools]
+"aqua:JohnnyMorganz/StyLua" = "2.6.0"
+
+# Specs run in headless Neovim with the binaries from tools.toml on PATH.
+# Unit and integration specs need only Git and temporary repositories; E2E
+# specs drive embedded Neovim UIs and the watcher process.
+[tasks.check]
+run = [
+  "stylua --check lua plugin tests",
+  "nvim --headless --noplugin -u tests/init.lua -c \"lua require('tests.framework').run_all_and_exit({ dir = 'unit' })\"",
+  "nvim --headless --noplugin -u tests/init.lua -c \"lua require('tests.framework').run_all_and_exit({ dir = 'integration' })\"",
+]
+
+[tasks.verify]
+depends = [":check"]
+run = "nvim --headless --noplugin -u tests/init.lua -c \"lua require('tests.framework').run_all_and_exit({ dir = 'e2e' })\""
+
+[tasks.test]
+description = "Run the specs selected by CODEDIFF_TEST_TARGET (layer, directory or spec; default all)"
+run = "nvim --headless --noplugin -u tests/init.lua -c \"lua require('tests.framework').run_all_and_exit()\""

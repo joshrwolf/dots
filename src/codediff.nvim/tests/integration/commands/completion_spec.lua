@@ -73,7 +73,7 @@ describe("Command Completion", function()
     end)
 
     it("Contains expected subcommands", function()
-      for _, name in ipairs({ "file", "pr", "install" }) do
+      for _, name in ipairs({ "file", "pr" }) do
         assert.is_true(vim.tbl_contains(commands.SUBCOMMANDS, name), "missing subcommand " .. name)
       end
     end)

@@ -1,16 +1,13 @@
 describe("watcher repository manager", function()
-  local original_install
   local original_process
   local original_manager
 
   before_each(function()
-    original_install = package.loaded["codediff.core.installer.watcher"]
     original_process = package.loaded["codediff.core.watcher.process"]
     original_manager = package.loaded["codediff.core.watcher"]
   end)
 
   after_each(function()
-    package.loaded["codediff.core.installer.watcher"] = original_install
     package.loaded["codediff.core.watcher.process"] = original_process
     package.loaded["codediff.core.watcher"] = original_manager
   end)
@@ -18,13 +15,8 @@ describe("watcher repository manager", function()
   local function load_manager(options)
     local starts = {}
     local stops = 0
-    package.loaded["codediff.core.installer.watcher"] = {
-      ensure = function(callback)
-        callback(options.binary, options.install_error)
-      end,
-    }
     package.loaded["codediff.core.watcher.process"] = {
-      start = function(_, repository, handlers)
+      start = function(repository, handlers)
         starts[#starts + 1] = { repository = repository, handlers = handlers }
         if options.start_error then
           return nil, options.start_error
@@ -43,7 +35,7 @@ describe("watcher repository manager", function()
   end
 
   it("shares one process between subscribers for the same repository", function()
-    local manager, starts, stop_count = load_manager({ binary = "/watcher" })
+    local manager, starts, stop_count = load_manager({})
     local first_refreshes = 0
     local second_refreshes = 0
     local first_ready = 0
@@ -80,8 +72,8 @@ describe("watcher repository manager", function()
     assert.equals(1, stop_count())
   end)
 
-  it("reports installation failure without retrying for each subscriber", function()
-    local manager, starts = load_manager({ install_error = "download failed" })
+  it("reports a start failure without retrying for each subscriber", function()
+    local manager, starts = load_manager({ start_error = "not on PATH" })
     local errors = {}
 
     local unsubscribe_first = manager.subscribe("/repo", {
@@ -95,14 +87,14 @@ describe("watcher repository manager", function()
       end,
     })
 
-    assert.equals(0, #starts)
-    assert.same({ "download failed", "download failed" }, errors)
+    assert.equals(1, #starts)
+    assert.same({ "not on PATH", "not on PATH" }, errors)
     unsubscribe_first()
     unsubscribe_second()
   end)
 
   it("stops every repository process when Neovim exits", function()
-    local manager, starts, stop_count = load_manager({ binary = "/watcher" })
+    local manager, starts, stop_count = load_manager({})
     manager.subscribe("/first", {})
     manager.subscribe("/second", {})
 
@@ -112,7 +104,7 @@ describe("watcher repository manager", function()
   end)
 
   it("falls back for every subscriber when a running process fails", function()
-    local manager, starts = load_manager({ binary = "/watcher" })
+    local manager, starts = load_manager({})
     local errors = 0
     local first = manager.subscribe("/repo", {
       on_error = function()

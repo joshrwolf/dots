@@ -18,7 +18,7 @@ local function setup_command()
     nargs = "*",
     bang = true,
     complete = function()
-      return { "file", "install" }
+      return { "file" }
     end,
   })
 end

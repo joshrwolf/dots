@@ -250,8 +250,8 @@ describe("Move annotation virt_lines", function()
     highlights.setup()
 
     view.create({
-      original = path.make_ref("scripts/test_pairs/block_moved_down/original.txt", nil),
-      modified = path.make_ref("scripts/test_pairs/block_moved_down/modified.txt", nil),
+      original = path.make_ref("tests/fixtures/move_pairs/block_moved_down/original.txt", nil),
+      modified = path.make_ref("tests/fixtures/move_pairs/block_moved_down/modified.txt", nil),
     })
     vim.cmd("redraw")
     vim.wait(500)
@@ -308,8 +308,8 @@ describe("Move annotation virt_lines", function()
     highlights.setup()
 
     view.create({
-      original = path.make_ref("scripts/test_pairs/simple_swap/original.txt", nil),
-      modified = path.make_ref("scripts/test_pairs/simple_swap/modified.txt", nil),
+      original = path.make_ref("tests/fixtures/move_pairs/simple_swap/original.txt", nil),
+      modified = path.make_ref("tests/fixtures/move_pairs/simple_swap/modified.txt", nil),
     })
     vim.cmd("redraw")
     vim.wait(500)
@@ -341,14 +341,14 @@ describe("Move annotation virt_lines", function()
     while vim.fn.tabpagenr("$") > 1 do vim.cmd("tabclose!") end
   end)
 
-  -- 8. All test pairs in scripts/test_pairs/ produce balanced visual lines
+  -- 8. All test pairs in tests/fixtures/move_pairs/ produce balanced visual lines
   it("produces balanced visual lines for ALL test pairs", function()
     local view = require("codediff.ui.view")
     local lifecycle = require("codediff.ui.lifecycle")
 
-    local pairs_dir = "scripts/test_pairs"
+    local pairs_dir = "tests/fixtures/move_pairs"
     local handle = vim.loop.fs_scandir(pairs_dir)
-    assert.is_truthy(handle, "test_pairs directory should exist")
+    assert.is_truthy(handle, "move_pairs directory should exist")
 
     local tested = 0
     while true do

@@ -1,6 +1,5 @@
 local M = {}
 
-local install = require("codediff.core.installer.watcher")
 local process = require("codediff.core.watcher.process")
 
 local repositories = {}
@@ -20,49 +19,38 @@ local function notify(entry, event, ...)
 end
 
 local function start(entry)
-  install.ensure(function(binary, install_error)
-    entry.starting = false
-    if repositories[entry.repository] ~= entry or next(entry.subscribers) == nil then
-      return
-    end
-    if not binary then
-      entry.error = install_error
-      notify(entry, "on_error", install_error)
-      return
-    end
-
-    local watcher, start_error = process.start(binary, entry.repository, {
-      on_ready = function(message)
-        if repositories[entry.repository] ~= entry then
-          return
-        end
-        entry.ready = true
-        entry.ready_message = message
-        notify(entry, "on_ready", message)
-      end,
-      on_refresh = function(message)
-        if repositories[entry.repository] == entry then
-          notify(entry, "on_refresh", message)
-        end
-      end,
-      on_error = function(message)
-        if repositories[entry.repository] ~= entry then
-          return
-        end
-        entry.process = nil
-        entry.ready = false
-        entry.ready_message = nil
-        entry.error = message
-        notify(entry, "on_error", message)
-      end,
-    })
-    if not watcher then
-      entry.error = start_error
-      notify(entry, "on_error", start_error)
-      return
-    end
-    entry.process = watcher
-  end)
+  local watcher, start_error = process.start(entry.repository, {
+    on_ready = function(message)
+      if repositories[entry.repository] ~= entry then
+        return
+      end
+      entry.ready = true
+      entry.ready_message = message
+      notify(entry, "on_ready", message)
+    end,
+    on_refresh = function(message)
+      if repositories[entry.repository] == entry then
+        notify(entry, "on_refresh", message)
+      end
+    end,
+    on_error = function(message)
+      if repositories[entry.repository] ~= entry then
+        return
+      end
+      entry.process = nil
+      entry.ready = false
+      entry.ready_message = nil
+      entry.error = message
+      notify(entry, "on_error", message)
+    end,
+  })
+  if not watcher then
+    vim.notify("CodeDiff: " .. start_error .. "; using polling refresh", vim.log.levels.WARN)
+    entry.error = start_error
+    notify(entry, "on_error", start_error)
+    return
+  end
+  entry.process = watcher
 end
 
 function M.stop_all()
@@ -98,8 +86,7 @@ function M.subscribe(repository, handlers)
     handlers.on_ready(entry.ready_message)
   elseif entry.error and handlers.on_error then
     handlers.on_error(entry.error)
-  elseif not entry.process and not entry.starting then
-    entry.starting = true
+  elseif not entry.process then
     start(entry)
   end
 

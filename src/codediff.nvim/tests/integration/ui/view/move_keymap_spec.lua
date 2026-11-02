@@ -364,9 +364,9 @@ describe("gm align_move keymap", function()
 
   -- Test 6: gm alignment works for ALL test pairs with moves
   it("gm aligns correctly for ALL test pairs with moves", function()
-    local pairs_dir = "scripts/test_pairs"
+    local pairs_dir = "tests/fixtures/move_pairs"
     local handle = vim.loop.fs_scandir(pairs_dir)
-    assert.is_truthy(handle, "test_pairs directory should exist")
+    assert.is_truthy(handle, "move_pairs directory should exist")
 
     local tested = 0
     while true do

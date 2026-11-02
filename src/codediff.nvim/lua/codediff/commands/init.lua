@@ -3,7 +3,7 @@
 local M = {}
 
 -- Subcommands available for :CodeDiff
-M.SUBCOMMANDS = { "merge", "file", "dir", "history", "pr", "install" }
+M.SUBCOMMANDS = { "merge", "file", "dir", "history", "pr" }
 
 local git = require("codediff.core.git")
 local ap = require("codediff.core.argparse")
@@ -256,20 +256,6 @@ local function build_app()
     M.vscode_merge({ fargs = { file } }, parse.to_global_opts(m))
   end))
 
-  app:subcommand(ap.Command.new("install"):handler(function(m)
-    local force = m:bang()
-    local installer = require("codediff.core.installer.libvscode_diff")
-    if force then
-      vim.notify("Reinstalling libvscode-diff...", vim.log.levels.INFO)
-    end
-    local success, err = installer.install({ force = force, silent = false })
-    if success then
-      vim.notify("libvscode-diff installation successful!", vim.log.levels.INFO)
-    else
-      vim.notify("Installation failed: " .. (err or "unknown error"), vim.log.levels.ERROR)
-    end
-  end))
-
   return app
 end
 
@@ -292,9 +278,7 @@ local function completion_prior(cmd_line, arg_lead)
   return toks
 end
 
--- Completion entry point shared by :CodeDiff and :VscodeDiff.
-
--- Completion entry point shared by :CodeDiff and :VscodeDiff.
+-- Completion entry point for :CodeDiff.
 function M.complete(arg_lead, cmd_line)
   return ap.complete.complete(get_app(), completion_prior(cmd_line, arg_lead), arg_lead)
 end
@@ -307,13 +291,6 @@ function M.vscode_diff(opts)
   if #fargs == 0 and lifecycle.get_session(current_tab) then
     lifecycle.close(current_tab)
     return
-  end
-
-  -- Normalize the `install!` alias into the `install` subcommand + bang.
-  if fargs[1] == "install!" then
-    fargs = vim.list_slice(fargs, 1, #fargs)
-    fargs[1] = "install"
-    bang = true
   end
 
   local _, err = get_app():execute(fargs, {

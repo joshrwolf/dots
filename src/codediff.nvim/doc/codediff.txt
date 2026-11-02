@@ -4,13 +4,13 @@ CodeDiff is a live code review workspace for Neovim. It keeps repository
 changes synchronized while you inspect diffs, stage or discard hunks, review
 pull requests and history, and resolve merge conflicts.
 
-This help file is usage-focused. For installation, build, and development
-details, see README.md.
+This help file is usage-focused. The native diff library and file watcher
+come from mise tools; see README.md.
 
 ==============================================================================
 QUICK START                                           *codediff-quickstart*
 
-After installing the plugin and running |:CodeDiff|, you can:
+After running |:CodeDiff|, you can:
 - Browse changed files (default explorer)
 - Compare the current file with a git revision
 - Review a pull request without checking it out
@@ -21,10 +21,6 @@ COMMANDS                                                  *codediff-commands*
 
 :CodeDiff [args]
     Open the CodeDiff UI. See |codediff-usage| for available modes.
-
-:CodeDiff install
-:CodeDiff install!
-    Manually install/update the C library (optional; auto-installed on use).
 
 ==============================================================================
 USAGE                                                       *codediff-usage*
@@ -647,7 +643,7 @@ Example: Hide tabline while CodeDiff is open:
 ==============================================================================
 SEE ALSO                                                *codediff-see-also*
 
-README.md for full installation, build, and development details.
+README.md for installation and development.
 
 ==============================================================================
 vim:tw=78:ft=help:norl:

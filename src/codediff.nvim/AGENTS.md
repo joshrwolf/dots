@@ -1,35 +1,41 @@
-# Agent Instructions
+# codediff.nvim
 
-## General CLI Agent Behavior Instructions
+Owned fork of [esmuellert/codediff.nvim](https://github.com/esmuellert/codediff.nvim),
+brought in at v4.0.6 with `git subtree add --squash`. It is ours to change
+freely; it takes no upstream pulls. Port a later upstream fix by hand when one
+is worth having. Upstream's MIT `LICENSE` and `ATTRIBUTION.md` stay.
 
-> ⚠️ **CRITICAL: NEVER commit code unless the user explicitly requests it.** After completing changes, STOP and wait for user to say "commit". Each commit request authorizes only ONE commit operation.
+## Binaries
 
-### Communication and File Operation Guidelines
+The plugin is Lua only. Its native pieces are upstream release binaries,
+pinned as mise tools in [tools.toml](tools.toml) with per-platform assets for
+macOS arm64 and Linux x64/arm64:
 
-1. **Output Messages**: When responding to users, utilize the native chat output interface. Do not use command-line utilities such as `cat`, `echo`, or `write-host` to display messages in the console.
+- `github:esmuellert/codediff.nvim` installs the diff library as
+  `libvscode_diff` on `PATH`; `lua/codediff/core/diff.lua` loads it with
+  LuaJIT FFI. The `ffi.cdef` declarations there must match the pinned release;
+  `tests/integration/core/diff/ffi_spec.lua` checks the loaded version against
+  the pin. Bump the version, declarations and lock together.
+- `github:esmuellert/codediff` installs `codediff-watcher`, which
+  `lua/codediff/core/watcher/process.lua` spawns for native refresh.
 
-2. **File Creation and Editing**: Always use native file operation tools (create, edit, patch/diff APIs) for all file operations. Do not use shell redirection operators (`>`, `>>`, `<<`) or command-line utilities (`cat`, `sed`, `awk`, `grep`) to create or modify files. This applies to ALL files, regardless of location (project files, `/tmp`, `%TEMP%`, etc.).
+Never download at runtime. A missing library is an error naming its mise tool;
+a missing watcher warns and falls back to polling. Linux releases link glibc and
+`libgomp.so.1`, which machine setup installs as a system package.
 
-   **Prohibited patterns**:
-   - `cat > /tmp/file.md << 'EOF'`
-   - `echo "content" > file.txt`
-   - `sed -i 's/pattern/replacement/' file.js`
-   
-   **Required approach**: Use native `create` or `str_replace` tools instead.
+## Install
 
-3. **Experimental and Demonstration Scripts**: When running experiments, demonstrations, or temporary operations that require script files, create the script files explicitly in temporary directories (`/tmp` on Linux/macOS, `%TEMP%` on Windows) using native file creation tools first, then execute them. Do not use inline heredocs or shell redirection. Do not place code that should have commited and checked-in in `/tmp` folder
+[Machine setup](../../bootstrap/README.md) includes `tools.toml` and deploys
+this directory as the `codediff` dotfile group to
+`~/.local/share/nvim/site/pack/dots/start/codediff.nvim`, excluding tests and
+development files. The Neovim configuration calls `require("codediff").setup()`
+from `init.lua`; Neovim sources `plugin/` afterwards.
 
-   **Example workflow**:
-   - Step 1: Use `create` tool to make `/tmp/experiment.sh`
-   - Step 2: Execute `bash /tmp/experiment.sh`
-   - Step 3: Clean up the file after use
+## Checks
 
-4. **Trailing Spaces**: NEVER add trailing spaces to any line in any file. Always ensure lines end cleanly without whitespace.
-
-5. **Pull Requests**: When asked to create a PR, push the branch as is (do not create a new branch), create PR with comprehensive description (summary, changes, benefits, testing), and enable auto-merge.
-
-6. **Release Titles**: Use a Conventional Commit prefix from `cliff.toml` when a PR should trigger a release bump.
-
-## Path-Specific Instructions
-
-Path-specific instructions live in `.github/instructions/*.instructions.md`, scoped by the `applyTo` glob in each file's frontmatter.
+`mise run check` runs StyLua with this directory's `.stylua.toml`, then the
+unit and integration specs in headless Neovim (the repository's pinned
+release). `mise run verify` adds the E2E specs, which drive embedded Neovim UIs
+and the watcher process. `CODEDIFF_TEST_TARGET=<layer|dir|spec> mise run test`
+runs a selection. Tests never need network access once the tools are
+installed. See [tests/README.md](tests/README.md) for the test layers.

@@ -1,23 +1,11 @@
 local M = {}
 local Screen = require("tests.framework.screen")
 local fixture = require("tests.fixtures.refresh_repo")
-local watcher_path
 
 function M.native_watcher()
-  if require("codediff.core.installer.common").detect_os() == "android" then
-    pending("No native watcher release for Android; polling E2Es run separately")
-  end
-  if not watcher_path then
-    local saved = vim.env.CODEDIFF_WATCHER_NO_AUTO_INSTALL
-    vim.env.CODEDIFF_WATCHER_NO_AUTO_INSTALL = nil
-    local install_error
-    require("codediff.core.installer.watcher").ensure(function(path, err)
-      watcher_path, install_error = path, err
-    end)
-    vim.env.CODEDIFF_WATCHER_NO_AUTO_INSTALL = saved
-    assert(watcher_path and vim.fn.filereadable(watcher_path) == 1, "Native E2Es require codediff-watcher: " .. tostring(install_error))
-  end
-  return watcher_path
+  local path = vim.fn.exepath("codediff-watcher")
+  assert(path ~= "", "Native E2Es require codediff-watcher on PATH")
+  return path
 end
 
 function M.repo(profile, options)
@@ -45,7 +33,6 @@ function M.screen(backend, layout, options)
     _G.refresh_test = { received = 0, reads = 0, pending = 0, scheduled = 0, errors = {}, notifications = {} }
     local test = refresh_test
     if backend == 'native' then
-      vim.env.CODEDIFF_WATCHER_PATH = binary
       local uv = vim.uv or vim.loop
       local spawn = uv.spawn
       uv.spawn = function(command, options, done)
@@ -54,8 +41,8 @@ function M.screen(backend, layout, options)
         return handle, pid
       end
     else
-      require('codediff.core.installer.watcher').ensure = function(done)
-        done(nil, 'native transport disabled for polling E2E')
+      require('codediff.core.watcher.process').start = function()
+        return nil, 'native transport disabled for polling E2E'
       end
     end
     -- Observe the real transport and Git requests, without replacing their work.

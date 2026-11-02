@@ -67,6 +67,8 @@ production diff/merge calculator to construct their expectations.
 `conflict_gutter.lua` keeps the focused gutter expectations and a `new_repo()`
 builder on the same factory. `keymap_matrix.txt` is the hand-reviewed mapping
 golden; its capture driver belongs to `support/keymaps.lua`, not to fixture data.
+`move_pairs/` holds original/modified text pairs for the move detection and
+rendering specs.
 
 ## API
 

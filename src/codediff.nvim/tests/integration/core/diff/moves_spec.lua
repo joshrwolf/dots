@@ -159,9 +159,9 @@ describe("move detection", function()
 
   -- Test 7: All test pairs — C move count matches Node reference
   it("matches Node reference move count for ALL test pairs", function()
-    local pairs_dir = "scripts/test_pairs"
+    local pairs_dir = "tests/fixtures/move_pairs"
     local handle = vim.loop.fs_scandir(pairs_dir)
-    assert.is_truthy(handle, "test_pairs directory should exist")
+    assert.is_truthy(handle, "move_pairs directory should exist")
 
     local tested = 0
     while true do

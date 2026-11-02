@@ -1,3 +1,0 @@
-# Mark CMake-generated files
-build.sh linguist-generated=true
-build.cmd linguist-generated=true

@@ -6,7 +6,7 @@
 -- identical fixture; an intended change produces a small, reviewable diff.
 --
 -- Regenerate after an intentional change:
---   CODEDIFF_WRITE_KEYMAP_GOLDEN=1 ./tests/run_tests.sh tests/integration/keymap/golden_matrix_spec.lua
+--   CODEDIFF_WRITE_KEYMAP_GOLDEN=1 CODEDIFF_TEST_TARGET=tests/integration/keymap/golden_matrix_spec.lua mise run test
 
 local h = require("tests.support")
 local matrix = require("tests.support.keymaps")
