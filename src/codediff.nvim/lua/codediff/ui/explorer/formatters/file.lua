@@ -1,15 +1,17 @@
 -- Default file row: `[indent] [icon] filename [directory] [decoration] [stats] [status]`.
--- The `[decoration]` segment is the caller's text from codediff.api.set_decorations.
+-- The `[decoration]` segment is the caller's text from codediff.api.set_decorations;
+-- a decoration's `name_hl` replaces the filename and directory highlights.
 -- The `[stats]` segment renders only when `explorer.line_stats.enabled = true`.
 
 local common = require("codediff.ui.explorer.formatters.common")
 local stats = require("codediff.ui.explorer.formatters.stats")
 
 return function(ctx)
+  local name_hl = ctx.decoration and ctx.decoration.name_hl
   local left = {
     { segments = common.prefix(ctx) },
     {
-      segments = { { text = ctx.filename, hl = "Normal" } },
+      segments = { { text = ctx.filename, hl = name_hl or "Normal" } },
       truncate_priority = 2,
     },
   }
@@ -17,7 +19,7 @@ return function(ctx)
     left[#left + 1] = {
       segments = {
         { text = " ", hl = "Normal" },
-        { text = ctx.directory, hl = "ExplorerDirectorySmall" },
+        { text = ctx.directory, hl = name_hl or "ExplorerDirectorySmall" },
       },
       truncate_priority = 1,
     }

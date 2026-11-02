@@ -343,7 +343,7 @@ local function file_context(node, data, explorer_config, decoration)
     indent_hl = indent_hl,
     icon = data.icon or "",
     icon_hl = data.icon_color,
-    decoration = decoration and { text = decoration.text, hl = decoration.hl } or nil,
+    decoration = decoration and { text = decoration.text, hl = decoration.hl, name_hl = decoration.name_hl } or nil,
   }
 end
 
@@ -355,7 +355,7 @@ local function selected_background(is_selected)
 end
 
 -- Prepare node for rendering (format display). `decorations` maps a file path
--- to the caller's { text, hl } (codediff.api.set_decorations).
+-- to the caller's { text, hl, name_hl } (codediff.api.set_decorations).
 function M.prepare_node(node, max_width, selected_path, selected_group, decorations)
   local data = node.data or {}
   local explorer_config = config.options.explorer

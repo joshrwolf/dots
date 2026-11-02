@@ -237,6 +237,33 @@ describe("codediff.api", function()
     assert.is_nil(row("f.txt"):find("●", 1, true))
   end)
 
+  it("draws a decoration's name highlight over the file name", function()
+    local tab = open()
+    local explorer = lifecycle.get_panel(tab).view
+    vim.api.nvim_set_hl(0, "CodeDiffSpecDim", { fg = "#777777" })
+    local function name_groups(path)
+      local groups = {}
+      for row, line in ipairs(vim.api.nvim_buf_get_lines(explorer.bufnr, 0, -1, false)) do
+        local col = line:find(path, 1, true)
+        if col then
+          local marks = vim.api.nvim_buf_get_extmarks(explorer.bufnr, -1, { row - 1, 0 }, { row - 1, -1 }, { details = true })
+          for _, mark in ipairs(marks) do
+            local start, finish = mark[3], mark[4].end_col or mark[3]
+            if mark[4].hl_group and start <= col - 1 and finish >= col - 1 + #path then
+              groups[mark[4].hl_group] = true
+            end
+          end
+        end
+      end
+      return groups
+    end
+    assert.is_true(api.set_decorations(tab, { ["f.txt"] = { text = "✓", hl = "DiagnosticOk", name_hl = "CodeDiffSpecDim" } }))
+    assert.is_true(name_groups("f.txt").CodeDiffSpecDim)
+    assert.is_nil(name_groups("added.txt").CodeDiffSpecDim)
+    assert.is_true(api.set_decorations(tab, { ["f.txt"] = { text = "✓", hl = "DiagnosticOk" } }))
+    assert.is_nil(name_groups("f.txt").CodeDiffSpecDim)
+  end)
+
   it("follows quickfix jumps into its revision buffers", function()
     local tab = open()
     show(tab, { path = "f.txt", side = "modified", line = 1 })

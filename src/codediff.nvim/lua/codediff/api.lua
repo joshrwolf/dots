@@ -98,9 +98,11 @@ function M.show(tabpage, target, callback)
 end
 
 --- Replace the explorer's per-file decorations: a map from path to
---- `{ text, hl }`, drawn on that file's row. An empty map clears them.
+--- `{ text, hl, name_hl }`: `text` in `hl` drawn on that file's row, and
+--- `name_hl`, when set, replacing the highlight of its name. An empty map
+--- clears them.
 ---@param tabpage integer
----@param decorations table<string, { text: string, hl: string? }>
+---@param decorations table<string, { text: string, hl: string?, name_hl: string? }>
 ---@return boolean? ok, string? err
 function M.set_decorations(tabpage, decorations)
   local panel = vim.api.nvim_tabpage_is_valid(tabpage) and lifecycle.get_panel(tabpage)
