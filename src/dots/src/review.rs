@@ -5,13 +5,14 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, bail};
 use dots_review::{
-    ChangedFile, NewThread, Overview, Refreshed, Reviews, Side, Status, Summary, TargetSpec, Thread,
+    Anchor, ChangedFile, Draft, FileStatus, NewDraft, NewThread, Overview, Preset, Refreshed,
+    ReviewedFile, Reviews, ShowOptions, Side, Status, Submitted, Summary, TargetSpec, Thread,
 };
 use serde::Deserialize;
 use serde_json::json;
 use time::OffsetDateTime;
 
-use crate::command::{ReviewBody, ReviewCommand, ReviewTarget};
+use crate::command::{DiscardWhich, ReviewBody, ReviewCommand, ReviewDraft, ReviewTarget};
 
 /// Largest threads file `add`, or body file `reply`, reads.
 const INPUT_LIMIT: u64 = 8 * 1024 * 1024;
@@ -22,6 +23,10 @@ struct Batch {
     threads: Vec<NewThread>,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "A flat dispatch with one short arm per subcommand"
+)]
 pub(crate) fn run(command: ReviewCommand, directory: &Path, json: bool) -> Result<String> {
     let reviews = Reviews::open(directory)?;
     let now = OffsetDateTime::now_utc().unix_timestamp();
@@ -40,8 +45,8 @@ pub(crate) fn run(command: ReviewCommand, directory: &Path, json: bool) -> Resul
                 render_overview(&overview)
             })
         }
-        ReviewCommand::List { all, owner } => {
-            let mut summaries = reviews.list(all)?;
+        ReviewCommand::List { all, owner, drafts } => {
+            let mut summaries = reviews.list(all, drafts)?;
             summaries.retain(|summary| owner.is_none() || summary.owner == owner);
             Ok(if json {
                 crate::json::render(json!({ "reviews": summaries }))
@@ -49,8 +54,13 @@ pub(crate) fn run(command: ReviewCommand, directory: &Path, json: bool) -> Resul
                 render_list(&summaries, all, owner.as_deref())
             })
         }
-        ReviewCommand::Show { id: review } => {
-            let overview = reviews.show(&id(review)?)?;
+        ReviewCommand::Show {
+            id: review,
+            drafts,
+            preset,
+        } => {
+            let preset = preset.as_deref().map(preset_of).transpose()?;
+            let overview = reviews.show(&id(review)?, ShowOptions { drafts, preset })?;
             Ok(if json {
                 crate::json::render(serde_json::to_value(&overview)?)
             } else {
@@ -102,6 +112,59 @@ pub(crate) fn run(command: ReviewCommand, directory: &Path, json: bool) -> Resul
             let thread = reviews.set(&review, &thread, status, author, body, now)?;
             Ok(render_changed(&review, &thread, json))
         }
+        ReviewCommand::Draft(args) => {
+            let review = id(args.id.clone())?;
+            record_draft(&reviews, &review, args, now, json)
+        }
+        ReviewCommand::Discard {
+            id: review,
+            which: DiscardWhich { draft, all: _ },
+        } => {
+            let review = id(review)?;
+            let discarded = reviews.discard(&review, draft.as_deref())?;
+            let ids: Vec<&str> = discarded.iter().map(|draft| draft.id.as_str()).collect();
+            Ok(if json {
+                crate::json::render(json!({ "review": review, "discarded": ids }))
+            } else if ids.is_empty() {
+                format!("No drafts in {review}.\n")
+            } else {
+                format!("Discarded {} from {review}.\n", ids.join(", "))
+            })
+        }
+        ReviewCommand::Submit {
+            id: review,
+            body,
+            body_file,
+        } => {
+            let review = id(review)?;
+            let body = match (body, body_file) {
+                (None, None) => None,
+                (body, body_file) => Some(read_body(ReviewBody { body, body_file })?),
+            };
+            let submitted = reviews.submit(&review, body, now)?;
+            Ok(if json {
+                crate::json::render(json!({
+                    "review": review,
+                    "submission": submitted.submission,
+                    "threads": submitted.threads,
+                }))
+            } else {
+                render_submitted(&review, &submitted)
+            })
+        }
+        ReviewCommand::Mark { id: review, path } => mark(&reviews, &id(review)?, &path, true, json),
+        ReviewCommand::Unmark { id: review, path } => {
+            mark(&reviews, &id(review)?, &path, false, json)
+        }
+        ReviewCommand::Look { id: review } => {
+            let review = id(review)?;
+            let looked = reviews.look(&review, now)?;
+            Ok(if json {
+                crate::json::render(json!({ "review": review, "looked": looked }))
+            } else {
+                format!("Looked at revision {} of {review}.\n", looked.revision)
+            })
+        }
         ReviewCommand::Refresh { id } => {
             let refreshed = reviews.refresh(&id, now)?;
             Ok(if json {
@@ -119,6 +182,55 @@ pub(crate) fn run(command: ReviewCommand, directory: &Path, json: bool) -> Resul
             })
         }
     }
+}
+
+fn record_draft(
+    reviews: &Reviews,
+    review: &str,
+    args: ReviewDraft,
+    now: i64,
+    json: bool,
+) -> Result<String> {
+    let anchor = args
+        .path
+        .map(|path| match (args.side.as_deref(), args.start) {
+            (Some(side), Some(start)) => Anchor::lines(
+                path,
+                if side == "old" { Side::Old } else { Side::New },
+                start,
+                args.end.unwrap_or(start),
+            ),
+            _ => Anchor::file(path),
+        });
+    let draft = NewDraft {
+        thread: args.thread,
+        anchor,
+        body: read_body(args.body)?,
+    };
+    let draft = reviews.draft(review, draft, preset_of(&args.preset)?, args.revision, now)?;
+    if json {
+        return Ok(crate::json::render(
+            json!({ "review": review, "draft": draft }),
+        ));
+    }
+    let mut out = format!("Drafted {} in {review}.\n", draft.id);
+    render_draft(&mut out, &draft);
+    Ok(out)
+}
+
+fn preset_of(name: &str) -> Result<Preset> {
+    Preset::parse(name).context("preset parser admitted an unknown preset")
+}
+
+fn mark(reviews: &Reviews, review: &str, path: &str, reviewed: bool, json: bool) -> Result<String> {
+    let file = reviews.mark(review, path, reviewed)?;
+    Ok(if json {
+        crate::json::render(json!({ "review": review, "file": file }))
+    } else {
+        let mut out = String::new();
+        render_files(&mut out, std::slice::from_ref(&file));
+        out
+    })
 }
 
 fn spec(target: ReviewTarget) -> Result<TargetSpec> {
@@ -252,7 +364,66 @@ fn render_overview(overview: &Overview) -> String {
     for thread in &review.threads {
         render_thread(&mut out, thread);
     }
+    if !review.drafts.is_empty() {
+        let _ = writeln!(out, "\n{} draft(s):", review.drafts.len());
+        for draft in &review.drafts {
+            render_draft(&mut out, draft);
+        }
+    }
+    if let Some(view) = &overview.view {
+        let _ = writeln!(
+            out,
+            "\nView {}: {}..{} ({} file(s))",
+            view.preset.name(),
+            view.base,
+            view.head,
+            view.files.len()
+        );
+    }
     out
+}
+
+fn render_draft(out: &mut String, draft: &Draft) {
+    let target = match &draft.thread {
+        Some(thread) => format!("reply to {thread}"),
+        None => location(draft.anchor.as_ref()),
+    };
+    let first = draft.body.lines().next().unwrap_or_default();
+    let _ = writeln!(out, "  {} · {target}: {first}", draft.id);
+}
+
+fn render_submitted(review: &str, submitted: &Submitted) -> String {
+    let mut out = format!(
+        "Submitted {} comment(s) in {review}.\n",
+        submitted.submission.comments.len()
+    );
+    if let Some(body) = &submitted.submission.body {
+        let _ = writeln!(out, "{body}");
+    }
+    for thread in &submitted.threads {
+        render_thread(&mut out, thread);
+    }
+    out
+}
+
+fn location(anchor: Option<&Anchor>) -> String {
+    match anchor {
+        None => "review".to_owned(),
+        Some(Anchor { path, lines: None }) => format!("{path} (file)"),
+        Some(Anchor {
+            path,
+            lines: Some(lines),
+        }) => format!(
+            "{path}:{}-{}{}",
+            lines.start,
+            lines.end,
+            if lines.side == Side::Old {
+                " (old)"
+            } else {
+                ""
+            }
+        ),
+    }
 }
 
 fn render_refreshed(refreshed: &Refreshed) -> String {
@@ -273,39 +444,52 @@ fn render_refreshed(refreshed: &Refreshed) -> String {
     );
     if let Some(delta) = &refreshed.delta {
         out.push_str("Changed since the previous revision:\n");
-        render_files(&mut out, &delta.files);
+        render_changes(&mut out, &delta.files);
         let _ = writeln!(out, "Delta: {}", delta.diff_command);
     }
     out
 }
 
-fn render_files(out: &mut String, files: &[ChangedFile]) {
+fn render_files(out: &mut String, files: &[ReviewedFile]) {
     for file in files {
-        if file.binary {
-            let _ = writeln!(out, "  {} (binary)", file.path);
-        } else {
-            let _ = writeln!(out, "  {} +{} -{}", file.path, file.added, file.removed);
+        render_change(out, &file.change);
+        if file.reviewed {
+            out.push_str(" · reviewed");
         }
+        if file.changed_since_looked {
+            out.push_str(" · changed since last looked");
+        }
+        out.push('\n');
+    }
+}
+
+fn render_changes(out: &mut String, files: &[ChangedFile]) {
+    for file in files {
+        render_change(out, file);
+        out.push('\n');
+    }
+}
+
+fn render_change(out: &mut String, file: &ChangedFile) {
+    let status = match file.status {
+        FileStatus::Added => "A",
+        FileStatus::Modified => "M",
+        FileStatus::Deleted => "D",
+        FileStatus::TypeChanged => "T",
+    };
+    if file.binary {
+        let _ = write!(out, "  {status} {} (binary)", file.path);
+    } else {
+        let _ = write!(
+            out,
+            "  {status} {} +{} -{}",
+            file.path, file.added, file.removed
+        );
     }
 }
 
 fn render_thread(out: &mut String, thread: &Thread) {
-    let location = thread.anchor.as_ref().map_or_else(
-        || "review".to_owned(),
-        |anchor| {
-            format!(
-                "{}:{}-{}{}",
-                anchor.path,
-                anchor.start,
-                anchor.end,
-                if anchor.side == Side::Old {
-                    " (old)"
-                } else {
-                    ""
-                }
-            )
-        },
-    );
+    let location = location(thread.anchor.as_ref());
     let severity = thread.severity.map_or_else(String::new, |severity| {
         format!(
             " [{}{}]",

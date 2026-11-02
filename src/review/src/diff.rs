@@ -1,8 +1,49 @@
 //! Unified-diff hunk headers: which lines a review can anchor to, and how
-//! line numbers move between two revisions.
+//! line numbers move between two revisions; and raw diffs: which paths
+//! changed, how, and between which objects.
 use std::collections::BTreeMap;
 
-use crate::{Error, Result, Side};
+use crate::git::Git;
+use crate::{ChangedFile, Error, FileStatus, Identity, Result, Side};
+
+/// The difference between two trees: its paths from the raw diff, its hunks
+/// from the patch.
+#[derive(Debug)]
+pub(crate) struct Change {
+    pub(crate) patch: Patch,
+    pub(crate) raw: BTreeMap<String, RawEntry>,
+}
+
+impl Change {
+    /// The change from `from` to `to`, its patch read with `context` lines.
+    pub(crate) fn read(git: &Git, from: &str, to: &str, context: u8) -> Result<Self> {
+        Ok(Self {
+            patch: Patch::parse(&git.diff(from, to, context)?)?,
+            raw: parse_raw(&git.raw(from, to)?)?,
+        })
+    }
+
+    pub(crate) fn files(&self) -> Vec<ChangedFile> {
+        self.raw
+            .iter()
+            .map(|(path, entry)| {
+                let file = self.patch.files.get(path);
+                ChangedFile {
+                    path: path.clone(),
+                    status: entry.status,
+                    added: file.map_or(0, |file| file.added),
+                    removed: file.map_or(0, |file| file.removed),
+                    binary: file.is_some_and(|file| file.binary),
+                }
+            })
+            .collect()
+    }
+
+    /// Whether `path` is among the changed paths.
+    pub(crate) fn changes(&self, path: &str) -> bool {
+        self.raw.contains_key(path)
+    }
+}
 
 /// One hunk header, `@@ -old_start,old_len +new_start,new_len @@`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +78,7 @@ impl Patch {
         for line in bytes.split(|byte| *byte == b'\n') {
             if let Some(rest) = line.strip_prefix(b"diff --git ") {
                 if let Some((path, patch)) = current.take() {
-                    files.insert(path, patch);
+                    insert(&mut files, path, patch);
                 }
                 current = Some((header_path(rest)?, FilePatch::default()));
                 in_hunk = false;
@@ -71,7 +112,7 @@ impl Patch {
             }
         }
         if let Some((path, patch)) = current {
-            files.insert(path, patch);
+            insert(&mut files, path, patch);
         }
         Ok(Self { files })
     }
@@ -119,6 +160,70 @@ impl Patch {
         let moved = |line: u32| u32::try_from(i64::from(line) + shift).ok();
         Some((moved(start)?, moved(end)?))
     }
+}
+
+/// Add one file section to `files`. A type change (a file becoming a symlink,
+/// say) comes as two sections for one path, its removal and then its
+/// addition; they merge into one, the removal's hunks first.
+fn insert(files: &mut BTreeMap<String, FilePatch>, path: String, section: FilePatch) {
+    match files.get_mut(&path) {
+        Some(file) => {
+            file.hunks.extend(section.hunks);
+            file.added += section.added;
+            file.removed += section.removed;
+            file.binary |= section.binary;
+        }
+        None => {
+            files.insert(path, section);
+        }
+    }
+}
+
+/// One path of a raw diff: how it changed and the change's content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RawEntry {
+    pub(crate) status: FileStatus,
+    pub(crate) identity: Identity,
+}
+
+/// Parse `git diff --raw -z --no-abbrev --no-renames` output by path.
+pub(crate) fn parse_raw(bytes: &[u8]) -> Result<BTreeMap<String, RawEntry>> {
+    let mut entries = BTreeMap::new();
+    let mut fields = bytes.split(|byte| *byte == 0);
+    while let Some(header) = fields.next() {
+        if header.is_empty() {
+            continue;
+        }
+        let header = std::str::from_utf8(header).map_err(|_| malformed("raw header"))?;
+        let mut parts = header
+            .strip_prefix(':')
+            .ok_or_else(|| malformed("raw header"))?
+            .split(' ');
+        let mut part = || parts.next().ok_or_else(|| malformed("raw header"));
+        let (old_mode, new_mode, old, new, letter) = (part()?, part()?, part()?, part()?, part()?);
+        let status = match letter {
+            "A" => FileStatus::Added,
+            "M" => FileStatus::Modified,
+            "D" => FileStatus::Deleted,
+            "T" => FileStatus::TypeChanged,
+            other => return Err(malformed(&format!("raw status {other}"))),
+        };
+        let path = fields.next().ok_or_else(|| malformed("raw path"))?;
+        let path = String::from_utf8(path.to_vec()).map_err(|_| malformed("path is not UTF-8"))?;
+        entries.insert(
+            path,
+            RawEntry {
+                status,
+                identity: Identity {
+                    old_mode: old_mode.to_owned(),
+                    old: old.to_owned(),
+                    new_mode: new_mode.to_owned(),
+                    new: new.to_owned(),
+                },
+            },
+        );
+    }
+    Ok(entries)
 }
 
 fn malformed(reason: &str) -> Error {
@@ -313,6 +418,63 @@ Binary files /dev/null and b/image.png differ
         assert!(!patch.shows("gone.txt", Side::New, 1, 1));
         assert!(patch.shows("gone.txt", Side::Old, 1, 2));
         assert!(!patch.shows("missing.rs", Side::New, 1, 1));
+    }
+
+    #[test]
+    fn a_type_change_merges_its_removal_and_addition() {
+        let typechange = "diff --git a/link b/link
+deleted file mode 100644
+--- a/link
++++ /dev/null
+@@ -1,2 +0,0 @@
+-one
+-two
+diff --git a/link b/link
+new file mode 120000
+--- /dev/null
++++ b/link
+@@ -0,0 +1 @@
++target
+\\ No newline at end of file
+";
+        let patch = Patch::parse(typechange.as_bytes()).unwrap();
+        let link = &patch.files["link"];
+        assert_eq!((link.added, link.removed, link.hunks.len()), (1, 2, 2));
+        assert!(patch.shows("link", Side::Old, 1, 2));
+        assert!(patch.shows("link", Side::New, 1, 1));
+    }
+
+    #[test]
+    fn parses_raw_entries() {
+        let zero = "0".repeat(40);
+        let (a, b) = ("a".repeat(40), "b".repeat(40));
+        let raw = format!(
+            ":000000 100644 {zero} {a} A\0new file.txt\0:100644 100644 {a} {b} M\0src/lib.rs\0:100644 120000 {a} {b} T\0link\0:100644 000000 {b} {zero} D\0gone\0"
+        );
+        let entries = parse_raw(raw.as_bytes()).unwrap();
+        let statuses: Vec<_> = entries
+            .iter()
+            .map(|(path, entry)| (path.as_str(), entry.status))
+            .collect();
+        assert_eq!(
+            statuses,
+            [
+                ("gone", FileStatus::Deleted),
+                ("link", FileStatus::TypeChanged),
+                ("new file.txt", FileStatus::Added),
+                ("src/lib.rs", FileStatus::Modified),
+            ]
+        );
+        assert_eq!(
+            entries["link"].identity,
+            Identity {
+                old_mode: "100644".into(),
+                old: a.clone(),
+                new_mode: "120000".into(),
+                new: b.clone(),
+            }
+        );
+        assert!(parse_raw(b":100644 100644 x y R100\0a\0b\0").is_err());
     }
 
     #[test]

@@ -300,6 +300,26 @@ impl Git {
         )
     }
 
+    /// Which paths changed between two trees, how, and between which
+    /// objects: `git diff --raw -z`, renames off, full object ids.
+    pub(crate) fn raw(&self, from: &str, to: &str) -> Result<Vec<u8>> {
+        self.git(
+            &[
+                "diff",
+                "--raw",
+                "-z",
+                "--no-abbrev",
+                "--no-renames",
+                "--no-ext-diff",
+                from,
+                to,
+                "--",
+            ],
+            DIFF_LIMIT,
+            "diff revisions",
+        )
+    }
+
     /// A command that prints the patch [`Git::diff`] reads, from any worktree.
     pub(crate) fn diff_command(from: &str, to: &str) -> String {
         format!("git --attr-source={to} diff --no-renames {from} {to}")

@@ -7,8 +7,9 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use dots_review::{
-        Anchor, Comment, Error, NewThread, REFRESH_AUTHOR, Reviews, RuleCitation, Severity, Side,
-        Status, TargetSpec,
+        Anchor, AuthorKind, Comment, Error, FileStatus, Looked, NewDraft, NewThread, Preset,
+        Published, REFRESH_AUTHOR, Reviews, RuleCitation, SCHEMA, Severity, ShowOptions, Side,
+        Status, Submission, TargetSpec, USER, View,
     };
 
     struct Repo {
@@ -133,12 +134,7 @@ mod tests {
     /// A plain comment thread.
     fn comment(anchor: Option<(&str, Side, u32, u32)>) -> NewThread {
         NewThread {
-            anchor: anchor.map(|(path, side, start, end)| Anchor {
-                path: path.into(),
-                side,
-                start,
-                end,
-            }),
+            anchor: anchor.map(|(path, side, start, end)| Anchor::lines(path, side, start, end)),
             body: "When the list is empty this indexes past the end.".into(),
             author: "fixture".into(),
             title: None,
@@ -178,7 +174,7 @@ mod tests {
         let paths: Vec<_> = overview
             .files
             .iter()
-            .map(|file| file.path.as_str())
+            .map(|file| file.change.path.as_str())
             .collect();
         assert_eq!(paths, ["notes/new.md", "src/lib.rs"]);
         let revision = overview.review.current();
@@ -205,7 +201,7 @@ mod tests {
         assert!(overview.review.id.starts_with("r-"));
         assert_eq!(overview.review.profile.as_deref(), Some("standard"));
         assert_eq!(overview.review.owner.as_deref(), Some("pi-session"));
-        let listed = repo.reviews().list(false).unwrap();
+        let listed = repo.reviews().list(false, false).unwrap();
         assert_eq!(listed[0].owner.as_deref(), Some("pi-session"));
         assert_eq!(overview.review.worktree.path, repo.root);
         assert_eq!(overview.review.worktree.branch.as_deref(), Some("main"));
@@ -247,7 +243,7 @@ mod tests {
             Err(Error::Invalid(_))
         ));
         assert!(
-            reviews.list(true).unwrap().is_empty(),
+            reviews.list(true, false).unwrap().is_empty(),
             "refused starts leave nothing behind"
         );
     }
@@ -273,7 +269,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(base.review.current().base, initial);
-        let paths: Vec<_> = base.files.iter().map(|file| file.path.as_str()).collect();
+        let paths: Vec<_> = base
+            .files
+            .iter()
+            .map(|file| file.change.path.as_str())
+            .collect();
         assert_eq!(paths, ["later.txt", "src/lib.rs"]);
 
         let range = reviews
@@ -283,10 +283,14 @@ mod tests {
         assert_eq!(revision.base, initial);
         assert_eq!(revision.head_commit.as_deref(), Some(feature.as_str()));
         assert!(!revision.includes_worktree);
-        let paths: Vec<_> = range.files.iter().map(|file| file.path.as_str()).collect();
+        let paths: Vec<_> = range
+            .files
+            .iter()
+            .map(|file| file.change.path.as_str())
+            .collect();
         assert_eq!(paths, ["src/lib.rs"]);
         let listed: Vec<_> = reviews
-            .list(false)
+            .list(false, false)
             .unwrap()
             .into_iter()
             .map(|summary| summary.id)
@@ -349,7 +353,15 @@ mod tests {
             "{}",
             rejections[0].message
         );
-        assert_eq!(reviews.show(&id).unwrap().review.threads.len(), 0);
+        assert_eq!(
+            reviews
+                .show(&id, ShowOptions::default())
+                .unwrap()
+                .review
+                .threads
+                .len(),
+            0
+        );
 
         let mut cited = finding(Some(("src/lib.rs", Side::Old, 10, 10)));
         cited.rule = Some(RuleCitation {
@@ -430,7 +442,12 @@ mod tests {
             "a revision that does not exist is refused too"
         );
         assert_eq!(
-            reviews.show(&id).unwrap().review.threads.len(),
+            reviews
+                .show(&id, ShowOptions::default())
+                .unwrap()
+                .review
+                .threads
+                .len(),
             1,
             "refused batches record nothing"
         );
@@ -498,7 +515,7 @@ mod tests {
         assert_eq!(
             (
                 threads[0].revision,
-                threads[0].anchor.as_ref().unwrap().start
+                threads[0].anchor.as_ref().unwrap().lines.unwrap().start
             ),
             (0, 5)
         );
@@ -506,7 +523,7 @@ mod tests {
         assert_eq!(
             (
                 threads[1].revision,
-                threads[1].anchor.as_ref().unwrap().start
+                threads[1].anchor.as_ref().unwrap().lines.unwrap().start
             ),
             (1, 17)
         );
@@ -515,7 +532,7 @@ mod tests {
             (
                 threads[3].status,
                 threads[3].revision,
-                threads[3].anchor.as_ref().unwrap().start
+                threads[3].anchor.as_ref().unwrap().lines.unwrap().start
             ),
             (Status::Dismissed, 1, 16),
             "dispositions follow unchanged lines"
@@ -598,7 +615,7 @@ mod tests {
                 entry("agent", 5, None, Some(Status::Fixed)),
             ]
         );
-        let shown = reviews.show(&id).unwrap().review;
+        let shown = reviews.show(&id, ShowOptions::default()).unwrap().review;
         assert_eq!(shown.threads[0], fixed);
         assert_eq!(shown.updated_at, 5);
 
@@ -619,12 +636,21 @@ mod tests {
             Err(Error::NoThread { .. })
         ));
         assert!(matches!(
-            reviews.show("r-00000000"),
+            reviews.show("r-00000000", ShowOptions::default()),
             Err(Error::NotFound(_))
         ));
-        assert!(matches!(reviews.show("../../etc"), Err(Error::Invalid(_))));
+        assert!(matches!(
+            reviews.show("../../etc", ShowOptions::default()),
+            Err(Error::Invalid(_))
+        ));
         assert_eq!(
-            reviews.show(&id).unwrap().review.threads[0].comments.len(),
+            reviews
+                .show(&id, ShowOptions::default())
+                .unwrap()
+                .review
+                .threads[0]
+                .comments
+                .len(),
             4,
             "refused comments leave nothing behind"
         );
@@ -693,10 +719,13 @@ mod tests {
         repo.write(".gitattributes", "src/lib.rs -diff\n");
 
         let primary = repo.reviews();
-        let shown = primary.show(&id).unwrap();
+        let shown = primary.show(&id, ShowOptions::default()).unwrap();
         assert_eq!(shown.files.len(), 1);
-        assert!(!shown.files[0].binary, "{:?}", shown.files);
-        assert_eq!((shown.files[0].added, shown.files[0].removed), (1, 0));
+        assert!(!shown.files[0].change.binary, "{:?}", shown.files);
+        assert_eq!(
+            (shown.files[0].change.added, shown.files[0].change.removed),
+            (1, 0)
+        );
         primary
             .add(
                 &id,
@@ -730,7 +759,7 @@ mod tests {
             .id;
         repo.write("notes/new.md", "new file, edited\n");
         reviews.refresh(&id, 2).unwrap();
-        let review = reviews.show(&id).unwrap().review;
+        let review = reviews.show(&id, ShowOptions::default()).unwrap().review;
         assert_eq!(review.revisions.len(), 2);
         for revision in &review.revisions {
             let snapshot = &revision.snapshot;
@@ -773,7 +802,7 @@ mod tests {
 
         let ids = |reviews: &Reviews, all| -> Vec<String> {
             reviews
-                .list(all)
+                .list(all, false)
                 .unwrap()
                 .into_iter()
                 .map(|summary| summary.id)
@@ -783,7 +812,7 @@ mod tests {
         assert_eq!(ids(&other, false), [theirs.as_str()]);
         assert_eq!(ids(&primary, true), [own.as_str(), theirs.as_str()]);
 
-        let listed = other.list(true).unwrap();
+        let listed = other.list(true, false).unwrap();
         assert_eq!(
             (
                 listed[0].worktree.path.as_path(),
@@ -826,14 +855,20 @@ mod tests {
             .unwrap();
 
         let primary = repo.reviews();
-        let shown = primary.show(&id).unwrap();
+        let shown = primary.show(&id, ShowOptions::default()).unwrap();
         assert_eq!(shown.file, other.directory().join(format!("{id}.json")));
         assert_eq!(shown.review.worktree.path, linked);
         primary
             .reply(&id, "t1", "user".into(), "Seen from main.".into(), 3)
             .unwrap();
         assert_eq!(
-            other.show(&id).unwrap().review.threads[0].comments.len(),
+            other
+                .show(&id, ShowOptions::default())
+                .unwrap()
+                .review
+                .threads[0]
+                .comments
+                .len(),
             2,
             "the reply lands in the linked worktree's review file"
         );
@@ -855,10 +890,21 @@ mod tests {
             repo.git(&["show", &format!("{head}:src/lib.rs")]),
             numbered(1..=22).trim_end()
         );
-        assert_eq!(other.show(&id).unwrap().review.revisions.len(), 2);
+        assert_eq!(
+            other
+                .show(&id, ShowOptions::default())
+                .unwrap()
+                .review
+                .revisions
+                .len(),
+            2
+        );
 
         primary.remove(&id).unwrap();
-        assert!(matches!(other.show(&id), Err(Error::NotFound(_))));
+        assert!(matches!(
+            other.show(&id, ShowOptions::default()),
+            Err(Error::NotFound(_))
+        ));
         assert_eq!(repo.git(&["for-each-ref", "refs/dots/"]), "");
     }
 
@@ -872,10 +918,16 @@ mod tests {
             .unwrap()
             .review
             .id;
-        let head = reviews.show(&id).unwrap().review.current().head.clone();
+        let head = reviews
+            .show(&id, ShowOptions::default())
+            .unwrap()
+            .review
+            .current()
+            .head
+            .clone();
         repo.git(&["checkout", "--", "src/lib.rs"]);
         repo.git(&["gc", "-q", "--prune=now"]);
-        reviews.show(&id).unwrap();
+        reviews.show(&id, ShowOptions::default()).unwrap();
         repo.git(&["cat-file", "-e", &format!("{head}:src/lib.rs")]);
         repo.git(&["rev-parse", "--verify", &format!("refs/dots/reviews/{id}")]);
 
@@ -906,7 +958,7 @@ mod tests {
             .id;
         fs::write(linked.join("src/lib.rs"), numbered(1..=20)).unwrap();
         repo.git(&["gc", "-q", "--prune=now"]);
-        reviews.show(&id).unwrap();
+        reviews.show(&id, ShowOptions::default()).unwrap();
 
         repo.git(&["worktree", "remove", "--force", linked.to_str().unwrap()]);
         change_line_ten(&repo);
@@ -944,7 +996,12 @@ mod tests {
                 });
             }
         });
-        let threads = repo.reviews().show(&id).unwrap().review.threads;
+        let threads = repo
+            .reviews()
+            .show(&id, ShowOptions::default())
+            .unwrap()
+            .review
+            .threads;
         let mut ids: Vec<_> = threads.iter().map(|thread| thread.id.clone()).collect();
         ids.sort();
         ids.dedup();
@@ -973,14 +1030,21 @@ mod tests {
             serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
         written.as_object_mut().unwrap().remove("owner");
         fs::write(&file, serde_json::to_vec(&written).unwrap()).unwrap();
-        assert_eq!(reviews.show(&id).unwrap().review.owner, None);
+        assert_eq!(
+            reviews
+                .show(&id, ShowOptions::default())
+                .unwrap()
+                .review
+                .owner,
+            None
+        );
 
         fs::write(
             &file,
             format!("{{\"schema\": 1, \"id\": \"{id}\", \"findings\": []}}"),
         )
         .unwrap();
-        let Err(error @ Error::Corrupt { .. }) = reviews.show(&id) else {
+        let Err(error @ Error::Corrupt { .. }) = reviews.show(&id, ShowOptions::default()) else {
             panic!("a schema 1 file was read");
         };
         let message = error.to_string();
@@ -988,12 +1052,740 @@ mod tests {
             message.contains(&file.display().to_string()) && message.contains("schema 1"),
             "{message}"
         );
-        assert!(matches!(reviews.list(true), Err(Error::Corrupt { .. })));
-        fs::write(&file, "{\"schema\": 2}").unwrap();
-        assert!(matches!(reviews.show(&id), Err(Error::Corrupt { .. })));
+        assert!(matches!(
+            reviews.list(true, false),
+            Err(Error::Corrupt { .. })
+        ));
+        fs::write(&file, format!("{{\"schema\": {SCHEMA}}}")).unwrap();
+        assert!(matches!(
+            reviews.show(&id, ShowOptions::default()),
+            Err(Error::Corrupt { .. })
+        ));
 
         reviews.remove(&id).unwrap();
         assert!(!file.exists());
         assert!(matches!(reviews.remove(&id), Err(Error::NotFound(_))));
+    }
+
+    fn user(anchor: Option<(&str, Side, u32, u32)>) -> NewThread {
+        NewThread {
+            author: USER.into(),
+            ..comment(anchor)
+        }
+    }
+
+    fn draft(thread: Option<&str>, anchor: Option<Anchor>, body: &str) -> NewDraft {
+        NewDraft {
+            thread: thread.map(Into::into),
+            anchor,
+            body: body.into(),
+        }
+    }
+
+    fn drafts() -> ShowOptions {
+        ShowOptions {
+            drafts: true,
+            preset: None,
+        }
+    }
+
+    #[test]
+    fn only_the_user_settles_the_threads_the_user_started() {
+        let repo = Repo::new();
+        change_line_ten(&repo);
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(TargetSpec::Worktree, None, None, 1)
+            .unwrap()
+            .review
+            .id;
+        reviews
+            .add(&id, vec![user(None), finding(None)], None, 2)
+            .unwrap();
+        assert_eq!(AuthorKind::of(USER), AuthorKind::User);
+        assert_eq!(AuthorKind::of(REFRESH_AUTHOR), AuthorKind::Refresh);
+        assert_eq!(AuthorKind::of("claude-opus"), AuthorKind::Agent);
+
+        let refused = reviews.set(&id, "t1", Status::Fixed, "agent".into(), None, 3);
+        let Err(error @ Error::UserDecides { .. }) = refused else {
+            panic!("an agent settled the user's thread: {refused:?}");
+        };
+        assert!(error.to_string().contains("only the user"), "{error}");
+        let replied = reviews
+            .reply(
+                &id,
+                "t1",
+                "agent".into(),
+                "Fixed in the next revision.".into(),
+                4,
+            )
+            .unwrap();
+        assert_eq!(replied.status, Status::Open, "a reply leaves the status");
+        let settled = reviews
+            .set(&id, "t1", Status::Fixed, USER.into(), None, 5)
+            .unwrap();
+        assert_eq!(settled.status, Status::Fixed);
+        reviews
+            .set(&id, "t2", Status::Dismissed, "verifier".into(), None, 6)
+            .expect("agents settle agent threads");
+
+        for result in [
+            reviews.reply(&id, "t2", REFRESH_AUTHOR.into(), "Spoofed.".into(), 7),
+            reviews.set(&id, "t2", Status::Open, REFRESH_AUTHOR.into(), None, 7),
+        ] {
+            assert!(matches!(result, Err(Error::Invalid(_))), "{result:?}");
+        }
+        let mut spoofed = comment(None);
+        spoofed.author = REFRESH_AUTHOR.into();
+        assert!(matches!(
+            reviews.add(&id, vec![spoofed], None, 7),
+            Err(Error::Rejected(_))
+        ));
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "One draft lifecycle: private, refused, discarded, submitted, summary-only"
+    )]
+    fn drafts_stay_private_until_the_user_submits_them_at_once() {
+        let repo = Repo::new();
+        change_line_ten(&repo);
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(TargetSpec::Worktree, None, None, 1)
+            .unwrap()
+            .review
+            .id;
+        reviews.add(&id, vec![finding(None)], None, 2).unwrap();
+        let at_ten = Anchor::lines("src/lib.rs", Side::New, 10, 10);
+        let everything = Preset::Everything;
+        let d1 = reviews
+            .draft(
+                &id,
+                draft(None, Some(at_ten.clone()), "Why here?"),
+                everything,
+                Some(0),
+                3,
+            )
+            .unwrap();
+        let d2 = reviews
+            .draft(&id, draft(Some("t1"), None, "Agreed."), everything, None, 4)
+            .unwrap();
+        let d3 = reviews
+            .draft(&id, draft(None, None, "Overall fine."), everything, None, 5)
+            .unwrap();
+        assert_eq!(
+            [d1.id.as_str(), d2.id.as_str(), d3.id.as_str()],
+            ["d1", "d2", "d3"]
+        );
+        assert_eq!(d1.anchor, Some(at_ten.clone()));
+
+        let hidden = reviews.show(&id, ShowOptions::default()).unwrap();
+        assert_eq!(hidden.review.drafts, []);
+        assert_eq!(hidden.review.threads.len(), 1);
+        assert_eq!(
+            hidden.review.updated_at, 2,
+            "drafts are not visible changes"
+        );
+        let json = serde_json::to_value(&hidden).unwrap();
+        assert!(json["review"].get("drafts").is_none(), "{json}");
+        assert_eq!(reviews.show(&id, drafts()).unwrap().review.drafts.len(), 3);
+        assert_eq!(reviews.list(false, false).unwrap()[0].drafts, None);
+        assert_eq!(reviews.list(false, true).unwrap()[0].drafts, Some(3));
+
+        // Refused drafts record nothing.
+        for refused in [
+            reviews.draft(&id, draft(Some("t9"), None, "x"), everything, None, 6),
+            reviews.draft(
+                &id,
+                draft(Some("t1"), Some(at_ten.clone()), "x"),
+                everything,
+                None,
+                6,
+            ),
+            reviews.draft(&id, draft(None, None, " "), everything, None, 6),
+            reviews.draft(
+                &id,
+                draft(
+                    None,
+                    Some(Anchor::lines("src/lib.rs", Side::New, 1, 1)),
+                    "x",
+                ),
+                everything,
+                None,
+                6,
+            ),
+            reviews.draft(&id, draft(None, None, "x"), everything, Some(1), 6),
+        ] {
+            assert!(refused.is_err(), "{refused:?}");
+        }
+        assert!(matches!(
+            reviews.discard(&id, Some("d9")),
+            Err(Error::NoDraft { .. })
+        ));
+        assert_eq!(reviews.discard(&id, Some("d3")).unwrap()[0].id, "d3");
+        assert_eq!(reviews.show(&id, drafts()).unwrap().review.drafts.len(), 2);
+
+        let submitted = reviews.submit(&id, Some("Two notes.".into()), 7).unwrap();
+        assert_eq!(
+            submitted.submission,
+            Submission {
+                at: 7,
+                body: Some("Two notes.".into()),
+                comments: vec![
+                    Published {
+                        thread: "t2".into(),
+                        comment: 0
+                    },
+                    Published {
+                        thread: "t1".into(),
+                        comment: 1
+                    },
+                ],
+            }
+        );
+        let ids: Vec<_> = submitted
+            .threads
+            .iter()
+            .map(|thread| thread.id.as_str())
+            .collect();
+        assert_eq!(ids, ["t2", "t1"]);
+        let review = reviews.show(&id, drafts()).unwrap().review;
+        assert_eq!(review.drafts, []);
+        assert_eq!(review.submissions, [submitted.submission]);
+        assert_eq!(review.updated_at, 7);
+        let opened = &review.threads[1];
+        assert_eq!(
+            (opened.id.as_str(), opened.anchor.as_ref(), opened.status),
+            ("t2", Some(&at_ten), Status::Open)
+        );
+        assert_eq!(opened.comments, [entry(USER, 7, Some("Why here?"), None)]);
+        assert!(opened.started_by_user());
+        assert_eq!(
+            review.threads[0].comments.last(),
+            Some(&entry(USER, 7, Some("Agreed."), None))
+        );
+
+        assert!(
+            matches!(reviews.submit(&id, None, 8), Err(Error::Invalid(_))),
+            "nothing to submit"
+        );
+        let summary = reviews.submit(&id, Some("Looks good.".into()), 8).unwrap();
+        assert!(summary.submission.comments.is_empty() && summary.threads.is_empty());
+        reviews
+            .draft(&id, draft(None, None, "a"), everything, None, 9)
+            .unwrap();
+        reviews
+            .draft(&id, draft(None, None, "b"), everything, None, 9)
+            .unwrap();
+        assert_eq!(reviews.discard(&id, None).unwrap().len(), 2);
+        assert_eq!(reviews.show(&id, drafts()).unwrap().review.drafts, []);
+    }
+
+    #[test]
+    fn a_submission_with_a_draft_whose_lines_changed_publishes_nothing() {
+        let repo = Repo::new();
+        let mut lines: Vec<String> = (1..=20).map(|line| format!("line {line}")).collect();
+        lines[4] = "line five, changed".into();
+        lines[14] = "line fifteen, changed".into();
+        repo.write("src/lib.rs", &(lines.join("\n") + "\n"));
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(TargetSpec::Worktree, None, None, 1)
+            .unwrap()
+            .review
+            .id;
+        reviews.add(&id, vec![finding(None)], None, 2).unwrap();
+        let everything = Preset::Everything;
+        let at = |line| Some(Anchor::lines("src/lib.rs", Side::New, line, line));
+        reviews
+            .draft(&id, draft(None, at(5), "five"), everything, None, 3)
+            .unwrap();
+        reviews
+            .draft(&id, draft(None, at(15), "fifteen"), everything, None, 3)
+            .unwrap();
+        reviews
+            .draft(&id, draft(Some("t1"), None, "reply"), everything, None, 3)
+            .unwrap();
+
+        lines[4] = "line five, fixed".into();
+        lines.insert(0, "header".into());
+        repo.write("src/lib.rs", &(lines.join("\n") + "\n"));
+        let refreshed = reviews.refresh(&id, 4).unwrap();
+        assert!(
+            refreshed.review.drafts.is_empty(),
+            "refresh output hides drafts"
+        );
+        let held = reviews.show(&id, drafts()).unwrap().review.drafts;
+        assert_eq!(
+            held.iter()
+                .map(|draft| (draft.revision, draft.anchor.clone()))
+                .collect::<Vec<_>>(),
+            [(0, at(5)), (1, at(16)), (0, None)],
+            "unchanged lines carry; changed ones stay behind"
+        );
+
+        let Err(Error::Rejected(rejections)) = reviews.submit(&id, Some("Batch".into()), 5) else {
+            panic!("a stale draft was submitted");
+        };
+        assert_eq!(
+            rejections
+                .iter()
+                .map(|rejection| (rejection.index, rejection.field))
+                .collect::<Vec<_>>(),
+            [(0, "anchor")]
+        );
+        assert!(
+            rejections[0].message.contains("d1"),
+            "{}",
+            rejections[0].message
+        );
+        let review = reviews.show(&id, drafts()).unwrap().review;
+        assert_eq!(
+            (
+                review.threads.len(),
+                review.drafts.len(),
+                review.submissions.len()
+            ),
+            (1, 3, 0),
+            "nothing was published"
+        );
+        assert_eq!(review.threads[0].comments.len(), 1);
+
+        reviews.discard(&id, Some("d1")).unwrap();
+        let submitted = reviews.submit(&id, None, 6).unwrap();
+        assert_eq!(submitted.submission.comments.len(), 2);
+        let review = reviews.show(&id, ShowOptions::default()).unwrap().review;
+        assert_eq!(
+            (review.threads[1].revision, review.threads[1].anchor.clone()),
+            (1, at(16))
+        );
+    }
+
+    #[test]
+    fn whole_file_threads_anchor_to_changed_paths_and_carry_while_they_change() {
+        let repo = Repo::new();
+        change_line_ten(&repo);
+        repo.write("notes.md", "new\n");
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(TargetSpec::Worktree, None, None, 1)
+            .unwrap()
+            .review
+            .id;
+        let file = |path: &str| NewThread {
+            anchor: Some(Anchor::file(path)),
+            ..comment(None)
+        };
+        let Err(Error::Rejected(rejections)) =
+            reviews.add(&id, vec![file("AGENTS.md"), file("/abs")], None, 2)
+        else {
+            panic!("an unchanged path took a whole-file thread");
+        };
+        assert_eq!(
+            rejections
+                .iter()
+                .map(|rejection| (rejection.index, rejection.field))
+                .collect::<Vec<_>>(),
+            [(0, "anchor"), (1, "anchor")]
+        );
+        reviews
+            .add(&id, vec![file("src/lib.rs"), file("notes.md")], None, 2)
+            .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(Anchor::file("a.rs")).unwrap(),
+            serde_json::json!({"path": "a.rs"})
+        );
+        assert_eq!(
+            serde_json::to_value(Anchor::lines("a.rs", Side::Old, 2, 3)).unwrap(),
+            serde_json::json!({"path": "a.rs", "side": "old", "start": 2, "end": 3})
+        );
+        let partial =
+            serde_json::from_value::<Anchor>(serde_json::json!({"path": "a.rs", "start": 2}));
+        assert!(
+            partial
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("whole-file")),
+            "{partial:?}"
+        );
+
+        // notes.md stays changed; src/lib.rs is reverted, so it is not.
+        repo.write("notes.md", "newer\n");
+        repo.git(&["checkout", "--", "src/lib.rs"]);
+        let refreshed = reviews.refresh(&id, 3).unwrap();
+        assert_eq!(refreshed.carried, ["t2"]);
+        assert_eq!(refreshed.outdated, ["t1"]);
+    }
+
+    #[test]
+    fn reviewed_marks_hold_exactly_while_the_files_change_is_the_one_marked() {
+        let repo = Repo::new();
+        change_line_ten(&repo);
+        repo.write("notes.md", "new\n");
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(TargetSpec::Worktree, None, None, 1)
+            .unwrap()
+            .review
+            .id;
+        let state = || -> Vec<(String, bool)> {
+            reviews
+                .show(&id, ShowOptions::default())
+                .unwrap()
+                .files
+                .into_iter()
+                .map(|file| (file.change.path, file.reviewed))
+                .collect()
+        };
+        let marked = reviews.mark(&id, "src/lib.rs", true).unwrap();
+        assert!(marked.reviewed && marked.change.path == "src/lib.rs");
+        assert_eq!(marked.change.status, FileStatus::Modified);
+        assert_eq!(
+            state(),
+            [("notes.md".into(), false), ("src/lib.rs".into(), true)]
+        );
+        assert!(matches!(
+            reviews.mark(&id, "AGENTS.md", true),
+            Err(Error::Invalid(_))
+        ));
+
+        // Another file's change leaves the mark; this file's change lapses it.
+        repo.write("notes.md", "newer\n");
+        reviews.refresh(&id, 2).unwrap();
+        assert_eq!(state()[1], ("src/lib.rs".into(), true));
+        let mut lines: Vec<String> = (1..=20).map(|line| format!("line {line}")).collect();
+        lines[9] = "line ten, changed again".into();
+        repo.write("src/lib.rs", &(lines.join("\n") + "\n"));
+        reviews.refresh(&id, 3).unwrap();
+        assert_eq!(state()[1], ("src/lib.rs".into(), false));
+        // The very change it covered, back again, is reviewed again.
+        change_line_ten(&repo);
+        reviews.refresh(&id, 4).unwrap();
+        assert_eq!(state()[1], ("src/lib.rs".into(), true));
+
+        assert!(!reviews.mark(&id, "src/lib.rs", false).unwrap().reviewed);
+        assert_eq!(state()[1], ("src/lib.rs".into(), false));
+    }
+
+    #[test]
+    fn changed_since_last_looked_compares_each_files_change() {
+        let repo = Repo::new();
+        change_line_ten(&repo);
+        repo.write("notes.md", "new\n");
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(TargetSpec::Worktree, None, None, 1)
+            .unwrap()
+            .review
+            .id;
+        let changed = || -> Vec<(String, bool)> {
+            reviews
+                .show(&id, ShowOptions::default())
+                .unwrap()
+                .files
+                .into_iter()
+                .map(|file| (file.change.path, file.changed_since_looked))
+                .collect()
+        };
+        assert_eq!(
+            changed(),
+            [("notes.md".into(), false), ("src/lib.rs".into(), false)],
+            "never looked"
+        );
+        assert_eq!(reviews.look(&id, 2).unwrap(), Looked { revision: 0, at: 2 });
+        repo.write("notes.md", "newer\n");
+        repo.write("added.txt", "added\n");
+        reviews.refresh(&id, 3).unwrap();
+        assert_eq!(
+            changed(),
+            [
+                ("added.txt".into(), true),
+                ("notes.md".into(), true),
+                ("src/lib.rs".into(), false)
+            ]
+        );
+        let review = reviews.show(&id, ShowOptions::default()).unwrap().review;
+        assert_eq!(review.updated_at, 3, "looking is not a visible change");
+        reviews.look(&id, 4).unwrap();
+        assert!(changed().iter().all(|(_, changed)| !changed));
+    }
+
+    /// A review of branch `feature` against `main`: two commits' worth of
+    /// committed change and uncommitted work on top, so every preset differs.
+    /// Returns the base commit and the HEAD commit.
+    fn layered(repo: &Repo) -> (String, String) {
+        let base = repo.git(&["rev-parse", "HEAD"]);
+        repo.git(&["switch", "-q", "-c", "feature"]);
+        // HEAD: two header lines, then line five changed (HEAD line 7).
+        let mut committed: Vec<String> = (1..=20).map(|line| format!("line {line}")).collect();
+        committed[4] = "line five, committed".into();
+        committed.splice(0..0, ["header 1".to_owned(), "header 2".to_owned()]);
+        repo.write("src/lib.rs", &(committed.join("\n") + "\n"));
+        repo.write("notes.md", "committed notes\n");
+        let head = repo.commit("committed work");
+        // Working tree: a line inserted after HEAD line 10, and line fifteen
+        // (HEAD line 17, now 18) changed.
+        let mut working = committed;
+        working[16] = "line fifteen, uncommitted".into();
+        working.insert(10, "inserted".into());
+        repo.write("src/lib.rs", &(working.join("\n") + "\n"));
+        (base, head)
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "One layered revision placed in each of the three presets"
+    )]
+    fn presets_place_every_anchor_in_their_own_line_numbers() {
+        let repo = Repo::new();
+        let (base, head) = layered(&repo);
+        let reviews = repo.reviews();
+        let overview = reviews
+            .start(
+                TargetSpec::Base {
+                    reference: "main".into(),
+                },
+                None,
+                None,
+                1,
+            )
+            .unwrap();
+        let id = overview.review.id.clone();
+        let snapshot = overview.review.current().snapshot.clone();
+        let new = |line| Anchor::lines("src/lib.rs", Side::New, line, line);
+        let old = |line| Anchor::lines("src/lib.rs", Side::Old, line, line);
+        let threads = vec![
+            new(18),                    // t1: uncommitted change
+            new(7),                     // t2: committed change
+            old(5),                     // t3: base line the commit replaced
+            new(13),                    // t4: context shifted by the insertion
+            old(3),                     // t5: base line the headers shifted
+            Anchor::file("src/lib.rs"), // t6
+            Anchor::file("notes.md"),   // t7: changed only by the commit
+        ];
+        reviews
+            .add(
+                &id,
+                threads
+                    .into_iter()
+                    .map(|anchor| NewThread {
+                        anchor: Some(anchor),
+                        ..comment(None)
+                    })
+                    .collect(),
+                None,
+                2,
+            )
+            .unwrap();
+        reviews
+            .draft(
+                &id,
+                draft(None, Some(new(13)), "draft"),
+                Preset::Everything,
+                None,
+                3,
+            )
+            .unwrap();
+        let view = |preset| {
+            reviews
+                .show(
+                    &id,
+                    ShowOptions {
+                        drafts: true,
+                        preset: Some(preset),
+                    },
+                )
+                .unwrap()
+                .view
+                .unwrap()
+        };
+        let placed = |view: &View| -> Vec<Option<Anchor>> {
+            ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "d1"]
+                .into_iter()
+                .map(|id| view.anchors[id].clone())
+                .collect()
+        };
+        let paths = |view: &View| -> Vec<String> {
+            view.files.iter().map(|file| file.path.clone()).collect()
+        };
+        let file = |path| Some(Anchor::file(path));
+
+        let everything = view(Preset::Everything);
+        assert_eq!(
+            everything.available,
+            [Preset::Everything, Preset::Uncommitted, Preset::Committed]
+        );
+        assert_eq!(
+            (everything.base.as_str(), everything.head.as_str()),
+            (base.as_str(), snapshot.as_str())
+        );
+        assert_eq!(paths(&everything), ["notes.md", "src/lib.rs"]);
+        assert_eq!(
+            placed(&everything),
+            [
+                Some(new(18)),
+                Some(new(7)),
+                Some(old(5)),
+                Some(new(13)),
+                Some(old(3)),
+                file("src/lib.rs"),
+                file("notes.md"),
+                Some(new(13)),
+            ]
+        );
+
+        let uncommitted = view(Preset::Uncommitted);
+        assert_eq!(
+            (uncommitted.base.as_str(), uncommitted.head.as_str()),
+            (head.as_str(), snapshot.as_str())
+        );
+        assert_eq!(paths(&uncommitted), ["src/lib.rs"]);
+        assert_eq!(
+            placed(&uncommitted),
+            [
+                Some(new(18)),
+                Some(new(7)),
+                None,
+                Some(new(13)),
+                Some(old(5)),
+                file("src/lib.rs"),
+                None,
+                Some(new(13)),
+            ]
+        );
+
+        let committed = view(Preset::Committed);
+        assert_eq!(
+            (committed.base.as_str(), committed.head.as_str()),
+            (base.as_str(), head.as_str())
+        );
+        assert_eq!(paths(&committed), ["notes.md", "src/lib.rs"]);
+        assert_eq!(
+            placed(&committed),
+            [
+                None,
+                Some(new(7)),
+                Some(old(5)),
+                Some(new(12)),
+                Some(old(3)),
+                file("src/lib.rs"),
+                file("notes.md"),
+                Some(new(12)),
+            ]
+        );
+        assert!(
+            reviews
+                .show(&id, ShowOptions::default())
+                .unwrap()
+                .view
+                .is_none(),
+            "no view unless asked"
+        );
+    }
+
+    #[test]
+    fn comments_from_a_preset_map_back_or_are_refused() {
+        let repo = Repo::new();
+        layered(&repo);
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(
+                TargetSpec::Base {
+                    reference: "main".into(),
+                },
+                None,
+                None,
+                1,
+            )
+            .unwrap()
+            .review
+            .id;
+        let new = |line| Anchor::lines("src/lib.rs", Side::New, line, line);
+        let old = |line| Anchor::lines("src/lib.rs", Side::Old, line, line);
+        let at = |anchor: Anchor, preset| {
+            reviews
+                .draft(&id, draft(None, Some(anchor), "here"), preset, None, 2)
+                .map(|draft| draft.anchor.unwrap())
+        };
+        assert_eq!(at(new(12), Preset::Committed).unwrap(), new(13));
+        assert_eq!(at(old(5), Preset::Uncommitted).unwrap(), old(3));
+        assert_eq!(at(new(18), Preset::Uncommitted).unwrap(), new(18));
+        assert_eq!(
+            at(Anchor::file("notes.md"), Preset::Committed).unwrap(),
+            Anchor::file("notes.md")
+        );
+        for (anchor, preset, why) in [
+            (new(17), Preset::Committed, "differs from the working tree"),
+            (old(7), Preset::Uncommitted, "differs from the base"),
+            (
+                Anchor::file("notes.md"),
+                Preset::Uncommitted,
+                "not changed in the uncommitted view",
+            ),
+        ] {
+            let refused = at(anchor, preset);
+            assert!(
+                matches!(&refused, Err(Error::Invalid(message)) if message.contains(why)),
+                "{refused:?}"
+            );
+        }
+        assert_eq!(
+            reviews.show(&id, drafts()).unwrap().review.drafts.len(),
+            4,
+            "refused comments record nothing"
+        );
+    }
+
+    #[test]
+    fn presets_need_changes_of_their_own() {
+        let repo = Repo::new();
+        change_line_ten(&repo);
+        let reviews = repo.reviews();
+        let worktree = reviews
+            .start(TargetSpec::Worktree, None, None, 1)
+            .unwrap()
+            .review
+            .id;
+        let view = |id: &str, preset| {
+            reviews.show(
+                id,
+                ShowOptions {
+                    drafts: false,
+                    preset: Some(preset),
+                },
+            )
+        };
+        assert_eq!(
+            view(&worktree, Preset::Everything)
+                .unwrap()
+                .view
+                .unwrap()
+                .available,
+            [Preset::Everything, Preset::Uncommitted],
+            "a worktree review has nothing committed"
+        );
+        assert!(matches!(
+            view(&worktree, Preset::Committed),
+            Err(Error::Invalid(_))
+        ));
+
+        let feature = repo.commit("ten");
+        let range = reviews
+            .start(
+                TargetSpec::range(&format!("HEAD~1..{feature}")).unwrap(),
+                None,
+                None,
+                2,
+            )
+            .unwrap()
+            .review
+            .id;
+        let Err(Error::Invalid(message)) = view(&range, Preset::Uncommitted) else {
+            panic!("a range review has no uncommitted view");
+        };
+        assert!(message.contains("available: everything"), "{message}");
     }
 }

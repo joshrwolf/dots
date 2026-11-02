@@ -10,12 +10,19 @@
 //! repository, so any worktree can find and change any review; removing the
 //! review releases it, and pins whose review file is gone from every worktree
 //! are released by the next start or remove.
+//!
+//! The user, [`USER`], reviews alongside agents. The user's comments can be
+//! drafts, private until the user submits them all at once; a thread the
+//! user started is settled only by the user. Reviewed marks and the revision
+//! the user last looked at are the viewer's own state; presets are the
+//! viewer's ways of looking at the current revision.
 //! Callers pass the time explicitly.
 
 mod diff;
 mod git;
 mod model;
 mod store;
+mod view;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -24,13 +31,16 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 pub use model::{
-    Anchor, ChangedFile, Comment, NewThread, REFRESH_AUTHOR, Review, Revision, RuleCitation,
-    SCHEMA, Severity, Side, Status, TargetSpec, Thread, Worktree,
+    Anchor, AuthorKind, ChangedFile, Comment, Draft, FileStatus, Identity, Lines, Looked,
+    NewThread, Preset, Published, REFRESH_AUTHOR, Review, ReviewedFile, Revision, RuleCitation,
+    SCHEMA, Severity, Side, Status, Submission, TargetSpec, Thread, USER, Worktree,
 };
+pub use view::View;
 
-use diff::Patch;
+use diff::{Change, Patch};
 use git::Git;
 use store::Store;
+use view::Frame;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -46,6 +56,12 @@ pub enum Error {
     NoReviews,
     #[error("review {id} has no thread {thread}")]
     NoThread { id: String, thread: String },
+    #[error("review {id} has no draft {draft}; dots review show --drafts lists them")]
+    NoDraft { id: String, draft: String },
+    #[error(
+        "{thread} was started by the user, so only the user changes its status; reply with your outcome instead"
+    )]
+    UserDecides { thread: String },
     #[error(
         "review {id} is at revision {current}, not revision {expected} the threads were anchored against; nothing was recorded. Read the current revision with dots review show and anchor against it"
     )]
@@ -99,7 +115,7 @@ impl fmt::Display for Rejections<'_> {
             }
             write!(
                 f,
-                "  thread {} {}: {}",
+                "  #{} {}: {}",
                 rejection.index, rejection.field, rejection.message
             )?;
         }
@@ -114,15 +130,49 @@ pub const REVIEW_LIMIT: usize = 2000;
 /// Most comments one thread may hold.
 pub const COMMENT_LIMIT: usize = 500;
 
+/// Most drafts one review may hold, and so one submission.
+pub const DRAFT_LIMIT: usize = BATCH_LIMIT;
+
 /// A review with its file and the files its current revision changes.
 #[derive(Debug, Serialize)]
 pub struct Overview {
+    /// Its drafts only when asked for.
     pub review: Review,
     /// The review file.
     pub file: PathBuf,
-    pub files: Vec<ChangedFile>,
+    pub files: Vec<ReviewedFile>,
     /// Reads the reviewed patch.
     pub diff_command: String,
+    /// The preset asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub view: Option<View>,
+}
+
+/// What [`Reviews::show`] includes beyond the review itself.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ShowOptions {
+    /// The user's drafts.
+    pub drafts: bool,
+    /// A preset view of the current revision.
+    pub preset: Option<Preset>,
+}
+
+/// One of the user's comments before it becomes a draft: a new thread, or a
+/// reply when `thread` is set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewDraft {
+    pub thread: Option<String>,
+    /// For a new thread, in the line numbers of the preset it was written in.
+    pub anchor: Option<Anchor>,
+    pub body: String,
+}
+
+/// What a submission published.
+#[derive(Debug, Serialize)]
+pub struct Submitted {
+    pub submission: Submission,
+    /// The threads it opened or replied to, as they now stand.
+    pub threads: Vec<Thread>,
 }
 
 /// A review's identity, place, target and counts, without threads.
@@ -141,6 +191,9 @@ pub struct Summary {
     pub revision: Revision,
     /// Thread counts by status.
     pub threads: BTreeMap<Status, usize>,
+    /// How many drafts the user holds, when asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drafts: Option<usize>,
 }
 
 /// What a refresh did.
@@ -259,8 +312,8 @@ impl Reviews {
         }
         self.store.prepare()?;
         let resolved = resolve(&self.git, self.store.directory(), &target)?;
-        let patch = patch(&self.git, &resolved.base, &resolved.head)?;
-        if patch.files.is_empty() {
+        let change = Change::read(&self.git, &resolved.base, &resolved.head, 3)?;
+        if change.raw.is_empty() {
             return Err(Error::NothingToReview(format!(
                 "{target} resolves to no changes ({}..{})",
                 short(&resolved.base),
@@ -285,6 +338,11 @@ impl Reviews {
                 revisions: Vec::new(),
                 threads: Vec::new(),
                 next_thread: 1,
+                drafts: Vec::new(),
+                next_draft: 1,
+                submissions: Vec::new(),
+                reviewed: BTreeMap::new(),
+                looked: None,
             },
             |review| {
                 let Some(snapshot) = self.git.pin_new(
@@ -302,7 +360,7 @@ impl Reviews {
         )?;
         self.release_orphans()?;
         let file = self.store.path(&review.id);
-        Ok(overview(review, file, &patch))
+        self.overview(review, file, &change, ShowOptions::default())
     }
 
     /// The id of this worktree's most recently updated review.
@@ -317,7 +375,8 @@ impl Reviews {
 
     /// This worktree's reviews or, with `all`, those of every worktree of the
     /// repository; oldest first.
-    pub fn list(&self, all: bool) -> Result<Vec<Summary>> {
+    /// With `drafts`, each summary counts the user's drafts.
+    pub fn list(&self, all: bool, drafts: bool) -> Result<Vec<Summary>> {
         let directories = if all {
             store::directories(&self.git.shared_dir)?
         } else {
@@ -342,6 +401,7 @@ impl Reviews {
                     created_at: review.created_at,
                     updated_at: review.updated_at,
                     threads,
+                    drafts: drafts.then_some(review.drafts.len()),
                 });
             }
         }
@@ -350,12 +410,239 @@ impl Reviews {
         Ok(summaries)
     }
 
-    pub fn show(&self, id: &str) -> Result<Overview> {
+    /// A review with its changed files and, as `options` ask, the user's
+    /// drafts and a preset view.
+    pub fn show(&self, id: &str, options: ShowOptions) -> Result<Overview> {
         let store = self.locate(id)?;
         let review = store.load(id)?;
         let current = review.current();
-        let patch = patch(&self.git, &current.base, &current.head)?;
-        Ok(overview(review, store.path(id), &patch))
+        let change = Change::read(&self.git, &current.base, &current.head, 3)?;
+        self.overview(review, store.path(id), &change, options)
+    }
+
+    /// Record `draft`, one of the user's comments, at the current revision.
+    /// Its anchor counts lines of `preset` and must map to the review's
+    /// lines; a reply names a submitted thread. `expected` works as for
+    /// [`Reviews::add`].
+    pub fn draft(
+        &self,
+        id: &str,
+        draft: NewDraft,
+        preset: Preset,
+        expected: Option<usize>,
+        now: i64,
+    ) -> Result<Draft> {
+        text("body", &draft.body, BODY_LIMIT, true).map_err(Error::Invalid)?;
+        if draft.thread.is_some() && draft.anchor.is_some() {
+            return Err(Error::Invalid(
+                "a reply takes its thread's place; give a thread or an anchor, not both".into(),
+            ));
+        }
+        self.locate(id)?.update(id, |review, _| {
+            if review.drafts.len() >= DRAFT_LIMIT {
+                return Err(Error::Invalid(format!(
+                    "review {id} already holds {DRAFT_LIMIT} drafts; submit or discard some"
+                )));
+            }
+            let at = review.revisions.len() - 1;
+            if let Some(expected) = expected.filter(|expected| *expected != at) {
+                return Err(Error::Moved {
+                    id: id.to_owned(),
+                    expected,
+                    current: at,
+                });
+            }
+            if let Some(thread) = &draft.thread
+                && !review.threads.iter().any(|entry| &entry.id == thread)
+            {
+                return Err(Error::NoThread {
+                    id: id.to_owned(),
+                    thread: thread.clone(),
+                });
+            }
+            let anchor = match &draft.anchor {
+                None => None,
+                Some(anchor) => {
+                    check_anchor(anchor).map_err(Error::Invalid)?;
+                    let revision = review.current();
+                    let change = Change::read(&self.git, &revision.base, &revision.head, 3)?;
+                    let available = view::available(&self.git, revision)?;
+                    let frame = Frame::new(&self.git, revision, &change, preset, &available)?;
+                    let mapped = frame.unplace(anchor)?.map_err(Error::Invalid)?;
+                    anchor_in(&mapped, &change).map_err(Error::Invalid)?;
+                    Some(mapped)
+                }
+            };
+            let entry = Draft {
+                id: format!("d{}", review.next_draft),
+                thread: draft.thread,
+                revision: at,
+                anchor,
+                body: draft.body,
+                at: now,
+            };
+            review.next_draft += 1;
+            review.drafts.push(entry.clone());
+            Ok(entry)
+        })
+    }
+
+    /// Drop draft `draft`, or every draft when it is `None`; returns what was
+    /// dropped.
+    pub fn discard(&self, id: &str, draft: Option<&str>) -> Result<Vec<Draft>> {
+        self.locate(id)?.update(id, |review, _| match draft {
+            None => Ok(std::mem::take(&mut review.drafts)),
+            Some(draft) => {
+                let position = review
+                    .drafts
+                    .iter()
+                    .position(|entry| entry.id == draft)
+                    .ok_or_else(|| Error::NoDraft {
+                        id: id.to_owned(),
+                        draft: draft.to_owned(),
+                    })?;
+                Ok(vec![review.drafts.remove(position)])
+            }
+        })
+    }
+
+    /// Publish every draft at once, in order, with an optional summary
+    /// `body`, and record the submission; all or none, listing every draft
+    /// that cannot be published. A new thread whose lines changed since it
+    /// was drafted cannot.
+    pub fn submit(&self, id: &str, body: Option<String>, now: i64) -> Result<Submitted> {
+        if let Some(body) = &body {
+            text("body", body, BODY_LIMIT, true).map_err(Error::Invalid)?;
+        }
+        self.locate(id)?.update(id, |review, sequence| {
+            if review.drafts.is_empty() && body.is_none() {
+                return Err(Error::Invalid(
+                    "nothing to submit: no drafts and no summary".into(),
+                ));
+            }
+            let opened = review
+                .drafts
+                .iter()
+                .filter(|draft| draft.thread.is_none())
+                .count();
+            if review.threads.len() + opened > REVIEW_LIMIT {
+                return Err(Error::Invalid(format!(
+                    "review {id} would exceed {REVIEW_LIMIT} threads"
+                )));
+            }
+            let rejections = unsubmittable(review);
+            if !rejections.is_empty() {
+                return Err(Error::Rejected(rejections));
+            }
+            let mut published = Vec::with_capacity(review.drafts.len());
+            let mut touched: Vec<String> = Vec::new();
+            for draft in std::mem::take(&mut review.drafts) {
+                let thread = match draft.thread {
+                    None => {
+                        let thread = format!("t{}", review.next_thread);
+                        review.next_thread += 1;
+                        let new = NewThread {
+                            anchor: draft.anchor,
+                            body: draft.body,
+                            author: USER.to_owned(),
+                            title: None,
+                            severity: None,
+                            pre_existing: false,
+                            confidence: None,
+                            angle: None,
+                            rule: None,
+                        };
+                        review
+                            .threads
+                            .push(open(thread.clone(), draft.revision, new, now));
+                        published.push(Published {
+                            thread: thread.clone(),
+                            comment: 0,
+                        });
+                        thread
+                    }
+                    Some(thread) => {
+                        let entry = review
+                            .threads
+                            .iter_mut()
+                            .find(|entry| entry.id == thread)
+                            .ok_or_else(|| Error::NoThread {
+                                id: id.to_owned(),
+                                thread: thread.clone(),
+                            })?;
+                        entry.comments.push(Comment {
+                            author: USER.to_owned(),
+                            at: now,
+                            body: Some(draft.body),
+                            status: None,
+                        });
+                        entry.updated_at = now;
+                        published.push(Published {
+                            thread: thread.clone(),
+                            comment: entry.comments.len() - 1,
+                        });
+                        thread
+                    }
+                };
+                if !touched.contains(&thread) {
+                    touched.push(thread);
+                }
+            }
+            let submission = Submission {
+                at: now,
+                body,
+                comments: published,
+            };
+            review.submissions.push(submission.clone());
+            review.touch(now, sequence);
+            let threads = touched
+                .iter()
+                .filter_map(|thread| review.threads.iter().find(|entry| &entry.id == thread))
+                .cloned()
+                .collect();
+            Ok(Submitted {
+                submission,
+                threads,
+            })
+        })
+    }
+
+    /// Mark changed file `path` reviewed as it now stands, or clear its mark.
+    pub fn mark(&self, id: &str, path: &str, reviewed: bool) -> Result<ReviewedFile> {
+        let store = self.locate(id)?;
+        store.update(id, |review, _| {
+            let revision = review.current();
+            let change = Change::read(&self.git, &revision.base, &revision.head, 3)?;
+            let Some(entry) = change.raw.get(path) else {
+                return Err(Error::Invalid(format!(
+                    "{path} is not changed in review {id}'s current revision"
+                )));
+            };
+            if reviewed {
+                review
+                    .reviewed
+                    .insert(path.to_owned(), entry.identity.clone());
+            } else {
+                review.reviewed.remove(path);
+            }
+            let looked = self.looked_change(review)?;
+            Ok(reviewed_files(review, &change, looked.as_ref())
+                .into_iter()
+                .find(|file| file.change.path == path)
+                .expect("a changed path has a file"))
+        })
+    }
+
+    /// Record that the user looked at the current revision.
+    pub fn look(&self, id: &str, now: i64) -> Result<Looked> {
+        self.locate(id)?.update(id, |review, _| {
+            let looked = Looked {
+                revision: review.revisions.len() - 1,
+                at: now,
+            };
+            review.looked = Some(looked.clone());
+            Ok(looked)
+        })
     }
 
     /// Open `threads` at the current revision, all or none. With `expected`,
@@ -392,10 +679,10 @@ impl Reviews {
                 });
             }
             let revision = review.current().clone();
-            let patch = patch(&self.git, &revision.base, &revision.head)?;
+            let change = Change::read(&self.git, &revision.base, &revision.head, 3)?;
             let mut rejections = Vec::new();
             for (index, thread) in threads.iter().enumerate() {
-                self.check(index, thread, &revision, &patch, &mut rejections)?;
+                self.check(index, thread, &revision, &change, &mut rejections)?;
             }
             if !rejections.is_empty() {
                 return Err(Error::Rejected(rejections));
@@ -435,7 +722,11 @@ impl Reviews {
 
     /// Change a thread's status, recorded as a comment by `author` with an
     /// optional body. `outdated` belongs to refresh and is refused, as is
-    /// reopening a thread left at an earlier revision.
+    /// reopening a thread left at an earlier revision. Only the user changes
+    /// the status of a thread the user started.
+    ///
+    /// The user's status changes take effect at once, never as drafts: a
+    /// status is the user's decision about a thread, not a comment to batch.
     pub fn set(
         &self,
         id: &str,
@@ -452,6 +743,11 @@ impl Reviews {
         }
         comment(&author, body.as_deref())?;
         self.comment(id, thread, now, |entry, revisions| {
+            if entry.started_by_user() && AuthorKind::of(&author) != AuthorKind::User {
+                return Err(Error::UserDecides {
+                    thread: thread.to_owned(),
+                });
+            }
             if status.live() && entry.revision + 1 != revisions {
                 return Err(Error::Invalid(format!(
                     "{thread}'s lines changed after revision {}; open a new thread against the current revision instead of reopening it",
@@ -480,52 +776,47 @@ impl Reviews {
             let previous = review.current().clone();
             let next = resolve(&git, store.directory(), &review.target)?;
             if next.base == previous.base && next.head == previous.head {
-                let patch = patch(&git, &previous.base, &previous.head)?;
+                let change = Change::read(&git, &previous.base, &previous.head, 3)?;
                 return Ok(Refreshed {
-                    review: review.clone(),
+                    review: public(review.clone()),
                     changed: false,
                     carried: Vec::new(),
                     outdated: Vec::new(),
                     delta: None,
-                    files: files(&patch),
+                    files: change.files(),
                 });
             }
-            let heads = Patch::parse(&git.diff(&previous.head, &next.head, 0)?)?;
+            let heads = Change::read(&git, &previous.head, &next.head, 0)?;
             let bases = if next.base == previous.base {
                 Patch::default()
             } else {
                 Patch::parse(&git.diff(&previous.base, &next.base, 0)?)?
             };
-            let patch = patch(&git, &next.base, &next.head)?;
+            let change = Change::read(&git, &next.base, &next.head, 3)?;
             let snapshot = git.pin_next(id, &next.base, &next.head, next.head_commit.as_deref())?;
             let next = next.revision(snapshot, now);
             let current = review.revisions.len() - 1;
             review.revisions.push(next.clone());
+            let carry = |anchor: &Option<Anchor>| match anchor {
+                None => Some(None),
+                Some(anchor) => carry(anchor, &heads.patch, &bases, &change).map(Some),
+            };
+            // A draft whose lines changed stays behind; submit refuses it.
+            for draft in &mut review.drafts {
+                if draft.thread.is_none()
+                    && draft.revision == current
+                    && let Some(anchor) = carry(&draft.anchor)
+                {
+                    draft.anchor = anchor;
+                    draft.revision = current + 1;
+                }
+            }
             let (mut carried, mut outdated) = (Vec::new(), Vec::new());
             for thread in &mut review.threads {
                 if thread.revision != current {
                     continue;
                 }
-                let moved = match &thread.anchor {
-                    None => Some(None),
-                    Some(anchor) => {
-                        let map = match anchor.side {
-                            Side::New => &heads,
-                            Side::Old => &bases,
-                        };
-                        map.map(&anchor.path, anchor.start, anchor.end)
-                            .filter(|&(start, end)| {
-                                patch.shows(&anchor.path, anchor.side, start, end)
-                            })
-                            .map(|(start, end)| {
-                                Some(Anchor {
-                                    start,
-                                    end,
-                                    ..anchor.clone()
-                                })
-                            })
-                    }
-                };
+                let moved = carry(&thread.anchor);
                 // Dispositions follow their lines when they can; only live
                 // threads become outdated or count as carried.
                 let live = thread.status.live();
@@ -550,17 +841,17 @@ impl Reviews {
             }
             review.touch(now, sequence);
             Ok(Refreshed {
-                review: review.clone(),
+                review: public(review.clone()),
                 changed: true,
                 carried,
                 outdated,
                 delta: Some(Delta {
                     diff_command: Git::diff_command(&previous.head, &next.head),
-                    files: files(&heads),
+                    files: heads.files(),
                     from: previous,
                     to: next,
                 }),
-                files: files(&patch),
+                files: change.files(),
             })
         })
     }
@@ -627,12 +918,69 @@ impl Reviews {
         Ok(())
     }
 
+    /// `review`, stored in `file`, whose current revision's change is
+    /// `change`, with what `options` ask for.
+    fn overview(
+        &self,
+        mut review: Review,
+        file: PathBuf,
+        change: &Change,
+        options: ShowOptions,
+    ) -> Result<Overview> {
+        let looked = self.looked_change(&review)?;
+        let files = reviewed_files(&review, change, looked.as_ref());
+        let revision = review.current();
+        let view = match options.preset {
+            None => None,
+            Some(preset) => {
+                let available = view::available(&self.git, revision)?;
+                let frame = Frame::new(&self.git, revision, change, preset, &available)?;
+                let current = review.revisions.len() - 1;
+                let threads = review
+                    .threads
+                    .iter()
+                    .filter(|thread| thread.revision == current)
+                    .filter_map(|thread| Some((thread.id.as_str(), thread.anchor.as_ref()?)));
+                let drafts = review
+                    .drafts
+                    .iter()
+                    .filter(|draft| options.drafts && draft.revision == current)
+                    .filter_map(|draft| Some((draft.id.as_str(), draft.anchor.as_ref()?)));
+                Some(frame.view(available, threads.chain(drafts))?)
+            }
+        };
+        let diff_command = Git::diff_command(&revision.base, &revision.head);
+        if !options.drafts {
+            review = public(review);
+        }
+        Ok(Overview {
+            review,
+            file,
+            files,
+            diff_command,
+            view,
+        })
+    }
+
+    /// The change of the revision the user last looked at, unless that is the
+    /// current one or the user has not looked.
+    fn looked_change(&self, review: &Review) -> Result<Option<Change>> {
+        let Some(looked) = &review.looked else {
+            return Ok(None);
+        };
+        if looked.revision + 1 == review.revisions.len() {
+            return Ok(None);
+        }
+        let revision = &review.revisions[looked.revision];
+        Change::read(&self.git, &revision.base, &revision.head, 0).map(Some)
+    }
+
     fn check(
         &self,
         index: usize,
         thread: &NewThread,
         revision: &Revision,
-        patch: &Patch,
+        change: &Change,
         rejections: &mut Vec<Rejection>,
     ) -> Result<()> {
         let mut reject = |field, message: String| {
@@ -650,7 +998,7 @@ impl Reviews {
         if let Err(message) = text("body", &thread.body, BODY_LIMIT, true) {
             reject("body", message);
         }
-        if let Err(message) = text("author", &thread.author, 200, false) {
+        if let Err(message) = author(&thread.author) {
             reject("author", message);
         }
         if let Some(angle) = &thread.angle
@@ -663,35 +1011,10 @@ impl Reviews {
         {
             reject("confidence", format!("{confidence} is not between 0 and 1"));
         }
-        if let Some(anchor) = &thread.anchor {
-            if let Err(message) =
-                relative("anchor path", &anchor.path).and(lines(anchor.start, anchor.end))
-            {
-                reject("anchor", message);
-            } else if !patch.files.contains_key(&anchor.path) {
-                reject(
-                    "anchor",
-                    format!(
-                        "{} is not changed in this review; anchor to a changed path or omit the anchor for a review-level thread",
-                        anchor.path
-                    ),
-                );
-            } else if !patch.shows(&anchor.path, anchor.side, anchor.start, anchor.end) {
-                reject(
-                    "anchor",
-                    format!(
-                        "{}:{}-{} ({}) is not within one hunk of the reviewed diff ({}); anchor to diff lines or omit the anchor",
-                        anchor.path,
-                        anchor.start,
-                        anchor.end,
-                        match anchor.side {
-                            Side::New => "new side",
-                            Side::Old => "old side",
-                        },
-                        hunk_list(patch, &anchor.path, anchor.side)
-                    ),
-                );
-            }
+        if let Some(anchor) = &thread.anchor
+            && let Err(message) = check_anchor(anchor).and_then(|()| anchor_in(anchor, change))
+        {
+            reject("anchor", message);
         }
         if let Some(rule) = &thread.rule {
             if let Err(message) = relative("rule path", &rule.path).and(lines(rule.start, rule.end))
@@ -782,8 +1105,135 @@ fn resolve(git: &Git, scratch: &Path, target: &TargetSpec) -> Result<Resolved> {
     })
 }
 
-fn patch(git: &Git, base: &str, head: &str) -> Result<Patch> {
-    Patch::parse(&git.diff(base, head, 3)?)
+/// Why each of `review`'s drafts that cannot be published cannot: a new
+/// thread whose lines changed since it was drafted, or a reply that would
+/// overfill its thread. Positions count drafts.
+fn unsubmittable(review: &Review) -> Vec<Rejection> {
+    let current = review.revisions.len() - 1;
+    let mut rejections = Vec::new();
+    let mut replies: BTreeMap<&str, usize> = BTreeMap::new();
+    for (index, draft) in review.drafts.iter().enumerate() {
+        match &draft.thread {
+            Some(thread) => *replies.entry(thread).or_default() += 1,
+            None if draft.anchor.is_some() && draft.revision != current => {
+                rejections.push(Rejection {
+                    index,
+                    field: "anchor",
+                    message: format!(
+                        "{}'s lines changed after revision {}; discard it and comment on the current revision",
+                        draft.id, draft.revision
+                    ),
+                });
+            }
+            None => {}
+        }
+    }
+    for (thread, count) in replies {
+        let held = review
+            .threads
+            .iter()
+            .find(|entry| entry.id == thread)
+            .map_or(0, |entry| entry.comments.len());
+        if held + count <= COMMENT_LIMIT {
+            continue;
+        }
+        for (index, draft) in review.drafts.iter().enumerate() {
+            if draft.thread.as_deref() == Some(thread) {
+                rejections.push(Rejection {
+                    index,
+                    field: "thread",
+                    message: format!(
+                        "{} would take {thread} past {COMMENT_LIMIT} comments",
+                        draft.id
+                    ),
+                });
+            }
+        }
+    }
+    rejections.sort_by_key(|rejection| rejection.index);
+    rejections
+}
+
+/// `review` as anyone but the user's viewer sees it: without drafts.
+fn public(mut review: Review) -> Review {
+    review.drafts.clear();
+    review
+}
+
+/// Where `anchor`, valid before a refresh, lands after it: `heads` and
+/// `bases` are the zero-context patches from the old head and base to the
+/// new ones, `change` the new revision's change. A whole-file anchor holds
+/// while its path is still changed; lines must be unchanged and still within
+/// the new diff. `None` when it does not carry.
+fn carry(anchor: &Anchor, heads: &Patch, bases: &Patch, change: &Change) -> Option<Anchor> {
+    if !change.changes(&anchor.path) {
+        return None;
+    }
+    let Some(lines) = anchor.lines else {
+        return Some(anchor.clone());
+    };
+    let map = match lines.side {
+        Side::New => heads,
+        Side::Old => bases,
+    };
+    map.map(&anchor.path, lines.start, lines.end)
+        .filter(|&(start, end)| change.patch.shows(&anchor.path, lines.side, start, end))
+        .map(|(start, end)| Anchor::lines(&anchor.path, lines.side, start, end))
+}
+
+/// Each changed file of `change`, the review's current one, with whether the
+/// user's mark covers it and whether it differs from `looked`, the change of
+/// the revision the user last looked at when that is an earlier one.
+fn reviewed_files(review: &Review, change: &Change, looked: Option<&Change>) -> Vec<ReviewedFile> {
+    change
+        .files()
+        .into_iter()
+        .map(|file| {
+            let identity = &change.raw[&file.path].identity;
+            ReviewedFile {
+                reviewed: review.reviewed.get(&file.path) == Some(identity),
+                changed_since_looked: looked.is_some_and(|looked| {
+                    looked.raw.get(&file.path).map(|entry| &entry.identity) != Some(identity)
+                }),
+                change: file,
+            }
+        })
+        .collect()
+}
+
+/// An anchor's own shape: a relative path and, if it has lines, a range.
+fn check_anchor(anchor: &Anchor) -> Result<(), String> {
+    relative("anchor path", &anchor.path)?;
+    match anchor.lines {
+        Some(range) => lines(range.start, range.end),
+        None => Ok(()),
+    }
+}
+
+/// Whether `anchor` names a path `change` changes and, with lines, lines
+/// within one hunk of its diff.
+fn anchor_in(anchor: &Anchor, change: &Change) -> Result<(), String> {
+    if !change.changes(&anchor.path) {
+        return Err(format!(
+            "{} is not changed in this review; anchor to a changed path or omit the anchor for a review-level thread",
+            anchor.path
+        ));
+    }
+    let Some(Lines { side, start, end }) = anchor.lines else {
+        return Ok(());
+    };
+    if change.patch.shows(&anchor.path, side, start, end) {
+        return Ok(());
+    }
+    Err(format!(
+        "{}:{start}-{end} ({}) is not within one hunk of the reviewed diff ({}); anchor to diff lines, to the whole file, or omit the anchor",
+        anchor.path,
+        match side {
+            Side::New => "new side",
+            Side::Old => "old side",
+        },
+        hunk_list(&change.patch, &anchor.path, side)
+    ))
 }
 
 fn open(id: String, revision: usize, thread: NewThread, now: i64) -> Thread {
@@ -809,10 +1259,19 @@ fn open(id: String, revision: usize, thread: NewThread, now: i64) -> Thread {
     }
 }
 
+/// A caller-given author: one line, never refresh's own name.
+fn author(name: &str) -> Result<(), String> {
+    text("author", name, 200, false)?;
+    if AuthorKind::of(name) == AuthorKind::Refresh {
+        return Err(format!("author {name:?} is reserved for refresh"));
+    }
+    Ok(())
+}
+
 /// Validate a reply or status change's author and optional body.
-fn comment(author: &str, body: Option<&str>) -> Result<()> {
+fn comment(name: &str, body: Option<&str>) -> Result<()> {
     let mut errors = Vec::new();
-    if let Err(message) = text("author", author, 200, false) {
+    if let Err(message) = author(name) {
         errors.push(message);
     }
     if let Some(body) = body
@@ -827,32 +1286,12 @@ fn comment(author: &str, body: Option<&str>) -> Result<()> {
     }
 }
 
-fn overview(review: Review, file: PathBuf, patch: &Patch) -> Overview {
-    let revision = review.current();
-    Overview {
-        diff_command: Git::diff_command(&revision.base, &revision.head),
-        files: files(patch),
-        file,
-        review,
-    }
-}
-
-fn files(patch: &Patch) -> Vec<ChangedFile> {
-    patch
-        .files
-        .iter()
-        .map(|(path, file)| ChangedFile {
-            path: path.clone(),
-            added: file.added,
-            removed: file.removed,
-            binary: file.binary,
-        })
-        .collect()
-}
-
 fn hunk_list(patch: &Patch, changed: &str, side: Side) -> String {
-    let ranges: Vec<String> = patch.files[changed]
-        .hunks
+    let ranges: Vec<String> = patch
+        .files
+        .get(changed)
+        .map(|file| file.hunks.as_slice())
+        .unwrap_or_default()
         .iter()
         .map(|hunk| match side {
             Side::New => (hunk.new_start, hunk.new_len),

@@ -127,6 +127,39 @@ impl Store {
         {
             return Err(corrupt("a thread has no comments".into()));
         }
+        let revisions = review.revisions.len();
+        let has_thread = |id: &str| review.threads.iter().any(|thread| thread.id == id);
+        if review.drafts.iter().any(|draft| {
+            draft.revision >= revisions
+                || draft
+                    .thread
+                    .as_deref()
+                    .is_some_and(|thread| !has_thread(thread))
+        }) {
+            return Err(corrupt(
+                "a draft names a revision or thread the review lacks".into(),
+            ));
+        }
+        if review
+            .looked
+            .as_ref()
+            .is_some_and(|looked| looked.revision >= revisions)
+        {
+            return Err(corrupt("last looked at a revision the review lacks".into()));
+        }
+        if review.submissions.iter().any(|submission| {
+            submission.comments.iter().any(|published| {
+                review
+                    .threads
+                    .iter()
+                    .find(|thread| thread.id == published.thread)
+                    .is_none_or(|thread| published.comment >= thread.comments.len())
+            })
+        }) {
+            return Err(corrupt(
+                "a submission names a comment the review lacks".into(),
+            ));
+        }
         Ok(review)
     }
 
