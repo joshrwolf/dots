@@ -192,11 +192,15 @@ impl Fixture {
         if let Some(source) = std::env::var_os("DOTS_TEST_PRIVATE_BOOTSTRAP") {
             self.copy_tree(Path::new(&source), &private.join("bootstrap"))?;
         } else {
-            self.write(&private.join("bootstrap/mise.private.toml"), "[dotfile_groups.private-skills]\nroot = \"../private/skills\"\ntarget = \"~/.local/share/dots/skills\"\nmanifest = \"git\"\n")?;
+            self.write(&private.join("bootstrap/mise.private.toml"), "[dotfile_groups.private-skills]\nroot = \"../private/skills\"\ntarget = \"~/.local/share/dots/skills\"\nmanifest = \"git\"\n\n[dotfile_groups.private-rex]\nroot = \"../private/rex\"\ntarget = \"~/.config/rex\"\nmanifest = \"git\"\n")?;
         }
         self.write(
             &private.join("skills/local-example/SKILL.md"),
             "---\nname: local-example\ndescription: Neutral private skill\n---\nPrivate skill.\n",
+        )?;
+        self.write(
+            &private.join("rex/checkouts/example.json"),
+            "{\"version\": 1, \"rules\": {\"example-org/*\": \"~/dev/example/{name}\"}}\n",
         )?;
         self.init_repo(&private)?;
         Ok(private)
@@ -577,6 +581,15 @@ fn private_module_selection_persists_without_cross_source_writes() -> Result {
             .exists()
     );
     assert!(!f.checkout().join("skills/local-example").exists());
+    // Public and private checkout rules share one directory.
+    for rule in ["default.json", "example.json"] {
+        assert!(f.home.join(".config/rex/checkouts").join(rule).is_symlink());
+    }
+    assert!(
+        !f.checkout()
+            .join("home/rex/.config/rex/checkouts/example.json")
+            .exists()
+    );
     assert_eq!(f.git(&f.checkout(), &["status", "--porcelain"])?, "");
     assert_eq!(
         f.git(&f.checkout().join("private"), &["status", "--porcelain"])?,
