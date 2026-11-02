@@ -140,8 +140,9 @@ revision-checked `dots memory` commands.
 
 ## Review submissions
 
-A review records the session that started it (`dots review start --owner`
-defaults to the invoking agent session). That session watches the reviews it
+A review records its owner: the session that started it, or the agent session
+that last opened the worktree's review (`dots review open` and `start` take the
+invoking agent session unless given `--owner`). That session watches the reviews it
 owns across the repository's worktrees. The user's comments stay private drafts
 until the user submits them; each submission reaches the owner as one notice
 with its summary and comments. Like a wake fire, a notice waits until the

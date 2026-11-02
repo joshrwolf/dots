@@ -44,6 +44,7 @@ mod tests {
                 .args(["--json", "review"])
                 .args(args)
                 .current_dir(self.root.join(worktree))
+                .env("XDG_DATA_HOME", self.root.join("data"))
                 .env_remove("PI_SESSION_ID")
                 .env_remove("CLAUDE_CODE_SESSION_ID")
                 .env_remove("CODEX_SESSION_ID");
@@ -97,19 +98,19 @@ mod tests {
     #[test]
     fn a_review_is_owned_by_the_starting_session_unless_named() {
         let repo = Repo::new();
-        let started = repo.run("checkout", Some("parent"), &["start", "--worktree"]);
+        let started = repo.run("checkout", Some("parent"), &["start", "--uncommitted"]);
         assert_eq!(started["review"]["owner"], "pi-parent");
         let parent = started["review"]["id"].as_str().unwrap();
 
         let named = repo.run(
             "linked",
             Some("worker"),
-            &["start", "--worktree", "--owner", "pi-parent"],
+            &["start", "--uncommitted", "--owner", "pi-parent"],
         );
         assert_eq!(named["review"]["owner"], "pi-parent");
         let delegated = named["review"]["id"].as_str().unwrap();
 
-        let unowned = repo.run("linked", None, &["start", "--worktree"]);
+        let unowned = repo.run("linked", None, &["start", "--uncommitted"]);
         assert_eq!(unowned["review"]["owner"], Value::Null);
         let unowned = unowned["review"]["id"].as_str().unwrap();
         assert_eq!(
@@ -157,7 +158,7 @@ mod tests {
     #[test]
     fn drafts_and_submissions_round_trip_as_json() {
         let repo = Repo::new();
-        let started = repo.run("linked", None, &["start", "--worktree"]);
+        let started = repo.run("linked", None, &["start", "--uncommitted"]);
         let id = started["review"]["id"].as_str().unwrap();
 
         let drafted = repo.run(
@@ -260,7 +261,7 @@ mod tests {
     #[test]
     fn marks_and_looks_round_trip_as_json() {
         let repo = Repo::new();
-        let started = repo.run("linked", None, &["start", "--worktree"]);
+        let started = repo.run("linked", None, &["start", "--uncommitted"]);
         let id = started["review"]["id"].as_str().unwrap();
         let marked = repo.run("checkout", None, &["mark", id, "README.md"]);
         assert_eq!(keys(&marked), ["file", "review"]);
@@ -270,5 +271,94 @@ mod tests {
         let looked = repo.run("checkout", None, &["look", id]);
         assert_eq!(keys(&looked), ["looked", "review"]);
         assert_eq!(looked["looked"]["revision"], 0);
+    }
+    #[test]
+    fn open_and_inbox_speak_versioned_json() {
+        let repo = Repo::new();
+        let opened = repo.run(
+            "linked",
+            Some("agent"),
+            &["open", "--drafts", "--preset", "everything"],
+        );
+        let id = opened["review"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(opened["review"]["schema"], 4);
+        assert_eq!(
+            opened["review"]["target"],
+            serde_json::json!({"kind": "worktree", "base": null})
+        );
+        assert_eq!(opened["review"]["owner"], "pi-agent");
+        assert_eq!(opened["opened"]["created"], true);
+        assert_eq!(opened["view"]["preset"], "everything");
+        let basis = &opened["review"]["revisions"][0]["basis"];
+        assert_eq!(basis["reference"], "main");
+        assert_eq!(basis["reason"], "default");
+        assert_eq!(
+            basis["candidates"],
+            serde_json::json!([{"reference": "main", "commits": 0}])
+        );
+
+        let again = repo.run("linked", None, &["open"]);
+        assert_eq!(again["review"]["id"], id.as_str());
+        assert_eq!(again["opened"]["created"], false);
+        let primary = repo.run("checkout", None, &["open"]);
+        assert_eq!(
+            primary["review"]["revisions"][0]["basis"]["reason"],
+            "default_branch"
+        );
+
+        // No catalog in this data home: the current repository alone.
+        let inbox = repo.run("linked", None, &["inbox"]);
+        assert_eq!(inbox["schema"], 4);
+        assert_eq!(inbox["skipped"], serde_json::json!([]));
+        let worktrees = inbox["worktrees"].as_array().unwrap();
+        assert_eq!(worktrees.len(), 2);
+        let linked = worktrees
+            .iter()
+            .find(|entry| entry["review"]["id"] == id.as_str())
+            .unwrap();
+        assert_eq!(
+            keys(linked),
+            [
+                "base",
+                "basis",
+                "branch",
+                "diff",
+                "head",
+                "other_reviews",
+                "path",
+                "repository",
+                "review"
+            ]
+        );
+        assert_eq!(
+            linked["diff"],
+            serde_json::json!({"files": 1, "added": 1, "removed": 1})
+        );
+        assert_eq!(
+            keys(&linked["review"]),
+            [
+                "changed_since_looked",
+                "drafts",
+                "id",
+                "owner",
+                "revision",
+                "updated_at",
+                "waiting"
+            ]
+        );
+        let outside = Command::new(env!("CARGO_BIN_EXE_dots"))
+            .args(["--json", "review", "inbox", "--repo"])
+            .arg(repo.root.join("checkout"))
+            .current_dir(std::env::temp_dir())
+            .env("XDG_DATA_HOME", repo.root.join("data"))
+            .output()
+            .unwrap();
+        assert!(
+            outside.status.success(),
+            "{}",
+            String::from_utf8_lossy(&outside.stderr)
+        );
+        let outside: Value = serde_json::from_slice(&outside.stdout).unwrap();
+        assert_eq!(outside["worktrees"].as_array().unwrap().len(), 2);
     }
 }

@@ -71,7 +71,7 @@ pub(crate) enum Command {
     },
     /// Review a repository's changes in threads anchored to exact revisions, across its worktrees
     #[command(
-        long_about = "Reviews of a repository's changes. A review pins its target to exact content: a base commit and a head tree, with uncommitted work captured as a tree, so threads refer to bytes reviewers can read with `git show HEAD_TREE:PATH`. Each revision also records a snapshot commit whose tree is its head, so viewers can diff base..snapshot. A thread is an agent finding or a comment: an optional anchor validated against the reviewed diff, optional finding fields, a status, and a conversation whose replies and status changes name their author. Refresh carries threads forward when the change moves. The author `user` is the human reviewing in the viewer: only the user drafts and submits comments, and only the user changes the status of a thread the user started. The user's drafts stay private until submitted; reviewed marks, the revision last looked at and presets serve the viewer. Reviews never post anywhere.\nA review belongs to the worktree that started it: its file lives in that worktree's own Git directory ($(git rev-parse --git-dir)/dots/reviews) and disappears with it. A shared ref (refs/dots/reviews/ID) keeps reviewed content safe from garbage collection and makes ids unique across the repository, so any worktree can show or change any review by id; without an id, commands use this worktree's most recently updated review. remove releases the ref, and the next start or remove releases refs whose review is gone from every worktree. Parallel writers to one review are safe."
+        long_about = "Reviews of a repository's changes. A review pins its target to exact content: a base commit and a head tree, with uncommitted work captured as a tree, so threads refer to bytes reviewers can read with `git show HEAD_TREE:PATH`. Each revision also records a snapshot commit whose tree is its head, so viewers can diff base..snapshot. A thread is an agent finding or a comment: an optional anchor validated against the reviewed diff, optional finding fields, a status, and a conversation whose replies and status changes name their author. Refresh carries threads forward when the change moves. The author `user` is the human reviewing in the viewer: only the user drafts and submits comments, and only the user changes the status of a thread the user started. The user's drafts stay private until submitted; reviewed marks, the revision last looked at and presets serve the viewer. Reviews never post anywhere.\nEach worktree has one living review of its branch against its base, which open creates and refreshes; inbox summarises the worktrees of every known repository; start reviews other targets ad hoc. A review belongs to the worktree that holds it: its file lives in that worktree's own Git directory ($(git rev-parse --git-dir)/dots/reviews) and disappears with it. A shared ref (refs/dots/reviews/ID) keeps reviewed content safe from garbage collection and makes ids unique across the repository, so any worktree can show or change any review by id; without an id, commands use this worktree's most recently updated review. remove releases the ref, and the next start or remove releases refs whose review is gone from every worktree. Parallel writers to one review are safe."
     )]
     Review {
         #[command(subcommand)]
@@ -739,7 +739,7 @@ fn positive(value: &str) -> Result<usize, String> {
 pub(crate) enum ReviewCommand {
     /// Start a review of one target and print its revision, changed files, and diff command
     #[command(
-        long_about = "Start a review. Choose exactly one target: --worktree reviews uncommitted changes (tracked and untracked, not ignored) against HEAD; --base REF reviews everything since the merge base of REF and HEAD, including uncommitted work; --range FROM..TO reviews committed changes only. Refuses an empty change. Reviewers read the patch with the returned diff_command and file content with `git show HEAD:PATH` using the review's head tree, not the live working tree."
+        long_about = "Start a review of another target than the worktree's own review (see open), such as an ad hoc pass by agents. Choose exactly one target: --uncommitted reviews uncommitted changes (tracked and untracked, not ignored) against HEAD; --base REF reviews everything since the merge base of REF and HEAD, including uncommitted work. Refuses an empty change. Reviewers read the patch with the returned diff_command and file content with `git show HEAD:PATH` using the review's head tree, not the live working tree."
     )]
     Start {
         #[command(flatten)]
@@ -750,6 +750,39 @@ pub(crate) enum ReviewCommand {
         /// Session told when the user submits comments; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID), otherwise none
         #[arg(long, value_name = "NAME")]
         owner: Option<String>,
+    },
+    /// Open this worktree's own review, creating or refreshing it, and show it
+    #[command(
+        long_about = "Open the worktree's own review: its branch through the working tree against its base. There is one per worktree; open creates it on first use and otherwise refreshes it to the working tree as it is now (new commits and edits; threads carry forward as for refresh), then prints what show prints plus an opened record: whether it was created, whether it moved, the threads carried and outdated, and the delta since the previous revision. Run it in the worktree, or name one with --directory. The base is, in order: a base set with --base, kept for later opens and refreshes until --default-base; the branch's upstream when it names another branch (a stacked branch), never the branch's own name on a remote; HEAD itself on the default branch, so only uncommitted changes; otherwise the nearest default-branch candidate among each remote's default branch (refs/remotes/REMOTE/HEAD) and the local main, else master: the one HEAD has the fewest commits beyond, ties preferring upstream, then origin, then other remotes, then the local branch. Each revision's basis records the reference, the reason, and every candidate's distance. An --owner, or the invoking agent session, becomes the review's owner; without one the owner stays. Refuses to create a review of an empty change."
+    )]
+    Open {
+        /// Compare against the merge base with REF from now on
+        #[arg(long, value_name = "REF", conflicts_with = "default_base")]
+        base: Option<String>,
+        /// Drop a base set earlier and use the default rule
+        #[arg(long)]
+        default_base: bool,
+        /// Session told when the user submits comments; defaults to the invoking agent session, otherwise the owner stays
+        #[arg(long, value_name = "NAME")]
+        owner: Option<String>,
+        /// Include the user's drafts
+        #[arg(long)]
+        drafts: bool,
+        /// Add a view, as for show
+        #[arg(long, value_parser = ["everything", "uncommitted", "committed"])]
+        preset: Option<String>,
+    },
+    /// Summarise the worktrees of every known repository: changes and what their reviews wait on the user for
+    #[command(
+        long_about = "Summarise worktrees across repositories without creating, refreshing or writing anything. Repositories: the common Git directories bound in the dots project catalog, the current repository, and each --repo. Per worktree: path, branch, HEAD, the base its review would use now with its basis, the working tree's change against it (files, added and removed lines, untracked files included), how many other reviews it holds, and its own review if it has one: id, owner, revision, threads waiting on the user, the user's drafts, and the paths whose change differs from the revision the user last looked at (null before the first look). A thread waits on the user when it is open, accepted or outdated and its latest comment, ignoring refresh's, is not the user's: an agent's finding, or the user's thread an agent answered. Most in need of attention first: waiting threads, drafts, changed paths, having a review, change size. Worktrees with no change and no review are left out unless --all. Repositories and worktrees that cannot be read are listed as skipped with the reason."
+    )]
+    Inbox {
+        /// Another repository, by any directory in it
+        #[arg(long = "repo", value_name = "PATH")]
+        repos: Vec<PathBuf>,
+        /// Include worktrees with no change and no review
+        #[arg(long)]
+        all: bool,
     },
     /// List this worktree's reviews, or every worktree's with --all
     #[command(
@@ -959,13 +992,10 @@ pub(crate) struct ReviewBody {
 pub(crate) struct ReviewTarget {
     /// Uncommitted changes against HEAD
     #[arg(long)]
-    pub worktree: bool,
+    pub uncommitted: bool,
     /// Changes since the merge base with REF, including uncommitted work
     #[arg(long, value_name = "REF")]
     pub base: Option<String>,
-    /// Committed changes from FROM to TO
-    #[arg(long, value_name = "FROM..TO")]
-    pub range: Option<String>,
 }
 
 #[derive(Debug, Args)]

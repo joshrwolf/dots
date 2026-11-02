@@ -26,4 +26,4 @@ Add every PR you create or start working on to the watch list with `dots github 
 - `dots github`: Inspect GitHub CI evidence and PR review threads, and keep a PR watch list. Commands: ci, reviews, watch.
 - `dots task`: Track shared, claimable work for a project across concurrent sessions. Commands: goal, list, ready, show, result-event, events, add, claim, release, update, review, done, hold, drop, reopen, ref, dep.
 - `dots memory`: Read, publish, and search scoped Markdown memory without a service. Commands: scope, read, write, remove, search.
-- `dots review`: Review a repository's changes in threads anchored to exact revisions, across its worktrees. Commands: start, list, show, add, reply, set, draft, discard, submit, mark, unmark, look, refresh, remove.
+- `dots review`: Review a repository's changes in threads anchored to exact revisions, across its worktrees. Commands: start, open, inbox, list, show, add, reply, set, draft, discard, submit, mark, unmark, look, refresh, remove.

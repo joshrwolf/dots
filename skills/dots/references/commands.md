@@ -2191,12 +2191,14 @@ Options:
 
 ```text
 Reviews of a repository's changes. A review pins its target to exact content: a base commit and a head tree, with uncommitted work captured as a tree, so threads refer to bytes reviewers can read with `git show HEAD_TREE:PATH`. Each revision also records a snapshot commit whose tree is its head, so viewers can diff base..snapshot. A thread is an agent finding or a comment: an optional anchor validated against the reviewed diff, optional finding fields, a status, and a conversation whose replies and status changes name their author. Refresh carries threads forward when the change moves. The author `user` is the human reviewing in the viewer: only the user drafts and submits comments, and only the user changes the status of a thread the user started. The user's drafts stay private until submitted; reviewed marks, the revision last looked at and presets serve the viewer. Reviews never post anywhere.
-A review belongs to the worktree that started it: its file lives in that worktree's own Git directory ($(git rev-parse --git-dir)/dots/reviews) and disappears with it. A shared ref (refs/dots/reviews/ID) keeps reviewed content safe from garbage collection and makes ids unique across the repository, so any worktree can show or change any review by id; without an id, commands use this worktree's most recently updated review. remove releases the ref, and the next start or remove releases refs whose review is gone from every worktree. Parallel writers to one review are safe.
+Each worktree has one living review of its branch against its base, which open creates and refreshes; inbox summarises the worktrees of every known repository; start reviews other targets ad hoc. A review belongs to the worktree that holds it: its file lives in that worktree's own Git directory ($(git rev-parse --git-dir)/dots/reviews) and disappears with it. A shared ref (refs/dots/reviews/ID) keeps reviewed content safe from garbage collection and makes ids unique across the repository, so any worktree can show or change any review by id; without an id, commands use this worktree's most recently updated review. remove releases the ref, and the next start or remove releases refs whose review is gone from every worktree. Parallel writers to one review are safe.
 
 Usage: dots review [OPTIONS] <COMMAND>
 
 Commands:
   start    Start a review of one target and print its revision, changed files, and diff command
+  open     Open this worktree's own review, creating or refreshing it, and show it
+  inbox    Summarise the worktrees of every known repository: changes and what their reviews wait on the user for
   list     List this worktree's reviews, or every worktree's with --all
   show     Show a review with its worktree, revisions, threads, changed files, and diff command
   add      Open threads from a JSON file at the current revision; all or none
@@ -2225,15 +2227,15 @@ Options:
 ## dots review start
 
 ```text
-Start a review. Choose exactly one target: --worktree reviews uncommitted changes (tracked and untracked, not ignored) against HEAD; --base REF reviews everything since the merge base of REF and HEAD, including uncommitted work; --range FROM..TO reviews committed changes only. Refuses an empty change. Reviewers read the patch with the returned diff_command and file content with `git show HEAD:PATH` using the review's head tree, not the live working tree.
+Start a review of another target than the worktree's own review (see open), such as an ad hoc pass by agents. Choose exactly one target: --uncommitted reviews uncommitted changes (tracked and untracked, not ignored) against HEAD; --base REF reviews everything since the merge base of REF and HEAD, including uncommitted work. Refuses an empty change. Reviewers read the patch with the returned diff_command and file content with `git show HEAD:PATH` using the review's head tree, not the live working tree.
 
-Usage: dots review start [OPTIONS] <--worktree|--base <REF>|--range <FROM..TO>>
+Usage: dots review start [OPTIONS] <--uncommitted|--base <REF>>
 
 Options:
       --json
           Return JSON instead of readable output
 
-      --worktree
+      --uncommitted
           Uncommitted changes against HEAD
 
       --base <REF>
@@ -2242,14 +2244,70 @@ Options:
       --directory <PATH>
           Working directory for commands that use checkout context
 
-      --range <FROM..TO>
-          Committed changes from FROM to TO
-
       --profile <NAME>
           Name of the profile running the review, recorded as given
 
       --owner <NAME>
           Session told when the user submits comments; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID), otherwise none
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review open
+
+```text
+Open the worktree's own review: its branch through the working tree against its base. There is one per worktree; open creates it on first use and otherwise refreshes it to the working tree as it is now (new commits and edits; threads carry forward as for refresh), then prints what show prints plus an opened record: whether it was created, whether it moved, the threads carried and outdated, and the delta since the previous revision. Run it in the worktree, or name one with --directory. The base is, in order: a base set with --base, kept for later opens and refreshes until --default-base; the branch's upstream when it names another branch (a stacked branch), never the branch's own name on a remote; HEAD itself on the default branch, so only uncommitted changes; otherwise the nearest default-branch candidate among each remote's default branch (refs/remotes/REMOTE/HEAD) and the local main, else master: the one HEAD has the fewest commits beyond, ties preferring upstream, then origin, then other remotes, then the local branch. Each revision's basis records the reference, the reason, and every candidate's distance. An --owner, or the invoking agent session, becomes the review's owner; without one the owner stays. Refuses to create a review of an empty change.
+
+Usage: dots review open [OPTIONS]
+
+Options:
+      --base <REF>
+          Compare against the merge base with REF from now on
+
+      --json
+          Return JSON instead of readable output
+
+      --default-base
+          Drop a base set earlier and use the default rule
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Session told when the user submits comments; defaults to the invoking agent session, otherwise the owner stays
+
+      --drafts
+          Include the user's drafts
+
+      --preset <PRESET>
+          Add a view, as for show
+
+          [possible values: everything, uncommitted, committed]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review inbox
+
+```text
+Summarise worktrees across repositories without creating, refreshing or writing anything. Repositories: the common Git directories bound in the dots project catalog, the current repository, and each --repo. Per worktree: path, branch, HEAD, the base its review would use now with its basis, the working tree's change against it (files, added and removed lines, untracked files included), how many other reviews it holds, and its own review if it has one: id, owner, revision, threads waiting on the user, the user's drafts, and the paths whose change differs from the revision the user last looked at (null before the first look). A thread waits on the user when it is open, accepted or outdated and its latest comment, ignoring refresh's, is not the user's: an agent's finding, or the user's thread an agent answered. Most in need of attention first: waiting threads, drafts, changed paths, having a review, change size. Worktrees with no change and no review are left out unless --all. Repositories and worktrees that cannot be read are listed as skipped with the reason.
+
+Usage: dots review inbox [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --repo <PATH>
+          Another repository, by any directory in it
+
+      --all
+          Include worktrees with no change and no review
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
   -h, --help
           Print help (see a summary with '-h')

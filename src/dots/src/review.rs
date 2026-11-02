@@ -1,12 +1,13 @@
 //! `dots review`: parse requests, call the review store, and present results.
 use std::fmt::Write as _;
 use std::io::Read as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use dots_review::{
-    Anchor, ChangedFile, Draft, FileStatus, NewDraft, NewThread, Overview, Preset, Refreshed,
-    ReviewedFile, Reviews, ShowOptions, Side, Status, Submitted, Summary, TargetSpec, Thread,
+    Anchor, BaseChoice, ChangedFile, Draft, FileStatus, Inbox, NewDraft, NewThread, Overview,
+    Preset, Refreshed, ReviewedFile, Reviews, ShowOptions, Side, Status, Submitted, Summary,
+    TargetSpec, Thread,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -28,6 +29,15 @@ struct Batch {
     reason = "A flat dispatch with one short arm per subcommand"
 )]
 pub(crate) fn run(command: ReviewCommand, directory: &Path, json: bool) -> Result<String> {
+    // The inbox spans repositories, so it runs outside any checkout too.
+    if let ReviewCommand::Inbox { repos, all } = command {
+        let inbox = dots_review::inbox(&repositories(directory, repos)?, all);
+        return Ok(if json {
+            crate::json::render(serde_json::to_value(&inbox)?)
+        } else {
+            render_inbox(&inbox)
+        });
+    }
     let reviews = Reviews::open(directory)?;
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let id = |id: Option<String>| id.map_or_else(|| reviews.latest(), Ok);
@@ -45,6 +55,29 @@ pub(crate) fn run(command: ReviewCommand, directory: &Path, json: bool) -> Resul
                 render_overview(&overview)
             })
         }
+        ReviewCommand::Open {
+            base,
+            default_base,
+            owner,
+            drafts,
+            preset,
+        } => {
+            let base = match (base, default_base) {
+                (Some(reference), _) => BaseChoice::Reference(reference),
+                (None, true) => BaseChoice::Default,
+                (None, false) => BaseChoice::Keep,
+            };
+            let preset = preset.as_deref().map(preset_of).transpose()?;
+            let owner = owner.or_else(crate::agent::session);
+            let overview =
+                reviews.open_worktree(base, owner, ShowOptions { drafts, preset }, now)?;
+            Ok(if json {
+                crate::json::render(serde_json::to_value(&overview)?)
+            } else {
+                render_overview(&overview)
+            })
+        }
+        ReviewCommand::Inbox { .. } => unreachable!("the inbox runs before a checkout is opened"),
         ReviewCommand::List { all, owner, drafts } => {
             let mut summaries = reviews.list(all, drafts)?;
             summaries.retain(|summary| owner.is_none() || summary.owner == owner);
@@ -250,12 +283,86 @@ fn mark(
 }
 
 fn spec(target: ReviewTarget) -> Result<TargetSpec> {
-    Ok(match (target.worktree, target.base, target.range) {
-        (true, None, None) => TargetSpec::Worktree,
-        (false, Some(reference), None) => TargetSpec::Base { reference },
-        (false, None, Some(range)) => TargetSpec::range(&range)?,
-        _ => bail!("choose exactly one of --worktree, --base REF or --range FROM..TO"),
+    Ok(match (target.uncommitted, target.base) {
+        (true, None) => TargetSpec::Uncommitted,
+        (false, Some(reference)) => TargetSpec::Base { reference },
+        _ => bail!("choose exactly one of --uncommitted or --base REF"),
     })
+}
+
+/// The inbox's repositories: those bound in the project catalog, when there
+/// is one, the one containing `directory`, and `extra`.
+fn repositories(directory: &Path, extra: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
+    let mut repositories = Vec::new();
+    if crate::project::catalog_path()?.try_exists()? {
+        for project in crate::project::open()?.registered_projects()? {
+            repositories.extend(project.common_directories);
+        }
+    }
+    // Outside any checkout, the current directory names no repository.
+    if crate::project::common_directory(directory)?.is_some() {
+        repositories.push(directory.to_owned());
+    }
+    repositories.extend(extra);
+    Ok(repositories)
+}
+
+fn render_inbox(inbox: &Inbox) -> String {
+    let mut out = String::new();
+    if inbox.worktrees.is_empty() {
+        out.push_str("No worktrees with changes or reviews.\n");
+    }
+    for entry in &inbox.worktrees {
+        let _ = write!(
+            out,
+            "{}{} · base {} · {} file(s) +{} -{}",
+            entry.path.display(),
+            entry
+                .branch
+                .as_deref()
+                .map(|branch| format!(" ({branch})"))
+                .unwrap_or_default(),
+            entry.basis,
+            entry.diff.files,
+            entry.diff.added,
+            entry.diff.removed
+        );
+        match &entry.review {
+            None => out.push_str(" · no review"),
+            Some(review) => {
+                let _ = write!(out, " · {}", review.id);
+                if !review.waiting.is_empty() {
+                    let _ = write!(out, " · waiting on you: {}", review.waiting.join(", "));
+                }
+                if review.drafts > 0 {
+                    let _ = write!(out, " · {} draft(s)", review.drafts);
+                }
+                match &review.changed_since_looked {
+                    None => out.push_str(" · never looked"),
+                    Some(paths) if !paths.is_empty() => {
+                        let _ = write!(out, " · {} changed since looked", paths.len());
+                    }
+                    Some(_) => {}
+                }
+                if let Some(owner) = &review.owner {
+                    let _ = write!(out, " · owner {owner}");
+                }
+            }
+        }
+        if entry.other_reviews > 0 {
+            let _ = write!(out, " · {} other review(s)", entry.other_reviews);
+        }
+        out.push('\n');
+    }
+    for skipped in &inbox.skipped {
+        let _ = writeln!(
+            out,
+            "Skipped {}: {}",
+            skipped.path.display(),
+            skipped.reason
+        );
+    }
+    out
 }
 
 fn read_body(body: ReviewBody) -> Result<String> {
@@ -344,7 +451,7 @@ fn render_overview(overview: &Overview) -> String {
     let review = &overview.review;
     let revision = review.current();
     let mut out = format!(
-        "{} · {}{}{}\n{}{}\nbase {} · head tree {}{}\n",
+        "{} · {}{}{}\n{}{}\nbase {} · head tree {}\n",
         review.id,
         review.target,
         review
@@ -366,12 +473,24 @@ fn render_overview(overview: &Overview) -> String {
             .unwrap_or_default(),
         revision.base,
         revision.head,
-        if revision.includes_worktree {
-            " (includes uncommitted work)"
-        } else {
-            ""
-        }
     );
+    let _ = writeln!(out, "Base: {}", revision.basis);
+    if let Some(opened) = &overview.opened {
+        if opened.created {
+            out.push_str("Created this worktree's review.\n");
+        } else if opened.changed {
+            let _ = writeln!(
+                out,
+                "Moved to revision {}: {} carried, {} outdated.",
+                review.revisions.len() - 1,
+                opened.carried.len(),
+                opened.outdated.len()
+            );
+            if let Some(delta) = &opened.delta {
+                let _ = writeln!(out, "Delta: {}", delta.diff_command);
+            }
+        }
+    }
     render_files(&mut out, &overview.files);
     let _ = writeln!(out, "Diff: {}", overview.diff_command);
     if review.threads.is_empty() {
