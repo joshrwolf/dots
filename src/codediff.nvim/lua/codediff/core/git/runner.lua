@@ -114,6 +114,16 @@ function M.run_async(args, opts, callback)
   end
 end
 
+-- Run a git command synchronously and return its stdout, or nil on error.
+-- `vim.fn.system` runs no scheduled callbacks while it waits.
+function M.run_sync_output(args)
+  local output = vim.fn.system(vim.list_extend({ "git" }, args))
+  if vim.v.shell_error ~= 0 then
+    return nil
+  end
+  return output
+end
+
 -- Run a git command synchronously.
 -- Returns output lines or nil on error.
 function M.run_sync(args, opts)

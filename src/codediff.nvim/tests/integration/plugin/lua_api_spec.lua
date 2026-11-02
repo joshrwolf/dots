@@ -25,6 +25,7 @@ describe("codediff.api", function()
     repo.write_file("gone.txt", numbered("gone", 30))
     repo.write_file("other.txt", { "other" })
     repo.write_file("kind.txt", { "regular file" })
+    repo.write_bytes("z-crlf.txt", table.concat(numbered("crlf", 10), "\r\n") .. "\r\n")
     base = repo.commit("base")
     local changed = numbered("line", 30)
     changed[25] = "CHANGED 25"
@@ -32,6 +33,9 @@ describe("codediff.api", function()
     repo.write_file("added.txt", numbered("added", 30))
     vim.fn.delete(repo.path("gone.txt"))
     repo.write_file("other.txt", { "other changed" })
+    local crlf = numbered("crlf", 10)
+    crlf[5] = "CHANGED 5"
+    repo.write_bytes("z-crlf.txt", table.concat(crlf, "\r\n") .. "\r\n")
     -- A regular file becomes a symlink: Git reports a type change (T).
     vim.fn.delete(repo.path("kind.txt"))
     assert(vim.uv.fs_symlink("f.txt", repo.path("kind.txt")))
@@ -292,6 +296,36 @@ describe("codediff.api", function()
     assert.equals(session.original_win, vim.api.nvim_get_current_win())
     assert.is_not_nil(lifecycle.get_session(tab), "the session must survive the jumps")
     vim.api.nvim_del_autocmd(redraws)
+  end)
+
+  it("reads CRLF revisions alike whether a jump or CodeDiff loads them", function()
+    local tab = assert(api.open({
+      root = repo.dir,
+      base = base,
+      head = head,
+      files = { { path = "z-crlf.txt", status = "M" }, { path = "f.txt", status = "M" } },
+    }))
+    assert.is_true(vim.wait(5000, function()
+      return require("codediff.ui.refresh").shown(tab)
+    end, 10))
+    show(tab, { path = "f.txt", side = "modified", line = 1 })
+    -- The jump reads the original side synchronously; CodeDiff reads the
+    -- modified side asynchronously.
+    local old = assert(api.revision_buffer(tab, "z-crlf.txt", "original"))
+    assert.is_false(vim.api.nvim_buf_is_loaded(old))
+    -- Nothing cached either, so the jump itself reads the revision.
+    require("codediff.core.git.content").clear_cache()
+    vim.api.nvim_set_current_win(lifecycle.get_session(tab).modified_win)
+    vim.cmd("edit +5 " .. vim.fn.fnameescape(vim.api.nvim_buf_get_name(old)))
+    local session = lifecycle.get_session(tab)
+    assert.is_true(vim.wait(5000, function()
+      return session.panel.data.current_selection.path == "z-crlf.txt" and require("codediff.ui.refresh").shown(tab)
+    end, 10))
+    assert.same(numbered("crlf", 10), vim.api.nvim_buf_get_lines(session.original_bufnr, 0, -1, false))
+    local changes = session.stored_diff_result.changes
+    assert.equals(1, #changes, "only line 5 changes")
+    assert.equals(5, changes[1].original.start_line)
+    assert.equals(1, changes[1].original.end_line - changes[1].original.start_line)
   end)
 
   it("follows :edit +N into an unloaded revision buffer", function()

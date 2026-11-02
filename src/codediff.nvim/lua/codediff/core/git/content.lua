@@ -2,7 +2,7 @@
 local M = {}
 
 local run_git_async = require("codediff.core.git.runner").run_async
-local run_git_sync = require("codediff.core.git.runner").run_sync
+local run_git_sync_output = require("codediff.core.git.runner").run_sync_output
 
 -- LRU Cache for git file content
 -- Stores recently fetched file content to avoid redundant git calls
@@ -78,6 +78,17 @@ function M.clear_cache()
   file_content_cache:clear()
 end
 
+-- File lines from `git show` output, read the same way by both readers:
+-- CRLF line endings become LF (as `vim.system` text mode does), and the final
+-- newline ends the last line rather than starting an empty one.
+local function output_lines(output)
+  local lines = vim.split((output:gsub("\r\n", "\n")), "\n")
+  if lines[#lines] == "" then
+    table.remove(lines, #lines)
+  end
+  return lines
+end
+
 -- Get file content from a specific git revision (async, atomic)
 -- revision: e.g., "HEAD", "HEAD~1", commit hash, branch name, tag
 -- git_root: absolute path to git repository root
@@ -109,10 +120,7 @@ function M.get_file_content(revision, git_root, rel_path, callback)
       return
     end
 
-    local lines = vim.split(output, "\n")
-    if lines[#lines] == "" then
-      table.remove(lines, #lines)
-    end
+    local lines = output_lines(output)
 
     -- Store in cache (only for immutable revisions)
     if not is_mutable then
@@ -134,7 +142,8 @@ function M.get_file_content_sync(revision, git_root, rel_path)
       return cached_lines
     end
   end
-  local lines = run_git_sync({ "-C", git_root, "show", revision .. ":" .. rel_path })
+  local output = run_git_sync_output({ "-C", git_root, "show", revision .. ":" .. rel_path })
+  local lines = output and output_lines(output)
   if lines and not is_mutable then
     file_content_cache:put(revision, git_root, rel_path, lines)
   end
