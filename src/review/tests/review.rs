@@ -2556,4 +2556,27 @@ mod tests {
             "restored with a change counts the change against the base"
         );
     }
+
+    #[test]
+    fn the_inbox_follows_core_filemode_for_untracked_files() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let repo = Repo::new();
+        repo.git(&["config", "core.filemode", "false"]);
+        repo.git(&["switch", "-q", "-c", "feature"]);
+        repo.write("run.sh", "echo run\n");
+        fs::set_permissions(
+            repo.path().join("run.sh"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let id = repo.open(BaseChoice::Keep, None, 1).review.id;
+        repo.reviews().look(&id, None, 2).unwrap();
+
+        let entry = inbox_entry(&repo, repo.path());
+        assert_eq!(
+            entry.review.unwrap().changed_since_looked,
+            Some(Vec::new()),
+            "without core.filemode an executable is stored as 100644, as capture stores it"
+        );
+    }
 }

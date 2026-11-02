@@ -480,6 +480,8 @@ impl Git {
                 ),
             });
         }
+        // As `git add` stores a file new to the index.
+        let executable_bit = regular.is_empty() || self.trusts_executable_bit()?;
         let mut ids = ids.into_iter();
         files
             .iter()
@@ -489,11 +491,26 @@ impl Git {
                     return Ok(blob);
                 }
                 Ok(Blob {
-                    mode: file_mode(&self.toplevel.join(file))?.into(),
+                    mode: file_mode(&self.toplevel.join(file), executable_bit)?.into(),
                     id: ids.next().unwrap_or_default(),
                 })
             })
             .collect()
+    }
+
+    /// Whether Git records files' executable bit: `core.filemode`, true
+    /// unless set false.
+    fn trusts_executable_bit(&self) -> Result<bool> {
+        match self.git(
+            &["config", "--type=bool", "--get", "core.filemode"],
+            SMALL,
+            "read core.filemode",
+        ) {
+            Ok(value) => Ok(utf8(value, "core.filemode")?.trim() != "false"),
+            // Exit status 1 without a message: not set.
+            Err(Error::Git { message, .. }) if message.is_empty() => Ok(true),
+            Err(error) => Err(error),
+        }
     }
 
     /// The blob id of `bytes`, unfiltered, without writing it.
@@ -900,9 +917,13 @@ pub(crate) fn random() -> Result<u64> {
     getrandom::u64().map_err(|error| Error::Invalid(format!("no randomness available: {error}")))
 }
 
-/// The mode Git records for the ordinary file at `path`.
-fn file_mode(path: &Path) -> Result<&'static str> {
+/// The mode Git records for the ordinary file at `path`, new to the index:
+/// 100644 unless `executable_bit` is honoured and set, as `git add` does.
+fn file_mode(path: &Path, executable_bit: bool) -> Result<&'static str> {
     use std::os::unix::fs::PermissionsExt as _;
+    if !executable_bit {
+        return Ok("100644");
+    }
     let metadata = std::fs::metadata(path).map_err(|source| Error::Io {
         operation: "hash files",
         path: path.to_owned(),
