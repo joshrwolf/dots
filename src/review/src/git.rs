@@ -10,6 +10,8 @@ const DEADLINE: Duration = Duration::from_secs(60);
 const SMALL: usize = 1024 * 1024;
 /// Diffs larger than this are refused rather than reviewed partially.
 pub(crate) const DIFF_LIMIT: usize = 32 * 1024 * 1024;
+/// Most bytes of paths passed to one Git command as a pathspec.
+const PATHSPEC_BYTES: usize = 256 * 1024;
 
 /// One checkout: the top level of its working tree and its own Git directory.
 #[derive(Debug)]
@@ -260,9 +262,9 @@ impl Git {
     }
 
     /// `git diff --numstat -z` from `commit` to the working tree's tracked
-    /// files, renames off.
-    pub(crate) fn numstat(&self, commit: &str) -> Result<Vec<u8>> {
-        self.git(
+    /// files among `among`, renames off, refreshing the index's stat cache.
+    pub(crate) fn numstat(&self, commit: &str, among: &[String]) -> Result<Vec<u8>> {
+        self.diff_among(
             &[
                 "diff",
                 "--numstat",
@@ -270,59 +272,17 @@ impl Git {
                 "--no-renames",
                 "--no-ext-diff",
                 commit,
-                "--",
             ],
-            DIFF_LIMIT,
+            among,
             "measure changes",
         )
     }
 
-    /// Untracked paths that are not ignored, every file listed: `git status`
-    /// names untracked directories whole and quickly, and only those are
-    /// listed file by file.
-    pub(crate) fn untracked(&self) -> Result<Vec<String>> {
-        let status = self.git(
-            &[
-                "status",
-                "--porcelain=v2",
-                "-z",
-                "--untracked-files=normal",
-                "--ignore-submodules=all",
-            ],
-            DIFF_LIMIT,
-            "list untracked files",
-        )?;
-        let mut files = Vec::new();
-        let mut directories = Vec::new();
-        for entry in status.split(|byte| *byte == 0) {
-            let Some(path) = entry.strip_prefix(b"? ") else {
-                continue;
-            };
-            let path = String::from_utf8(path.to_vec()).map_err(|_| Error::Git {
-                operation: "list untracked files",
-                message: "path is not UTF-8".into(),
-            })?;
-            if path.ends_with('/') {
-                directories.push(path);
-            } else {
-                files.push(path);
-            }
-        }
-        if !directories.is_empty() {
-            let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z", "--"];
-            args.extend(directories.iter().map(String::as_str));
-            let listed = self.git(&args, DIFF_LIMIT, "list untracked files")?;
-            files.extend(paths(&listed)?);
-        }
-        files.sort();
-        Ok(files)
-    }
-
-    /// Tracked paths whose working-tree content differs from `commit`'s.
-    /// A path of `commit` that is untracked in the working tree counts as
-    /// removed.
-    pub(crate) fn changed_since(&self, commit: &str) -> Result<Vec<String>> {
-        let output = self.git(
+    /// Tracked paths among `among` whose working-tree content differs from
+    /// `commit`'s. A path of `commit` that is untracked in the working tree
+    /// counts as removed.
+    pub(crate) fn changed_since(&self, commit: &str, among: &[String]) -> Result<Vec<String>> {
+        let output = self.diff_among(
             &[
                 "diff",
                 "--name-only",
@@ -330,12 +290,93 @@ impl Git {
                 "--no-renames",
                 "--no-ext-diff",
                 commit,
-                "--",
             ],
-            DIFF_LIMIT,
+            among,
             "compare with the working tree",
         )?;
         paths(&output)
+    }
+
+    /// Run working-tree diff `args` limited to the literal paths `among`:
+    /// without a limit, comparing a commit with the working tree walks the
+    /// whole tree, which takes about a second in a large repository.
+    fn diff_among(
+        &self,
+        args: &[&str],
+        among: &[String],
+        operation: &'static str,
+    ) -> Result<Vec<u8>> {
+        if among.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut full = vec!["--literal-pathspecs"];
+        full.extend_from_slice(args);
+        full.push("--");
+        // Past this size the paths could exceed the argument limit; the
+        // whole tree is then compared.
+        if among.iter().map(String::len).sum::<usize>() <= PATHSPEC_BYTES {
+            full.extend(among.iter().map(String::as_str));
+        }
+        self.git_refreshing(&full, DIFF_LIMIT, operation)
+    }
+
+    /// The working tree's state from one `git status`, refreshing the
+    /// index's stat cache: tracked paths whose index or working-tree content
+    /// differs from HEAD, and untracked paths that are not ignored, every
+    /// file listed. Status names untracked directories whole and quickly, and
+    /// only those are listed file by file.
+    pub(crate) fn status(&self) -> Result<Status> {
+        let status = self.git_refreshing(
+            &[
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--no-renames",
+                "--untracked-files=normal",
+                "--ignore-submodules=all",
+            ],
+            DIFF_LIMIT,
+            "read working tree status",
+        )?;
+        let utf8_path = |path: &[u8]| {
+            String::from_utf8(path.to_vec()).map_err(|_| Error::Git {
+                operation: "read working tree status",
+                message: "path is not UTF-8".into(),
+            })
+        };
+        let mut changed = Vec::new();
+        let mut untracked = Vec::new();
+        let mut directories = Vec::new();
+        for entry in status.split(|byte| *byte == 0) {
+            // Fields before the path: 8 for an ordinary change, 10 for an
+            // unmerged one.
+            let fields = match entry.first() {
+                Some(b'1') => 8,
+                Some(b'u') => 10,
+                Some(b'?') => 1,
+                _ => continue,
+            };
+            let Some(path) = entry.splitn(fields + 1, |byte| *byte == b' ').nth(fields) else {
+                continue;
+            };
+            let path = utf8_path(path)?;
+            if fields != 1 {
+                changed.push(path);
+            } else if path.ends_with('/') {
+                directories.push(path);
+            } else {
+                untracked.push(path);
+            }
+        }
+        if !directories.is_empty() {
+            let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z", "--"];
+            args.extend(directories.iter().map(String::as_str));
+            let listed = self.git(&args, DIFF_LIMIT, "list untracked files")?;
+            untracked.extend(paths(&listed)?);
+        }
+        changed.sort();
+        untracked.sort();
+        Ok(Status { changed, untracked })
     }
 
     /// Paths that differ between two trees.
@@ -636,6 +677,34 @@ impl Git {
     fn git(&self, args: &[&str], limit: usize, operation: &'static str) -> Result<Vec<u8>> {
         run(&self.toplevel, args, &[], limit, operation)
     }
+
+    /// As [`Self::git`], letting Git refresh the index's cached file stats
+    /// on disk as a plain `git status` does (skipped while another process
+    /// holds the index lock). Without it, a worktree whose cache is stale is
+    /// rehashed on every read.
+    fn git_refreshing(
+        &self,
+        args: &[&str],
+        limit: usize,
+        operation: &'static str,
+    ) -> Result<Vec<u8>> {
+        run(
+            &self.toplevel,
+            args,
+            &[("GIT_OPTIONAL_LOCKS", OsStr::new("1"))],
+            limit,
+            operation,
+        )
+    }
+}
+
+/// What `git status` reports of a working tree against HEAD.
+#[derive(Debug)]
+pub(crate) struct Status {
+    /// Tracked paths changed in the index or the working tree.
+    pub(crate) changed: Vec<String>,
+    /// Untracked files that are not ignored.
+    pub(crate) untracked: Vec<String>,
 }
 
 /// One worktree as `git worktree list` names it.

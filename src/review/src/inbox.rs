@@ -1,11 +1,12 @@
 //! The worktrees of many repositories at a glance: each one's change against
 //! its base and what its review waits on the user for.
 //!
-//! The inbox reads and never writes: it creates and refreshes no review,
-//! captures no working tree, takes no lock, and runs Git with optional locks
-//! off, so the index is not refreshed on disk either. Its signals therefore
-//! describe the working tree as it is now, while a review's threads stay at
-//! the review's current revision until something opens or refreshes it.
+//! The inbox writes no review and no ref: it creates and refreshes no review
+//! and captures no working tree. Like a plain `git status`, it lets Git
+//! refresh each index's cached file stats, which changes no content. Its
+//! signals therefore describe the working tree as it is now, while a
+//! review's threads stay at the review's current revision until something
+//! opens or refreshes it.
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -14,9 +15,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::Serialize;
 
 use crate::base::Refs;
-use crate::git::{Git, Listed};
+use crate::git::{Git, Listed, Status};
 use crate::store::Store;
-use crate::{Basis, Error, Result, Review, SCHEMA, TargetSpec};
+use crate::{Basis, Error, Result, Review, Revision, SCHEMA, TargetSpec};
 
 /// Many worktrees' changes and reviews.
 #[derive(Debug, Serialize)]
@@ -172,7 +173,7 @@ fn repository(common: &Path) -> Result<Option<(Refs, Vec<Listed>)>> {
 fn parallel<J: Sync, T: Send>(jobs: &[J], work: impl Fn(&J) -> T + Sync) -> Vec<T> {
     let threads = std::thread::available_parallelism()
         .map_or(4, usize::from)
-        .clamp(1, 4)
+        .clamp(1, 8)
         .min(jobs.len().max(1));
     let next = AtomicUsize::new(0);
     let mut results: Vec<(usize, T)> = std::thread::scope(|scope| {
@@ -231,11 +232,18 @@ fn entry(common: &Path, refs: &Refs, listed: &Listed) -> Result<InboxEntry> {
         _ => None,
     };
     let chosen = refs.choose(&git, head, listed.branch.as_deref(), kept)?;
-    let untracked = git.untracked()?;
-    let (diff, changed) = measure(&git, &chosen.base, &untracked)?;
+    let status = git.status()?;
+    let (diff, changed) = measure(&git, &chosen.base, head, &status)?;
     let review = match own {
         None => None,
-        Some(review) => Some(signals(&git, &review, &chosen.base, &untracked, &changed)?),
+        Some(review) => Some(signals(
+            &git,
+            &review,
+            &chosen.base,
+            head,
+            &status,
+            &changed,
+        )?),
     };
     Ok(InboxEntry {
         repository: common.to_owned(),
@@ -250,11 +258,17 @@ fn entry(common: &Path, refs: &Refs, listed: &Listed) -> Result<InboxEntry> {
     })
 }
 
-/// The working tree's change against `base`, and the paths it changes.
-fn measure(git: &Git, base: &str, untracked: &[String]) -> Result<(DiffSize, BTreeSet<String>)> {
+/// The working tree, in `status` on HEAD commit `head`, against `base`:
+/// its change and the paths it changes.
+fn measure(
+    git: &Git,
+    base: &str,
+    head: &str,
+    status: &Status,
+) -> Result<(DiffSize, BTreeSet<String>)> {
     let mut size = DiffSize::default();
     let mut changed = BTreeSet::new();
-    let numstat = git.numstat(base)?;
+    let numstat = git.numstat(base, &candidates(git, base, head, status)?)?;
     for record in numstat.split(|byte| *byte == 0) {
         let Ok(record) = std::str::from_utf8(record) else {
             continue;
@@ -270,7 +284,7 @@ fn measure(git: &Git, base: &str, untracked: &[String]) -> Result<(DiffSize, BTr
         size.removed += removed.parse::<u64>().unwrap_or(0);
         changed.insert(path.to_owned());
     }
-    for path in untracked {
+    for path in &status.untracked {
         size.added += lines(&git.toplevel.join(path));
         changed.insert(path.clone());
     }
@@ -303,13 +317,14 @@ fn lines(path: &Path) -> u64 {
     u64::from(crate::line_count(&bytes))
 }
 
-/// What `review` waits on the user for, against the working tree whose
-/// change from `base` touches `changed`, `untracked` among them.
+/// What `review` waits on the user for, against the working tree in
+/// `status` on HEAD commit `head`, whose change from `base` touches `changed`.
 fn signals(
     git: &Git,
     review: &Review,
     base: &str,
-    untracked: &[String],
+    head: &str,
+    status: &Status,
     changed: &BTreeSet<String>,
 ) -> Result<ReviewSignals> {
     let changed_since_looked = match &review.looked {
@@ -321,15 +336,7 @@ fn signals(
                     review.id
                 ))
             })?;
-            Some(since(
-                git,
-                &revision.snapshot,
-                &revision.head,
-                &revision.base,
-                base,
-                untracked,
-                changed,
-            )?)
+            Some(since(git, revision, base, head, status, changed)?)
         }
     };
     Ok(ReviewSignals {
@@ -348,52 +355,67 @@ fn signals(
     })
 }
 
-/// Paths whose change differs between the revision the user looked at
-/// (pinned by `snapshot`, whose tree is `head`, against `looked_base`) and
-/// the working tree against `base`: the working tree's content differs from
-/// the looked-at head, or the base moved under a path the change touches.
+/// Paths whose change differs between `looked`, the revision the user looked
+/// at, and the working tree in `status` on HEAD commit `current` against `base`: the
+/// working tree's content differs from the looked-at head, or the base moved
+/// under a path the change touches.
 fn since(
     git: &Git,
-    snapshot: &str,
-    head: &str,
-    looked_base: &str,
+    looked: &Revision,
     base: &str,
-    untracked: &[String],
+    current: &str,
+    status: &Status,
     changed: &BTreeSet<String>,
 ) -> Result<Vec<String>> {
+    let untracked = &status.untracked;
     let untracked_set: BTreeSet<&str> = untracked.iter().map(String::as_str).collect();
     // Untracked files show as removed against the snapshot; they are
     // compared by content below.
     let mut paths: BTreeSet<String> = git
-        .changed_since(snapshot)?
+        .changed_since(
+            &looked.snapshot,
+            &candidates(git, &looked.snapshot, current, status)?,
+        )?
         .into_iter()
         .filter(|path| !untracked_set.contains(path.as_str()))
         .collect();
     if !untracked.is_empty() {
-        let looked: BTreeMap<String, String> = git.blobs(head, untracked)?;
+        let then: BTreeMap<String, String> = git.blobs(&looked.head, untracked)?;
         let present: Vec<String> = untracked
             .iter()
-            .filter(|path| looked.contains_key(*path))
+            .filter(|path| then.contains_key(*path))
             .cloned()
             .collect();
         let hashes = git.hash_files(&present)?;
         for path in untracked {
-            if !looked.contains_key(path) {
+            if !then.contains_key(path) {
                 paths.insert(path.clone());
             }
         }
         for (path, hash) in present.iter().zip(hashes) {
-            if looked.get(path) != Some(&hash) {
+            if then.get(path) != Some(&hash) {
                 paths.insert(path.clone());
             }
         }
     }
-    if looked_base != base {
+    if looked.base != base {
         paths.extend(
-            git.changed_between(looked_base, base)?
+            git.changed_between(&looked.base, base)?
                 .into_iter()
                 .filter(|path| changed.contains(path)),
         );
+    }
+    Ok(paths.into_iter().collect())
+}
+
+/// The tracked paths whose content can differ between commit `from` and the
+/// working tree in `status` on HEAD commit `head`: those `from` and HEAD
+/// differ in, and those changed since HEAD. Diffs limited to them skip
+/// walking the whole tree.
+fn candidates(git: &Git, from: &str, head: &str, status: &Status) -> Result<Vec<String>> {
+    let mut paths: BTreeSet<String> = status.changed.iter().cloned().collect();
+    if from != head {
+        paths.extend(git.changed_between(from, head)?);
     }
     Ok(paths.into_iter().collect())
 }

@@ -2412,18 +2412,22 @@ mod tests {
         assert!(everything.skipped.is_empty());
     }
 
-    /// Every file under `roots` with its size and modification time, and the
-    /// refs of each repository.
+    /// Every file under `roots` with its size and modification time, except
+    /// the indexes whose cached file stats Git may refresh. Directories count
+    /// by their entries: Git's index lock file changes their times.
     fn state(roots: &[&Path]) -> Vec<String> {
         fn walk(path: &Path, out: &mut Vec<String>) {
             let metadata = fs::symlink_metadata(path).unwrap();
-            out.push(format!(
-                "{} {} {:?}",
-                path.display(),
-                metadata.len(),
-                metadata.modified().unwrap()
-            ));
+            if !metadata.is_dir() && path.file_name().is_some_and(|name| name != "index") {
+                out.push(format!(
+                    "{} {} {:?}",
+                    path.display(),
+                    metadata.len(),
+                    metadata.modified().unwrap()
+                ));
+            }
             if metadata.is_dir() {
+                out.push(path.display().to_string());
                 let mut entries: Vec<_> = fs::read_dir(path)
                     .unwrap()
                     .map(|entry| entry.unwrap().path())
@@ -2447,6 +2451,10 @@ mod tests {
         let one_linked = fleet.one.path().with_extension("linked");
         let two_linked = fleet.two.path().with_extension("linked");
         let roots = [fleet.one.path(), &one_linked, fleet.two.path(), &two_linked];
+        // Rewriting a tracked file with its own content leaves its index stats stale, which
+        // the inbox may refresh; that is not a write this test counts.
+        let file = one_linked.join("src/lib.rs");
+        fs::write(&file, fs::read(&file).unwrap()).unwrap();
         let before = state(&roots);
         let refs = (
             fleet.one.git(&["for-each-ref"]),
