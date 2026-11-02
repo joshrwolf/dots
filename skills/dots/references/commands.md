@@ -2190,7 +2190,7 @@ Options:
 ## dots review
 
 ```text
-Reviews of a repository's changes. A review pins its target to exact content: a base commit and a head tree, with uncommitted work captured as a tree, so threads refer to bytes reviewers can read with `git show HEAD_TREE:PATH`. Each revision also records a snapshot commit whose tree is its head, so viewers can diff base..snapshot. A thread is an agent finding or a comment: an optional anchor validated against the reviewed diff, optional finding fields, a status, and a conversation whose replies and status changes name their author. Refresh carries threads forward when the change moves. Reviews never post anywhere.
+Reviews of a repository's changes. A review pins its target to exact content: a base commit and a head tree, with uncommitted work captured as a tree, so threads refer to bytes reviewers can read with `git show HEAD_TREE:PATH`. Each revision also records a snapshot commit whose tree is its head, so viewers can diff base..snapshot. A thread is an agent finding or a comment: an optional anchor validated against the reviewed diff, optional finding fields, a status, and a conversation whose replies and status changes name their author. Refresh carries threads forward when the change moves. The author `user` is the human reviewing in the viewer: only the user drafts and submits comments, and only the user changes the status of a thread the user started. The user's drafts stay private until submitted; reviewed marks, the revision last looked at and presets serve the viewer. Reviews never post anywhere.
 A review belongs to the worktree that started it: its file lives in that worktree's own Git directory ($(git rev-parse --git-dir)/dots/reviews) and disappears with it. A shared ref (refs/dots/reviews/ID) keeps reviewed content safe from garbage collection and makes ids unique across the repository, so any worktree can show or change any review by id; without an id, commands use this worktree's most recently updated review. remove releases the ref, and the next start or remove releases refs whose review is gone from every worktree. Parallel writers to one review are safe.
 
 Usage: dots review [OPTIONS] <COMMAND>
@@ -2202,6 +2202,12 @@ Commands:
   add      Open threads from a JSON file at the current revision; all or none
   reply    Reply to a thread without changing its status
   set      Change a thread's status: open, accepted, dismissed, fixed or posted
+  draft    Record a draft of the user's: a new thread, or a reply with --thread
+  discard  Drop one of the user's drafts, or all of them
+  submit   Publish every draft of the user's at once, with an optional summary
+  mark     Mark a changed file reviewed until its change differs
+  unmark   Clear a file's reviewed mark
+  look     Record that the user looked at the current revision
   refresh  Re-resolve the target in the review's worktree; carry unchanged threads forward, mark changed ones outdated
   remove   Delete a review and release its pinned content
 
@@ -2243,7 +2249,7 @@ Options:
           Name of the profile running the review, recorded as given
 
       --owner <NAME>
-          Session told about the user's replies; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID), otherwise none
+          Session told when the user submits comments; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID), otherwise none
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2252,7 +2258,7 @@ Options:
 ## dots review list
 
 ```text
-List reviews, oldest first: this worktree's, or with --all those of every worktree of the repository. Each entry carries its owner (the session that started it, or null), worktree (path and branch at start), review file, current revision and thread counts by status.
+List reviews, oldest first: this worktree's, or with --all those of every worktree of the repository. Each entry carries its owner (the session that started it, or null), worktree (path and branch at start), review file, current revision and thread counts by status; with --drafts, the number of the user's drafts.
 
 Usage: dots review list [OPTIONS]
 
@@ -2269,6 +2275,9 @@ Options:
       --owner <NAME>
           Only reviews owned by this session, such as pi-<id>
 
+      --drafts
+          Count the user's drafts
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -2276,7 +2285,7 @@ Options:
 ## dots review show
 
 ```text
-Show a review: its file, worktree, revisions (each with base, head tree and snapshot, the commit whose tree is that head, so base..snapshot is the reviewed diff), threads with their conversations, the current revision's changed files, and the command that reads its patch. Patches take attributes from the reviewed tree, never from the calling worktree, so they read the same everywhere. ID defaults to this worktree's most recently updated review.
+Show a review: its file, worktree, revisions (each with base, head tree and snapshot, the commit whose tree is that head, so base..snapshot is the reviewed diff), threads with their conversations, the user's submissions, reviewed marks and last-looked revision, the current revision's changed files (each with status, line counts, whether the user marked that exact change reviewed, and whether it changed since the revision the user last looked at), and the command that reads its patch. Patches take attributes from the reviewed tree, never from the calling worktree, so they read the same everywhere. The user's drafts are private until submitted: --drafts includes them. --preset adds a view for the viewer: the commits its sides show, the paths it diffs, the presets with changes at this revision, and where each anchor of the current revision falls in its line numbers (null where it does not show). ID defaults to this worktree's most recently updated review.
 
 Usage: dots review show [OPTIONS] [ID]
 
@@ -2285,11 +2294,19 @@ Arguments:
           Review id; defaults to this worktree's most recently updated review
 
 Options:
+      --drafts
+          Include the user's drafts
+
       --json
           Return JSON instead of readable output
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --preset <PRESET>
+          Add a view: everything (base..head), uncommitted (HEAD commit..head) or committed (base..HEAD commit)
+
+          [possible values: everything, uncommitted, committed]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2298,7 +2315,7 @@ Options:
 ## dots review add
 
 ```text
-Open threads at the review's current revision. The file (or - for stdin) holds {"threads": [...]}, at most 200 per batch. Each thread: body (the opening comment; Markdown, at most 16 KiB), author (who wrote it: a model id, an agent, user), optional anchor {path, side: new|old, start, end} whose lines fall within one hunk of the reviewed diff (omit for a review-level thread), and, for findings, optional title (one line, at most 200 characters), severity (critical, important, minor or nit), pre_existing (bool), confidence (0 to 1), angle (lowercase name like correctness) and rule {path, start, end} citing instruction-file lines in the reviewed head. Unknown fields are refused. Any invalid thread rejects the whole batch, listing every error by index. Pass --revision with the index of the revision the anchors were read against (its position in show's revisions, from zero); if the review has moved to another revision since, the whole batch is refused. ID defaults to this worktree's most recently updated review.
+Open threads at the review's current revision. The file (or - for stdin) holds {"threads": [...]}, at most 200 per batch. Each thread: body (the opening comment; Markdown, at most 16 KiB), author (who wrote it: a model id, an agent, user), optional anchor: {path, side: new|old, start, end} whose lines fall within one hunk of the reviewed diff, or {path} alone for the whole of a changed file (omit the anchor for a review-level thread), and, for findings, optional title (one line, at most 200 characters), severity (critical, important, minor or nit), pre_existing (bool), confidence (0 to 1), angle (lowercase name like correctness) and rule {path, start, end} citing instruction-file lines in the reviewed head. Unknown fields are refused. Any invalid thread rejects the whole batch, listing every error by index. Pass --revision with the index of the revision the anchors were read against (its position in show's revisions, from zero); if the review has moved to another revision since, the whole batch is refused. ID defaults to this worktree's most recently updated review.
 
 Usage: dots review add [OPTIONS] --threads <PATH> [ID]
 
@@ -2360,7 +2377,7 @@ Options:
 ## dots review set
 
 ```text
-Change a thread's status, recorded in its conversation as a comment naming the author and new status, with an optional body giving the evidence. Outdated is set only by refresh. A thread left at an earlier revision cannot be reopened (open or accepted); open a new thread instead. ID defaults to this worktree's most recently updated review.
+Change a thread's status, recorded in its conversation as a comment naming the author and new status, with an optional body giving the evidence. Outdated is set only by refresh. Only the user (author user) changes the status of a thread the user started; others reply instead. A thread left at an earlier revision cannot be reopened (open or accepted); open a new thread instead. ID defaults to this worktree's most recently updated review.
 
 Usage: dots review set [OPTIONS] --status <STATUS> --author <NAME> [ID] <THREAD>
 
@@ -2391,10 +2408,192 @@ Options:
           Print help (see a summary with '-h')
 ```
 
+## dots review draft
+
+```text
+Record one of the user's comments as a draft at the current revision: a reply to a submitted thread with --thread, or a new thread with an optional anchor: --path alone for the whole file, with --side, --start and --end for lines. Anchor lines count lines of --preset's view (default everything) and must map to lines of the reviewed diff; lines that differ between that view's side and the review's are refused. Drafts belong to the user, are hidden from show and list unless asked for, and are published only by submit. --revision refuses a review that has moved, as for add. ID defaults to this worktree's most recently updated review.
+
+Usage: dots review draft [OPTIONS] <--body <TEXT>|--body-file <PATH>> [ID]
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --thread <THREAD>
+          Reply to this submitted thread, like t1
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --path <PATH>
+          Anchor a new thread to this changed path
+
+      --side <SIDE>
+          Side the lines count on
+
+          [possible values: new, old]
+
+      --start <N>
+          First line
+
+      --end <N>
+          Last line; defaults to --start
+
+      --preset <PRESET>
+          The view the lines count in
+
+          [default: everything]
+          [possible values: everything, uncommitted, committed]
+
+      --revision <N>
+          Revision index the anchor was read against; refuse the draft if the review has moved
+
+      --body <TEXT>
+          Comment body (Markdown)
+
+      --body-file <PATH>
+          File holding the comment body, or - for stdin
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review discard
+
+```text
+Drop one of the user's drafts, or all of them
+
+Usage: dots review discard [OPTIONS] <--draft <DRAFT>|--all> [ID]
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+Options:
+      --draft <DRAFT>
+          Draft id, like d1
+
+      --json
+          Return JSON instead of readable output
+
+      --all
+          Every draft
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots review submit
+
+```text
+Publish every draft at once, in order: new threads open as the user's, replies join their threads. Records the submission (time, summary, and each published comment), which the owning session is told about. All or none: a new thread whose lines changed since it was drafted refuses the whole submission, listing every such draft; discard it and comment again. A summary alone is a submission too. ID defaults to this worktree's most recently updated review.
+
+Usage: dots review submit [OPTIONS] [ID]
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+Options:
+      --body <TEXT>
+          Summary (Markdown)
+
+      --json
+          Return JSON instead of readable output
+
+      --body-file <PATH>
+          File holding the summary, or - for stdin
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review mark
+
+```text
+Mark a changed file of the current revision reviewed. The mark records the file's change (modes and object ids on both sides), so it holds exactly while the file's change is that change: it lapses by itself when the file changes at a later revision, and holds again if the change returns. ID defaults to this worktree's most recently updated review.
+
+Usage: dots review mark [OPTIONS] [ID] <PATH>
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+  <PATH>
+          Changed path
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots review unmark
+
+```text
+Clear a file's reviewed mark
+
+Usage: dots review unmark [OPTIONS] [ID] <PATH>
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+  <PATH>
+          Changed path
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots review look
+
+```text
+Record the current revision as the one the user last looked at; show then reports, per changed file, whether its change differs from that revision's. ID defaults to this worktree's most recently updated review.
+
+Usage: dots review look [OPTIONS] [ID]
+
+Arguments:
+  [ID]
+          Review id; defaults to this worktree's most recently updated review
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
 ## dots review refresh
 
 ```text
-Re-resolve the review's target in the worktree the review belongs to, whichever worktree runs the command. When the content moved, append a revision; open and accepted threads whose lines are unchanged and still within the new diff move to their new line numbers, and the rest become outdated through a status comment by dots review refresh. Dismissed, fixed and posted threads follow unchanged lines too but are never outdated; one left at an earlier revision cannot be reopened, so open a new thread instead. Whether a thread was fixed is a judgment for reviewers: compare with the returned delta diff_command. Review-level threads always carry forward.
+Re-resolve the review's target in the worktree the review belongs to, whichever worktree runs the command. When the content moved, append a revision; open and accepted threads whose lines are unchanged and still within the new diff move to their new line numbers, and the rest become outdated through a status comment by dots review refresh. Dismissed, fixed and posted threads follow unchanged lines too but are never outdated; one left at an earlier revision cannot be reopened, so open a new thread instead. Whether a thread was fixed is a judgment for reviewers: compare with the returned delta diff_command. Whole-file threads carry forward while their path is still changed; review-level threads always do. The user's drafts carry forward the same way; a draft whose lines changed stays behind and cannot be submitted.
 
 Usage: dots review refresh [OPTIONS] <ID>
 

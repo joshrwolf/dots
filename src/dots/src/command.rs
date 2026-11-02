@@ -747,7 +747,7 @@ pub(crate) enum ReviewCommand {
         /// Name of the profile running the review, recorded as given
         #[arg(long, value_name = "NAME")]
         profile: Option<String>,
-        /// Session told about the user's replies; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID), otherwise none
+        /// Session told when the user submits comments; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID), otherwise none
         #[arg(long, value_name = "NAME")]
         owner: Option<String>,
     },

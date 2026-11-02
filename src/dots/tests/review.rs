@@ -144,4 +144,131 @@ mod tests {
             Vec::<&str>::new()
         );
     }
+
+    fn keys(value: &Value) -> Vec<&str> {
+        value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect()
+    }
+
+    #[test]
+    fn drafts_and_submissions_round_trip_as_json() {
+        let repo = Repo::new();
+        let started = repo.run("linked", None, &["start", "--worktree"]);
+        let id = started["review"]["id"].as_str().unwrap();
+
+        let drafted = repo.run(
+            "checkout",
+            None,
+            &[
+                "draft",
+                id,
+                "--path",
+                "README.md",
+                "--side",
+                "new",
+                "--start",
+                "1",
+                "--body",
+                "Why?",
+            ],
+        );
+        assert_eq!(keys(&drafted), ["draft", "review"]);
+        assert_eq!(
+            drafted["draft"],
+            serde_json::json!({
+                "id": "d1",
+                "thread": null,
+                "revision": 0,
+                "anchor": {"path": "README.md", "side": "new", "start": 1, "end": 1},
+                "body": "Why?",
+                "at": drafted["draft"]["at"],
+            })
+        );
+        let file = repo.run(
+            "checkout",
+            None,
+            &["draft", id, "--path", "README.md", "--body", "Whole file"],
+        );
+        assert_eq!(
+            file["draft"]["anchor"],
+            serde_json::json!({"path": "README.md"})
+        );
+
+        let shown = repo.run("checkout", None, &["show", id]);
+        assert!(shown["review"].get("drafts").is_none(), "{shown}");
+        assert!(shown.get("view").is_none(), "{shown}");
+        let listed = repo.run("checkout", None, &["list", "--all"]);
+        assert!(listed["reviews"][0].get("drafts").is_none(), "{listed}");
+        let listed = repo.run("checkout", None, &["list", "--all", "--drafts"]);
+        assert_eq!(listed["reviews"][0]["drafts"], 2);
+
+        let shown = repo.run(
+            "checkout",
+            None,
+            &["show", id, "--drafts", "--preset", "everything"],
+        );
+        assert_eq!(shown["review"]["drafts"].as_array().unwrap().len(), 2);
+        let view = &shown["view"];
+        assert_eq!(
+            keys(view),
+            ["anchors", "available", "base", "files", "head", "preset"]
+        );
+        assert_eq!(view["preset"], "everything");
+        assert_eq!(
+            view["available"],
+            serde_json::json!(["everything", "uncommitted"])
+        );
+        assert_eq!(
+            view["anchors"],
+            serde_json::json!({
+                "d1": {"path": "README.md", "side": "new", "start": 1, "end": 1},
+                "d2": {"path": "README.md"},
+            })
+        );
+        assert_eq!(
+            keys(&shown["files"][0]),
+            [
+                "added",
+                "binary",
+                "changed_since_looked",
+                "path",
+                "removed",
+                "reviewed",
+                "status"
+            ]
+        );
+
+        let submitted = repo.run("checkout", None, &["submit", id, "--body", "Summary"]);
+        assert_eq!(keys(&submitted), ["review", "submission", "threads"]);
+        assert_eq!(submitted["submission"]["body"], "Summary");
+        assert_eq!(
+            submitted["submission"]["comments"],
+            serde_json::json!([{"thread": "t1", "comment": 0}, {"thread": "t2", "comment": 0}])
+        );
+        let shown = repo.run("checkout", None, &["show", id, "--drafts"]);
+        assert!(shown["review"].get("drafts").is_none(), "{shown}");
+        assert_eq!(
+            shown["review"]["threads"][0]["comments"][0]["author"],
+            "user"
+        );
+    }
+
+    #[test]
+    fn marks_and_looks_round_trip_as_json() {
+        let repo = Repo::new();
+        let started = repo.run("linked", None, &["start", "--worktree"]);
+        let id = started["review"]["id"].as_str().unwrap();
+        let marked = repo.run("checkout", None, &["mark", id, "README.md"]);
+        assert_eq!(keys(&marked), ["file", "review"]);
+        assert_eq!(marked["file"]["reviewed"], true);
+        let unmarked = repo.run("checkout", None, &["unmark", id, "README.md"]);
+        assert_eq!(unmarked["file"]["reviewed"], false);
+        let looked = repo.run("checkout", None, &["look", id]);
+        assert_eq!(keys(&looked), ["looked", "review"]);
+        assert_eq!(looked["looked"]["revision"], 0);
+    }
 }
