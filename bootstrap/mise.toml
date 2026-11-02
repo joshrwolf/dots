@@ -23,6 +23,7 @@ root = "pi"
 
 [dotfile_groups.pi.entries]
 "~/.pi/agent/settings.json/preferences" = { merge = true, permissions = "0600" }
+"~/.pi/agent/web-search.json/preferences" = { merge = true, permissions = "0600" }
 
 [dotfile_groups.worktrunk]
 root = "worktrunk"

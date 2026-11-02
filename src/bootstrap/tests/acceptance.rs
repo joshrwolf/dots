@@ -475,8 +475,23 @@ fn pi_preferences_merge_without_replacing_machine_state() -> Result {
     });
     f.write(&settings, &serde_json::to_string_pretty(&local)?)?;
     f.write(&auth, "{\"fixture\":true}\n")?;
+    let web_search = f.home.join(".pi/agent/web-search.json");
+    f.write(&web_search, "{\"exaApiKey\": \"neutral-key\"}\n")?;
     f.apply(&[], &[])?;
     assert!(!settings.is_symlink(), "Pi must own a writable local file");
+    assert!(
+        !web_search.is_symlink(),
+        "pi-web-access must own a writable local file"
+    );
+    let expected_search: Value = serde_json::from_slice(&fs::read(
+        f.source.join("home/pi/.pi/agent/web-search.json"),
+    )?)?;
+    let configured_search: Value = serde_json::from_slice(&fs::read(&web_search)?)?;
+    assert_eq!(
+        configured_search["searchRouting"],
+        expected_search["searchRouting"]
+    );
+    assert_eq!(configured_search["exaApiKey"], "neutral-key");
     let configured: Value = serde_json::from_slice(&fs::read(&settings)?)?;
     for key in ["theme", "defaultTools", "enabledModels"] {
         assert_eq!(configured[key], expected[key], "deployed preference: {key}");

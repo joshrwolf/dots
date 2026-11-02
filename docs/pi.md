@@ -20,7 +20,10 @@ registering a replacement. Skills use the shared [skill namespace](skills.md).
 ## Preferences
 
 Machine setup merges the [public preferences](../home/pi/.pi/agent/settings.json)
-into `~/.pi/agent/settings.json`, leaving other fields untouched. Credentials,
+into `~/.pi/agent/settings.json` and the [web search routing](../home/pi/.pi/agent/web-search.json)
+into pi-web-access's `~/.pi/agent/web-search.json`, leaving other fields
+untouched. Search tries OpenAI through the Codex login first, whatever the
+active model, and falls back to keyless Exa. API keys, credentials,
 last-selected model/provider, device identity, package registrations and sessions
 stay machine-local.
 
