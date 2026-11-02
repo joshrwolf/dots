@@ -1,6 +1,6 @@
 -- Public API for callers that build on CodeDiff views, such as a review layer.
 -- It knows diffs, files and lines, never what a caller layers on them.
--- Documented in README.md ("Lua API"); covered by tests/integration/plugin/api_module_spec.lua.
+-- Documented in README.md ("Lua API"); covered by tests/integration/plugin/lua_api_spec.lua.
 local M = {}
 
 local navigate = require("codediff.ui.explorer.navigate")
