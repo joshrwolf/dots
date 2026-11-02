@@ -403,7 +403,7 @@ test('the real CLI and file watcher deliver a submission in a linked worktree, n
     run(checkout, 'git', 'worktree', 'add', '-q', linked, '-b', 'slice');
     writeFileSync(path.join(linked, 'a.txt'), 'two\n');
     const started = JSON.parse(
-      execFileSync('dots', ['--json', 'review', 'start', '--worktree'], {
+      execFileSync('dots', ['--json', 'review', 'open'], {
         cwd: linked,
         env: {...env, PI_SESSION_ID: 'real'},
         encoding: 'utf8',
@@ -416,7 +416,7 @@ test('the real CLI and file watcher deliver a submission in a linked worktree, n
       'dots',
       'review',
       'start',
-      '--worktree',
+      '--uncommitted',
       '--owner',
       'pi-someone-else',
     );
