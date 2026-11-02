@@ -37,7 +37,7 @@ end
 function codediff.select(tab, path)
   local panel = require("codediff.ui.lifecycle").get_panel(tab)
   local explorer = panel and panel.name == "explorer" and panel.view
-  local status = explorer and explorer.status_result or {}
+  local status = explorer and panel.data.status_result or {}
   for _, name in ipairs({ "unstaged", "staged" }) do
     for _, file in ipairs(status[name] or {}) do
       if file.path == path then
