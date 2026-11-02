@@ -1,0 +1,6 @@
+line 1
+changed line 2
+line 3
+new line inserted
+line 4
+line 5

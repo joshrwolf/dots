@@ -1,0 +1,6 @@
+CompileFlags:
+  Add:
+    - -DUSE_OPENMP
+    - -fopenmp
+    - -I/usr/lib/gcc/aarch64-linux-gnu/15/include
+  CompilationDatabase: build

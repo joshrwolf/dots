@@ -1,0 +1,5 @@
+LIBRARY vscode_diff
+EXPORTS
+    compute_diff
+    free_lines_diff
+    get_version

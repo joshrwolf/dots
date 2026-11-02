@@ -1,0 +1,13 @@
+function process(data)
+    print(data)
+end
+
+function validate(input)
+    if input == nil then
+        return false, "input is nil"
+    end
+    if type(input) ~= "string" then
+        return false, "not a string"
+    end
+    return #input > 0
+end

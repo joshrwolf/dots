@@ -1,0 +1,19 @@
+-- Block C
+local function gamma()
+    return "c"
+end
+
+-- Block D
+local function delta()
+    return "d"
+end
+
+-- Block A
+local function alpha()
+    return "a"
+end
+
+-- Block B
+local function beta()
+    return "b"
+end

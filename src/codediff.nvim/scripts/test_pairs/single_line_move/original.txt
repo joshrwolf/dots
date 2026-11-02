@@ -1,0 +1,5 @@
+aaa
+local x = 42
+bbb
+ccc
+ddd

@@ -1,0 +1,16 @@
+-- Header comment
+local config = {}
+
+function run()
+    print("running")
+end
+
+function cleanup()
+    print("done")
+end
+
+function setup()
+    config.enabled = true
+    config.debug = false
+    config.timeout = 5000
+end
