@@ -2207,7 +2207,7 @@ Commands:
   submit   Publish every draft of the user's at once, with an optional summary
   mark     Mark a changed file reviewed until its change differs
   unmark   Clear a file's reviewed mark
-  look     Record that the user looked at the current revision
+  look     Record the revision the user looked at
   refresh  Re-resolve the target in the review's worktree; carry unchanged threads forward, mark changed ones outdated
   remove   Delete a review and release its pinned content
 
@@ -2521,7 +2521,7 @@ Options:
 ## dots review mark
 
 ```text
-Mark a changed file of the current revision reviewed. The mark records the file's change (modes and object ids on both sides), so it holds exactly while the file's change is that change: it lapses by itself when the file changes at a later revision, and holds again if the change returns. ID defaults to this worktree's most recently updated review.
+Mark a changed file of the current revision reviewed; with --revision, refuse if the review has moved past the revision the user saw. The mark records the file's change (modes and object ids on both sides), so it holds exactly while the file's change is that change: it lapses by itself when the file changes at a later revision, and holds again if the change returns. ID defaults to this worktree's most recently updated review.
 
 Usage: dots review mark [OPTIONS] [ID] <PATH>
 
@@ -2535,6 +2535,9 @@ Arguments:
 Options:
       --json
           Return JSON instead of readable output
+
+      --revision <N>
+          Revision index the user saw; refuse if the review has moved
 
       --directory <PATH>
           Working directory for commands that use checkout context
@@ -2561,6 +2564,9 @@ Options:
       --json
           Return JSON instead of readable output
 
+      --revision <N>
+          Revision index the user saw; refuse if the review has moved
+
       --directory <PATH>
           Working directory for commands that use checkout context
 
@@ -2571,7 +2577,7 @@ Options:
 ## dots review look
 
 ```text
-Record the current revision as the one the user last looked at; show then reports, per changed file, whether its change differs from that revision's. ID defaults to this worktree's most recently updated review.
+Record the revision the user looked at (--revision, default the current one) as the one last looked at; show then reports, per changed file, whether its change differs from that revision's. A look never moves back to an earlier revision than one already recorded. ID defaults to this worktree's most recently updated review.
 
 Usage: dots review look [OPTIONS] [ID]
 
@@ -2583,6 +2589,9 @@ Options:
       --json
           Return JSON instead of readable output
 
+      --revision <N>
+          Revision index the user saw; defaults to the current one
+
       --directory <PATH>
           Working directory for commands that use checkout context
 
@@ -2593,7 +2602,7 @@ Options:
 ## dots review refresh
 
 ```text
-Re-resolve the review's target in the worktree the review belongs to, whichever worktree runs the command. When the content moved, append a revision; open and accepted threads whose lines are unchanged and still within the new diff move to their new line numbers, and the rest become outdated through a status comment by dots review refresh. Dismissed, fixed and posted threads follow unchanged lines too but are never outdated; one left at an earlier revision cannot be reopened, so open a new thread instead. Whether a thread was fixed is a judgment for reviewers: compare with the returned delta diff_command. Whole-file threads carry forward while their path is still changed; review-level threads always do. The user's drafts carry forward the same way; a draft whose lines changed stays behind and cannot be submitted.
+Re-resolve the review's target in the worktree the review belongs to, whichever worktree runs the command. When the content or its HEAD commit moved, append a revision; open and accepted threads whose lines are unchanged and still within the new diff move to their new line numbers, and the rest become outdated through a status comment by dots review refresh. Dismissed, fixed and posted threads follow unchanged lines too but are never outdated; one left at an earlier revision cannot be reopened, so open a new thread instead. Whether a thread was fixed is a judgment for reviewers: compare with the returned delta diff_command. Whole-file threads carry forward while their path is still changed; review-level threads always do. The user's drafts carry forward the same way; a draft whose lines changed stays behind and cannot be submitted.
 
 Usage: dots review refresh [OPTIONS] <ID>
 

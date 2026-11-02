@@ -858,7 +858,7 @@ pub(crate) enum ReviewCommand {
     },
     /// Mark a changed file reviewed until its change differs
     #[command(
-        long_about = "Mark a changed file of the current revision reviewed. The mark records the file's change (modes and object ids on both sides), so it holds exactly while the file's change is that change: it lapses by itself when the file changes at a later revision, and holds again if the change returns. ID defaults to this worktree's most recently updated review.",
+        long_about = "Mark a changed file of the current revision reviewed; with --revision, refuse if the review has moved past the revision the user saw. The mark records the file's change (modes and object ids on both sides), so it holds exactly while the file's change is that change: it lapses by itself when the file changes at a later revision, and holds again if the change returns. ID defaults to this worktree's most recently updated review.",
         allow_missing_positional = true
     )]
     Mark {
@@ -866,6 +866,9 @@ pub(crate) enum ReviewCommand {
         id: Option<String>,
         /// Changed path
         path: String,
+        /// Revision index the user saw; refuse if the review has moved
+        #[arg(long, value_name = "N")]
+        revision: Option<usize>,
     },
     /// Clear a file's reviewed mark
     #[command(allow_missing_positional = true)]
@@ -874,18 +877,24 @@ pub(crate) enum ReviewCommand {
         id: Option<String>,
         /// Changed path
         path: String,
+        /// Revision index the user saw; refuse if the review has moved
+        #[arg(long, value_name = "N")]
+        revision: Option<usize>,
     },
-    /// Record that the user looked at the current revision
+    /// Record the revision the user looked at
     #[command(
-        long_about = "Record the current revision as the one the user last looked at; show then reports, per changed file, whether its change differs from that revision's. ID defaults to this worktree's most recently updated review."
+        long_about = "Record the revision the user looked at (--revision, default the current one) as the one last looked at; show then reports, per changed file, whether its change differs from that revision's. A look never moves back to an earlier revision than one already recorded. ID defaults to this worktree's most recently updated review."
     )]
     Look {
         /// Review id; defaults to this worktree's most recently updated review
         id: Option<String>,
+        /// Revision index the user saw; defaults to the current one
+        #[arg(long, value_name = "N")]
+        revision: Option<usize>,
     },
     /// Re-resolve the target in the review's worktree; carry unchanged threads forward, mark changed ones outdated
     #[command(
-        long_about = "Re-resolve the review's target in the worktree the review belongs to, whichever worktree runs the command. When the content moved, append a revision; open and accepted threads whose lines are unchanged and still within the new diff move to their new line numbers, and the rest become outdated through a status comment by dots review refresh. Dismissed, fixed and posted threads follow unchanged lines too but are never outdated; one left at an earlier revision cannot be reopened, so open a new thread instead. Whether a thread was fixed is a judgment for reviewers: compare with the returned delta diff_command. Whole-file threads carry forward while their path is still changed; review-level threads always do. The user's drafts carry forward the same way; a draft whose lines changed stays behind and cannot be submitted."
+        long_about = "Re-resolve the review's target in the worktree the review belongs to, whichever worktree runs the command. When the content or its HEAD commit moved, append a revision; open and accepted threads whose lines are unchanged and still within the new diff move to their new line numbers, and the rest become outdated through a status comment by dots review refresh. Dismissed, fixed and posted threads follow unchanged lines too but are never outdated; one left at an earlier revision cannot be reopened, so open a new thread instead. Whether a thread was fixed is a judgment for reviewers: compare with the returned delta diff_command. Whole-file threads carry forward while their path is still changed; review-level threads always do. The user's drafts carry forward the same way; a draft whose lines changed stays behind and cannot be submitted."
     )]
     Refresh { id: String },
     /// Delete a review and release its pinned content

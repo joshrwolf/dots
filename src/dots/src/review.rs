@@ -152,13 +152,22 @@ pub(crate) fn run(command: ReviewCommand, directory: &Path, json: bool) -> Resul
                 render_submitted(&review, &submitted)
             })
         }
-        ReviewCommand::Mark { id: review, path } => mark(&reviews, &id(review)?, &path, true, json),
-        ReviewCommand::Unmark { id: review, path } => {
-            mark(&reviews, &id(review)?, &path, false, json)
-        }
-        ReviewCommand::Look { id: review } => {
+        ReviewCommand::Mark {
+            id: review,
+            path,
+            revision,
+        } => mark(&reviews, &id(review)?, &path, true, revision, json),
+        ReviewCommand::Unmark {
+            id: review,
+            path,
+            revision,
+        } => mark(&reviews, &id(review)?, &path, false, revision, json),
+        ReviewCommand::Look {
+            id: review,
+            revision,
+        } => {
             let review = id(review)?;
-            let looked = reviews.look(&review, now)?;
+            let looked = reviews.look(&review, revision, now)?;
             Ok(if json {
                 crate::json::render(json!({ "review": review, "looked": looked }))
             } else {
@@ -222,8 +231,15 @@ fn preset_of(name: &str) -> Result<Preset> {
     Preset::parse(name).context("preset parser admitted an unknown preset")
 }
 
-fn mark(reviews: &Reviews, review: &str, path: &str, reviewed: bool, json: bool) -> Result<String> {
-    let file = reviews.mark(review, path, reviewed)?;
+fn mark(
+    reviews: &Reviews,
+    review: &str,
+    path: &str,
+    reviewed: bool,
+    revision: Option<usize>,
+    json: bool,
+) -> Result<String> {
+    let file = reviews.mark(review, path, reviewed, revision)?;
     Ok(if json {
         crate::json::render(json!({ "review": review, "file": file }))
     } else {

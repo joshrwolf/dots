@@ -63,7 +63,7 @@ pub enum Error {
     )]
     UserDecides { thread: String },
     #[error(
-        "review {id} is at revision {current}, not revision {expected} the threads were anchored against; nothing was recorded. Read the current revision with dots review show and anchor against it"
+        "review {id} is at revision {current}, not revision {expected} that was read; nothing was recorded. Read the current revision with dots review show and act on it"
     )]
     Moved {
         id: String,
@@ -444,14 +444,7 @@ impl Reviews {
                     "review {id} already holds {DRAFT_LIMIT} drafts; submit or discard some"
                 )));
             }
-            let at = review.revisions.len() - 1;
-            if let Some(expected) = expected.filter(|expected| *expected != at) {
-                return Err(Error::Moved {
-                    id: id.to_owned(),
-                    expected,
-                    current: at,
-                });
-            }
+            let at = moved(id, review, expected)?;
             if let Some(thread) = &draft.thread
                 && !review.threads.iter().any(|entry| &entry.id == thread)
             {
@@ -608,9 +601,19 @@ impl Reviews {
     }
 
     /// Mark changed file `path` reviewed as it now stands, or clear its mark.
-    pub fn mark(&self, id: &str, path: &str, reviewed: bool) -> Result<ReviewedFile> {
+    /// With `expected`, the revision index the user saw, a review that has
+    /// moved since refuses with [`Error::Moved`] rather than mark bytes the
+    /// user has not seen.
+    pub fn mark(
+        &self,
+        id: &str,
+        path: &str,
+        reviewed: bool,
+        expected: Option<usize>,
+    ) -> Result<ReviewedFile> {
         let store = self.locate(id)?;
         store.update(id, |review, _| {
+            moved(id, review, expected)?;
             let revision = review.current();
             let change = Change::read(&self.git, &revision.base, &revision.head, 3)?;
             let Some(entry) = change.raw.get(path) else {
@@ -633,13 +636,26 @@ impl Reviews {
         })
     }
 
-    /// Record that the user looked at the current revision.
-    pub fn look(&self, id: &str, now: i64) -> Result<Looked> {
+    /// Record that the user looked at revision `seen` (default: the current
+    /// one). A look never moves back: an older view closing after a newer
+    /// one was seen keeps the newer look, which is returned.
+    pub fn look(&self, id: &str, seen: Option<usize>, now: i64) -> Result<Looked> {
         self.locate(id)?.update(id, |review, _| {
-            let looked = Looked {
-                revision: review.revisions.len() - 1,
-                at: now,
-            };
+            let current = review.revisions.len() - 1;
+            let revision = seen.unwrap_or(current);
+            if revision > current {
+                return Err(Error::Invalid(format!(
+                    "review {id} has no revision {revision}; its current revision is {current}"
+                )));
+            }
+            if let Some(looked) = review
+                .looked
+                .as_ref()
+                .filter(|looked| looked.revision > revision)
+            {
+                return Ok(looked.clone());
+            }
+            let looked = Looked { revision, at: now };
             review.looked = Some(looked.clone());
             Ok(looked)
         })
@@ -670,14 +686,7 @@ impl Reviews {
                     "review {id} would exceed {REVIEW_LIMIT} threads"
                 )));
             }
-            let at = review.revisions.len() - 1;
-            if let Some(expected) = expected.filter(|expected| *expected != at) {
-                return Err(Error::Moved {
-                    id: id.to_owned(),
-                    expected,
-                    current: at,
-                });
-            }
+            let at = moved(id, review, expected)?;
             let revision = review.current().clone();
             let change = Change::read(&self.git, &revision.base, &revision.head, 3)?;
             let mut rejections = Vec::new();
@@ -775,7 +784,12 @@ impl Reviews {
             let git = worktree_git(review, &store)?;
             let previous = review.current().clone();
             let next = resolve(&git, store.directory(), &review.target)?;
-            if next.base == previous.base && next.head == previous.head {
+            // The HEAD commit bounds the presets, so committing the captured
+            // bytes as they are is a new revision too.
+            if next.base == previous.base
+                && next.head == previous.head
+                && next.head_commit == previous.head_commit
+            {
                 let change = Change::read(&git, &previous.base, &previous.head, 3)?;
                 return Ok(Refreshed {
                     review: public(review.clone()),
@@ -1051,6 +1065,20 @@ const BODY_LIMIT: usize = 16 * 1024;
 /// Git for the worktree that owns `review`, whose files are in `store`. The
 /// worktree is found where the review recorded it and must still be the
 /// checkout whose Git directory holds the store.
+/// The current revision index of `review`, or [`Error::Moved`] when it is not
+/// `expected`, the revision a caller read.
+fn moved(id: &str, review: &Review, expected: Option<usize>) -> Result<usize> {
+    let current = review.revisions.len() - 1;
+    match expected {
+        Some(expected) if expected != current => Err(Error::Moved {
+            id: id.to_owned(),
+            expected,
+            current,
+        }),
+        _ => Ok(current),
+    }
+}
+
 fn worktree_git(review: &Review, store: &Store) -> Result<Git> {
     let gone = || {
         Error::Invalid(format!(

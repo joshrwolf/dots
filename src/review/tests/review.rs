@@ -1439,7 +1439,7 @@ mod tests {
                 .map(|file| (file.change.path, file.reviewed))
                 .collect()
         };
-        let marked = reviews.mark(&id, "src/lib.rs", true).unwrap();
+        let marked = reviews.mark(&id, "src/lib.rs", true, None).unwrap();
         assert!(marked.reviewed && marked.change.path == "src/lib.rs");
         assert_eq!(marked.change.status, FileStatus::Modified);
         assert_eq!(
@@ -1447,7 +1447,7 @@ mod tests {
             [("notes.md".into(), false), ("src/lib.rs".into(), true)]
         );
         assert!(matches!(
-            reviews.mark(&id, "AGENTS.md", true),
+            reviews.mark(&id, "AGENTS.md", true, None),
             Err(Error::Invalid(_))
         ));
 
@@ -1465,7 +1465,12 @@ mod tests {
         reviews.refresh(&id, 4).unwrap();
         assert_eq!(state()[1], ("src/lib.rs".into(), true));
 
-        assert!(!reviews.mark(&id, "src/lib.rs", false).unwrap().reviewed);
+        assert!(
+            !reviews
+                .mark(&id, "src/lib.rs", false, None)
+                .unwrap()
+                .reviewed
+        );
         assert_eq!(state()[1], ("src/lib.rs".into(), false));
     }
 
@@ -1494,7 +1499,10 @@ mod tests {
             [("notes.md".into(), false), ("src/lib.rs".into(), false)],
             "never looked"
         );
-        assert_eq!(reviews.look(&id, 2).unwrap(), Looked { revision: 0, at: 2 });
+        assert_eq!(
+            reviews.look(&id, None, 2).unwrap(),
+            Looked { revision: 0, at: 2 }
+        );
         repo.write("notes.md", "newer\n");
         repo.write("added.txt", "added\n");
         reviews.refresh(&id, 3).unwrap();
@@ -1508,7 +1516,7 @@ mod tests {
         );
         let review = reviews.show(&id, ShowOptions::default()).unwrap().review;
         assert_eq!(review.updated_at, 3, "looking is not a visible change");
-        reviews.look(&id, 4).unwrap();
+        reviews.look(&id, None, 4).unwrap();
         assert!(changed().iter().all(|(_, changed)| !changed));
     }
 
@@ -1787,5 +1795,122 @@ mod tests {
             panic!("a range review has no uncommitted view");
         };
         assert!(message.contains("available: everything"), "{message}");
+    }
+
+    #[test]
+    fn refresh_moves_to_a_new_head_commit_even_when_the_trees_are_unchanged() {
+        let repo = Repo::new();
+        let (_, _) = layered(&repo);
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(
+                TargetSpec::Base {
+                    reference: "main".into(),
+                },
+                None,
+                None,
+                1,
+            )
+            .unwrap()
+            .review
+            .id;
+        let available = || {
+            reviews
+                .show(
+                    &id,
+                    ShowOptions {
+                        drafts: false,
+                        preset: Some(Preset::Everything),
+                    },
+                )
+                .unwrap()
+                .view
+                .unwrap()
+                .available
+        };
+        assert_eq!(
+            available(),
+            [Preset::Everything, Preset::Uncommitted, Preset::Committed]
+        );
+        // Commit the captured bytes as they are: same base, same head tree.
+        let commit = repo.commit("the rest");
+        let refreshed = reviews.refresh(&id, 2).unwrap();
+        assert!(refreshed.changed, "a new HEAD commit is a new revision");
+        assert_eq!(refreshed.review.revisions.len(), 2);
+        assert_eq!(
+            refreshed.review.current().head_commit.as_deref(),
+            Some(commit.as_str())
+        );
+        assert_eq!(available(), [Preset::Everything, Preset::Committed]);
+        assert!(!reviews.refresh(&id, 3).unwrap().changed);
+    }
+
+    #[test]
+    fn marks_refuse_a_revision_the_review_has_moved_past() {
+        let repo = Repo::new();
+        change_line_ten(&repo);
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(TargetSpec::Worktree, None, None, 1)
+            .unwrap()
+            .review
+            .id;
+        repo.write("src/lib.rs", "moved on\n");
+        reviews.refresh(&id, 2).unwrap();
+        assert!(matches!(
+            reviews.mark(&id, "src/lib.rs", true, Some(0)),
+            Err(Error::Moved {
+                expected: 0,
+                current: 1,
+                ..
+            })
+        ));
+        let files = reviews.show(&id, ShowOptions::default()).unwrap().files;
+        assert!(!files[0].reviewed, "nothing was marked");
+        assert!(
+            reviews
+                .mark(&id, "src/lib.rs", true, Some(1))
+                .unwrap()
+                .reviewed
+        );
+        assert!(reviews.mark(&id, "src/lib.rs", false, None).is_ok());
+    }
+
+    #[test]
+    fn looking_records_the_revision_seen_and_never_moves_back() {
+        let repo = Repo::new();
+        change_line_ten(&repo);
+        let reviews = repo.reviews();
+        let id = reviews
+            .start(TargetSpec::Worktree, None, None, 1)
+            .unwrap()
+            .review
+            .id;
+        repo.write("notes.md", "unseen\n");
+        reviews.refresh(&id, 2).unwrap();
+        // The user saw revision 0 only: the refresh's change stays unseen.
+        assert_eq!(
+            reviews.look(&id, Some(0), 3).unwrap(),
+            Looked { revision: 0, at: 3 }
+        );
+        let files = reviews.show(&id, ShowOptions::default()).unwrap().files;
+        let notes = files
+            .iter()
+            .find(|file| file.change.path == "notes.md")
+            .unwrap();
+        assert!(notes.changed_since_looked);
+        assert_eq!(
+            reviews.look(&id, Some(1), 4).unwrap(),
+            Looked { revision: 1, at: 4 }
+        );
+        assert_eq!(
+            reviews.look(&id, Some(0), 5).unwrap(),
+            Looked { revision: 1, at: 4 },
+            "an older view closing later keeps the newer look"
+        );
+        assert!(matches!(
+            reviews.look(&id, Some(2), 6),
+            Err(Error::Invalid(_))
+        ));
     }
 }
