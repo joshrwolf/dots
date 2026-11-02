@@ -1,4 +1,4 @@
-// Turn-requesting custom messages (review reply notices, wake fires) through
+// Turn-requesting custom messages (review submission notices, wake fires) through
 // the pinned Pi host: an explicit cancellation never starts another run or
 // delivers twice, and compaction is never overlapped by a new run.
 import assert from 'node:assert/strict';
@@ -59,7 +59,7 @@ interface Fixture {
   requests(): number;
   /** Custom messages of `customType` on the branch. */
   receipts(customType: string): number;
-  /** The user replies in the review; its directory watcher reports the change. */
+  /** The user submits a comment in the review; its directory watcher reports the change. */
   reply(): void;
   clock: ReturnType<typeof manualClock>;
   /** Resolves once compaction or a summarized /tree waits on `release()`. */
@@ -78,6 +78,7 @@ async function fixture(): Promise<Fixture> {
   const dir = mkdtempSync(join(tmpdir(), 'dots-turn-delivery-'));
   const clock = manualClock();
   const threads: unknown[] = [];
+  const submissions: unknown[] = [];
   let changed = () => {};
   let release = () => {};
   let entered: () => void = () => {};
@@ -118,6 +119,7 @@ async function fixture(): Promise<Fixture> {
                     id: REVIEW,
                     worktree: {path: dir, branch: 'main'},
                     threads: structuredClone(threads),
+                    submissions: structuredClone(submissions),
                   },
                 },
         });
@@ -255,11 +257,13 @@ async function fixture(): Promise<Fixture> {
             entry.type === 'custom_message' && entry.customType === customType,
         ).length,
     reply() {
+      const id = `t${threads.length + 1}`;
       threads.push({
-        id: `t${threads.length + 1}`,
+        id,
         anchor: null,
-        comments: [{author: 'user', body: 'Please explain', status: null}],
+        comments: [{author: 'user', body: 'Please explain'}],
       });
+      submissions.push({body: null, comments: [{thread: id, comment: 0}]});
       changed();
     },
     held: () => held,

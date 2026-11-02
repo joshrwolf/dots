@@ -18,6 +18,7 @@ function fakeDots() {
       owner,
       worktree: {path: worktree, branch: 'slice'},
       threads: [],
+      submissions: [],
     };
     reviews.set(id, review);
     return review;
@@ -27,18 +28,31 @@ function fakeDots() {
       id,
       anchor,
       status: 'open',
-      comments: comments.map(([author, body, status = null]) => ({
-        author,
-        at: 1,
-        body,
-        status,
-      })),
+      comments: comments.map(([author, body]) => ({author, at: 1, body})),
     };
     review.threads.push(entry);
     return entry;
   };
-  const comment = (entry, author, body, status = null) =>
-    entry.comments.push({author, at: 2, body, status});
+  const comment = (entry, author, body) =>
+    entry.comments.push({author, at: 2, body});
+  /**
+   * The user submits: each item is a new thread `[id, anchor, body]` or a
+   * reply `[thread, body]`.
+   */
+  const submit = (review, summary, ...items) => {
+    const comments = items.map(item => {
+      if (item.length === 3) {
+        const [id, anchor, body] = item;
+        thread(review, id, anchor, ['user', body]);
+        return {thread: id, comment: 0};
+      }
+      const [id, body] = item;
+      const entry = review.threads.find(entry => entry.id === id);
+      comment(entry, 'user', body);
+      return {thread: id, comment: entry.comments.length - 1};
+    });
+    review.submissions.push({at: 3, body: summary, comments});
+  };
   const run = async args => {
     calls.push(args);
     if (args[1] === 'list') {
@@ -60,7 +74,7 @@ function fakeDots() {
     }
     throw new Error(`unexpected dots ${args.join(' ')}`);
   };
-  return {reviews, calls, add, thread, comment, run};
+  return {reviews, calls, add, thread, comment, submit, run};
 }
 
 /** A Pi runtime: lifecycle handlers, sent messages, and the branch they land on. */
@@ -132,7 +146,7 @@ function runtime(
   };
 }
 
-test('a user reply is delivered once, starting a turn', async () => {
+test('a submission is delivered once as one notice, starting a turn; single comments are not', async () => {
   const fake = fakeDots();
   const review = fake.add('r-00000001', 'pi-s1');
   const t1 = fake.thread(
@@ -152,9 +166,20 @@ test('a user reply is delivered once, starting a turn', async () => {
     'pi-s1',
   ]);
   assert.deepEqual([...h.watches.keys()], ['/repo/linked/.git/dots/reviews']);
-  assert.equal(h.messages.length, 0, 'agent findings are not replies');
+  assert.equal(h.messages.length, 0, 'agent findings are not submissions');
 
-  fake.comment(t1, 'user', 'Why not\nreuse the helper?');
+  // A comment written straight to a thread, even by the user, is no notice.
+  fake.comment(t1, 'user', 'Posted directly');
+  h.changed();
+  await settle();
+  assert.equal(h.messages.length, 0, 'no per-comment notices');
+
+  fake.submit(
+    review,
+    'Two things\nbefore merging.',
+    ['t1', 'Why not\nreuse the helper?'],
+    ['t2', {path: 'README.md'}, 'Document this'],
+  );
   h.changed();
   await settle();
   assert.equal(h.messages.length, 1);
@@ -162,76 +187,73 @@ test('a user reply is delivered once, starting a turn', async () => {
   assert.deepEqual(options, {triggerTurn: true});
   assert.equal(message.customType, NOTICE);
   assert.equal(message.display, true);
-  assert.deepEqual(message.details, {marks: {'r-00000001/t1': 2}});
+  assert.deepEqual(message.details, {marks: {'r-00000001': 1}});
   assert.equal(
     message.content,
     [
-      'The user responded in a review this session started.',
+      'The user submitted review comments in a review this session started.',
       [
         'r-00000001 in /repo/linked (slice)',
-        '- t1 · src/lib.rs:10-12 · user replied: Why not reuse the helper?',
-        'Read: dots review show r-00000001 (t1)',
+        'Summary: Two things before merging.',
+        '- t1 · src/lib.rs:10-12 · reply: Why not reuse the helper?',
+        '- t2 · README.md (whole file) · new thread: Document this',
+        'Read: dots review show r-00000001 (t1, t2)',
       ].join('\n'),
-      'Decide whether to answer, fix, or resume the worker that owns the change; then reply on each thread with the outcome (dots review reply ID THREAD --author <you> --body ...).',
+      'Decide whether to answer, fix, or resume the worker that owns the change; then reply on each thread with the outcome (dots review reply ID THREAD --author <you> --body ...). Only the user changes the status of threads the user started.',
     ].join('\n\n'),
   );
 
-  fake.comment(t1, 'claude-opus', 'Fixed in the next revision', 'fixed');
+  fake.comment(t1, 'claude-opus', 'Fixed in the next revision');
   h.changed();
   await settle();
   assert.equal(h.messages.length, 1, 'neither repeats nor reports agents');
 
-  fake.comment(t1, 'user', null, 'dismissed');
+  fake.submit(review, 'Looks good now.');
   h.changed();
   await settle();
   assert.equal(h.messages.length, 2);
   assert.match(
     h.messages[1].message.content,
-    /- t1 · src\/lib\.rs:10-12 · user set dismissed\n/,
+    /r-00000001 in \/repo\/linked \(slice\)\nSummary: Looks good now\.\nRead: dots review show r-00000001\n/,
   );
-  assert.deepEqual(h.messages[1].message.details.marks, {
-    'r-00000001/t1': 4,
-  });
+  assert.deepEqual(h.messages[1].message.details.marks, {'r-00000001': 2});
   await h.shutdown();
   assert.equal(h.watches.size, 0);
 });
 
-test('a burst across threads and reviews becomes one notice', async () => {
+test('a burst of submissions across reviews becomes one notice', async () => {
   const fake = fakeDots();
   const first = fake.add('r-00000001', 'pi-s1');
   const second = fake.add('r-00000002', 'pi-s1', '/repo/checkout');
   const h = runtime(fake.run);
   h.start();
   await settle();
-  fake.thread(first, 't1', null, ['user', 'Is this the right approach?']);
+  fake.submit(first, null, ['t1', null, 'Is this the right approach?']);
   h.changed();
-  fake.thread(first, 't2', {path: 'a.rs', side: 'old', start: 3, end: 3}, [
-    'user',
+  fake.submit(first, null, [
+    't2',
+    {path: 'a.rs', side: 'old', start: 3, end: 3},
     'Keep this',
   ]);
   h.changed();
-  fake.thread(second, 't1', null, ['user', 'Also here']);
+  fake.submit(second, null, ['t1', null, 'Also here']);
   h.changed();
   await settle();
   assert.equal(h.messages.length, 1);
   const {content, details} = h.messages[0].message;
   assert.match(
     content,
-    /- t1 · review-level · user opened a thread: Is this the right approach\?\n- t2 · a\.rs:3 \(old side\) · user opened a thread: Keep this\nRead: dots review show r-00000001 \(t1, t2\)/,
+    /- t1 · review-level · new thread: Is this the right approach\?\nRead: dots review show r-00000001 \(t1\)\n\nr-00000001 in \/repo\/linked \(slice\)\n- t2 · a\.rs:3 \(old side\) · new thread: Keep this\n/,
   );
   assert.match(content, /r-00000002 in \/repo\/checkout \(slice\)/);
-  assert.deepEqual(details.marks, {
-    'r-00000001/t1': 1,
-    'r-00000001/t2': 1,
-    'r-00000002/t1': 1,
-  });
+  assert.deepEqual(details.marks, {'r-00000001': 2, 'r-00000002': 1});
   await h.shutdown();
 });
 
 test('reload and resume neither repeat a notice nor lose one that arrived while closed', async () => {
   const fake = fakeDots();
   const review = fake.add('r-00000001', 'pi-s1');
-  const t1 = fake.thread(review, 't1', null, ['user', 'First']);
+  fake.submit(review, null, ['t1', null, 'First']);
   const branch = [];
   const before = runtime(fake.run, {branch});
   before.start();
@@ -245,7 +267,7 @@ test('reload and resume neither repeat a notice nor lose one that arrived while 
   assert.equal(reloaded.messages.length, 0, 'the branch holds the receipt');
   await reloaded.shutdown();
 
-  fake.comment(t1, 'user', 'Second, while Pi was closed');
+  fake.submit(review, null, ['t1', 'Second, while Pi was closed']);
   const resumed = runtime(fake.run, {branch});
   resumed.start();
   await settle();
@@ -258,7 +280,7 @@ test('reload and resume neither repeat a notice nor lose one that arrived while 
 test('a notice waits for a busy session without repeating, and an empty branch is told again', async () => {
   const fake = fakeDots();
   const review = fake.add('r-00000001', 'pi-s1');
-  fake.thread(review, 't1', null, ['user', 'Look here']);
+  fake.submit(review, null, ['t1', null, 'Look here']);
   const h = runtime(fake.run);
   h.state.idle = false;
   h.start();
@@ -281,14 +303,14 @@ test('a notice waits for a busy session without repeating, and an empty branch i
 test('a notice held across a cancellation or /tree is delivered once, without a run', async () => {
   const fake = fakeDots();
   const review = fake.add('r-00000001', 'pi-s1');
-  const t1 = fake.thread(review, 't1', null, ['user', 'Look here']);
+  fake.submit(review, null, ['t1', null, 'Look here']);
   const h = runtime(fake.run);
   h.start();
   await settle();
   assert.equal(h.messages.length, 1);
 
   h.state.idle = false;
-  fake.comment(t1, 'user', 'And here');
+  fake.submit(review, null, ['t1', 'And here']);
   h.changed();
   await settle();
   h.settled(true);
@@ -304,7 +326,7 @@ test('a notice held across a cancellation or /tree is delivered once, without a 
   // dropped, and the new branch is told once.
   h.handlers.before_agent_start({messageType: 'user', prompt: 'go on'}, h.ctx);
   h.state.idle = false;
-  fake.comment(t1, 'user', 'Third');
+  fake.submit(review, null, ['t1', 'Third']);
   h.changed();
   await settle();
   h.branch.length = 0;
@@ -314,16 +336,14 @@ test('a notice held across a cancellation or /tree is delivered once, without a 
   await settle();
   assert.equal(h.messages.length, 3);
   assert.deepEqual(h.messages[2].options, {triggerTurn: true});
-  assert.deepEqual(h.messages[2].message.details.marks, {
-    'r-00000001/t1': 3,
-  });
+  assert.deepEqual(h.messages[2].message.details.marks, {'r-00000001': 3});
   await h.shutdown();
 });
 
 test("other sessions' reviews and failures stay quiet", async () => {
   const fake = fakeDots();
   const theirs = fake.add('r-00000001', 'pi-other');
-  fake.thread(theirs, 't1', null, ['user', 'Not for s1']);
+  fake.submit(theirs, null, ['t1', null, 'Not for s1']);
   const h = runtime(fake.run);
   h.start();
   await settle();
@@ -352,7 +372,7 @@ test("other sessions' reviews and failures stay quiet", async () => {
   await broken.shutdown();
 });
 
-test('the real CLI and file watcher deliver a reply in a linked worktree', async () => {
+test('the real CLI and file watcher deliver a submission in a linked worktree, not its drafts', async () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'dots-review-')));
   const env = {
     ...process.env,
@@ -370,6 +390,10 @@ test('the real CLI and file watcher deliver a reply in a linked worktree', async
   const linked = path.join(root, 'linked');
   const run = (cwd, command, ...args) =>
     execFileSync(command, args, {cwd, env, encoding: 'utf8'});
+  const waitFor = async count => {
+    for (let waited = 0; h.messages.length < count && waited < 10_000;)
+      waited += await settle(100).then(() => 100);
+  };
   let h;
   try {
     run(root, 'git', 'init', '-q', '-b', 'main', checkout);
@@ -422,21 +446,50 @@ test('the real CLI and file watcher deliver a reply in a linked worktree', async
       checkout,
       'dots',
       'review',
+      'draft',
+      id,
+      '--thread',
+      't1',
+      '--body',
+      'Please explain',
+    );
+    run(
+      checkout,
+      'dots',
+      'review',
+      'draft',
+      id,
+      '--path',
+      'a.txt',
+      '--body',
+      'Whole file',
+    );
+    run(
+      checkout,
+      'dots',
+      'review',
       'reply',
       id,
       't1',
       '--author',
       'user',
       '--body',
-      'Please explain',
+      'Direct',
     );
-    for (let waited = 0; h.messages.length === 0 && waited < 10_000;)
-      waited += await settle(100).then(() => 100);
+    await settle(1500);
+    assert.equal(
+      h.messages.length,
+      0,
+      'drafts and direct comments tell nothing',
+    );
+
+    run(checkout, 'dots', 'review', 'submit', id, '--body', 'Two notes');
+    await waitFor(1);
     assert.equal(h.messages.length, 1);
     assert.match(
       h.messages[0].message.content,
       new RegExp(
-        `${id} in ${linked} \\(slice\\)\\n- t1 · a\\.txt:1 · user replied: Please explain`,
+        `${id} in ${linked} \\(slice\\)\\nSummary: Two notes\\n- t1 · a\\.txt:1 · reply: Please explain\\n- t2 · a\\.txt \\(whole file\\) · new thread: Whole file\\n`,
       ),
     );
   } finally {

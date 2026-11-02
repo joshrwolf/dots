@@ -9,15 +9,17 @@ import {Type, type Static, type TSchema} from 'typebox';
 import {Check} from 'typebox/value';
 import {TurnMessages} from '../../src/host/delivery.ts';
 
-// Review reply notices: tell the session that started a review (its owner)
-// when the user comments or changes a status in it, so it does not poll.
+// Review submission notices: tell the session that started a review (its
+// owner) when the user submits a batch of comments in it, so it does not poll.
+// The user's drafts are private until submitted, so a submission is the one
+// event: one notice per batch, with its summary and every published comment.
 //
-// The notices themselves are the receipts. Each carries, per thread, how many
-// comments it covered; the current branch's notices say what this session was
-// told, so reload and resume neither repeat a notice nor lose a reply that
-// arrived while Pi was closed. /tree to a branch without a receipt tells that
-// branch again. Coverage of a notice not yet on the branch is held in memory
-// until the session is idle with nothing held.
+// The notices themselves are the receipts. Each carries, per review, how many
+// submissions it covered; the current branch's notices say what this session
+// was told, so reload and resume neither repeat a notice nor lose a submission
+// that arrived while Pi was closed. /tree to a branch without a receipt tells
+// that branch again. Coverage of a notice not yet on the branch is held in
+// memory until the session is idle with nothing held.
 //
 // A notice waits for the session to be idle and never restarts a run the user
 // cancelled; see TurnMessages.
@@ -28,17 +30,16 @@ import {TurnMessages} from '../../src/host/delivery.ts';
 // reads small files; a timer would spend the same process on idle sessions.
 
 export const NOTICE = 'dots.review.notice';
-/** The author the user's own comments carry. */
-export const USER = 'user';
 /** Window that batches a burst of changes into one notice. */
 export const SETTLE_MS = 750;
 const EXCERPT = 300;
 
+// A whole-file anchor has a path alone.
 const AnchorSchema = Type.Object({
   path: Type.String(),
-  side: Type.String(),
-  start: Type.Integer(),
-  end: Type.Integer(),
+  side: Type.Optional(Type.String()),
+  start: Type.Optional(Type.Integer()),
+  end: Type.Optional(Type.Integer()),
 });
 const WorktreeSchema = Type.Object({
   path: Type.String(),
@@ -64,8 +65,15 @@ const ShowSchema = Type.Object({
           Type.Object({
             author: Type.String(),
             body: Type.Union([Type.String(), Type.Null()]),
-            status: Type.Union([Type.String(), Type.Null()]),
           }),
+        ),
+      }),
+    ),
+    submissions: Type.Array(
+      Type.Object({
+        body: Type.Union([Type.String(), Type.Null()]),
+        comments: Type.Array(
+          Type.Object({thread: Type.String(), comment: Type.Integer()}),
         ),
       }),
     ),
@@ -73,11 +81,11 @@ const ShowSchema = Type.Object({
 });
 type Shown = Static<typeof ShowSchema>['review'];
 
-/** Comments covered per `review/thread`. */
+/** Submissions covered per review id. */
 type Marks = Map<string, number>;
 
 export interface NoticeDetails {
-  /** Per `review/thread`, how many of its comments this notice covers. */
+  /** Per review id, how many of its submissions this notice covers. */
   marks: Record<string, number>;
 }
 
@@ -131,12 +139,16 @@ export function receipts(branch: readonly unknown[]): Marks {
   return marks;
 }
 
-interface Reply {
+interface Comment {
   thread: string;
   location: string;
   opened: boolean;
-  status: string | null;
   body: string | null;
+}
+
+interface Batch {
+  summary: string | null;
+  comments: Comment[];
 }
 
 function excerpt(body: string): string {
@@ -146,6 +158,8 @@ function excerpt(body: string): string {
 
 function location(anchor: Shown['threads'][number]['anchor']): string {
   if (!anchor) return 'review-level';
+  if (anchor.start === undefined || anchor.end === undefined)
+    return `${anchor.path} (whole file)`;
   const lines =
     anchor.start === anchor.end
       ? `${anchor.start}`
@@ -153,57 +167,54 @@ function location(anchor: Shown['threads'][number]['anchor']): string {
   return `${anchor.path}:${lines}${anchor.side === 'old' ? ' (old side)' : ''}`;
 }
 
-/** The user's comments in `review` past what `told` covers, and the new coverage. */
-export function replies(
+/** The submissions in `review` past what `told` covers, and the new coverage. */
+export function submissions(
   review: Shown,
   told: Marks,
-): {replies: Reply[]; marks: Record<string, number>} {
-  const found: Reply[] = [];
-  const marks: Record<string, number> = {};
-  for (const thread of review.threads) {
-    const key = `${review.id}/${thread.id}`;
-    const from = told.get(key) ?? 0;
-    let any = false;
-    thread.comments.forEach((comment, index) => {
-      if (index < from || comment.author !== USER) return;
-      any = true;
-      found.push({
-        thread: thread.id,
-        location: location(thread.anchor),
+): {batches: Batch[]; marks: Record<string, number>} {
+  const from = told.get(review.id) ?? 0;
+  const batches = review.submissions.slice(from).map(submission => ({
+    summary: submission.body,
+    comments: submission.comments.map(({thread: id, comment: index}) => {
+      const thread = review.threads.find(thread => thread.id === id);
+      return {
+        thread: id,
+        location: location(thread?.anchor ?? null),
         opened: index === 0,
-        status: comment.status,
-        body: comment.body,
-      });
-    });
-    if (any) marks[key] = thread.comments.length;
-  }
-  return {replies: found, marks};
+        body: thread?.comments[index]?.body ?? null,
+      };
+    }),
+  }));
+  const marks: Record<string, number> =
+    batches.length > 0 ? {[review.id]: review.submissions.length} : {};
+  return {batches, marks};
 }
 
 export function notice(
-  reviews: readonly {review: Shown; replies: readonly Reply[]}[],
+  reviews: readonly {review: Shown; batches: readonly Batch[]}[],
 ): string {
-  const sections = reviews.map(({review, replies}) => {
+  const sections = reviews.flatMap(({review, batches}) => {
     const {path: worktree, branch} = review.worktree;
-    const lines = replies.map(reply => {
-      const action = reply.opened
-        ? 'opened a thread'
-        : reply.status
-          ? `set ${reply.status}`
-          : 'replied';
-      return `- ${reply.thread} · ${reply.location} · user ${action}${reply.body ? `: ${excerpt(reply.body)}` : ''}`;
+    return batches.map(batch => {
+      const lines = batch.comments.map(
+        comment =>
+          `- ${comment.thread} · ${comment.location} · ${comment.opened ? 'new thread' : 'reply'}${comment.body ? `: ${excerpt(comment.body)}` : ''}`,
+      );
+      const threads = [
+        ...new Set(batch.comments.map(comment => comment.thread)),
+      ].join(', ');
+      return [
+        `${review.id} in ${worktree}${branch ? ` (${branch})` : ''}`,
+        ...(batch.summary ? [`Summary: ${excerpt(batch.summary)}`] : []),
+        ...lines,
+        `Read: dots review show ${review.id}${threads ? ` (${threads})` : ''}`,
+      ].join('\n');
     });
-    const threads = [...new Set(replies.map(reply => reply.thread))].join(', ');
-    return [
-      `${review.id} in ${worktree}${branch ? ` (${branch})` : ''}`,
-      ...lines,
-      `Read: dots review show ${review.id} (${threads})`,
-    ].join('\n');
   });
   return [
-    'The user responded in a review this session started.',
+    'The user submitted review comments in a review this session started.',
     ...sections,
-    'Decide whether to answer, fix, or resume the worker that owns the change; then reply on each thread with the outcome (dots review reply ID THREAD --author <you> --body ...).',
+    'Decide whether to answer, fix, or resume the worker that owns the change; then reply on each thread with the outcome (dots review reply ID THREAD --author <you> --body ...). Only the user changes the status of threads the user started.',
   ].join('\n\n');
 }
 
@@ -287,7 +298,7 @@ export default function registerReview(
     if (signal.aborted || context !== ctx) return;
     rewatch(new Set(listed.map(review => path.dirname(review.file))));
     const known = told(ctx);
-    const found: {review: Shown; replies: Reply[]}[] = [];
+    const found: {review: Shown; batches: Batch[]}[] = [];
     const marks: Record<string, number> = {};
     for (const {id} of listed) {
       let review: Shown;
@@ -309,9 +320,9 @@ export default function registerReview(
         continue;
       }
       if (signal.aborted || context !== ctx) return;
-      const delta = replies(review, known);
-      if (delta.replies.length === 0) continue;
-      found.push({review, replies: delta.replies});
+      const delta = submissions(review, known);
+      if (delta.batches.length === 0) continue;
+      found.push({review, batches: delta.batches});
       Object.assign(marks, delta.marks);
     }
     if (found.length === 0 || signal.aborted || context !== ctx) return;
