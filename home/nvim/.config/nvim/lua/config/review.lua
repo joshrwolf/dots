@@ -1,53 +1,20 @@
 -- `dots review` in CodeDiff: open a review on its exact revisions, show its
--- threads at their lines, and write comments, replies and statuses through the
--- CLI, which owns the review files. Agent changes appear live.
+-- threads as diagnostics and in the quickfix list, and write comments,
+-- replies and statuses through the CLI, which owns the review files. Agent
+-- changes appear live.
 local M = {}
+
+local codediff = require("codediff.api")
 
 local author = "user"
 local ns = vim.api.nvim_create_namespace("dots.review")
 local group = vim.api.nvim_create_augroup("dots.review", { clear = true })
 local views = {} -- tabpage -> open review view
-local pending = {} -- "base..snapshot" -> view waiting for its CodeDiff tab
+local drafts = 0
 
--- CodeDiff internals from the in-tree fork (src/codediff.nvim). Its supported API
--- covers only hunk/file navigation and lifecycle events; everything else this
--- module needs from CodeDiff is here.
-local codediff = {}
-
--- Side buffers are named codediff:///<root>///<commit>/<path>.
-function codediff.parse(buf)
-  return vim.api.nvim_buf_get_name(buf):match("^codediff:///.-///(%x+)/(.+)$")
-end
-
-function codediff.revisions(tab)
-  local context = require("codediff.ui.lifecycle").get_git_context(tab)
-  return context and context.original_revision, context and context.modified_revision
-end
-
--- Whether buf's diff has rendered. This says nothing about the buffer's content:
--- added and deleted files publish an empty result before their content loads.
-function codediff.rendered(tab, buf)
-  local session = require("codediff.ui.lifecycle").get_session(tab)
-  return session ~= nil
-    and session.stored_diff_result ~= nil
-    and (session.original_bufnr == buf or session.modified_bufnr == buf)
-end
-
--- Show a changed path in the explorer without CodeDiff jumping to its first hunk.
-function codediff.select(tab, path)
-  local panel = require("codediff.ui.lifecycle").get_panel(tab)
-  local explorer = panel and panel.name == "explorer" and panel.view
-  local status = explorer and panel.data.status_result or {}
-  for _, name in ipairs({ "unstaged", "staged" }) do
-    for _, file in ipairs(status[name] or {}) do
-      if file.path == path then
-        explorer.on_file_select(vim.tbl_extend("force", file, { group = name }), { no_jump = true })
-        return true
-      end
-    end
-  end
-  return false
-end
+-- Review anchors name sides old/new; CodeDiff names them original/modified.
+local to_codediff = { old = "original", new = "modified" }
+local from_codediff = { original = "old", modified = "new" }
 
 local function notify(message, level)
   vim.notify("Review: " .. message, level or vim.log.levels.INFO)
@@ -80,6 +47,25 @@ local function dots(args, opts, on_done, on_error)
   if not ok then
     fail(tostring(err))
   end
+end
+
+-- The files a revision changes, with the status CodeDiff needs to show one-sided
+-- files. Matches the review's own patch, which also ignores renames.
+local function changed_files(cwd, base, snapshot, on_done)
+  vim.system(
+    { "git", "diff", "--no-renames", "--name-status", "-z", base, snapshot },
+    { cwd = cwd, text = true },
+    vim.schedule_wrap(function(result)
+      if result.code ~= 0 then
+        return notify(vim.trim(result.stderr or "git diff failed"), vim.log.levels.ERROR)
+      end
+      local fields, files = vim.split(result.stdout, "\0", { trimempty = true }), {}
+      for i = 1, #fields - 1, 2 do
+        table.insert(files, { status = fields[i]:sub(1, 1), path = fields[i + 1] })
+      end
+      on_done(files)
+    end)
+  )
 end
 
 -- Where repository commands run: the current file's directory or the cwd.
@@ -121,6 +107,33 @@ local function style(thread)
   return unpack(styles[thread.status] or { "●", "Comment" })
 end
 
+-- Open threads rank by finding severity; settled ones recede to hints.
+local severities = {
+  critical = vim.diagnostic.severity.ERROR,
+  important = vim.diagnostic.severity.WARN,
+  minor = vim.diagnostic.severity.INFO,
+  nit = vim.diagnostic.severity.HINT,
+}
+
+local function severity(thread)
+  if thread.status ~= "open" then
+    return vim.diagnostic.severity.HINT
+  end
+  return severities[thread.severity] or vim.diagnostic.severity.WARN
+end
+
+vim.diagnostic.config({
+  underline = false,
+  severity_sort = true,
+  signs = true,
+  virtual_text = {
+    spacing = 2,
+    prefix = function(diagnostic)
+      return (styles[diagnostic.user_data.status] or { "●" })[1]
+    end,
+  },
+}, ns)
+
 local function summary(thread)
   local first = thread.comments[1] or {}
   local replies = 0
@@ -161,9 +174,11 @@ end
 
 -- The path and side a buffer shows in view, if it is one of the view's sides.
 local function side_of(view, buf)
-  local commit, path = codediff.parse(buf)
-  local side = commit == view.base and "old" or commit == view.snapshot and "new" or nil
-  return side and path, side
+  local at = codediff.buffer(buf, view.tab)
+  if not at then
+    return nil
+  end
+  return at.path, from_codediff[at.side]
 end
 
 -- This tab's review view and the path and side the current buffer shows.
@@ -196,49 +211,65 @@ local function anchored(view)
   return threads
 end
 
-local function set_cursor(win, line)
-  vim.api.nvim_set_current_win(win)
-  vim.api.nvim_win_set_cursor(win, { math.min(line, vim.api.nvim_buf_line_count(0)), 0 })
-  vim.cmd("normal! zz")
-end
-
 local setup_buffer
 
-local function render(view, buf)
-  local path, side = side_of(view, buf)
-  if not side then
-    return
-  end
-  setup_buffer(buf)
-  vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-  local count = vim.api.nvim_buf_line_count(buf)
+-- Draw view's threads: diagnostics on its revision buffers (shown or not), its
+-- quickfix list, and open-thread counts in the file list. Reviews sharing a
+-- base share CodeDiff's buffers, so only the current tab's review is drawn.
+local function render(view)
+  local diagnostics, items, open = {}, {}, {}
   for _, thread in ipairs(anchored(view)) do
     local a = thread.anchor
-    if a.path == path and a.side == side and a["end"] <= count then
-      local icon, hl = style(thread)
-      -- End-of-line text keeps both sides aligned; virtual lines would not.
-      vim.api.nvim_buf_set_extmark(buf, ns, a.start - 1, 0, {
-        sign_text = icon,
-        sign_hl_group = hl,
-        virt_text = { { "  " .. icon .. " " .. thread.status .. " ", hl }, { summary(thread), "Comment" } },
-        virt_text_pos = "eol",
+    local buf = codediff.revision_buffer(view.tab, a.path, to_codediff[a.side])
+    if buf then
+      local message = thread.status .. " · " .. summary(thread)
+      diagnostics[buf] = diagnostics[buf] or {}
+      table.insert(diagnostics[buf], {
+        lnum = a.start - 1,
+        end_lnum = a["end"] - 1,
+        col = 0,
+        severity = severity(thread),
+        message = message,
+        source = "review",
+        code = thread.id,
+        user_data = { thread = thread.id, status = thread.status },
       })
-      for line = a.start + 1, a["end"] do
-        vim.api.nvim_buf_set_extmark(buf, ns, line - 1, 0, { sign_text = "│", sign_hl_group = hl })
-      end
+      table.insert(items, {
+        bufnr = buf,
+        lnum = a.start,
+        end_lnum = a["end"],
+        text = ("%s %s (%s)"):format(thread.id, message, a.side),
+        type = ({ "E", "W", "I", "N" })[severity(thread)],
+      })
+    end
+    if thread.status == "open" then
+      open[a.path] = (open[a.path] or 0) + 1
+    end
+  end
+  vim.diagnostic.reset(ns)
+  for buf, list in pairs(diagnostics) do
+    vim.diagnostic.set(ns, buf, list)
+  end
+  if view.qf and vim.fn.getqflist({ id = view.qf }).id == view.qf then
+    vim.fn.setqflist({}, "u", { id = view.qf, items = items })
+  end
+  local decorations = {}
+  for path, count in pairs(open) do
+    decorations[path] = { text = "● " .. count, hl = "DiagnosticWarn" }
+  end
+  codediff.set_decorations(view.tab, decorations)
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(view.tab)) do
+    local buf = vim.api.nvim_win_get_buf(win)
+    if side_of(view, buf) then
+      setup_buffer(buf)
     end
   end
 end
 
--- Reviews sharing a base share CodeDiff's side buffers, so notes are drawn for
--- the current tab's review only and redrawn when another tab is entered.
 local function render_current()
-  local tab = vim.api.nvim_get_current_tabpage()
-  local view = views[tab]
+  local view = views[vim.api.nvim_get_current_tabpage()]
   if view then
-    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-      render(view, vim.api.nvim_win_get_buf(win))
-    end
+    render(view)
   end
 end
 
@@ -255,7 +286,7 @@ local function reload(view)
       notify(view.id .. " moved to a new revision; reopen it to see its current threads", vim.log.levels.WARN)
     end
     if view.tab == vim.api.nvim_get_current_tabpage() then
-      render_current()
+      render(view)
     end
   end)
 end
@@ -284,36 +315,20 @@ local function close(view)
       handle:close()
     end
   end
+  vim.diagnostic.reset(ns)
+  render_current()
 end
 
 local function jump_to(view, thread)
   local a = thread.anchor
-  local function land()
-    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(view.tab)) do
-      local buf = vim.api.nvim_win_get_buf(win)
-      local path, side = side_of(view, buf)
-      -- The buffer must also hold its content: a loading side is one empty line,
-      -- and the cursor would clamp to it and never move again.
-      local loaded = vim.api.nvim_buf_line_count(buf) >= a.start
-      if path == a.path and side == a.side and loaded and codediff.rendered(view.tab, buf) then
-        set_cursor(win, a.start)
-        return true
-      end
-    end
+  local ok, err = codediff.show(view.tab, { path = a.path, side = to_codediff[a.side], line = a.start }, function(win)
+    vim.api.nvim_win_call(win, function()
+      vim.cmd("normal! zz")
+    end)
+  end)
+  if not ok then
+    notify(err, vim.log.levels.WARN)
   end
-  if land() then
-    return
-  elseif not codediff.select(view.tab, a.path) then
-    return notify(a.path .. " is not in this diff", vim.log.levels.WARN)
-  end
-  -- CodeDiff places both cursors once the new file's diff renders; land after.
-  local deadline = vim.uv.now() + 5000
-  local function retry()
-    if views[view.tab] == view and not land() and vim.uv.now() < deadline then
-      vim.defer_fn(retry, 20)
-    end
-  end
-  vim.defer_fn(retry, 20)
 end
 
 function M.next_thread(direction)
@@ -351,27 +366,47 @@ local function open_float(buf, opts)
   )
 end
 
--- A Markdown scratch float; submit hands its text to on_submit.
+-- A Markdown draft that submits on write (:w, :x, ZZ) and is discarded by
+-- closing it unwritten (ZQ, :q!); plain :q asks first ('confirm'). An
+-- empty draft submits nothing.
 local function compose(title, on_submit, text)
+  drafts = drafts + 1
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].filetype = "markdown"
+  vim.api.nvim_buf_set_name(buf, ("dots-review://draft/%d"):format(drafts))
+  vim.bo[buf].buftype = "acwrite"
   vim.bo[buf].bufhidden = "wipe"
+  vim.bo[buf].filetype = "markdown"
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(text or "", "\n"))
+  vim.bo[buf].modified = true
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    buffer = buf,
+    callback = function()
+      local body = vim.trim(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
+      vim.bo[buf].modified = false
+      -- After :x or ZZ has closed the window itself.
+      vim.schedule(function()
+        local win = vim.fn.bufwinid(buf)
+        if win ~= -1 then
+          vim.api.nvim_win_close(win, true)
+        end
+        if body == "" then
+          return notify("empty comment discarded")
+        end
+        on_submit(body)
+      end)
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = buf,
+    callback = function()
+      if vim.bo[buf].modified then
+        notify("comment discarded")
+      end
+    end,
+  })
   local win =
-    open_float(buf, { width = 80, height = 8, title = " " .. title .. " ", footer = " <C-s> submit · q cancel " })
-  local function submit()
-    local body = vim.trim(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), "\n"))
-    vim.cmd.stopinsert()
-    vim.api.nvim_win_close(win, true)
-    if body == "" then
-      return notify("empty comment discarded")
-    end
-    on_submit(body)
-  end
-  vim.keymap.set({ "n", "i" }, "<C-s>", submit, { buffer = buf, desc = "Submit comment" })
-  vim.keymap.set("n", "q", function()
-    vim.api.nvim_win_close(win, true)
-  end, { buffer = buf, desc = "Cancel comment" })
+    open_float(buf, { width = 80, height = 10, title = " " .. title .. " ", footer = " :w submit · ZQ discard " })
+  vim.wo[win].wrap = true
   vim.cmd.startinsert()
   return buf
 end
@@ -539,20 +574,29 @@ function M.open(id, cwd)
         return vim.api.nvim_set_current_tabpage(tab)
       end
     end
-    pending[revision.base .. ".." .. revision.snapshot] = {
-      id = review.id,
-      cwd = review.worktree.path,
-      file = out.file,
-      revision = #review.revisions - 1,
-      base = revision.base,
-      snapshot = revision.snapshot,
-      review = review,
-      generation = 0,
-    }
-    vim.api.nvim_cmd(
-      { cmd = "CodeDiff", args = { "--repo", review.worktree.path, revision.base, revision.snapshot } },
-      {}
-    )
+    local root = review.worktree.path
+    changed_files(root, revision.base, revision.snapshot, function(files)
+      local tab, err = codediff.open({ root = root, base = revision.base, head = revision.snapshot, files = files })
+      if not tab then
+        return notify(err, vim.log.levels.ERROR)
+      end
+      local view = {
+        id = review.id,
+        tab = tab,
+        cwd = root,
+        file = out.file,
+        revision = #review.revisions - 1,
+        base = revision.base,
+        snapshot = revision.snapshot,
+        review = review,
+        generation = 0,
+      }
+      views[tab] = view
+      vim.fn.setqflist({}, " ", { title = "Review " .. review.id, context = { dots_review = review.id } })
+      view.qf = vim.fn.getqflist({ id = 0 }).id
+      watch(view)
+      render_current()
+    end)
   end)
 end
 
@@ -643,23 +687,6 @@ end
 
 vim.api.nvim_create_autocmd("User", {
   group = group,
-  pattern = "CodeDiffOpen",
-  callback = function(event)
-    local tab = event.data.tabpage
-    local base, snapshot = codediff.revisions(tab)
-    local view = base and pending[base .. ".." .. snapshot]
-    if view then
-      pending[base .. ".." .. snapshot] = nil
-      view.tab = tab
-      views[tab] = view
-      watch(view)
-      render_current()
-    end
-  end,
-})
-
-vim.api.nvim_create_autocmd("User", {
-  group = group,
   pattern = "CodeDiffClose",
   callback = function(event)
     local view = views[event.data.tabpage]
@@ -669,28 +696,22 @@ vim.api.nvim_create_autocmd("User", {
   end,
 })
 
+-- Content arriving resets a buffer's diagnostic marks to its first line, and
+-- CodeDiff wipes revision buffers it stops showing (the quickfix list points at
+-- buffer numbers), so redraw on both. Entering a tab draws its own review.
 vim.api.nvim_create_autocmd("User", {
   group = group,
   pattern = "CodeDiffVirtualFileLoaded",
-  callback = function(event)
-    render_current()
-  end,
+  callback = render_current,
 })
-
--- Side buffers can finish loading before CodeDiff shows them.
-vim.api.nvim_create_autocmd("BufWinEnter", {
+vim.api.nvim_create_autocmd({ "BufWinEnter", "BufWipeout" }, {
   group = group,
   pattern = "codediff:///*",
-  callback = function()
-    render_current()
-  end,
+  callback = vim.schedule_wrap(render_current),
 })
-
 vim.api.nvim_create_autocmd("TabEnter", {
   group = group,
-  callback = function()
-    render_current()
-  end,
+  callback = render_current,
 })
 
 return M
