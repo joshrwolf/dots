@@ -494,22 +494,47 @@ test('a new wake replays from its own cursor, whatever other wakes already saw',
   h.handlers.session_shutdown({}, h.ctx);
 });
 
-test('wake_run looks the task up and fires with its status', async () => {
+test('wake_run reports the task status without firing; later events still fire', async () => {
   const {tasks, h} = await started();
-  const {details} = await taskWake(h, {limit: 2});
+  const {details} = await taskWake(h);
+  const written = records(h).length;
   tasks.tree.get('t-a0').status = 'review';
-  assert.match(await h.text('wake_run', {id: details.id}), /fired \(1 total\)/);
+  const {content, details: looked} = await h.tools
+    .get('wake_run')
+    .execute('c', {id: details.id}, undefined, undefined, h.ctx);
+  assert.match(content[0].text, /status now: "review"/);
+  assert.match(
+    content[0].text,
+    /Waiting until review: 0 of 1 fire used, 24h left\./,
+  );
+  assert.equal(looked.status, 'review');
+  assert.equal(looked.fired, 0);
+  assert.equal(looked.active, true);
   await settle();
-  const {content, details: fired} = h.messages[0].message;
-  assert.match(content, / · manual \(fire 1 of 2\)\n/);
-  assert.match(content, /observed: current state/);
-  assert.match(content, /status now: "review"/);
-  assert.equal(fired.manual, true);
+  assert.equal(h.messages.length, 0, 'a look sends no message');
+  assert.equal(records(h).length, written, 'a look changes no record');
+  tasks.emit(event('t-a0', 'review'));
+  await settle();
+  assert.equal(h.messages.length, 1);
+  const {content: message, details: fired} = h.messages[0].message;
+  assert.match(message, / · matched\n/);
+  assert.doesNotMatch(message, /status now/);
+  assert.equal(fired.manual, undefined);
+  assert.equal((await h.call('wake_list', {})).length, 0);
+  tasks.fail('dots: catalog unavailable');
+  assert.match(await h.text('wake_run', {id: details.id}), /is not active/);
+  h.handlers.session_shutdown({}, h.ctx);
+});
+
+test('wake_run reports an unreadable task store and keeps waiting', async () => {
+  const {tasks, h} = await started();
+  const {details} = await taskWake(h);
   tasks.fail('dots: catalog unavailable');
   await assert.rejects(
     h.call('wake_run', {id: details.id}),
     /could not read task t-a0 for k-[a-f0-9]+; it keeps waiting: dots: catalog unavailable/,
   );
+  assert.equal((await h.call('wake_list', {}))[0].fired, 0);
   h.handlers.session_shutdown({}, h.ctx);
 });
 

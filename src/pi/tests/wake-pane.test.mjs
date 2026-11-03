@@ -598,24 +598,79 @@ test('transitions while a fire is pending join it', async () => {
   h.handlers.session_shutdown({}, h.ctx);
 });
 
-test('wake_run snapshots and fires with the current state, or reports an end', async () => {
+test('creation names a program by the app its own status reports', async () => {
+  {
+    const {rex, h} = await started();
+    rex.pane.record = record('working', 't1', 41, {app: 'pi'});
+    const text = (await paneWake(h)).content[0].text;
+    assert.match(
+      text,
+      /Program: "pi" \(make, pid 41\); foreground: cc \(pid 42\)/,
+    );
+    h.handlers.session_shutdown({}, h.ctx);
+  }
+  {
+    const {rex, h} = await started();
+    rex.pane.record = record('working', 't1', 42, {app: 'pi'});
+    const text = (await paneWake(h)).content[0].text;
+    assert.match(
+      text,
+      /Program: make \(pid 41\); foreground: "pi" \(cc, pid 42\)/,
+    );
+    h.handlers.session_shutdown({}, h.ctx);
+  }
+  {
+    const {rex, h} = await started();
+    rex.pane.record = {state: 'working', updatedAt: 't1', app: 'make'};
+    const text = (await paneWake(h)).content[0].text;
+    assert.match(text, /Program: make \(pid 41\); foreground: cc \(pid 42\)/);
+    h.handlers.session_shutdown({}, h.ctx);
+  }
+});
+
+test('wake_run reports a fresh snapshot without firing; later transitions still fire', async () => {
   const {rex, h} = await started();
   rex.pane.record = record('working', 't1');
-  const {details} = await paneWake(h, {limit: 3});
+  const {details} = await paneWake(h);
+  const written = records(h).length;
   rex.pane.record = record('working', 't2', 7, {msg: 'linking'});
-  assert.match(await h.text('wake_run', {id: details.id}), /fired \(1 total\)/);
+  const text = await h.text('wake_run', {id: details.id});
+  assert.match(text, /status now: working · msg "linking"/);
+  assert.match(text, /Waiting until done\|exit: 0 of 1 fire used, 24h left\./);
   await settle();
-  assert.match(h.messages[0].message.content, / · manual \(fire 1 of 3\)\n/);
-  assert.match(
-    h.messages[0].message.content,
-    /status now: working · msg "linking"/,
-  );
-  assert.equal(h.messages[0].message.details.manual, true);
-  rex.pane.present = false;
-  await h.call('wake_run', {id: details.id});
+  assert.equal(h.messages.length, 0, 'a look sends no message');
+  const [listed] = await h.call('wake_list', {});
+  assert.equal(listed.fired, 0);
+  assert.equal(listed.active, true);
+  assert.equal(records(h).length, written, 'a look changes no record');
+  rex.emit(changed('done', 't3'));
   await settle();
-  assert.match(h.messages[1].message.content, /ended: the block was closed/);
+  assert.equal(h.messages.length, 1);
+  const {content, details: fired} = h.messages[0].message;
+  assert.match(content, / · matched\n/);
+  assert.equal(fired.manual, undefined);
   assert.equal((await h.call('wake_list', {})).length, 0);
+  assert.match(
+    await h.text('wake_run', {id: details.id}),
+    /is not active \(1 of 1 fires used\)/,
+  );
+  h.handlers.session_shutdown({}, h.ctx);
+});
+
+test('wake_run during an in-flight snapshot reports a snapshot taken after it', async () => {
+  const {rex, h} = await started();
+  rex.pane.record = record('working', 't1');
+  const {details} = await paneWake(h);
+  const release = rex.hold();
+  rex.open();
+  await settle();
+  const before = rex.snapshots.length;
+  const look = h.text('wake_run', {id: details.id});
+  rex.pane.record = record('working', 't2', 7, {msg: 'later'});
+  release();
+  assert.match(await look, /status now: working · msg "later"/);
+  assert.equal(rex.snapshots.length, before + 1, 'one queued snapshot');
+  assert.equal(h.messages.length, 0);
   h.handlers.session_shutdown({}, h.ctx);
 });
 
@@ -625,11 +680,14 @@ test('one observation is one fire: the last fire keeps every outcome it saw', as
     rex.pane.record = record('working', 't1');
     const {details} = await paneWake(h);
     rex.pane.present = false;
-    await h.call('wake_run', {id: details.id});
+    assert.match(
+      await h.text('wake_run', {id: details.id}),
+      /ended the wait; it fired the wake\.\nThis wake has finished\./,
+    );
     await settle();
     const {content, details: fired} = h.messages[0].message;
     assert.equal(fired.outcome, 'ended');
-    assert.equal(fired.manual, true);
+    assert.equal(fired.manual, undefined);
     assert.match(content, /observed: ended: the block was closed/);
     assert.match(content, /status now: no status reported/);
     h.handlers.session_shutdown({}, h.ctx);

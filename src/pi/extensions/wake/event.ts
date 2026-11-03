@@ -2,7 +2,7 @@
 // text other programs wrote. Each trigger's rules module (pane.ts, task.ts)
 // extends a transition with what its messages report.
 
-export type Outcome = 'matched' | 'ended' | 'timed out' | 'manual';
+export type Outcome = 'matched' | 'ended' | 'timed out';
 
 export interface Transition {
   readonly outcome: Outcome;

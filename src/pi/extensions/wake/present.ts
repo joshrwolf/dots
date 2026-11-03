@@ -13,6 +13,7 @@ import {
   type Notice,
   type Segment,
 } from '../../src/index.ts';
+import type {Outcome} from './event.ts';
 
 type CustomMessage<T> = Parameters<MessageRenderer<T>>[0];
 
@@ -22,6 +23,7 @@ export interface WakeDetails {
   limit: number;
   late: number;
   every?: string;
+  /** A time wake fired by wake_run. */
   manual?: boolean;
   check?: string;
   exit?: number;
@@ -33,7 +35,7 @@ export interface WakeDetails {
   pane?: string;
   /** The watched task's ID. */
   task?: string;
-  outcome?: 'matched' | 'ended' | 'timed out' | 'manual';
+  outcome?: Outcome;
   /** The observed transitions, in our own words. */
   summary?: string;
 }
@@ -89,7 +91,7 @@ export function renderWake(
       priority: 60,
       shrink: 'omit',
     });
-  if (d.outcome && d.outcome !== 'manual')
+  if (d.outcome)
     status.push({
       text: d.outcome,
       tone: d.outcome === 'matched' ? 'muted' : 'warning',
