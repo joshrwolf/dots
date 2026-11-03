@@ -52,7 +52,6 @@ import {
   type TaskTransition,
   type TaskTrigger,
 } from './task.ts';
-import {TaskFeeds, type TaskSource} from './task-feed.ts';
 import {
   DEFAULT_FOR_MS,
   DEFAULT_LIMIT,
@@ -69,7 +68,6 @@ import {
   type WakeRecord,
 } from './record.ts';
 export type {CheckResult, CheckRunner} from './check.ts';
-export type {TaskSource} from './task-feed.ts';
 export type {Clock} from '../../src/host/clock.ts';
 export {
   DEFAULT_FOR_MS,
@@ -108,6 +106,19 @@ export type PaneSource = Pick<
   Rex,
   'resolvePane' | 'snapshotPane' | 'watch' | 'close'
 >;
+
+/** What task wakes need from the task store; `Tasks` in production, a fake in tests. */
+export type TaskSource = Pick<
+  Tasks,
+  'kinds' | 'task' | 'events' | 'head' | 'follow' | 'close'
+>;
+
+/** One task wake's follower of its subtree. */
+interface TaskWatch {
+  readonly wake: TaskWake;
+  stop: () => void;
+  state: StreamState | undefined;
+}
 
 export function parseDuration(value: string): number {
   const match = /^\s*(\d+(?:\.\d+)?)\s*(s|m|h|d)\s*$/i.exec(value);
@@ -235,6 +246,8 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
   const reads = new Set<Promise<void>>();
   const watches = new Map<string, () => void>();
   const connections = new Map<string, StreamState>();
+  /** By wake id: each live task wake follows its own subtree from its cursor. */
+  const taskWatches = new Map<string, TaskWatch>();
   const delivery = new TurnMessages(pi);
   let context: ExtensionContext | undefined;
   let owner: string | undefined;
@@ -280,7 +293,12 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
 
   /** Why an event wake cannot currently observe, or undefined while it can. */
   const disconnected = (wake: EventWake): string | undefined => {
-    if (isTask(wake)) return feeds.disconnected(wake.trigger.project);
+    if (isTask(wake)) {
+      const state = taskWatches.get(wake.id)?.state;
+      return state?.status === 'disconnected'
+        ? state.error || 'disconnected'
+        : undefined;
+    }
     const state = connections.get(hostKey(wake.trigger));
     if (state?.status === 'disconnected') return state.error || 'disconnected';
     const runtime = runtimes.get(wake.id);
@@ -288,29 +306,51 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
   };
 
   /** Task wakes that observe live events: active, in this runtime, before their deadline. */
-  const liveTasks = (project?: string): TaskWake[] =>
+  const liveTasks = (): TaskWake[] =>
     armed
       ? active().filter(
           (wake): wake is TaskWake =>
-            isTask(wake) &&
-            (project === undefined || wake.trigger.project === project) &&
-            wake.trigger.deadline > clock.now(),
+            isTask(wake) && wake.trigger.deadline > clock.now(),
         )
       : [];
 
-  const feeds = new TaskFeeds<TaskWake>(
-    tasks,
-    {
-      wakes: project => liveTasks(project),
-      observe: (wake, event, inTree) => observeEvent(wake, event, inTree),
-      changed: () => refresh(),
-    },
-    clock,
-  );
-
-  /** Follow each project with live task wakes, and only those. */
-  const watchProjects = () =>
-    feeds.sync(new Set(liveTasks().map(wake => wake.trigger.project)));
+  /**
+   * Follow each live task wake's subtree, and only those. Each follower
+   * resumes from its wake's cursor, so a reconnect neither skips nor repeats
+   * an event; the store decides which events belong to the tree.
+   */
+  const watchTasks = () => {
+    const live = new Map(liveTasks().map(wake => [wake.id, wake]));
+    for (const [id, watch] of taskWatches)
+      if (live.get(id) !== watch.wake) {
+        watch.stop();
+        taskWatches.delete(id);
+      }
+    for (const wake of live.values()) {
+      if (taskWatches.has(wake.id)) continue;
+      const watch: TaskWatch = {wake, stop: () => {}, state: undefined};
+      const current = () =>
+        taskWatches.get(wake.id) === watch &&
+        wake.trigger.deadline > clock.now();
+      taskWatches.set(wake.id, watch);
+      watch.stop = tasks.follow(
+        wake.trigger.project,
+        wake.trigger.id,
+        () => wake.trigger.cursor,
+        {
+          event: event => {
+            if (current() && event.seq > wake.trigger.cursor)
+              observeEvent(wake, event);
+          },
+          state: state => {
+            if (taskWatches.get(wake.id) !== watch) return;
+            watch.state = state;
+            refresh();
+          },
+        },
+      );
+    }
+  };
 
   const activity = (): WakeActivity[] =>
     orderWakes(
@@ -505,7 +545,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     disarm(wake.id);
     persist(wake);
     watchHosts();
-    watchProjects();
+    watchTasks();
     refresh();
   };
 
@@ -825,12 +865,13 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
    * what the event means for the wait. A match always writes the record, so a
    * restart never replays a delivered match.
    */
-  const observeEvent = (wake: TaskWake, event: TaskEvent, inTree: boolean) => {
+  const observeEvent = (wake: TaskWake, event: TaskEvent) => {
     if (!armed || !wake.active || wakes.get(wake.id) !== wake) return;
-    const step = observeTask(wake.trigger, event, {
-      inTree,
-      own: owner !== undefined && event.actor === `pi-${owner}`,
-    });
+    const step = observeTask(
+      wake.trigger,
+      event,
+      owner !== undefined && event.actor === `pi-${owner}`,
+    );
     const runtime = taskRuntime(wake);
     wake.trigger.cursor = event.seq;
     runtime.dirty = true;
@@ -980,19 +1021,30 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
    */
   const expireTask = (wake: TaskWake) => {
     const currentGeneration = generation;
-    const done = feeds
-      .expire(wake, wake.trigger.deadline)
+    const current = () =>
+      armed &&
+      generation === currentGeneration &&
+      wake.active &&
+      wakes.get(wake.id) === wake;
+    const {project, id, deadline} = wake.trigger;
+    const replay = async () => {
+      let since = wake.trigger.cursor;
+      for (;;) {
+        const page = await tasks.events(project, id, since);
+        for (const event of page.events) {
+          if (!current() || event.at * 1000 > deadline) return;
+          observeEvent(wake, event);
+          since = event.seq;
+        }
+        if (!page.more) return;
+      }
+    };
+    // An unreadable store leaves the history unknown; the wake still gives up.
+    const done = replay()
       .catch(() => undefined)
       .then(() => {
         reads.delete(done);
-        if (
-          !armed ||
-          generation !== currentGeneration ||
-          !wake.active ||
-          wakes.get(wake.id) !== wake
-        )
-          return;
-        signal(wake, taskRuntime(wake), [timedOut(wake)]);
+        if (current()) signal(wake, taskRuntime(wake), [timedOut(wake)]);
       });
     reads.add(done);
   };
@@ -1113,13 +1165,14 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     for (const stop of watches.values()) stop();
     watches.clear();
     connections.clear();
+    for (const watch of taskWatches.values()) watch.stop();
+    taskWatches.clear();
   };
 
   const restore = (ctx: ExtensionContext) => {
     generation++;
     for (const controller of checking.values()) controller.abort();
     unwatch();
-    feeds.stop();
     armed = true;
     context = ctx;
     cwd = ctx.cwd;
@@ -1183,7 +1236,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     for (const wake of expired) expire(wake);
     const expiring = new Set<Wake>(expired);
     const started = watchHosts();
-    watchProjects();
+    watchTasks();
     // A host already watched opens no new connection; reconcile directly.
     for (const wake of active())
       if (
@@ -1381,8 +1434,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     persist(wake);
     if (armed) {
       arm(wake);
-      watchProjects();
-      feeds.joined(wake);
+      watchTasks();
     }
     refresh();
     const text = [
@@ -1420,7 +1472,6 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
       ...checkRuns,
       ...reads,
       rex.close(),
-      feeds.close(),
       tasks.close(),
     ]);
   });

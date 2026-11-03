@@ -17,7 +17,11 @@ const settle = async () => {
   for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
 };
 
-/** Parsed task store events, lookups and history, driven by the test. */
+/**
+ * Parsed task store events, lookups and history, driven by the test. Like the
+ * store, followers and pages keep only events in their root's subtree, judged
+ * by the tree when each event is read.
+ */
 function fakeTasks() {
   const tree = new Map([
     ['t-a0', {parent: null, title: 'Ship the feature', status: 'open'}],
@@ -27,6 +31,12 @@ function fakeTasks() {
   const history = [];
   const follows = [];
   const lookups = [];
+  const pages = [];
+  const within = (root, id) => {
+    for (let at = id; at; at = tree.get(at)?.parent)
+      if (at === root) return true;
+    return false;
+  };
   let failing;
   let closing = Promise.resolve();
   let closed = 0;
@@ -41,15 +51,19 @@ function fakeTasks() {
       if (!task) throw new Error(`task ${id} does not exist in this project`);
       return {project: PROJECT, id, ...task};
     },
-    async events(project, since) {
-      const events = history.filter(e => e.seq > since).slice(0, 2);
+    async events(project, root, since) {
+      pages.push({project, root, since});
+      if (failing) throw new Error(failing);
+      const events = history
+        .filter(e => e.seq > since && within(root, e.task))
+        .slice(0, 2);
       return {events, more: events.length === 2};
     },
     async head() {
       return history.at(-1)?.seq ?? 0;
     },
-    follow(project, since, listener) {
-      const follow = {project, since: since(), listener, stopped: false};
+    follow(project, root, since, listener) {
+      const follow = {project, root, since, listener, stopped: false};
       follows.push(follow);
       return () => {
         follow.stopped = true;
@@ -67,6 +81,7 @@ function fakeTasks() {
     history,
     follows,
     lookups,
+    pages,
     live,
     closed: () => closed,
     fail(message) {
@@ -75,17 +90,20 @@ function fakeTasks() {
     closeAfter(promise) {
       closing = promise;
     },
-    /** Commit an event: it joins history and reaches every live follower. */
+    /** Commit an event: it joins history and reaches the followers of its trees. */
     emit(event) {
       history.push(event);
-      for (const follow of live()) follow.listener.event(event);
+      for (const follow of live())
+        if (within(follow.root, event.task)) follow.listener.event(event);
     },
-    /** A follower (re)connects and replays history after its cursor. */
+    /** Followers respawn and replay their trees' history after their cursors. */
     reconnect() {
-      const [follow] = live();
-      follow.listener.open();
-      for (const event of history)
-        if (event.seq > follow.since) follow.listener.event(event);
+      for (const follow of live()) {
+        const since = follow.since();
+        for (const event of history)
+          if (event.seq > since && within(follow.root, event.task))
+            follow.listener.event(event);
+      }
     },
     state: state => {
       for (const follow of live()) follow.listener.state(state);
@@ -182,13 +200,18 @@ test('creation validates kinds and the task, resolves the project, and starts at
     cursor: seq,
   });
   assert.equal(tasks.live().length, 1);
-  assert.equal(tasks.live()[0].since, seq);
+  assert.equal(tasks.live()[0].since(), seq);
   assert.equal(tasks.live()[0].project, PROJECT);
+  assert.equal(tasks.live()[0].root, 't-a0');
 
   // An explicit project is looked up there, not in the checkout.
   await taskWake(h, {task: {id: 't-b1', project: PROJECT}});
   assert.deepEqual(tasks.lookups.at(-1), {id: 't-b1', project: PROJECT});
-  assert.equal(tasks.live().length, 1, 'one follower per project');
+  assert.deepEqual(
+    tasks.live().map(f => f.root),
+    ['t-a0', 't-b1'],
+    'one follower per wake, on its own subtree',
+  );
   h.handlers.session_shutdown({}, h.ctx);
 });
 
@@ -219,18 +242,15 @@ test('matches the task and every descendant, including later-created and reparen
   assert.equal(details.task, 't-a0');
   assert.equal(details.outcome, 'matched');
 
-  // A task created later under the tree is learned once through the CLI.
+  // A task created later under the tree.
+  const lookups = tasks.lookups.length;
   tasks.tree.set('t-d3', {parent: 't-b1', title: 'Nested', status: 'open'});
   tasks.emit(event('t-d3', 'created'));
   tasks.emit(event('t-d3', 'review'));
   await settle();
   assert.equal(h.messages.length, 2);
   assert.match(h.messages[1].message.content, /review on descendant t-d3/);
-  assert.equal(
-    tasks.lookups.filter(l => l.id === 't-d3').length,
-    1,
-    'parentage is cached',
-  );
+  assert.equal(tasks.lookups.length, lookups, 'no parentage lookups');
 
   // Moving a task into the tree is an update; its later events count.
   tasks.tree.get('t-c2').parent = 't-b1';
@@ -337,7 +357,7 @@ test('restore resumes from each cursor with no gap and no repeated fire', async 
   await crashed.handlers.session_start({reason: 'resume'}, crashed.ctx);
   assert.equal(tasks.live().length, 2, 'the old runtime never shut down');
   tasks.live()[0].stopped = true;
-  assert.equal(tasks.live()[0].since, matched);
+  assert.equal(tasks.live()[0].since(), matched);
   tasks.emit(event('t-b1', 'review'));
   tasks.reconnect();
   await settle();
@@ -347,7 +367,7 @@ test('restore resumes from each cursor with no gap and no repeated fire', async 
     new RegExp(`#${seq} review`),
   );
   // A clean shutdown keeps the cursor of events that did not match.
-  tasks.emit(event('t-c2', 'review'));
+  tasks.emit(event('t-b1', 'claimed'));
   await settle();
   await crashed.handlers.session_shutdown({}, crashed.ctx);
   assert.equal(records(crashed).at(-1).trigger.cursor, seq);
@@ -355,7 +375,7 @@ test('restore resumes from each cursor with no gap and no repeated fire', async 
   const resumed = harness(clock, undefined, {tasks: tasks.port});
   resumed.entries.push(...crashed.entries);
   await resumed.handlers.session_start({reason: 'resume'}, resumed.ctx);
-  assert.equal(tasks.live()[0].since, seq);
+  assert.equal(tasks.live()[0].since(), seq);
   tasks.reconnect();
   await settle();
   assert.equal(resumed.messages.length, 0);
@@ -376,6 +396,9 @@ test('a deadline that passed while Pi was closed delivers missed history, then t
   await restored.handlers.session_start({reason: 'resume'}, restored.ctx);
   await settle();
   assert.equal(tasks.live().length, 0, 'an expired wake starts no follower');
+  assert.ok(
+    tasks.pages.every(page => page.root === 't-a0' && page.project === PROJECT),
+  );
   const messages = restored.messages.map(m => m.message);
   assert.equal(messages.length, 2);
   assert.match(
@@ -392,51 +415,62 @@ test('a deadline that passed while Pi was closed delivers missed history, then t
   await restored.handlers.session_shutdown({}, restored.ctx);
 });
 
-test('a disconnected follower is shown; a failed lookup replays from the cursor', async () => {
-  const {clock, tasks, h} = await started();
+test('a disconnected follower is shown on its own wake', async () => {
+  const {tasks, h} = await started();
   tasks.history.push(event('t-c2', 'claimed'));
   await taskWake(h, {until: ['review'], limit: 3});
-  tasks.state({status: 'disconnected', error: 'catalog locked', retryAt: 0});
-  let [listed] = await h.call('wake_list', {});
-  assert.equal(listed.disconnected, 'catalog locked');
+  await taskWake(h, {task: {id: 't-c2'}, until: ['review']});
+  const [first, second] = tasks.live();
+  first.listener.state({
+    status: 'disconnected',
+    error: 'catalog locked',
+    retryAt: 0,
+  });
+  let listed = await h.call('wake_list', {});
+  assert.deepEqual(
+    listed.map(w => w.disconnected),
+    ['catalog locked', null],
+  );
   assert.match(await h.text('wake_list', {}), /· disconnected/);
-  tasks.state({status: 'connected', since: 0});
-  [listed] = await h.call('wake_list', {});
-  assert.equal(listed.disconnected, null);
-
-  tasks.tree.set('t-e4', {parent: 't-a0', title: 'Late', status: 'open'});
-  tasks.fail('dots: catalog unavailable');
-  tasks.emit(event('t-e4', 'review'));
-  await settle();
-  assert.equal(h.messages.length, 0);
-  [listed] = await h.call('wake_list', {});
-  assert.match(
-    listed.disconnected,
-    /could not read the task store: dots: catalog unavailable/,
+  first.listener.state({status: 'connected', since: 0});
+  second.listener.state({status: 'connected', since: 0});
+  listed = await h.call('wake_list', {});
+  assert.deepEqual(
+    listed.map(w => w.disconnected),
+    [null, null],
   );
-  assert.equal(tasks.live().length, 0, 'the follower stops until it retries');
-  tasks.fail(undefined);
-  await clock.advance(5_000);
-  assert.equal(tasks.live().length, 1);
-  assert.equal(
-    tasks.live()[0].since,
-    seq - 1,
-    'resumes before the unjudged event',
-  );
-  tasks.reconnect();
-  await settle();
-  assert.equal(h.messages.length, 1);
-  assert.match(h.messages[0].message.content, /review on descendant t-e4/);
-  [listed] = await h.call('wake_list', {});
-  assert.equal(listed.disconnected, null);
   h.handlers.session_shutdown({}, h.ctx);
 });
 
-test('a wake joining a follower that delivered past its cursor replays', async () => {
+test('a reparent no follower saw is judged by the tree when the event is read', async () => {
+  const {tasks, h} = await started();
+  const {details} = await taskWake(h, {until: ['claimed', 'review'], limit: 5});
+  tasks.emit(event('t-b1', 'claimed'));
+  await settle();
+  assert.equal(h.messages.length, 1);
+  await h.call('wake_cancel', {id: details.id});
+  assert.equal(tasks.live().length, 0);
+
+  // t-b1 moves from t-a0 to t-c2 while nothing follows either tree.
+  tasks.tree.get('t-b1').parent = 't-c2';
+  tasks.history.push(event('t-b1', 'updated', {detail: 'parent t-a0 -> t-c2'}));
+  await taskWake(h, {until: ['review'], limit: 5});
+  await taskWake(h, {task: {id: 't-c2'}, until: ['review'], limit: 5});
+  tasks.emit(event('t-b1', 'review'));
+  await settle();
+  const fired = h.messages.slice(1).map(m => m.message.content);
+  assert.equal(fired.length, 1);
+  assert.match(fired[0], /task t-c2 · matched/);
+  assert.match(fired[0], /review on descendant t-b1/);
+  h.handlers.session_shutdown({}, h.ctx);
+});
+
+test('a new wake replays from its own cursor, whatever other wakes already saw', async () => {
   const {tasks, h} = await started();
   tasks.history.push(event('t-c2', 'claimed'));
   await taskWake(h, {until: ['claimed'], limit: 3});
-  // The head is read before the follower delivers an event the new wake must see.
+  // An event lands after the new wake reads its head but before its follower
+  // starts, and an earlier wake's follower has already delivered it.
   const head = tasks.port.head;
   tasks.port.head = async () => {
     const value = await head();
@@ -446,13 +480,17 @@ test('a wake joining a follower that delivered past its cursor replays', async (
   };
   await taskWake(h, {until: ['review']});
   tasks.port.head = head;
-  assert.equal(tasks.follows.filter(f => f.stopped).length, 1);
-  assert.equal(tasks.live().length, 1);
-  assert.equal(tasks.live()[0].since, seq - 1);
+  const [, follower] = tasks.live();
+  assert.equal(follower.since(), seq - 1);
+  // The follower replays the backlog after its cursor once it spawns, then
+  // any later events in order.
   tasks.reconnect();
+  tasks.emit(event('t-b1', 'claimed'));
   await settle();
-  assert.equal(h.messages.length, 1);
-  assert.match(h.messages[0].message.content, /review on descendant t-b1/);
+  const reviews = h.messages.filter(m =>
+    /review on descendant t-b1/.test(m.message.content),
+  );
+  assert.equal(reviews.length, 1, 'once, not skipped or repeated');
   h.handlers.session_shutdown({}, h.ctx);
 });
 
@@ -478,7 +516,7 @@ test('wake_run looks the task up and fires with its status', async () => {
 test('shutdown flushes cursors and waits for the task store follower to stop', async () => {
   const {tasks, h} = await started();
   await taskWake(h);
-  tasks.emit(event('t-c2', 'claimed'));
+  tasks.emit(event('t-b1', 'claimed'));
   await settle();
   let stopped;
   tasks.closeAfter(

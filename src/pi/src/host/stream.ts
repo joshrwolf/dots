@@ -26,7 +26,11 @@ export interface StreamListener {
 export type Launch = (
   file: string,
   args: readonly string[],
-  options: {stdio: ['ignore', 'pipe', 'pipe']},
+  options: {
+    stdio: ['ignore', 'pipe', 'pipe'];
+    /** Absent: the child inherits this process's environment. */
+    env?: NodeJS.ProcessEnv;
+  },
 ) => ChildProcess;
 
 export interface StreamOptions {
@@ -35,6 +39,8 @@ export interface StreamOptions {
   readonly args: () => readonly string[];
   readonly clock?: Clock;
   readonly launch?: Launch;
+  /** The child's environment; defaults to this process's. */
+  readonly env?: NodeJS.ProcessEnv;
   /** First retry delay; doubles per failed connection up to `maxBackoffMs`. */
   readonly minBackoffMs?: number;
   readonly maxBackoffMs?: number;
@@ -58,6 +64,7 @@ export class NdjsonStream {
   private readonly args: () => readonly string[];
   private readonly clock: Clock;
   private readonly launch: Launch;
+  private readonly env: NodeJS.ProcessEnv | undefined;
   private readonly minBackoffMs: number;
   private readonly maxBackoffMs: number;
   private readonly healthyMs: number;
@@ -77,6 +84,7 @@ export class NdjsonStream {
     this.launch =
       options.launch ??
       ((file, args, spawnOptions) => spawn(file, [...args], spawnOptions));
+    this.env = options.env;
     this.minBackoffMs = options.minBackoffMs ?? 1_000;
     this.maxBackoffMs = options.maxBackoffMs ?? 60_000;
     this.healthyMs = options.healthyMs ?? 30_000;
@@ -122,6 +130,7 @@ export class NdjsonStream {
     try {
       child = this.launch(this.file, this.args(), {
         stdio: ['ignore', 'pipe', 'pipe'],
+        ...(this.env ? {env: this.env} : {}),
       });
     } catch (error) {
       this.ended(

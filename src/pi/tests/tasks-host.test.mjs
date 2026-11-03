@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {DotsError} from '@joshrwolf/pi-kit/dots';
 import {Tasks, parseTaskLine} from '../src/host/tasks.ts';
 import {launcher} from './child-fixture.mjs';
 import {fakeClock} from './wake-fixture.mjs';
@@ -35,11 +36,6 @@ test('stream lines are events, a storage failure, or ignored', () => {
 test('one-shot calls go through the dots client and are validated', async () => {
   const calls = [];
   let kindsFail = true;
-  const pages = [
-    Array.from({length: 1000}, (_, i) => event(i + 1)),
-    [event(1001), event(1002)],
-    [],
-  ];
   const run = async (args, options) => {
     calls.push({args, directory: options.directory, env: options.env});
     if (args[1] === 'event-kinds') {
@@ -52,7 +48,8 @@ test('one-shot calls go through the dots client and are validated', async () => 
         task: {id: args[2], parent: null, title: 'Goal', status: 'open'},
         now: 1,
       };
-    if (args[1] === 'events') return {events: pages.shift(), project: PROJECT};
+    if (args[1] === 'events')
+      return {events: [], head: 1002, project: PROJECT, now: 1};
     throw new Error(`unexpected ${args.join(' ')}`);
   };
   const env = {XDG_DATA_HOME: '/tmp/fixture-data'};
@@ -87,12 +84,12 @@ test('one-shot calls go through the dots client and are validated', async () => 
   ]);
 
   assert.equal(await tasks.head(PROJECT), 1002);
-  const since = calls
-    .filter(c => c.args[1] === 'events')
-    .map(c => c.args[c.args.indexOf('--since') + 1]);
-  assert.deepEqual(since, ['0', '1000']);
-  assert.equal(await tasks.head(PROJECT), 1002, 'pages from the last head');
-  assert.equal(calls.at(-1).args.at(-3), '1002');
+  assert.deepEqual(
+    calls.at(-1).args,
+    ['task', 'events', '--project', PROJECT, '--limit', '0'],
+    'the head is one small call',
+  );
+  assert.equal(calls.at(-1).env, env);
 
   const bad = new Tasks({run: async () => ({project: PROJECT, task: {}})});
   await assert.rejects(
@@ -101,16 +98,79 @@ test('one-shot calls go through the dots client and are validated', async () => 
   );
 });
 
-test('a follower resumes from the cursor at each spawn and reports storage failures', async () => {
+test('history pages read one subtree and halve when a page outgrows the output cap', async () => {
+  const calls = [];
+  const run = async args => {
+    const limit = Number(args[args.indexOf('--limit') + 1]);
+    calls.push({since: args[args.indexOf('--since') + 1], limit});
+    if (limit > 25) {
+      const cause = Object.assign(
+        new RangeError('stdout maxBuffer length exceeded'),
+        {code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'},
+      );
+      throw new DotsError(args, 'failed', '', cause.message, {cause});
+    }
+    return {
+      events: Array.from({length: limit}, (_, i) => event(i + 1)),
+      head: 99,
+    };
+  };
+  const tasks = new Tasks({run});
+  const page = await tasks.events(PROJECT, 't-a0', 4);
+  assert.equal(page.events.length, 25);
+  assert.equal(page.more, true);
+  assert.deepEqual(
+    calls.map(c => c.limit),
+    [100, 50, 25],
+  );
+  await tasks.events(PROJECT, 't-a0', 29);
+  assert.deepEqual(
+    calls.at(-1),
+    {since: '29', limit: 25},
+    'the smaller page sticks',
+  );
+
+  const failing = new Tasks({
+    run: async args => {
+      throw new DotsError(
+        args,
+        'failed',
+        'dots: task t-a0 not found',
+        'dots: task t-a0 not found',
+      );
+    },
+  });
+  await assert.rejects(failing.events(PROJECT, 't-a0', 0), /not found/);
+  const args = [];
+  await new Tasks({
+    run: async a => {
+      args.push(a);
+      return {events: [], head: 0};
+    },
+  }).events(PROJECT, 't-a0', 4);
+  assert.deepEqual(args[0], [
+    'task',
+    'events',
+    '--project',
+    PROJECT,
+    '--under',
+    't-a0',
+    '--since',
+    '4',
+    '--limit',
+    '100',
+  ]);
+});
+
+test('a follower reads one subtree in the configured environment, resumes from the cursor at each spawn and reports storage failures', async () => {
   const clock = fakeClock();
-  const {launch, children, calls} = launcher();
-  const tasks = new Tasks({launch, clock});
+  const {launch, children, calls, spawns} = launcher();
+  const env = {XDG_DATA_HOME: '/tmp/fixture-data'};
+  const tasks = new Tasks({launch, clock, env});
   let cursor = 7;
   const events = [];
   const states = [];
-  let opened = 0;
-  const stop = tasks.follow(PROJECT, () => cursor, {
-    open: () => opened++,
+  const stop = tasks.follow(PROJECT, 't-a0', () => cursor, {
     event: e => events.push(e.seq),
     state: s => states.push(s),
   });
@@ -123,12 +183,18 @@ test('a follower resumes from the cursor at each spawn and reports storage failu
       '--follow',
       '--project',
       PROJECT,
+      '--under',
+      't-a0',
       '--since',
       '7',
     ],
   ]);
+  assert.equal(
+    spawns[0].env,
+    env,
+    'the follower reads the same catalog as calls',
+  );
   children[0].spawned();
-  assert.equal(opened, 1);
   children[0].stdout.write(
     `${JSON.stringify(event(8))}\n{"other":1}\n${JSON.stringify(event(9))}\n`,
   );
@@ -146,7 +212,6 @@ test('a follower resumes from the cursor at each spawn and reports storage failu
   assert.equal(calls.length, 2);
   assert.equal(calls[1].at(-1), '9', 'the restart resumes from the cursor');
   children[1].spawned();
-  assert.equal(opened, 2);
   children[1].exit(1);
   await settle();
   assert.match(
@@ -180,7 +245,7 @@ test('close aborts calls in flight and waits for followers to exit', async () =>
     });
   const tasks = new Tasks({run, launch, clock});
   const lookup = tasks.task('t-a0', {project: PROJECT}).catch(() => 'rejected');
-  tasks.follow(PROJECT, () => 0, {open() {}, event() {}, state() {}});
+  tasks.follow(PROJECT, 't-a0', () => 0, {event() {}, state() {}});
   children[0].spawned();
   let closed = false;
   const closing = tasks.close().then(() => {

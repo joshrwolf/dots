@@ -3,8 +3,8 @@ import type {TaskEvent} from '../../src/host/tasks.ts';
 import {untrusted, type Transition} from './event.ts';
 
 // The task trigger's rules: which task store events match a wait or end it.
-// Pure; the feed decides which events belong to the watched tree, and the
-// wake engine owns effects.
+// Pure; the store delivers only events in the watched tree, and the wake
+// engine owns effects.
 
 /** Statuses after which a task records nothing more unless reopened. */
 export const CLOSED: readonly string[] = ['done', 'dropped'];
@@ -25,7 +25,7 @@ export const TaskTriggerSchema = Type.Object(
     }),
     /** Give up at this time, epoch ms. */
     deadline: Type.Integer({minimum: 0}),
-    /** The seq of the last project event this wake has seen. */
+    /** The seq after which events count: the project head at creation, then the last event seen in the tree. */
     cursor: Type.Integer({minimum: 0}),
   },
   {additionalProperties: false},
@@ -45,15 +45,14 @@ export interface TaskStep {
 const NOTHING: TaskStep = {transitions: []};
 
 /**
- * One event's consequence for a wait. `inTree` says whether the event's task
- * is the root or one of its descendants; `own` whether this session wrote it.
+ * One consequence for a wait of an event on the root or one of its
+ * descendants; `own` says whether this session wrote it.
  */
 export function observeTask(
   trigger: TaskTrigger,
   event: TaskEvent,
-  {inTree, own}: {readonly inTree: boolean; readonly own: boolean},
+  own: boolean,
 ): TaskStep {
-  if (!inTree) return NOTHING;
   const root = event.task === trigger.id;
   const closed = root && CLOSED.includes(event.kind);
   if (own) return closed ? {transitions: [], close: true} : NOTHING;

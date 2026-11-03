@@ -1,4 +1,4 @@
-import {DOTS, dots, type DotsOptions} from '@joshrwolf/pi-kit/dots';
+import {DOTS, DotsError, dots, type DotsOptions} from '@joshrwolf/pi-kit/dots';
 import {Type, type Static, type TSchema} from 'typebox';
 import {Check} from 'typebox/value';
 import {systemClock, type Clock} from './clock.ts';
@@ -6,9 +6,9 @@ import {NdjsonStream, type Launch, type StreamState} from './stream.ts';
 
 /**
  * The companion's one owner of task store observation: the event vocabulary,
- * task lookups, history pages, and `dots task events --follow` streams. The
- * store, project resolution and validation stay with the `dots` CLI; every
- * value it prints is checked here before use.
+ * task lookups, subtree history pages, and `dots task events --follow`
+ * streams. The store, project resolution, subtree membership and validation
+ * stay with the `dots` CLI; every value it prints is checked here before use.
  */
 
 const TaskId = Type.String({pattern: '^t-[a-f0-9]+$', maxLength: 128});
@@ -37,7 +37,10 @@ const Shown = Type.Object({
     status: Type.String({minLength: 1, maxLength: 64}),
   }),
 });
-const Page = Type.Object({events: Type.Array(EventSchema)});
+const Page = Type.Object({
+  events: Type.Array(EventSchema),
+  head: Type.Integer({minimum: 0}),
+});
 
 /** One history entry. Actor, detail and result are writer-controlled, untrusted text. */
 export type TaskEvent = Static<typeof EventSchema>;
@@ -65,8 +68,7 @@ export type DotsRun = (
 ) => Promise<unknown>;
 
 export interface FollowListener {
-  /** A newly spawned follower is running; it replays everything after `since`. */
-  open(): void;
+  /** The next event in the subtree; a respawned follower replays from `since`. */
   event(event: TaskEvent): void;
   state(state: StreamState): void;
 }
@@ -79,7 +81,11 @@ export interface TasksOptions {
   readonly env?: NodeJS.ProcessEnv;
 }
 
-const PAGE = 1000;
+/**
+ * Events per history page to start with. Events carry results of up to 24 KiB,
+ * so a page can outgrow the client's output cap; it then halves.
+ */
+const PAGE = 100;
 
 const is = <T extends TSchema>(schema: T, value: unknown): value is Static<T> =>
   Check(schema, value);
@@ -99,8 +105,8 @@ export class Tasks {
   private readonly clock: Clock;
   private readonly env: NodeJS.ProcessEnv | undefined;
   private vocabulary: Promise<readonly string[]> | undefined;
-  /** A seq at or below each project's newest event, to page from. */
-  private readonly heads = new Map<string, number>();
+  /** Events per history page; shrinks when a page exceeds the output cap. */
+  private page = PAGE;
   private readonly streams = new Set<NdjsonStream>();
   private readonly closing = new Set<Promise<void>>();
   private readonly calls = new Set<{
@@ -177,42 +183,56 @@ export class Tasks {
     };
   }
 
-  /** One page of a project's history after `since`, oldest first. */
-  async events(project: string, since: number): Promise<TaskPage> {
-    const {events} = await this.call(
-      [
-        'task',
-        'events',
-        '--project',
-        project,
-        '--since',
-        String(since),
-        '--limit',
-        String(PAGE),
-      ],
-      Page,
-    );
-    return {events, more: events.length >= PAGE};
+  /** One page of the history of a task and its descendants after `since`, oldest first. */
+  async events(
+    project: string,
+    root: string,
+    since: number,
+  ): Promise<TaskPage> {
+    for (;;) {
+      const limit = this.page;
+      try {
+        const {events} = await this.call(
+          [
+            'task',
+            'events',
+            '--project',
+            project,
+            '--under',
+            root,
+            '--since',
+            String(since),
+            '--limit',
+            String(limit),
+          ],
+          Page,
+        );
+        return {events, more: events.length >= limit};
+      } catch (error) {
+        if (limit === 1 || !overflowed(error)) throw error;
+        this.page = Math.min(this.page, Math.floor(limit / 2));
+      }
+    }
   }
 
   /** The seq of a project's newest event, or 0 before its first. */
   async head(project: string): Promise<number> {
-    let since = this.heads.get(project) ?? 0;
-    for (;;) {
-      const page = await this.events(project, since);
-      since = page.events.at(-1)?.seq ?? since;
-      this.heads.set(project, since);
-      if (!page.more) return since;
-    }
+    const {head} = await this.call(
+      ['task', 'events', '--project', project, '--limit', '0'],
+      Page,
+    );
+    return head;
   }
 
   /**
-   * Follow a project's history after `since`, evaluated at each spawn so a
-   * reconnect resumes from the caller's cursor. A storage failure's error line
-   * becomes the disconnected reason. Stopping ends the follower's process.
+   * Follow the events on a task and its descendants after `since`, evaluated
+   * at each spawn so a reconnect resumes from the caller's cursor. The store
+   * judges membership by the tree at each read. A storage failure's error
+   * line becomes the disconnected reason. Stopping ends the follower's process.
    */
   follow(
     project: string,
+    root: string,
     since: () => number,
     listener: FollowListener,
   ): () => void {
@@ -225,18 +245,20 @@ export class Tasks {
         '--follow',
         '--project',
         project,
+        '--under',
+        root,
         '--since',
         String(since()),
       ],
       clock: this.clock,
       ...(this.launch ? {launch: this.launch} : {}),
+      ...(this.env ? {env: this.env} : {}),
     });
     this.streams.add(stream);
     let failure: string | undefined;
     const stop = stream.subscribe({
       open: () => {
         failure = undefined;
-        listener.open();
       },
       line: value => {
         const line = parseTaskLine(value);
@@ -276,4 +298,14 @@ export class Tasks {
       ...calls.map(call => call.done),
     ]);
   }
+}
+
+/** Whether a call failed only because its output exceeded the client's cap. */
+function overflowed(error: unknown): boolean {
+  return (
+    error instanceof DotsError &&
+    error.cause instanceof Error &&
+    'code' in error.cause &&
+    error.cause.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+  );
 }

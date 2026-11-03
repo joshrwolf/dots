@@ -131,11 +131,12 @@ never autostart a server, and reconcile with snapshots after a reconnect or
 restart. A pane wake ends early when its program stops, its block or session
 closes, or the Rex server restarts, and gives up after its `for` deadline.
 
-Task wakes follow one `dots task events --follow` stream per project while any
-exist. They match `until` event kinds on the task and every descendant,
-including tasks created later, and ignore the session's own changes. Each wake
-keeps the seq of the last event it saw, so a reconnect or restart resumes
-without gaps or repeats. A task wake ends when the task closes by a kind outside
+Each task wake follows its own `dots task events --follow --under` stream. It
+matches `until` event kinds on the task and every descendant, as the store's
+tree stands when each event is read, so tasks created in or moved into the tree
+count and tasks moved out stop counting. It ignores the session's own changes.
+Each wake keeps the seq of the last event it saw, so a reconnect or restart
+resumes without gaps or repeats. A task wake ends when the task closes by a kind outside
 `until`, and gives up after its `for` deadline.
 
 Wakes persist but do not fire while Pi is closed. A missed wake fires once on

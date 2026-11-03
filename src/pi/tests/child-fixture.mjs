@@ -30,11 +30,14 @@ export function fakeChild({obeysTerm = true} = {}) {
 export function launcher(options) {
   const children = [];
   const calls = [];
-  const launch = (file, args) => {
+  /** Each launch's spawn options, in order. */
+  const spawns = [];
+  const launch = (file, args, spawnOptions) => {
     const child = fakeChild(options);
     children.push(child);
     calls.push([file, ...args]);
+    spawns.push(spawnOptions);
     return child;
   };
-  return {launch, children, calls};
+  return {launch, children, calls, spawns};
 }
