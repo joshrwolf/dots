@@ -343,15 +343,18 @@ pub(crate) enum TaskQuery {
     },
     /// Project history after an event seq, oldest first; use the last seen seq as a cursor
     #[command(
-        long_about = "Project history after an event seq, oldest first; use the last seen seq as a cursor. dots task event-kinds lists the kinds an event can have.\n--follow keeps running instead of returning a page: it prints every event after --since, then each new event as any session commits it, within about a second, one per line with no gaps or repeats. With --json each line is one event object, shaped like an item of the events array (NDJSON). It exits 0 when its output closes or on SIGTERM, SIGINT, or SIGHUP. A storage failure ends it nonzero with the error on stderr; with --json it also prints one {\"error\": ...} line. To resume after a restart, pass the seq of the last event received as --since."
+        long_about = "Project history after an event seq, oldest first; use the last seen seq as a cursor. dots task event-kinds lists the kinds an event can have.\nWith --json the page also carries head, the project's newest seq (0 before its first event), even with --under; --limit 0 returns only the head, a starting cursor for reading what follows.\n--under ID keeps only events on that task and its descendants, judged by the task tree at each read: tasks created in or moved into it count from then on, and a task moved out stops counting. An ID outside the project is an error.\n--follow keeps running instead of returning a page: it prints every event after --since, then each new event as any session commits it, within about a second, one per line with no gaps or repeats. With --json each line is one event object, shaped like an item of the events array (NDJSON). It exits 0 when its output closes or on SIGTERM, SIGINT, or SIGHUP. A storage failure ends it nonzero with the error on stderr; with --json it also prints one {\"error\": ...} line. To resume after a restart, pass the seq of the last event received as --since."
     )]
     Events {
         /// Only events with seq greater than this (default 0)
         #[arg(long, default_value_t = 0)]
         since: i64,
-        /// Maximum events to return; --follow streams every event instead
-        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=1000), conflicts_with = "follow")]
+        /// Maximum events to return (0 for only the head); --follow streams every event instead
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(0..=1000), conflicts_with = "follow")]
         limit: u16,
+        /// Only events on this task and its descendants
+        #[arg(long, value_name = "ID")]
+        under: Option<String>,
         /// Keep printing events as they commit, one per line, until stopped
         #[arg(long)]
         follow: bool,

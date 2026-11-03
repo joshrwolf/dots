@@ -1,6 +1,6 @@
 //! Process lifecycle of the shipped binary: `dots github watch follow` ends
 //! with its reader, and `dots task events --follow` streams other processes'
-//! commits.
+//! commits, optionally for one task's subtree.
 #[cfg(test)]
 mod tests {
     use std::io::{BufRead as _, BufReader};
@@ -139,7 +139,21 @@ mod task_events {
 
         /// Add a task from another process; the seq of its `created` event.
         fn add(&self, title: &str) -> i64 {
-            self.ok(&["task", "add", title])["task"]["last_event"]["seq"]
+            self.add_task(title, &[]).1
+        }
+
+        /// Add a task from another process; its ID and the seq of its `created` event.
+        fn add_task(&self, title: &str, args: &[&str]) -> (String, i64) {
+            let added = self.ok(&[&["task", "add", title], args].concat());
+            (
+                added["task"]["id"].as_str().unwrap().to_owned(),
+                added["task"]["last_event"]["seq"].as_i64().unwrap(),
+            )
+        }
+
+        /// Move a task from another process; the seq of its `updated` event.
+        fn reparent(&self, id: &str, parent: &[&str]) -> i64 {
+            self.ok(&[&["task", "update", id], parent].concat())["task"]["last_event"]["seq"]
                 .as_i64()
                 .unwrap()
         }
@@ -260,6 +274,54 @@ mod task_events {
         assert_eq!([resumed.seq(), resumed.seq()], [second, third]);
         resumed.quiet();
         resumed.stop();
+    }
+
+    #[test]
+    fn follow_under_a_task_streams_its_current_subtree() {
+        let workspace = Workspace::new();
+        let (root, root_created) = workspace.add_task("root", &[]);
+        let (stray, _) = workspace.add_task("stray", &[]);
+        let following = workspace.follow(&["--json", "--under", &root]);
+        assert_eq!(following.seq(), root_created);
+        following.quiet();
+
+        let (child, child_created) = workspace.add_task("child", &["--parent", &root]);
+        assert_eq!(following.seq(), child_created);
+        workspace.add("elsewhere");
+        let moved_in = workspace.reparent(&stray, &["--parent", &child]);
+        assert_eq!(following.seq(), moved_in);
+        workspace.reparent(&child, &["--parent", ""]);
+        let (_, direct) = workspace.add_task("direct", &["--parent", &root]);
+        assert_eq!(
+            following.seq(),
+            direct,
+            "a moved-out subtree no longer counts"
+        );
+        following.quiet();
+        following.stop();
+
+        let resumed =
+            workspace.follow(&["--json", "--under", &root, "--since", &moved_in.to_string()]);
+        assert_eq!(resumed.seq(), direct);
+        resumed.quiet();
+        resumed.stop();
+    }
+
+    #[test]
+    fn follow_under_an_unknown_task_fails_with_an_error_line() {
+        let workspace = Workspace::new();
+        let mut following = workspace.follow(&["--json", "--under", "t-00"]);
+        let line: Value = serde_json::from_str(&following.line()).unwrap();
+        assert!(line["error"].as_str().unwrap().contains("t-00"), "{line}");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = following.child.try_wait().unwrap() {
+                assert_eq!(status.code(), Some(1), "{status}");
+                return;
+            }
+            assert!(Instant::now() < deadline, "follow outlived its failure");
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]

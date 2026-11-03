@@ -42,6 +42,6 @@ pub use follow::{FOLLOW_INTERVAL, Follower};
 pub use goals::{Goal, GoalOverview, GoalProgress};
 pub use references::ExternalReference;
 pub use store::{
-    Actor, Error, Event, EventKind, Filter, NewTask, Owner, Prerequisite, Project, STORE_PATH,
-    Status, Store, Task, Update,
+    Actor, Error, Event, EventKind, Filter, History, NewTask, Owner, Prerequisite, Project,
+    STORE_PATH, Status, Store, Task, Update,
 };

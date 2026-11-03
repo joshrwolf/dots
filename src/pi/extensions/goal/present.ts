@@ -174,7 +174,7 @@ export function inspection(
   }
   if (eventShown)
     lines.push(
-      "Latest events show only each slice's most recent record, not a handoff or acceptance; a later claim or update can supersede an earlier note. dots task show ID shows the result and recent events; for older events, page dots task events --json from --since 0 and filter by task.",
+      "Latest events show only each slice's most recent record, not a handoff or acceptance; a later claim or update can supersede an earlier note. dots task show ID shows the result and recent events; for older events, page dots task events --json --under ID from --since 0.",
     );
   if (!tasks.length)
     lines.push(

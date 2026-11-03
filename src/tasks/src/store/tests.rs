@@ -584,3 +584,119 @@ fn release_reopen_and_explicit_claims_respect_owners_and_children() {
     assert!(Owner::try_new(" ").is_err());
     assert_eq!(Owner::try_new(" a ").unwrap().as_str(), "a");
 }
+
+fn add_under(store: &mut Store, title: &str, parent: &str) -> Task {
+    store
+        .add(
+            &project(),
+            &NewTask {
+                title: title.into(),
+                parent: Some(parent.into()),
+                ..NewTask::default()
+            },
+            actor(1),
+        )
+        .unwrap()
+}
+
+fn reparent(store: &mut Store, id: &str, parent: Option<&str>) -> i64 {
+    store
+        .update(
+            &project(),
+            id,
+            &Update {
+                parent: Some(parent.map(str::to_owned)),
+                ..Update::default()
+            },
+            actor(2),
+            false,
+        )
+        .unwrap()
+        .last_event
+        .unwrap()
+        .seq
+}
+
+/// The seqs of a subtree's history after `since`.
+fn under(store: &mut Store, id: &str, since: i64) -> Vec<i64> {
+    store
+        .history(&project(), Some(id), since, 100)
+        .unwrap()
+        .events
+        .iter()
+        .map(|event| event.seq)
+        .collect()
+}
+
+#[test]
+fn history_under_a_task_follows_the_current_tree() {
+    let mut store = store();
+    let root = add(&mut store, "root");
+    let child = add_under(&mut store, "child", &root.id);
+    let grandchild = add_under(&mut store, "grandchild", &child.id);
+    let outside = add(&mut store, "outside");
+    let seq = |task: &Task| task.last_event.as_ref().unwrap().seq;
+    assert_eq!(
+        under(&mut store, &root.id, 0),
+        [seq(&root), seq(&child), seq(&grandchild)]
+    );
+
+    // Moved in: its later events count, its earlier ones too, since
+    // membership is judged when the history is read.
+    let moved_in = reparent(&mut store, &outside.id, Some(&grandchild.id));
+    assert_eq!(under(&mut store, &root.id, seq(&outside)), [moved_in]);
+    assert_eq!(
+        under(&mut store, &root.id, 0),
+        [
+            seq(&root),
+            seq(&child),
+            seq(&grandchild),
+            seq(&outside),
+            moved_in
+        ]
+    );
+
+    // Moved out, with its subtree: nothing of it counts any more.
+    let moved_out = reparent(&mut store, &child.id, None);
+    assert_eq!(under(&mut store, &root.id, moved_in), Vec::<i64>::new());
+    assert_eq!(under(&mut store, &root.id, 0), [seq(&root)]);
+    assert_eq!(
+        under(&mut store, &child.id, moved_in),
+        [moved_out],
+        "a subtree's own root is part of it"
+    );
+
+    // Created later, below a descendant.
+    let late = add_under(&mut store, "late", &root.id);
+    assert_eq!(under(&mut store, &root.id, moved_out), [seq(&late)]);
+}
+
+#[test]
+fn history_reports_the_project_head_even_under_a_task() {
+    let mut store = store();
+    assert_eq!(store.history(&project(), None, 0, 0).unwrap().head, 0);
+    let root = add(&mut store, "root");
+    let other = add(&mut store, "other");
+    let head = other.last_event.unwrap().seq;
+    let page = store.history(&project(), Some(&root.id), 0, 0).unwrap();
+    assert!(page.events.is_empty(), "limit 0 reads only the head");
+    assert_eq!(page.head, head);
+    let page = store.history(&project(), None, head, 100).unwrap();
+    assert!(page.events.is_empty());
+    assert_eq!(page.head, head);
+}
+
+#[test]
+fn history_under_an_unknown_or_foreign_task_fails() {
+    let mut store = store();
+    assert!(matches!(
+        store.history(&project(), Some("t-00"), 0, 100),
+        Err(Error::NotFound(id)) if id == "t-00"
+    ));
+    let task = add(&mut store, "here");
+    let other = Project::try_new("p-00000000000000000000000000000002").unwrap();
+    assert!(matches!(
+        store.history(&other, Some(&task.id), 0, 100),
+        Err(Error::NotFound(_))
+    ));
+}

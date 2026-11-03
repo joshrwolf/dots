@@ -55,13 +55,14 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
         crate::project::resolve(&mut store, request.directory, request.project.as_deref())?;
     if let TaskCommand::Query(TaskQuery::Events {
         since,
+        under,
         follow: true,
         ..
     }) = request.command
     {
         drop(store);
         crate::stream::exit_on_signals()?;
-        let mut follower = Follower::open(&crate::project::catalog_path()?, project, since)?;
+        let mut follower = Follower::open(&crate::project::catalog_path()?, project, under, since)?;
         follow(
             &mut follower,
             request.json,
@@ -178,7 +179,8 @@ enum Outcome {
         tasks: Vec<Shown>,
     },
     Events {
-        events: Vec<dots_tasks::Event>,
+        #[serde(flatten)]
+        history: dots_tasks::History,
     },
 }
 
@@ -256,9 +258,10 @@ fn execute(
         TaskCommand::Query(TaskQuery::Events {
             since,
             limit,
+            under,
             follow: _,
         }) => Ok(Outcome::Events {
-            events: store.events_since(project, since, usize::from(limit))?,
+            history: store.history(project, under.as_deref(), since, usize::from(limit))?,
         }),
         TaskCommand::Query(TaskQuery::EventKinds) => {
             anyhow::bail!("event-kinds is handled before opening the catalog")
@@ -568,8 +571,8 @@ fn text(outcome: &Outcome, now: i64) -> String {
             format!("Detached the brief from {detached}; its tasks and document remain.\n")
         }
         Outcome::Overview { overview } => overview_text(overview, now),
-        Outcome::Events { events } if events.is_empty() => "No events.\n".to_owned(),
-        Outcome::Events { events } => events.iter().map(event_line).collect(),
+        Outcome::Events { history } if history.events.is_empty() => "No events.\n".to_owned(),
+        Outcome::Events { history } => history.events.iter().map(event_line).collect(),
         Outcome::Tasks { tasks } if tasks.is_empty() => "No matching tasks.\n".to_owned(),
         Outcome::Tasks { tasks } => tasks.iter().map(|task| line(&task.task, now)).collect(),
         Outcome::Task {
@@ -836,6 +839,7 @@ mod tests {
             Follower::open(
                 &self.root.join("workspace.sqlite3"),
                 self.project.clone(),
+                None,
                 0,
             )
             .unwrap()

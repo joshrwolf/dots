@@ -1,5 +1,9 @@
 //! Project history as other processes commit it, for long-lived followers.
 //!
+//! A follower can be limited to one task's subtree. Membership is judged
+//! against the tree at each read, so tasks created in or moved into the
+//! subtree count from then on, with no parentage kept between reads.
+//!
 //! Change detection polls the open connection's `PRAGMA data_version` every
 //! [`FOLLOW_INTERVAL`]. SQLite changes that value whenever another connection
 //! commits, in this process or another, and leaves it alone otherwise. Under
@@ -43,6 +47,8 @@ pub struct Follower {
     /// Device and inode of the file `store` opened.
     identity: (u64, u64),
     project: Project,
+    /// Only events on this task and its descendants.
+    under: Option<String>,
     /// `seq` of the last event returned, or the starting cursor.
     cursor: i64,
     /// Every project's history up to this `seq` has been read.
@@ -52,8 +58,17 @@ pub struct Follower {
 }
 
 impl Follower {
-    /// Follow `project` in the catalog at `path` from the event after `since`.
-    pub fn open(path: &Path, project: Project, since: i64) -> Result<Self, Error> {
+    /// Follow `project` in the catalog at `path` from the event after `since`,
+    /// only on `under` and its descendants when given.
+    ///
+    /// An `under` outside the project fails the first [`Self::poll`], and
+    /// any later one after a replacement catalog lacks it.
+    pub fn open(
+        path: &Path,
+        project: Project,
+        under: Option<String>,
+        since: i64,
+    ) -> Result<Self, Error> {
         // Identify the file before opening it: a replacement in between is
         // then seen as a change on the first tick rather than never.
         let identity = identity(path).map_err(|source| Error::CatalogPath {
@@ -65,6 +80,7 @@ impl Follower {
             store: Store::open(path)?,
             identity,
             project,
+            under,
             cursor: since,
             scanned: since,
             caught_up: None,
@@ -104,7 +120,9 @@ impl Follower {
         if self.caught_up == Some(version) {
             return Ok(Vec::new());
         }
-        let page = self.store.event_page(&self.project, self.scanned, BATCH)?;
+        let page =
+            self.store
+                .event_page(&self.project, self.under.as_deref(), self.scanned, BATCH)?;
         self.scanned = page.through;
         if let Some(last) = page.events.last() {
             self.cursor = last.seq;

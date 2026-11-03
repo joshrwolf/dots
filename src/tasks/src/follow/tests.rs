@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{BATCH, Follower};
-use crate::{Actor, EventKind, NewTask, Owner, Project, Store};
+use crate::{Actor, EventKind, NewTask, Owner, Project, Store, Update};
 
 /// No events.
 const NONE: [i64; 0] = [];
@@ -43,7 +43,7 @@ impl Fixture {
     }
 
     fn follow(&self, since: i64) -> Follower {
-        Follower::open(&self.path(), self.project.clone(), since).unwrap()
+        Follower::open(&self.path(), self.project.clone(), None, since).unwrap()
     }
 }
 
@@ -53,21 +53,55 @@ impl Drop for Fixture {
     }
 }
 
+fn writer_actor() -> Actor<'static> {
+    Actor {
+        name: Some(Owner::try_new("writer").unwrap()),
+        now: 1,
+    }
+}
+
 fn add(store: &mut Store, project: &Project, title: &str) -> i64 {
+    add_task(store, project, title, None).1
+}
+
+/// A new task's ID and the seq of its `created` event.
+fn add_task(
+    store: &mut Store,
+    project: &Project,
+    title: &str,
+    parent: Option<&str>,
+) -> (String, i64) {
     let task = store
         .add(
             project,
             &NewTask {
                 title: title.into(),
+                parent: parent.map(str::to_owned),
                 ..NewTask::default()
             },
-            Actor {
-                name: Some(Owner::try_new("writer").unwrap()),
-                now: 1,
-            },
+            writer_actor(),
         )
         .unwrap();
-    task.last_event.unwrap().seq
+    (task.id, task.last_event.unwrap().seq)
+}
+
+/// Move a task; the seq of its `updated` event.
+fn reparent(store: &mut Store, project: &Project, id: &str, parent: Option<&str>) -> i64 {
+    store
+        .update(
+            project,
+            id,
+            &Update {
+                parent: Some(parent.map(str::to_owned)),
+                ..Update::default()
+            },
+            writer_actor(),
+            false,
+        )
+        .unwrap()
+        .last_event
+        .unwrap()
+        .seq
 }
 
 fn seqs(follower: &mut Follower) -> Vec<i64> {
@@ -236,11 +270,74 @@ fn an_absent_catalog_is_waited_for() {
 }
 
 #[test]
+fn a_subtree_follower_judges_each_commit_against_the_current_tree() {
+    let fixture = Fixture::new();
+    let mut writer = fixture.writer();
+    let project = &fixture.project;
+    let (root, root_created) = add_task(&mut writer, project, "root", None);
+    let (child, child_created) = add_task(&mut writer, project, "child", Some(&root));
+    let (stray, _) = add_task(&mut writer, project, "stray", None);
+    let mut follower =
+        Follower::open(&fixture.path(), project.clone(), Some(root.clone()), 0).unwrap();
+    assert_eq!(drain(&mut follower), [root_created, child_created]);
+
+    // Created below a descendant while following.
+    let (late, late_created) = add_task(&mut writer, project, "late", Some(&child));
+    assert_eq!(seqs(&mut follower), [late_created]);
+    // Moved in by another process: no earlier event repeats, later ones count.
+    let moved_in = reparent(&mut writer, project, &stray, Some(&late));
+    assert_eq!(seqs(&mut follower), [moved_in]);
+    let (_, below_stray) = add_task(&mut writer, project, "below stray", Some(&stray));
+    assert_eq!(seqs(&mut follower), [below_stray]);
+    // Moved out: its move and everything after it no longer count.
+    reparent(&mut writer, project, &child, None);
+    add_task(&mut writer, project, "below child", Some(&child));
+    let (_, direct) = add_task(&mut writer, project, "direct", Some(&root));
+    assert_eq!(seqs(&mut follower), [direct]);
+    assert_eq!(seqs(&mut follower), NONE);
+}
+
+#[test]
+fn a_subtree_follower_resumes_without_gap_or_duplicate() {
+    let fixture = Fixture::new();
+    let mut writer = fixture.writer();
+    let project = &fixture.project;
+    let (root, root_created) = add_task(&mut writer, project, "root", None);
+    let mut follower =
+        Follower::open(&fixture.path(), project.clone(), Some(root.clone()), 0).unwrap();
+    assert_eq!(drain(&mut follower), [root_created]);
+    drop(follower);
+
+    let (_, first) = add_task(&mut writer, project, "first", Some(&root));
+    add(&mut writer, project, "elsewhere");
+    let (_, second) = add_task(&mut writer, project, "second", Some(&root));
+    let mut resumed =
+        Follower::open(&fixture.path(), project.clone(), Some(root), root_created).unwrap();
+    assert_eq!(drain(&mut resumed), [first, second]);
+}
+
+#[test]
+fn a_subtree_follower_of_an_unknown_task_fails_its_first_poll() {
+    let fixture = Fixture::new();
+    let mut follower = Follower::open(
+        &fixture.path(),
+        fixture.project.clone(),
+        Some("t-00".into()),
+        0,
+    )
+    .unwrap();
+    assert!(matches!(
+        follower.poll(),
+        Err(crate::Error::NotFound(id)) if id == "t-00"
+    ));
+}
+
+#[test]
 fn opening_a_missing_catalog_fails() {
     let fixture = Fixture::new();
     let missing = fixture.root.join("missing.sqlite3");
     assert!(matches!(
-        Follower::open(&missing, fixture.project.clone(), 0),
+        Follower::open(&missing, fixture.project.clone(), None, 0),
         Err(crate::Error::CatalogPath { .. })
     ));
 }

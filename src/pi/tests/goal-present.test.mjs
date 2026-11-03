@@ -378,7 +378,7 @@ test('slice inspection shows only the latest recorded event, labeled as history 
   assert.equal(content.match(/not a handoff or acceptance/g).length, 1);
   assert.match(
     content,
-    /dots task show ID shows the result and recent events; for older events, page dots task events --json from --since 0 and filter by task\./,
+    /dots task show ID shows the result and recent events; for older events, page dots task events --json --under ID from --since 0\./,
   );
   assert.doesNotMatch(content, /full history/);
   value.overview.tasks = [

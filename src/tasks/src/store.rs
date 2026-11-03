@@ -387,6 +387,15 @@ pub struct Event {
     pub operation: Option<String>,
 }
 
+/// A page of project history and the project's newest event `seq`.
+#[derive(Debug, Clone, Serialize)]
+pub struct History {
+    pub events: Vec<Event>,
+    /// The project's newest event `seq` when the page was read, or 0 before
+    /// its first event: a cursor for reading only what follows.
+    pub head: i64,
+}
+
 /// One page of project history and the catalog position it covers.
 #[derive(Debug)]
 pub(super) struct EventPage {
@@ -907,41 +916,49 @@ impl Store {
         Ok(updated)
     }
 
-    /// Project-wide history after `since` (an event `seq`), oldest first, at most `limit`.
-    /// Oversized limits saturate to SQLite's signed integer maximum.
-    pub fn events_since(
+    /// Project history after `since` (an event `seq`), oldest first, at most `limit`,
+    /// with the project's newest `seq` as of the same read.
+    ///
+    /// With `under`, only events on that task and its descendants, judged by
+    /// the tree as it is now; the head stays the whole project's, so it is a
+    /// cursor from which no later event in any subtree is missed. Oversized
+    /// limits saturate to SQLite's signed integer maximum.
+    pub fn history(
         &mut self,
         project: &Project,
+        under: Option<&str>,
         since: i64,
         limit: usize,
-    ) -> Result<Vec<Event>, Error> {
-        Ok(self.event_page(project, since, limit)?.events)
+    ) -> Result<History, Error> {
+        let tx = self.connection.transaction()?;
+        let events = query_events(&tx, project, under, since, limit)?;
+        let head = tx.query_row(
+            "SELECT COALESCE(MAX(events.seq),0) FROM events JOIN tasks ON tasks.id=events.task WHERE tasks.project=?1",
+            params![project.0],
+            |row| row.get(0),
+        )?;
+        Ok(History { events, head })
     }
 
-    /// [`Self::events_since`], plus how far the page covers the whole catalog.
+    /// Like [`Self::history`] without the head, plus how far the page covers
+    /// the whole catalog.
     ///
     /// Every write transaction is immediate and events are never deleted, so
     /// `seq` (the rowid) grows in commit order: an event committed after this
     /// read has a `seq` above any this read could see. A page that is not
     /// full therefore covers every project's history up to the newest `seq`,
     /// and a follower can resume there rather than rescanning other projects'
-    /// events after its own last one.
+    /// events after its own last one. A task that moves into `under` after
+    /// this read contributes only its later events.
     pub(super) fn event_page(
         &mut self,
         project: &Project,
+        under: Option<&str>,
         since: i64,
         limit: usize,
     ) -> Result<EventPage, Error> {
         let tx = self.connection.transaction()?;
-        let events = {
-            let mut statement = tx.prepare(
-                "SELECT events.seq,events.task,events.at,events.actor,events.kind,events.detail,events.result,events.predecessor,events.operation FROM events
-                 JOIN tasks ON tasks.id=events.task WHERE tasks.project=?1 AND events.seq>?2 ORDER BY events.seq ASC LIMIT ?3",
-            )?;
-            let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-            let rows = statement.query_map(params![project.0, since, limit], event_row)?;
-            rows.collect::<Result<Vec<_>, _>>()?
-        };
+        let events = query_events(&tx, project, under, since, limit)?;
         let through = match events.last() {
             Some(last) if events.len() >= limit => last.seq,
             _ => tx.query_row(
@@ -981,6 +998,36 @@ impl Store {
         events.reverse();
         Ok(events)
     }
+}
+
+/// A project's events after `since`, oldest first, optionally only on `under`
+/// and its current descendants; an `under` outside the project is an error.
+fn query_events(
+    tx: &Transaction<'_>,
+    project: &Project,
+    under: Option<&str>,
+    since: i64,
+    limit: usize,
+) -> Result<Vec<Event>, Error> {
+    if let Some(id) = under {
+        let known: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 AND project=?2)",
+            params![id, project.0],
+            |row| row.get(0),
+        )?;
+        if !known {
+            return Err(Error::NotFound(id.to_owned()));
+        }
+    }
+    let mut statement = tx.prepare(
+        "WITH RECURSIVE subtree(id) AS (SELECT ?4 UNION SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent=subtree.id)
+         SELECT events.seq,events.task,events.at,events.actor,events.kind,events.detail,events.result,events.predecessor,events.operation FROM events
+         JOIN tasks ON tasks.id=events.task WHERE tasks.project=?1 AND events.seq>?2 AND (?4 IS NULL OR events.task IN subtree)
+         ORDER BY events.seq ASC LIMIT ?3",
+    )?;
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let rows = statement.query_map(params![project.0, since, limit, under], event_row)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 pub(super) fn validate_result(result: &str) -> Result<(), Error> {

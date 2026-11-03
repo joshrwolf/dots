@@ -1117,4 +1117,38 @@ mod tests {
                 .contains("cannot be used with")
         );
     }
+
+    #[test]
+    fn events_under_a_task_page_its_subtree_with_the_project_head() {
+        let fixture = Fixture::new();
+        let id = |value: &Value| {
+            value
+                .pointer("/task/id")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let root = id(&fixture.ok("checkout", &["add", "root"]));
+        let child = id(&fixture.ok("checkout", &["add", "child", "--parent", &root]));
+        fixture.ok("checkout", &["add", "elsewhere"]);
+
+        let head = fixture.ok("checkout", &["events", "--limit", "0"]);
+        assert_eq!(
+            head,
+            serde_json::json!({ "events": [], "head": 3, "project": fixture.project, "now": head["now"] })
+        );
+        let page = fixture.ok("checkout", &["events", "--under", &root]);
+        let tasks: Vec<_> = page["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["task"].as_str().unwrap())
+            .collect();
+        assert_eq!(tasks, [root.as_str(), child.as_str()]);
+        assert_eq!(page["head"], 3, "the head stays the project's");
+
+        let error = fixture.fail("checkout", &["events", "--under", "t-00"]);
+        assert!(error.contains("t-00"), "{error}");
+    }
 }

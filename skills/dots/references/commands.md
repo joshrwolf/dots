@@ -1453,6 +1453,8 @@ Options:
 
 ```text
 Project history after an event seq, oldest first; use the last seen seq as a cursor. dots task event-kinds lists the kinds an event can have.
+With --json the page also carries head, the project's newest seq (0 before its first event), even with --under; --limit 0 returns only the head, a starting cursor for reading what follows.
+--under ID keeps only events on that task and its descendants, judged by the task tree at each read: tasks created in or moved into it count from then on, and a task moved out stops counting. An ID outside the project is an error.
 --follow keeps running instead of returning a page: it prints every event after --since, then each new event as any session commits it, within about a second, one per line with no gaps or repeats. With --json each line is one event object, shaped like an item of the events array (NDJSON). It exits 0 when its output closes or on SIGTERM, SIGINT, or SIGHUP. A storage failure ends it nonzero with the error on stderr; with --json it also prints one {"error": ...} line. To resume after a restart, pass the seq of the last event received as --since.
 
 Usage: dots task events [OPTIONS]
@@ -1473,12 +1475,15 @@ Options:
           Working directory for commands that use checkout context
 
       --limit <LIMIT>
-          Maximum events to return; --follow streams every event instead
+          Maximum events to return (0 for only the head); --follow streams every event instead
 
           [default: 100]
 
       --owner <NAME>
           Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --under <ID>
+          Only events on this task and its descendants
 
       --follow
           Keep printing events as they commit, one per line, until stopped

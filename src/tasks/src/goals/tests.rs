@@ -118,7 +118,13 @@ fn creation_is_atomic_and_does_not_claim_or_execute() {
             .unwrap()
             .is_empty()
     );
-    assert!(store.events_since(&project(), 0, 100).unwrap().is_empty());
+    assert!(
+        store
+            .history(&project(), None, 0, 100)
+            .unwrap()
+            .events
+            .is_empty()
+    );
     store
         .connection
         .execute_batch("DROP TRIGGER reject_goal;")
