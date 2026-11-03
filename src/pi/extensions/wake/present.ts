@@ -29,8 +29,10 @@ export interface WakeDetails {
   /** The wake was set on another branch of this session than the one it fired into. */
   elsewhere?: boolean;
   /** Event triggers: what fired the wake. */
-  trigger?: 'pane';
+  trigger?: 'pane' | 'task';
   pane?: string;
+  /** The watched task's ID. */
+  task?: string;
   outcome?: 'matched' | 'ended' | 'timed out' | 'manual';
   /** The observed transitions, in our own words. */
   summary?: string;
@@ -76,6 +78,13 @@ export function renderWake(
   if (d.pane)
     secondary.push({
       text: `pane ${labelText(d.pane).slice(0, 40)}`,
+      tone: 'dim',
+      priority: 60,
+      shrink: 'omit',
+    });
+  if (d.task)
+    secondary.push({
+      text: `task ${labelText(d.task).slice(0, 40)}`,
       tone: 'dim',
       priority: 60,
       shrink: 'omit',

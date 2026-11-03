@@ -39,8 +39,24 @@ export interface PaneActivity extends ActivityBase {
   readonly state: 'waiting' | 'queued';
 }
 
+export interface TaskActivity extends ActivityBase {
+  readonly kind: 'task';
+  readonly task: string;
+  /** The root's title when the wake was set; writer-controlled text. */
+  readonly title: string;
+  readonly project: string;
+  readonly until: readonly string[];
+  readonly deadline: number;
+  /** The last task store event seen. */
+  readonly cursor: number;
+  /** Why the task store cannot be observed right now. */
+  readonly disconnected?: string;
+  readonly state: 'waiting' | 'queued';
+}
+
 /** Observations only: presentation never arms or fires a wake. */
-export type WakeActivity = TimeActivity | PaneActivity;
+export type WakeActivity = TimeActivity | PaneActivity | TaskActivity;
+type EventActivity = PaneActivity | TaskActivity;
 
 export function wakeDelay(ms: number): string {
   const seconds = Math.ceil(Math.max(0, ms) / 1000);
@@ -69,10 +85,10 @@ function displayText(text: string, limit: number): string {
 }
 
 function status(row: WakeActivity, now: number): string {
-  if (row.kind === 'pane')
+  if (row.kind !== 'time')
     return row.state === 'queued'
       ? 'queued'
-      : `waiting for ${labelText(row.pane.slice(0, 80))}: until ${row.until.join('|')}`;
+      : `waiting for ${row.kind === 'pane' ? labelText(row.pane.slice(0, 80)) : `task ${labelText(row.task)}`}: until ${row.until.join('|')}`;
   return row.state === 'scheduled'
     ? row.at <= now
       ? 'due'
@@ -80,7 +96,7 @@ function status(row: WakeActivity, now: number): string {
     : row.state;
 }
 
-function paneEnd(row: PaneActivity, now: number): Segment[] {
+function eventEnd(row: EventActivity, now: number): Segment[] {
   const end: Segment[] = [];
   if (row.disconnected !== undefined)
     end.push({
@@ -135,6 +151,15 @@ function details(row: WakeActivity): string[] {
         ? []
         : [`Disconnected: ${displayText(row.disconnected, 4000)}`]),
     ];
+  if (row.kind === 'task')
+    return [
+      `Task: ${labelText(row.task)} ${displayText(JSON.stringify(row.title), 240)} · ${labelText(row.project)}`,
+      `Until: ${row.until.join('|')} on the task or a descendant · gives up ${new Date(row.deadline).toISOString()}`,
+      `Seen through event #${row.cursor}`,
+      ...(row.disconnected === undefined
+        ? []
+        : [`Disconnected: ${displayText(row.disconnected, 4000)}`]),
+    ];
   return [
     `Scheduled: ${new Date(row.at).toISOString()}${row.every ? ` · every ${wakeDelay(row.every)}` : ' · once'}`,
     ...(row.check
@@ -165,7 +190,7 @@ export function wakeActivityBody(
         shrink: 'clip',
         minWidth: 4,
       },
-      ...(row.kind === 'pane' ? paneEnd(row, now) : timeEnd(row)),
+      ...(row.kind === 'time' ? timeEnd(row) : eventEnd(row, now)),
     ];
     const line = new PriorityRow();
     line.update(

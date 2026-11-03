@@ -1,58 +1,20 @@
 import assert from 'node:assert/strict';
-import {EventEmitter} from 'node:events';
-import {PassThrough} from 'node:stream';
 import test from 'node:test';
 import {Rex, RexError, parseRexEvent, rexBinary} from '../src/host/rex.ts';
 import {NdjsonStream} from '../src/host/stream.ts';
+import {fakeChild, launcher} from './child-fixture.mjs';
 import {fakeClock} from './wake-fixture.mjs';
 
 const settle = async () => {
   for (let i = 0; i < 5; i++) await new Promise(r => setImmediate(r));
 };
 
-/** An in-process child: the test writes its output and decides when it exits. */
-function fakeChild({obeysTerm = true} = {}) {
-  const child = new EventEmitter();
-  child.stdout = new PassThrough();
-  child.stderr = new PassThrough();
-  child.exitCode = null;
-  child.signalCode = null;
-  child.signals = [];
-  child.exit = (code, signal = null) => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    child.exitCode = code;
-    child.signalCode = signal;
-    child.stdout.end();
-    child.stderr.end();
-    setImmediate(() => child.emit('close', code, signal));
-  };
-  child.kill = signal => {
-    child.signals.push(signal);
-    if (signal === 'SIGKILL' || obeysTerm) child.exit(null, signal);
-    return true;
-  };
-  child.spawned = () => child.emit('spawn');
-  return child;
-}
-
-function launcher(options) {
-  const children = [];
-  const calls = [];
-  const launch = (file, args) => {
-    const child = fakeChild(options);
-    children.push(child);
-    calls.push([file, ...args]);
-    return child;
-  };
-  return {launch, children, calls};
-}
-
 test('the stream starts lazily, parses lines, and reports connection state', async () => {
   const clock = fakeClock();
   const {launch, children, calls} = launcher();
   const stream = new NdjsonStream({
     file: 'tool',
-    args: ['follow'],
+    args: () => ['follow'],
     clock,
     launch,
   });
@@ -93,7 +55,12 @@ test('the stream starts lazily, parses lines, and reports connection state', asy
 test('a failed connection retries with doubling backoff that a healthy one resets', async () => {
   const clock = fakeClock();
   const {launch, children} = launcher();
-  const stream = new NdjsonStream({file: 'tool', args: [], clock, launch});
+  const stream = new NdjsonStream({
+    file: 'tool',
+    args: () => [],
+    clock,
+    launch,
+  });
   const states = [];
   stream.subscribe({line: () => {}, state: state => states.push(state)});
   const fail = async (index, stderr) => {
@@ -136,7 +103,7 @@ test('close stops retries, escalates to SIGKILL, and waits for every exit', asyn
   const {launch, children} = launcher({obeysTerm: false});
   const stream = new NdjsonStream({
     file: 'tool',
-    args: [],
+    args: () => [],
     clock,
     launch,
     stopGraceMs: 500,
@@ -158,7 +125,7 @@ test('close stops retries, escalates to SIGKILL, and waits for every exit', asyn
   // A spawn failure is a disconnection, not a crash.
   const broken = new NdjsonStream({
     file: 'missing',
-    args: [],
+    args: () => [],
     clock,
     launch: () => {
       const child = fakeChild();

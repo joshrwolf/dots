@@ -198,7 +198,7 @@ test('creation refuses exited programs, unknown targets and mixed triggers, crea
   await assert.rejects(paneWake(h, {until: undefined}), /pane requires until/);
   await assert.rejects(
     paneWake(h, {in: '5m'}),
-    /exactly one of in, at, every, or pane/,
+    /exactly one of in, at, every, pane, or task/,
   );
   await assert.rejects(paneWake(h, {for: '31d'}), /at most 30d/);
   await assert.rejects(
@@ -650,10 +650,7 @@ test('shutdown waits for the Rex streams and snapshots to stop', async () => {
 test('tool parameters constrain pane values in the schema', async () => {
   const {h} = await started();
   const params = h.tools.get('wake').parameters.properties;
-  assert.deepEqual(
-    params.until.items.anyOf.map(s => s.const),
-    ['exit', 'done', 'error', 'blocked', 'idle'],
-  );
+  assert.equal(params.until.items.type, 'string');
   assert.equal(params.until.uniqueItems, true);
   assert.equal(params.until.minItems, 1);
   assert.deepEqual(params.pane.required, ['target']);

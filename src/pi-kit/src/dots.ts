@@ -3,6 +3,9 @@ import {execFile} from 'node:child_process';
 // The `dots` command as a JSON client. Every call runs the installed binary
 // with `--json`; the store, project resolution, and validation stay with it.
 
+/** The installed CLI, found on PATH; long-lived followers spawn it too. */
+export const DOTS = 'dots';
+
 export interface DotsOptions {
   /** Passed as `--directory`, for commands that use checkout context. */
   readonly directory?: string;
@@ -47,7 +50,7 @@ export function dots(
   return new Promise((resolve, reject) => {
     options.signal?.throwIfAborted();
     execFile(
-      'dots',
+      DOTS,
       argv,
       {
         ...(options.cwd ? {cwd: options.cwd} : {}),

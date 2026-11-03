@@ -567,7 +567,7 @@ export class Rex {
       const created: Watch = {
         stream: new NdjsonStream({
           file: this.binary,
-          args: this.args(host, ['events', '--all', '--json']),
+          args: () => this.args(host, ['events', '--all', '--json']),
           clock: this.clock,
           ...(this.launch ? {launch: this.launch} : {}),
         }),
