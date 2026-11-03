@@ -10,6 +10,7 @@ mod project;
 mod render;
 mod review;
 mod skills;
+mod stream;
 mod tasks;
 mod watch;
 mod xdg;
@@ -156,6 +157,7 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
                 owner: owner.as_deref(),
                 directory: &directory,
                 json: cli.json,
+                out,
             })
         }
         Command::Review { command } => {
@@ -214,7 +216,7 @@ fn watch(
     out: &mut dyn Write,
 ) -> Result<String> {
     if matches!(command, command::WatchCommand::Follow) {
-        watch::exit_on_signals()?;
+        stream::exit_on_signals()?;
     }
     let store = xdg::base("XDG_STATE_HOME", ".local/state")?.join(github_watch::STORE_PATH);
     let session = agent::session();
@@ -232,7 +234,7 @@ fn watch(
         clock: &|| time::OffsetDateTime::now_utc().unix_timestamp(),
         json,
         out,
-        sleep: &mut watch::sleep_while_read,
+        sleep: &mut stream::sleep_while_read,
     })
 }
 

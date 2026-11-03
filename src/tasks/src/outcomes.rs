@@ -6,7 +6,7 @@ use rusqlite::{OptionalExtension as _, Transaction, params};
 use serde::Serialize;
 
 use crate::outputs::{self, MAX_OUTPUT_BYTES};
-use crate::store::{self, Actor, Error, Owner, Project, Status, Store, Task};
+use crate::store::{self, Actor, Error, EventKind, Owner, Project, Status, Store, Task};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Evidence {
@@ -23,11 +23,12 @@ pub enum Operation {
 }
 
 impl Operation {
-    fn as_str(self) -> &'static str {
+    /// The history entry recording this operation; also its stored operation name.
+    fn kind(self) -> EventKind {
         match self {
-            Self::UpdateResult => "update-result",
-            Self::Review => "review",
-            Self::Done => "done",
+            Self::UpdateResult => EventKind::UpdateResult,
+            Self::Review => EventKind::Review,
+            Self::Done => EventKind::Done,
         }
     }
     fn status(self) -> Option<Status> {
@@ -153,7 +154,7 @@ impl Store {
                 id,
                 actor.now,
                 actor.name.map(Owner::as_str),
-                outcome.operation.as_str(),
+                outcome.operation.kind().as_str(),
                 outcome.result,
                 task.result_event
             ],

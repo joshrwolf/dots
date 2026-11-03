@@ -342,14 +342,22 @@ pub(crate) enum TaskQuery {
         event: i64,
     },
     /// Project history after an event seq, oldest first; use the last seen seq as a cursor
+    #[command(
+        long_about = "Project history after an event seq, oldest first; use the last seen seq as a cursor. dots task event-kinds lists the kinds an event can have.\n--follow keeps running instead of returning a page: it prints every event after --since, then each new event as any session commits it, within about a second, one per line with no gaps or repeats. With --json each line is one event object, shaped like an item of the events array (NDJSON). It exits 0 when its output closes or on SIGTERM, SIGINT, or SIGHUP. A storage failure ends it nonzero with the error on stderr; with --json it also prints one {\"error\": ...} line. To resume after a restart, pass the seq of the last event received as --since."
+    )]
     Events {
         /// Only events with seq greater than this (default 0)
         #[arg(long, default_value_t = 0)]
         since: i64,
-        /// Maximum events to return
-        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=1000))]
+        /// Maximum events to return; --follow streams every event instead
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=1000), conflicts_with = "follow")]
         limit: u16,
+        /// Keep printing events as they commit, one per line, until stopped
+        #[arg(long)]
+        follow: bool,
     },
+    /// List every kind an event can have
+    EventKinds,
 }
 
 #[derive(Debug, Subcommand)]

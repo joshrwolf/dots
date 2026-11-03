@@ -27,6 +27,7 @@ fn test_store(store: Store) -> Store {
     store
 }
 
+mod follow;
 mod goals;
 pub mod outcomes;
 pub mod output_discovery;
@@ -37,9 +38,10 @@ mod references;
 pub use projects::{RegisteredProject, validate_project_name};
 mod store;
 
+pub use follow::{FOLLOW_INTERVAL, Follower};
 pub use goals::{Goal, GoalOverview, GoalProgress};
 pub use references::ExternalReference;
 pub use store::{
-    Actor, Error, Event, Filter, NewTask, Owner, Prerequisite, Project, STORE_PATH, Status, Store,
-    Task, Update,
+    Actor, Error, Event, EventKind, Filter, NewTask, Owner, Prerequisite, Project, STORE_PATH,
+    Status, Store, Task, Update,
 };

@@ -3,7 +3,7 @@ use rusqlite::{Transaction, params};
 use serde::Serialize;
 
 use crate::outputs;
-use crate::store::{self, Actor, Error, Project, Store};
+use crate::store::{self, Actor, Error, EventKind, Project, Store};
 
 #[derive(Debug, Serialize)]
 pub struct OutputList {
@@ -104,8 +104,8 @@ pub(super) fn associate(
         });
     }
     let (changed,kind)=match association {
-            Association::Attach=>(tx.execute("INSERT INTO task_outputs(task,project,slug) VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",params![id,project.as_str(),slug])?,"output-attached"),
-            Association::Detach=>(tx.execute("DELETE FROM task_outputs WHERE task=?1 AND project=?2 AND slug=?3",params![id,project.as_str(),slug])?,"output-detached"),
+            Association::Attach=>(tx.execute("INSERT INTO task_outputs(task,project,slug) VALUES(?1,?2,?3) ON CONFLICT DO NOTHING",params![id,project.as_str(),slug])?,EventKind::OutputAttached),
+            Association::Detach=>(tx.execute("DELETE FROM task_outputs WHERE task=?1 AND project=?2 AND slug=?3",params![id,project.as_str(),slug])?,EventKind::OutputDetached),
         };
     if changed != 0 {
         store::record(tx, id, actor, kind, Some(slug))?;
