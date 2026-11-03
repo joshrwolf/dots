@@ -41,6 +41,7 @@ import {
   costDetail,
   createWidget,
   describeActivity,
+  describeStep,
   describeText,
   renderEvent,
   type EventDetails,
@@ -73,6 +74,7 @@ import {
   type WorkerRecord,
 } from './record.ts';
 import {publishActivity, recordId} from '../../src/host/activity.ts';
+import {summaryLine} from '../../src/host/summary.ts';
 import {
   WORKER_ACTIVITY_EVENT,
   projectWorkerActivity,
@@ -179,6 +181,8 @@ interface Worker {
   tool?: string | undefined;
   /** Current call, or the last thing said/done between calls (glance text). */
   activity?: string | undefined;
+  /** The same moment in words for status records, without raw commands. */
+  step?: string | undefined;
   failed?: string | undefined;
   lastEventAt: number;
   /** Explicit progress takes precedence over reasoning headings within one run. */
@@ -721,9 +725,9 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
           if (!own && descendants === 0) return [];
           const message =
             w.state === 'asking'
-              ? `waiting for parent: ${w.question?.text ?? ''}`
+              ? `waiting for parent: ${summaryLine(w.question?.text) ?? ''}`
               : own
-                ? (w.phase ?? w.headline ?? w.activity)
+                ? (w.phase ?? w.headline ?? w.step)
                 : `waiting on ${descendants} worker${descendants === 1 ? '' : 's'}`;
           // The id, not the label: labels repeat and normalize alike.
           return [
@@ -945,6 +949,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       case 'tool_execution_start':
         worker.tool = record.toolName;
         worker.activity = describeActivity(record.toolName, record.args);
+        worker.step = describeStep(record.toolName, record.args);
         worker.calls += 1;
         worker.updatedAt = worker.lastEventAt = Date.now();
         log(worker, 'call', worker.activity);
@@ -1033,7 +1038,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         }
         const said = describeText(record.message);
         if (said) {
-          worker.activity = `\u201c${said}\u201d`;
+          worker.activity = worker.step = `\u201c${said}\u201d`;
           log(worker, 'said', said);
           observe(worker);
           widget();

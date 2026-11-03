@@ -12,6 +12,7 @@ import {
   publishActivity,
   recordId,
 } from '../src/host/activity.ts';
+import {summaryLine} from '../src/host/summary.ts';
 
 const idle = {
   running: false,
@@ -408,6 +409,74 @@ test('completion uses the final assistant answer, not the prompt or session name
     writes.length,
     before,
     'metadata refresh does not repeat a completion',
+  );
+});
+
+test('a completion summarizes the answer, skipping Markdown structure', () => {
+  const cases = [
+    [
+      'plain prose',
+      'Parser fixed; all checks pass.\nDetails follow.',
+      'Parser fixed; all checks pass.',
+    ],
+    ['list first', '1. **Parser** fixed\n2. Tests added', 'Parser fixed'],
+    ['lone list numbers', '1\n\n2.\n- Footer aligned', 'Footer aligned'],
+    [
+      'lead-in and list',
+      'Here is what changed:\n\n- Fixed the [parser](src/p.ts)',
+      'Here is what changed: Fixed the parser',
+    ],
+    [
+      'heading then list',
+      '## Changes\n\n- [x] Renamed `foo`',
+      'Changes: Renamed foo',
+    ],
+    [
+      'heading then prose',
+      '# Summary\n\nThe footer now aligns.',
+      'The footer now aligns.',
+    ],
+    [
+      'code first',
+      '```ts\nconst x = 1;\n# not a heading\n```\n\nThat adds the constant.',
+      'That adds the constant.',
+    ],
+    [
+      'table and rule',
+      '| a | b |\n|---|---|\n| 1 | 2 |\n\n---\n> Both rows match.',
+      'Both rows match.',
+    ],
+    ['only code', '```\nmake test\n```', undefined],
+    ['empty', ' \n\n', undefined],
+    ['missing', undefined, undefined],
+  ];
+  for (const [name, text, want] of cases)
+    assert.equal(summaryLine(text), want, name);
+  const long = `${'Word '.repeat(30).trim()}. ${'more '.repeat(40)}`;
+  assert.equal(summaryLine(long), `${'Word '.repeat(30).trim()}.`);
+  const unbroken = 'word '.repeat(60);
+  const cut = summaryLine(unbroken);
+  assert.ok(cut.length <= 200 && cut.endsWith('word\u2026'), cut);
+
+  const {fire, writes, settle} = host();
+  const finish = (state, text, errorMessage) => {
+    fire('agent_start');
+    fire('message_end', assistant(state, errorMessage, text));
+    fire('agent_settled', {aborted: false});
+    settle();
+    return writes.at(-1);
+  };
+  assert.equal(
+    finish('stop', '1. Parser fixed\n2. Tests added'),
+    formatRecord({state: 'done', message: 'Parser fixed'}),
+  );
+  assert.equal(
+    finish('stop', '```\nonly code\n```'),
+    formatRecord({state: 'done', message: 'Ready for your next instruction'}),
+  );
+  assert.equal(
+    finish('error', undefined, 'Request failed:\n  overloaded'),
+    formatRecord({state: 'error', message: 'Request failed: overloaded'}),
   );
 });
 

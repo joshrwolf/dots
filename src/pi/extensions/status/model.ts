@@ -24,7 +24,7 @@ export interface StatusInputs {
   readonly rest: Rest;
   readonly activities: ReadonlyMap<string, readonly ActivityItem[]>;
   readonly sessionName?: string;
-  /** The first line of the user's latest prompt, what the session is about without a name. */
+  /** A one-line summary of the user's latest prompt, what the session is about without a name. */
   readonly prompt?: string;
 }
 

@@ -7,6 +7,7 @@ import {
   STALL_MS,
   createWidget,
   describeActivity,
+  describeStep,
   describeText,
   projectEvent,
   renderEvent,
@@ -175,6 +176,50 @@ test('activity text says what a call is doing, bounded and sanitized', () => {
   assert.equal(
     describeText({role: 'user', content: [{type: 'text', text: 'no'}]}),
     '',
+  );
+});
+
+test('status steps describe a call in words, never a raw command', () => {
+  const cases = [
+    [
+      'bash',
+      {command: 'cd /repo && FOO=1 ./bin/check --all | tail'},
+      'running check',
+    ],
+    ['bash', {command: 'git -C src status\x1b[2J'}, 'running git'],
+    ['bash', {command: 'cd /repo'}, 'running a command'],
+    ['bash', {}, 'running a command'],
+    ['edit', {path: 'src/api/x.yaml', edits: []}, 'editing x.yaml'],
+    ['read', {path: 'docs/'}, 'reading docs'],
+    ['ls', undefined, 'listing'],
+    ['grep', {pattern: 'secret.*token', path: 'src'}, 'searching files'],
+    [
+      'worker_spawn',
+      {label: 'review', task: 'long brief'},
+      'starting worker review',
+    ],
+    ['message', {to: 'parent', text: 'long note'}, 'messaging parent'],
+    [
+      'codemode',
+      {code: 'await tools.bash({command: "rm -rf x"})'},
+      'running a script',
+    ],
+    ['custom\x1b', {anything: 'x'.repeat(500)}, 'using custom'],
+  ];
+  for (const [tool, args, want] of cases)
+    assert.equal(
+      describeStep(tool, args),
+      want,
+      `${tool} ${JSON.stringify(args)}`,
+    );
+  assert.equal(
+    describeText({
+      role: 'assistant',
+      content: [
+        {type: 'text', text: '## Plan\n\n1. Read the parser\n2. Fix it'},
+      ],
+    }),
+    'Plan: Read the parser',
   );
 });
 

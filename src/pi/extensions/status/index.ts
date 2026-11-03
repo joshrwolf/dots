@@ -12,6 +12,7 @@ import {
   type Rest,
   type StatusRecord,
 } from './model.ts';
+import {summaryLine} from '../../src/host/summary.ts';
 
 /**
  * Owns this terminal's program status (OSC 7501), counting the agent and the
@@ -35,15 +36,7 @@ const schedule: Schedule = (run, ms) => {
   return () => clearTimeout(timer);
 };
 
-const firstLine = (text: string | undefined) =>
-  (text ?? '').split('\n', 1)[0]!.trim() || 'Run failed';
-
-/** A one-line status summary, or undefined when the message has no text. */
-const summaryLine = (text: string | undefined) =>
-  (text ?? '')
-    .split('\n')
-    .map(line => line.trim())
-    .find(line => line !== '');
+const failure = (text: string | undefined) => summaryLine(text) ?? 'Run failed';
 
 /** The text of a user message's content. */
 const contentText = (content: unknown): string | undefined => {
@@ -183,7 +176,7 @@ export default function status(
     if (event.message.role !== 'assistant') return;
     rest =
       event.message.stopReason === 'error'
-        ? {state: 'error', message: firstLine(event.message.errorMessage)}
+        ? {state: 'error', message: failure(event.message.errorMessage)}
         : {
             state: 'done',
             message: summaryLine(contentText(event.message.content)),
@@ -203,7 +196,7 @@ export default function status(
     compacting = false;
     if (event.aborted) rest = {state: 'idle'};
     else if (event.errorMessage)
-      rest = {state: 'error', message: firstLine(event.errorMessage)};
+      rest = {state: 'error', message: failure(event.errorMessage)};
     report();
   });
   pi.on('agent_settled', event => {

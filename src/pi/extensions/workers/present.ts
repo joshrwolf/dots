@@ -1,5 +1,6 @@
 import type {EventDetails, EventKind} from './record.ts';
 import type {TaskAssignment} from './assignment.ts';
+import {summaryLine} from '../../src/host/summary.ts';
 import type {
   MessageRenderer,
   MessageRenderOptions,
@@ -261,13 +262,75 @@ export function describeActivity(toolName: string, args: unknown): string {
   return detail ? `${toolName} ${detail.slice(0, 200)}` : toolName;
 }
 
-/** The first non-empty line of an assistant message's text, as a glance at what it is saying. */
+/**
+ * What a tool call is doing, in words, for status surfaces read by people and
+ * other agents: names a file or program, never a whole command or argument list.
+ */
+export function describeStep(toolName: string, args: unknown): string {
+  const a = (args && typeof args === 'object' ? args : {}) as Record<
+    string,
+    unknown
+  >;
+  const str = (key: string) =>
+    typeof a[key] === 'string' ? labelText(a[key] as string).slice(0, 80) : '';
+  const named = (verb: string, path: string) =>
+    path
+      ? `${verb} ${path.replace(/\/+$/, '').split('/').at(-1) || path}`
+      : verb;
+  switch (toolName) {
+    case 'bash': {
+      const program = commandProgram(str('command'));
+      return program ? `running ${program}` : 'running a command';
+    }
+    case 'read':
+      return named('reading', str('path'));
+    case 'write':
+      return named('writing', str('path'));
+    case 'edit':
+      return named('editing', str('path'));
+    case 'ls':
+      return named('listing', str('path'));
+    case 'grep':
+    case 'find':
+      return 'searching files';
+    case 'worker_spawn':
+      return named('starting worker', str('label'));
+    case 'worker_wait':
+      return 'waiting for workers';
+    case 'worker_status':
+      return 'checking workers';
+    case 'worker_stop':
+      return 'stopping a worker';
+    case 'message':
+      return named('messaging', str('to'));
+    case 'codemode':
+      return 'running a script';
+    default:
+      return `using ${labelText(toolName).slice(0, 40)}`;
+  }
+}
+
+/**
+ * The program a shell command runs: the first segment that is not a `cd`,
+ * past environment assignments, as a basename (`cd x && FOO=1 ./bin/t -v` is `t`).
+ */
+function commandProgram(command: string): string | undefined {
+  for (const segment of command.split(/&&|\|\||;|\|/)) {
+    const words = segment.trim().split(/\s+/);
+    const word = words.find(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    if (!word || word === 'cd') continue;
+    return word.split('/').at(-1) || undefined;
+  }
+  return undefined;
+}
+
+/** A one-line summary of an assistant message's text, as a glance at what it is saying. */
 export function describeText(message: unknown): string {
   const m = message as {role?: string; content?: unknown} | undefined;
   if (!m || m.role !== 'assistant' || !Array.isArray(m.content)) return '';
   for (const block of m.content as {type?: string; text?: string}[]) {
     if (block.type === 'text' && block.text) {
-      const line = block.text.split('\n').find(l => l.trim());
+      const line = summaryLine(block.text);
       if (line) return labelText(line).slice(0, 200);
     }
   }
