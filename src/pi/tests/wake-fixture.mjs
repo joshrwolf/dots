@@ -35,12 +35,18 @@ export function fakeClock(start = Date.UTC(2026, 0, 1)) {
 
 // A session file: entries in file order with ids; `branch` is the current leaf's path (all of it unless a test moves it).
 // Runs finish at once unless a test calls `busy()`; `turn()` then settles that run.
+/**
+ * @param {import('../src/host/clock.ts').Clock} clock
+ * @param {import('../extensions/wake/index.ts').WakeHost['run']} run
+ * @param {{session?: string, mode?: string, rex?: import('../extensions/wake/index.ts').PaneSource, env?: NodeJS.ProcessEnv}} [options]
+ */
 export function harness(
   clock,
   run,
   {session = 'session-a', mode = 'rpc', rex, env = {}} = {},
 ) {
   const listeners = {};
+  /** @type {Record<string, any>} */
   const handlers = {};
   let idle = true;
   const tools = new Map();

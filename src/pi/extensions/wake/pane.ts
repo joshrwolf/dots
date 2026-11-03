@@ -134,8 +134,13 @@ function statusStep(
         : [],
     };
   }
+  // Rex omits the owner when the reporting process exited before the report
+  // was read, as when a program reports done right before it exits. An
+  // unknown owner is not a different program.
   const ownerChanged =
-    previous !== undefined && previous.owner !== current.owner;
+    previous?.owner !== undefined &&
+    current.owner !== undefined &&
+    previous.owner !== current.owner;
   const matches = states.includes(current.state);
   // Live, a match is entry into the set (a re-report or progress update is
   // not). After a gap, any change of record identity in the set counts.
@@ -181,9 +186,15 @@ export function observe(
         ? statusStep(trigger, observed(event.record), true)
         : undefined;
     case 'program_status_removed':
-      return event.ids.includes('')
-        ? statusStep(trigger, undefined, true)
-        : undefined;
+      if (!event.ids.includes('')) return undefined;
+      // Rex drops a running program's record just before it reports the
+      // exit; the exit that follows decides, as it does after a gap.
+      if (event.reason === 'child_exited')
+        return {
+          ...(trigger.record ? {record: null} : {}),
+          transitions: [],
+        };
+      return statusStep(trigger, undefined, true);
   }
 }
 

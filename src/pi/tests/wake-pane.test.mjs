@@ -304,6 +304,28 @@ test('owner changes: into a matching state fire; into another state end a status
   h.handlers.session_shutdown({}, h.ctx);
 });
 
+test('a record without an owner is not from a different program', async () => {
+  const {rex, h} = await started();
+  rex.pane.record = record('working', 't1', 7);
+  await paneWake(h, {until: ['done', 'blocked'], limit: 5});
+  // Rex omits the owner of a report whose process already exited.
+  const unowned = state => ({
+    ...changed(state, `${state}-t`),
+    record: {state, updatedAt: `${state}-t`},
+  });
+  rex.emit(unowned('working'));
+  await settle();
+  assert.equal(h.messages.length, 0, 'no new owner and no entry');
+  rex.emit(unowned('done'));
+  await settle();
+  assert.equal(h.messages.length, 1);
+  assert.match(
+    h.messages[0].message.content,
+    /matched: status done \(was working\)\n/,
+  );
+  h.handlers.session_shutdown({}, h.ctx);
+});
+
 test('ended outcomes finish the wake with their reason', async () => {
   const cases = [
     [
@@ -315,7 +337,7 @@ test('ended outcomes finish the wake with their reason', async () => {
           session: SESSION,
           block: BLOCK,
           ids: ['', 'worker/w-1'],
-          reason: 'process_exited',
+          reason: 'clear',
         }),
       /ended: the program stopped reporting status/,
     ],
@@ -334,13 +356,22 @@ test('ended outcomes finish the wake with their reason', async () => {
     [
       'status-only wait on an exiting program',
       {until: ['done']},
-      rex =>
+      rex => {
+        // Rex drops a working record just before it reports the exit.
+        rex.emit({
+          type: 'program_status_removed',
+          session: SESSION,
+          block: BLOCK,
+          ids: [''],
+          reason: 'child_exited',
+        });
         rex.emit({
           type: 'child_exited',
           session: SESSION,
           block: BLOCK,
           exit: {code: 1, error: 'exit status 1'},
-        }),
+        });
+      },
       /ended: the block's program exited with code 1 \("exit status 1"\)/,
     ],
     [
