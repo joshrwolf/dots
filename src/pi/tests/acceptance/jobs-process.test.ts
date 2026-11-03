@@ -176,16 +176,20 @@ test(
 test('timeout runs TERM trap and capture final flush', posix, async () => {
   await harness(async h => {
     await until(h.ready);
+    // The timeout runs from spawn, before any handler a job installs. A shell
+    // trap as the root's first act keeps that startup window small; the
+    // timeout bounds it with a margin for a loaded machine.
     h.send({
       type: 'start',
-      command: `exec ${quote(process.execPath)} ${quote(fixture)} trap ${quote(h.dir)}`,
+      command: `trap 'printf TERM > trapped; exit 0' TERM; sleep 20 & wait`,
       cwd: h.dir,
       directory: h.dir,
-      timeoutMs: 400,
+      timeoutMs: 2000,
     });
-    await until(h.exited);
+    await until(h.exited, 10_000);
     assert.equal(h.facts().reason, 'timeout');
     assert.equal(h.facts().root?.code, 0);
+    assert.equal(readFileSync(join(h.dir, 'trapped'), 'utf8'), 'TERM');
     assert.equal(h.facts().capture.prefixFlushed, true);
     assert.equal(h.facts().capture.tailFlushed, true);
   });
