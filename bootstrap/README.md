@@ -55,7 +55,8 @@ before removing anything.
 
 ## Inspect and update
 
-From the source project:
+From `bootstrap/source/` (the source project; from the repository root these
+commands reapply without fetching):
 
 ```sh
 mise bootstrap --only files,repos,dotfiles,task --dry-run
