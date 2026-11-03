@@ -126,7 +126,7 @@ for (const mode of ['ignore', 'trap', 'chatty'])
         const start = Date.now();
         h.send({
           type: 'start',
-          command: `${quote(process.execPath)} ${quote(fixture)} ${mode} ${quote(h.dir)} & sleep 0.3; exit 3`,
+          command: `${quote(process.execPath)} ${quote(fixture)} ${mode} ${quote(h.dir)} & until ls ${quote(h.dir)} | grep -q "^member-"; do sleep 0.05; done; exit 3`,
           cwd: h.dir,
           directory: h.dir,
           timeoutMs: 10_000,

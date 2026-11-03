@@ -840,7 +840,7 @@ if (process.env.DOTS_WORKERS_FIXTURE !== 'pi') {
       await h.commands.get('workers').handler(verbose.id, h.ctx);
       assert.match(
         inspectionText,
-        /Context: ~60k context · compaction unknown · 200k capacity · Cost: \$0\.13/,
+        /Context: ~60k context · compaction unknown · 200k capacity · Cost: ~\$0\.13 \(estimate\)/,
       );
 
       // a settle we did not ask for is an update and keeps the real result
