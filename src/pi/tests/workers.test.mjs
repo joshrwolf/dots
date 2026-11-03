@@ -144,16 +144,18 @@ test('RPC acknowledgement deadlines clean up and close preempts pending commands
     cwd: dir,
     args: [],
     command: [process.execPath, cli],
-    requestTimeoutMs: 250,
+    requestTimeoutMs: 30_000,
   });
   try {
+    // A real start under load can take longer than a short deadline; only
+    // the mocked deadline below is under test.
     await child.state();
     t.mock.timers.enable({apis: ['setTimeout']});
     const expired = assert.rejects(
       child.prompt('ignore'),
       /prompt acknowledgement timed out/,
     );
-    t.mock.timers.tick(250);
+    t.mock.timers.tick(30_000);
     await expired;
     assert.ok((await child.state()).sessionFile);
     const pending = assert.rejects(child.prompt('ignore'), /closing/);

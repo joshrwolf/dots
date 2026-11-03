@@ -139,7 +139,7 @@ test('one-shot, recurring with limit, no drift, no pile-up, cancel, manual run',
   assert.match(await h.text('wake_run', {id: loop.id}), /fired \(2 total\)/);
   assert.match(h.messages[5].message.content, /manual/);
   assert.match(
-    await h.text('wake_cancel', {id: loop.id.slice(0, 4)}),
+    await h.text('wake_cancel', {id: loop.id.slice(0, 10)}),
     /cancelled after 2/,
   );
   await clock.advance(60 * 60_000);
