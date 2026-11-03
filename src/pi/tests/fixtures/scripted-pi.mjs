@@ -176,8 +176,8 @@ process.stdin.on('data', chunk => {
           title: 'question before crash',
           timeout: 600000,
         });
-        // Crash once the owner knows the session, so the worker stays resumable.
-        global.crashAfterState = true;
+        // Crash right after the question, before any further owner read.
+        process.stdout.write('', () => process.exit(1));
         continue;
       }
       if (m === 'expired-question') {
@@ -338,19 +338,6 @@ process.stdin.on('data', chunk => {
         global.delayRead = false;
         writeFileSync(sessionFile + '.reading', 'ready');
         setTimeout(() => ok({sessionFile, isStreaming: active}), 150);
-        continue;
-      }
-      if (global.crashAfterState) {
-        process.stdout.write(
-          JSON.stringify({
-            id: cmd.id,
-            type: 'response',
-            command: cmd.type,
-            success: true,
-            data: {sessionFile, isStreaming: active},
-          }) + '\n',
-          () => process.exit(1),
-        );
         continue;
       }
       ok({sessionFile, isStreaming: active});

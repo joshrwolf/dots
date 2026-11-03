@@ -1360,6 +1360,9 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     }
     attach(worker, child);
     try {
+      // Know the session before the run starts, so a crash at any point after
+      // the prompt leaves the worker resumable.
+      worker.sessionFile = (await child.state()).sessionFile;
       const disposition = await child.prompt(input.task);
       if (shuttingDown || worker.process !== child)
         throw new Error('worker startup cancelled by stop or shutdown');
@@ -1379,13 +1382,6 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       throw new Error(`${worker.id} failed to start: ${diagnostic}`, {
         cause: error,
       });
-    }
-    try {
-      const state = await child.state();
-      if (!shuttingDown && worker.process === child)
-        worker.sessionFile = state.sessionFile;
-    } catch {
-      // settle() reads it again
     }
     save(worker);
     return worker;
