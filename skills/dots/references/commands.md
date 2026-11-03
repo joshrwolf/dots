@@ -1107,6 +1107,7 @@ Commands:
   show          Show one task with its result, evidence, and recent events
   result-event  Show an earlier result and its evidence
   events        Project history after an event seq, oldest first; use the last seen seq as a cursor
+  event-kinds   List every kind an event can have
   add           Create an open task; --parent groups it under a larger task or goal
   claim         Claim a task, or the next ready one, for this session
   release       Release this session's claim on a task, or every claim it holds with --all
@@ -1451,7 +1452,8 @@ Options:
 ## dots task events
 
 ```text
-Project history after an event seq, oldest first; use the last seen seq as a cursor
+Project history after an event seq, oldest first; use the last seen seq as a cursor. dots task event-kinds lists the kinds an event can have.
+--follow keeps running instead of returning a page: it prints every event after --since, then each new event as any session commits it, within about a second, one per line with no gaps or repeats. With --json each line is one event object, shaped like an item of the events array (NDJSON). It exits 0 when its output closes or on SIGTERM, SIGINT, or SIGHUP. A storage failure ends it nonzero with the error on stderr; with --json it also prints one {"error": ...} line. To resume after a restart, pass the seq of the last event received as --since.
 
 Usage: dots task events [OPTIONS]
 
@@ -1471,9 +1473,36 @@ Options:
           Working directory for commands that use checkout context
 
       --limit <LIMIT>
-          Maximum events to return
+          Maximum events to return; --follow streams every event instead
 
           [default: 100]
+
+      --owner <NAME>
+          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --follow
+          Keep printing events as they commit, one per line, until stopped
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots task event-kinds
+
+```text
+List every kind an event can have
+
+Usage: dots task event-kinds [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
       --owner <NAME>
           Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use

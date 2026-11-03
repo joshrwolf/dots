@@ -35,6 +35,12 @@ pub enum Error {
         project: String,
         bindings: Vec<std::path::PathBuf>,
     },
+    #[error("cannot inspect workspace catalog {path}")]
+    CatalogPath {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("cannot resolve project common directory {path}")]
     ProjectPath {
         path: std::path::PathBuf,
@@ -282,17 +288,111 @@ impl Task {
     }
 }
 
+/// What a history entry records. The store writes only these kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventKind {
+    Created,
+    Updated,
+    Claimed,
+    Released,
+    Open,
+    Held,
+    Dropped,
+    Review,
+    Done,
+    UpdateResult,
+    BlockedBy,
+    UnblockedBy,
+    ReferenceSet,
+    ReferenceRemoved,
+    OutputAttached,
+    OutputDetached,
+    GoalAttached,
+    GoalDetached,
+}
+
+impl EventKind {
+    /// Every kind, in the order help and listings present them.
+    pub const ALL: [Self; 18] = [
+        Self::Created,
+        Self::Updated,
+        Self::Claimed,
+        Self::Released,
+        Self::Open,
+        Self::Held,
+        Self::Dropped,
+        Self::Review,
+        Self::Done,
+        Self::UpdateResult,
+        Self::BlockedBy,
+        Self::UnblockedBy,
+        Self::ReferenceSet,
+        Self::ReferenceRemoved,
+        Self::OutputAttached,
+        Self::OutputDetached,
+        Self::GoalAttached,
+        Self::GoalDetached,
+    ];
+
+    /// The stored and printed name.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Updated => "updated",
+            Self::Claimed => "claimed",
+            Self::Released => "released",
+            Self::Open => "open",
+            Self::Held => "held",
+            Self::Dropped => "dropped",
+            Self::Review => "review",
+            Self::Done => "done",
+            Self::UpdateResult => "update-result",
+            Self::BlockedBy => "blocked_by",
+            Self::UnblockedBy => "unblocked_by",
+            Self::ReferenceSet => "reference_set",
+            Self::ReferenceRemoved => "reference_removed",
+            Self::OutputAttached => "output-attached",
+            Self::OutputDetached => "output-detached",
+            Self::GoalAttached => "goal_attached",
+            Self::GoalDetached => "goal_detached",
+        }
+    }
+}
+
+impl From<Status> for EventKind {
+    /// The entry recording a change to `status`.
+    fn from(status: Status) -> Self {
+        match status {
+            Status::Open => Self::Open,
+            Status::Review => Self::Review,
+            Status::Held => Self::Held,
+            Status::Done => Self::Done,
+            Status::Dropped => Self::Dropped,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Event {
     pub seq: i64,
     pub task: String,
     pub at: i64,
     pub actor: Option<String>,
+    /// One of [`EventKind::ALL`].
     pub kind: String,
     pub detail: Option<String>,
     pub result: Option<String>,
     pub predecessor: Option<i64>,
     pub operation: Option<String>,
+}
+
+/// One page of project history and the catalog position it covers.
+#[derive(Debug)]
+pub(super) struct EventPage {
+    pub events: Vec<Event>,
+    /// Highest `seq` of any project this page accounts for.
+    pub through: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -667,7 +767,13 @@ impl Store {
                 parent.as_deref().unwrap_or("none")
             ));
         }
-        record(&tx, id, actor, "updated", Some(&changes.join(", ")))?;
+        record(
+            &tx,
+            id,
+            actor,
+            EventKind::Updated,
+            Some(&changes.join(", ")),
+        )?;
         tx.execute(
             "UPDATE tasks SET updated_at=?2 WHERE id=?1",
             params![id, actor.now],
@@ -731,7 +837,7 @@ impl Store {
             "UPDATE tasks SET status=?2, closed_at=?3, owner=NULL, updated_at=?4 WHERE id=?1",
             params![id, status.as_str(), closed_at, actor.now],
         )?;
-        record(&tx, id, actor, status.as_str(), reason)?;
+        record(&tx, id, actor, status.into(), reason)?;
         let updated = load(&tx, project, id)?;
         tx.commit()?;
         Ok(updated)
@@ -770,7 +876,7 @@ impl Store {
                 blocked_by: blocked_by.into(),
             });
         }
-        record(&tx, id, actor, "blocked_by", Some(blocked_by))?;
+        record(&tx, id, actor, EventKind::BlockedBy, Some(blocked_by))?;
         let updated = load(&tx, project, id)?;
         tx.commit()?;
         Ok(updated)
@@ -795,7 +901,7 @@ impl Store {
                 blocked_by: blocked_by.into(),
             });
         }
-        record(&tx, id, actor, "unblocked_by", Some(blocked_by))?;
+        record(&tx, id, actor, EventKind::UnblockedBy, Some(blocked_by))?;
         let updated = load(&tx, project, id)?;
         tx.commit()?;
         Ok(updated)
@@ -809,14 +915,42 @@ impl Store {
         since: i64,
         limit: usize,
     ) -> Result<Vec<Event>, Error> {
+        Ok(self.event_page(project, since, limit)?.events)
+    }
+
+    /// [`Self::events_since`], plus how far the page covers the whole catalog.
+    ///
+    /// Every write transaction is immediate and events are never deleted, so
+    /// `seq` (the rowid) grows in commit order: an event committed after this
+    /// read has a `seq` above any this read could see. A page that is not
+    /// full therefore covers every project's history up to the newest `seq`,
+    /// and a follower can resume there rather than rescanning other projects'
+    /// events after its own last one.
+    pub(super) fn event_page(
+        &mut self,
+        project: &Project,
+        since: i64,
+        limit: usize,
+    ) -> Result<EventPage, Error> {
         let tx = self.connection.transaction()?;
-        let mut statement = tx.prepare(
-            "SELECT events.seq,events.task,events.at,events.actor,events.kind,events.detail,events.result,events.predecessor,events.operation FROM events
-             JOIN tasks ON tasks.id=events.task WHERE tasks.project=?1 AND events.seq>?2 ORDER BY events.seq ASC LIMIT ?3",
-        )?;
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let rows = statement.query_map(params![project.0, since, limit], event_row)?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        let events = {
+            let mut statement = tx.prepare(
+                "SELECT events.seq,events.task,events.at,events.actor,events.kind,events.detail,events.result,events.predecessor,events.operation FROM events
+                 JOIN tasks ON tasks.id=events.task WHERE tasks.project=?1 AND events.seq>?2 ORDER BY events.seq ASC LIMIT ?3",
+            )?;
+            let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+            let rows = statement.query_map(params![project.0, since, limit], event_row)?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let through = match events.last() {
+            Some(last) if events.len() >= limit => last.seq,
+            _ => tx.query_row(
+                "SELECT MAX(?1, COALESCE(MAX(seq), ?1)) FROM events",
+                params![since],
+                |row| row.get(0),
+            )?,
+        };
+        Ok(EventPage { events, through })
     }
 
     /// Unclosed descendants, for warning before holding a grouping task.
@@ -890,7 +1024,7 @@ fn take(
         name: Some(owner),
         now,
     };
-    record(tx, &task.id, actor, "claimed", detail.as_deref())
+    record(tx, &task.id, actor, EventKind::Claimed, detail.as_deref())
 }
 
 fn unclaim(tx: &Transaction<'_>, id: &str, owner: Owner<'_>, now: i64) -> Result<(), Error> {
@@ -902,7 +1036,7 @@ fn unclaim(tx: &Transaction<'_>, id: &str, owner: Owner<'_>, now: i64) -> Result
         name: Some(owner),
         now,
     };
-    record(tx, id, actor, "released", None)
+    record(tx, id, actor, EventKind::Released, None)
 }
 
 pub(super) fn insert_task(
@@ -932,7 +1066,7 @@ pub(super) fn insert_task(
             params![id, blocker],
         )?;
     }
-    record(tx, &id, actor, "created", None)?;
+    record(tx, &id, actor, EventKind::Created, None)?;
     load(tx, project, &id)
 }
 
@@ -940,12 +1074,18 @@ pub(super) fn record(
     tx: &Transaction<'_>,
     id: &str,
     actor: Actor<'_>,
-    kind: &str,
+    kind: EventKind,
     detail: Option<&str>,
 ) -> Result<(), Error> {
     tx.execute(
         "INSERT INTO events(task,at,actor,kind,detail) VALUES(?1,?2,?3,?4,?5)",
-        params![id, actor.now, actor.name.map(Owner::as_str), kind, detail],
+        params![
+            id,
+            actor.now,
+            actor.name.map(Owner::as_str),
+            kind.as_str(),
+            detail
+        ],
     )?;
     Ok(())
 }

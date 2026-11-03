@@ -1089,4 +1089,32 @@ mod tests {
         assert_eq!(held.pointer("/task/last_event/detail").unwrap(), "x");
         nested_groups_are_one_subtree(&fixture, &epic);
     }
+
+    #[test]
+    fn event_kinds_need_no_catalog_and_follow_rejects_a_page_limit() {
+        let fixture = Fixture::new();
+        fs::remove_file(fixture.root.join("data/dots/workspace.sqlite3")).unwrap();
+        let kinds = fixture.ok("checkout", &["event-kinds"]);
+        let kinds: Vec<_> = kinds["kinds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|kind| kind.as_str().unwrap())
+            .collect();
+        for kind in [
+            "created",
+            "claimed",
+            "review",
+            "done",
+            "update-result",
+            "goal_attached",
+        ] {
+            assert!(kinds.contains(&kind), "{kind} in {kinds:?}");
+        }
+        assert!(
+            fixture
+                .fail("checkout", &["events", "--follow", "--limit", "5"])
+                .contains("cannot be used with")
+        );
+    }
 }

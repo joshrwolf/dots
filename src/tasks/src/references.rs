@@ -1,5 +1,5 @@
 //! Links from tasks to issues, pull requests, or tickets; never provider state.
-use crate::store::{self, Actor, Error, Project, Store, Task};
+use crate::store::{self, Actor, Error, EventKind, Project, Store, Task};
 use rusqlite::{Transaction, params};
 use serde::Serialize;
 
@@ -61,7 +61,13 @@ impl Store {
              ON CONFLICT(task,url) DO UPDATE SET label=excluded.label",
             params![id, reference.url, reference.label],
         )?;
-        store::record(&tx, id, actor, "reference_set", Some(&reference.url))?;
+        store::record(
+            &tx,
+            id,
+            actor,
+            EventKind::ReferenceSet,
+            Some(&reference.url),
+        )?;
         tx.execute(
             "UPDATE tasks SET updated_at=?2 WHERE id=?1",
             params![id, actor.now],
@@ -91,7 +97,7 @@ impl Store {
                 "reference URL: not associated with this task",
             ));
         }
-        store::record(&tx, id, actor, "reference_removed", Some(url))?;
+        store::record(&tx, id, actor, EventKind::ReferenceRemoved, Some(url))?;
         tx.execute(
             "UPDATE tasks SET updated_at=?2 WHERE id=?1",
             params![id, actor.now],

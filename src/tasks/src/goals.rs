@@ -1,5 +1,5 @@
 //! Goal briefs attached to task roots. Documents stay outside the store.
-use crate::store::{self, Actor, Error, NewTask, Owner, Project, Status, Store, Task};
+use crate::store::{self, Actor, Error, EventKind, NewTask, Owner, Project, Status, Store, Task};
 use rusqlite::{OptionalExtension as _, Transaction, params};
 use serde::Serialize;
 use std::path::Path;
@@ -85,7 +85,7 @@ impl Store {
             "INSERT INTO goals(root,brief) VALUES(?1,?2)",
             params![root.id, brief],
         )?;
-        store::record(&tx, &root.id, actor, "goal_attached", Some(brief))?;
+        store::record(&tx, &root.id, actor, EventKind::GoalAttached, Some(brief))?;
         let goal = load_goal(&tx, project, &root.id)?;
         tx.commit()?;
         Ok(goal)
@@ -116,7 +116,7 @@ impl Store {
                 "INSERT INTO goals(root,brief) VALUES(?1,?2) ON CONFLICT(root) DO UPDATE SET brief=excluded.brief",
                 params![id, brief],
             )?;
-            store::record(&tx, id, actor, "goal_attached", Some(brief))?;
+            store::record(&tx, id, actor, EventKind::GoalAttached, Some(brief))?;
         }
         let goal = load_goal(&tx, project, id)?;
         tx.commit()?;
@@ -134,7 +134,7 @@ impl Store {
         let root = store::load(&tx, project, id)?;
         protect(&root, actor)?;
         if tx.execute("DELETE FROM goals WHERE root=?1", [id])? > 0 {
-            store::record(&tx, id, actor, "goal_detached", None)?;
+            store::record(&tx, id, actor, EventKind::GoalDetached, None)?;
         }
         tx.commit()?;
         Ok(())

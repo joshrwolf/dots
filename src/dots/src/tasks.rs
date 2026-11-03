@@ -1,11 +1,14 @@
 //! `dots task`: project resolution, storage location, and presentation.
 use std::fmt::Write as _;
+use std::io;
 use std::path::Path;
+use std::time::Duration;
 
 use crate::goal_brief::{self, Overview, ShownGoal};
 use anyhow::{Context as _, Result};
 use dots_tasks::{
-    Actor, ExternalReference, Filter, NewTask, Owner, Project, Status, Store, Task, Update,
+    Actor, EventKind, ExternalReference, Filter, Follower, NewTask, Owner, Project, Status, Store,
+    Task, Update,
 };
 use time::OffsetDateTime;
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -20,9 +23,14 @@ pub(crate) struct Request<'request> {
     pub owner: Option<&'request str>,
     pub directory: &'request Path,
     pub json: bool,
+    /// Where `events --follow` streams; other commands return their output.
+    pub out: &'request mut dyn io::Write,
 }
 
 pub(crate) fn run(request: Request<'_>) -> Result<String> {
+    if let TaskCommand::Query(TaskQuery::EventKinds) = request.command {
+        return Ok(event_kinds(request.json));
+    }
     let mut store = crate::project::open()?;
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let session_owner = crate::agent::session();
@@ -45,6 +53,23 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
     }
     let project =
         crate::project::resolve(&mut store, request.directory, request.project.as_deref())?;
+    if let TaskCommand::Query(TaskQuery::Events {
+        since,
+        follow: true,
+        ..
+    }) = request.command
+    {
+        drop(store);
+        crate::stream::exit_on_signals()?;
+        let mut follower = Follower::open(&crate::project::catalog_path()?, project, since)?;
+        follow(
+            &mut follower,
+            request.json,
+            request.out,
+            &mut crate::stream::sleep_while_read,
+        )?;
+        return Ok(String::new());
+    }
     let outcome = execute(&mut store, &project, request.command, actor)?;
     let discovery_command = if let Outcome::Task { task, .. } = &outcome {
         Some(format!(
@@ -71,6 +96,43 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
             let _ = writeln!(out, "Reports: {command}");
         }
         Ok(out)
+    }
+}
+
+/// `event-kinds`: the vocabulary of event kinds, for callers that validate
+/// the kinds they wait for.
+fn event_kinds(json: bool) -> String {
+    let kinds = EventKind::ALL.map(EventKind::as_str);
+    if json {
+        crate::json::render(serde_json::json!({ "kinds": kinds }))
+    } else {
+        kinds.iter().flat_map(|kind| [kind, "\n"]).collect()
+    }
+}
+
+/// `events --follow`: print each event after the follower's cursor as it
+/// commits, one per line, until the reader goes away or storage fails.
+fn follow(
+    follower: &mut Follower,
+    json: bool,
+    out: &mut dyn io::Write,
+    sleep: &mut dyn FnMut(Duration) -> bool,
+) -> Result<()> {
+    loop {
+        let events = follower.poll()?;
+        for event in &events {
+            let line = if json {
+                format!("{}\n", serde_json::to_string(event)?)
+            } else {
+                event_line(event)
+            };
+            if !crate::stream::write(out, &line)? {
+                return Ok(());
+            }
+        }
+        if events.is_empty() && !sleep(dots_tasks::FOLLOW_INTERVAL) {
+            return Ok(());
+        }
     }
 }
 
@@ -191,9 +253,16 @@ fn execute(
                 warnings: Vec::new(),
             })
         }
-        TaskCommand::Query(TaskQuery::Events { since, limit }) => Ok(Outcome::Events {
+        TaskCommand::Query(TaskQuery::Events {
+            since,
+            limit,
+            follow: _,
+        }) => Ok(Outcome::Events {
             events: store.events_since(project, since, usize::from(limit))?,
         }),
+        TaskCommand::Query(TaskQuery::EventKinds) => {
+            anyhow::bail!("event-kinds is handled before opening the catalog")
+        }
         TaskCommand::Mutation(mutation) => {
             let adds_dependency = matches!(
                 mutation,
@@ -721,4 +790,138 @@ fn line(task: &Task, now: i64) -> String {
 
 fn stamp(unix: i64) -> String {
     u64::try_from(unix).map_or_else(|_| unix.to_string(), crate::render::observed_time)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    struct Catalog {
+        root: PathBuf,
+        store: Store,
+        project: Project,
+    }
+
+    impl Catalog {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "dots-task-follow-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&root).unwrap();
+            let mut store = Store::create(&root.join("workspace.sqlite3")).unwrap();
+            let project = store.register_project("fixture").unwrap();
+            Self {
+                root,
+                store,
+                project,
+            }
+        }
+
+        fn add(&mut self, title: &str) {
+            let task = NewTask {
+                title: title.into(),
+                ..NewTask::default()
+            };
+            let actor = Actor { name: None, now: 1 };
+            self.store.add(&self.project, &task, actor).unwrap();
+        }
+
+        fn follower(&self) -> Follower {
+            Follower::open(
+                &self.root.join("workspace.sqlite3"),
+                self.project.clone(),
+                0,
+            )
+            .unwrap()
+        }
+    }
+
+    impl Drop for Catalog {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.root).unwrap();
+        }
+    }
+
+    /// Accepts `lines` lines, then reports that its reader went away.
+    struct Reader {
+        text: String,
+        lines: usize,
+    }
+
+    impl io::Write for Reader {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.text.matches('\n').count() >= self.lines {
+                return Err(io::ErrorKind::BrokenPipe.into());
+            }
+            self.text.push_str(std::str::from_utf8(bytes).unwrap());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn follow_prints_the_backlog_then_each_commit_as_one_json_line() {
+        let mut catalog = Catalog::new();
+        catalog.add("first");
+        let mut follower = catalog.follower();
+        let mut reader = Reader {
+            text: String::new(),
+            lines: usize::MAX,
+        };
+        let mut pauses = Vec::new();
+        follow(&mut follower, true, &mut reader, &mut |pause| {
+            pauses.push(pause);
+            match pauses.len() {
+                1 => catalog.add("second"),
+                2 => {}
+                _ => return false,
+            }
+            true
+        })
+        .unwrap();
+        let events: Vec<serde_json::Value> = reader
+            .text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let seqs: Vec<_> = events.iter().map(|event| event["seq"].clone()).collect();
+        assert_eq!(seqs, [1, 2]);
+        assert!(events.iter().all(|event| event["kind"] == "created"));
+        assert_eq!(pauses, [dots_tasks::FOLLOW_INTERVAL; 3]);
+    }
+
+    #[test]
+    fn follow_prints_readable_lines_and_ends_with_its_reader() {
+        let mut catalog = Catalog::new();
+        catalog.add("first");
+        catalog.add("second");
+        let mut reader = Reader {
+            text: String::new(),
+            lines: 1,
+        };
+        follow(&mut catalog.follower(), false, &mut reader, &mut |_| {
+            panic!("a closed reader ends follow before it waits")
+        })
+        .unwrap();
+        assert_eq!(reader.text.lines().count(), 1);
+        assert!(reader.text.contains(" #1 t-"), "{}", reader.text);
+        assert!(reader.text.ends_with(" created\n"), "{}", reader.text);
+    }
+
+    #[test]
+    fn event_kinds_lists_the_store_vocabulary() {
+        let listed: serde_json::Value = serde_json::from_str(&event_kinds(true)).unwrap();
+        let names: Vec<_> = EventKind::ALL.map(EventKind::as_str).to_vec();
+        assert_eq!(listed, serde_json::json!({ "kinds": names }));
+        assert_eq!(event_kinds(false), format!("{}\n", names.join("\n")));
+    }
 }
