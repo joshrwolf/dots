@@ -1,5 +1,5 @@
-import path from 'node:path';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
+import {rexBinary} from '../../src/host/rex.ts';
 
 /**
  * Rex's agent setup gives Claude Code and Codex a session-start hook that adds
@@ -34,9 +34,13 @@ export async function rexContext(
   // and so on) is for the agent the user talks to.
   if (!env.REX_SESSION || env.DOTS_WORKER_ID) return undefined;
   try {
-    const rex = env.REX_BIN_DIR ? path.join(env.REX_BIN_DIR, 'rex') : 'rex';
     const text = (
-      await run(rex, ['__internal', 'session-start', '--agent', 'pi'])
+      await run(rexBinary(env), [
+        '__internal',
+        'session-start',
+        '--agent',
+        'pi',
+      ])
     ).trim();
     return text || undefined;
   } catch {

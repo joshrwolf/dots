@@ -1,137 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {checkDigest} from '../extensions/wake/check.ts';
-import register, {
-  describe,
-  parseDuration,
-  shouldFire,
-} from '../extensions/wake/index.ts';
+import {describe, parseDuration, shouldFire} from '../extensions/wake/index.ts';
 
-// A fake clock: timers fire only when the test advances time, in order.
-function fakeClock(start = Date.UTC(2026, 0, 1)) {
-  let now = start;
-  let seq = 0;
-  const timers = new Map();
-  return {
-    now: () => now,
-    setTimeout: (fn, ms) => {
-      const id = ++seq;
-      timers.set(id, {at: now + ms, fn});
-      return id;
-    },
-    clearTimeout: id => timers.delete(id),
-    pending: () => timers.size,
-    async advance(ms) {
-      const target = now + ms;
-      for (;;) {
-        const due = [...timers.entries()]
-          .filter(([, t]) => t.at <= target)
-          .sort((a, b) => a[1].at - b[1].at)[0];
-        if (!due) break;
-        now = due[1].at;
-        timers.delete(due[0]);
-        due[1].fn();
-        await new Promise(resolve => setImmediate(resolve)); // let async fire() settle
-        await new Promise(resolve => setImmediate(resolve));
-      }
-      now = target;
-    },
-  };
-}
-
-// A session file: entries in file order with ids; `branch` is the current leaf's path (all of it unless a test moves it).
-// Runs finish at once unless a test calls `busy()`; `turn()` then settles that run.
-function harness(clock, run, {session = 'session-a', mode = 'rpc'} = {}) {
-  const listeners = {};
-  const handlers = {};
-  let idle = true;
-  const tools = new Map();
-  const messages = [];
-  const widgets = new Map();
-  const entries = [];
-  let branch;
-  let next = 0;
-  const pi = {
-    on: (name, fn) => {
-      (listeners[name] ??= []).push(fn);
-      handlers[name] = (event, context) => {
-        let result;
-        for (const listener of listeners[name])
-          result = listener(event, context);
-        return result;
-      };
-    },
-    registerTool: tool => tools.set(tool.name, tool),
-    registerCommand: () => {},
-    registerMessageRenderer: () => {},
-    sendMessage: (message, options) => messages.push({message, options}),
-    appendEntry: (customType, data) => {
-      const entry = {type: 'custom', id: `e${++next}`, customType, data};
-      entries.push(entry);
-      branch?.push(entry);
-    },
-    exec: async () => {
-      throw new Error('exec should be stubbed');
-    },
-  };
-  register(pi, {clock, run});
-  const notices = [];
-  const ctx = {
-    cwd: '/project',
-    hasUI: true,
-    mode,
-    isIdle: () => idle,
-    ui: {
-      notify: (message, level) => notices.push({message, level}),
-      setWidget: (key, factory) =>
-        factory ? widgets.set(key, factory) : widgets.delete(key),
-    },
-    sessionManager: {
-      getSessionId: () => session,
-      getEntries: () => entries,
-      getBranch: () => branch ?? entries,
-    },
-  };
-  /** Moves the leaf, as /tree does: the new branch shares none of the entries so far. */
-  const navigate = () => {
-    branch = [];
-    handlers.session_tree?.({type: 'session_tree'}, ctx);
-  };
-  const call = async (name, params) =>
-    (await tools.get(name).execute('c', params, undefined, undefined, ctx))
-      .details;
-  const text = async (name, params) =>
-    (await tools.get(name).execute('c', params, undefined, undefined, ctx))
-      .content[0].text;
-  /** A run is in progress until `turn()`. */
-  const busy = () => {
-    idle = false;
-  };
-  /** The run settles; held messages are delivered on the next macrotask. */
-  const turn = async ({aborted = false} = {}) => {
-    idle = true;
-    handlers.agent_settled?.({type: 'agent_settled', aborted}, ctx);
-    await new Promise(resolve => setTimeout(resolve, 5));
-  };
-  /** The user prompts, which ends a cancellation. */
-  const prompt = () =>
-    handlers.before_agent_start?.({messageType: 'user', prompt: 'go on'}, ctx);
-  return {
-    handlers,
-    tools,
-    messages,
-    widgets,
-    entries,
-    notices,
-    ctx,
-    call,
-    text,
-    busy,
-    turn,
-    prompt,
-    navigate,
-  };
-}
+import {fakeClock, harness} from './wake-fixture.mjs';
 
 test('the TUI wake section follows creation, checking, queued consumption, cancellation and shutdown', async () => {
   const clock = fakeClock();
@@ -585,7 +457,7 @@ test('checks persist a bounded digest rather than complete output', async () => 
   assert.equal(h.messages.length, 1);
   assert.ok(h.entries.every(entry => JSON.stringify(entry).length < 1000));
   assert.match(
-    h.entries.at(-1).data.lastDigest,
+    h.entries.at(-1).data.trigger.check.lastDigest,
     /^[0-9a-f]{64}:[0-9a-f]{64}:$/,
   );
   h.handlers.session_shutdown({}, h.ctx);
@@ -765,7 +637,14 @@ test('an unreadable latest record of a wake never gives an older timer back its 
     type: 'custom',
     id: 'broken',
     customType: 'dots.wake',
-    data: {...record, cancelled: true, on: 'invalid-policy'},
+    data: {
+      ...record,
+      active: false,
+      trigger: {
+        ...record.trigger,
+        check: {...record.trigger.check, on: 'invalid-policy'},
+      },
+    },
   });
   const reloaded = harness(clock, async command => {
     runs.push(command);
@@ -775,7 +654,7 @@ test('an unreadable latest record of a wake never gives an older timer back its 
   reloaded.handlers.session_start({reason: 'reload'}, reloaded.ctx);
   assert.match(
     reloaded.notices[0].message,
-    /^1 wake record was incompatible and not restored \(\/on /,
+    /^1 wake record was incompatible and not restored \(\/trigger\/check\/on /,
   );
   assert.deepEqual(
     (await reloaded.call('wake_list', {})).map(w => w.id),
