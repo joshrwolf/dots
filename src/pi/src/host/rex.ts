@@ -503,28 +503,38 @@ export class Rex {
     };
   }
 
-  /** The pane's current facts. Throws RexError when Rex cannot be reached. */
+  /**
+   * The pane's current facts. Throws RexError when Rex cannot be reached.
+   *
+   * The process is read before the status records, never concurrently: Rex
+   * applies a program's output before it records the exit, so a status read
+   * after an observed exit includes everything the program reported. Read
+   * the other way round, one snapshot could pair the exit with the status
+   * from before the program's final report.
+   */
   async snapshotPane(ref: PaneRef): Promise<PaneSnapshot> {
     const target = {session_id: ref.session, block_id: ref.block};
-    const [instance, status, proc] = await Promise.allSettled([
+    const [instance, facts] = await Promise.allSettled([
       this.instance(ref.host),
-      this.typed(
-        ref.host,
-        'block.method',
-        {...target, method: 'program_status'},
-        Records,
-      ),
-      this.typed(
-        ref.host,
-        'block.method',
-        {...target, method: 'process'},
-        ProcessSchema,
-      ),
+      (async () => {
+        const proc = await this.typed(
+          ref.host,
+          'block.method',
+          {...target, method: 'process'},
+          ProcessSchema,
+        );
+        const status = await this.typed(
+          ref.host,
+          'block.method',
+          {...target, method: 'program_status'},
+          Records,
+        );
+        return {proc, status};
+      })(),
     ]);
     if (instance.status === 'rejected') throw instance.reason;
-    for (const result of [status, proc]) {
-      if (result.status === 'fulfilled') continue;
-      const error: unknown = result.reason;
+    if (facts.status === 'rejected') {
+      const error: unknown = facts.reason;
       if (error instanceof RexError && error.code === 'session_not_found')
         return {
           present: false,
@@ -537,11 +547,11 @@ export class Rex {
           instance: instance.value,
           reason: 'block closed',
         };
+      throw error;
     }
-    if (status.status === 'rejected') throw status.reason;
-    if (proc.status === 'rejected') throw proc.reason;
-    const root = status.value.records.find(record => (record.id ?? '') === '');
-    const {last_exit, child, foreground} = proc.value;
+    const {proc, status} = facts.value;
+    const root = status.records.find(record => (record.id ?? '') === '');
+    const {last_exit, child, foreground} = proc;
     return {
       present: true,
       instance: instance.value,

@@ -337,6 +337,51 @@ test('snapshotPane reads the root record, exit and server run, and maps vanished
   assert.match(error.message, /autostart is disabled/);
 });
 
+test('snapshotPane reads the status only after the process, so an exit never pairs with an older status', async () => {
+  // The program reports done and exits while the snapshot runs: the process
+  // read sees the exit, and every later status read sees done.
+  let state = 'working';
+  let exited = false;
+  const events = [];
+  const {exec} = fakeExec((method, params) => {
+    if (method === 'server.status') return json({instance_id: 'run-1'});
+    events.push(params.method);
+    if (params.method === 'process') {
+      const reply = json({
+        last_exit: exited ? {exit_code: 0} : null,
+        child: null,
+        foreground: null,
+      });
+      state = 'done';
+      exited = true;
+      return reply;
+    }
+    return json({records: [{state, updated_at: 'u'}]});
+  });
+  const rex = new Rex({env: {}, exec});
+  const before = await rex.snapshotPane({session: S, block: B});
+  assert.deepEqual(events, ['process', 'program_status']);
+  assert.equal(before.exit, null);
+  assert.equal(before.record.state, 'done', 'a newer status with no exit yet');
+  const after = await rex.snapshotPane({session: S, block: B});
+  assert.deepEqual(after.exit, {code: 0});
+  assert.equal(after.record.state, 'done');
+
+  // A vanished pane on the process read ends the snapshot there.
+  events.length = 0;
+  const gone = fakeExec((method, params) => {
+    if (method === 'server.status') return json({instance_id: 'run-1'});
+    events.push(params.method);
+    return apiError(`block not found: ${B}`, 'not_found');
+  });
+  const closed = await new Rex({env: {}, exec: gone.exec}).snapshotPane({
+    session: S,
+    block: B,
+  });
+  assert.equal(closed.reason, 'block closed');
+  assert.deepEqual(events, ['process']);
+});
+
 test('Rex events are parsed to the shapes observers use; others are ignored', () => {
   const block = (name, payload) => ({
     type: 'session_event',
