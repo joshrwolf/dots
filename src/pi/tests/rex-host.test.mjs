@@ -73,8 +73,12 @@ test('the stream starts lazily, parses lines, and reports connection state', asy
   children[0].stdout.write(':2}\nnot json\n\n');
   children[0].stdout.write(`${'x'.repeat(2 * 1024 * 1024)}`);
   children[0].stdout.write('still the long line\n{"c":3}\n');
+  // A complete oversized line in one chunk is dropped too.
+  children[0].stdout.write(
+    `{"big":"${'y'.repeat(2 * 1024 * 1024)}"}\n{"d":4}\n`,
+  );
   await settle();
-  assert.deepEqual(lines, [{a: 1}, {b: 2}, {c: 3}]);
+  assert.deepEqual(lines, [{a: 1}, {b: 2}, {c: 3}, {d: 4}]);
   stop();
   await settle();
   assert.deepEqual(children[0].signals, ['SIGTERM']);

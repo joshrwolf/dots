@@ -346,7 +346,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
         if (!armed || !wake.active || wakes.get(wake.id) !== wake) return;
         if (due(wake) > clock.now()) arm(wake);
         else if (isTime(wake)) backgroundFire(wake, 'timer');
-        else if (isPane(wake)) signal(wake, timedOut(wake));
+        else if (isPane(wake)) signal(wake, [timedOut(wake)]);
       }, delay),
     );
   };
@@ -619,18 +619,22 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
   };
 
   /**
-   * Record a transition. The first one since the last delivery fires; later
-   * ones join that pending message, which is composed when delivered.
-   * Returns whether the record was written.
+   * Record the transitions of one observation as one fire. The first fire
+   * since the last delivery sends a message; later ones join it, since it is
+   * composed when delivered. Returns whether the record was written.
    */
-  const signal = (wake: PaneWake, transition: Transition): boolean => {
-    if (!armed || !wake.active) return false;
+  const signal = (
+    wake: PaneWake,
+    transitions: readonly Transition[],
+  ): boolean => {
+    if (!armed || !wake.active || transitions.length === 0) return false;
     const runtime = paneRuntime(wake);
-    runtime.transitions.push(transition);
+    runtime.transitions.push(...transitions);
+    const final = transitions.some(transition => transition.final);
     if (wake.pending) {
-      if (transition.final) finish(wake);
+      if (final) finish(wake);
       refresh();
-      return transition.final;
+      return final;
     }
     wake.fired += 1;
     wake.pending = true;
@@ -643,7 +647,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
         refresh();
       },
     );
-    if (transition.final || wake.fired >= wake.limit) finish(wake);
+    if (final || wake.fired >= wake.limit) finish(wake);
     else persist(wake);
     refresh();
     return true;
@@ -671,9 +675,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
       if (!material && before?.updatedAt !== after?.updatedAt)
         runtime.dirty = true;
     }
-    let written = false;
-    for (const transition of step.transitions)
-      written = signal(wake, transition) || written;
+    const written = signal(wake, step.transitions);
     // A fire already wrote the whole record, including the new observation.
     if (material && wake.active && !written) persist(wake);
     refresh();
@@ -713,7 +715,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
       snapshot.instance === wake.trigger.instance
     )
       return;
-    apply(wake, step, snapshot.present ? (snapshot.record ?? null) : undefined);
+    apply(wake, step, snapshot.present ? (snapshot.record ?? null) : null);
   };
 
   /** Reconcile a pane wake with a snapshot; one at a time per wake. */
@@ -777,7 +779,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
         if (!current()) return;
         // Same tick as the timeout, so both join one message.
         if (snapshot) applySnapshot(wake, snapshot, false);
-        signal(wake, timedOut(wake));
+        signal(wake, [timedOut(wake)]);
       });
     snapshots.add(done);
   };
@@ -1346,7 +1348,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
           ...step.transitions,
         ],
       },
-      snapshot.present ? (snapshot.record ?? null) : undefined,
+      snapshot.present ? (snapshot.record ?? null) : null,
     );
     return merged ? 'merged' : 'fired';
   };

@@ -148,6 +148,7 @@ export class NdjsonStream {
           discarding = false;
           continue;
         }
+        if (Buffer.byteLength(part) > this.maxLineBytes) continue;
         this.deliver(part);
         if (!owned()) return;
       }

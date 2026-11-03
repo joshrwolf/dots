@@ -588,6 +588,38 @@ test('wake_run snapshots and fires with the current state, or reports an end', a
   h.handlers.session_shutdown({}, h.ctx);
 });
 
+test('one observation is one fire: the last fire keeps every outcome it saw', async () => {
+  {
+    const {rex, h} = await started();
+    rex.pane.record = record('working', 't1');
+    const {details} = await paneWake(h);
+    rex.pane.present = false;
+    await h.call('wake_run', {id: details.id});
+    await settle();
+    const {content, details: fired} = h.messages[0].message;
+    assert.equal(fired.outcome, 'ended');
+    assert.equal(fired.manual, true);
+    assert.match(content, /observed: ended: the block was closed/);
+    assert.match(content, /status now: no status reported/);
+    h.handlers.session_shutdown({}, h.ctx);
+  }
+  {
+    const {rex, h} = await started();
+    rex.pane.record = record('working', 't1');
+    await paneWake(h);
+    rex.pane.record = record('done', 't2');
+    rex.pane.exit = {code: 3};
+    rex.open();
+    await settle();
+    assert.equal(h.messages.length, 1);
+    const {content, details} = h.messages[0].message;
+    assert.equal(details.exit, 3);
+    assert.match(content, /status done/);
+    assert.match(content, /exited with code 3/);
+    h.handlers.session_shutdown({}, h.ctx);
+  }
+});
+
 test('shutdown waits for the Rex streams and snapshots to stop', async () => {
   const {rex, h} = await started();
   await paneWake(h);
