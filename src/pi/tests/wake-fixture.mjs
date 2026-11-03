@@ -43,7 +43,7 @@ export function fakeClock(start = Date.UTC(2026, 0, 1)) {
 export function harness(
   clock,
   run,
-  {session = 'session-a', mode = 'rpc', rex, env = {}} = {},
+  {session = 'session-a', mode = 'rpc', rex, tasks, env = {}} = {},
 ) {
   const listeners = {};
   /** @type {Record<string, any>} */
@@ -78,7 +78,13 @@ export function harness(
       throw new Error('exec should be stubbed');
     },
   };
-  register(pi, {clock, run, env, ...(rex ? {rex} : {})});
+  register(pi, {
+    clock,
+    run,
+    env,
+    ...(rex ? {rex} : {}),
+    ...(tasks ? {tasks} : {}),
+  });
   const notices = [];
   const ctx = {
     cwd: '/project',

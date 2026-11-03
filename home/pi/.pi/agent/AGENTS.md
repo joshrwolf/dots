@@ -111,10 +111,14 @@ any optional skill is loaded.
   instead of redoing the work; `message` with `wait` is how a worker asks and
   how I answer.
 - Use `wake` instead of polling: `in`/`at` for a follow-up later, `every` with
-  `check` to wake only on a change or failure, and `pane` to wake when a Rex
-  terminal's program reaches a status or exits. Launch watched commands with
-  `rex run --keep-open` so their exit persists. Keep intervals coarse, set a
-  sensible `limit`, and cancel wakes whose purpose is over.
+  `check` to wake only on a change or failure, `pane` to wake when a Rex
+  terminal's program reaches a status or exits, and `task` to wake on task
+  events. Launch watched commands with `rex run --keep-open` so their exit
+  persists. Keep intervals coarse, set a sensible `limit`, and cancel wakes
+  whose purpose is over.
+- When coordinating a goal with other sessions, wait on its task events (such as
+  `review` or `done`) rather than a peer's terminal `done`, which only means a
+  turn ended.
 - Surface decisions, blockers, and meaningful discoveries, not routine chatter.
   Distinguish running, awaiting input, implemented, verified, and shipped;
   successful execution alone does not establish correctness or readiness.

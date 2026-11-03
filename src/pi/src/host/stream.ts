@@ -31,7 +31,8 @@ export type Launch = (
 
 export interface StreamOptions {
   readonly file: string;
-  readonly args: readonly string[];
+  /** Evaluated at each spawn, so a restart can resume from a cursor. */
+  readonly args: () => readonly string[];
   readonly clock?: Clock;
   readonly launch?: Launch;
   /** First retry delay; doubles per failed connection up to `maxBackoffMs`. */
@@ -54,7 +55,7 @@ const STDERR_CHARS = 2_000;
  */
 export class NdjsonStream {
   private readonly file: string;
-  private readonly args: readonly string[];
+  private readonly args: () => readonly string[];
   private readonly clock: Clock;
   private readonly launch: Launch;
   private readonly minBackoffMs: number;
@@ -119,7 +120,7 @@ export class NdjsonStream {
     const started = this.clock.now();
     let child: ChildProcess;
     try {
-      child = this.launch(this.file, this.args, {
+      child = this.launch(this.file, this.args(), {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {

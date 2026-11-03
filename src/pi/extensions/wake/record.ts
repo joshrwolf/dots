@@ -1,5 +1,6 @@
 import {Type, type Static} from 'typebox';
 import {PaneTriggerSchema} from './pane.ts';
+import {TaskTriggerSchema} from './task.ts';
 
 export const ENTRY = 'dots.wake';
 export const VERSION = 2;
@@ -47,7 +48,11 @@ export type TimeTrigger = Static<typeof TimeTriggerSchema>;
  * `deadline`, observer state, and `until`, and share the engine's outcomes,
  * pending-fire merging and restore reconciliation.
  */
-export const TriggerSchema = Type.Union([TimeTriggerSchema, PaneTriggerSchema]);
+export const TriggerSchema = Type.Union([
+  TimeTriggerSchema,
+  PaneTriggerSchema,
+  TaskTriggerSchema,
+]);
 export type Trigger = Static<typeof TriggerSchema>;
 
 /** The persisted record; each change appends the whole record and the latest one wins. */

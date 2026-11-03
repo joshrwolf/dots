@@ -145,6 +145,62 @@ test('pane wakes show what they wait for, the time left, and a lost connection',
   }
 });
 
+test('task wakes show the task, what they wait for, the time left, and a lost follower', () => {
+  const task: WakeActivity = {
+    kind: 'task',
+    id: 'k-task',
+    text: 'Integrate the slice',
+    task: 't-a0',
+    title: 'Ship \u001b[31mthe feature',
+    project: 'p-fixture',
+    until: ['review', 'done'],
+    deadline: 5 * 3_600_000,
+    cursor: 42,
+    fired: 1,
+    limit: 3,
+    state: 'waiting',
+  };
+  for (const name of ['dark', 'light']) {
+    const theme = getThemeByName(name)!;
+    const shown = (rows: WakeActivity[]) =>
+      stripTerminalSequences(
+        createWakeWidget(
+          () => rows,
+          () => 0,
+          theme,
+        )
+          .render(140)
+          .join('\n'),
+      );
+    assert.match(
+      shown([task]),
+      /waiting for task t-a0: until review\|done · 5h left · 1\/3/,
+    );
+    assert.doesNotMatch(shown([task]), /disconnected/);
+    assert.match(
+      shown([{...task, disconnected: 'catalog locked'}]),
+      /disconnected/,
+    );
+    const full = stripTerminalSequences(
+      wakeActivityBody(
+        [{...task, disconnected: 'catalog locked'}],
+        0,
+        theme,
+        true,
+      )
+        .render(140)
+        .join('\n'),
+    );
+    assert.match(full, /Task: t-a0 "Ship \\u001b\[31mthe feature" · p-fixture/);
+    assert.match(
+      full,
+      /Until: review\|done on the task or a descendant · gives up 1970-01-01T05:00:00.000Z/,
+    );
+    assert.match(full, /Seen through event #42/);
+    assert.match(full, /Disconnected: catalog locked/);
+  }
+});
+
 test('worker runtime metadata aligns with the primary session across models, efforts, themes and resize', () => {
   for (const name of ['dark', 'light']) {
     const theme = getThemeByName(name)!;

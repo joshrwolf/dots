@@ -5,6 +5,7 @@ import type {
   RexEvent,
   StatusRecord,
 } from '../../src/host/rex.ts';
+import {untrusted, type Transition} from './event.ts';
 
 // The pane trigger's rules: what counts as a match or an end, from live
 // events and from snapshots after a gap. Pure; the wake engine owns effects.
@@ -52,22 +53,15 @@ export const PaneTriggerSchema = Type.Object(
 );
 export type PaneTrigger = Static<typeof PaneTriggerSchema>;
 
-export type Outcome = 'matched' | 'ended' | 'timed out' | 'manual';
-
-export interface Transition {
-  readonly outcome: Outcome;
-  /** One line in our own words; program text never appears here. */
-  readonly summary: string;
+export interface PaneTransition extends Transition {
   readonly state?: string;
   readonly exit?: ExitStatus;
-  /** The pane can produce nothing more: the wake finishes with this fire. */
-  readonly final: boolean;
 }
 
 export interface Step {
   /** The root record to keep: a value, null once removed, absent when unchanged. */
   readonly record?: Observed | null;
-  readonly transitions: readonly Transition[];
+  readonly transitions: readonly PaneTransition[];
 }
 
 export function observed(record: StatusRecord): Observed {
@@ -92,7 +86,10 @@ const statusEnds = (trigger: PaneTrigger) =>
 const exited = (exit: ExitStatus): string =>
   `exited with code ${exit.code}${exit.error ? ` (${untrusted(exit.error, 120)})` : ''}`;
 
-function exitTransition(trigger: PaneTrigger, exit: ExitStatus): Transition {
+function exitTransition(
+  trigger: PaneTrigger,
+  exit: ExitStatus,
+): PaneTransition {
   return watchesExit(trigger)
     ? {
         outcome: 'matched',
@@ -108,7 +105,7 @@ function exitTransition(trigger: PaneTrigger, exit: ExitStatus): Transition {
       };
 }
 
-const ended = (summary: string): Transition => ({
+const ended = (summary: string): PaneTransition => ({
   outcome: 'ended',
   summary,
   final: true,
@@ -148,7 +145,7 @@ function statusStep(
     ? matches && (!previous || !states.includes(previous.state) || ownerChanged)
     : matches &&
       (!previous || previous.updatedAt !== current.updatedAt || ownerChanged);
-  const transitions: Transition[] = fire
+  const transitions: PaneTransition[] = fire
     ? [
         {
           outcome: 'matched',
@@ -229,14 +226,6 @@ export function reconcile(trigger: PaneTrigger, snapshot: PaneSnapshot): Step {
   return {...('record' in status ? {record: status.record} : {}), transitions};
 }
 
-const INVISIBLE = /[\p{Cc}\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu;
-
-/** Program-controlled text as a bounded, quoted literal with controls and direction overrides removed. */
-export function untrusted(text: string, max = 300): string {
-  const clean = text.replace(INVISIBLE, '');
-  return JSON.stringify(clean.length > max ? `${clean.slice(0, max)}…` : clean);
-}
-
 /** A status record as one line; quoted values come from the program. */
 export function statusLine(record: StatusRecord | undefined): string {
   if (!record) return 'no status reported';
@@ -251,8 +240,6 @@ export function statusLine(record: StatusRecord | undefined): string {
     .filter(Boolean)
     .join(' · ');
 }
-
-export const untilLabel = (until: readonly string[]) => until.join('|');
 
 /** How the pane is named in rows and messages. */
 export function paneName(
