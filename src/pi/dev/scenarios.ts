@@ -340,20 +340,38 @@ function goalScenario(): Scenario {
 }
 
 function wakeFixtures(phase: number): WakeActivity[] {
-  return Array.from({length: phase >= 2 ? 5 : 2}, (_, i) => ({
-    id: `k-fixture-${i}`,
-    text: i
-      ? `Inspect check result ${i}`
-      : 'Review the latest verification result',
-    at: (i + 1) * 120000,
-    every: i ? undefined : 120000,
-    fired: i ? 0 : 2,
-    limit: i ? 1 : 10,
-    check: i ? undefined : 'fixture-check',
-    on: 'change',
-    lastCode: phase && !i ? 1 : undefined,
-    state: phase === 1 ? (i ? 'queued' : 'checking') : 'scheduled',
-  }));
+  return Array.from({length: phase >= 2 ? 5 : 2}, (_, i): WakeActivity =>
+    i === 4
+      ? {
+          kind: 'pane',
+          id: 'k-fixture-pane',
+          text: 'Review the build once it finishes',
+          pane: 'build',
+          where: 'block:fixture-build in fixture-session',
+          until: ['done', 'exit'],
+          deadline: 23 * 3_600_000,
+          status: 'working · app "fixture" · msg "compiling"',
+          disconnected: 'no Rex server is running',
+          fired: 0,
+          limit: 1,
+          state: 'waiting',
+        }
+      : {
+          kind: 'time' as const,
+          id: `k-fixture-${i}`,
+          text: i
+            ? `Inspect check result ${i}`
+            : 'Review the latest verification result',
+          at: (i + 1) * 120000,
+          every: i ? undefined : 120000,
+          fired: i ? 0 : 2,
+          limit: i ? 1 : 10,
+          check: i ? undefined : 'fixture-check',
+          on: 'change',
+          lastCode: phase && !i ? 1 : undefined,
+          state: phase === 1 ? (i ? 'queued' : 'checking') : 'scheduled',
+        },
+  );
 }
 
 export const scenarios: readonly Scenario[] = [

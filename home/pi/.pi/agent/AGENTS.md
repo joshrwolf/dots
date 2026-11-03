@@ -110,10 +110,11 @@ any optional skill is loaded.
   `message` to a finished or paused worker continues it in its own session
   instead of redoing the work; `message` with `wait` is how a worker asks and
   how I answer.
-- Use `wake` for anything time-based: a follow-up later, supervising long work
-  (`in: "15m"` to check a worker), or polling with `check` so the model wakes
-  only on a change or failure instead of each tick. Keep intervals coarse, set
-  a sensible `limit`, and cancel wakes whose purpose is over.
+- Use `wake` instead of polling: `in`/`at` for a follow-up later, `every` with
+  `check` to wake only on a change or failure, and `pane` to wake when a Rex
+  terminal's program reaches a status or exits. Launch watched commands with
+  `rex run --keep-open` so their exit persists. Keep intervals coarse, set a
+  sensible `limit`, and cancel wakes whose purpose is over.
 - Surface decisions, blockers, and meaningful discoveries, not routine chatter.
   Distinguish running, awaiting input, implemented, verified, and shipped;
   successful execution alone does not establish correctness or readiness.

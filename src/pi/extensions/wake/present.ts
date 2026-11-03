@@ -28,6 +28,12 @@ export interface WakeDetails {
   text?: string;
   /** The wake was set on another branch of this session than the one it fired into. */
   elsewhere?: boolean;
+  /** Event triggers: what fired the wake. */
+  trigger?: 'pane';
+  pane?: string;
+  outcome?: 'matched' | 'ended' | 'timed out' | 'manual';
+  /** The observed transitions, in our own words. */
+  summary?: string;
 }
 
 function bodyOf(content: CustomMessage<unknown>['content']): string {
@@ -67,6 +73,21 @@ export function renderWake(
     });
   if (d.manual)
     secondary.push({text: 'manual', tone: 'dim', priority: 40, shrink: 'omit'});
+  if (d.pane)
+    secondary.push({
+      text: `pane ${labelText(d.pane).slice(0, 40)}`,
+      tone: 'dim',
+      priority: 60,
+      shrink: 'omit',
+    });
+  if (d.outcome && d.outcome !== 'manual')
+    status.push({
+      text: d.outcome,
+      tone: d.outcome === 'matched' ? 'muted' : 'warning',
+      priority: 105,
+      minWidth: 5,
+      shrink: 'clip',
+    });
   if (typeof d.exit === 'number')
     status.push({
       text: `exit ${d.exit}`,
@@ -97,7 +118,12 @@ export function renderWake(
         'end',
         secondary,
       ),
-      state: typeof d.exit === 'number' && d.exit !== 0 ? 'failed' : 'done',
+      state:
+        typeof d.exit === 'number' && d.exit !== 0
+          ? 'failed'
+          : d.outcome === 'ended' || d.outcome === 'timed out'
+            ? 'cancelled'
+            : 'done',
       notices,
       body:
         body &&
@@ -108,7 +134,12 @@ export function renderWake(
             ? new OutputView(body)
             : new PreviewView(body, theme, options)
           : undefined,
-      caption: options.expanded && d.check ? `check: ${d.check}` : '',
+      caption:
+        options.expanded && d.check
+          ? `check: ${d.check}`
+          : options.expanded && d.summary
+            ? labelText(d.summary)
+            : '',
     },
     theme,
   );

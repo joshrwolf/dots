@@ -196,21 +196,28 @@ test(
     });
     try {
       await session.prompt('set-wakes');
-      const records = session.sessionManager
-        .getEntries()
-        .flatMap(entry =>
-          entry.type === 'custom' && entry.customType === 'dots.wake'
-            ? [entry.data as {id: string; text: string}]
-            : [],
-        );
+      const records = session.sessionManager.getEntries().flatMap(entry =>
+        entry.type === 'custom' && entry.customType === 'dots.wake'
+          ? [
+              entry.data as {
+                id: string;
+                text: string;
+                trigger: {check?: object};
+              },
+            ]
+          : [],
+      );
       const older = records.find(record => record.text === 'older check');
       const kept = records.find(record => record.text === 'kept');
       assert.ok(older && kept);
       // A newer record of the same wake that this runtime cannot read.
       session.sessionManager.appendCustomEntry('dots.wake', {
         ...older,
-        cancelled: true,
-        on: 'invalid-policy',
+        active: false,
+        trigger: {
+          ...older.trigger,
+          check: {...older.trigger.check, on: 'invalid-policy'},
+        },
       });
       await session.reload();
       await clock.advance(2_000);

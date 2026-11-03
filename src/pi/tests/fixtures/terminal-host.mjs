@@ -209,18 +209,20 @@ if (flow === 'package') {
     result: 'Fixture completed',
   });
   sessionManager.appendCustomEntry('dots.wake', {
-    version: 1,
+    version: 2,
     owner: sessionManager.getSessionId(),
     id: 'k-0123456789abcdef',
     text: 'Inspect fixture verification',
-    at: Date.now() + 1200000,
-    every: 1200000,
     fired: 0,
     limit: 5,
-    on: 'change',
-    check: 'fixture-check',
-    cancelled: false,
+    active: true,
     createdAt: Date.now(),
+    trigger: {
+      kind: 'time',
+      at: Date.now() + 1200000,
+      every: 1200000,
+      check: {command: 'fixture-check', on: 'change'},
+    },
   });
 }
 const runtime = await host.createAgentSessionRuntime(createRuntime, {
