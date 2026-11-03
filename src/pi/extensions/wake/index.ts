@@ -585,7 +585,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
       outcomes.map(t => `${t.outcome}: ${t.summary}`).join('; ') ||
       'current state';
     const left = trigger.deadline - clock.now();
-    const header = `Wake ${wake.id} · pane ${name} · ${outcome}${wake.limit > 1 ? ` (fire ${fired} of ${wake.limit})` : ''}${manual ? ' · manual' : ''}${elsewhere ? ' · set on another branch of this session' : ''}`;
+    const header = `Wake ${wake.id} · pane ${name} · ${outcome}${wake.limit > 1 ? ` (fire ${fired} of ${wake.limit})` : ''}${manual && outcome !== 'manual' ? ' · manual' : ''}${elsewhere ? ' · set on another branch of this session' : ''}`;
     const lines = [
       `pane: ${name} (${trigger.block}) in session ${trigger.sessionLabel || trigger.session}${trigger.host ? ` on host ${trigger.host}` : ''}`,
       `until: ${untilLabel(trigger.until)}`,

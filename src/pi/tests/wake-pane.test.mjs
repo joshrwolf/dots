@@ -574,7 +574,7 @@ test('wake_run snapshots and fires with the current state, or reports an end', a
   rex.pane.record = record('working', 't2', 7, {msg: 'linking'});
   assert.match(await h.text('wake_run', {id: details.id}), /fired \(1 total\)/);
   await settle();
-  assert.match(h.messages[0].message.content, / · manual\n/);
+  assert.match(h.messages[0].message.content, / · manual \(fire 1 of 3\)\n/);
   assert.match(
     h.messages[0].message.content,
     /status now: working · msg "linking"/,
