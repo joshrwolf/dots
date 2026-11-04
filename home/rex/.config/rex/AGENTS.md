@@ -79,8 +79,9 @@ memory or older notes.
 - Keep Rex-independent logic in plain functions over plain tables and test
   them; keep `rex.*` calls in thin adapters around them.
 - Only `dots.views` decides how a view is placed and where focus goes when
-  it closes. It also registers `views_dismiss`, which `dots-pick` runs on
-  Esc.
+  it closes. It also registers `views_dismiss`, which a view's program
+  (`dots-pick`, or a command such as `dots attention view`) runs when it
+  closes.
 - Dependencies point from features to shared modules (`dots.checkouts`,
   `dots.result`, `dots.process`, `dots.sessions`, `dots.snapshot`,
   `dots.start`, `dots.views`), never back.

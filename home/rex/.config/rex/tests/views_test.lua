@@ -318,6 +318,53 @@ return {
     expect.equal(views.open_views, {})
   end,
 
+  ["a command view runs in the same place and closes through views_dismiss"] = function(t)
+    tracking_go(t, false)
+    local fake = fake_rex.install(t, world({ open = true }))
+    t.stub(process, "which", function()
+      error("a command view needs no picker", 0)
+    end)
+    views.open({
+      title = "attention",
+      command = { "/bin/dots", "attention", "view" },
+      at = { session_id = "s", block_id = "go" },
+    })
+    local calls = changes(fake)
+    expect.equal(
+      calls[1],
+      { method = "session.close_layer", args = { session_id = "s", layer_id = "old" } }
+    )
+    expect.equal(calls[2].args.bounds, views.LIST)
+    expect.equal(
+      calls[2].args.layout,
+      rex.layout.block({
+        flavor = SHELL,
+        label = "attention",
+        options = {
+          command = { "/bin/dots", "attention", "view", "--dismiss", "views_dismiss" },
+          cwd = "/src",
+        },
+      })
+    )
+    expect.equal(views.open_views.picker.origin, "pane")
+  end,
+
+  ["a view names exactly one of a picker view and a command"] = function(t)
+    local fake = fake_rex.install(t, world({}))
+    expect.fails(function()
+      views.open({
+        title = "x",
+        view = "go_view",
+        command = { "/bin/true" },
+        at = { session_id = "s", block_id = "pane" },
+      })
+    end, "opening x: a view names a picker view or a command, not both")
+    expect.fails(function()
+      views.open({ title = "x", at = { session_id = "s", block_id = "pane" } })
+    end, "opening x: a view names a picker view or a command")
+    expect.equal(fake.calls, {})
+  end,
+
   ["open refuses when the picker is not installed"] = function(t)
     t.stub(process, "which", function()
       return nil

@@ -21,6 +21,7 @@ the app.
 | In Go: Ctrl+R / Ctrl+T / Ctrl+O | Start Pi in a worktree: review the typed PR, work on the typed Linear issue, or a new session in the selected row's repo |
 | Cmd+O | Back to the last tab you jumped from; again to return |
 | Cmd+Shift+R | PRs: the watch list agents keep, with review and CI status |
+| Cmd+I | Attention: decisions goals need from you and their work, across registered projects |
 | Cmd+Shift+A | Rex's activity panel: everything reporting status, across sessions |
 | Cmd+H / Cmd+K, Cmd+J / Cmd+L | Previous, next tab |
 | Cmd+Shift+H / Cmd+Shift+L | Move tab back, forward |

@@ -1,5 +1,5 @@
--- How a view opens and closes. Every search-first view goes through `open`,
--- so its placement is decided here and nowhere else.
+-- How a view opens and closes. Every view goes through `open`, so its
+-- placement is decided here and nowhere else.
 local must = require("dots.result").must
 local process = require("dots.process")
 local sessions = require("dots.sessions")
@@ -30,8 +30,33 @@ M.open_views = {}
 
 ---@class dots.ViewSpec
 ---@field title string The view's block label, shown in its header.
----@field view string The action that returns the view, such as `go_view`.
+---@field view? string The action that returns a picker view, such as `go_view`.
+---@field command? string[] An interactive program to run instead of a picker. Like `dots-pick`, it takes `--dismiss ACTION` and runs that action when the user closes it.
 ---@field at rex.Context The action that opens it, run from the pane the user is in or from an open view.
+
+---The program a view runs, closing through `views_dismiss`.
+---@param spec dots.ViewSpec
+---@return string[]
+local function command(spec)
+  local argv = {}
+  if spec.command then
+    if spec.view then
+      error("opening " .. spec.title .. ": a view names a picker view or a command, not both", 0)
+    end
+    for _, arg in ipairs(spec.command) do
+      argv[#argv + 1] = arg
+    end
+  else
+    local view = spec.view
+      or error("opening " .. spec.title .. ": a view names a picker view or a command", 0)
+    argv[1] = process.which("dots-pick")
+      or error("dots-pick is not installed on the command path", 0)
+    argv[2] = view
+  end
+  argv[#argv + 1] = "--dismiss"
+  argv[#argv + 1] = "views_dismiss"
+  return argv
+end
 
 ---The window holding `block_id` in `view`, and the floating layer holding it,
 ---if it floats.
@@ -71,13 +96,12 @@ end
 ---unseen tab. A window shows one view at a time: opening one closes any other
 ---there, and the key of the view already open closes it. A view replacing
 ---another returns to the pane the first was opened from, and runs in that
----pane's directory. Rex removes the layer when the picker exits; Esc first
----runs `views_dismiss`.
+---pane's directory. Rex removes the layer when the program exits; closing
+---it first runs `views_dismiss`.
 ---@param spec dots.ViewSpec
 ---@return string? layer_id The new layer, or nil when the key closed its view.
 function M.open(spec)
-  local picker = process.which("dots-pick")
-    or error("dots-pick is not installed on the command path", 0)
+  local argv = command(spec)
   local session_id = spec.at.session_id
     or error("opening " .. spec.title .. ": run it from a Rex session", 0)
   local here = spec.at.block_id or error("opening " .. spec.title .. ": run it from a pane", 0)
@@ -130,7 +154,7 @@ function M.open(spec)
       layout = rex.layout.block({
         flavor = "com.superlogical.terminal.shell",
         label = spec.title,
-        options = { command = { picker, spec.view, "--dismiss", "views_dismiss" }, cwd = cwd },
+        options = { command = argv, cwd = cwd },
       }),
     })
   )
@@ -188,7 +212,7 @@ function M.link(ctx, url)
   )
 end
 
----Esc in a view: back to the pane it was opened from, while the view still
+---Closing a view: back to the pane it was opened from, while the view still
 ---shows. A view this load did not open, or whose pane has closed, leaves
 ---focus to Rex.
 ---@param ctx rex.Context The picker's.
@@ -208,7 +232,7 @@ function M.install()
   rex.action({
     name = "views_dismiss",
     title = "Views: dismiss",
-    description = "Return from a closing view to the pane it was opened from, for dots-pick",
+    description = "Return from a closing view to the pane it was opened from, for the view's program",
     category = "Navigation",
     run = M.dismiss,
   })
