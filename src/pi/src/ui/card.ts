@@ -211,7 +211,7 @@ export function activityHeader(
   };
 }
 
-/** Composition only: no tool/session state or syntax service ownership. */
+/** Composition only: no tool or session state. */
 export class ActivityCard extends VStack {
   private readonly row = new PriorityRow();
   private readonly notices = new Notices();

@@ -5,7 +5,6 @@ import {join} from 'node:path';
 import test from 'node:test';
 import {SessionManager} from '@earendil-works/pi-coding-agent';
 import {rendererResolver} from '../extensions/ui/index.ts';
-import {createSyntaxService} from '../src/index.ts';
 import {jobFixture} from '../dev/scenarios.ts';
 import {summary} from '../extensions/jobs/protocol.ts';
 import {thinkingFixture} from '../dev/thinking.ts';
@@ -17,7 +16,6 @@ import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-ag
 
 test('cold HTML export uses registered background presentation and retains expanded evidence', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'dots-cohesion-export-'));
-  const syntax = createSyntaxService();
   try {
     const session = SessionManager.create(directory, directory);
     const job = jobFixture(4);
@@ -54,7 +52,7 @@ test('cold HTML export uses registered background presentation and retains expan
       isError: false,
       timestamp: 2,
     });
-    const resolve = rendererResolver(syntax);
+    const resolve = rendererResolver();
     const theme = getThemeByName('dark');
     assert.ok(theme);
     const renderer = createToolHtmlRenderer({
@@ -88,7 +86,6 @@ test('cold HTML export uses registered background presentation and retains expan
       /Cleanup evidence is not universal process containment/,
     );
   } finally {
-    syntax.dispose();
     await rm(directory, {recursive: true, force: true});
   }
 });

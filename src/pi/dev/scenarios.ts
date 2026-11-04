@@ -18,7 +18,6 @@ import {
   Inspector,
   OutputView,
   Panel,
-  type SyntaxService,
   type ToolObservation,
   type ToolPresentation,
 } from '../src/index.ts';
@@ -33,7 +32,7 @@ import {readPresentation} from '../src/features/tools/read.ts';
 import {writePresentation} from '../src/features/tools/write.ts';
 import {editPresentation} from '../src/features/tools/edit.ts';
 import {codemodePresentation} from '../src/features/tools/codemode.ts';
-import {FooterView, createHeader} from '../src/features/frame.ts';
+import {FooterView} from '../src/features/frame.ts';
 import {JobInspector} from '../extensions/jobs/inspector.ts';
 import {emptyFacts, type Job} from '../extensions/jobs/protocol.ts';
 import {
@@ -59,7 +58,6 @@ import {
 // The clock advances presentation-only spinner frames; observations stay fixed.
 const animationFrame = () => Math.floor(Date.now() / WORKER_FRAME_MS);
 export interface ScenarioContext {
-  readonly syntax: SyntaxService;
   readonly tui: TUI;
   readonly bindings: Pick<KeybindingsManager, 'matches' | 'getKeys'>;
   readonly close: () => void;
@@ -127,7 +125,7 @@ const result = (
 function tool<Model>(
   id: string,
   title: string,
-  presentation: (syntax: SyntaxService) => ToolPresentation<Model>,
+  spec: ToolPresentation<Model>,
   frames: readonly Frame[],
 ): Scenario {
   return {
@@ -135,7 +133,6 @@ function tool<Model>(
     title,
     phases: frames.map(frame => frame.label),
     create(context) {
-      const spec = presentation(context.syntax);
       const view = spec.create(context.redraw);
       const inspector = new Inspector(
         context.bindings,
@@ -552,7 +549,7 @@ export const scenarios: readonly Scenario[] = [
                 ...(combined || phase === 5
                   ? [
                       {
-                        key: 'dots-ui-release',
+                        key: 'example.notice',
                         text: 'Companion update · /reload when idle',
                       },
                     ]
@@ -599,8 +596,6 @@ export const scenarios: readonly Scenario[] = [
               title: 'Application frame',
               detail: 'icon footer · B bottom',
               body: new VStack([
-                createHeader(theme),
-                new Spacer(1),
                 new UserMessageComponent(
                   'Check the renderer and report any failures.',
                   undefined,
@@ -736,13 +731,19 @@ export const scenarios: readonly Scenario[] = [
     {
       label: 'comparison',
       observation: result(editArgs, 'Applied', {
+        diff: ' 1 export function greet(name: string) {\n-2   return `Hello, ${name} 👩🏽‍💻`;\n+2   return `Welcome, ${name} 👩🏽‍💻`;\n 3 }',
         patch:
           '@@ -1,3 +1,3 @@\n export function greet(name: string) {\n-  return `Hello, ${name} 👩🏽‍💻`;\n+  return `Welcome, ${name} 👩🏽‍💻`;\n }',
       }),
     },
     {
-      label: 'long split / narrow unified',
+      label: 'long lines wrap',
       observation: result(editArgs, 'Applied', {
+        diff:
+          ' 18 export function shippingComponent(label: string) {\n' +
+          '-19   return `Package ${label} · variant=classic · preview=compact · width=responsive`;\n' +
+          '+19   return `Package ${label} · variant=modern · preview=expanded · width=responsive`;\n' +
+          ' 20 }',
         patch:
           '@@ -18,3 +18,3 @@\n export function shippingComponent(label: string) {\n' +
           '-  return `Package ${label} · variant=classic · preview=compact · width=responsive`;\n' +

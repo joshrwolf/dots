@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {initTheme} from '@earendil-works/pi-coding-agent';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
-import {Panel, PriorityRow, readableForeground} from '@joshrwolf/pi-dots/ui';
-import * as kit from '@joshrwolf/pi-kit/ui';
 import {
   FollowedWidget,
   GoalWidget,
@@ -17,12 +15,6 @@ import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-ag
 
 initTheme('dark', false);
 const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
-
-test('companion re-exports the shared primitive identities', () => {
-  assert.equal(Panel, kit.Panel);
-  assert.equal(PriorityRow, kit.PriorityRow);
-  assert.equal(readableForeground, kit.readableForeground);
-});
 
 test('dashboards retain recorded facts and original context across states, themes and widths', () => {
   for (let phase = 0; phase < 8; phase++) {

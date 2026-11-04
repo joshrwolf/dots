@@ -56,7 +56,7 @@ test('combined persistent sections share unboxed chrome and a bounded default fo
         statuses: [
           {key: 'dots.jobs', text: jobsStatus(models)!},
           {
-            key: 'dots-ui-release',
+            key: 'example.notice',
             text: 'Companion update · /reload when idle',
           },
         ],

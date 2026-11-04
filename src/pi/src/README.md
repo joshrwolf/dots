@@ -1,9 +1,8 @@
-# Pi presentation library
+# Pi presentation components
 
-`@joshrwolf/pi-dots/ui` supplies reusable presentation components without
-registering extensions, selecting themes, or starting resources on import.
-`Panel`, `PriorityRow`, and the text helpers live in `@joshrwolf/pi-kit/ui`,
-and are re-exported here.
+The companion's extensions compose these components. Importing them registers
+no extensions, selects no theme, and starts no resources. `Panel`,
+`PriorityRow`, and the text helpers live in `@joshrwolf/pi-kit/ui`.
 
 ## Use
 
@@ -44,11 +43,9 @@ when details are collapsed, and metadata yields before important outcomes.
 
 - Pi owns rendering, layout primitives, input, themes, and scheduling. Presentation
   must not change tool execution or reconstruct missing history from current files.
-- Share one lazy syntax service per runtime and dispose it at shutdown. Ignore late
-  initialization results after disposal; source stays readable if highlighting fails.
-  The service records initialization, grammar, and cleanup errors in `failure`.
-  Explicit preview `prepare()` calls return failures to their caller; `render()`
-  owns detached preparation and redraw errors, exposing them in the view’s `failure`.
+- `SourceView` highlights with Pi's `highlightCode`; `DiffView` styles the edit
+  tool's recorded `details.diff` with Pi's `renderDiff`. Both follow Pi's active
+  theme, so they render after `initTheme`; oversized source stays plain.
 - Tool rows have no disposal or viewport-visibility contract. Do not start per-row
   timers or watchers; activity markers are static facts, not animations.
 - Apply theme changes through the component lifecycle. Keep original records apart

@@ -41,7 +41,7 @@ in memory. Ctrl+N/P switches scenarios without consuming message text.
 Scenarios cover tools, nested codemode activity, job inspection, workers, thinking, and the
 application frame (the default), including its native editor. For responsive tool layout,
 open `/ui-lab bash`, `/ui-lab codemode`, and `/ui-lab edit`; advance to their long
-command, nested preview, and split diff states with Space. Resize from narrow to
+command, nested preview, and long-line diff states with Space. Resize from narrow to
 wide and back, toggle E for wrapped details, and T for the other theme. The frame uses Pi’s
 actual tool/message components through the shipping renderer resolver: calls,
 job completions, worker replies, wakes, and an otherwise unstyled tool share one

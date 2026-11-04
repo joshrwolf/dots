@@ -360,10 +360,6 @@ async function packageFlow() {
     await sleep(150);
   }
   send('\x1b');
-  await sleep(150);
-  await command('/ui');
-  await wait(() => shows('Presentation'), 'packaged UI menu');
-  send('\x1b');
   await sleep(300);
   await fresh('/workers');
   await wait(
@@ -751,8 +747,8 @@ async function workbenchFlow() {
     if (scenario === 'edit') {
       send('E');
       await wait(
-        () => shows('before') && shows('after') && shows('Welcome'),
-        'native recorded comparison',
+        () => shows('Hello') && shows('Welcome'),
+        'native recorded diff',
       );
       send(' ');
       await wait(

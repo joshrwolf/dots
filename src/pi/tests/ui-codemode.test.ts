@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test, {after} from 'node:test';
+import test from 'node:test';
 import {
   initTheme,
   ToolExecutionComponent,
@@ -11,14 +11,10 @@ import {
   visibleWidth,
 } from '@earendil-works/pi-tui';
 import {toolRenderers} from '../extensions/ui/index.ts';
-import {createSyntaxService} from '../src/index.ts';
 import {projectCodemode} from '../src/features/tools/codemode.ts';
-import {parsePreferences} from '../src/host/preferences.ts';
 import type {ToolObservation} from '../src/host/tools.ts';
 
 initTheme('dark', false);
-const syntax = createSyntaxService();
-after(() => syntax.dispose());
 const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
 const header = {
   type: 'text' as const,
@@ -37,7 +33,7 @@ function row() {
     'fixture',
     {code: 'const answer = 42;\ntext(answer);'},
     {outputPad: 1},
-    toolRenderers(syntax).get('codemode'),
+    toolRenderers().get('codemode'),
     new TuiMainScreen(new ProcessTerminal()),
     '/workspace',
   );
@@ -453,33 +449,15 @@ test('script-only output remains discoverable and cancellation is not called suc
   assert.doesNotMatch(plain(component.render(100)), /done/);
 });
 
-test('only the exact native header block is removed; existing explicit preferences stay explicit', () => {
+test('only the exact native header block is removed', () => {
   const input = {
     ...frame({calls: []}),
     content: [{type: 'text' as const, text: 'Script completed\nuser output'}],
   };
   assert.equal(projectCodemode(input).output, 'Script completed\nuser output');
-  assert.deepEqual(parsePreferences({version: 1, tools: ['bash']}).tools, [
-    'bash',
-  ]);
-  assert.ok(parsePreferences({version: 1}).tools.includes('codemode'));
-  assert.deepEqual(parsePreferences({version: 1, tools: ['codemode']}).tools, [
-    'codemode',
-  ]);
 });
 
-test('a streamed script is highlighted once, when complete, and never again for progress or idle frames', async () => {
-  const highlighted: string[] = [];
-  const counting = createSyntaxService(async () => ({
-    async load() {},
-    tokenize(source) {
-      highlighted.push(source);
-      return source.split('\n').map(content => [{content, offset: 0}]);
-    },
-    dispose() {},
-  }));
-  after(() => counting.dispose());
-  const settle = () => new Promise(resolve => setImmediate(resolve));
+test('a streamed script stays plain until complete, then keeps its highlighting across progress frames', () => {
   const script = Array.from(
     {length: 40},
     (_, i) => `const value${i} = ${i};`,
@@ -489,7 +467,7 @@ test('a streamed script is highlighted once, when complete, and never again for 
     'fixture',
     {code: ''},
     {outputPad: 1},
-    toolRenderers(counting).get('codemode'),
+    toolRenderers().get('codemode'),
     new TuiMainScreen(new ProcessTerminal()),
     '/workspace',
   );
@@ -497,17 +475,20 @@ test('a streamed script is highlighted once, when complete, and never again for 
   for (let end = 20; end < script.length; end += 20) {
     component.updateArgs({code: script.slice(0, end)});
     component.render(100);
-    await settle();
   }
   component.updateArgs({code: script});
-  assert.match(plain(component.render(100)), /const value39 = 39;/);
-  await settle();
-  assert.equal(highlighted.length, 0);
+  const streamed = component.render(100).join('\n');
+  assert.match(stripTerminalSequences(streamed), /const value39 = 39;/);
   component.setArgsComplete();
   component.markExecutionStarted();
-  component.render(100);
-  await settle();
-  assert.deepEqual(highlighted, [script]);
+  const complete = component.render(100).join('\n');
+  assert.equal(
+    stripTerminalSequences(complete),
+    stripTerminalSequences(streamed),
+  );
+  assert.notEqual(complete, streamed, 'complete source is highlighted');
+  const line = (text: string) =>
+    text.split('\n').find(row => row.includes('value39'));
   for (let i = 0; i < 5; i++) {
     component.updateResult(
       {
@@ -517,13 +498,7 @@ test('a streamed script is highlighted once, when complete, and never again for 
       },
       i < 4,
     );
-    component.render(100);
-    component.setExpanded(i % 2 === 0);
-    component.render(100);
-    await settle();
+    component.setExpanded(true);
+    assert.equal(line(component.render(100).join('\n')), line(complete));
   }
-  component.setExpanded(true);
-  component.render(100);
-  await settle();
-  assert.equal(highlighted.length, 1);
 });

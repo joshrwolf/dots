@@ -14,19 +14,9 @@ import {
   stripTerminalSequences,
   visibleWidth,
 } from '@earendil-works/pi-tui';
-import {registerUI as register} from '../extensions/ui/index.ts';
-import {
-  editRenderers,
-  writeRenderers,
-  DiffView,
-  SourceView,
-} from './ui-fixture.mjs';
-import {
-  MAX_PATCH_CHARS,
-  pairLines,
-  parsePatch,
-  wordChanges,
-} from '../src/ui/previews/patch.ts';
+import register from '../extensions/ui/index.ts';
+import {editRenderers} from './ui-fixture.mjs';
+import {DiffView} from '../src/ui/previews/view.ts';
 import {sourceText as clean} from '@joshrwolf/pi-kit/ui';
 
 initTheme('dark', false);
@@ -45,11 +35,12 @@ const theme = {
     toolDiffContext: rgbColor(150, 150, 150),
   },
 };
-const patch =
-  '--- sample.ts\n+++ sample.ts\n@@ -1,3 +1,4 @@\n const before = 1;\n-const old = 2;\n+const next = 3;\n+const extra = 4;\n const after = 5;\n';
+// Pi's recorded diff rows: marker, line number, text.
+const diff =
+  ' 1 const before = 1;\n-2 const old = 2;\n+2 const next = 3;\n+3 const extra = 4;\n 4 const after = 5;';
 const result = {
   content: [{type: 'text', text: 'Successfully replaced text in sample.ts.'}],
-  details: {patch},
+  details: {diff},
   isError: false,
 };
 const plain = lines => lines.map(stripTerminalSequences).join('\n');
@@ -72,60 +63,9 @@ function assertFits(lines, width) {
     );
 }
 
-test('validates hunks and preserves both coordinate systems and blank lines', () => {
-  const parsed = parsePatch(patch);
-  assert.equal(parsed.added, 2);
-  assert.equal(parsed.removed, 1);
-  assert.deepEqual(parsed.hunks[0].lines.at(-1), {
-    kind: 'context',
-    text: 'const after = 5;',
-    old: 3,
-    next: 4,
-  });
-  const empty = parsePatch('@@ -0,0 +1 @@\n+\n');
-  assert.deepEqual(empty.hunks[0].lines, [{kind: 'added', text: '', next: 1}]);
-  const deletion = parsePatch(
-    '@@ -1 +0,0 @@\n-last\n\\ No newline at end of file\n',
-  );
-  assert.equal(deletion.removed, 1);
-  assert.equal(deletion.hunks[0].lines.at(-1).kind, 'note');
-});
-
-test('accepts multiple hunks and handles source resembling patch headers', () => {
-  const parsed = parsePatch(
-    '--- a\n+++ a\n@@ -1 +1 @@\n--- old\n+++ new\n@@ -20 +20 @@\n-x\n+y\n',
-  );
-  assert.equal(parsed.hunks.length, 2);
-  assert.equal(parsed.added, 2);
-  assert.equal(parsed.hunks[0].lines[0].text, '-- old');
-});
-
-test('rejects malformed, incomplete, multifile, or oversized patches', () => {
-  for (const source of [
-    '',
-    'nonsense',
-    '@@ -1,2 +1 @@\n-a\n+b\n',
-    '@@ -1 +1 @@\n-a\n+b\n+c\n',
-    patch + patch,
-    '@@ -99999999999999999999 +1 @@\n-a\n+b\n',
-    'x'.repeat(MAX_PATCH_CHARS + 1),
-  ]) {
-    assert.equal(parsePatch(source), undefined);
-  }
-});
-
-test('pairing preserves unequal blocks, order, and explicit newline notes', () => {
-  const rows = pairLines(parsePatch(patch).hunks[0].lines);
-  assert.equal(rows[1].left.text, 'const old = 2;');
-  assert.equal(rows[1].right.text, 'const next = 3;');
-  assert.equal(rows[2].left, undefined);
-  assert.equal(rows[2].right.text, 'const extra = 4;');
-});
-
 test('registers only presentation; preserves other custom renderers', () => {
   let resolver;
   register({
-    registerCommand() {},
     registerMarkdownTransformer() {},
     on() {},
     registerToolRenderer(fn) {
@@ -154,20 +94,10 @@ test('real host component transitions from pending to one compact summary', () =
   assert.match(plain(collapsed), /edit\s+sample\.ts +\+2 −1/);
   assert.doesNotMatch(plain(collapsed), /const old/);
   component.setExpanded(true);
-  assert.match(plain(component.render(140)), /before.*│ after/);
   assert.match(
     plain(component.render(140)),
-    /const old = 2;.*│.*const next = 3;/,
+    /-2 const old = 2;\n.*\+2 const next = 3;\n.*\+3 const extra = 4;/,
   );
-  assert.doesNotMatch(plain(component.render(80)), /before.*│ after/);
-  assert.ok(
-    component
-      .render(80)
-      .every(
-        line => (stripTerminalSequences(line).match(/│/g) ?? []).length <= 1,
-      ),
-  );
-  assert.match(plain(component.render(80)), /const extra = 4;/);
   component.setExpanded(false);
   assert.equal(component.render(140).filter(line => line.trim()).length, 1);
 });
@@ -189,18 +119,14 @@ test('errors remain visible collapsed; expanded errors preserve full details', (
   assert.doesNotMatch(plain(component.render(80)), /applied/);
 });
 
-test('missing and malformed patches fall back to recorded output without rereading files', () => {
-  for (const details of [
-    {diff: '-1 old\n+1 new'},
-    {patch: 'not a patch'},
-    undefined,
-  ]) {
+test('a missing diff falls back to recorded output without rereading files', () => {
+  for (const details of [{patch: '@@ -1 +1 @@\n-old\n+new'}, undefined]) {
     const component = row();
     component.updateResult({...result, details});
     component.setExpanded(true);
     const rendered = plain(component.render(100));
     assert.match(rendered, /preview unavailable/);
-    assert.match(rendered, /old|not a patch|Successfully replaced/);
+    assert.match(rendered, /old|Successfully replaced/);
   }
 });
 
@@ -223,9 +149,9 @@ test('replay requires only recorded arguments/results and invalidation updates t
 
 test('all layouts fit tiny to wide widths, Unicode, tabs, controls, and padding', () => {
   const text = '\t漢字 👩‍💻 é \x1b[2J\x1b]0;bad\x07 \u202eend';
-  const source = `@@ -1 +1 @@\n-${text}\n+${text}!\n`;
+  const source = `-1 ${text}\n+1 ${text}!`;
   const component = row(undefined, {path: text + '\nfile.ts'});
-  component.updateResult({...result, details: {patch: source}});
+  component.updateResult({...result, details: {diff: source}});
   for (const expanded of [false, true]) {
     component.setExpanded(expanded);
     for (const padding of [0, 1]) {
@@ -240,12 +166,10 @@ test('all layouts fit tiny to wide widths, Unicode, tabs, controls, and padding'
   assert.equal(clean('a\r\x00b\t'), 'ab    ');
 });
 
-test('long source uses unified view and wraps rather than silently clipping', () => {
+test('long lines wrap rather than silently clipping', () => {
   const long = 'identifier '.repeat(30) + 'TAIL';
-  const parsed = parsePatch(`@@ -1 +1 @@\n-${long}\n+short\n`);
-  const view = new DiffView(parsed, 'sample.txt', theme);
+  const view = new DiffView(`-1 ${long}\n+1 short`, theme);
   const lines = view.render(140);
-  assert.doesNotMatch(plain(lines), /│/);
   assert.match(plain(lines), /TAIL/);
   assertFits(lines, 140);
   assert.strictEqual(view.render(140), lines, 'warm redraw reuses layout');
@@ -254,10 +178,10 @@ test('long source uses unified view and wraps rather than silently clipping', ()
 });
 
 test('large diffs have an explicit display limit', () => {
-  const source = `@@ -0,0 +1,2000 @@\n${Array.from({length: 2000}, (_, n) => `+line ${n}`).join('\n')}\n`;
-  const lines = new DiffView(parsePatch(source), 'sample.txt', theme).render(
-    80,
+  const source = Array.from({length: 2000}, (_, n) => `+${n + 1} line`).join(
+    '\n',
   );
+  const lines = new DiffView(source, theme).render(80);
   assert.equal(lines.length, 1000);
   assert.match(plain(lines), /display limited/);
 });
@@ -310,7 +234,7 @@ test('actual SDK edit result renders multi-edits and leaves execution untouched'
       undefined,
       {},
     );
-    assert.ok(parsePatch(outcome.details.patch));
+    assert.equal(typeof outcome.details.diff, 'string');
     const component = row(undefined, args);
     component.updateResult({...outcome, isError: false});
     component.setExpanded(true);

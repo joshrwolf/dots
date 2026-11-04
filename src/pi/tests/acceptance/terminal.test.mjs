@@ -1,5 +1,5 @@
 // Real interactive host in regular and fullscreen TUI modes, through Pi's public
-// virtual-terminal seam: package load, /ui, resize, theme, reload, the UI
+// virtual-terminal seam: package load, resize, theme, reload, the UI
 // workbench, goal inspection, and orderly shutdown. No tty, provider, or install.
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';

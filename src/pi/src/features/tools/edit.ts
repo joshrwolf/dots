@@ -11,9 +11,7 @@ import {
   ActivityCard,
   type Notice,
 } from '../../ui/card.ts';
-import {parsePatch, type Patch} from '../../ui/previews/patch.ts';
 import {DiffView} from '../../ui/previews/view.ts';
-import type {SyntaxService} from '../../ui/previews/syntax.ts';
 import {
   activityState,
   duration,
@@ -29,9 +27,20 @@ import {
 interface EditModel {
   readonly path: string;
   readonly subject: string;
-  readonly patch: string | undefined;
+  readonly diff: string | undefined;
   readonly fallback: string;
   readonly outcome: Outcome;
+}
+
+/** Changed-line counts from Pi's recorded diff rows (`+12 text`, `-12 text`). */
+export function diffCounts(diff: string): {added: number; removed: number} {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split('\n')) {
+    if (/^\+\s*\d+ /.test(line)) added++;
+    else if (/^-\s*\d+ /.test(line)) removed++;
+  }
+  return {added, removed};
 }
 export function projectEdit(frame: ToolObservation): EditModel {
   const details = frame.slot === 'result' ? record(frame.details) : undefined;
@@ -40,26 +49,17 @@ export function projectEdit(frame: ToolObservation): EditModel {
   return {
     path,
     subject: pathLabel(path, frame.cwd),
-    patch: string(details?.patch),
+    diff: string(details?.diff),
     fallback:
-      string(details?.diff) ??
-      string(details?.patch) ??
-      (state.kind === 'result' ? state.text : ''),
+      string(details?.patch) ?? (state.kind === 'result' ? state.text : ''),
     outcome: state,
   };
 }
 class EditView implements PresentationView<EditModel> {
   private readonly card = new ActivityCard();
-  private raw: string | undefined;
-  private path = '';
-  private patch: Patch | undefined;
+  private diff: string | undefined;
+  private counts: {added: number; removed: number} | undefined;
   private preview: DiffView | undefined;
-  private readonly syntax: SyntaxService;
-  private readonly notify: () => void;
-  constructor(syntax: SyntaxService, notify: () => void) {
-    this.syntax = syntax;
-    this.notify = notify;
-  }
   update(
     model: EditModel,
     theme: Theme,
@@ -74,26 +74,22 @@ class EditView implements PresentationView<EditModel> {
         notices.push(errorNotice(state));
         if (expanded) body = new OutputView(state.text);
       } else {
-        if (model.patch !== this.raw || model.path !== this.path) {
-          this.raw = model.patch;
-          this.path = model.path;
-          this.patch =
-            model.patch === undefined ? undefined : parsePatch(model.patch);
+        if (model.diff !== this.diff) {
+          this.diff = model.diff;
+          this.counts =
+            model.diff === undefined ? undefined : diffCounts(model.diff);
           this.preview = undefined;
         }
-        if (this.patch) {
-          segments.push(segment(`+${this.patch.added}`, 'toolDiffAdded', 100), {
-            ...segment(`−${this.patch.removed}`, 'toolDiffRemoved', 100),
-            separatorBefore: ' ',
-          });
+        if (this.diff !== undefined && this.counts) {
+          segments.push(
+            segment(`+${this.counts.added}`, 'toolDiffAdded', 100),
+            {
+              ...segment(`−${this.counts.removed}`, 'toolDiffRemoved', 100),
+              separatorBefore: ' ',
+            },
+          );
           if (expanded) {
-            this.preview ??= new DiffView({
-              patch: this.patch,
-              path: model.path,
-              theme,
-              syntax: this.syntax,
-              invalidate: this.notify,
-            });
+            this.preview ??= new DiffView(this.diff, theme);
             this.preview.setTheme(theme);
             body = this.preview;
           }
@@ -127,12 +123,8 @@ class EditView implements PresentationView<EditModel> {
     return this.card.render(width);
   }
 }
-export function editPresentation(
-  syntax: SyntaxService,
-): ToolPresentation<EditModel> {
-  return {
-    shell: 'self',
-    project: projectEdit,
-    create: notify => new EditView(syntax, notify),
-  };
-}
+export const editPresentation: ToolPresentation<EditModel> = {
+  shell: 'self',
+  project: projectEdit,
+  create: () => new EditView(),
+};

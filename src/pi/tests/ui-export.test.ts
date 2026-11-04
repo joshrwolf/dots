@@ -3,22 +3,24 @@ import {mkdtemp, readFile, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
-import {SessionManager, type Theme} from '@earendil-works/pi-coding-agent';
+import {
+  initTheme,
+  SessionManager,
+  type Theme,
+} from '@earendil-works/pi-coding-agent';
 import {Text} from '@earendil-works/pi-tui';
 import {toolRenderers} from '../extensions/ui/index.ts';
-import {
-  createSyntaxService,
-  createToolRenderers,
-  type ToolObservation,
-} from '@joshrwolf/pi-dots/ui';
+import {createToolRenderers, type ToolObservation} from '../src/host/tools.ts';
 // Private imports are confined to this exact-version host-contract test.
 import {exportSessionToHtml} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/index.js';
 import {createToolHtmlRenderer} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js';
 import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
 
+// Interactive /export renders with the session's initialized theme.
+initTheme('dark', false);
+
 test('real export bypasses builtin templates but invokes a standalone foundation consumer', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dots-ui-export-'));
-  const syntax = createSyntaxService();
   try {
     const names = [
       'bash',
@@ -108,9 +110,7 @@ test('real export bypasses builtin templates but invokes a standalone foundation
     const renderer = createToolHtmlRenderer({
       getToolRenderers(name) {
         visited.push(name);
-        return name === 'codemode'
-          ? toolRenderers(syntax).get(name)
-          : renderers;
+        return name === 'codemode' ? toolRenderers().get(name) : renderers;
       },
       theme,
       cwd: dir,
@@ -146,7 +146,6 @@ test('real export bypasses builtin templates but invokes a standalone foundation
       'the serialized invocation must not claim a job is still running',
     );
   } finally {
-    syntax.dispose();
     await rm(dir, {recursive: true, force: true});
   }
 });

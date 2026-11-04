@@ -3,7 +3,6 @@ import type {
   KeybindingHints,
   Theme,
   ToolRenderers,
-  ToolRendererResolver,
 } from '@earendil-works/pi-coding-agent';
 import type {Component} from '@earendil-works/pi-tui';
 
@@ -141,11 +140,4 @@ export function createToolRenderers<Model>(
       return row.result;
     },
   };
-}
-
-/** Delegation only occurs at resolution, never halfway through an owned row. */
-export function selectToolRenderers(
-  selected: ReadonlyMap<string, ToolRenderers>,
-): ToolRendererResolver {
-  return (name, next) => selected.get(name) ?? next();
 }

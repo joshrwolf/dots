@@ -10,9 +10,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
 import {thinkingFixture} from '../dev/thinking.ts';
-import {registerUI} from '../extensions/ui/index.ts';
-import {defaultPreferences, parsePreferences} from '../src/host/preferences.ts';
-import {configureUI} from '../src/features/settings.ts';
+import register from '../extensions/ui/index.ts';
 import {
   hiddenThinkingLabel,
   thinkingMarkdown,
@@ -27,7 +25,7 @@ const context: MarkdownTransformContext = {
 const plain = (view: AssistantMessageComponent, width = 120) =>
   stripTerminalSequences(view.render(width).join('\n'));
 
-function registration(thinking: 'native' | 'compact') {
+function registration() {
   const transforms: MarkdownTransformer[] = [];
   const handlers = new Map<
     string,
@@ -42,32 +40,22 @@ function registration(thinking: 'native' | 'compact') {
         labels.push(label);
       },
       setStatus() {},
+      setFooter() {},
+      getEditorComponent() {
+        return undefined;
+      },
+      setEditorComponent() {},
     },
   } as unknown as ExtensionContext;
-  registerUI(
-    {
-      registerCommand() {},
-      registerToolRenderer() {},
-      registerMarkdownTransformer(transform: MarkdownTransformer) {
-        transforms.push(transform);
-      },
-      on(
-        name: string,
-        handler: (event: unknown, ctx: ExtensionContext) => void,
-      ) {
-        handlers.set(name, handler);
-      },
-    } as unknown as ExtensionAPI,
-    parsePreferences({
-      version: 1,
-      tools: [],
-      otherTools: 'native',
-      header: 'native',
-      footer: 'native',
-      editor: 'native',
-      thinking,
-    }),
-  );
+  register({
+    registerToolRenderer() {},
+    registerMarkdownTransformer(transform: MarkdownTransformer) {
+      transforms.push(transform);
+    },
+    on(name: string, handler: (event: unknown, ctx: ExtensionContext) => void) {
+      handlers.set(name, handler);
+    },
+  } as unknown as ExtensionAPI);
   return {
     transforms,
     labels,
@@ -133,7 +121,7 @@ test('structured and unfinished thoughts preserve Markdown inside a native quote
 });
 
 test('registered transformer uses real assistant rendering, native disclosure, themes and streaming without changing records', () => {
-  const r = registration('compact');
+  const r = registration();
   try {
     assert.deepEqual(r.transforms, [thinkingMarkdown]);
     for (const name of ['dark', 'light']) {
@@ -195,63 +183,13 @@ test('registered transformer uses real assistant rendering, native disclosure, t
   }
 });
 
-test('native thinking owns its presentation; compact disclosure is TUI-only and shutdown does not clobber later owners', () => {
-  for (const thinking of ['native', 'compact'] as const) {
-    const r = registration(thinking);
-    for (const mode of ['rpc', 'print', 'json']) r.start(mode);
-    assert.deepEqual(r.labels, []);
-    r.start();
-    assert.deepEqual(
-      r.labels,
-      thinking === 'compact' ? [hiddenThinkingLabel] : [],
-    );
-    assert.equal(r.transforms.length, thinking === 'compact' ? 1 : 0);
-    r.dispose();
-    assert.deepEqual(
-      r.labels,
-      thinking === 'compact' ? [hiddenThinkingLabel] : [],
-    );
-  }
-});
-
-test('thinking preference validates independently and preserves older all-native choices', async () => {
-  assert.equal(parsePreferences({version: 1}).thinking, 'compact');
-  assert.equal(
-    parsePreferences({
-      version: 1,
-      tools: [],
-      otherTools: 'native',
-      header: 'native',
-      footer: 'native',
-      editor: 'native',
-    }).thinking,
-    'native',
-  );
-  for (const thinking of [null, 'hidden', true])
-    assert.throws(() => parsePreferences({version: 1, thinking}), /thinking/);
-  const choices = ['thinking: compact', 'Apply and reload'];
-  let saved = defaultPreferences;
-  let reloaded = false;
-  await configureUI(
-    {
-      async select(_title, items) {
-        assert.ok(items.some(item => item.startsWith('thinking:')));
-        return choices.shift();
-      },
-      notify(message) {
-        assert.fail(message);
-      },
-    },
-    async () => {
-      reloaded = true;
-    },
-    {
-      load: () => defaultPreferences,
-      save(value) {
-        saved = value;
-      },
-    },
-  );
-  assert.deepEqual(saved, {...defaultPreferences, thinking: 'native'});
-  assert.equal(reloaded, true);
+test('compact thinking disclosure is TUI-only and shutdown does not clobber later owners', () => {
+  const r = registration();
+  for (const mode of ['rpc', 'print', 'json']) r.start(mode);
+  assert.deepEqual(r.labels, []);
+  r.start();
+  assert.deepEqual(r.labels, [hiddenThinkingLabel]);
+  assert.equal(r.transforms.length, 1);
+  r.dispose();
+  assert.deepEqual(r.labels, [hiddenThinkingLabel]);
 });

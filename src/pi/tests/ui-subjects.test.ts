@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
-import test, {after} from 'node:test';
+import test from 'node:test';
 import {
   initTheme,
   ToolExecutionComponent,
@@ -13,12 +13,9 @@ import {
   visibleWidth,
 } from '@earendil-works/pi-tui';
 import {rendererResolver} from '../extensions/ui/index.ts';
-import {createSyntaxService} from '../src/index.ts';
 import {pathLabel, urlLabel} from '../src/features/tools/records.ts';
 
 initTheme('dark', false);
-const syntax = createSyntaxService();
-after(() => syntax.dispose());
 
 test('path labels preserve project identity and component boundaries', () => {
   const home = homedir();
@@ -54,7 +51,7 @@ test('generic URL subjects retain full recorded request on expansion and literal
     'fixture',
     {url},
     {},
-    rendererResolver(syntax)('lookup', () => undefined),
+    rendererResolver()('lookup', () => undefined),
     new TuiMainScreen(new ProcessTerminal()),
     '/workspace',
   );
@@ -77,7 +74,7 @@ test('generic URL subjects retain full recorded request on expansion and literal
     'command',
     {command},
     {},
-    rendererResolver(syntax)('bash', () => undefined),
+    rendererResolver()('bash', () => undefined),
     new TuiMainScreen(new ProcessTerminal()),
     '/workspace',
   );
