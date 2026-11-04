@@ -4,10 +4,6 @@ import type {
   ToolRendererResolver,
 } from '@earendil-works/pi-coding-agent';
 import {createToolRenderers} from '../../src/host/tools.ts';
-import {
-  createSyntaxService,
-  type SyntaxService,
-} from '../../src/ui/previews/syntax.ts';
 import {codemodePresentation} from '../../src/features/tools/codemode.ts';
 import {bashPresentation} from '../../src/features/tools/bash.ts';
 import {readPresentation} from '../../src/features/tools/read.ts';
@@ -21,15 +17,13 @@ import {
   thinkingMarkdown,
 } from '../../src/features/thinking.ts';
 
-export function toolRenderers(
-  syntax: SyntaxService,
-): ReadonlyMap<string, ToolRenderers> {
+export function toolRenderers(): ReadonlyMap<string, ToolRenderers> {
   return new Map<string, ToolRenderers>([
-    ['codemode', createToolRenderers(codemodePresentation(syntax))],
-    ['bash', createToolRenderers(bashPresentation(syntax))],
-    ['read', createToolRenderers(readPresentation(syntax))],
-    ['edit', createToolRenderers(editPresentation(syntax))],
-    ['write', createToolRenderers(writePresentation(syntax))],
+    ['codemode', createToolRenderers(codemodePresentation)],
+    ['bash', createToolRenderers(bashPresentation)],
+    ['read', createToolRenderers(readPresentation)],
+    ['edit', createToolRenderers(editPresentation)],
+    ['write', createToolRenderers(writePresentation)],
   ]);
 }
 
@@ -41,8 +35,8 @@ const webTools = [
 ];
 
 /** The workbench and live registration share this exact resolution path. */
-export function rendererResolver(syntax: SyntaxService): ToolRendererResolver {
-  const owned = toolRenderers(syntax);
+export function rendererResolver(): ToolRendererResolver {
+  const owned = toolRenderers();
   const other = new Map<string, ToolRenderers>();
   return (name, next) => {
     const selected = owned.get(name);
@@ -75,14 +69,11 @@ export function rendererResolver(syntax: SyntaxService): ToolRendererResolver {
 }
 
 export default function register(pi: ExtensionAPI): void {
-  // Rows can render before session_start. Syntax loading remains lazy.
-  const syntax = createSyntaxService();
-  pi.registerToolRenderer(rendererResolver(syntax));
+  pi.registerToolRenderer(rendererResolver());
   pi.registerMarkdownTransformer(thinkingMarkdown);
   let releaseEditor = () => {};
   pi.on('session_shutdown', () => {
     releaseEditor();
-    syntax.dispose();
   });
   pi.on('session_start', (_event, ctx) => {
     releaseEditor();

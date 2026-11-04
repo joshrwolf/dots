@@ -3,7 +3,7 @@ import {
   getSelectListTheme,
   type ExtensionAPI,
 } from '@earendil-works/pi-coding-agent';
-import {SoftEditor, createSyntaxService} from '../src/index.ts';
+import {SoftEditor} from '../src/index.ts';
 import {Workbench} from './workbench.ts';
 
 /** Explicit development resource; never listed in the distributable manifest. */
@@ -46,7 +46,6 @@ export default function workbenchExtension(pi: ExtensionAPI): void {
       }
       const initialTheme =
         ctx.ui.theme.name ?? `dots-${ctx.ui.theme.appearance}`;
-      const syntax = createSyntaxService();
       let view: Workbench | undefined;
       let overlay: OverlayHandle | undefined;
       try {
@@ -63,7 +62,6 @@ export default function workbenchExtension(pi: ExtensionAPI): void {
             current = {close};
             view = new Workbench(
               {
-                syntax,
                 tui,
                 bindings,
                 close,
@@ -136,7 +134,6 @@ export default function workbenchExtension(pi: ExtensionAPI): void {
         );
       } finally {
         view?.dispose();
-        syntax.dispose();
         current = undefined;
         pi.events.emit('dots:workbench-closed', undefined);
       }

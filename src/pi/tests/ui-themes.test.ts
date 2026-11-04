@@ -11,9 +11,6 @@ import {
   UserMessageComponent,
   type ThemeColor,
 } from '@earendil-works/pi-coding-agent';
-import {DiffView} from '../src/ui/previews/view.ts';
-import {createSyntaxService} from '../src/ui/previews/syntax.ts';
-import {parsePatch} from '../src/ui/previews/patch.ts';
 import {
   colorToRgb,
   parseColor,
@@ -121,48 +118,6 @@ for (const appearance of appearances) {
     }
   });
 }
-
-test('highlighted diff words remain readable on both palettes', async () => {
-  const syntax = createSyntaxService();
-  try {
-    const patch = parsePatch(
-      '@@ -1 +1 @@\n-const answer = 42; // previous\n+const answer = 43; // updated\n',
-    );
-    assert.ok(patch);
-    for (const appearance of appearances) {
-      const theme = loadThemeFromPath(
-        join(root, 'themes', `dots-${appearance}.json`),
-        'truecolor',
-      );
-      const original = theme.style.bind(theme);
-      const ratios: number[] = [];
-      theme.style = (text, options) => {
-        if (text.trim() && options.fg && options.bg) {
-          const fg =
-            typeof options.fg === 'string'
-              ? theme.colors[options.fg]
-              : options.fg;
-          const bg =
-            typeof options.bg === 'string'
-              ? theme.colors[options.bg]
-              : options.bg;
-          ratios.push(contrast(fg, bg));
-        }
-        return original(text, options);
-      };
-      const view = new DiffView({patch, path: 'example.ts', theme, syntax});
-      await view.prepare();
-      for (const width of [40, 80, 140]) view.render(width);
-      assert.ok(ratios.length > 0);
-      assert.ok(
-        Math.min(...ratios) >= 4.5,
-        `${appearance} diff contrast: ${Math.min(...ratios).toFixed(2)}`,
-      );
-    }
-  } finally {
-    syntax.dispose();
-  }
-});
 
 test('the package discovers both themes, automatic mode resolves each, and real exports use their surfaces', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'dots-theme-host-'));

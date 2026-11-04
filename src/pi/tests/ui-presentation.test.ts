@@ -20,9 +20,7 @@ import {
 } from '../src/ui/state.ts';
 import {activityHeader, Notices, ActivityCard} from '../src/ui/card.ts';
 import {DiffView} from '../src/ui/previews/view.ts';
-import {parsePatch} from '../src/ui/previews/patch.ts';
 import {SoftEditor} from '../src/features/editor.ts';
-import {createSyntaxService} from '../src/ui/previews/syntax.ts';
 import {duration} from '../src/features/tools/records.ts';
 import {toolRenderers} from '../extensions/ui/index.ts';
 import {installEditor} from '../src/features/editor.ts';
@@ -150,46 +148,21 @@ test('caption policy follows actual header visibility on every resize', () => {
   assert.equal(plain(card.render(100)).split(path).length - 1, 2); // Explicit/default always.
 });
 
-test('split diffs fill the available width and recompute layout after resize', () => {
-  const syntax = createSyntaxService();
-  try {
-    const patch = parsePatch(
-      '--- example.ts\n+++ example.ts\n@@ -1 +1 @@\n-old\n+日本語\n',
-    );
-    assert.ok(patch);
-    const options = {patch, path: 'example.ts', theme, syntax};
-    const view = new DiffView(options);
-    const narrow = plain(view.render(80));
-    assert.doesNotMatch(narrow, /│/);
-    const wide = plain(view.render(240));
-    const divider = visibleWidth(wide.split('│')[0]!);
-    assert.equal(divider, Math.floor((240 - 3) / 2) + 1);
-    assert.ok(
-      view
-        .render(240)
-        .filter(line => line.includes('│'))
-        .every(line => visibleWidth(line) === 240),
-    );
-    assert.equal(plain(view.render(80)), narrow);
-    assert.equal(plain(view.render(240)), wide);
-    const longPatch = parsePatch(
-      '--- example.ts\n+++ example.ts\n@@ -1 +1 @@\n-' +
-        'a'.repeat(80) +
-        '\n+' +
-        'b'.repeat(100) +
-        '\n',
-    );
-    assert.ok(longPatch);
-    const long = new DiffView({...options, patch: longPatch});
-    for (const component of [view, long])
-      for (const width of [1, 20, 80, 120, 240]) {
-        assert.ok(
-          component.render(width).every(line => visibleWidth(line) <= width),
-        );
-      }
-  } finally {
-    syntax.dispose();
-  }
+test('recorded diffs wrap within the width and recompute after resize', () => {
+  const view = new DiffView('-1 old\n+1 日本語', theme);
+  const narrow = plain(view.render(80));
+  assert.match(narrow, /-1 old\n\+1 日本語/);
+  assert.equal(plain(view.render(240)), narrow);
+  const long = new DiffView(
+    '-1 ' + 'a'.repeat(80) + '\n+1 ' + 'b'.repeat(100),
+    theme,
+  );
+  for (const component of [view, long])
+    for (const width of [1, 20, 80, 120, 240])
+      assert.ok(
+        component.render(width).every(line => visibleWidth(line) <= width),
+      );
+  assert.match(plain(long.render(40)), /b{30}/);
 });
 
 test('state decoration distinguishes activity without color and stays bounded', t => {
@@ -294,52 +267,47 @@ test('tool subjects have a stable anchor and diagnostics are softly indented', (
 });
 
 test('file subjects are cwd-relative, full paths stay in expanded details, errors wrap separately', () => {
-  const syntax = createSyntaxService();
-  try {
-    const path = '/workspace/packages/example/deep/module.ts';
-    const component = new ToolExecutionComponent(
-      'read',
-      'fixture',
-      {path},
-      {outputPad: 1},
-      toolRenderers(syntax).get('read'),
-      new TuiMainScreen(new ProcessTerminal()),
-      '/workspace',
+  const path = '/workspace/packages/example/deep/module.ts';
+  const component = new ToolExecutionComponent(
+    'read',
+    'fixture',
+    {path},
+    {outputPad: 1},
+    toolRenderers().get('read'),
+    new TuiMainScreen(new ProcessTerminal()),
+    '/workspace',
+  );
+  component.updateResult({
+    content: [{type: 'text', text: 'const value = 1;'}],
+    isError: false,
+  });
+  assert.doesNotMatch(plain(component.render(42)), /\/workspace/);
+  assert.match(plain(component.render(42)), /module\.ts/);
+  component.setExpanded(true);
+  const expanded = component
+    .render(30)
+    .map(line =>
+      stripTerminalSequences(line)
+        .replace(/^\s*│ ?/, '')
+        .trim(),
+    )
+    .join('');
+  assert.ok(expanded.includes(path));
+  component.updateResult({
+    content: [
+      {
+        type: 'text',
+        text: 'Permission denied: choose a writable destination.',
+      },
+    ],
+    isError: true,
+  });
+  component.setExpanded(false);
+  assert.match(plain(component.render(60)), /✗ read[\s\S]*Permission denied/);
+  for (const width of [1, 3, 20, 42, 80, 140])
+    assert.ok(
+      component.render(width).every(line => visibleWidth(line) <= width),
     );
-    component.updateResult({
-      content: [{type: 'text', text: 'const value = 1;'}],
-      isError: false,
-    });
-    assert.doesNotMatch(plain(component.render(42)), /\/workspace/);
-    assert.match(plain(component.render(42)), /module\.ts/);
-    component.setExpanded(true);
-    const expanded = component
-      .render(30)
-      .map(line =>
-        stripTerminalSequences(line)
-          .replace(/^\s*│ ?/, '')
-          .trim(),
-      )
-      .join('');
-    assert.ok(expanded.includes(path));
-    component.updateResult({
-      content: [
-        {
-          type: 'text',
-          text: 'Permission denied: choose a writable destination.',
-        },
-      ],
-      isError: true,
-    });
-    component.setExpanded(false);
-    assert.match(plain(component.render(60)), /✗ read[\s\S]*Permission denied/);
-    for (const width of [1, 3, 20, 42, 80, 140])
-      assert.ok(
-        component.render(width).every(line => visibleWidth(line) <= width),
-      );
-  } finally {
-    syntax.dispose();
-  }
 });
 
 test('soft editor preserves native text, cursor layout, controls, and semantic border callback', () => {

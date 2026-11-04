@@ -37,8 +37,6 @@
     "typebox": "*"
   },
   "dependencies": {
-    "@joshrwolf/pi-kit": "workspace:*",
-    "diff": "9.0.0",
-    "shiki": "4.5.0"
+    "@joshrwolf/pi-kit": "workspace:*"
   }
 }

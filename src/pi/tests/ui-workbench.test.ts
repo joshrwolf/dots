@@ -8,7 +8,7 @@ import {
   stripTerminalSequences,
   visibleWidth,
 } from '@earendil-works/pi-tui';
-import {createSyntaxService, Inspector, OutputView} from '../src/index.ts';
+import {Inspector, OutputView} from '../src/index.ts';
 import {inspectorHeight} from '../src/ui/inspector.ts';
 import {FooterView} from '../src/features/frame.ts';
 import {scenarios} from '../dev/scenarios.ts';
@@ -25,47 +25,33 @@ const bindings = new KeybindingsManager({});
 const tui = new TuiMainScreen(new ProcessTerminal());
 const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
 
-function syntaxFixture() {
-  return createSyntaxService(async () => ({
-    load: async () => {},
-    tokenize: source =>
-      source.split('\n').map(content => [{content, offset: 0}]),
-    dispose() {},
-  }));
-}
-
 test('every workbench scenario uses real bounded components in both themes and expansion states', () => {
-  const syntax = syntaxFixture();
-  try {
-    for (const scenario of scenarios) {
-      const view = scenario.create(
-        {syntax, tui, bindings, close() {}, redraw() {}},
-        dark,
-      );
-      assert.ok(
-        view.component instanceof VStack,
-        `${scenario.id}: keep native layout identity`,
-      );
-      for (const theme of [dark, light])
-        for (const expanded of [false, true])
-          for (let phase = 0; phase < scenario.phases.length; phase++) {
-            view.update(phase, expanded, theme);
-            for (const width of [1, 2, 3, 8, 20, 60, 120, 240]) {
-              const lines = view.component.render(width);
-              assert.ok(
-                lines.length < 5000,
-                `${scenario.id}: bounded preparation/output`,
-              );
-              assert.ok(
-                lines.every(line => visibleWidth(line) <= width),
-                `${scenario.id}/${phase}/${width}: line overflow`,
-              );
-              assert.doesNotMatch(plain(lines), /\uFFFD|\x07|\x1b/);
-            }
+  for (const scenario of scenarios) {
+    const view = scenario.create(
+      {tui, bindings, close() {}, redraw() {}},
+      dark,
+    );
+    assert.ok(
+      view.component instanceof VStack,
+      `${scenario.id}: keep native layout identity`,
+    );
+    for (const theme of [dark, light])
+      for (const expanded of [false, true])
+        for (let phase = 0; phase < scenario.phases.length; phase++) {
+          view.update(phase, expanded, theme);
+          for (const width of [1, 2, 3, 8, 20, 60, 120, 240]) {
+            const lines = view.component.render(width);
+            assert.ok(
+              lines.length < 5000,
+              `${scenario.id}: bounded preparation/output`,
+            );
+            assert.ok(
+              lines.every(line => visibleWidth(line) <= width),
+              `${scenario.id}/${phase}/${width}: line overflow`,
+            );
+            assert.doesNotMatch(plain(lines), /\uFFFD|\x07|\x1b/);
           }
-    }
-  } finally {
-    syntax.dispose();
+        }
   }
 });
 
@@ -92,12 +78,12 @@ test('inspection shell preview composes the shipping Panel and SelectList', () =
   }
 });
 
-test('edit comparison exercises recorded patch rendering and keeps explicit fallback', () => {
+test('edit comparison exercises recorded diff rendering and keeps explicit fallback', () => {
   const h = harness('edit');
   try {
     h.view.handleInput('e');
     const comparison = plain(h.view.render(160));
-    assert.match(comparison, /before[\s\S]*after/);
+    assert.match(comparison, /-2 +return `Hello[\s\S]*\+2 +return `Welcome/);
     assert.match(comparison, /Hello/);
     assert.match(comparison, /Welcome/);
     assert.doesNotMatch(comparison, /diff unavailable/);
@@ -298,7 +284,6 @@ test('workbench shortcuts accept uppercase and terminal-protocol keys', () => {
 });
 
 function harness(initial = 'bash') {
-  const syntax = syntaxFixture();
   let theme = dark;
   let closed = 0;
   let redraws = 0;
@@ -306,7 +291,6 @@ function harness(initial = 'bash') {
   const changes: WorkbenchState[] = [];
   const view = new Workbench(
     {
-      syntax,
       tui,
       bindings,
       theme: () => theme,
@@ -330,7 +314,6 @@ function harness(initial = 'bash') {
     },
     dispose: () => {
       view.dispose();
-      syntax.dispose();
     },
   };
 }

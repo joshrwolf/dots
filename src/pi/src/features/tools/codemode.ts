@@ -24,7 +24,6 @@ import {
 import {StateGutter} from '../../ui/state.ts';
 import {DetailView} from '../../ui/details.ts';
 import {SourceView} from '../../ui/previews/view.ts';
-import type {SyntaxService} from '../../ui/previews/syntax.ts';
 import {
   activityState,
   duration,
@@ -302,15 +301,9 @@ class CallList implements Component {
 class CodemodeView implements PresentationView<CodemodeModel> {
   private readonly card = new ActivityCard();
   private readonly content = new VStack();
-  private readonly syntax: SyntaxService;
-  private readonly notify: () => void;
   private code = '';
   private highlighted = false;
   private preview: SourceView | undefined;
-  constructor(syntax: SyntaxService, notify: () => void) {
-    this.syntax = syntax;
-    this.notify = notify;
-  }
   update(
     model: CodemodeModel,
     theme: Theme,
@@ -403,8 +396,6 @@ class CodemodeView implements PresentationView<CodemodeModel> {
         source: model.code.slice(0, displayLimits.sourceCodeUnits),
         path: 'script.js',
         theme,
-        syntax: this.syntax,
-        invalidate: this.notify,
         highlight: highlighted,
       });
       this.preview.setTheme(theme);
@@ -552,12 +543,8 @@ class CodemodeView implements PresentationView<CodemodeModel> {
     return this.content.render(width);
   }
 }
-export function codemodePresentation(
-  syntax: SyntaxService,
-): ToolPresentation<CodemodeModel> {
-  return {
-    shell: 'self',
-    project: projectCodemode,
-    create: notify => new CodemodeView(syntax, notify),
-  };
-}
+export const codemodePresentation: ToolPresentation<CodemodeModel> = {
+  shell: 'self',
+  project: projectCodemode,
+  create: () => new CodemodeView(),
+};

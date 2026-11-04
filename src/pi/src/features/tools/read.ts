@@ -13,7 +13,6 @@ import {
   type Notice,
 } from '../../ui/card.ts';
 import {SourceView} from '../../ui/previews/view.ts';
-import type {SyntaxService} from '../../ui/previews/syntax.ts';
 import {
   activityState,
   duration,
@@ -106,12 +105,6 @@ class ReadView implements PresentationView<ReadModel> {
   private start = 0;
   private count = 0;
   private preview: SourceView | undefined;
-  private readonly syntax: SyntaxService;
-  private readonly notify: () => void;
-  constructor(syntax: SyntaxService, notify: () => void) {
-    this.syntax = syntax;
-    this.notify = notify;
-  }
   update(
     model: ReadModel,
     theme: Theme,
@@ -172,8 +165,6 @@ class ReadView implements PresentationView<ReadModel> {
             source: model.source.slice(0, displayLimits.sourceCodeUnits),
             path: model.path,
             theme,
-            syntax: this.syntax,
-            invalidate: this.notify,
             startLine: model.start,
             preserveTrailingEmptyLine: model.count > lines(model.source),
           });
@@ -203,12 +194,8 @@ class ReadView implements PresentationView<ReadModel> {
     return this.card.render(width);
   }
 }
-export function readPresentation(
-  syntax: SyntaxService,
-): ToolPresentation<ReadModel> {
-  return {
-    shell: 'self',
-    project: projectRead,
-    create: notify => new ReadView(syntax, notify),
-  };
-}
+export const readPresentation: ToolPresentation<ReadModel> = {
+  shell: 'self',
+  project: projectRead,
+  create: () => new ReadView(),
+};

@@ -13,7 +13,6 @@ import {
   type Notice,
 } from '../../ui/card.ts';
 import {SourceView} from '../../ui/previews/view.ts';
-import type {SyntaxService} from '../../ui/previews/syntax.ts';
 import {
   activityState,
   duration,
@@ -49,12 +48,6 @@ class WriteView implements PresentationView<WriteModel> {
   private source: string | undefined;
   private path = '';
   private count = 0;
-  private readonly syntax: SyntaxService;
-  private readonly notify: () => void;
-  constructor(syntax: SyntaxService, notify: () => void) {
-    this.syntax = syntax;
-    this.notify = notify;
-  }
   update(
     model: WriteModel,
     theme: Theme,
@@ -101,8 +94,6 @@ class WriteView implements PresentationView<WriteModel> {
             source: model.source.slice(0, displayLimits.sourceCodeUnits),
             path: model.path,
             theme,
-            syntax: this.syntax,
-            invalidate: this.notify,
           });
           this.preview.setTheme(theme);
           body = this.preview;
@@ -130,12 +121,8 @@ class WriteView implements PresentationView<WriteModel> {
     return this.card.render(width);
   }
 }
-export function writePresentation(
-  syntax: SyntaxService,
-): ToolPresentation<WriteModel> {
-  return {
-    shell: 'self',
-    project: projectWrite,
-    create: notify => new WriteView(syntax, notify),
-  };
-}
+export const writePresentation: ToolPresentation<WriteModel> = {
+  shell: 'self',
+  project: projectWrite,
+  create: () => new WriteView(),
+};

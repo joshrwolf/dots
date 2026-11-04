@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test, {after} from 'node:test';
+import test from 'node:test';
 import {
   initTheme,
   ToolExecutionComponent,
@@ -11,12 +11,9 @@ import {
   visibleWidth,
 } from '@earendil-works/pi-tui';
 import {rendererResolver} from '../extensions/ui/index.ts';
-import {createSyntaxService} from '../src/index.ts';
 import {activityHeader} from '../src/ui/card.ts';
 
 initTheme('dark', false);
-const syntax = createSyntaxService();
-after(() => syntax.dispose());
 const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
 const tui = new TuiMainScreen(new ProcessTerminal());
 function tool(
@@ -31,7 +28,7 @@ function tool(
     'fixture',
     args,
     {outputPad: 1},
-    rendererResolver(syntax)(name, () => undefined),
+    rendererResolver()(name, () => undefined),
     tui,
     '/workspace',
   );

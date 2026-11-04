@@ -14,7 +14,6 @@ import {
   type Notice,
 } from '../../ui/card.ts';
 import {SourceView} from '../../ui/previews/view.ts';
-import type {SyntaxService} from '../../ui/previews/syntax.ts';
 import {
   activityState,
   duration,
@@ -76,12 +75,6 @@ class BashView implements PresentationView<BashModel> {
   private preview: SourceView | undefined;
   private text = '';
   private output: OutputView | undefined;
-  private readonly syntax: SyntaxService;
-  private readonly notify: () => void;
-  constructor(syntax: SyntaxService, notify: () => void) {
-    this.syntax = syntax;
-    this.notify = notify;
-  }
   update(
     model: BashModel,
     theme: Theme,
@@ -103,8 +96,6 @@ class BashView implements PresentationView<BashModel> {
         source: model.command.slice(0, displayLimits.sourceCodeUnits),
         path: 'command.sh',
         theme,
-        syntax: this.syntax,
-        invalidate: this.notify,
       });
       this.preview.setTheme(theme);
       body = this.preview;
@@ -158,12 +149,8 @@ class BashView implements PresentationView<BashModel> {
     return this.card.render(width);
   }
 }
-export function bashPresentation(
-  syntax: SyntaxService,
-): ToolPresentation<BashModel> {
-  return {
-    shell: 'self',
-    project: projectBash,
-    create: notify => new BashView(syntax, notify),
-  };
-}
+export const bashPresentation: ToolPresentation<BashModel> = {
+  shell: 'self',
+  project: projectBash,
+  create: () => new BashView(),
+};

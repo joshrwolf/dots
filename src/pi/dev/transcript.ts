@@ -18,7 +18,7 @@ export function transcript(
   expanded: boolean,
   job: Job,
 ): Component[] {
-  const resolve = rendererResolver(context.syntax);
+  const resolve = rendererResolver();
   function tool(
     name: string,
     args: unknown,

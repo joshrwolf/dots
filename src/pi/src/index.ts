@@ -50,13 +50,4 @@ export {
   SourceView,
   DiffView,
   type SourceViewOptions,
-  type DiffViewOptions,
 } from './ui/previews/view.ts';
-export {parsePatch, type Patch} from './ui/previews/patch.ts';
-export {
-  createSyntaxService,
-  type SyntaxService,
-  type SyntaxEngine,
-  type SyntaxToken,
-  type Tokens,
-} from './ui/previews/syntax.ts';

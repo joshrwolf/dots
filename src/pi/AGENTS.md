@@ -97,10 +97,10 @@
 - Sanitize untrusted text before styling; use native Unicode/width helpers.
   Keep original records separate from their display representation.
 - Bound preparation, retained caches, and rendered output. Render callbacks do
-  no I/O, process execution, history scans, or repeated patch parsing.
-- Share one lazy syntax service per runtime. It must work before session binding;
-  guard asynchronous completion by document revision and runtime lifetime.
-  Tool rows have no disposal contract: no per-row timers or watchers.
+  no I/O, process execution, history scans, or repeated highlighting.
+- Source and diff previews use Pi's `highlightCode` and `renderDiff` on the
+  recorded content. Tool rows have no disposal contract: no per-row timers or
+  watchers.
 - Footer/header setters do not provide compare-and-restore ownership. Do not
   reset a later extension's surface during cleanup. Editor ownership is identity
   checked through the public API; preserve native input and working status.
