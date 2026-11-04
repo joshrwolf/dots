@@ -125,7 +125,10 @@ export function goalFixtures(phase = 0): GoalView[] {
     brief: {
       text: '# Shared export interface\n\nPreserve compatibility, make ownership explicit, and verify the public entrypoints.',
       ...(phase === 6
-        ? {warning: 'Brief truncated; read /fixture/goal.md for the rest.'}
+        ? {
+            warning:
+              'Brief truncated; read /fixture/workspaces/p-0123456789abcdef0123456789abcdef/briefs/shared-export-interface.md from line 201 for the rest.',
+          }
         : {}),
     },
   };

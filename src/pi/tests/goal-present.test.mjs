@@ -259,7 +259,11 @@ test('singleton brief warnings remain visible after another goal is removed', ()
       plain(summary([view], view.focus.id, theme).render(160)),
       /brief warning/,
     );
-    assert.ok(plain(panel(view, theme).render(160)).includes(warning));
+    const inspector = panel(view, theme);
+    const lead = warning.split(/[;:]/)[0].toLowerCase();
+    assert.ok(plain(inspector.render(160)).includes(`${lead} · 2 brief`));
+    inspector.handleInput('2');
+    assert.ok(plain(inspector.render(160)).includes(warning));
   }
 });
 

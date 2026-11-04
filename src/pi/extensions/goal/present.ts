@@ -18,7 +18,8 @@ const text = (value: string, max = 512) =>
   sliceByColumn(labelText(value), 0, max, true);
 const exceeds = (value: string, max: number) =>
   visibleWidth(labelText(value)) > max;
-export function compactSummary(view: GoalView): string {
+/** Progress counts only; see compactSummary. */
+export function progressSummary(view: GoalView): string {
   const p = view.snapshot?.overview.progress;
   if (!p || view.error)
     return view.error ? 'unavailable · /goal refresh' : 'loading';
@@ -28,10 +29,16 @@ export function compactSummary(view: GoalView): string {
     p.held && `${p.held} held`,
     p.review && `${p.review} review`,
     p.dropped && `${p.dropped} dropped`,
-    view.brief?.warning && 'brief needs attention',
   ]
     .filter(Boolean)
     .join(' · ');
+}
+/** The brief warning's leading phrase, such as "brief truncated"; the brief carries the rest. */
+export const briefNote = (view: GoalView): string | undefined =>
+  view.brief?.warning?.split(/[;:]/)[0]!.trim().toLowerCase();
+export function compactSummary(view: GoalView): string {
+  const note = !view.error && view.snapshot && briefNote(view);
+  return [progressSummary(view), note].filter(Boolean).join(' · ');
 }
 export function summary(view: GoalView): string {
   if (view.error) return 'unavailable · /goal refresh';

@@ -26,7 +26,8 @@ import {
 } from '../../src/ui/worker-activity.ts';
 import {
   artifacts,
-  compactSummary,
+  briefNote,
+  progressSummary,
   inspection,
   latestEvent,
   type GoalView,
@@ -735,8 +736,8 @@ export class GoalPanel extends Inspector {
       tree.warning && 'partial tree',
       work.workers.length &&
         `${work.workers.length} worker${work.workers.length === 1 ? '' : 's'}${asking ? ` · ${asking} asking` : ''}`,
-      view.brief?.warning && text(view.brief.warning),
-    ].filter(Boolean);
+      view.brief?.warning && `${briefNote(view)} · 2 brief`,
+    ].filter((value): value is string => Boolean(value));
     const hidden = snapshot.overview.hidden_closed;
     // dots reports what the graph could not draw, such as cycle edges.
     const warnings = [
@@ -759,13 +760,29 @@ export class GoalPanel extends Inspector {
     const treeMin =
       1 + Math.min(listed, 5) + notes.length + (listed > 5 ? 1 : 0);
     const reserved = treeMin + (split ? 0 : 4);
-    const summary = wrapped(
-      theme.fg('muted', compactSummary(view)) +
-        theme.fg('warning', attention.map(value => ` · ${value}`).join('')),
+    const summary = row(
+      {
+        layout: 'inline',
+        start: [
+          {
+            text: progressSummary(view),
+            tone: 'muted',
+            minWidth: 12,
+            priority: 70,
+            shrink: 'clip',
+          },
+          ...attention.map(value => ({
+            text: value,
+            tone: 'warning' as const,
+            priority: 90,
+            shrink: 'clip' as const,
+            separatorBefore: ' · ',
+          })),
+        ],
+        end: [],
+      },
       theme,
-    )
-      .render(width)
-      .slice(0, Math.max(1, height - reserved));
+    ).render(width);
     const spare = height - summary.length - reserved;
     const result = root.result
       ? new MarkdownView(root.result, theme).render(width).filter(Boolean)
@@ -796,9 +813,23 @@ export class GoalPanel extends Inspector {
           : []),
     ];
     const rest = Math.max(0, height - header.length);
+    const selected = rows[this.index(view, rows)]?.task ?? root;
+    const described = [
+      ...heading('Detail', '', theme).render(detailWidth),
+      ...detail(selected, tree, work, model, theme).render(detailWidth),
+    ];
+    // Stacked, the list keeps most rows; detail gets up to a third, at least
+    // four, and any rows the list does not need.
     const treeRows = split
       ? rest
-      : Math.min(rest, Math.max(treeMin, Math.floor(rest / 2)));
+      : Math.max(
+          Math.min(treeMin, rest),
+          Math.min(
+            1 + listed + notes.length,
+            rest -
+              Math.min(described.length, Math.max(4, Math.floor(rest / 3))),
+          ),
+        );
     const left = [
       ...heading(
         'Tasks',
@@ -813,16 +844,7 @@ export class GoalPanel extends Inspector {
       ...this.window(view, rows, notes, warnings, treeRows - 1, treeWidth),
     ];
     const right = clip(
-      [
-        ...heading('Detail', '', theme).render(detailWidth),
-        ...detail(
-          rows[this.index(view, rows)]?.task ?? root,
-          tree,
-          work,
-          model,
-          theme,
-        ).render(detailWidth),
-      ],
+      described,
       split ? rest : rest - left.length,
       detailWidth,
       theme,

@@ -13,6 +13,7 @@ import {
   summaryRow,
 } from '../extensions/goal/panel.ts';
 import type {GoalView} from '../extensions/goal/present.ts';
+import type {GoalTask} from '../extensions/goal/source.ts';
 import {orientation} from '../extensions/goal/context.ts';
 import {
   workerFrame,
@@ -268,7 +269,14 @@ test('the panel shows live work, the claimed task tree and the goal result witho
       if (phase === 1) assert.match(output, /! Held +Resolve compatibility/);
       if (phase === 4) assert.match(output, /Unavailable/);
       if (phase === 5) assert.match(output, /Loading goal/);
-      if (phase === 6) assert.match(output, /Brief truncated/);
+      if (phase === 6) {
+        const header = plain(view.render(80)).split('\n')[1]!;
+        assert.match(header, /slices done · .*brief truncated · 2 brief +│/);
+        assert.doesNotMatch(plain(view.render(80)), /from line 201/);
+        view.handleInput('2');
+        assert.match(plain(view.render(80)), /Brief truncated; read/);
+        view.handleInput('1');
+      }
       if (phase === 7) assert.match(output, /No slices recorded/);
       if (phase === 8) assert.match(output, /Shared types landed/);
       if (phase === 11) {
@@ -408,6 +416,61 @@ test('the graph lists leaves by dependency; the outline folds groups', () => {
     'narrow panes stack detail under the tree',
   );
   assert.doesNotMatch(narrow, / │ /);
+});
+
+test('a stacked popup gives the list most rows and bounds the detail', () => {
+  const leaf = (n: number, status: GoalTask['status']): GoalTask => ({
+    ...goalFixtures(8)[0]!.snapshot!.overview.tasks[0]!,
+    id: `t-${n}`,
+    title: `Slice ${n}`,
+    parent: 't-111111',
+    status,
+    owner: null,
+    result:
+      status === 'done' ? 'Verified.\n\nLong result\nwith\nmany\nlines.' : null,
+  });
+  const tasks = Array.from({length: 15}, (_, n) =>
+    leaf(n, n < 11 ? 'done' : 'open'),
+  );
+  const goal = goalFixtures(0)[0]!;
+  const graph = {
+    rows: tasks.map(task => ({
+      task: task.id,
+      lines: [task.status === 'done' ? '✓' : '○', '│'],
+    })),
+    notes: [],
+  };
+  const view: GoalView = {
+    ...goal,
+    snapshot: {
+      ...goal.snapshot!,
+      allTasks: tasks,
+      overview: {
+        ...goal.snapshot!.overview,
+        tasks,
+        graph,
+        open_graph: {...graph, rows: graph.rows.slice(11)},
+      },
+    },
+  };
+  const panel = new GoalPanel(
+    {matches: () => false},
+    {close() {}, cycle() {}},
+    () => {},
+    () => panelHeight(32),
+  );
+  panel.setGoal({view, followed: 1}, theme);
+  panel.handleInput('h');
+  const lines = plain(panel.render(80)).split('\n');
+  const tasksAt = lines.findIndex(line => /Tasks ─/.test(line));
+  const detailAt = lines.findIndex(line => /Detail ─/.test(line));
+  const body = lines.length - 2 - tasksAt;
+  assert.ok(detailAt - tasksAt >= (body * 2) / 3 - 1, lines.join('\n'));
+  assert.ok(
+    lines.length - 1 - detailAt <= Math.max(4, body / 3),
+    lines.join('\n'),
+  );
+  assert.match(lines.join('\n'), /… \d+ more lines · 3 record/);
 });
 
 test('short popups give rows to the tree and detail before the goal result', () => {
