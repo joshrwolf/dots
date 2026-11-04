@@ -804,11 +804,7 @@ export default function goalExtension(
         action !== 'focus' &&
         action !== 'follow' &&
         words.length >
-          (['show', 'unfocus', 'unfollow', 'dismiss'].includes(
-            action,
-          )
-            ? 2
-            : 1)
+          (['show', 'unfocus', 'unfollow', 'dismiss'].includes(action) ? 2 : 1)
       ) {
         notify(ctx, HELP, 'error');
         return;

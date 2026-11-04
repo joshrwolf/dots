@@ -6,7 +6,8 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
 import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
-import {FollowedWidget} from '../extensions/goal/dashboard.ts';
+import {PriorityRow} from '@joshrwolf/pi-kit/ui';
+import {summaryRow} from '../extensions/goal/panel.ts';
 import {
   JobsWidget,
   jobsStatus,
@@ -26,9 +27,9 @@ const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
 test('combined persistent sections share unboxed chrome and a bounded default footprint', () => {
   for (const name of ['dark', 'light']) {
     const theme = getThemeByName(name)!;
-    const goals = new FollowedWidget();
+    const goals = new PriorityRow();
     const views = goalFixtures(8);
-    goals.update(views, views[0]!.focus.id, theme);
+    goals.update(summaryRow(views, views[0]!.focus.id), theme);
     const workers = Array.from({length: 9}, (_, i) => ({
       label: `worker-${i}`,
       state: i ? 'running' : 'asking',
@@ -67,7 +68,7 @@ test('combined persistent sections share unboxed chrome and a bounded default fo
       const lines = [goals, workerView, jobs, footer].flatMap(component =>
         component.render(width),
       );
-      assert.ok(lines.length <= 23, `${width}: ${lines.length} lines`);
+      assert.ok(lines.length <= 20, `${width}: ${lines.length} lines`);
       assert.ok(lines.every(line => visibleWidth(line) <= width));
       assert.doesNotMatch(plain(lines), /[╭╮╰╯█▓▒░]|\uFFFD/);
     }
@@ -91,7 +92,8 @@ test('combined persistent sections share unboxed chrome and a bounded default fo
       }
       assert.equal(visibleWidth(lines[0]!), 80);
     }
-    assert.match(plain(goals.render(80)), /^◎ ! Unify.* \/goal/);
+    assert.equal(goals.render(80).length, 1, 'goals use one line');
+    assert.match(plain(goals.render(80)), /^◎ ! Unify.* alt\+g$/);
     assert.doesNotMatch(plain(workerView.render(160)), /\d+ calls?|\d+ tok/);
     assert.ok(
       plain(jobs.render(160)).indexOf('unknown') <
@@ -103,7 +105,7 @@ test('combined persistent sections share unboxed chrome and a bounded default fo
     assert.deepEqual(createWidget(() => [], theme).render(160), []);
     // Finishing execution never implicitly unfollows a goal.
     const finished = goalFixtures(2);
-    goals.update(finished, finished[0]!.focus.id, theme);
+    goals.update(summaryRow(finished, finished[0]!.focus.id), theme);
     assert.match(plain(goals.render(160)), /4\/4/);
     assert.equal(goals.render(160).length, 1);
   }

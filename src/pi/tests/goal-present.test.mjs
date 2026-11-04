@@ -3,20 +3,29 @@ import test from 'node:test';
 import {initTheme} from '@earendil-works/pi-coding-agent';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
 import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
-import {Inspector} from '../src/index.ts';
-import {
-  GoalWidget,
-  FollowedWidget,
-  GoalInspector,
-  compactSummary,
-  overview,
-  inspection,
-  setInspection,
-} from '../extensions/goal/present.ts';
+import {PriorityRow} from '@joshrwolf/pi-kit/ui';
+import {compactSummary, inspection} from '../extensions/goal/present.ts';
+import {GoalPanel, summaryRow} from '../extensions/goal/panel.ts';
 import {orientation} from '../extensions/goal/context.ts';
 import {snapshot, task} from './goal-fixture.mjs';
 initTheme('dark', false);
 const plain = lines => stripTerminalSequences(lines.join('\n'));
+const summary = (views, selected, theme) => {
+  const row = new PriorityRow();
+  row.update(summaryRow(views, selected ?? views[0].focus.id), theme);
+  return row;
+};
+const panel = (view, theme, release = () => {}, bindings = () => false) => {
+  const result = new GoalPanel(
+    {matches: bindings},
+    {release, close() {}, cycle() {}},
+    () => {},
+    () => 40,
+  );
+  result.focused = true;
+  result.setGoal({view, followed: 1}, theme);
+  return result;
+};
 
 test('orientation summarizes maximum evidence sets while explicit inspection retains exact selections', () => {
   const value = snapshot();
@@ -101,19 +110,14 @@ test('goal views use shared components, fit widths and sanitize terminal control
   };
   for (const name of ['dark', 'light']) {
     const theme = getThemeByName(name);
-    const widget = new GoalWidget();
-    widget.update(model, theme);
+    const widget = summary([model], undefined, theme);
     let closes = 0;
-    const inspector = new Inspector(
-      {
-        matches: (key, action) =>
-          key === '\r' && action === 'tui.select.confirm',
-      },
+    const inspector = panel(
+      model,
+      theme,
       () => closes++,
-      () => {},
-      () => 8,
+      (key, action) => key === '\r' && action === 'tui.select.confirm',
     );
-    setInspection(inspector, model, theme);
     for (const width of [1, 2, 10, 40, 80, 160]) {
       for (const view of [widget, inspector]) {
         const lines = view.render(width);
@@ -159,38 +163,34 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
     brief: {text: '# Accepted design\n\nUse **one** interface.'},
   };
   const theme = getThemeByName('dark');
-  const widget = new GoalWidget();
-  widget.update(model, theme);
-  assert.match(plain(widget.render(160)), /1\/5/);
-  assert.match(plain(widget.render(160)), /! Decision/);
-  assert.match(plain(widget.render(160)), /○ Consumer/);
-  assert.equal(widget.render(160).length, 4);
-  assert.match(overview(model), /Waiting +Consumer\n +Needs: Reference/);
-  assert.match(overview(model), /Open +Released/);
-  assert.doesNotMatch(
-    overview(model),
-    /Project:|Recorded at:|t-aa|Brief content:/,
-  );
-  assert.match(overview(model), /closed task details hidden/);
+  const line = () => plain(summary([model], undefined, theme).render(200));
+  assert.match(line(), /1\/5 done · 1 held · partial · now: Reference/);
+  assert.equal(summary([model], undefined, theme).render(160).length, 1);
+  const tree = plain(panel(model, theme).render(120));
+  assert.match(tree, /· Waiting +Consumer[^\n]*\n[^\n]* +Needs: Reference/);
+  assert.match(tree, /· Open +Released/);
+  assert.match(tree, /› Claimed +Reference · fixture/);
+  assert.doesNotMatch(tree, /Project:|Recorded at:|t-aa|Brief content:/);
+  assert.match(tree, /1 closed task hidden/);
   value.overview.progress.claimed = 2;
-  widget.update(model, theme);
   assert.doesNotMatch(
-    plain(widget.render(160)),
-    /Current:|Running/,
-    'multiple claims must not invent a current or running slice',
+    line(),
+    /Current:|Running|worker/,
+    'multiple claims must not invent a running slice',
   );
   assert.equal(
     compactSummary({...model, error: 'offline'}),
     'unavailable · /goal refresh',
   );
   let redraws = 0;
-  const inspector = new GoalInspector(
+  const inspector = new GoalPanel(
     {matches: () => false},
-    () => {},
-    () => {},
+    {release() {}, close() {}, cycle() {}},
+    () => redraws++,
     () => 20,
   );
-  inspector.setGoal(model, theme, () => redraws++);
+  inspector.focused = true;
+  inspector.setGoal({view: model, followed: 1}, theme);
   assert.doesNotMatch(plain(inspector.render(120)), /Accepted design|Project:/);
   inspector.handleInput('2');
   assert.match(plain(inspector.render(120)), /Accepted design/);
@@ -198,7 +198,7 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
   inspector.handleInput('3');
   assert.match(plain(inspector.render(120)), /Project:/);
   inspector.handleInput('1');
-  assert.match(plain(inspector.render(120)), /Waiting +Consumer/);
+  assert.match(plain(inspector.render(120)), /· Waiting +Consumer/);
   assert.equal(redraws, 3);
 });
 
@@ -213,12 +213,11 @@ test('followed overview keeps selection visible and reports display omissions wi
   });
   views[0] = {focus: views[0].focus, error: 'Unavailable'};
   for (const name of ['dark', 'light']) {
-    const widget = new FollowedWidget();
-    widget.update(views, 't-7', getThemeByName(name));
+    const widget = summary(views, 't-7', getThemeByName(name));
     const output = plain(widget.render(160));
     assert.match(output, /Goal 7/);
-    assert.match(output, /more followed/);
-    assert.ok(widget.render(160).length <= 6);
+    assert.match(output, /\+7 followed · needs attention/);
+    assert.equal(widget.render(160).length, 1);
     for (const width of [0, 1, 2, 12, 45, 80])
       assert.ok(
         widget.render(width).every(line => visibleWidth(line) <= width),
@@ -241,13 +240,16 @@ test('singleton brief warnings remain visible after another goal is removed', ()
       snapshot: value,
       brief: {text: '', warning},
     };
-    const widget = new FollowedWidget();
     const theme = getThemeByName('dark');
-    widget.update([view, healthy], healthy.focus.id, theme);
-    assert.match(plain(widget.render(160)), /brief warning/);
-    widget.update([view], view.focus.id, theme);
-    assert.match(plain(widget.render(160)), /brief warning/);
-    assert.ok(overview(view).includes(warning));
+    assert.match(
+      plain(summary([view, healthy], healthy.focus.id, theme).render(160)),
+      /needs attention/,
+    );
+    assert.match(
+      plain(summary([view], view.focus.id, theme).render(160)),
+      /brief warning/,
+    );
+    assert.ok(plain(panel(view, theme).render(160)).includes(warning));
   }
 });
 
@@ -289,10 +291,9 @@ test('review results and references remain explicit, bounded, and separate from 
   );
   assert.match(content, /1 review/);
   assert.equal(child.references.length, 10);
-  const widget = new GoalWidget();
-  widget.update(view, getThemeByName('dark'));
-  assert.match(plain(widget.render(160)), /◇ Reference slice/);
-  assert.doesNotMatch(plain(widget.render(160)), /Hierarchy incomplete/);
+  const shown = plain(panel(view, getThemeByName('dark')).render(160));
+  assert.match(shown, /◇ Review +Reference slice · reviewer/);
+  assert.doesNotMatch(shown, /Hierarchy incomplete/);
 });
 
 test('orientation limits task detail, retains the brief and reports omissions and unknowns', () => {
@@ -385,7 +386,10 @@ test('slice inspection shows only the latest recorded event, labeled as history 
     task('t-cc', 'Created only', {last_event: event('t-cc', 'created', null)}),
   ];
   assert.doesNotMatch(inspection(model), /Latest event|recent events/);
-  assert.doesNotMatch(overview(model), /Latest event/);
+  assert.doesNotMatch(
+    plain(panel(model, getThemeByName('dark')).render(160)),
+    /Latest event/,
+  );
 });
 
 test('bounded previews stop at grapheme boundaries', () => {

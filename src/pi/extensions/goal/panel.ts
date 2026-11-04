@@ -71,7 +71,13 @@ const heading = (title: string, detail: string, theme: Theme) =>
     {
       divider: true,
       start: [
-        {text: title, tone: 'accent', bold: true, priority: 100, shrink: 'clip'},
+        {
+          text: title,
+          tone: 'accent',
+          bold: true,
+          priority: 100,
+          shrink: 'clip',
+        },
       ],
       end: detail
         ? [{text: detail, tone: 'muted', priority: 50, shrink: 'omit'}]
@@ -114,7 +120,8 @@ export function goalWork(
       activity?.workers.flatMap(worker =>
         worker.assignment.project === view.focus.project &&
         worker.assignment.project === snapshot.project &&
-        (worker.assignment.id === root.id || tree.nodes.has(worker.assignment.id))
+        (worker.assignment.id === root.id ||
+          tree.nodes.has(worker.assignment.id))
           ? [{worker, task: task(worker.assignment.id)}]
           : [],
       ) ?? [],
@@ -156,9 +163,7 @@ export function summaryRow(
   if (!current) return {start: [], end: []};
   const frame = activity?.frame ?? 0;
   const tree =
-    current.snapshot && !current.error
-      ? goalTree(current.snapshot)
-      : undefined;
+    current.snapshot && !current.error ? goalTree(current.snapshot) : undefined;
   const work = goalWork(current, activity, owner, tree);
   const glyph = cue(current, work, tree, frame);
   const snapshot = current.error ? undefined : current.snapshot;
@@ -203,7 +208,8 @@ export function summaryRow(
   });
   const segments: Segment[] = [
     {
-      text: `◎ ${glyph}`,
+      // Review stays on slices and in the attention text, not beside the goal identity.
+      text: glyph === '◇' ? '◎' : `◎ ${glyph}`,
       tone: glyph === '!' ? 'warning' : 'accent',
       priority: 100,
       shrink: 'clip',
@@ -434,7 +440,13 @@ function overview(
           indent: 2,
           start: [
             {text: '›', tone: 'accent', priority: 100, shrink: 'clip'},
-            {text: 'you', tone: 'accent', bold: true, priority: 90, shrink: 'clip'},
+            {
+              text: 'you',
+              tone: 'accent',
+              bold: true,
+              priority: 90,
+              shrink: 'clip',
+            },
             {
               text: text(task.title),
               tone: 'text',
@@ -601,6 +613,10 @@ export class GoalPanel extends Inspector implements Focusable {
     return view.snapshot && !view.error
       ? treeRows(goalTree(view.snapshot), this.collapsed).slice(0, 100)
       : [];
+  }
+
+  override render(width: number): string[] {
+    return width > 0 ? super.render(width) : [];
   }
 
   get focused(): boolean {

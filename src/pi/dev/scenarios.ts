@@ -27,11 +27,7 @@ import {transcript} from './transcript.ts';
 import {workerInspectorScenario} from './workers.ts';
 import {thinkingComponent} from './thinking.ts';
 import {goalActivityFixture, goalFixtures} from './goals.ts';
-import {
-  GoalPanel,
-  PANEL_KEY,
-  summaryRow,
-} from '../extensions/goal/panel.ts';
+import {GoalPanel, PANEL_KEY, summaryRow} from '../extensions/goal/panel.ts';
 import {bashPresentation} from '../src/features/tools/bash.ts';
 import {readPresentation} from '../src/features/tools/read.ts';
 import {writePresentation} from '../src/features/tools/write.ts';
@@ -658,7 +654,9 @@ export const scenarios: readonly Scenario[] = [
             summaryRow(
               followed,
               followed[0]!.focus.id,
-              phase === 0 ? goalActivityFixture(11, animationFrame()) : undefined,
+              phase === 0
+                ? goalActivityFixture(11, animationFrame())
+                : undefined,
             ),
             theme,
           );

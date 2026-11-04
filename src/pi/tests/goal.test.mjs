@@ -36,6 +36,7 @@ function harness(backend = source(), saved = [], mode = 'rpc') {
   const messages = [];
   const userMessages = [];
   const widgets = [];
+  const shortcuts = new Map();
   const bus = new Map();
   const pi = {
     events: {
@@ -52,6 +53,9 @@ function harness(backend = source(), saved = [], mode = 'rpc') {
     },
     registerTool(tool) {
       tools.set(tool.name, tool);
+    },
+    registerShortcut(key, shortcut) {
+      shortcuts.set(key, shortcut);
     },
     sendUserMessage(message, options) {
       userMessages.push({message, options});
@@ -86,6 +90,7 @@ function harness(backend = source(), saved = [], mode = 'rpc') {
     messages,
     userMessages,
     widgets,
+    shortcuts,
     bus,
     ctx,
     tool: (id, signal, project) =>
@@ -238,33 +243,38 @@ test('agent can focus after creation; cancelled tool reads cannot persist focus'
   assert.equal(h.userMessages.length, 0);
 });
 
-test('history is explicit and never replaces active-only agent orientation', async () => {
+test('headless inspection and agent orientation stay active-only', async () => {
   const backend = source();
   const h = harness(backend, [entry(focused())]);
-  const histories = [];
-  backend.show = async (_cwd, id, _signal, history = false) => {
-    histories.push(history);
+  backend.show = async (_cwd, id) => {
     const value = snapshot(id);
     value.overview.progress.done = 1;
     value.overview.progress.total = 2;
-    value.overview.hidden_closed = history ? 0 : 1;
-    if (history)
-      value.overview.tasks.unshift({
-        ...value.overview.tasks[0],
-        id: 't-111111',
-        title: 'Old finished slice',
-        status: 'done',
-      });
-    return value;
+    const old = {
+      ...value.overview.tasks[0],
+      id: 't-111111',
+      title: 'Old finished slice',
+      status: 'done',
+    };
+    return withHierarchy({...value, allTasks: [old, ...value.overview.tasks]});
   };
   await h.event('session_start');
-  await h.command('history');
-  assert.match(h.messages.at(-1).message.content, /Old finished slice/);
+  await h.command('show');
+  assert.doesNotMatch(h.messages.at(-1).message.content, /Old finished slice/);
+  assert.match(
+    h.messages.at(-1).message.content,
+    /1 closed task details hidden/,
+  );
   assert.equal(h.messages.at(-1).options.triggerTurn, false);
+  await h.command('history');
+  assert.match(
+    h.notices.at(-1)[0],
+    /^\/goal \[new IDEA/,
+    'history is a panel key',
+  );
   const files = await h.context();
   assert.match(files[0].content, /Tasks: 1 open · 1 done/);
   assert.doesNotMatch(files[0].content, /Old finished slice/);
-  assert.equal(histories.at(-1), false);
 });
 
 test('unfocused sessions do not query dots; focus persists identity without execution', async () => {
@@ -392,10 +402,11 @@ test('goals in another project follow by explicit key; later reads use the recor
     ['t-123abc', '/example/project'],
     ['t-af18b0', '/other/project'],
   ]);
-  await h.command('history t-af18b0');
+  backend.calls.length = 0;
+  await h.command('show t-af18b0');
   assert.deepEqual(
     backend.calls
-      .filter(call => call.history)
+      .filter(call => call.id === 't-af18b0')
       .map(({id, project}) => [id, project]),
     [['t-af18b0', '/other/project']],
   );
@@ -585,36 +596,69 @@ test('initial focus selection is awaited before supplying pre-run context', asyn
   assert.match(files[0].content, /Consistent exports/);
 });
 
-test('overlapping inspections reserve one screen and shutdown closes its command', async () => {
-  const backend = source();
-  const h = harness(backend, [entry(focused())], 'tui');
-  await h.event('session_start');
-  const pending = gate();
-  const opened = gate();
-  backend.show = () => pending.promise;
-  let screens = 0;
-  h.ctx.ui.custom = factory =>
+// A stand-in for Pi's overlay host: records options, focus, and closes on done().
+function overlayHost(h, theme) {
+  const host = {opened: 0, closed: 0, focus: 0, unfocus: 0, view: undefined};
+  h.ctx.ui.custom = (factory, options) =>
     new Promise(resolve => {
-      screens++;
+      host.options = options;
+      host.opened++;
       const view = factory(
-        {requestRender() {}, terminal: {rows: 40}},
-        {},
-        {matches: () => false},
+        {requestRender() {}, terminal: {rows: 40, columns: 160}},
+        theme,
+        {
+          matches: (data, action) =>
+            data === '\x1b' && action === 'tui.select.cancel',
+        },
         () => {
-          view.dispose();
+          host.closed++;
+          host.view = undefined;
+          view.dispose?.();
           resolve();
         },
       );
-      opened.resolve();
+      host.view = view;
+      options.onHandle?.({
+        focus: () => host.focus++,
+        unfocus: () => host.unfocus++,
+      });
     });
-  const first = h.command('show');
+  return host;
+}
+
+test('the panel shortcut toggles one non-capturing overlay; /goal focuses it; shutdown closes it', async () => {
+  initTheme('dark', false);
+  const theme = getThemeByName('dark');
+  const h = harness(source(), [entry(focused())], 'tui');
+  await h.event('session_start');
+  const host = overlayHost(h, theme);
+  const toggle = h.shortcuts.get('alt+g');
+  assert.ok(toggle, 'registered shortcut');
+  toggle.handler(h.ctx);
+  assert.equal(host.opened, 1);
+  assert.equal(host.options.overlay, true);
+  assert.equal(host.options.overlayOptions.nonCapturing, true);
+  assert.equal(host.options.overlayOptions.anchor, 'top-right');
+  assert.equal(host.focus, 0, 'the editor keeps input');
+  assert.match(host.view.render(120).join('\n'), /Consistent exports/);
+  await h.command('');
   await h.command('show');
-  assert.ok(h.notices.some(([message]) => message.includes('already open')));
-  pending.resolve(snapshot());
-  await opened.promise;
-  assert.equal(screens, 1);
+  assert.equal(host.opened, 1, 'one panel at a time');
+  assert.equal(host.focus, 2);
+  host.view.handleInput('\x1b');
+  assert.equal(host.unfocus, 1, 'Esc returns input to the editor');
+  assert.equal(host.closed, 0);
+  toggle.handler(h.ctx);
+  assert.equal(host.closed, 1);
+  await h.command('show');
+  assert.equal(host.opened, 2);
+  host.view.handleInput('\x1bg');
+  assert.equal(host.closed, 2, 'the shortcut also closes a focused panel');
+  toggle.handler(h.ctx);
   await h.event('session_shutdown');
-  await first;
+  assert.equal(host.closed, 3);
+  assert.equal(h.userMessages.length, 0);
+  assert.equal(h.messages.length, 0);
 });
 
 test('cancelled picker and failed focus preserve prior focus; malformed history can be superseded', async () => {
@@ -796,7 +840,7 @@ test('saved sets reject duplicates and inconsistent selection; restoring writes 
   assert.equal((await h.list()).details.followed.length, 2);
 });
 
-test('dashboard uses native press/click handling and cannot revive stale widgets', async () => {
+test('the summary line uses native press/click handling and cannot revive stale widgets', async () => {
   initTheme('dark', false);
   const theme = getThemeByName('dark');
   const h = harness(source(), [entry(focused())], 'tui');
@@ -805,6 +849,8 @@ test('dashboard uses native press/click handling and cannot revive stale widgets
   const widget = h.widgets.findLast(
     ([key, value]) => key === 'dots.goal' && value,
   )[1](tui, theme);
+  assert.equal(widget.render(120).length, 1, 'one summary line');
+  assert.match(widget.render(120).join(''), /Consistent exports/);
   const event = {
     type: 'press',
     button: 'left',
@@ -830,57 +876,25 @@ test('dashboard uses native press/click handling and cannot revive stale widgets
   ]) {
     assert.equal(widget.handleMouse({...event, ...extra}), undefined);
   }
-  const before = h.backend.calls.length;
+  const host = overlayHost(h, theme);
   assert.equal(widget.handleMouse(event).handled, true);
-  assert.equal(
-    h.backend.calls.length,
-    before,
-    'press does not open inspection',
-  );
-  let inspector;
-  const opened = gate();
-  const closed = gate();
-  h.ctx.ui.custom = async (factory, options) => {
-    assert.equal(options.overlay, true);
-    assert.equal(options.overlayOptions.anchor, 'center');
-    assert.equal(options.overlayOptions.maxHeight, '80%');
-    inspector = factory(
-      tui,
-      theme,
-      {
-        matches: (data, action) =>
-          data === '\r' && action === 'tui.select.confirm',
-      },
-      () => {
-        inspector.dispose();
-        closed.resolve();
-      },
-    );
-    opened.resolve();
-    await closed.promise;
-  };
+  assert.equal(host.opened, 0, 'press does not open the panel');
   widget.handleMouse({...event, type: 'click'});
-  assert.equal(
-    widget.handleMouse({...event, type: 'click'}),
-    undefined,
-    'one dialog at a time',
-  );
-  await opened.promise;
-  assert.match(inspector.render(120).join('\n'), /Consistent exports/);
-  inspector.handleInput('\r');
-  await closed.promise;
-  assert.equal(h.userMessages.length, 0);
-  assert.equal(h.messages.length, 0);
+  assert.equal(host.opened, 1);
+  assert.equal(host.focus, 1, 'a click focuses the panel');
+  widget.handleMouse({...event, type: 'click'});
+  assert.equal(host.opened, 1, 'one panel at a time');
   assert.equal(
     h.entries.length,
     1,
     'inspection does not change selection or follows',
   );
   await h.event('session_tree');
+  assert.equal(host.closed, 1, 'branch changes close the panel');
   assert.equal(
     widget.handleMouse({...event, type: 'click'}),
     undefined,
-    'retired widgets cannot open dialogs',
+    'retired widgets cannot open panels',
   );
   const replacement = h.widgets.findLast(
     ([key, value]) => key === 'dots.goal' && value,
@@ -894,36 +908,27 @@ test('finished goal inspection shows closed slices without expanding ordinary ag
   const theme = getThemeByName('dark');
   for (const mode of ['tui', 'json']) {
     const backend = source();
-    backend.show = async (_cwd, id, _signal, history = false) => {
+    backend.show = async (_cwd, id) => {
       const full = snapshot(id);
       full.overview.goal.root.status = 'done';
       full.overview.tasks[0].status = 'done';
       Object.assign(full.overview.progress, {open: 0, ready: 0, done: 1});
-      return withHierarchy(full, history);
+      return withHierarchy(full);
     };
     const h = harness(backend, [entry(focused())], mode);
-    let output;
-    h.ctx.ui.custom = async (factory, options) => {
-      assert.equal(options.overlay, true);
-      const view = factory(
-        {requestRender() {}, terminal: {rows: 40}},
-        theme,
-        {matches: () => false},
-        () => {},
-      );
-      output = view.render(100).join('\n');
-      view.dispose();
-    };
+    const host = overlayHost(h, theme);
     await h.event('session_start');
     await h.command('show');
     if (mode === 'tui') {
+      const output = host.view.render(100).join('\n');
       assert.match(output, /Reference slice/);
-      assert.match(output, /history/);
+      assert.match(output, /with closed/);
     } else
       assert.doesNotMatch(h.messages.at(-1).message.content, /Reference slice/);
     const context = (await h.context())[0].content;
     assert.doesNotMatch(context, /Reference slice/);
     assert.match(context, /Tasks: 1 done\nNo unfinished tasks/);
+    await h.event('session_shutdown');
   }
 });
 
@@ -958,17 +963,17 @@ test('goal worker observation subscription is session-owned and unfocus removes 
   const render = () => mounted.render(120).join('\n');
   assert.doesNotMatch(render(), /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
   h.bus.get(WORKER_ACTIVITY_EVENT)({
-    workers: [{assignment: focused(), state: 'running'}],
+    workers: [{assignment: focused(), label: 'w', state: 'running'}],
     frame: 2,
   });
   assert.match(render(), /⠹/);
   h.bus.get(WORKER_ACTIVITY_EVENT)({
-    workers: [{assignment: focused(), state: 'quiet'}],
+    workers: [{assignment: focused(), label: 'w', state: 'quiet'}],
     frame: 3,
   });
   assert.doesNotMatch(render(), /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
   h.bus.get(WORKER_ACTIVITY_EVENT)({
-    workers: [{assignment: focused(), state: 'running'}],
+    workers: [{assignment: focused(), label: 'w', state: 'running'}],
     frame: 4,
   });
   await h.unfollow({all: true});
