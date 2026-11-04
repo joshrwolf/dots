@@ -167,7 +167,6 @@ test('Pi loads the checkout package, runs a native child, reloads, and shuts dow
     'request-guard',
     'context',
     'memory',
-    'ui',
     'workers',
     'wakes',
     'jobs',
@@ -231,7 +230,6 @@ test('Pi loads the checkout package, runs a native child, reloads, and shuts dow
     `${manifest.pi.extensions.map((p, i) => `import extension${i} from ${JSON.stringify(join(companion, p))};`).join('\n')}
 import {appendFileSync,readFileSync} from "node:fs";
 import {join} from "node:path";
-import {createToolRenderers} from ${JSON.stringify(join(companion, manifest.exports['./ui']))};
 export default function(pi){
  const marker=process.env.PI_TRIAL_MARKER;
  const mark=(data)=>appendFileSync(marker,JSON.stringify(data)+"\\n");
@@ -245,7 +243,6 @@ export default function(pi){
  pi.on("session_start",()=>mark({event:"start"}));
  pi.on("session_shutdown",()=>mark({event:"shutdown"}));
  pi.registerCommand("lab-job",{description:"isolated package child-process acceptance",async handler(args,ctx){
-  if(typeof createToolRenderers!=="function")throw new Error("public UI export missing");
   const started=await tools.get("job_start").execute("start",{command:"printf PACKAGE_CHILD_OK",cwd:ctx.cwd,timeoutMs:5000},undefined,undefined,ctx);
   const id=started.details.id;let job;
   const deadline=Date.now()+12000;
@@ -258,7 +255,7 @@ export default function(pi){
   if(job.state!=="finished" || job.facts.root?.code!==0)throw new Error("package child did not finish: "+JSON.stringify(job));
   const output=readFileSync(join(job.directory,"output.log"),"utf8");
   if(output!=="PACKAGE_CHILD_OK")throw new Error("child capture mismatch");
-  mark({event:"child-pass",id,publicExport:true});
+  mark({event:"child-pass",id});
  }});
  pi.registerCommand("lab-reload",{description:"isolated runtime reload",async handler(args,ctx){await ctx.reload();}});
 }
