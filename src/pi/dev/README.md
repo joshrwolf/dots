@@ -47,13 +47,12 @@ actual tool/message components through the shipping renderer resolver: calls,
 job completions, worker replies, wakes, and an otherwise unstyled tool share one
 transcript. `/ui-lab thinking` previews summaries, structured detail, and unfinished
 streaming Markdown through Pi’s real assistant component; **E** toggles its native
-thinking disclosure. `/ui-lab goal` starts with nested groups in the goal dashboard.
-Space cycles through closed history, partial trees, multiple follows, held work,
-unavailable data, brief warnings, and assigned running, asking, and quiet worker
-cues. In its
-inspector, **[**/**]** select groups and **←**/**→** fold/unfold them; Space remains
-the workbench state switch.
-**E** switches between the persistent section and slice inspection. The **frame**
+thinking disclosure. `/ui-lab goal` shows the goal summary line below the native editor.
+**E** opens the goal panel beside the transcript, as Alt+G does in a session;
+narrow widths stack it full width. In the panel, **1/2/3**, **h**, **[**/**]** and
+**←**/**→** work as in a session; Space remains the workbench state switch and
+cycles running, asking and quiet workers, closed history, partial trees, multiple
+follows, held work, unavailable data, and brief warnings. The **frame**
 scenario starts with a live assigned goal, asking/running workers, a job, and an update notice
 together below the native editor. Press **B** to see them. **Space** also reaches
 crowded and settled activity states, plus context warnings, unknown usage, long

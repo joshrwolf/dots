@@ -95,8 +95,18 @@ nor replaces a worker automatically. Unknown or stale context remains explicit.
 
 Use `/goal new IDEA` to plan an outcome, or `/goal follow ID` to follow an existing
 one. Following adds its brief and task outline to context; it does not authorize
-implementation or start work. Use `/goal` to inspect, `/goal refresh` to refresh,
-and `/goal unfollow ID` to remove its future context.
+implementation or start work. Use `/goal refresh` to refresh and
+`/goal unfollow ID` to remove its future context.
+
+A followed goal shows one summary line below the editor: progress, attention,
+the task this session or its workers are on, and other followed goals.
+**Alt+G** toggles the goal panel at the top right without taking the editor's
+input. It shows this session's claims and workers on the goal, the task tree with
+claims and blockers, and the goal's current result. `/goal` or a click on the
+summary line opens and focuses it for scrolling, folding, the brief, closed tasks
+and other followed goals; its footer lists the keys. **Esc** returns to the
+editor and **Alt+G** closes it. On macOS, Alt+G needs a terminal that sends
+Option as Alt; `/goal` always works.
 
 For another project, supply its exact `project` key from `dots task --json`,
 not a guessed path. Several goals may be followed at once; selecting one changes
