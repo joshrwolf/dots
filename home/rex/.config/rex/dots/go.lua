@@ -126,7 +126,7 @@ end
 function M.view(snap, recent, host)
   local items = {} ---@type dots.AgentRow[]
 
-  for _, entry in ipairs((agents.split(snap))) do
+  for _, entry in ipairs(agents.wanting(snap)) do
     items[#items + 1] = { group = "attention", entry = entry }
   end
   local tabs = {} ---@type { location: dots.Location, item: dots.AgentRow }[]

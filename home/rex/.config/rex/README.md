@@ -22,21 +22,19 @@ the app.
 | Cmd+O | Back to the last tab you jumped from; again to return |
 | Cmd+Shift+R | PRs: the watch list agents keep, with review and CI status |
 | Cmd+Shift+A | Rex's activity panel: everything reporting status, across sessions |
-| Cmd+T | New tab |
 | Cmd+H / Cmd+K, Cmd+J / Cmd+L | Previous, next tab |
 | Cmd+Shift+H / Cmd+Shift+L | Move tab back, forward |
 | Cmd+B | Show or hide the sidebar |
 | Ctrl+S, then \| / - | Split right, down |
-| Cmd+Shift+Enter | Zoom pane |
 | Ctrl+H/J/K/L | Move between panes, or within Neovim splits |
 | Ctrl+Shift+H/J/K/L | Resize pane |
-| Cmd+Up / Cmd+Down | Jump to the previous, next shell prompt |
 
-`rex keymap` lists every binding with the line that made it, and the command
-palette (Cmd+Shift+P) has every action, including "Agents needing attention…",
-a ranked list of everything reporting status. A tab shows one view at a
-time: a view's key closes it, and another view's key replaces it. Esc closes
-a view and returns focus to the pane you were in, zoomed again if it was.
+Rex's default shortcuts cover the rest, such as Cmd+T for a new tab and
+Cmd+Up / Cmd+Down for shell prompts. `rex keymap` lists these bindings with
+the line that made each, and the command palette (Cmd+Shift+P) has every
+action. A tab shows one view at a time: a view's key closes it, and another
+view's key replaces it. Esc closes a view and returns focus to the pane you
+were in, zoomed again if it was.
 
 In Go, each row is one piece of work: an agent that needs you (blocked,
 failed, or done), or a tab showing the status of the agent at work in it. A

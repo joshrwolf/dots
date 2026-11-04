@@ -1,4 +1,3 @@
-local attention = require("dots.attention")
 local expect = require("tests.expect")
 local fake_rex = require("tests.fake_rex")
 local go = require("dots.go")
@@ -67,7 +66,6 @@ return {
     local actions = install_all(t)
     local views = {
       go.view(snapshots.busy),
-      attention.view(snapshots.busy),
       prs.view(watch.mixed, snapshots.busy, "dots"),
     }
     for _, view in ipairs(views) do

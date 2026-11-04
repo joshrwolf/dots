@@ -3,7 +3,6 @@
 local M = {}
 
 function M.install()
-  rex.bind("cmd+t", "client.tab.new")
   rex.bind("cmd+h", "client.tab.previous")
   rex.bind("cmd+k", "client.tab.previous")
   rex.bind("cmd+j", "client.tab.next")
