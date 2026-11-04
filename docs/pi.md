@@ -180,8 +180,10 @@ not remove provider overrides.
 ## Rex
 
 Rex supplies session-start orientation. The companion reports OSC7501 status
-for the parent and its jobs/workers; Rex owns notifications. A child finishing
-does not announce parent completion. See [Rex configuration](../home/rex/.config/rex/README.md).
+for the parent and its jobs/workers in place of Pi's own reporter; Rex owns
+notifications. A child finishing does not announce parent completion. A dialog
+the agent waits on reports `blocked`; custom components never do, even with
+Pi's `blocked` option. See [Rex configuration](../home/rex/.config/rex/README.md).
 
 ## Development
 

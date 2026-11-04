@@ -17,7 +17,6 @@ import {summaryLine} from '../src/host/summary.ts';
 const idle = {
   running: false,
   compacting: false,
-  prompts: [],
   rest: {state: 'idle'},
   activities: new Map(),
   sessionName: 'docs',
@@ -58,21 +57,17 @@ test('background work keeps the root working after the run settles', () => {
   );
 });
 
-test('an open prompt blocks; confirm asks permission, others a question', () => {
-  const prompts = [
-    {kind: 'select', title: 'Pick a model'},
-    {kind: 'confirm', title: 'Delete branch?'},
-  ];
-  assert.deepEqual(rootRecord({...idle, running: true, prompts}), {
+test('an open dialog blocks; confirm asks permission, others a question', () => {
+  const dialog = {kind: 'confirm', title: 'Delete branch?'};
+  assert.deepEqual(rootRecord({...idle, running: true, dialog}), {
     state: 'blocked',
     kind: 'permission',
     message: 'Delete branch?',
   });
-  assert.deepEqual(rootRecord({...idle, prompts: prompts.slice(0, 1)}), {
-    state: 'blocked',
-    kind: 'question',
-    message: 'Pick a model',
-  });
+  assert.deepEqual(
+    rootRecord({...idle, dialog: {kind: 'select', title: 'Pick a model'}}),
+    {state: 'blocked', kind: 'question', message: 'Pick a model'},
+  );
   assert.deepEqual(rootRecord({...idle, compacting: true}), {
     state: 'working',
     message: 'Compacting context',

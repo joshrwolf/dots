@@ -10,6 +10,7 @@ import {
   formatRecord,
   rootRecord,
   type Rest,
+  type StatusInputs,
   type StatusRecord,
 } from './model.ts';
 import {summaryLine} from '../../src/host/summary.ts';
@@ -17,16 +18,20 @@ import {summaryLine} from '../../src/host/summary.ts';
 /**
  * Owns this terminal's program status (OSC 7501), counting the agent and the
  * jobs and workers it started: the session stays `working` until all of them
- * have settled. Pi's own reporter, which counts only the agent loop, is off.
- * Jobs and workers publish their live items as child records.
+ * have settled. Jobs and workers publish their live items as child records.
+ *
+ * Pi's own reporter counts only the agent loop. `PI_PROGRAM_STATUS=0`, its
+ * only switch, turns it off; Pi reads it when its terminal starts, after
+ * extensions load.
  */
 
 export type Write = (data: string) => void;
 export type Schedule = (run: () => void, ms: number) => () => void;
 
 /**
- * Coalesce settled transitions so queued work or a retry can replace them
- * before the terminal presents a state that is about to change.
+ * Coalesce settled transitions, so a run that a held message or background
+ * result starts right away replaces them before the terminal presents and
+ * notifies a state that is about to change.
  */
 export const SETTLE_MS = 1000;
 
@@ -76,17 +81,16 @@ export default function status(
   isTty: () => boolean = () => process.stdout.isTTY === true,
   later: Schedule = schedule,
 ) {
-  // Pi reads this when its terminal starts, after extensions load.
   env.PI_PROGRAM_STATUS = '0';
 
   let enabled = false;
   let running = false;
   let compacting = false;
   let rest: Rest = {state: 'idle'};
-  const prompts: {kind: string; title?: string}[] = [];
+  let dialog: StatusInputs['dialog'];
   const activities = new Map<string, readonly ActivityItem[]>();
   let prompt: string | undefined;
-  let lastRoot: StatusRecord = {state: 'idle'};
+  let lastRoot: StatusRecord | undefined;
   const lastChildren = new Map<string, string>();
   let pending: {root: StatusRecord; cancel: () => void} | undefined;
 
@@ -97,17 +101,17 @@ export default function status(
     lastRoot = root;
     write(formatRecord(root));
   };
-  const flush = () => {
-    if (pending) writeRoot(pending.root);
-  };
-
   const report = () => {
+    // Background work that outlives a run or starts after it defers the
+    // parent's completion to the run that handles its result.
+    if (!running && rest.state === 'done' && activities.size > 0)
+      rest = {state: 'idle'};
     if (!enabled) return;
     const sessionName = pi.getSessionName();
     const inputs = {
       running,
       compacting,
-      prompts,
+      ...(dialog === undefined ? {} : {dialog}),
       rest,
       activities,
       ...(sessionName === undefined ? {} : {sessionName}),
@@ -118,7 +122,7 @@ export default function status(
       (root.state === 'done' ||
         root.state === 'error' ||
         root.state === 'idle') &&
-      (lastRoot.state === 'working' || lastRoot.state === 'blocked');
+      (lastRoot?.state === 'working' || lastRoot?.state === 'blocked');
     if (!settling) writeRoot(root);
     else if (JSON.stringify(root) !== JSON.stringify(pending?.root)) {
       pending?.cancel();
@@ -147,14 +151,14 @@ export default function status(
   pi.on('session_start', (_event, ctx) => {
     enabled = ctx.mode === 'tui' && isTty() && !env.DOTS_WORKER_ID;
     prompt = latestPrompt(ctx.sessionManager.getBranch());
-    // Replace whatever an earlier instance left, even when it matches this one's idle start.
-    lastRoot = {state: 'idle', message: '\u0000'};
+    // Replace whatever an earlier instance left.
+    lastRoot = undefined;
     report();
   });
   pi.on('session_shutdown', event => {
     running = false;
     compacting = false;
-    prompts.length = 0;
+    dialog = undefined;
     pending?.cancel();
     pending = undefined;
     // Quitting removes every record. A reload or session switch reports
@@ -201,33 +205,32 @@ export default function status(
   });
   pi.on('agent_settled', event => {
     running = false;
-    if (event.aborted || (rest.state === 'done' && activities.size > 0))
-      rest = {state: 'idle'};
+    if (event.aborted) rest = {state: 'idle'};
     report();
   });
   pi.on('session_info_changed', () => report());
+  // Pi reports nested dialogs as one span. Its event omits a custom
+  // component's `blocked` option and most are pickers or inspectors, so
+  // customs never block; nor does a dialog opened while the agent is idle.
   pi.on('ui_prompt_start', event => {
-    // Idle pickers, inspectors and loaders are not an agent waiting for input.
     if (event.kind === 'custom' || !running) return;
-    prompts.push({
+    dialog = {
       kind: event.kind,
       ...(event.title === undefined ? {} : {title: event.title}),
-    });
+    };
     report();
   });
-  pi.on('ui_prompt_end', event => {
-    if (event.kind === 'custom') return;
-    const index = prompts.map(prompt => prompt.kind).lastIndexOf(event.kind);
-    if (index >= 0) prompts.splice(index, 1);
+  pi.on('ui_prompt_end', () => {
+    if (dialog === undefined) return;
+    dialog = undefined;
     report();
   });
 
   pi.events.on(ACTIVITY_EVENT, data => {
     const snapshot = data as ActivitySnapshot;
-    if (snapshot.items.length > 0) {
+    if (snapshot.items.length > 0)
       activities.set(snapshot.source, snapshot.items);
-      if (!running && rest.state === 'done') rest = {state: 'idle'};
-    } else activities.delete(snapshot.source);
+    else activities.delete(snapshot.source);
     report();
   });
 }

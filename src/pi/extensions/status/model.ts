@@ -18,8 +18,8 @@ export type Rest =
 export interface StatusInputs {
   readonly running: boolean;
   readonly compacting: boolean;
-  /** Open prompts in the order they opened; the latest is reported. */
-  readonly prompts: readonly {readonly kind: string; readonly title?: string}[];
+  /** An open dialog the agent waits on. */
+  readonly dialog?: {readonly kind: string; readonly title?: string};
   /** How the last run ended, reported once nothing is active. */
   readonly rest: Rest;
   readonly activities: ReadonlyMap<string, readonly ActivityItem[]>;
@@ -43,18 +43,18 @@ function backgroundSummary(inputs: StatusInputs): string | undefined {
 }
 
 /**
- * The root record: blocked while the user must answer a prompt, working while
+ * The root record: blocked while the user must answer a dialog, working while
  * the agent or any background work is active, then how the last run ended.
  * Background work keeps the session `working`, so it never reports an unread
  * `done` while something it started still runs.
  */
 export function rootRecord(inputs: StatusInputs): StatusRecord {
-  const prompt = inputs.prompts.at(-1);
-  if (prompt)
+  const {dialog} = inputs;
+  if (dialog)
     return {
       state: 'blocked',
-      kind: prompt.kind === 'confirm' ? 'permission' : 'question',
-      ...(prompt.title === undefined ? {} : {message: prompt.title}),
+      kind: dialog.kind === 'confirm' ? 'permission' : 'question',
+      ...(dialog.title === undefined ? {} : {message: dialog.title}),
     };
   if (inputs.compacting)
     return {state: 'working', message: 'Compacting context'};
@@ -104,10 +104,10 @@ function text(value: string | undefined, max: number): string | undefined {
 }
 
 /** The OSC 7501 report for a record, within the protocol's limits. */
-export function formatRecord(record: StatusRecord, app = 'pi'): string {
+export function formatRecord(record: StatusRecord): string {
   const pairs = [`state=${record.state}`];
   if (record.id) pairs.push(`id=${record.id}`);
-  if (!record.id) pairs.push(`app=${app}`);
+  if (!record.id) pairs.push('app=pi');
   if (record.state === 'blocked' && record.kind)
     pairs.push(`kind=${record.kind}`);
   const title = text(record.title, 192);
