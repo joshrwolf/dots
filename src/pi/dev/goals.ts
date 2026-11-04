@@ -134,6 +134,8 @@ export function goalActivityFixture(
     workers: [
       {
         assignment: {project: '/workspace/example', id: 't-333333'},
+        label: 'exports-worker',
+        doing: 'edit src/exports.ts',
         state: phase === 11 ? 'running' : phase === 12 ? 'asking' : 'quiet',
       },
     ],
@@ -144,6 +146,8 @@ function nestedGoalFixture(phase: number): GoalView {
   const root = task('t-111111', 'Unify the export interface', {
     parent: null,
     children: 2,
+    result:
+      'Shared types landed. Exports are in progress; consumers wait on them. Next: settle the documentation policy.',
   });
   const tasks = [
     task('t-222222', 'Define shared types', {

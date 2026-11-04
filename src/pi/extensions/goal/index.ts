@@ -1,31 +1,34 @@
 import {Type} from 'typebox';
-import {MouseRegion} from '@earendil-works/pi-tui';
+import {MouseRegion, type OverlayHandle} from '@earendil-works/pi-tui';
 import type {
   ExtensionAPI,
   ExtensionContext,
   Theme,
 } from '@earendil-works/pi-coding-agent';
-import {inspectorHeight, inspectorOverlay} from '../../src/ui/inspector.ts';
 import {
   WORKER_ACTIVITY_EVENT,
   workerActivitySnapshot,
   type WorkerActivitySnapshot,
 } from '../../src/ui/worker-activity.ts';
-import {labelText, sourceText} from '@joshrwolf/pi-kit/ui';
+import {PriorityRow, labelText, sourceText} from '@joshrwolf/pi-kit/ui';
 import {
-  FollowedWidget,
-  GoalInspector,
   inspection,
   compactSummary,
   type Focus,
   type GoalView,
 } from './present.ts';
+import {
+  GoalPanel,
+  PANEL_KEY,
+  panelHeight,
+  panelOverlay,
+  summaryRow,
+} from './panel.ts';
 import {GOAL_SECTION_PREFIX, goalSections, orientation} from './context.ts';
 import {
   dotsSource,
   dotsEvidenceSource,
   type EvidenceSource,
-  withHierarchy,
   type GoalSource,
   type GoalList,
 } from './source.ts';
@@ -42,7 +45,7 @@ const WIDGET = 'dots.goal';
 export const DISMISS_ENTRY = 'dots.goal.dismiss';
 const OFFERS_WIDGET = 'dots.goal.offers';
 const HELP =
-  "/goal [new IDEA | follow [ID [PROJECT]] | show [ID] | history [ID] | evidence TASK [EVENT|current] [PROJECT] | list | followed | offers | dismiss ID | refresh | unfollow ID | clear]. PROJECT is another project's exact key (the project field of dots task --json output); without it, follow uses this session's project. focus aliases follow; unfocus without an ID clears all. No shared task state is changed.";
+  "/goal [new IDEA | follow [ID [PROJECT]] | show [ID] | evidence TASK [EVENT|current] [PROJECT] | list | followed | offers | dismiss ID | refresh | unfollow ID | clear]. PROJECT is another project's exact key (the project field of dots task --json output); without it, follow uses this session's project. focus aliases follow; unfocus without an ID clears all. No shared task state is changed.";
 
 export function restoreGoals(
   entries: readonly {type: string; customType?: string; data?: unknown}[],
@@ -185,12 +188,20 @@ export default function goalExtension(
       }
     | undefined;
   let dialog: AbortController | undefined;
-  let closeInspector: (() => void) | undefined;
   let mounted = false;
+  let owner: string | undefined;
   let workerActivity: WorkerActivitySnapshot | undefined;
   let stopWorkerActivity: (() => void) | undefined;
-  let widget:
-    {view: FollowedWidget; theme: Theme; redraw: () => void} | undefined;
+  let summary: {row: PriorityRow; theme: Theme; redraw: () => void} | undefined;
+  let panel:
+    | {
+        view: GoalPanel;
+        theme: Theme;
+        redraw: () => void;
+        close: () => void;
+        handle?: OverlayHandle;
+      }
+    | undefined;
 
   const notify = (
     ctx: ExtensionContext,
@@ -212,13 +223,107 @@ export default function goalExtension(
         {triggerTurn: false},
       );
   };
+  /** Repaint the summary line and an open panel from current observations. */
+  const paint = () => {
+    if (summary) {
+      summary.row.update(
+        summaryRow([...followed.values()], focus?.id, workerActivity, owner),
+        summary.theme,
+      );
+      summary.redraw();
+    }
+    if (panel && model) {
+      panel.view.setGoal(
+        {
+          view: model,
+          activity: workerActivity,
+          owner,
+          followed: followed.size,
+        },
+        panel.theme,
+      );
+      panel.redraw();
+    }
+  };
+  const select = (ctx: ExtensionContext, chosen: GoalView) => {
+    focus = chosen.focus;
+    model = chosen;
+    persist();
+    draw(ctx);
+  };
+  /** Non-modal: the editor keeps input unless the panel is explicitly focused. */
+  const openPanel = (ctx: ExtensionContext, focusPanel: boolean) => {
+    if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
+    if (panel) {
+      if (focusPanel) panel.handle?.focus();
+      return;
+    }
+    if (!model) {
+      notify(ctx, 'No focused goal. Use /goal follow ID or /goal list.');
+      return;
+    }
+    const epoch = generation;
+    ctx.ui
+      .custom<void>(
+        (tui, theme, bindings, done) => {
+          if (!active || epoch !== generation) {
+            done();
+            return {render: () => [], invalidate() {}};
+          }
+          const owned: NonNullable<typeof panel> = {
+            view: new GoalPanel(
+              bindings,
+              {
+                release: () => owned.handle?.unfocus(),
+                close: () => done(),
+                cycle: () => {
+                  const views = [...followed.values()];
+                  const next =
+                    views[
+                      (views.findIndex(view => view.focus.id === focus?.id) +
+                        1) %
+                        views.length
+                    ];
+                  if (next) select(ctx, next);
+                },
+              },
+              () => tui.requestRender(),
+              () => panelHeight(tui.terminal.rows),
+            ),
+            theme,
+            redraw: () => tui.requestRender(),
+            close: () => done(),
+          };
+          panel = owned;
+          paint();
+          return Object.assign(owned.view, {
+            dispose: () => {
+              if (panel === owned) panel = undefined;
+            },
+          });
+        },
+        {
+          overlay: true,
+          overlayOptions: panelOverlay,
+          onHandle: handle => {
+            if (!panel) return;
+            panel.handle = handle;
+            if (focusPanel) handle.focus();
+          },
+        },
+      )
+      .catch((error: unknown) => {
+        if (active && epoch === generation) notify(ctx, String(error), 'error');
+      });
+  };
   const draw = (ctx: ExtensionContext) => {
     if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
     drawOffers(ctx);
     if (!model) {
       if (mounted) ctx.ui.setWidget(WIDGET, undefined);
-      widget = undefined;
+      summary = undefined;
       mounted = false;
+      panel?.close();
       return;
     }
     if (!mounted) {
@@ -228,30 +333,24 @@ export default function goalExtension(
         WIDGET,
         (tui, theme) => {
           const owned = {
-            view: new FollowedWidget(),
+            row: new PriorityRow(),
             theme,
             redraw: () => tui.requestRender(),
           };
-          widget = owned;
-          owned.view.update(
-            [...followed.values()],
-            focus?.id,
-            theme,
-            workerActivity,
-          );
+          summary = owned;
+          paint();
           const region = new MouseRegion(
             {
               render: width =>
-                active && epoch === generation ? owned.view.render(width) : [],
-              invalidate: () => owned.view.invalidate(),
+                active && epoch === generation ? owned.row.render(width) : [],
+              invalidate: () => owned.row.invalidate(),
             },
             event => {
               if (
                 !active ||
                 epoch !== generation ||
-                widget !== owned ||
+                summary !== owned ||
                 dialog ||
-                closeInspector ||
                 event.button !== 'left' ||
                 event.shift ||
                 event.alt ||
@@ -261,17 +360,14 @@ export default function goalExtension(
               // Pi synthesizes a click after an accepted press, only when it was not a drag.
               if (event.type === 'press') return {handled: true, render: false};
               if (event.type !== 'click') return undefined;
-              show(ctx).catch(error => {
-                if (active && epoch === generation && widget === owned)
-                  notify(ctx, String(error), 'error');
-              });
+              openPanel(ctx, true);
               return {handled: true, render: false};
             },
           );
           return Object.assign(region, {
             dispose: () => {
-              if (widget === owned) {
-                widget = undefined;
+              if (summary === owned) {
+                summary = undefined;
                 mounted = false;
               }
             },
@@ -280,15 +376,7 @@ export default function goalExtension(
         {placement: 'belowEditor'},
       );
     }
-    if (widget) {
-      widget.view.update(
-        [...followed.values()],
-        focus?.id,
-        widget.theme,
-        workerActivity,
-      );
-      widget.redraw();
-    }
+    paint();
   };
   const invalidate = (ctx?: ExtensionContext) => {
     generation++;
@@ -298,12 +386,11 @@ export default function goalExtension(
     request = undefined;
     dialog?.abort();
     dialog = undefined;
-    closeInspector?.();
-    closeInspector = undefined;
+    panel?.close();
     if (ctx && mounted && ctx.mode === 'tui' && ctx.hasUI)
       ctx.ui.setWidget(WIDGET, undefined);
     mounted = false;
-    widget = undefined;
+    summary = undefined;
   };
 
   // Ordinary observers share an in-flight read, including an explicit focus
@@ -412,6 +499,7 @@ export default function goalExtension(
     invalidate(ctx);
     workerActivity = undefined;
     active = true;
+    owner = `pi-${ctx.sessionManager.getSessionId()}`;
     focus = undefined;
     model = undefined;
     followed.clear();
@@ -445,15 +533,9 @@ export default function goalExtension(
     stopWorkerActivity?.();
     workerActivity = undefined;
     stopWorkerActivity = pi.events.on(WORKER_ACTIVITY_EVENT, data => {
-      if (!active || !widget || !model) return;
+      if (!active || !model) return;
       workerActivity = workerActivitySnapshot(data);
-      widget.view.update(
-        [...followed.values()],
-        focus?.id,
-        widget.theme,
-        workerActivity,
-      );
-      widget.redraw();
+      paint();
     });
     return restore(ctx);
   });
@@ -517,88 +599,35 @@ export default function goalExtension(
       await discover(ctx);
   });
 
-  const show = async (ctx: ExtensionContext, history = false) => {
-    // Reserve the interaction before reading: overlapping commands must not
-    // replace a custom screen whose completion promise is still outstanding.
-    const controller = new AbortController();
-    dialog = controller;
+  /** TUI: open and focus the panel, then refresh it. Headless: one inspection message. */
+  const show = async (ctx: ExtensionContext) => {
     const epoch = generation;
-    const current = () =>
-      active && generation === epoch && !controller.signal.aborted;
-    try {
-      let observed = await refresh(ctx);
-      if (!current()) return;
-      if (!observed) {
-        notify(ctx, 'No focused goal. Use /goal focus ID or /goal list.');
-        return;
-      }
-      const finished =
-        observed.snapshot?.overview.goal.root.status === 'done' ||
-        observed.snapshot?.overview.goal.root.status === 'dropped';
-      if (
-        (history || (finished && ctx.mode === 'tui' && ctx.hasUI)) &&
-        !observed.error
-      ) {
-        try {
-          const snapshot = observed.snapshot?.allTasks
-            ? withHierarchy(observed.snapshot, true)
-            : await source.show(
-                ctx.cwd,
-                observed.focus.id,
-                controller.signal,
-                true,
-                observed.focus.project,
-              );
-          if (!current()) return;
-          if (
-            snapshot.project !== observed.focus.project ||
-            snapshot.overview.goal.root.id !== observed.focus.id
-          )
-            throw new Error('Goal history identity changed');
-          const brief = snapshot.overview.goal.briefContent;
-          if (!current()) return;
-          observed = {...observed, snapshot, brief, history: true};
-        } catch (error) {
-          if (current()) notify(ctx, String(error), 'error');
-          return;
-        }
-      }
-      const document = observed;
-      if (ctx.mode !== 'tui' || !ctx.hasUI) {
-        pi.sendMessage(
-          {
-            customType: 'dots.goal.inspection',
-            content: inspection(document),
-            display: true,
-          },
-          {triggerTurn: false},
-        );
-        return;
-      }
-      await ctx.ui.custom<void>((tui, theme, bindings, done) => {
-        if (!current()) {
-          done();
-          return {render: () => [], invalidate() {}};
-        }
-        const close = () => done();
-        closeInspector = close;
-        const view = new GoalInspector(
-          bindings,
-          close,
-          () => tui.requestRender(),
-          () => inspectorHeight(tui.terminal.rows),
-        );
-        view.setGoal(document, theme, () => tui.requestRender());
-        return Object.assign(view, {
-          dispose: () => {
-            if (closeInspector === close) closeInspector = undefined;
-          },
-        });
-      }, inspectorOverlay);
-    } finally {
-      if (dialog === controller) dialog = undefined;
+    if (ctx.mode === 'tui' && ctx.hasUI) {
+      openPanel(ctx, true);
+      if (model) await refresh(ctx);
+      return;
     }
+    const observed = await refresh(ctx);
+    if (!active || generation !== epoch) return;
+    if (!observed)
+      notify(ctx, 'No focused goal. Use /goal follow ID or /goal list.');
+    else
+      pi.sendMessage(
+        {
+          customType: 'dots.goal.inspection',
+          content: inspection(observed),
+          display: true,
+        },
+        {triggerTurn: false},
+      );
   };
+  pi.registerShortcut(PANEL_KEY, {
+    description: 'Toggle the goal panel',
+    handler: ctx => {
+      if (panel) panel.close();
+      else openPanel(ctx, false);
+    },
+  });
 
   pi.registerTool({
     name: 'goal_focus',
@@ -624,8 +653,7 @@ export default function goalExtension(
     },
     async execute(_callId, {id, project}, signal, _update, ctx) {
       if (signal?.aborted) throw new Error('Goal focus cancelled');
-      if (dialog || closeInspector)
-        throw new Error('A goal dialog is already open');
+      if (dialog) throw new Error('A goal dialog is already open');
       const controller = new AbortController();
       dialog = controller;
       try {
@@ -711,12 +739,12 @@ export default function goalExtension(
 
   pi.registerCommand('goal', {
     description:
-      'Follow multiple goals: [new IDEA|follow [ID [PROJECT]]|show [ID]|history [ID]|evidence TASK [EVENT|current] [PROJECT]|list|followed|offers|dismiss ID|refresh|unfollow ID|clear]',
+      'Follow multiple goals; without arguments, open the goal panel: [new IDEA|follow [ID [PROJECT]]|show [ID]|evidence TASK [EVENT|current] [PROJECT]|list|followed|offers|dismiss ID|refresh|unfollow ID|clear]',
     handler: async (args, ctx) => {
       const words = args.trim().split(/\s+/).filter(Boolean);
       const action = words[0] ?? (focus ? 'show' : 'focus');
       if (action === 'evidence') {
-        if (dialog || closeInspector) {
+        if (dialog) {
           notify(ctx, 'A goal dialog is already open.');
           return;
         }
@@ -776,7 +804,7 @@ export default function goalExtension(
         action !== 'focus' &&
         action !== 'follow' &&
         words.length >
-          (['show', 'history', 'unfocus', 'unfollow', 'dismiss'].includes(
+          (['show', 'unfocus', 'unfollow', 'dismiss'].includes(
             action,
           )
             ? 2
@@ -841,11 +869,7 @@ export default function goalExtension(
         );
         return;
       }
-      if (dialog || closeInspector) {
-        notify(ctx, 'A goal dialog is already open.');
-        return;
-      }
-      if (action === 'show' || action === 'history') {
+      if (action === 'show') {
         if (words[1]) {
           const chosen = followed.get(words[1]);
           if (!chosen) {
@@ -856,36 +880,13 @@ export default function goalExtension(
             );
             return;
           }
-          focus = chosen.focus;
-          model = chosen;
-          persist();
-          draw(ctx);
-        } else if (followed.size > 1 && ctx.hasUI && ctx.mode === 'tui') {
-          const controller = new AbortController();
-          dialog = controller;
-          const choices = [...followed.values()].map(
-            view =>
-              `${view.focus.id} · ${labelText(view.snapshot?.overview.goal.root.title ?? view.focus.id)}`,
-          );
-          try {
-            const choice = await ctx.ui.select(
-              'Inspect a followed goal',
-              choices,
-              {signal: controller.signal},
-            );
-            if (controller.signal.aborted || !active || choice === undefined)
-              return;
-            const chosen = [...followed.values()][choices.indexOf(choice)];
-            if (!chosen) return;
-            focus = chosen.focus;
-            model = chosen;
-            persist();
-            draw(ctx);
-          } finally {
-            if (dialog === controller) dialog = undefined;
-          }
+          select(ctx, chosen);
         }
-        await show(ctx, action === 'history');
+        await show(ctx);
+        return;
+      }
+      if (dialog) {
+        notify(ctx, 'A goal dialog is already open.');
         return;
       }
       if (action === 'refresh') {

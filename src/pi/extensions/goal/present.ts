@@ -1,19 +1,6 @@
-import type {Theme} from '@earendil-works/pi-coding-agent';
-import {
-  matchesKey,
-  sliceByColumn,
-  visibleWidth,
-  VStack,
-  type Component,
-} from '@earendil-works/pi-tui';
-import {PriorityRow, labelText} from '@joshrwolf/pi-kit/ui';
-import {MarkdownView} from '../../src/ui/markdown.ts';
-import {Inspector} from '../../src/ui/inspector.ts';
-import {OutputView} from '../../src/ui/card.ts';
+import {sliceByColumn, visibleWidth} from '@earendil-works/pi-tui';
+import {labelText} from '@joshrwolf/pi-kit/ui';
 import type {Brief, GoalSnapshot, GoalTask} from './source.ts';
-import {compactSummary, goalOverview} from './dashboard.ts';
-import {goalTree, isGroup, treeRows, type TreeState} from './hierarchy.ts';
-export {compactSummary, GoalWidget, FollowedWidget} from './dashboard.ts';
 
 export interface Focus {
   readonly id: string;
@@ -31,6 +18,21 @@ const text = (value: string, max = 512) =>
   sliceByColumn(labelText(value), 0, max, true);
 const exceeds = (value: string, max: number) =>
   visibleWidth(labelText(value)) > max;
+export function compactSummary(view: GoalView): string {
+  const p = view.snapshot?.overview.progress;
+  if (!p || view.error)
+    return view.error ? 'unavailable · /goal refresh' : 'loading';
+  return [
+    p.total ? `${p.done}/${p.total} slices done` : 'No slices recorded',
+    p.claimed && `${p.claimed} claimed`,
+    p.held && `${p.held} held`,
+    p.review && `${p.review} review`,
+    p.dropped && `${p.dropped} dropped`,
+    view.brief?.warning && 'brief needs attention',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
 export function summary(view: GoalView): string {
   if (view.error) return 'unavailable · /goal refresh';
   const p = view.snapshot?.overview.progress;
@@ -184,7 +186,7 @@ export function inspection(
     );
   if (snapshot.overview.hidden_closed > 0)
     lines.push(
-      `${snapshot.overview.hidden_closed} closed task details hidden; /goal history or dots task goal show ${goal.root.id} --all shows history.`,
+      `${snapshot.overview.hidden_closed} closed task details hidden; h in the goal panel or dots task goal show ${goal.root.id} --all shows them.`,
     );
   if (tasks.length > taskLimit)
     lines.push(
@@ -199,228 +201,4 @@ export function inspection(
   );
   if (view.brief?.warning) lines.push('', view.brief.warning);
   return lines.join('\n');
-}
-
-type Section = 'slices' | 'brief' | 'details';
-
-export function overview(model: GoalView): string {
-  if (model.error || !model.snapshot) return inspection(model);
-  const {goal, tasks, hidden_closed} = model.snapshot.overview;
-  const labels = new Map(tasks.map(task => [task.id, text(task.title)]));
-  const lines = [
-    compactSummary(model),
-    ...(goal.root.status !== 'open' ? [`Goal: ${goal.root.status}`] : []),
-    '',
-  ];
-  for (const task of tasks.slice(0, 100)) {
-    const claimed =
-      (task.status === 'open' || task.status === 'review') && task.owner;
-    const state =
-      task.children > 0
-        ? `Group (${task.status})`
-        : task.status !== 'open'
-          ? task.status === 'held'
-            ? 'Held'
-            : task.status === 'review'
-              ? 'Review'
-              : task.status === 'done'
-                ? 'Done'
-                : 'Dropped'
-          : claimed
-            ? 'Claimed'
-            : task.blocked_by.length
-              ? 'Waiting'
-              : 'Open';
-    lines.push(`${state.padEnd(9)} ${text(task.title)}`);
-    if (task.blocked_by.length)
-      lines.push(
-        `          Needs: ${task.blocked_by.map(id => labels.get(id) ?? id).join(', ')}`,
-      );
-  }
-  if (!tasks.length)
-    lines.push(
-      hidden_closed ? 'No open slices remain.' : 'No slices recorded.',
-    );
-  if (tasks.length > 100)
-    lines.push(
-      `${tasks.length - 100} more tasks; see 3 details for the full-record command.`,
-    );
-  if (hidden_closed)
-    lines.push(
-      '',
-      `${hidden_closed} closed task details hidden · close and use /goal history`,
-    );
-  if (model.brief?.warning) lines.push('', model.brief.warning);
-  return lines.join('\n');
-}
-
-export function setInspection(
-  view: Inspector,
-  model: GoalView,
-  theme: Theme,
-  section: Section = 'slices',
-  resetScroll = false,
-  treeState?: TreeState,
-): void {
-  let body: Component;
-  if (section === 'slices') body = goalOverview(model, theme, treeState);
-  else {
-    const heading = new PriorityRow();
-    heading.update(
-      {
-        start: [
-          {
-            text: section === 'brief' ? 'Brief' : 'Record details',
-            tone: 'accent',
-            bold: true,
-            priority: 100,
-            shrink: 'clip',
-          },
-        ],
-        end: [],
-      },
-      theme,
-    );
-    body = new VStack([
-      heading,
-      section === 'brief'
-        ? new MarkdownView(
-            model.error ??
-              [model.brief?.text ?? 'Brief not loaded.', model.brief?.warning]
-                .filter(Boolean)
-                .join('\n\n'),
-            theme,
-          )
-        : new OutputView(inspection(model)),
-    ]);
-  }
-  view.setContent(
-    {
-      title: model.snapshot?.overview.goal.root.title ?? 'Goal inspection',
-      detail: model.error
-        ? 'unavailable'
-        : [
-            model.snapshot?.overview.goal.root.status,
-            model.history ? 'history' : section,
-          ]
-            .filter(Boolean)
-            .join(' · '),
-      body,
-      hint:
-        section === 'slices' && treeState
-          ? '1 slices · 2 brief · 3 details · [/] group · ←/→ fold · ↑/↓ scroll · Esc close'
-          : '1 slices · 2 brief · 3 details · ↑/↓ scroll · Enter/Esc close',
-    },
-    theme,
-    resetScroll,
-  );
-}
-
-export class GoalInspector extends Inspector {
-  private goal: {model: GoalView; theme: Theme; redraw: () => void} | undefined;
-  private section: Section = 'slices';
-  private readonly collapsed = new Set<string>();
-  private selected: string | undefined;
-
-  private refresh(resetScroll = false, reveal = false): void {
-    if (!this.goal) return;
-    const {model, theme} = this.goal;
-    const rows =
-      model.snapshot && !model.error
-        ? treeRows(goalTree(model.snapshot), this.collapsed).slice(0, 100)
-        : [];
-    const groups = rows.filter(row => isGroup(row.node));
-    if (!groups.some(row => row.node.task.id === this.selected))
-      this.selected = groups[0]?.node.task.id;
-    setInspection(
-      this,
-      model,
-      theme,
-      this.section,
-      resetScroll,
-      groups.length
-        ? {collapsed: this.collapsed, selected: this.selected}
-        : undefined,
-    );
-    if (reveal && this.section === 'slices' && this.selected) {
-      const index = rows.findIndex(row => row.node.task.id === this.selected);
-      const dependencies = rows
-        .slice(0, index)
-        .filter(row => row.node.task.blocked_by.length).length;
-      this.revealLine(
-        3 +
-          Number(model.snapshot?.overview.goal.root.status !== 'open') +
-          index +
-          dependencies,
-      );
-    }
-  }
-
-  setGoal(model: GoalView, theme: Theme, redraw: () => void): void {
-    const changed = this.goal?.model.focus.id !== model.focus.id;
-    if (changed) {
-      this.section = 'slices';
-      this.collapsed.clear();
-      this.selected = undefined;
-    }
-    this.goal = {model, theme, redraw};
-    if (model.snapshot) {
-      const nodes = goalTree(model.snapshot).nodes;
-      for (const id of this.collapsed)
-        if (!nodes.has(id) || !isGroup(nodes.get(id)!))
-          this.collapsed.delete(id);
-    }
-    this.refresh(changed);
-  }
-  override handleInput(data: string): void {
-    const section = matchesKey(data, '1')
-      ? 'slices'
-      : matchesKey(data, '2')
-        ? 'brief'
-        : matchesKey(data, '3')
-          ? 'details'
-          : undefined;
-    if (section && this.goal) {
-      this.section = section;
-      this.refresh(true);
-      this.goal.redraw();
-    } else if (
-      this.section === 'slices' &&
-      this.goal?.model.snapshot &&
-      !this.goal.model.error &&
-      (matchesKey(data, '[') ||
-        matchesKey(data, ']') ||
-        matchesKey(data, 'space') ||
-        matchesKey(data, 'left') ||
-        matchesKey(data, 'right'))
-    ) {
-      const groups = treeRows(
-        goalTree(this.goal.model.snapshot),
-        this.collapsed,
-      )
-        .slice(0, 100)
-        .filter(row => isGroup(row.node));
-      if (!groups.length) return;
-      if (matchesKey(data, '[') || matchesKey(data, ']')) {
-        const current = Math.max(
-          0,
-          groups.findIndex(row => row.node.task.id === this.selected),
-        );
-        this.selected =
-          groups[
-            (current + (matchesKey(data, ']') ? 1 : groups.length - 1)) %
-              groups.length
-          ]!.node.task.id;
-      } else if (this.selected) {
-        if (
-          matchesKey(data, 'left') ||
-          (matchesKey(data, 'space') && !this.collapsed.has(this.selected))
-        )
-          this.collapsed.add(this.selected);
-        else this.collapsed.delete(this.selected);
-      }
-      this.refresh(false, true);
-      this.goal.redraw();
-    } else super.handleInput(data);
-  }
 }

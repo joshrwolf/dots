@@ -10,6 +10,9 @@ export const workerFrame = (frame: number): string =>
 export interface WorkerActivity {
   readonly assignment: TaskAssignment;
   readonly state: 'running' | 'asking' | 'quiet';
+  readonly label: string;
+  /** Its current phase, headline or tool call, as the worker widget shows it. */
+  readonly doing?: string | undefined;
 }
 export interface WorkerActivitySnapshot {
   readonly workers: readonly WorkerActivity[];
@@ -18,7 +21,11 @@ export interface WorkerActivitySnapshot {
 
 interface WorkerRow {
   readonly assignment?: TaskAssignment;
+  readonly label: string;
   readonly state: string;
+  readonly detail?: string | undefined;
+  readonly headline?: string | undefined;
+  readonly phase?: string | undefined;
   readonly idleMs: number;
   readonly failed?: string | undefined;
   readonly finished?: boolean | undefined;
@@ -39,9 +46,12 @@ export function projectWorkerActivity(
         (row.state !== 'running' && row.state !== 'asking')
       )
         return [];
+      const doing = row.phase ?? row.headline ?? row.detail;
       return [
         {
           assignment: row.assignment,
+          label: row.label,
+          ...(doing ? {doing} : {}),
           state:
             row.state === 'asking'
               ? ('asking' as const)
@@ -69,6 +79,8 @@ export function workerActivitySnapshot(
         (worker.state === 'running' ||
           worker.state === 'asking' ||
           worker.state === 'quiet') &&
+        typeof worker.label === 'string' &&
+        (worker.doing === undefined || typeof worker.doing === 'string') &&
         typeof worker.assignment?.project === 'string' &&
         typeof worker.assignment.id === 'string',
     )

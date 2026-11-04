@@ -199,38 +199,3 @@ export function treeRows(
   }
   return result;
 }
-
-/** Bounded dashboard paths, never detached leaves with their parent context lost. */
-export function previewRows(tree: GoalTree, limit: number): TreeRow[] {
-  const eligible = tree.roots.filter(
-    node => isGroup(node) || tree.visible.has(node.task.id),
-  );
-  const chosen = eligible
-    .map((node, index) => ({node, index}))
-    .sort((a, b) => a.node.rank - b.node.rank || a.index - b.index)
-    .slice(0, limit)
-    .sort((a, b) => a.index - b.index);
-  const rows: TreeRow[] = [];
-  const seen = new Set<string>();
-  for (const {node: root} of chosen) {
-    let node: GoalNode | undefined = root;
-    let depth = 0;
-    while (node && !seen.has(node.task.id) && rows.length < 12) {
-      seen.add(node.task.id);
-      const next: GoalNode | undefined =
-        depth < 3
-          ? node.children
-              .filter(
-                child =>
-                  child.rank <= 1 &&
-                  (isGroup(child) || tree.visible.has(child.task.id)),
-              )
-              .sort((a, b) => a.rank - b.rank)[0]
-          : undefined;
-      rows.push({node, depth, expanded: next !== undefined});
-      node = next;
-      depth++;
-    }
-  }
-  return rows;
-}

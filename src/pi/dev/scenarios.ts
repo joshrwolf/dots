@@ -10,6 +10,7 @@ import {
   Text,
   Spacer,
   VStack,
+  truncateToWidth,
   type Component,
   type Keybinding,
   type TUI,
@@ -18,6 +19,7 @@ import {
   Inspector,
   OutputView,
   Panel,
+  PriorityRow,
   type ToolObservation,
   type ToolPresentation,
 } from '../src/index.ts';
@@ -25,8 +27,11 @@ import {transcript} from './transcript.ts';
 import {workerInspectorScenario} from './workers.ts';
 import {thinkingComponent} from './thinking.ts';
 import {goalActivityFixture, goalFixtures} from './goals.ts';
-import {GoalInspector} from '../extensions/goal/present.ts';
-import {FollowedWidget} from '../extensions/goal/dashboard.ts';
+import {
+  GoalPanel,
+  PANEL_KEY,
+  summaryRow,
+} from '../extensions/goal/panel.ts';
 import {bashPresentation} from '../src/features/tools/bash.ts';
 import {readPresentation} from '../src/features/tools/read.ts';
 import {writePresentation} from '../src/features/tools/write.ts';
@@ -262,9 +267,49 @@ const thinkingScenario: Scenario = {
   },
 };
 
+/** Fixture frame: the panel overlays the transcript's top right, above the
+ * editor and its summary line; narrow widths stack it full width. */
+class GoalFrame extends VStack {
+  private readonly transcript: Component;
+  private readonly dock: Component;
+  private panel: Component | undefined;
+  constructor(transcript: Component, dock: Component) {
+    super();
+    this.transcript = transcript;
+    this.dock = dock;
+  }
+  show(panel: Component | undefined): void {
+    this.panel = panel;
+    this.invalidate();
+  }
+  override render(width: number): string[] {
+    if (width <= 0) return [];
+    const dock = this.dock.render(width);
+    const panelWidth = Math.min(width, Math.max(64, Math.floor(width * 0.45)));
+    if (!this.panel) return [...this.transcript.render(width), ...dock];
+    const panel = this.panel.render(panelWidth);
+    if (panelWidth > width - 20) return [...panel, ...dock];
+    const left = width - panelWidth - 1;
+    const transcript = this.transcript.render(left);
+    return [
+      ...Array.from(
+        {length: Math.max(panel.length, transcript.length)},
+        (_, i) =>
+          truncateToWidth(transcript[i] ?? '', left, '', true) +
+          ' ' +
+          (panel[i] ?? ''),
+      ),
+      ...dock,
+    ];
+  }
+}
+
 function goalScenario(): Scenario {
   const states = [
     [8, 'nested groups'],
+    [11, 'assigned live worker'],
+    [12, 'worker asking'],
+    [13, 'worker quiet'],
     [9, 'closed history'],
     [10, 'incomplete snapshot'],
     [0, 'claimed'],
@@ -275,13 +320,12 @@ function goalScenario(): Scenario {
     [5, 'loading'],
     [6, 'brief warning'],
     [7, 'empty'],
-    [11, 'assigned live worker'],
-    [12, 'worker asking'],
-    [13, 'worker quiet'],
   ] as const;
+  // The fixture's claim owner stands in for this session.
+  const owner = 'fixture-reviewer';
   return {
     id: 'goal',
-    title: 'Goal dashboard',
+    title: 'Goal panel',
     phases: states.map(([, label]) => label),
     create(context) {
       const preview = new Inspector(
@@ -290,17 +334,18 @@ function goalScenario(): Scenario {
         context.redraw,
         context.height,
       );
-      const inspection = new GoalInspector(
+      const panel = new GoalPanel(
         context.bindings,
-        context.close,
+        {release() {}, close() {}, cycle() {}},
         context.redraw,
-        context.height,
+        () => Math.max(1, (context.height?.() ?? 20) - 2),
       );
-      const widget = new FollowedWidget();
+      panel.focused = true;
+      const summary = new PriorityRow();
       let expanded = false;
       const component = Object.assign(new VStack(), {
         handleInput(data: string) {
-          (expanded ? inspection : preview).handleInput(data);
+          (expanded ? panel : preview).handleInput(data);
         },
       });
       return {
@@ -308,28 +353,54 @@ function goalScenario(): Scenario {
         update(phase, nextExpanded, theme) {
           expanded = nextExpanded;
           const views = goalFixtures(states[phase]![0]);
-          widget.update(
-            views,
-            views[0]!.focus.id,
-            theme,
-            goalActivityFixture(states[phase]![0], animationFrame()),
+          const activity = goalActivityFixture(
+            states[phase]![0],
+            animationFrame(),
           );
+          summary.update(
+            summaryRow(views, views[0]!.focus.id, activity, owner),
+            theme,
+          );
+          panel.setGoal(
+            {view: views[0]!, activity, owner, followed: views.length},
+            theme,
+          );
+          const frame = new GoalFrame(
+            new VStack([
+              new UserMessageComponent(
+                'Coordinate the export interface goal.',
+                undefined,
+                0,
+              ),
+              new Spacer(1),
+              new Text(
+                theme.fg('text', 'I’ll check the remaining slices first.'),
+                0,
+                0,
+              ),
+            ]),
+            new VStack([
+              new Spacer(1),
+              ...(context.createEditor ? [context.createEditor(theme)] : []),
+              summary,
+            ]),
+          );
+          frame.show(expanded ? panel : undefined);
           component.clear();
-          if (expanded) {
-            inspection.setGoal(views[0]!, theme, context.redraw);
-            component.addChild(inspection);
-          } else {
-            preview.setContent(
-              {
-                title: 'Goal dashboard',
-                detail: 'persistent widget',
-                body: widget,
-                hint: 'Space state · E inspect · T theme · ↑/↓ scroll · Esc close',
-              },
-              theme,
-            );
-            component.addChild(preview);
-          }
+          preview.setContent(
+            {
+              title: 'Goal panel',
+              detail: expanded
+                ? `panel open · ${PANEL_KEY} toggles`
+                : 'summary line',
+              body: frame,
+              hint: expanded
+                ? 'Space state · E hide panel · 1/2/3 · h · [/] ←/→ fold · Esc close'
+                : 'Space state · E show panel · T theme · ↑/↓ scroll · Esc close',
+            },
+            theme,
+          );
+          component.addChild(preview);
         },
       };
     },
@@ -571,7 +642,7 @@ export const scenarios: readonly Scenario[] = [
           job.command =
             "printf 'Checking presentation fixtures\\n'; npm test -- --reporter=spec; printf 'Check complete\\n'";
           if (phase === 2) job.supervisorExit = {code: null, signal: 'SIGKILL'};
-          const goals = new FollowedWidget();
+          const goals = new PriorityRow();
           const followed = goalFixtures(
             phase === 9
               ? 2
@@ -584,10 +655,12 @@ export const scenarios: readonly Scenario[] = [
                     : 8,
           );
           goals.update(
-            followed,
-            followed[0]!.focus.id,
+            summaryRow(
+              followed,
+              followed[0]!.focus.id,
+              phase === 0 ? goalActivityFixture(11, animationFrame()) : undefined,
+            ),
             theme,
-            phase === 0 ? goalActivityFixture(11, animationFrame()) : undefined,
           );
           const activity = workers.length
             ? createWidget(() => workers, theme, undefined, animationFrame)

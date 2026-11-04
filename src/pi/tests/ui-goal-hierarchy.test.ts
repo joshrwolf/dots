@@ -3,13 +3,12 @@ import test from 'node:test';
 import {initTheme} from '@earendil-works/pi-coding-agent';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
 import {goalFixtures} from '../dev/goals.ts';
-import {GoalWidget, goalOverview} from '../extensions/goal/dashboard.ts';
-import {GoalInspector} from '../extensions/goal/present.ts';
+import {GoalPanel} from '../extensions/goal/panel.ts';
+import type {GoalView} from '../extensions/goal/present.ts';
 import {orientation} from '../extensions/goal/context.ts';
 import {
   goalTree,
   groupSummary,
-  previewRows,
   treeRows,
 } from '../extensions/goal/hierarchy.ts';
 import {
@@ -22,6 +21,17 @@ import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-ag
 initTheme('dark', false);
 const theme = getThemeByName('dark')!;
 const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const panel = (view: GoalView, height = 30) => {
+  const result = new GoalPanel(
+    {matches: () => false},
+    {release() {}, close() {}, cycle() {}},
+    () => {},
+    () => height,
+  );
+  result.focused = true;
+  result.setGoal({view, followed: 1}, theme);
+  return result;
+};
 
 test('group totals use complete leaf records, not visible children or group statuses', () => {
   const model = goalFixtures(8)[0]!;
@@ -100,37 +110,9 @@ test('dropped leaves remain in denominators, released tasks are not claims, and 
   assert.equal(treeRows(tree)[1]?.depth, 1);
 });
 
-test('previews keep attention slices under their groups and report hidden rows', () => {
-  const model = goalFixtures(8)[0]!;
-  const tree = goalTree(model.snapshot!);
-  assert.deepEqual(
-    previewRows(tree, 4).map(row => [row.node.task.id, row.depth]),
-    [
-      ['t-888888', 0],
-      ['t-333333', 1],
-      ['t-aaaaaa', 0],
-      ['t-cccccc', 1],
-    ],
-  );
-  const widget = new GoalWidget();
-  widget.update(model, theme);
-  const output = plain(widget.render(160));
-  assert.match(output, /! Documentation › Resolve documentation policy/);
-  assert.match(output, /Core interface › Consumer migration › Adapt consumers/);
-  assert.match(output, /more visible slices/);
-  assert.equal(widget.render(160).length, 4);
-  assert.doesNotMatch(output, /Current:|running|landed/);
-});
-
 test('folding is presentation-only, nested, preserved across refresh, and history reveals closed leaves', () => {
   const model = goalFixtures(8)[0]!;
-  const inspector = new GoalInspector(
-    {matches: () => false},
-    () => {},
-    () => {},
-    () => 30,
-  );
-  inspector.setGoal(model, theme, () => {});
+  const inspector = panel(model);
   const lines = inspector.render(160).map(stripTerminalSequences);
   assert.equal(
     lines.filter(line => line.startsWith('╭')).length,
@@ -139,7 +121,7 @@ test('folding is presentation-only, nested, preserved across refresh, and histor
   );
   assert.match(
     lines.join('\n'),
-    /Slices[\s\S]*Recorded progress · not live execution/,
+    /Now[\s\S]*Tasks[\s\S]*Result[\s\S]*Recorded state · not live execution/,
   );
   assert.match(plain(inspector.render(160)), /Consumer migration/);
   inspector.handleInput('\x1b[D'); // Fold selected Core interface.
@@ -150,7 +132,7 @@ test('folding is presentation-only, nested, preserved across refresh, and histor
   );
   assert.match(output, /Core interface · 1\/3 done · 1 claimed/);
   assert.match(output, /Documentation/);
-  inspector.setGoal(model, theme, () => {});
+  inspector.setGoal({view: model, followed: 1}, theme);
   assert.doesNotMatch(plain(inspector.render(160)), /Consumer migration/);
   inspector.handleInput('\x1b[C');
   assert.match(plain(inspector.render(160)), /Consumer migration/);
@@ -167,7 +149,7 @@ test('folding is presentation-only, nested, preserved across refresh, and histor
   inspector.handleInput(' ');
   assert.match(plain(inspector.render(160)), /Adapt consumers/);
   const history = goalFixtures(9)[0]!;
-  inspector.setGoal(history, theme, () => {});
+  inspector.setGoal({view: history, followed: 1}, theme);
   assert.match(plain(inspector.render(160)), /Define shared types/);
   assert.match(plain(inspector.render(160)), /Document shared types/);
   assert.equal(treeRows(goalTree(history.snapshot!)).length, 9);
@@ -190,9 +172,7 @@ test('partial, cyclic and duplicate hierarchies never report group completion fr
     for (const node of tree.nodes.values())
       assert.equal(node.totals, undefined);
     assert.ok(treeRows(tree).length <= originals.length + 1);
-    const output = plain(
-      goalOverview({...partial, snapshot}, theme).render(160),
-    );
+    const output = plain(panel({...partial, snapshot}, 60).render(160));
     assert.match(output, /totals unavailable/);
     assert.doesNotMatch(output, /1\/3 done|0\/1 done/);
   }
@@ -203,18 +183,16 @@ test('nested rows remain bounded in both themes; deep selection scrolls into vie
     for (const phase of [8, 9, 10]) {
       const view = goalFixtures(phase)[0]!;
       const theme = getThemeByName(name)!;
-      const widget = new GoalWidget();
-      widget.update(view, theme);
-      for (const component of [widget, goalOverview(view, theme)])
-        for (const width of [0, 1, 2, 12, 30, 60, 120, 240]) {
-          const lines = component.render(width);
-          assert.ok(lines.length < 30);
-          assert.ok(
-            lines.every(line => visibleWidth(line) <= width),
-            `${name}/${phase}/${width}: ${plain(lines)}`,
-          );
-          assert.doesNotMatch(plain(lines), /\uFFFD|\x1b|\x07/);
-        }
+      const component = panel(view, 40);
+      for (const width of [0, 1, 2, 12, 30, 60, 120, 240]) {
+        const lines = component.render(width);
+        assert.ok(lines.length < 45);
+        assert.ok(
+          lines.every(line => visibleWidth(line) <= width),
+          `${name}/${phase}/${width}: ${plain(lines)}`,
+        );
+        assert.doesNotMatch(plain(lines), /\uFFFD|\x1b|\x07/);
+      }
     }
   const model = goalFixtures(8)[0]!;
   const base = model.snapshot!;
@@ -259,13 +237,7 @@ test('nested rows remain bounded in both themes; deep selection scrolls into vie
     },
   };
   assert.equal(goalTree(snapshot).warning, undefined);
-  const inspector = new GoalInspector(
-    {matches: () => false},
-    () => {},
-    () => {},
-    () => 6,
-  );
-  inspector.setGoal({...model, snapshot}, theme, () => {});
+  const inspector = panel({...model, snapshot}, 6);
   inspector.render(120);
   for (let i = 0; i < 15; i++) {
     inspector.handleInput(']');
@@ -273,5 +245,4 @@ test('nested rows remain bounded in both themes; deep selection scrolls into vie
   }
   assert.match(plain(inspector.render(120)), /Nested group 15/);
   assert.match(plain(inspector.render(120)), /level 16/);
-  assert.ok(previewRows(goalTree(snapshot), 4).length <= 12);
 });
