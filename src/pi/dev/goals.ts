@@ -2,6 +2,7 @@ import type {GoalView} from '../extensions/goal/present.ts';
 import type {WorkerActivitySnapshot} from '../src/ui/worker-activity.ts';
 import {
   withHierarchy,
+  type DependencyGraph,
   type GoalSnapshot,
   type GoalTask,
 } from '../extensions/goal/source.ts';
@@ -28,6 +29,80 @@ const task = (
   last_event: null,
   ...fields,
 });
+// Drawn by dots task goal show for the same tasks and edges.
+const graph = (
+  rows: [string, ...string[]][],
+  layered: string[],
+): DependencyGraph => ({
+  rows: rows.map(([task, ...lines]) => ({task, lines})),
+  layered: layered.join('\n'),
+  notes: [],
+});
+const flatGraph = {
+  graph: graph(
+    [
+      ['t-222222', '✓'],
+      ['t-333333', '●', '│'],
+      ['t-444444', '◌'],
+      ['t-555555', '○'],
+    ],
+    [
+      '  [✓ Define shared types]   [● Update exports]   [○ Document the interface]',
+      '                                     └┐',
+      '                                      ↓',
+      '                             [◌ Adapt consumers]',
+    ],
+  ),
+  open_graph: graph(
+    [
+      ['t-333333', '●', '│'],
+      ['t-444444', '◌'],
+      ['t-555555', '○'],
+    ],
+    [
+      '  [● Update exports]   [○ Document the interface]',
+      '           └─────────────┐',
+      '                         ↓',
+      '                [◌ Adapt consumers]',
+    ],
+  ),
+};
+const nestedGraph = (policy: string) => ({
+  graph: graph(
+    [
+      ['t-222222', '✓  ', '├─╮'],
+      ['t-333333', '● │', '│ │'],
+      ['t-444444', '◌ │', '  │'],
+      ['t-bbbbbb', '  ✓'],
+      ['t-cccccc', `${policy}  `],
+      ['t-555555', '○  '],
+    ],
+    [
+      '  [✓ Define shared types · Core interface]   [! Resolve documentation policy · Documentation]   [○ Document the interface · Documentation]',
+      '                      └────────────────────────┬────────────────────────────────────────┐',
+      '                                               ↓                                        ↓',
+      '                              [● Update exports · Core interface]   [✓ Document shared types · Documentation]',
+      '                                               └──────────────────────┐',
+      '                                                                      ↓',
+      '                                                  [◌ Adapt consumers · Consumer migration]',
+    ].map(line => line.replace('[!', `[${policy}`)),
+  ),
+  open_graph: graph(
+    [
+      ['t-333333', '●', '│'],
+      ['t-444444', '◌'],
+      ['t-cccccc', policy],
+      ['t-555555', '○'],
+    ],
+    [
+      '  [● Update exports · Core interface]   [! Resolve documentation policy · Documentation]   [○ Document the interface · Documentation]',
+      '                   └───────────────────────────────────────────────┐',
+      '                                                                   ↓',
+      '                                               [◌ Adapt consumers · Consumer migration]',
+    ].map(line => line.replace('[!', `[${policy}`)),
+  ),
+});
+
 export function goalFixtures(phase = 0): GoalView[] {
   if (phase >= 8) return [nestedGoalFixture(phase)];
   const root = task('t-111111', 'Unify the export interface', {
@@ -84,6 +159,7 @@ export function goalFixtures(phase = 0): GoalView[] {
           review: 0,
         },
       },
+      ...(phase === 0 || phase === 3 ? flatGraph : {}),
     },
     brief: {
       text: '# Shared export interface\n\nPreserve compatibility, make ownership explicit, and verify the public entrypoints.',
@@ -186,6 +262,7 @@ function nestedGoalFixture(phase: number): GoalView {
       },
       tasks,
       hidden_closed: 0,
+      ...nestedGraph(phase >= 11 ? '○' : '!'),
       progress: {
         total: 6,
         done: 2,
@@ -208,6 +285,8 @@ function nestedGoalFixture(phase: number): GoalView {
               t => t.status !== 'done' && t.id !== 't-999999',
             ),
             hidden_closed: 3,
+            graph: complete.overview.open_graph!,
+            open_graph: null,
           },
         }
       : withHierarchy(complete, phase === 9);

@@ -2,7 +2,9 @@ import type {KeybindingsManager, Theme} from '@earendil-works/pi-coding-agent';
 import {
   VStack,
   matchesKey,
+  sliceByColumn,
   truncateToWidth,
+  visibleWidth,
   Text,
   type Component,
   type KeyId,
@@ -282,9 +284,9 @@ function taskState(task: GoalTask): TaskState {
   if (task.status === 'dropped') return {label: '− Dropped', tone: 'dim'};
   if (task.status === 'review')
     return {label: '◇ Review', tone: 'accent', emphasized: true};
-  if (task.owner) return {label: '› Claimed', tone: 'accent', emphasized: true};
-  if (task.blocked_by.length) return {label: '· Waiting', tone: 'muted'};
-  return {label: '· Open', tone: 'muted'};
+  if (task.owner) return {label: '● Claimed', tone: 'accent', emphasized: true};
+  if (task.blocked_by.length) return {label: '◌ Waiting', tone: 'muted'};
+  return {label: '○ Open', tone: 'muted'};
 }
 
 const glyph = (value: string): Segment => ({
@@ -294,40 +296,66 @@ const glyph = (value: string): Segment => ({
   priority: 100,
   shrink: 'clip',
 });
-function treeRow(
-  item: TreeRow,
+/** One selectable task in the list: an outline row, or a graph row with its link lines. */
+interface Item {
+  readonly task: GoalTask;
+  readonly tree?: TreeRow;
+  readonly lines?: readonly string[];
+}
+
+/**
+ * An outline row indents by depth and folds groups; a graph row starts with
+ * dots' prefix and names the task's group. Graph link lines follow their row.
+ */
+function listRow(
+  {task, tree, lines = []}: Item,
+  group: string | undefined,
   theme: Theme,
   owner: string | undefined,
   selected: boolean,
-): Component {
-  const {node, depth, expanded} = item;
-  const group = isGroup(node);
-  const state = taskState(node.task);
-  const closed = node.task.status === 'done' || node.task.status === 'dropped';
-  return row(
+  width: number,
+): string[] {
+  const folding = tree && isGroup(tree.node);
+  const depth = tree?.depth ?? 0;
+  const state = taskState(task);
+  const closed = task.status === 'done' || task.status === 'dropped';
+  const [prefix = '', ...links] = lines;
+  const line = row(
     {
       // The selection marker takes the place of two indent cells.
       indent: Math.min(depth, 6) * 2 + (selected ? 0 : 2),
       layout: 'inline',
       groupSeparator: ' · ',
+      endSeparator: ' · ',
       start: [
         ...(selected ? [glyph('→')] : []),
-        group
-          ? glyph(expanded ? '▾' : '▸')
+        ...(tree
+          ? []
+          : [
+              {
+                text: prefix,
+                tone: 'muted' as const,
+                width: visibleWidth(prefix),
+                priority: 100,
+                shrink: 'clip' as const,
+              },
+            ]),
+        folding
+          ? glyph(tree.expanded ? '▾' : '▸')
           : {
-              text: state.label,
+              text: tree ? state.label : state.label.slice(2),
               tone: state.tone,
               bold: state.emphasized ?? false,
-              width: 12,
+              width: tree ? 12 : 8,
               minWidth: 1,
               priority: 100,
               shrink: 'clip',
             },
         {
-          text: `${depth > 6 ? `[level ${depth + 1}] ` : ''}${text(node.task.title)}`,
+          text: `${depth > 6 ? `[level ${depth + 1}] ` : ''}${text(task.title)}`,
           tone:
-            state.emphasized && !group ? 'accent' : closed ? 'muted' : 'text',
-          bold: group || selected || (state.emphasized ?? false),
+            state.emphasized && !folding ? 'accent' : closed ? 'muted' : 'text',
+          bold: folding || selected || (state.emphasized ?? false),
           minWidth: 8,
           priority: 80,
           shrink: 'clip',
@@ -335,22 +363,32 @@ function treeRow(
       ],
       end: [
         {
-          text: group
-            ? groupSummary(node)
-            : claimed(node.task)
-              ? node.task.owner === owner
+          text: group ? text(group, 64) : '',
+          tone: 'dim',
+          priority: 50,
+          shrink: 'omit',
+        },
+        {
+          text: folding
+            ? groupSummary(tree.node)
+            : claimed(task)
+              ? task.owner === owner
                 ? 'you'
-                : text(node.task.owner!, 64)
+                : text(task.owner!, 64)
               : '',
-          tone: node.totals?.held ? 'warning' : 'muted',
-          minWidth: group ? 8 : 0,
+          tone: tree?.node.totals?.held ? 'warning' : 'muted',
+          minWidth: folding ? 8 : 0,
           priority: 70,
-          shrink: group ? 'clip' : 'omit',
+          shrink: folding ? 'clip' : 'omit',
         },
       ],
     },
     theme,
-  );
+  ).render(width);
+  return [
+    ...line,
+    ...links.map(link => truncateToWidth(theme.fg('dim', `  ${link}`), width)),
+  ];
 }
 
 const wrapped = (value: string, theme: Theme, tone: Tone = 'text') =>
@@ -455,8 +493,11 @@ export interface PanelActions {
 export class GoalPanel extends Inspector {
   private model: PanelModel | undefined;
   private theme: Theme | undefined;
-  private section: 'overview' | 'brief' | 'record' = 'overview';
+  private section: 'overview' | 'brief' | 'record' | 'graph' = 'overview';
   private history = false;
+  private outline = false;
+  /** Layered graph's first visible column. */
+  private column = 0;
   private readonly collapsed = new Set<string>();
   private selected: string | undefined;
   private readonly actions: PanelActions;
@@ -488,15 +529,38 @@ export class GoalPanel extends Inspector {
     return {...view, snapshot: withHierarchy(snapshot, true), history: true};
   }
 
-  private rows(view: GoalView | undefined): TreeRow[] {
-    return view?.snapshot && !view.error
-      ? treeRows(goalTree(view.snapshot), this.collapsed)
-      : [];
+  private graph(view: GoalView | undefined) {
+    const overview = view?.error ? undefined : view?.snapshot?.overview;
+    return this.history
+      ? overview?.graph
+      : (overview?.open_graph ?? overview?.graph);
+  }
+
+  /** The dependency graph's rows, or the group outline on request or without a graph. */
+  private rows(view: GoalView | undefined): Item[] {
+    const snapshot = view?.error ? undefined : view?.snapshot;
+    if (!snapshot) return [];
+    const graph = this.graph(view);
+    if (this.outline || !graph)
+      return treeRows(goalTree(snapshot), this.collapsed).map(tree => ({
+        task: tree.node.task,
+        tree,
+      }));
+    const tasks = new Map(
+      (snapshot.allTasks ?? snapshot.overview.tasks).map(task => [
+        task.id,
+        task,
+      ]),
+    );
+    return graph.rows.flatMap(({task, lines}) => {
+      const found = tasks.get(task);
+      return found ? [{task: found, lines}] : [];
+    });
   }
 
   /** The selected row: the chosen task if visible, else this session's current work. */
-  private index(view: GoalView, rows: readonly TreeRow[]): number {
-    const at = rows.findIndex(item => item.node.task.id === this.selected);
+  private index(view: GoalView, rows: readonly Item[]): number {
+    const at = rows.findIndex(item => item.task.id === this.selected);
     if (at >= 0) return at;
     const {mine, workers} = goalWork(
       view,
@@ -506,7 +570,7 @@ export class GoalPanel extends Inspector {
     const now = mine[0] ?? workers.find(({task}) => task)?.task;
     return Math.max(
       0,
-      rows.findIndex(({node}) => node.task === now),
+      rows.findIndex(({task}) => task.id === now?.id),
     );
   }
 
@@ -515,6 +579,7 @@ export class GoalPanel extends Inspector {
     const status = model.view.snapshot?.overview.goal.root.status;
     if (changed) {
       this.section = 'overview';
+      this.column = 0;
       this.collapsed.clear();
       this.selected = undefined;
       this.history = status === 'done' || status === 'dropped';
@@ -545,10 +610,20 @@ export class GoalPanel extends Inspector {
                   .join('\n\n'),
               theme,
             )
-          : new OutputView(inspection(view));
+          : this.section === 'record'
+            ? new OutputView(inspection(view))
+            : this.layered(view, theme);
+    const graphed = Boolean(this.graph(view));
     const keys = [
-      '1 overview · 2 brief · 3 record',
-      this.section === 'overview' ? '↑/↓ select · ←/→ fold' : '↑/↓ scroll',
+      '1 overview · 2 brief · 3 record · 4 graph',
+      this.section === 'overview'
+        ? `↑/↓ select${this.outline || !graphed ? ' · ←/→ fold' : ''}`
+        : this.section === 'graph'
+          ? '↑/↓ ←/→ scroll'
+          : '↑/↓ scroll',
+      this.section === 'overview' &&
+        graphed &&
+        (this.outline ? 'o graph' : 'o outline'),
       view.snapshot?.allTasks && 'h closed',
       model.followed > 1 && 'Tab next goal',
       `Esc/${PANEL_KEY} close`,
@@ -573,38 +648,53 @@ export class GoalPanel extends Inspector {
     );
   }
 
-  /** The tree rows around the selection, with omissions and hierarchy notes. */
+  /** The list lines around the selection, with omissions and notes. */
   private window(
     view: GoalView,
     tree: GoalTree,
-    rows: readonly TreeRow[],
+    rows: readonly Item[],
     notes: string[],
     height: number,
     width: number,
   ): string[] {
     const theme = this.theme!;
     const selected = this.index(view, rows);
+    const owner = this.model?.owner;
+    const groups = new Map(
+      (view.snapshot?.allTasks ?? view.snapshot?.overview.tasks ?? []).map(
+        task => [task.id, task.title],
+      ),
+    );
+    const blocks = rows.map((item, i) =>
+      listRow(
+        item,
+        item.tree || !item.task.parent
+          ? undefined
+          : groups.get(item.task.parent),
+        theme,
+        owner,
+        i === selected,
+        width,
+      ),
+    );
+    const lines = blocks.flat();
+    const start = blocks.slice(0, selected).flat().length;
     let space = Math.max(0, height - notes.length);
-    if (rows.length > space) {
-      space = Math.max(0, space - 1);
-      notes.unshift(`${space} of ${rows.length} rows · ↑/↓ select`);
-    }
+    if (lines.length > space) space = Math.max(0, space - 1);
     const top = Math.max(
       0,
-      Math.min(selected - Math.floor(space / 2), rows.length - space),
+      Math.min(start - Math.floor(space / 2), lines.length - space),
     );
+    const shown = lines.slice(top, top + space);
     return clip(
       [
-        ...rows
-          .slice(top, top + space)
-          .flatMap((item, i) =>
-            treeRow(
-              item,
+        ...shown,
+        ...(shown.length < lines.length
+          ? note(
+              `lines ${top + 1}–${top + shown.length} of ${lines.length} · ↑/↓ select`,
               theme,
-              this.model?.owner,
-              top + i === selected,
-            ).render(width),
-          ),
+            ).render(width)
+          : []),
         ...notes.flatMap(value =>
           note(value, theme, value === tree.warning ? 'warning' : 'dim').render(
             width,
@@ -617,10 +707,39 @@ export class GoalPanel extends Inspector {
     );
   }
 
+  /** The layered graph, clipped at the current column; the viewport scrolls rows. */
+  private layered(view: GoalView, theme: Theme): Component {
+    const graph = this.graph(view);
+    const lines = graph
+      ? [
+          ...graph.layered.split('\n'),
+          ...graph.notes.map(note => theme.fg('warning', note)),
+        ]
+      : [theme.fg('muted', 'No dependency graph from dots.')];
+    const widest = Math.max(0, ...lines.map(line => visibleWidth(line)));
+    return {
+      render: (width: number) => {
+        this.column = Math.max(0, Math.min(this.column, widest - width));
+        return [
+          ...(widest > width
+            ? [
+                theme.fg(
+                  'dim',
+                  `columns ${this.column + 1}–${this.column + width} of ${widest} · ←/→`,
+                ),
+              ]
+            : []),
+          ...lines.map(line => sliceByColumn(line, this.column, width, true)),
+        ];
+      },
+      invalidate() {},
+    };
+  }
+
   /** Header, then the task tree beside (or above) the selected task's detail, in exactly `height` lines. */
   private overview(
     view: GoalView,
-    rows: readonly TreeRow[],
+    rows: readonly Item[],
     width: number,
   ): string[] {
     const model = this.model!;
@@ -649,6 +768,7 @@ export class GoalPanel extends Inspector {
     ).length;
     const attention = [
       tree.warning && 'partial tree',
+      ...(this.graph(view)?.notes.length ? ['graph notes · 4 graph'] : []),
       work.workers.length &&
         `${work.workers.length} worker${work.workers.length === 1 ? '' : 's'}${asking ? ` · ${asking} asking` : ''}`,
       view.brief?.warning && text(view.brief.warning),
@@ -666,8 +786,9 @@ export class GoalPanel extends Inspector {
     // Tree and detail claim rows first: a heading, up to five tasks with their
     // notes, and when stacked a short detail. The goal result takes what remains,
     // down to one line, then only the record tab shows it.
+    const listed = rows.reduce((n, item) => n + (item.lines?.length ?? 1), 0);
     const treeMin =
-      1 + Math.min(rows.length, 5) + notes.length + (rows.length > 5 ? 1 : 0);
+      1 + Math.min(listed, 5) + notes.length + (listed > 5 ? 1 : 0);
     const reserved = treeMin + (split ? 0 : 4);
     const summary = wrapped(
       theme.fg('muted', compactSummary(view)) +
@@ -726,7 +847,7 @@ export class GoalPanel extends Inspector {
       [
         ...heading('Detail', '', theme).render(detailWidth),
         ...detail(
-          rows[this.index(view, rows)]?.node.task ?? root,
+          rows[this.index(view, rows)]?.task ?? root,
           tree,
           work,
           model,
@@ -759,12 +880,29 @@ export class GoalPanel extends Inspector {
         ? 'brief'
         : matchesKey(data, '3')
           ? 'record'
-          : undefined;
+          : matchesKey(data, '4')
+            ? 'graph'
+            : undefined;
     const view = this.shown();
     const rows = this.rows(view);
+    const sideways = matchesKey(data, 'left')
+      ? -1
+      : matchesKey(data, 'right')
+        ? 1
+        : 0;
     if (section) {
       this.section = section;
+      this.column = 0;
       this.refresh(true);
+    } else if (this.section === 'graph' && sideways) {
+      this.column = Math.max(0, this.column + sideways * 8);
+    } else if (
+      matchesKey(data, 'o') &&
+      this.section === 'overview' &&
+      this.graph(view)
+    ) {
+      this.outline = !this.outline;
+      this.refresh();
     } else if (matchesKey(data, 'h') && this.model?.view.snapshot?.allTasks) {
       this.history = !this.history;
       this.refresh();
@@ -785,36 +923,30 @@ export class GoalPanel extends Inspector {
     this.requestRender();
   }
 
-  /** Tree keys: select, fold, and step to a leaf's parent. */
-  private move(
-    data: string,
-    view: GoalView,
-    rows: readonly TreeRow[],
-  ): boolean {
+  /** List keys: select; in the outline, fold and step to a leaf's parent. */
+  private move(data: string, view: GoalView, rows: readonly Item[]): boolean {
     const at = this.index(view, rows);
-    const item = rows[at]!;
+    const {task, tree} = rows[at]!;
     const step = matchesKey(data, 'up') ? -1 : matchesKey(data, 'down') ? 1 : 0;
-    const id = item.node.task.id;
-    this.selected = id;
+    this.selected = task.id;
+    const group = tree && isGroup(tree.node);
     if (step)
       this.selected =
-        rows[Math.max(0, Math.min(rows.length - 1, at + step))]!.node.task.id;
+        rows[Math.max(0, Math.min(rows.length - 1, at + step))]!.task.id;
     else if (
-      isGroup(item.node) &&
-      (matchesKey(data, 'left') || (matchesKey(data, 'space') && item.expanded))
+      group &&
+      (matchesKey(data, 'left') || (matchesKey(data, 'space') && tree.expanded))
     )
-      this.collapsed.add(id);
+      this.collapsed.add(task.id);
+    else if (group && (matchesKey(data, 'right') || matchesKey(data, 'space')))
+      this.collapsed.delete(task.id);
     else if (
-      isGroup(item.node) &&
-      (matchesKey(data, 'right') || matchesKey(data, 'space'))
-    )
-      this.collapsed.delete(id);
-    else if (
+      tree &&
       matchesKey(data, 'left') &&
-      item.node.task.parent &&
-      rows.some(r => r.node.task.id === item.node.task.parent)
+      task.parent &&
+      rows.some(r => r.task.id === task.parent)
     )
-      this.selected = item.node.task.parent;
+      this.selected = task.parent;
     else return false;
     return true;
   }

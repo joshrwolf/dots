@@ -262,7 +262,7 @@ test('the panel shows live work, the claimed task tree and the goal result witho
       }
       const output = plain(view.render(120));
       if (phase === 0) {
-        assert.match(output, /→ › Claimed +Update exports · you/);
+        assert.match(output, /→ ● Claimed +Update exports · you/);
         assert.match(output, /Detail[\s\S]*Claimed by this session/);
       }
       if (phase === 1) assert.match(output, /! Held +Resolve compatibility/);
@@ -330,7 +330,7 @@ test('panel keys select sections, closed tasks and goals; Esc returns input and 
   assert.match(plain(hidden.render(120)), /with closed/);
 });
 
-test('the tree selects tasks, folds groups and details the selection', () => {
+test('the graph lists leaves by dependency; the outline folds groups', () => {
   const {result: view} = panel(goalFixtures(8)[0]!);
   const detail = () =>
     plain(view.render(160))
@@ -342,7 +342,34 @@ test('the tree selects tasks, folds groups and details the selection', () => {
     /Update exports[\s\S]*Claimed by this session/,
     'starts on this session’s claim',
   );
+  assert.match(
+    plain(view.render(160)),
+    /→ ● Claimed +Update exports · Core interface · you.*\n│ +│ .*\n.*◌ Waiting +Adapt consumers · Consumer migration/,
+    'dots draws the edge; the group follows the title',
+  );
   view.handleInput('\x1b[B');
+  assert.match(detail(), /Adapt consumers[\s\S]*Needs: Update exports · open/);
+  view.handleInput('h');
+  assert.match(
+    plain(view.render(160)),
+    /✓ +Done +Define shared types[\s\S]*├─╮[\s\S]*→ ◌ │ Waiting +Adapt consumers/,
+    'closed leaves join the graph and keep the selection',
+  );
+  view.handleInput('4');
+  const layered = plain(view.render(90));
+  assert.match(layered, /columns 1–86 of 138 · ←\/→/);
+  assert.match(layered, /\[✓ Define shared types · Core interface\]/);
+  view.handleInput('\x1b[C');
+  assert.match(plain(view.render(90)), /columns 9–94 of 138/);
+  assert.doesNotMatch(plain(view.render(90)), /\[✓ Define/);
+  view.handleInput('1');
+  view.handleInput('h');
+  view.handleInput('o');
+  assert.match(
+    plain(view.render(160)),
+    /→ ◌ Waiting +Adapt consumers[\s\S]*o graph/,
+  );
+  view.handleInput('\x1b[A');
   assert.match(plain(view.render(160)), /→ ▾ Consumer migration/);
   assert.match(detail(), /0\/1 done/);
   view.handleInput('\x1b[D');
@@ -375,7 +402,7 @@ test('short popups give rows to the tree and detail before the goal result', () 
     output
       .split('\n')
       .filter(line =>
-        /[▾▸] |✓ Done|› Claimed|· Waiting|! Held|· Open/.test(line),
+        /(Done|Claimed|Waiting|Held|Open) {2,}\w/.test(line.split(' │ ')[0]!),
       ).length;
   const at = (width: number, height: number) => {
     const view = new GoalPanel(
@@ -390,18 +417,18 @@ test('short popups give rows to the tree and detail before the goal result', () 
     assert.doesNotMatch(output, / 0 of /);
     return output;
   };
-  let output = at(160, 11);
-  assert.ok(tasks(output) >= 5, output);
+  let output = at(160, 10);
+  assert.equal(tasks(output), 4, output);
   assert.match(output, /Goal result ─/, 'a heading and one line fit');
-  output = at(160, 10);
-  assert.ok(tasks(output) >= 5, output);
+  output = at(160, 9);
+  assert.equal(tasks(output), 4, output);
   assert.match(output, /Goal result Shared types landed/, 'one line');
   output = at(160, 8);
-  assert.ok(tasks(output) >= 4, output);
+  assert.equal(tasks(output), 4, output);
   assert.doesNotMatch(output, /Goal result/);
   assert.match(output, /goal result: 3 record/);
   assert.match(output, /Claimed by this session/, 'detail keeps its rows');
   output = at(90, 12);
-  assert.ok(tasks(output) >= 5, output);
+  assert.equal(tasks(output), 4, output);
   assert.match(output, /Detail[\s\S]*Update exports/, 'stacked detail stays');
 });

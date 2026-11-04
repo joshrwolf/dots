@@ -142,17 +142,23 @@ test('goal starts with nested groups and cycles every fixture in one scenario', 
     h.view.handleInput('E');
     const open = plain(h.view.render(160));
     assert.match(open, /popup open · alt\+g toggles/);
-    assert.match(
-      open,
-      /Goal result[\s\S]*Tasks[\s\S]*Core interface[\s\S]*Claimed by this session/,
-    );
-    assert.match(open, /→ › Claimed +Update exports · you/);
+    assert.match(open, /Goal result[\s\S]*Tasks[\s\S]*Claimed by this session/);
+    assert.match(open, /→ ● Claimed +Update exports · Core interface · you/);
     assert.match(
       open,
       /│ Coordina/,
       'the popup is centered over the transcript',
     );
     assert.match(open, /◎ ! Unif/, 'and over the editor and summary line');
+    h.view.handleInput('4');
+    const layered = plain(h.view.render(160));
+    assert.match(layered, /\[● Update exports · Core interface\]/);
+    assert.match(
+      layered,
+      /graph · recorded state[\s\S]*↓[\s\S]*\[◌ Adapt consumers/,
+    );
+    h.view.handleInput('1');
+    h.view.handleInput('o');
     h.view.handleInput('\x1b[D');
     assert.match(plain(h.view.render(160)), /→ ▾ Core interface/);
     h.view.handleInput('\x1b[D');

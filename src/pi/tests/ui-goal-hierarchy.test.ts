@@ -29,6 +29,7 @@ const panel = (view: GoalView, height = 30) => {
     () => height,
   );
   result.setGoal({view, followed: 1}, theme);
+  if (view.snapshot?.overview.graph) result.handleInput('o');
   return result;
 };
 

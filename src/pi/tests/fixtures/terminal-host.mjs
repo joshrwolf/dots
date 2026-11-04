@@ -700,9 +700,20 @@ async function workbenchFlow() {
       );
       send('E');
       await wait(
-        () => state('goal', 0, true) && shows('Consumer migration'),
-        'popup over the transcript',
+        () =>
+          state('goal', 0, true) &&
+          shows('Consumer migration') &&
+          shows('◌ Waiting'),
+        'popup over the transcript lists the graph',
       );
+      send('4');
+      await wait(
+        () => shows('[● Update exports · Core interface]'),
+        'layered graph in workbench',
+      );
+      send('1');
+      send('o');
+      await wait(() => shows('o graph'), 'outline in workbench');
       send('\x1b[D');
       await wait(
         () => shows('→ ▾ Core interface'),
@@ -941,19 +952,23 @@ async function goalFlow() {
   await wait(() => shows('Nested fixture goal'), 'nested summary');
   await fresh('/goal show t-abcdef');
   await wait(
-    () => shows('Consumer migration') && shows('Adapt consumers'),
-    'nested panel',
+    () =>
+      shows('● Claimed') &&
+      shows('◌ Waiting') &&
+      shows('Adapt consumers') &&
+      !shows('▾'),
+    'nested panel lists the dependency graph',
   );
-  // A short screen still gives the tree its rows before the goal result.
+  // A short screen still gives the list its rows before the goal result.
   terminal.capture = '';
   terminal.resize(14, 120);
   await wait(
     () =>
-      shows('Core interface') &&
-      shows('Adapt consumers') &&
+      shows('Update exports') &&
+      shows('Document the interface') &&
       shows('Detail') &&
       !/ 0 of /.test(plain()),
-    'short popup keeps the tree',
+    'short popup keeps the list',
   );
   terminal.capture = '';
   terminal.resize(40, 120);
@@ -961,6 +976,18 @@ async function goalFlow() {
     () => renders().at(-1) === 'inspector-render:108:34',
     'restored height',
   );
+  send('4');
+  await wait(
+    () => shows('[◌ Adapt consumers · Consumer migration]'),
+    'layered graph tab',
+  );
+  send('1');
+  send('o');
+  await wait(
+    () => shows('o graph') && shows('▾') && shows('Core interface'),
+    'group outline',
+  );
+  send('\x1b[A');
   send('\x1b[D');
   await wait(() => shows('▸') && shows('Core interface'), 'fold parent');
   assert.ok(!shows('Adapt consumers'), 'folded parent hides its leaves');

@@ -65,6 +65,12 @@ export default function (pi: ExtensionAPI): void {
         },
       ],
       hidden_closed: 0,
+      graph: {
+        rows: [{task: 't-456def', lines: ['○']}],
+        layered: '  [○ Reference fixture slice]',
+        notes: [],
+      },
+      open_graph: null,
       progress: {
         total: 1,
         open: 1,

@@ -62,10 +62,25 @@ export interface GoalSnapshot {
     readonly tasks: readonly GoalTask[];
     readonly hidden_closed: number;
     readonly progress: Progress;
+    /** dots' drawing of every leaf in `tasks`. */
+    readonly graph?: DependencyGraph;
+    /** The same over unclosed leaves, when `tasks` includes a closed leaf. */
+    readonly open_graph?: DependencyGraph | null;
   };
   /** Complete descendants from the same --all snapshot, for hierarchy rollups only. */
   readonly allTasks?: readonly GoalTask[];
   readonly workers?: TaskWorkers;
+}
+/** Leaf dependencies as dots draws them; Pi only displays the lines. */
+export interface DependencyGraph {
+  /** Prerequisites above dependents: a node line, then link lines, one width. */
+  readonly rows: readonly {
+    readonly task: string;
+    readonly lines: readonly string[];
+  }[];
+  /** Layered overview, as wide as the graph needs. */
+  readonly layered: string;
+  readonly notes: readonly string[];
 }
 export interface GoalList {
   readonly project: string;
@@ -232,9 +247,29 @@ export function decodeList(value: unknown): GoalList {
   const v = record(value);
   return {project: string(v.project), goals: array(v.goals).map(goal)};
 }
+function dependencyGraph(
+  value: unknown,
+  tasks: ReadonlySet<string>,
+): DependencyGraph {
+  const v = record(value);
+  return {
+    rows: array(v.rows).map(row => {
+      const r = record(row);
+      const task = string(r.task);
+      const lines = array(r.lines).map(string);
+      if (!tasks.has(task) || !lines.length)
+        throw new Error('Invalid dots goal graph row');
+      return {task, lines};
+    }),
+    layered: string(v.layered),
+    notes: array(v.notes).map(string),
+  };
+}
 export function decodeSnapshot(value: unknown): GoalSnapshot {
   const v = record(value);
   const overview = record(v.overview);
+  const tasks = array(overview.tasks).map(task);
+  const ids = new Set(tasks.map(task => task.id));
   // Progress belongs to the goal; the snapshot keeps it beside the tasks it counts.
   const p = record(record(overview.goal).progress);
   return {
@@ -242,7 +277,7 @@ export function decodeSnapshot(value: unknown): GoalSnapshot {
     now: timestamp(v.now),
     overview: {
       goal: goal(overview.goal),
-      tasks: array(overview.tasks).map(task),
+      tasks,
       hidden_closed: count(overview.hidden_closed),
       progress: {
         total: count(p.total),
@@ -254,6 +289,11 @@ export function decodeSnapshot(value: unknown): GoalSnapshot {
         claimed: count(p.claimed),
         review: count(p.review),
       },
+      graph: dependencyGraph(overview.graph, ids),
+      open_graph:
+        overview.open_graph === null
+          ? null
+          : dependencyGraph(overview.open_graph, ids),
     },
   };
 }

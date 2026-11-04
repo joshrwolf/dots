@@ -29,6 +29,12 @@ export const snapshot = (id = 't-123abc', title = 'Consistent exports') => ({
     },
     tasks: [task('t-456def', 'Reference slice', {parent: id})],
     hidden_closed: 0,
+    graph: {
+      rows: [{task: 't-456def', lines: ['○']}],
+      layered: '  [○ Reference slice]',
+      notes: [],
+    },
+    open_graph: null,
     progress: {
       total: 1,
       open: 1,

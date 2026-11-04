@@ -145,6 +145,16 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
     task('t-cc', 'Decision', {status: 'held'}),
     task('t-dd', 'Released'),
   ];
+  value.overview.graph = {
+    rows: [
+      {task: 't-aa', lines: ['●', '│']},
+      {task: 't-bb', lines: ['◌']},
+      {task: 't-cc', lines: ['!']},
+      {task: 't-dd', lines: ['○']},
+    ],
+    layered: '',
+    notes: [],
+  };
   value.overview.progress = {
     total: 5,
     open: 3,
@@ -167,8 +177,8 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
   assert.equal(summary([model], undefined, theme).render(160).length, 1);
   const browser = panel(model, theme);
   const tree = plain(browser.render(120));
-  assert.match(tree, /· Open +Released/);
-  assert.match(tree, /→ › Claimed +Reference · fixture/);
+  assert.match(tree, /○ Open +Released/);
+  assert.match(tree, /→ ● Claimed +Reference · fixture/);
   assert.match(tree, /Claimed by fixture/);
   assert.doesNotMatch(tree, /Project:|Recorded at:|t-aa|Brief content:/);
   assert.match(tree, /1 closed hidden/);
@@ -199,7 +209,7 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
   inspector.handleInput('3');
   assert.match(plain(inspector.render(120)), /Project:/);
   inspector.handleInput('1');
-  assert.match(plain(inspector.render(120)), /· Waiting +Consumer/);
+  assert.match(plain(inspector.render(120)), /◌ Waiting +Consumer/);
   assert.equal(redraws, 4, 'setGoal and each key request one render');
 });
 
@@ -265,6 +275,7 @@ test('review results and references remain explicit, bounded, and separate from 
   const child = value.overview.tasks[0];
   child.status = 'review';
   child.owner = 'reviewer';
+  value.overview.graph.rows[0].lines = ['◇'];
   child.result = 'Checks passed; integration pending. ' + 'x'.repeat(2200);
   child.references = Array.from({length: 10}, (_, n) => ({
     url: `https://github.com/example/project/issues/${n}`,
