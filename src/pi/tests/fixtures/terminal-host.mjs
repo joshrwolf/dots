@@ -575,7 +575,7 @@ async function workbenchFlow() {
     ['workers', 'Worker activity'],
     ['wake', 'Scheduled follow-up'],
     ['thinking', 'Thinking blocks'],
-    ['goal', 'Goal dashboard'],
+    ['goal', 'Goal panel'],
     ['edit', 'Recorded diff'],
     ['codemode', 'Nested tool activity'],
     ['inspection-shell', 'Workers'],
@@ -695,13 +695,13 @@ async function workbenchFlow() {
     }
     if (scenario === 'goal') {
       await wait(
-        () => shows('Core interface') && shows('Resolve documentation policy'),
-        'group preview with complete totals',
+        () => shows('2/6 done') && shows('now: Update exports'),
+        'summary line below the editor',
       );
       send('E');
       await wait(
         () => state('goal', 0, true) && shows('Consumer migration'),
-        'nested slice inspection',
+        'panel beside the transcript',
       );
       send('\x1b[D');
       await wait(
@@ -714,33 +714,27 @@ async function workbenchFlow() {
         'unfold group in workbench',
       );
       send('E');
-      await wait(() => state('goal', 0, false), 'hierarchy dashboard');
-      send(' ');
-      await wait(() => state('goal', 1), 'history fixture');
-      send('E');
-      await wait(() => shows('Define shared types'), 'closed slice detail');
-      send('E');
-      await wait(() => state('goal', 1, false), 'history dashboard');
-      send(' ');
-      await wait(
-        () => shows('hierarchy incomplete'),
-        'partial hierarchy without guessed totals',
-      );
+      await wait(() => state('goal', 0, false), 'panel hidden');
       const labels = [
-        'Adapt consumers',
-        'Resolve compatibility',
-        '4/4',
-        'Align CLI output',
-        'unavailable · refresh',
+        '1 worker',
+        '1 asking',
+        'Unify the export interface',
+        '2/6 done',
+        'partial',
+        'now: Update exports',
+        '1 held',
+        '4/4 done',
+        '+2 followed',
+        'unavailable · /goal refresh',
         'loading',
         'brief warning',
-        'Unify the export interface',
+        'no slices',
       ];
       for (const [index, label] of labels.entries()) {
         send(' ');
         await wait(
-          () => state('goal', index + 3) && shows(label),
-          `goal phase ${index + 3}`,
+          () => state('goal', index + 1) && shows(label),
+          `goal phase ${index + 1}`,
         );
       }
     }
@@ -852,11 +846,11 @@ async function workbenchFlow() {
 }
 
 async function goalFlow() {
-  // Enter closes an inspector; the fixture records each command's end.
-  const closeInspector = async (args, label) => {
-    const before = countLine(`command-end:${args}`);
-    send('\r');
-    await wait(() => countLine(`command-end:${args}`) > before, label);
+  // alt+g closes the panel from the editor or the focused panel.
+  const closePanel = async label => {
+    const before = countLine('inspector-closed');
+    send('\x1bg');
+    await wait(() => countLine('inspector-closed') > before, label);
   };
   const renders = () =>
     lines().filter(line => line.startsWith('inspector-render:'));
@@ -866,49 +860,60 @@ async function goalFlow() {
   await wait(
     () =>
       shows('Unified fixture exports') &&
-      shows('0/1') &&
+      shows('0/1 done') &&
       shows('◎ ·') &&
-      shows('Reference fixture slice'),
-    'unboxed goal dashboard',
+      shows('alt+g'),
+    'one-line goal summary',
   );
   if (mode === 'fullscreen') {
-    // Use the host's painted heading position, not a fixed screen row.
+    // Use the host's painted summary position, not a fixed screen row.
     const goalRow = paintedRows('Unified fixture exports').at(-1);
-    assert.ok(goalRow, 'goal heading has a fullscreen cursor position');
+    assert.ok(goalRow, 'goal summary has a fullscreen cursor position');
     send('DRAFT_SURVIVES_INSPECTION');
     await wait(() => shows('DRAFT_SURVIVES_INSPECTION'), 'editor draft');
     const draftRow = paintedRows('DRAFT_SURVIVES_INSPECTION').at(-1);
     assert.ok(draftRow, 'editor draft has a fullscreen cursor position');
     assert.ok(
       draftRow < goalRow,
-      `dashboard stays below the editor (draft ${draftRow}, goal ${goalRow})`,
+      `summary stays below the editor (draft ${draftRow}, goal ${goalRow})`,
     );
-    const closed = countLine('inspector-closed');
     send(`\x1b[<0;4;${goalRow}M\x1b[<0;4;${goalRow}m`);
     await wait(
-      () => shows('1 slices') && shows('Reference fixture slice'),
-      'click opens goal inspector',
+      () => shows('1 overview') && shows('Reference fixture slice'),
+      'click opens and focuses the panel',
     );
     const size = renders().at(-1)?.split(':').slice(1).map(Number);
-    assert.ok(size, 'inspector render recorded');
-    assert.ok(
-      size[0] < 120,
-      `inspector uses bounded overlay width (${size[0]})`,
-    );
-    assert.ok(size[1] <= 32, `inspector fits overlay height (${size[1]})`);
+    assert.ok(size, 'panel render recorded');
+    assert.ok(size[0] < 120, `panel uses a side width (${size[0]})`);
+    assert.ok(size[1] <= 32, `panel fits its height (${size[1]})`);
     send('\x1b');
     await wait(
-      () => countLine('inspector-closed') > closed,
-      'clicked inspector closed',
+      () => shows('/goal to scroll and fold'),
+      'Esc returns input to the editor',
     );
+    await closePanel('clicked panel closed');
     assert.ok(
       lines().includes('editor:DRAFT_SURVIVES_INSPECTION'),
       'editor draft survives inspection',
     );
     send('\x15');
   }
+  assert.ok(!shows('Reference fixture slice'), 'no task rows below the editor');
+  send('\x1bg');
+  await wait(
+    () => shows('Reference fixture slice') && shows('/goal to scroll and fold'),
+    'shortcut opens an unfocused panel',
+  );
+  send('KEEPS_EDITOR_INPUT');
+  await wait(() => shows('KEEPS_EDITOR_INPUT'), 'editor keeps input');
+  await closePanel('shortcut closes the panel');
+  assert.ok(
+    lines().includes('editor:KEEPS_EDITOR_INPUT'),
+    'editor draft survives the panel',
+  );
+  send('\x15');
   await fresh('/goal');
-  await wait(() => shows('1 slices'), 'inspector');
+  await wait(() => shows('1 overview'), 'focused panel');
   send('2');
   await wait(() => shows('Fixture brief'), 'brief body mounted');
   send('\x1b[F');
@@ -921,16 +926,13 @@ async function goalFlow() {
     terminal.resize(rows, columns);
     await wait(() => shows('Unified fixture exports'), 'resize');
   }
-  await closeInspector('', 'inspector closed');
+  await closePanel('panel closed');
   await fresh('/goal follow t-abcdef');
-  await wait(
-    () => shows('Nested fixture goal') && shows('Core interface'),
-    'nested dashboard',
-  );
+  await wait(() => shows('Nested fixture goal'), 'nested summary');
   await fresh('/goal show t-abcdef');
   await wait(
     () => shows('Consumer migration') && shows('Adapt consumers'),
-    'nested inspector',
+    'nested panel',
   );
   send('\x1b[D');
   await wait(() => shows('▸') && shows('Core interface'), 'fold parent');
@@ -950,35 +952,39 @@ async function goalFlow() {
   assert.ok(!shows('Adapt consumers'), 'folded nested group hides its leaves');
   send('\x1b[C');
   await wait(() => shows('Adapt consumers'), 'unfold nested group');
-  await closeInspector('show t-abcdef', 'nested inspector closed');
-  await fresh('/goal history t-abcdef');
+  send('h');
   await wait(
-    () => shows('Define shared types') && shows('Document shared types'),
-    'closed leaves in history',
+    () =>
+      shows('with closed') &&
+      shows('Define shared types') &&
+      shows('Document shared types'),
+    'closed leaves on request',
   );
-  await closeInspector('history t-abcdef', 'history closed');
+  await closePanel('nested panel closed');
   await fresh('/goal unfollow t-abcdef');
   await wait(() => shows('Unfollowed t-abcdef'), 'remove hierarchy fixture');
   await fresh('/goal follow t-999999');
   await wait(
-    () => shows('Unified fixture exports') && shows('Second fixture goal'),
+    () => shows('Second fixture goal') && shows('+1 followed'),
     'two followed goals',
   );
   await fresh('/goal');
-  await wait(() => shows('Inspect a followed goal'), 'goal selection');
-  const before = renders().length;
-  send('\r');
   await wait(
-    () => shows('1 slices') && renders().length > before,
-    'selected inspection',
+    () => shows('Second fixture goal') && shows('Tab next goal'),
+    'panel for the selected goal',
   );
-  await closeInspector('', 'selected inspector closed');
+  send('\t');
+  await wait(
+    () => shows('Unified fixture exports'),
+    'Tab selects the next goal',
+  );
+  await closePanel('selected panel closed');
   await fresh('/reload');
   await wait(
     () =>
       count('start') >= 2 &&
       shows('Unified fixture exports') &&
-      shows('Second fixture goal'),
+      shows('+1 followed'),
     'reload followed set',
   );
   await fresh('/goal unfollow t-999999');
@@ -1021,15 +1027,15 @@ async function goalFlow() {
   assert.equal(countLine('UNEXPECTED_PROVIDER_TURN'), 0);
   await fresh('/goal follow t-fedcba');
   await wait(
-    () => shows('Completed fixture goal') && shows('1/1'),
-    'finished dashboard',
+    () => shows('Completed fixture goal') && shows('1/1 done'),
+    'finished summary',
   );
   await fresh('/goal show t-fedcba');
   await wait(
-    () => shows('Completed fixture slice') && shows('history'),
-    'finished inspection includes closed leaves',
+    () => shows('Completed fixture slice') && shows('with closed'),
+    'finished panel includes closed leaves',
   );
-  await closeInspector('show t-fedcba', 'finished inspection closed');
+  await closePanel('finished panel closed');
   await fresh('/goal unfollow t-fedcba');
   await wait(() => shows('Unfollowed t-fedcba'), 'remove finished fixture');
   await fresh('/goal-fixture-exit');

@@ -1,6 +1,9 @@
 // Opt-in neutral fixture: real goal extension/components, no CLI or model calls.
 import {appendFileSync} from 'node:fs';
-import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from '@earendil-works/pi-coding-agent';
 import goal from '../../extensions/goal/index.ts';
 import {
   withHierarchy,
@@ -74,34 +77,49 @@ export default function (pi: ExtensionAPI): void {
       },
     },
   };
+  type Handler = (data: unknown, ctx: ExtensionContext) => unknown;
+  // Every context the extension receives records its overlay's renders and close.
+  const observe = <C extends ExtensionContext>(ctx: C): C => {
+    const ui: typeof ctx.ui = {
+      ...ctx.ui,
+      async custom(factory, options) {
+        try {
+          return await ctx.ui.custom(async (...parameters) => {
+            const view = await factory(...parameters);
+            const render = view.render.bind(view);
+            view.render = width => {
+              const lines = render(width);
+              mark(`inspector-render:${width}:${lines.length}`);
+              return lines;
+            };
+            return view;
+          }, options);
+        } finally {
+          mark(`editor:${ctx.ui.getEditorText()}`);
+          mark('inspector-closed');
+        }
+      },
+    };
+    return {...ctx, ui};
+  };
   const observed: ExtensionAPI = {
     ...pi,
+    on: ((event: string, handler: Handler) =>
+      (pi.on as (event: string, handler: Handler) => void)(event, (data, ctx) =>
+        handler(data, observe(ctx)),
+      )) as ExtensionAPI['on'],
+    registerShortcut(key, shortcut) {
+      pi.registerShortcut(key, {
+        ...shortcut,
+        handler: ctx => shortcut.handler(observe(ctx)),
+      });
+    },
     registerCommand(name, definition) {
       pi.registerCommand(name, {
         ...definition,
         async handler(args, ctx) {
-          const ui: typeof ctx.ui = {
-            ...ctx.ui,
-            async custom(factory, options) {
-              try {
-                return await ctx.ui.custom(async (...parameters) => {
-                  const view = await factory(...parameters);
-                  const render = view.render.bind(view);
-                  view.render = width => {
-                    const lines = render(width);
-                    mark(`inspector-render:${width}:${lines.length}`);
-                    return lines;
-                  };
-                  return view;
-                }, options);
-              } finally {
-                mark(`editor:${ctx.ui.getEditorText()}`);
-                mark('inspector-closed');
-              }
-            },
-          };
           try {
-            await definition.handler(args, {...ctx, ui});
+            await definition.handler(args, observe(ctx));
           } finally {
             mark(`command-end:${args}`);
           }
