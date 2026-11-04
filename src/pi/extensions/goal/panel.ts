@@ -344,7 +344,7 @@ function treeRow(
               : '',
           tone: node.totals?.held ? 'warning' : 'muted',
           minWidth: group ? 8 : 0,
-          priority: 90,
+          priority: 70,
           shrink: group ? 'clip' : 'omit',
         },
       ],
@@ -578,24 +578,16 @@ export class GoalPanel extends Inspector {
     view: GoalView,
     tree: GoalTree,
     rows: readonly TreeRow[],
+    notes: string[],
     height: number,
     width: number,
   ): string[] {
     const theme = this.theme!;
     const selected = this.index(view, rows);
-    const hidden = view.snapshot?.overview.hidden_closed;
-    const notes = [
-      !rows.length &&
-        (hidden ? 'No open slices remain.' : 'No slices recorded.'),
-      tree.warning,
-      hidden && `${hidden} closed hidden · h shows them`,
-    ].filter((value): value is string => Boolean(value));
     let space = Math.max(0, height - notes.length);
     if (rows.length > space) {
       space = Math.max(0, space - 1);
-      notes.unshift(
-        `rows ${Math.min(rows.length, space)} of ${rows.length} · ↑/↓ select`,
-      );
+      notes.unshift(`${space} of ${rows.length} rows · ↑/↓ select`);
     }
     const top = Math.max(
       0,
@@ -661,42 +653,74 @@ export class GoalPanel extends Inspector {
         `${work.workers.length} worker${work.workers.length === 1 ? '' : 's'}${asking ? ` · ${asking} asking` : ''}`,
       view.brief?.warning && text(view.brief.warning),
     ].filter(Boolean);
-    const header = [
-      ...wrapped(
-        theme.fg('muted', compactSummary(view)) +
-          theme.fg('warning', attention.map(value => ` · ${value}`).join('')),
-        theme,
-      ).render(width),
-      ...heading(
-        'Goal result',
-        root.result_event !== null ? `event ${root.result_event}` : '',
-        theme,
-      ).render(width),
-      ...clip(
-        (root.result
-          ? new MarkdownView(root.result, theme)
-          : note('No goal result recorded yet.', theme)
-        ).render(width),
-        Math.min(4, Math.max(1, height - 8)),
-        width,
-        theme,
-      ).filter((line, i) => i === 0 || line),
-    ];
-    const rest = Math.max(0, height - header.length);
+    const hidden = snapshot.overview.hidden_closed;
+    const notes = [
+      !rows.length &&
+        (hidden ? 'No open slices remain.' : 'No slices recorded.'),
+      tree.warning,
+      hidden && `${hidden} closed hidden · h shows them`,
+    ].filter((value): value is string => Boolean(value));
     const split = width >= 100;
     const treeWidth = split ? Math.floor(width * 0.45) : width;
     const detailWidth = split ? width - treeWidth - 3 : width;
+    // Tree and detail claim rows first: a heading, up to five tasks with their
+    // notes, and when stacked a short detail. The goal result takes what remains,
+    // down to one line, then only the record tab shows it.
+    const treeMin =
+      1 + Math.min(rows.length, 5) + notes.length + (rows.length > 5 ? 1 : 0);
+    const reserved = treeMin + (split ? 0 : 4);
+    const summary = wrapped(
+      theme.fg('muted', compactSummary(view)) +
+        theme.fg('warning', attention.map(value => ` · ${value}`).join('')),
+      theme,
+    )
+      .render(width)
+      .slice(0, Math.max(1, height - reserved));
+    const spare = height - summary.length - reserved;
+    const result = root.result
+      ? new MarkdownView(root.result, theme).render(width).filter(Boolean)
+      : note('No goal result recorded yet.', theme).render(width);
+    const header = [
+      ...summary,
+      ...(spare >= 2
+        ? [
+            ...heading(
+              'Goal result',
+              root.result_event !== null ? `event ${root.result_event}` : '',
+              theme,
+            ).render(width),
+            ...clip(
+              result,
+              Math.min(4, spare - 1, result.length),
+              width,
+              theme,
+            ),
+          ]
+        : spare === 1
+          ? [
+              truncateToWidth(
+                theme.fg('accent', 'Goal result ') + (result[0] ?? ''),
+                width,
+              ),
+            ]
+          : []),
+    ];
+    const rest = Math.max(0, height - header.length);
+    const treeRows = split
+      ? rest
+      : Math.min(rest, Math.max(treeMin, Math.floor(rest / 2)));
     const left = [
-      ...heading('Tasks', view.history ? 'with closed' : '', theme).render(
-        treeWidth,
-      ),
-      ...this.window(
-        view,
-        tree,
-        rows,
-        (split ? rest : Math.max(2, Math.floor(rest / 2))) - 1,
-        treeWidth,
-      ),
+      ...heading(
+        'Tasks',
+        [
+          view.history && 'with closed',
+          spare < 1 && root.result && 'goal result: 3 record',
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        theme,
+      ).render(treeWidth),
+      ...this.window(view, tree, rows, notes, treeRows - 1, treeWidth),
     ];
     const right = clip(
       [

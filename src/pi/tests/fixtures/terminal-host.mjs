@@ -944,6 +944,23 @@ async function goalFlow() {
     () => shows('Consumer migration') && shows('Adapt consumers'),
     'nested panel',
   );
+  // A short screen still gives the tree its rows before the goal result.
+  terminal.capture = '';
+  terminal.resize(14, 120);
+  await wait(
+    () =>
+      shows('Core interface') &&
+      shows('Adapt consumers') &&
+      shows('Detail') &&
+      !/ 0 of /.test(plain()),
+    'short popup keeps the tree',
+  );
+  terminal.capture = '';
+  terminal.resize(40, 120);
+  await wait(
+    () => renders().at(-1) === 'inspector-render:108:34',
+    'restored height',
+  );
   send('\x1b[D');
   await wait(() => shows('▸') && shows('Core interface'), 'fold parent');
   assert.ok(!shows('Adapt consumers'), 'folded parent hides its leaves');

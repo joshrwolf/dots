@@ -368,3 +368,40 @@ test('the tree selects tasks, folds groups and details the selection', () => {
   );
   assert.doesNotMatch(narrow, / │ /);
 });
+
+test('short popups give rows to the tree and detail before the goal result', () => {
+  const goal = goalFixtures(8)[0]!;
+  const tasks = (output: string) =>
+    output
+      .split('\n')
+      .filter(line =>
+        /[▾▸] |✓ Done|› Claimed|· Waiting|! Held|· Open/.test(line),
+      ).length;
+  const at = (width: number, height: number) => {
+    const view = new GoalPanel(
+      {matches: () => false},
+      {close() {}, cycle() {}},
+      () => {},
+      () => height,
+    );
+    view.setGoal({view: goal, followed: 1, owner: 'fixture-reviewer'}, theme);
+    const output = plain(view.render(width));
+    assert.equal(view.render(width).length, height + 2);
+    assert.doesNotMatch(output, / 0 of /);
+    return output;
+  };
+  let output = at(160, 11);
+  assert.ok(tasks(output) >= 5, output);
+  assert.match(output, /Goal result ─/, 'a heading and one line fit');
+  output = at(160, 10);
+  assert.ok(tasks(output) >= 5, output);
+  assert.match(output, /Goal result Shared types landed/, 'one line');
+  output = at(160, 8);
+  assert.ok(tasks(output) >= 4, output);
+  assert.doesNotMatch(output, /Goal result/);
+  assert.match(output, /goal result: 3 record/);
+  assert.match(output, /Claimed by this session/, 'detail keeps its rows');
+  output = at(90, 12);
+  assert.ok(tasks(output) >= 5, output);
+  assert.match(output, /Detail[\s\S]*Update exports/, 'stacked detail stays');
+});
