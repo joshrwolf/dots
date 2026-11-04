@@ -141,9 +141,20 @@ test('goal starts with nested groups and cycles every fixture in one scenario', 
     assert.doesNotMatch(plain(h.view.render(160)), /Core interface/);
     h.view.handleInput('E');
     const open = plain(h.view.render(160));
-    assert.match(open, /panel open · alt\+g toggles/);
-    assert.match(open, /Now[\s\S]*Tasks[\s\S]*Core interface[\s\S]*Result/);
-    assert.match(open, /› you · Update exports/);
+    assert.match(open, /popup open · alt\+g toggles/);
+    assert.match(
+      open,
+      /Goal result[\s\S]*Tasks[\s\S]*Core interface[\s\S]*Claimed by this session/,
+    );
+    assert.match(open, /→ › Claimed +Update exports · you/);
+    assert.match(
+      open,
+      /│ Coordina/,
+      'the popup is centered over the transcript',
+    );
+    assert.match(open, /◎ ! Unif/, 'and over the editor and summary line');
+    h.view.handleInput('\x1b[D');
+    assert.match(plain(h.view.render(160)), /→ ▾ Core interface/);
     h.view.handleInput('\x1b[D');
     assert.doesNotMatch(plain(h.view.render(160)), /Consumer migration/);
     h.view.handleInput('\x1b[C');

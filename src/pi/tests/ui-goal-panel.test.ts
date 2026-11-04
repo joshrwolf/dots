@@ -9,6 +9,7 @@ import {
   PANEL_KEY,
   panelHeight,
   panelOverlay,
+  panelWidth,
   summaryRow,
 } from '../extensions/goal/panel.ts';
 import type {GoalView} from '../extensions/goal/present.ts';
@@ -62,7 +63,6 @@ function panel(view: GoalView, followed = 1) {
         data === '\x1b' && action === 'tui.select.cancel',
     },
     {
-      release: () => calls.push('release'),
       close: () => calls.push('close'),
       cycle: () => calls.push('cycle'),
     },
@@ -215,12 +215,15 @@ test('worker activity projection carries labels and current work, not terminal h
   );
 });
 
-test('the panel overlay keeps editor input and fits narrow terminals', () => {
-  assert.equal(panelOverlay.nonCapturing, true);
-  assert.equal(panelOverlay.anchor, 'top-right');
+test('the popup is large and centered and fills small terminals', () => {
+  assert.equal(panelOverlay.anchor, 'center');
   assert.equal(PANEL_KEY, 'alt+g');
-  assert.equal(panelHeight(60), 40);
+  assert.equal(panelHeight(60), 49);
+  assert.equal(panelHeight(24), 22, 'short screens use every row');
   assert.equal(panelHeight(2), 1);
+  assert.equal(panelWidth(200), 180);
+  assert.equal(panelWidth(100), 90);
+  assert.equal(panelWidth(60), 60, 'narrow screens use every column');
 });
 
 test('the panel shows live work, the claimed task tree and the goal result without changing records', () => {
@@ -231,7 +234,7 @@ test('the panel shows live work, the claimed task tree and the goal result witho
     for (const name of ['dark', 'light']) {
       const view = new GoalPanel(
         {matches: () => false},
-        {release() {}, close() {}, cycle() {}},
+        {close() {}, cycle() {}},
         () => {},
         () => 40,
       );
@@ -246,7 +249,11 @@ test('the panel shows live work, the claimed task tree and the goal result witho
       );
       for (const width of [0, 1, 2, 12, 30, 60, 120, 240]) {
         const lines = view.render(width);
-        assert.ok(lines.length <= 42);
+        assert.equal(
+          lines.length,
+          width ? 42 : 0,
+          'the overview fills the popup',
+        );
         assert.ok(
           lines.every(line => visibleWidth(line) <= width),
           `${phase}/${name}/${width}`,
@@ -255,8 +262,8 @@ test('the panel shows live work, the claimed task tree and the goal result witho
       }
       const output = plain(view.render(120));
       if (phase === 0) {
-        assert.match(output, /› you · Update exports/);
-        assert.match(output, /Needs: Update exports/);
+        assert.match(output, /→ › Claimed +Update exports · you/);
+        assert.match(output, /Detail[\s\S]*Claimed by this session/);
       }
       if (phase === 1) assert.match(output, /! Held +Resolve compatibility/);
       if (phase === 4) assert.match(output, /Unavailable/);
@@ -264,12 +271,11 @@ test('the panel shows live work, the claimed task tree and the goal result witho
       if (phase === 6) assert.match(output, /Brief truncated/);
       if (phase === 7) assert.match(output, /No slices recorded/);
       if (phase === 8) assert.match(output, /Shared types landed/);
-      if (phase === 11)
-        assert.match(
-          output,
-          /exports-worker · Update exports · edit src\/exports\.ts/,
-        );
-      if (phase === 12) assert.match(output, /exports-worker · .* · asking/);
+      if (phase === 11) {
+        assert.match(output, /1 worker/);
+        assert.match(output, /Worker exports-worker · edit src\/exports\.ts/);
+      }
+      if (phase === 12) assert.match(output, /Worker exports-worker · asking/);
     }
     assert.deepEqual(views, original);
     assert.deepEqual(
@@ -282,12 +288,7 @@ test('the panel shows live work, the claimed task tree and the goal result witho
 test('panel keys select sections, closed tasks and goals; Esc returns input and the shortcut closes', () => {
   const goal = goalFixtures(9)[0]!;
   const {result: view, calls} = panel(goal, 2);
-  assert.match(
-    plain(view.render(120)),
-    /\/goal to scroll and fold · alt\+g close/,
-  );
-  view.focused = true;
-  assert.match(plain(view.render(120)), /Tab next goal/);
+  assert.match(plain(view.render(120)), /Tab next goal · Esc\/alt\+g close/);
   view.handleInput('2');
   assert.match(plain(view.render(120)), /Two workstreams/);
   view.setGoal({view: goal, followed: 2}, getThemeByName('light')!);
@@ -297,13 +298,17 @@ test('panel keys select sections, closed tasks and goals; Esc returns input and 
     'refresh keeps section',
   );
   view.setGoal({view: goalFixtures(3)[1]!, followed: 2}, theme);
-  assert.match(plain(view.render(120)), /Now[\s\S]*Tasks/, 'new goal resets');
+  assert.match(
+    plain(view.render(120)),
+    /Tasks[\s\S]*Detail/,
+    'new goal resets',
+  );
   view.handleInput('3');
   assert.match(plain(view.render(120)), /Focus only; no automatic execution/);
   view.handleInput('\t');
   view.handleInput('\x1b');
   view.handleInput('\x1bg');
-  assert.deepEqual(calls, ['cycle', 'release', 'close']);
+  assert.deepEqual(calls, ['cycle', 'close', 'close']);
   const nested = goalFixtures(8)[0]!;
   const hidden = panel({
     ...nested,
@@ -318,13 +323,48 @@ test('panel keys select sections, closed tasks and goals; Esc returns input and 
       },
     },
   }).result;
-  hidden.focused = true;
   assert.doesNotMatch(plain(hidden.render(120)), /Define shared types/);
-  assert.match(
-    plain(hidden.render(120)),
-    /2 closed tasks hidden · h shows them/,
-  );
+  assert.match(plain(hidden.render(120)), /2 closed hidden · h shows them/);
   hidden.handleInput('h');
   assert.match(plain(hidden.render(120)), /Define shared types/);
   assert.match(plain(hidden.render(120)), /with closed/);
+});
+
+test('the tree selects tasks, folds groups and details the selection', () => {
+  const {result: view} = panel(goalFixtures(8)[0]!);
+  const detail = () =>
+    plain(view.render(160))
+      .split('\n')
+      .map(line => line.split(' │ ')[1] ?? '')
+      .join('\n');
+  assert.match(
+    detail(),
+    /Update exports[\s\S]*Claimed by this session/,
+    'starts on this session’s claim',
+  );
+  view.handleInput('\x1b[B');
+  assert.match(plain(view.render(160)), /→ ▾ Consumer migration/);
+  assert.match(detail(), /0\/1 done/);
+  view.handleInput('\x1b[D');
+  assert.doesNotMatch(
+    plain(view.render(160)),
+    /Adapt consumers/,
+    'left folds a group',
+  );
+  view.handleInput('\x1b[C');
+  view.handleInput('\x1b[B');
+  assert.match(detail(), /Adapt consumers[\s\S]*Needs: Update exports · open/);
+  view.handleInput('\x1b[D');
+  assert.match(
+    plain(view.render(160)),
+    /→ ▾ Consumer migration/,
+    'left on a leaf selects its parent',
+  );
+  const narrow = plain(view.render(80));
+  assert.match(
+    narrow,
+    /Tasks[\s\S]*Detail/,
+    'narrow panes stack detail under the tree',
+  );
+  assert.doesNotMatch(narrow, / │ /);
 });

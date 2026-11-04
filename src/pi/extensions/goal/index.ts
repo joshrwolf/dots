@@ -1,5 +1,5 @@
 import {Type} from 'typebox';
-import {MouseRegion, type OverlayHandle} from '@earendil-works/pi-tui';
+import {MouseRegion} from '@earendil-works/pi-tui';
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -193,15 +193,7 @@ export default function goalExtension(
   let workerActivity: WorkerActivitySnapshot | undefined;
   let stopWorkerActivity: (() => void) | undefined;
   let summary: {row: PriorityRow; theme: Theme; redraw: () => void} | undefined;
-  let panel:
-    | {
-        view: GoalPanel;
-        theme: Theme;
-        redraw: () => void;
-        close: () => void;
-        handle?: OverlayHandle;
-      }
-    | undefined;
+  let panel: {view: GoalPanel; theme: Theme; close: () => void} | undefined;
 
   const notify = (
     ctx: ExtensionContext,
@@ -242,7 +234,6 @@ export default function goalExtension(
         },
         panel.theme,
       );
-      panel.redraw();
     }
   };
   const select = (ctx: ExtensionContext, chosen: GoalView) => {
@@ -251,13 +242,9 @@ export default function goalExtension(
     persist();
     draw(ctx);
   };
-  /** Non-modal: the editor keeps input unless the panel is explicitly focused. */
-  const openPanel = (ctx: ExtensionContext, focusPanel: boolean) => {
-    if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
-    if (panel) {
-      if (focusPanel) panel.handle?.focus();
-      return;
-    }
+  /** A focused popup; closing it returns input to the editor with its draft. */
+  const openPanel = (ctx: ExtensionContext) => {
+    if (!active || ctx.mode !== 'tui' || !ctx.hasUI || panel) return;
     if (!model) {
       notify(ctx, 'No focused goal. Use /goal follow ID or /goal list.');
       return;
@@ -274,24 +261,19 @@ export default function goalExtension(
             view: new GoalPanel(
               bindings,
               {
-                release: () => owned.handle?.unfocus(),
                 close: () => done(),
                 cycle: () => {
                   const views = [...followed.values()];
-                  const next =
-                    views[
-                      (views.findIndex(view => view.focus.id === focus?.id) +
-                        1) %
-                        views.length
-                    ];
-                  if (next) select(ctx, next);
+                  const at = views.findIndex(
+                    view => view.focus.id === focus?.id,
+                  );
+                  select(ctx, views[(at + 1) % views.length]!);
                 },
               },
               () => tui.requestRender(),
               () => panelHeight(tui.terminal.rows),
             ),
             theme,
-            redraw: () => tui.requestRender(),
             close: () => done(),
           };
           panel = owned;
@@ -302,15 +284,7 @@ export default function goalExtension(
             },
           });
         },
-        {
-          overlay: true,
-          overlayOptions: panelOverlay,
-          onHandle: handle => {
-            if (!panel) return;
-            panel.handle = handle;
-            if (focusPanel) handle.focus();
-          },
-        },
+        {overlay: true, overlayOptions: panelOverlay},
       )
       .catch((error: unknown) => {
         if (active && epoch === generation) notify(ctx, String(error), 'error');
@@ -360,7 +334,7 @@ export default function goalExtension(
               // Pi synthesizes a click after an accepted press, only when it was not a drag.
               if (event.type === 'press') return {handled: true, render: false};
               if (event.type !== 'click') return undefined;
-              openPanel(ctx, true);
+              openPanel(ctx);
               return {handled: true, render: false};
             },
           );
@@ -599,11 +573,11 @@ export default function goalExtension(
       await discover(ctx);
   });
 
-  /** TUI: open and focus the panel, then refresh it. Headless: one inspection message. */
+  /** TUI: open the panel, then refresh it. Headless: one inspection message. */
   const show = async (ctx: ExtensionContext) => {
     const epoch = generation;
     if (ctx.mode === 'tui' && ctx.hasUI) {
-      openPanel(ctx, true);
+      openPanel(ctx);
       if (model) await refresh(ctx);
       return;
     }
@@ -622,10 +596,10 @@ export default function goalExtension(
       );
   };
   pi.registerShortcut(PANEL_KEY, {
-    description: 'Toggle the goal panel',
+    description: 'Toggle the goal popup',
     handler: ctx => {
       if (panel) panel.close();
-      else openPanel(ctx, false);
+      else openPanel(ctx);
     },
   });
 
@@ -739,7 +713,7 @@ export default function goalExtension(
 
   pi.registerCommand('goal', {
     description:
-      'Follow multiple goals; without arguments, open the goal panel: [new IDEA|follow [ID [PROJECT]]|show [ID]|evidence TASK [EVENT|current] [PROJECT]|list|followed|offers|dismiss ID|refresh|unfollow ID|clear]',
+      'Follow multiple goals; without arguments, open the goal popup: [new IDEA|follow [ID [PROJECT]]|show [ID]|evidence TASK [EVENT|current] [PROJECT]|list|followed|offers|dismiss ID|refresh|unfollow ID|clear]',
     handler: async (args, ctx) => {
       const words = args.trim().split(/\s+/).filter(Boolean);
       const action = words[0] ?? (focus ? 'show' : 'focus');

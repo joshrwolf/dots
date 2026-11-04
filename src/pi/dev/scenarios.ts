@@ -10,7 +10,9 @@ import {
   Text,
   Spacer,
   VStack,
+  sliceByColumn,
   truncateToWidth,
+  visibleWidth,
   type Component,
   type Keybinding,
   type TUI,
@@ -27,7 +29,13 @@ import {transcript} from './transcript.ts';
 import {workerInspectorScenario} from './workers.ts';
 import {thinkingComponent} from './thinking.ts';
 import {goalActivityFixture, goalFixtures} from './goals.ts';
-import {GoalPanel, PANEL_KEY, summaryRow} from '../extensions/goal/panel.ts';
+import {
+  GoalPanel,
+  PANEL_KEY,
+  panelHeight,
+  panelWidth,
+  summaryRow,
+} from '../extensions/goal/panel.ts';
 import {bashPresentation} from '../src/features/tools/bash.ts';
 import {readPresentation} from '../src/features/tools/read.ts';
 import {writePresentation} from '../src/features/tools/write.ts';
@@ -263,40 +271,53 @@ const thinkingScenario: Scenario = {
   },
 };
 
-/** Fixture frame: the panel overlays the transcript's top right, above the
- * editor and its summary line; narrow widths stack it full width. */
-class GoalFrame extends VStack {
+/** Fixture screen: the transcript above the editor and its summary line, with
+ * the popup composited at Pi's centered overlay geometry. */
+class GoalScreen extends VStack {
   private readonly transcript: Component;
   private readonly dock: Component;
-  private panel: Component | undefined;
-  constructor(transcript: Component, dock: Component) {
+  private readonly rows: () => number;
+  private popup: Component | undefined;
+  constructor(transcript: Component, dock: Component, rows: () => number) {
     super();
     this.transcript = transcript;
     this.dock = dock;
+    this.rows = rows;
   }
-  show(panel: Component | undefined): void {
-    this.panel = panel;
+  show(popup: Component | undefined): void {
+    this.popup = popup;
     this.invalidate();
   }
   override render(width: number): string[] {
     if (width <= 0) return [];
+    const rows = this.rows();
     const dock = this.dock.render(width);
-    const panelWidth = Math.min(width, Math.max(64, Math.floor(width * 0.45)));
-    if (!this.panel) return [...this.transcript.render(width), ...dock];
-    const panel = this.panel.render(panelWidth);
-    if (panelWidth > width - 20) return [...panel, ...dock];
-    const left = width - panelWidth - 1;
-    const transcript = this.transcript.render(left);
-    return [
-      ...Array.from(
-        {length: Math.max(panel.length, transcript.length)},
-        (_, i) =>
-          truncateToWidth(transcript[i] ?? '', left, '', true) +
-          ' ' +
-          (panel[i] ?? ''),
-      ),
+    const transcript = this.transcript.render(width);
+    const screen = [
+      ...transcript.slice(0, Math.max(0, rows - dock.length)),
+      ...Array<string>(
+        Math.max(0, rows - dock.length - transcript.length),
+      ).fill(''),
       ...dock,
     ];
+    if (!this.popup) return screen;
+    const columns = panelWidth(width);
+    const popup = this.popup.render(columns).slice(0, rows);
+    const top = Math.floor((rows - popup.length) / 2);
+    const left = Math.floor((width - columns) / 2);
+    return screen.map((line, i) => {
+      const own = popup[i - top];
+      if (own === undefined) return line;
+      const head = sliceByColumn(line, 0, left, true);
+      return (
+        head +
+        ' '.repeat(Math.max(0, left - visibleWidth(head))) +
+        '\x1b[0m' +
+        truncateToWidth(own, columns, '', true) +
+        '\x1b[0m' +
+        sliceByColumn(line, left + columns, width - left - columns, true)
+      );
+    });
   }
 }
 
@@ -321,7 +342,7 @@ function goalScenario(): Scenario {
   const owner = 'fixture-reviewer';
   return {
     id: 'goal',
-    title: 'Goal panel',
+    title: 'Goal popup',
     phases: states.map(([, label]) => label),
     create(context) {
       const preview = new Inspector(
@@ -330,13 +351,13 @@ function goalScenario(): Scenario {
         context.redraw,
         context.height,
       );
+      const screen = () => context.height?.() ?? 20;
       const panel = new GoalPanel(
         context.bindings,
-        {release() {}, close() {}, cycle() {}},
+        {close() {}, cycle() {}},
         context.redraw,
-        () => Math.max(1, (context.height?.() ?? 20) - 2),
+        () => panelHeight(screen()),
       );
-      panel.focused = true;
       const summary = new PriorityRow();
       let expanded = false;
       const component = Object.assign(new VStack(), {
@@ -361,7 +382,7 @@ function goalScenario(): Scenario {
             {view: views[0]!, activity, owner, followed: views.length},
             theme,
           );
-          const frame = new GoalFrame(
+          const frame = new GoalScreen(
             new VStack([
               new UserMessageComponent(
                 'Coordinate the export interface goal.',
@@ -380,19 +401,20 @@ function goalScenario(): Scenario {
               ...(context.createEditor ? [context.createEditor(theme)] : []),
               summary,
             ]),
+            screen,
           );
           frame.show(expanded ? panel : undefined);
           component.clear();
           preview.setContent(
             {
-              title: 'Goal panel',
+              title: 'Goal popup',
               detail: expanded
-                ? `panel open · ${PANEL_KEY} toggles`
+                ? `popup open · ${PANEL_KEY} toggles`
                 : 'summary line',
               body: frame,
               hint: expanded
-                ? 'Space state · E hide panel · 1/2/3 · h · [/] ←/→ fold · Esc close'
-                : 'Space state · E show panel · T theme · ↑/↓ scroll · Esc close',
+                ? 'Space state · E hide popup · 1/2/3 · h · ↑/↓ select · ←/→ fold · Esc close'
+                : 'Space state · E show popup · T theme · ↑/↓ scroll · Esc close',
             },
             theme,
           );

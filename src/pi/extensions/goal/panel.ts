@@ -3,8 +3,8 @@ import {
   VStack,
   matchesKey,
   truncateToWidth,
+  Text,
   type Component,
-  type Focusable,
   type KeyId,
   type OverlayOptions,
 } from '@earendil-works/pi-tui';
@@ -23,7 +23,13 @@ import {
   type WorkerActivity,
   type WorkerActivitySnapshot,
 } from '../../src/ui/worker-activity.ts';
-import {compactSummary, inspection, type GoalView} from './present.ts';
+import {
+  artifacts,
+  compactSummary,
+  inspection,
+  latestEvent,
+  type GoalView,
+} from './present.ts';
 import {withHierarchy, type GoalTask} from './source.ts';
 import {
   goalTree,
@@ -34,21 +40,22 @@ import {
   type TreeRow,
 } from './hierarchy.ts';
 
-/** Toggles the panel from the editor; closes it from the focused panel. */
+/** Opens the goal popup from the editor; closes it from the popup. */
 export const PANEL_KEY: KeyId = 'alt+g';
 
-/** A side panel at the top right; narrow terminals reach full width through minWidth. */
+/** A large centered popup; minWidth fills narrow terminals. */
 export const panelOverlay = {
-  anchor: 'top-right',
-  width: '45%',
-  minWidth: 64,
-  maxHeight: '70%',
-  margin: {top: 1, right: 1},
-  nonCapturing: true,
+  anchor: 'center',
+  width: '90%',
+  minWidth: 80,
+  maxHeight: '100%',
 } satisfies OverlayOptions;
-/** Body rows: the frame reserves two lines for its heading and footer. */
+/** The popup's columns for a terminal width, as Pi resolves panelOverlay. */
+export const panelWidth = (columns: number): number =>
+  Math.min(columns, Math.max(80, Math.floor(columns * 0.9)));
+/** Body rows: 85% of the screen, or all of a short one, less the frame's heading and footer. */
 export const panelHeight = (rows: number): number =>
-  Math.max(1, Math.floor(rows * 0.7) - 2);
+  Math.max(1, (rows < 30 ? rows : Math.floor(rows * 0.85)) - 2);
 
 const text = (value: string, max = 512) =>
   truncateToWidth(labelText(value), max);
@@ -57,10 +64,9 @@ const row = (model: RowModel, theme: Theme): PriorityRow => {
   view.update(model, theme);
   return view;
 };
-const note = (value: string, theme: Theme, tone: Tone = 'dim', indent = 0) =>
+const note = (value: string, theme: Theme, tone: Tone = 'dim') =>
   row(
     {
-      indent,
       start: [{text: value, tone, priority: 100, shrink: 'clip'}],
       end: [],
     },
@@ -86,6 +92,9 @@ const heading = (title: string, detail: string, theme: Theme) =>
     theme,
   );
 
+const claimed = (task: GoalTask) =>
+  task.owner !== null && (task.status === 'open' || task.status === 'review');
+
 /** Live work on one goal: this session's claims and its assigned workers. */
 export interface GoalWork {
   readonly mine: readonly GoalTask[];
@@ -110,11 +119,7 @@ export function goalWork(
     mine: owner
       ? [...tree.nodes.values()]
           .map(node => node.task)
-          .filter(
-            task =>
-              task.owner === owner &&
-              (task.status === 'open' || task.status === 'review'),
-          )
+          .filter(task => task.owner === owner && claimed(task))
       : [],
     workers:
       activity?.workers.flatMap(worker =>
@@ -187,10 +192,7 @@ export function summaryRow(
     work.mine[0] ??
     work.workers.find(({task}) => task)?.task ??
     [...(tree?.nodes.values() ?? [])].find(
-      node =>
-        !isGroup(node) &&
-        node.task.owner &&
-        (node.task.status === 'open' || node.task.status === 'review'),
+      node => !isGroup(node) && claimed(node.task),
     )?.task;
   const asking = work.workers.filter(
     ({worker}) => worker.state === 'asking',
@@ -285,109 +287,157 @@ function taskState(task: GoalTask): TaskState {
   return {label: '· Open', tone: 'muted'};
 }
 
+const glyph = (value: string): Segment => ({
+  text: value,
+  tone: 'accent',
+  bold: true,
+  priority: 100,
+  shrink: 'clip',
+});
 function treeRow(
   item: TreeRow,
   theme: Theme,
   owner: string | undefined,
-  selected: string | undefined,
+  selected: boolean,
 ): Component {
   const {node, depth, expanded} = item;
-  const indent = Math.min(depth, 6) * 2;
-  const title = `${depth > 6 ? `[level ${depth + 1}] ` : ''}${text(node.task.title)}`;
-  if (isGroup(node))
-    return row(
-      {
-        indent,
-        layout: 'inline',
-        groupSeparator: ' · ',
-        start: [
-          {
-            text: `${node.task.id === selected ? '› ' : ''}${expanded ? '▾' : '▸'}`,
-            tone: 'accent',
-            width: 3,
-            priority: 100,
-            shrink: 'clip',
-          },
-          {
-            text: title,
-            tone: 'text',
-            bold: true,
-            minWidth: 8,
-            priority: 80,
-            shrink: 'clip',
-          },
-        ],
-        end: [
-          {
-            text: node.task.status === 'open' ? '' : node.task.status,
-            tone: node.task.status === 'held' ? 'warning' : 'muted',
-            priority: 95,
-            shrink: 'clip',
-          },
-          {
-            text: groupSummary(node),
-            tone: node.totals?.held
-              ? 'warning'
-              : node.totals?.claimed
-                ? 'accent'
-                : 'muted',
-            minWidth: 8,
-            priority: 90,
-            shrink: 'clip',
-          },
-        ],
-      },
-      theme,
-    );
+  const group = isGroup(node);
   const state = taskState(node.task);
-  const claimed =
-    node.task.owner &&
-    (node.task.status === 'open' || node.task.status === 'review');
+  const closed = node.task.status === 'done' || node.task.status === 'dropped';
   return row(
     {
-      indent,
+      // The selection marker takes the place of two indent cells.
+      indent: Math.min(depth, 6) * 2 + (selected ? 0 : 2),
       layout: 'inline',
       groupSeparator: ' · ',
       start: [
+        ...(selected ? [glyph('→')] : []),
+        group
+          ? glyph(expanded ? '▾' : '▸')
+          : {
+              text: state.label,
+              tone: state.tone,
+              bold: state.emphasized ?? false,
+              width: 12,
+              minWidth: 1,
+              priority: 100,
+              shrink: 'clip',
+            },
         {
-          text: state.label,
-          tone: state.tone,
-          bold: state.emphasized ?? false,
-          width: 12,
-          minWidth: 1,
-          priority: 100,
-          shrink: 'clip',
-        },
-        {
-          text: title,
-          tone: state.emphasized
-            ? 'accent'
-            : node.task.status === 'done' || node.task.status === 'dropped'
-              ? 'muted'
-              : 'text',
-          bold: state.emphasized ?? false,
+          text: `${depth > 6 ? `[level ${depth + 1}] ` : ''}${text(node.task.title)}`,
+          tone:
+            state.emphasized && !group ? 'accent' : closed ? 'muted' : 'text',
+          bold: group || selected || (state.emphasized ?? false),
           minWidth: 8,
           priority: 80,
           shrink: 'clip',
         },
       ],
-      end: claimed
-        ? [
-            {
-              text:
-                node.task.owner === owner ? 'you' : text(node.task.owner!, 64),
-              tone: 'muted',
-              priority: 60,
-              shrink: 'omit',
-            },
-          ]
-        : [],
+      end: [
+        {
+          text: group
+            ? groupSummary(node)
+            : claimed(node.task)
+              ? node.task.owner === owner
+                ? 'you'
+                : text(node.task.owner!, 64)
+              : '',
+          tone: node.totals?.held ? 'warning' : 'muted',
+          minWidth: group ? 8 : 0,
+          priority: 90,
+          shrink: group ? 'clip' : 'omit',
+        },
+      ],
     },
     theme,
   );
 }
 
-export type PanelSection = 'overview' | 'brief' | 'record';
+const wrapped = (value: string, theme: Theme, tone: Tone = 'text') =>
+  new Text(theme.fg(tone, value), 0, 0);
+
+/** Everything recorded about one task, plus live workers assigned to it. */
+function detail(
+  task: GoalTask,
+  tree: GoalTree,
+  work: GoalWork,
+  model: PanelModel,
+  theme: Theme,
+): Component {
+  const state = taskState(task);
+  const node = tree.nodes.get(task.id);
+  const lines: [string, Tone][] = [
+    [theme.bold(labelText(task.title)), 'text'],
+    [
+      node && isGroup(node)
+        ? `${task.status} · ${groupSummary(node)}`
+        : state.label,
+      state.tone,
+    ],
+  ];
+  if (claimed(task))
+    lines.push([
+      `Claimed by ${task.owner === model.owner ? 'this session' : text(task.owner!, 128)}`,
+      'accent',
+    ]);
+  for (const {worker} of work.workers.filter(({task: t}) => t?.id === task.id))
+    lines.push([
+      `Worker ${text(worker.label, 64)} · ${worker.state === 'running' ? text(worker.doing ?? 'working', 160) : worker.state}`,
+      worker.state === 'asking' ? 'warning' : 'accent',
+    ]);
+  for (const id of task.blocked_by.slice(0, 8)) {
+    const blocker = tree.nodes.get(id)?.task;
+    lines.push([
+      `Needs: ${blocker ? `${text(blocker.title)} · ${blocker.status}` : id}`,
+      blocker?.status === 'done' ? 'muted' : 'warning',
+    ]);
+  }
+  if (task.blocked_by.length > 8)
+    lines.push([`Needs ${task.blocked_by.length - 8} more`, 'warning']);
+  if (task.branch) lines.push([`Branch ${text(task.branch)}`, 'muted']);
+  for (const line of latestEvent(task)) lines.push([line.trim(), 'muted']);
+  // References and evidence as the record states them; the result renders below.
+  for (const line of artifacts(task, 0))
+    if (!/^\[?Result/.test(line)) lines.push([line, 'muted']);
+  const body = new VStack(
+    lines.map(([value, tone]) => wrapped(value, theme, tone)),
+  );
+  body.addChild(
+    heading(
+      'Result',
+      task.result_event !== null
+        ? `/goal evidence ${task.id} ${task.result_event}`
+        : '',
+      theme,
+    ),
+  );
+  body.addChild(
+    task.result
+      ? new MarkdownView(task.result, theme)
+      : note('No result recorded.', theme),
+  );
+  return body;
+}
+
+/** Exactly `rows` lines of `lines`, marking clipped content. */
+function clip(
+  lines: readonly string[],
+  rows: number,
+  width: number,
+  theme: Theme,
+): string[] {
+  if (rows <= 0) return [];
+  if (lines.length <= rows)
+    return [...lines, ...Array<string>(rows - lines.length).fill('')];
+  return [
+    ...lines.slice(0, rows - 1),
+    truncateToWidth(
+      theme.fg('dim', `… ${lines.length - rows + 1} more lines · 3 record`),
+      width,
+    ),
+  ];
+}
+
 export interface PanelModel {
   readonly view: GoalView;
   readonly activity?: WorkerActivitySnapshot | undefined;
@@ -396,207 +446,22 @@ export interface PanelModel {
   readonly followed: number;
 }
 export interface PanelActions {
-  /** Return input to the editor and keep the panel visible. */
-  readonly release: () => void;
   readonly close: () => void;
   /** Select the next followed goal. */
   readonly cycle: () => void;
 }
 
-/** Bounded overview: live work, the task tree, and the goal's current result. */
-class PanelBody extends VStack {
-  override render(width: number): string[] {
-    return width > 0 ? super.render(width) : [];
-  }
-}
-function overview(
-  model: PanelModel,
-  view: GoalView,
-  theme: Theme,
-  rows: readonly TreeRow[],
-  selected: string | undefined,
-): {body: VStack; treeTop: number} {
-  const body = new PanelBody();
-  const snapshot = view.snapshot;
-  if (view.error || !snapshot) {
-    body.addChild(
-      note(
-        view.error ? 'Unavailable · /goal refresh' : 'Loading goal…',
-        theme,
-        view.error ? 'warning' : 'muted',
-      ),
-    );
-    if (view.error) body.addChild(note(text(view.error), theme, 'warning'));
-    return {body, treeTop: 0};
-  }
-  const tree = goalTree(snapshot);
-  const work = goalWork(view, model.activity, model.owner, tree);
-  const frame = model.activity?.frame ?? 0;
-  body.addChild(heading('Now', '', theme));
-  for (const task of work.mine)
-    body.addChild(
-      row(
-        {
-          indent: 2,
-          start: [
-            {text: '›', tone: 'accent', priority: 100, shrink: 'clip'},
-            {
-              text: 'you',
-              tone: 'accent',
-              bold: true,
-              priority: 90,
-              shrink: 'clip',
-            },
-            {
-              text: text(task.title),
-              tone: 'text',
-              minWidth: 8,
-              priority: 80,
-              shrink: 'clip',
-              separatorBefore: ' · ',
-            },
-          ],
-          end: [],
-          separator: ' ',
-        },
-        theme,
-      ),
-    );
-  for (const {worker, task} of work.workers)
-    body.addChild(
-      row(
-        {
-          indent: 2,
-          start: [
-            {
-              text:
-                worker.state === 'asking'
-                  ? '?'
-                  : worker.state === 'quiet'
-                    ? '·'
-                    : workerFrame(frame),
-              tone: worker.state === 'asking' ? 'warning' : 'accent',
-              priority: 100,
-              shrink: 'clip',
-            },
-            {
-              text: text(worker.label, 64),
-              tone: 'text',
-              bold: true,
-              minWidth: 4,
-              priority: 90,
-              shrink: 'clip',
-            },
-            {
-              text: text(task?.title ?? worker.assignment.id),
-              tone: 'muted',
-              minWidth: 8,
-              priority: 70,
-              shrink: 'clip',
-              separatorBefore: ' · ',
-            },
-            {
-              text:
-                worker.state === 'asking'
-                  ? 'asking'
-                  : worker.state === 'quiet'
-                    ? 'quiet'
-                    : text(worker.doing ?? 'working', 160),
-              tone: worker.state === 'asking' ? 'warning' : 'dim',
-              priority: 60,
-              shrink: 'clip',
-              separatorBefore: ' · ',
-            },
-          ],
-          end: [],
-          separator: ' ',
-        },
-        theme,
-      ),
-    );
-  if (!work.mine.length && !work.workers.length)
-    body.addChild(
-      note(
-        'No claims or live workers from this session on this goal.',
-        theme,
-        'dim',
-        2,
-      ),
-    );
-  body.addChild(heading('Tasks', compactSummary(view), theme));
-  const treeTop = body.children.length;
-  const labels = new Map(
-    [...tree.nodes.values()].map(({task}) => [task.id, text(task.title)]),
-  );
-  for (const item of rows) {
-    body.addChild(treeRow(item, theme, model.owner, selected));
-    const blockers = item.node.task.blocked_by;
-    if (blockers.length)
-      body.addChild(
-        note(
-          `Needs: ${blockers
-            .slice(0, 8)
-            .map(id => labels.get(id) ?? text(id))
-            .join(
-              ', ',
-            )}${blockers.length > 8 ? ` · +${blockers.length - 8} more` : ''}`,
-          theme,
-          'muted',
-          Math.min(item.depth, 6) * 2 + 13,
-        ),
-      );
-  }
-  const {hidden_closed} = snapshot.overview;
-  if (!rows.length)
-    body.addChild(
-      note(
-        hidden_closed ? 'No open slices remain.' : 'No slices recorded.',
-        theme,
-        'muted',
-      ),
-    );
-  if (rows.length >= 100)
-    body.addChild(
-      note('Showing 100 rows · 3 record for the full-record command', theme),
-    );
-  if (tree.warning) body.addChild(note(tree.warning, theme, 'warning'));
-  if (hidden_closed)
-    body.addChild(
-      note(
-        `${hidden_closed} closed task${hidden_closed === 1 ? '' : 's'} hidden · h shows them`,
-        theme,
-      ),
-    );
-  const {root} = snapshot.overview.goal;
-  body.addChild(
-    heading(
-      'Result',
-      root.result_event !== null ? `event ${root.result_event}` : '',
-      theme,
-    ),
-  );
-  body.addChild(
-    root.result
-      ? new MarkdownView(root.result, theme)
-      : note('No goal result recorded yet.', theme, 'dim', 2),
-  );
-  if (view.brief?.warning)
-    body.addChild(note(text(view.brief.warning), theme, 'warning'));
-  body.addChild(note('Recorded state · not live execution', theme));
-  return {body, treeTop};
-}
-
-/** Non-modal goal overview. Pi owns focus; this owns sections, folds and history. */
-export class GoalPanel extends Inspector implements Focusable {
+/** Focused goal popup: overview with tree and detail, brief, and full record. */
+export class GoalPanel extends Inspector {
   private model: PanelModel | undefined;
   private theme: Theme | undefined;
-  private section: PanelSection = 'overview';
+  private section: 'overview' | 'brief' | 'record' = 'overview';
   private history = false;
   private readonly collapsed = new Set<string>();
   private selected: string | undefined;
-  private hasFocus = false;
   private readonly actions: PanelActions;
   private readonly requestRender: () => void;
+  private readonly height: () => number;
 
   constructor(
     bindings: Pick<KeybindingsManager, 'matches'>,
@@ -604,28 +469,14 @@ export class GoalPanel extends Inspector implements Focusable {
     redraw: () => void,
     height: () => number,
   ) {
-    super(bindings, actions.release, redraw, height);
+    super(bindings, actions.close, redraw, height);
     this.actions = actions;
     this.requestRender = redraw;
-  }
-
-  private rows(view: GoalView): TreeRow[] {
-    return view.snapshot && !view.error
-      ? treeRows(goalTree(view.snapshot), this.collapsed).slice(0, 100)
-      : [];
+    this.height = height;
   }
 
   override render(width: number): string[] {
     return width > 0 ? super.render(width) : [];
-  }
-
-  get focused(): boolean {
-    return this.hasFocus;
-  }
-  set focused(value: boolean) {
-    if (value === this.hasFocus) return;
-    this.hasFocus = value;
-    this.refresh();
   }
 
   /** The displayed snapshot: closed tasks join only on request or for a closed goal. */
@@ -635,6 +486,28 @@ export class GoalPanel extends Inspector implements Focusable {
     if (!view || !snapshot || view.error || !this.history) return view;
     if (!snapshot.allTasks && snapshot.overview.hidden_closed) return view;
     return {...view, snapshot: withHierarchy(snapshot, true), history: true};
+  }
+
+  private rows(view: GoalView | undefined): TreeRow[] {
+    return view?.snapshot && !view.error
+      ? treeRows(goalTree(view.snapshot), this.collapsed)
+      : [];
+  }
+
+  /** The selected row: the chosen task if visible, else this session's current work. */
+  private index(view: GoalView, rows: readonly TreeRow[]): number {
+    const at = rows.findIndex(item => item.node.task.id === this.selected);
+    if (at >= 0) return at;
+    const {mine, workers} = goalWork(
+      view,
+      this.model?.activity,
+      this.model?.owner,
+    );
+    const now = mine[0] ?? workers.find(({task}) => task)?.task;
+    return Math.max(
+      0,
+      rows.findIndex(({node}) => node.task === now),
+    );
   }
 
   setGoal(model: PanelModel, theme: Theme): void {
@@ -648,48 +521,23 @@ export class GoalPanel extends Inspector implements Focusable {
     }
     this.model = model;
     this.theme = theme;
-    const snapshot = model.view.snapshot;
-    if (snapshot) {
-      const nodes = goalTree(snapshot).nodes;
-      for (const id of this.collapsed)
-        if (!nodes.has(id) || !isGroup(nodes.get(id)!))
-          this.collapsed.delete(id);
-    }
     this.refresh(changed);
+    this.requestRender();
   }
 
-  private refresh(resetScroll = false, reveal = false): void {
+  private refresh(resetScroll = false): void {
     const model = this.model;
     const theme = this.theme;
     const view = this.shown();
     if (!model || !theme || !view) return;
-    let body: Component;
-    let groups: TreeRow[] = [];
-    if (this.section === 'overview') {
-      const rows = this.rows(view);
-      groups = rows.filter(item => isGroup(item.node));
-      if (!groups.some(item => item.node.task.id === this.selected))
-        this.selected = groups[0]?.node.task.id;
-      const built = overview(
-        model,
-        view,
-        theme,
-        rows,
-        this.hasFocus ? this.selected : undefined,
-      );
-      body = built.body;
-      if (reveal && this.selected) {
-        const index = rows.findIndex(
-          item => item.node.task.id === this.selected,
-        );
-        const blockers = rows
-          .slice(0, index)
-          .filter(item => item.node.task.blocked_by.length).length;
-        this.revealLine(built.treeTop + index + blockers);
-      }
-    } else
-      body =
-        this.section === 'brief'
+    const rows = this.rows(view);
+    const body =
+      this.section === 'overview'
+        ? {
+            render: (width: number) => this.overview(view, rows, width),
+            invalidate() {},
+          }
+        : this.section === 'brief'
           ? new MarkdownView(
               view.error ??
                 [view.brief?.text ?? 'Brief not loaded.', view.brief?.warning]
@@ -700,11 +548,10 @@ export class GoalPanel extends Inspector implements Focusable {
           : new OutputView(inspection(view));
     const keys = [
       '1 overview · 2 brief · 3 record',
+      this.section === 'overview' ? '↑/↓ select · ←/→ fold' : '↑/↓ scroll',
       view.snapshot?.allTasks && 'h closed',
       model.followed > 1 && 'Tab next goal',
-      this.section === 'overview' && groups.length && '[/] group · ←/→ fold',
-      '↑/↓ scroll · Esc editor',
-      `${PANEL_KEY} close`,
+      `Esc/${PANEL_KEY} close`,
     ];
     this.setContent(
       {
@@ -714,18 +561,167 @@ export class GoalPanel extends Inspector implements Focusable {
           : [
               view.snapshot?.overview.goal.root.status,
               this.section,
-              this.history && 'with closed',
+              'recorded state, not live',
             ]
               .filter(Boolean)
               .join(' · '),
         body,
-        hint: this.hasFocus
-          ? keys.filter(Boolean).join(' · ')
-          : `/goal to scroll and fold · ${PANEL_KEY} close`,
+        hint: keys.filter(Boolean).join(' · '),
       },
       theme,
       resetScroll,
     );
+  }
+
+  /** The tree rows around the selection, with omissions and hierarchy notes. */
+  private window(
+    view: GoalView,
+    tree: GoalTree,
+    rows: readonly TreeRow[],
+    height: number,
+    width: number,
+  ): string[] {
+    const theme = this.theme!;
+    const selected = this.index(view, rows);
+    const hidden = view.snapshot?.overview.hidden_closed;
+    const notes = [
+      !rows.length &&
+        (hidden ? 'No open slices remain.' : 'No slices recorded.'),
+      tree.warning,
+      hidden && `${hidden} closed hidden · h shows them`,
+    ].filter((value): value is string => Boolean(value));
+    let space = Math.max(0, height - notes.length);
+    if (rows.length > space) {
+      space = Math.max(0, space - 1);
+      notes.unshift(
+        `rows ${Math.min(rows.length, space)} of ${rows.length} · ↑/↓ select`,
+      );
+    }
+    const top = Math.max(
+      0,
+      Math.min(selected - Math.floor(space / 2), rows.length - space),
+    );
+    return clip(
+      [
+        ...rows
+          .slice(top, top + space)
+          .flatMap((item, i) =>
+            treeRow(
+              item,
+              theme,
+              this.model?.owner,
+              top + i === selected,
+            ).render(width),
+          ),
+        ...notes.flatMap(value =>
+          note(value, theme, value === tree.warning ? 'warning' : 'dim').render(
+            width,
+          ),
+        ),
+      ],
+      height,
+      width,
+      theme,
+    );
+  }
+
+  /** Header, then the task tree beside (or above) the selected task's detail, in exactly `height` lines. */
+  private overview(
+    view: GoalView,
+    rows: readonly TreeRow[],
+    width: number,
+  ): string[] {
+    const model = this.model!;
+    const theme = this.theme!;
+    const height = Math.max(1, this.height());
+    const snapshot = view.snapshot;
+    if (width <= 0) return [];
+    if (view.error || !snapshot)
+      return clip(
+        wrapped(
+          view.error
+            ? `Unavailable · /goal refresh\n${text(view.error)}`
+            : 'Loading goal…',
+          theme,
+          view.error ? 'warning' : 'muted',
+        ).render(width),
+        height,
+        width,
+        theme,
+      );
+    const tree = goalTree(snapshot);
+    const work = goalWork(view, model.activity, model.owner, tree);
+    const {root} = snapshot.overview.goal;
+    const asking = work.workers.filter(
+      ({worker}) => worker.state === 'asking',
+    ).length;
+    const attention = [
+      tree.warning && 'partial tree',
+      work.workers.length &&
+        `${work.workers.length} worker${work.workers.length === 1 ? '' : 's'}${asking ? ` · ${asking} asking` : ''}`,
+      view.brief?.warning && text(view.brief.warning),
+    ].filter(Boolean);
+    const header = [
+      ...wrapped(
+        theme.fg('muted', compactSummary(view)) +
+          theme.fg('warning', attention.map(value => ` · ${value}`).join('')),
+        theme,
+      ).render(width),
+      ...heading(
+        'Goal result',
+        root.result_event !== null ? `event ${root.result_event}` : '',
+        theme,
+      ).render(width),
+      ...clip(
+        (root.result
+          ? new MarkdownView(root.result, theme)
+          : note('No goal result recorded yet.', theme)
+        ).render(width),
+        Math.min(4, Math.max(1, height - 8)),
+        width,
+        theme,
+      ).filter((line, i) => i === 0 || line),
+    ];
+    const rest = Math.max(0, height - header.length);
+    const split = width >= 100;
+    const treeWidth = split ? Math.floor(width * 0.45) : width;
+    const detailWidth = split ? width - treeWidth - 3 : width;
+    const left = [
+      ...heading('Tasks', view.history ? 'with closed' : '', theme).render(
+        treeWidth,
+      ),
+      ...this.window(
+        view,
+        tree,
+        rows,
+        (split ? rest : Math.max(2, Math.floor(rest / 2))) - 1,
+        treeWidth,
+      ),
+    ];
+    const right = clip(
+      [
+        ...heading('Detail', '', theme).render(detailWidth),
+        ...detail(
+          rows[this.index(view, rows)]?.node.task ?? root,
+          tree,
+          work,
+          model,
+          theme,
+        ).render(detailWidth),
+      ],
+      split ? rest : rest - left.length,
+      detailWidth,
+      theme,
+    );
+    if (!split) return [...header, ...left, ...right].slice(0, height);
+    const rule = theme.fg('dim', ' │ ');
+    return [
+      ...header,
+      ...left.map(
+        (line, i) =>
+          truncateToWidth(line, treeWidth, '', true) + rule + (right[i] ?? ''),
+      ),
+    ].slice(0, height);
   }
 
   override handleInput(data: string): void {
@@ -740,6 +736,8 @@ export class GoalPanel extends Inspector implements Focusable {
         : matchesKey(data, '3')
           ? 'record'
           : undefined;
+    const view = this.shown();
+    const rows = this.rows(view);
     if (section) {
       this.section = section;
       this.refresh(true);
@@ -751,37 +749,49 @@ export class GoalPanel extends Inspector implements Focusable {
       return;
     } else if (
       this.section === 'overview' &&
-      this.selected &&
-      (matchesKey(data, '[') ||
-        matchesKey(data, ']') ||
-        matchesKey(data, 'space') ||
-        matchesKey(data, 'left') ||
-        matchesKey(data, 'right'))
+      view &&
+      rows.length &&
+      this.move(data, view, rows)
     ) {
-      const groups = this.rows(this.shown()!).filter(item =>
-        isGroup(item.node),
-      );
-      if (matchesKey(data, '[') || matchesKey(data, ']')) {
-        const current = Math.max(
-          0,
-          groups.findIndex(item => item.node.task.id === this.selected),
-        );
-        this.selected =
-          groups[
-            (current + (matchesKey(data, ']') ? 1 : groups.length - 1)) %
-              groups.length
-          ]!.node.task.id;
-      } else if (
-        matchesKey(data, 'left') ||
-        (matchesKey(data, 'space') && !this.collapsed.has(this.selected))
-      )
-        this.collapsed.add(this.selected);
-      else this.collapsed.delete(this.selected);
-      this.refresh(false, true);
+      this.refresh();
     } else {
       super.handleInput(data);
       return;
     }
     this.requestRender();
+  }
+
+  /** Tree keys: select, fold, and step to a leaf's parent. */
+  private move(
+    data: string,
+    view: GoalView,
+    rows: readonly TreeRow[],
+  ): boolean {
+    const at = this.index(view, rows);
+    const item = rows[at]!;
+    const step = matchesKey(data, 'up') ? -1 : matchesKey(data, 'down') ? 1 : 0;
+    const id = item.node.task.id;
+    this.selected = id;
+    if (step)
+      this.selected =
+        rows[Math.max(0, Math.min(rows.length - 1, at + step))]!.node.task.id;
+    else if (
+      isGroup(item.node) &&
+      (matchesKey(data, 'left') || (matchesKey(data, 'space') && item.expanded))
+    )
+      this.collapsed.add(id);
+    else if (
+      isGroup(item.node) &&
+      (matchesKey(data, 'right') || matchesKey(data, 'space'))
+    )
+      this.collapsed.delete(id);
+    else if (
+      matchesKey(data, 'left') &&
+      item.node.task.parent &&
+      rows.some(r => r.node.task.id === item.node.task.parent)
+    )
+      this.selected = item.node.task.parent;
+    else return false;
+    return true;
   }
 }

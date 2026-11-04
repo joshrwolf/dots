@@ -575,7 +575,7 @@ async function workbenchFlow() {
     ['workers', 'Worker activity'],
     ['wake', 'Scheduled follow-up'],
     ['thinking', 'Thinking blocks'],
-    ['goal', 'Goal panel'],
+    ['goal', 'Goal popup'],
     ['edit', 'Recorded diff'],
     ['codemode', 'Nested tool activity'],
     ['inspection-shell', 'Workers'],
@@ -701,7 +701,12 @@ async function workbenchFlow() {
       send('E');
       await wait(
         () => state('goal', 0, true) && shows('Consumer migration'),
-        'panel beside the transcript',
+        'popup over the transcript',
+      );
+      send('\x1b[D');
+      await wait(
+        () => shows('→ ▾ Core interface'),
+        'select parent in workbench',
       );
       send('\x1b[D');
       await wait(
@@ -846,7 +851,7 @@ async function workbenchFlow() {
 }
 
 async function goalFlow() {
-  // alt+g closes the panel from the editor or the focused panel.
+  // alt+g closes the popup.
   const closePanel = async label => {
     const before = countLine('inspector-closed');
     send('\x1bg');
@@ -880,18 +885,21 @@ async function goalFlow() {
     send(`\x1b[<0;4;${goalRow}M\x1b[<0;4;${goalRow}m`);
     await wait(
       () => shows('1 overview') && shows('Reference fixture slice'),
-      'click opens and focuses the panel',
+      'click opens the popup',
     );
     const size = renders().at(-1)?.split(':').slice(1).map(Number);
-    assert.ok(size, 'panel render recorded');
-    assert.ok(size[0] < 120, `panel uses a side width (${size[0]})`);
-    assert.ok(size[1] <= 32, `panel fits its height (${size[1]})`);
+    assert.ok(size, 'popup render recorded');
+    assert.ok(
+      size[0] >= terminal.columns * 0.9,
+      `popup uses most of the width (${size[0]})`,
+    );
+    assert.ok(size[1] <= terminal.rows, `popup fits the screen (${size[1]})`);
+    const before = countLine('inspector-closed');
     send('\x1b');
     await wait(
-      () => shows('/goal to scroll and fold'),
-      'Esc returns input to the editor',
+      () => countLine('inspector-closed') > before,
+      'Esc closes the popup',
     );
-    await closePanel('clicked panel closed');
     assert.ok(
       lines().includes('editor:DRAFT_SURVIVES_INSPECTION'),
       'editor draft survives inspection',
@@ -899,17 +907,19 @@ async function goalFlow() {
     send('\x15');
   }
   assert.ok(!shows('Reference fixture slice'), 'no task rows below the editor');
+  send('KEEPS_EDITOR_DRAFT');
+  await wait(() => shows('KEEPS_EDITOR_DRAFT'), 'editor draft');
   send('\x1bg');
   await wait(
-    () => shows('Reference fixture slice') && shows('/goal to scroll and fold'),
-    'shortcut opens an unfocused panel',
+    () => shows('Reference fixture slice') && shows('1 overview'),
+    'shortcut opens the popup',
   );
-  send('KEEPS_EDITOR_INPUT');
-  await wait(() => shows('KEEPS_EDITOR_INPUT'), 'editor keeps input');
-  await closePanel('shortcut closes the panel');
+  send('2');
+  await wait(() => shows('Fixture brief'), 'popup takes input');
+  await closePanel('shortcut closes the popup');
   assert.ok(
-    lines().includes('editor:KEEPS_EDITOR_INPUT'),
-    'editor draft survives the panel',
+    lines().includes('editor:KEEPS_EDITOR_DRAFT'),
+    'editor draft survives the popup',
   );
   send('\x15');
   await fresh('/goal');
@@ -942,8 +952,14 @@ async function goalFlow() {
     () => shows('Consumer migration') && shows('Adapt consumers'),
     'unfold parent',
   );
-  send(']');
-  await wait(() => shows('Consumer migration'), 'select nested group');
+  for (let i = 0; i < 5 && !/→ ▾ Consumer migration/.test(plain()); i++) {
+    send('\x1b[B');
+    await sleep(100);
+  }
+  await wait(
+    () => /→ ▾ Consumer migration/.test(plain()),
+    'select nested group',
+  );
   send('\x1b[D');
   await wait(
     () => shows('▸') && shows('Consumer migration'),

@@ -596,9 +596,9 @@ test('initial focus selection is awaited before supplying pre-run context', asyn
   assert.match(files[0].content, /Consistent exports/);
 });
 
-// A stand-in for Pi's overlay host: records options, focus, and closes on done().
+// A stand-in for Pi's overlay host: records options and closes on done().
 function overlayHost(h, theme) {
-  const host = {opened: 0, closed: 0, focus: 0, unfocus: 0, view: undefined};
+  const host = {opened: 0, closed: 0, view: undefined};
   h.ctx.ui.custom = (factory, options) =>
     new Promise(resolve => {
       host.options = options;
@@ -618,15 +618,11 @@ function overlayHost(h, theme) {
         },
       );
       host.view = view;
-      options.onHandle?.({
-        focus: () => host.focus++,
-        unfocus: () => host.unfocus++,
-      });
     });
   return host;
 }
 
-test('the panel shortcut toggles one non-capturing overlay; /goal focuses it; shutdown closes it', async () => {
+test('the shortcut, /goal and Esc open and close one centered popup; shutdown closes it', async () => {
   initTheme('dark', false);
   const theme = getThemeByName('dark');
   const h = harness(source(), [entry(focused())], 'tui');
@@ -637,23 +633,18 @@ test('the panel shortcut toggles one non-capturing overlay; /goal focuses it; sh
   toggle.handler(h.ctx);
   assert.equal(host.opened, 1);
   assert.equal(host.options.overlay, true);
-  assert.equal(host.options.overlayOptions.nonCapturing, true);
-  assert.equal(host.options.overlayOptions.anchor, 'top-right');
-  assert.equal(host.focus, 0, 'the editor keeps input');
+  assert.equal(host.options.overlayOptions.anchor, 'center');
+  assert.equal(host.options.overlayOptions.nonCapturing, undefined);
   assert.match(host.view.render(120).join('\n'), /Consistent exports/);
   await h.command('');
   await h.command('show');
-  assert.equal(host.opened, 1, 'one panel at a time');
-  assert.equal(host.focus, 2);
+  assert.equal(host.opened, 1, 'one popup at a time');
   host.view.handleInput('\x1b');
-  assert.equal(host.unfocus, 1, 'Esc returns input to the editor');
-  assert.equal(host.closed, 0);
-  toggle.handler(h.ctx);
-  assert.equal(host.closed, 1);
+  assert.equal(host.closed, 1, 'Esc closes the popup');
   await h.command('show');
   assert.equal(host.opened, 2);
   host.view.handleInput('\x1bg');
-  assert.equal(host.closed, 2, 'the shortcut also closes a focused panel');
+  assert.equal(host.closed, 2, 'the shortcut closes the popup');
   toggle.handler(h.ctx);
   await h.event('session_shutdown');
   assert.equal(host.closed, 3);
@@ -881,7 +872,6 @@ test('the summary line uses native press/click handling and cannot revive stale 
   assert.equal(host.opened, 0, 'press does not open the panel');
   widget.handleMouse({...event, type: 'click'});
   assert.equal(host.opened, 1);
-  assert.equal(host.focus, 1, 'a click focuses the panel');
   widget.handleMouse({...event, type: 'click'});
   assert.equal(host.opened, 1, 'one panel at a time');
   assert.equal(

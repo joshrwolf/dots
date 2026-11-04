@@ -100,13 +100,14 @@ implementation or start work. Use `/goal refresh` to refresh and
 
 A followed goal shows one summary line below the editor: progress, attention,
 the task this session or its workers are on, and other followed goals.
-**Alt+G** toggles the goal panel at the top right without taking the editor's
-input. It shows this session's claims and workers on the goal, the task tree with
-claims and blockers, and the goal's current result. `/goal` or a click on the
-summary line opens and focuses it for scrolling, folding, the brief, closed tasks
-and other followed goals; its footer lists the keys. **Esc** returns to the
-editor and **Alt+G** closes it. On macOS, Alt+G needs a terminal that sends
-Option as Alt; `/goal` always works.
+**Alt+G**, `/goal`, or a click on the summary line opens the goal popup over
+the session. Its header shows progress, attention, and the goal's current result.
+Below it, the task tree sits beside the selected task's detail: status, claim
+(this session or a named owner), blockers, result, branch and references, latest
+event, and live workers on it. **1/2/3** switch between this overview, the brief,
+and the full record; the footer lists the remaining keys. **Esc** or **Alt+G**
+closes it and returns to the editor with its draft intact. On macOS, Alt+G needs
+a terminal that sends Option as Alt; `/goal` always works.
 
 For another project, supply its exact `project` key from `dots task --json`,
 not a guessed path. Several goals may be followed at once; selecting one changes

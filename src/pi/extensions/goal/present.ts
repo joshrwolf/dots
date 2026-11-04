@@ -39,7 +39,7 @@ export function summary(view: GoalView): string {
   if (!p) return 'loading';
   return `${p.done} done · ${p.open} open · ${p.held} held · ${p.dropped} dropped · ${p.ready} ready · ${p.review} review`;
 }
-function artifacts(task: GoalTask, evidenceLimit: number): string[] {
+export function artifacts(task: GoalTask, evidenceLimit: number): string[] {
   const lines = task.references
     .slice(0, 8)
     .map(
@@ -75,7 +75,7 @@ function artifacts(task: GoalTask, evidenceLimit: number): string[] {
 }
 const EVENT_DETAIL = 512;
 /** The latest recorded event only; never a reconstructed history or handoff. */
-function latestEvent(task: GoalTask): string[] {
+export function latestEvent(task: GoalTask): string[] {
   const event = task.last_event;
   if (!event || (event.kind === 'created' && !event.detail)) return [];
   // Result-recording events repeat the result shown above; keep only when, what, and who.
@@ -186,7 +186,7 @@ export function inspection(
     );
   if (snapshot.overview.hidden_closed > 0)
     lines.push(
-      `${snapshot.overview.hidden_closed} closed task details hidden; h in the goal panel or dots task goal show ${goal.root.id} --all shows them.`,
+      `${snapshot.overview.hidden_closed} closed task details hidden; h in the goal popup or dots task goal show ${goal.root.id} --all shows them.`,
     );
   if (tasks.length > taskLimit)
     lines.push(

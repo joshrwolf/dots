@@ -48,8 +48,8 @@ job completions, worker replies, wakes, and an otherwise unstyled tool share one
 transcript. `/ui-lab thinking` previews summaries, structured detail, and unfinished
 streaming Markdown through Pi’s real assistant component; **E** toggles its native
 thinking disclosure. `/ui-lab goal` shows the goal summary line below the native editor.
-**E** opens the goal panel beside the transcript, as Alt+G does in a session;
-narrow widths stack it full width. In the panel, **1/2/3**, **h**, **[**/**]** and
+**E** opens the goal popup centered over the transcript and editor, at the size
+Alt+G opens it in a session. In the popup, **1/2/3**, **h**, **↑**/**↓** and
 **←**/**→** work as in a session; Space remains the workbench state switch and
 cycles running, asking and quiet workers, closed history, partial trees, multiple
 follows, held work, unavailable data, and brief warnings. The **frame**

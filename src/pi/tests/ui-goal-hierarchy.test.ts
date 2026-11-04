@@ -24,11 +24,10 @@ const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
 const panel = (view: GoalView, height = 30) => {
   const result = new GoalPanel(
     {matches: () => false},
-    {release() {}, close() {}, cycle() {}},
+    {close() {}, cycle() {}},
     () => {},
     () => height,
   );
-  result.focused = true;
   result.setGoal({view, followed: 1}, theme);
   return result;
 };
@@ -121,7 +120,7 @@ test('folding is presentation-only, nested, preserved across refresh, and histor
   );
   assert.match(
     lines.join('\n'),
-    /Now[\s\S]*Tasks[\s\S]*Result[\s\S]*Recorded state · not live execution/,
+    /recorded state, not live[\s\S]*Goal result[\s\S]*Tasks[\s\S]*Detail/,
   );
   assert.match(plain(inspector.render(160)), /Consumer migration/);
   inspector.handleInput('\x1b[D'); // Fold selected Core interface.
@@ -136,7 +135,8 @@ test('folding is presentation-only, nested, preserved across refresh, and histor
   assert.doesNotMatch(plain(inspector.render(160)), /Consumer migration/);
   inspector.handleInput('\x1b[C');
   assert.match(plain(inspector.render(160)), /Consumer migration/);
-  inspector.handleInput(']'); // Select nested Consumer migration.
+  inspector.handleInput('\x1b[B');
+  inspector.handleInput('\x1b[B'); // Select nested Consumer migration.
   inspector.handleInput(' ');
   output = plain(inspector.render(160));
   assert.match(output, /Consumer migration/);
@@ -240,7 +240,7 @@ test('nested rows remain bounded in both themes; deep selection scrolls into vie
   const inspector = panel({...model, snapshot}, 6);
   inspector.render(120);
   for (let i = 0; i < 15; i++) {
-    inspector.handleInput(']');
+    inspector.handleInput('\x1b[B');
     inspector.render(120);
   }
   assert.match(plain(inspector.render(120)), /Nested group 15/);

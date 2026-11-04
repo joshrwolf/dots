@@ -15,14 +15,13 @@ const summary = (views, selected, theme) => {
   row.update(summaryRow(views, selected ?? views[0].focus.id), theme);
   return row;
 };
-const panel = (view, theme, release = () => {}, bindings = () => false) => {
+const panel = (view, theme, close = () => {}, bindings = () => false) => {
   const result = new GoalPanel(
     {matches: bindings},
-    {release, close() {}, cycle() {}},
+    {close, cycle() {}},
     () => {},
     () => 40,
   );
-  result.focused = true;
   result.setGoal({view, followed: 1}, theme);
   return result;
 };
@@ -166,12 +165,15 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
   const line = () => plain(summary([model], undefined, theme).render(200));
   assert.match(line(), /1\/5 done · 1 held · partial · now: Reference/);
   assert.equal(summary([model], undefined, theme).render(160).length, 1);
-  const tree = plain(panel(model, theme).render(120));
-  assert.match(tree, /· Waiting +Consumer[^\n]*\n[^\n]* +Needs: Reference/);
+  const browser = panel(model, theme);
+  const tree = plain(browser.render(120));
   assert.match(tree, /· Open +Released/);
-  assert.match(tree, /› Claimed +Reference · fixture/);
+  assert.match(tree, /→ › Claimed +Reference · fixture/);
+  assert.match(tree, /Claimed by fixture/);
   assert.doesNotMatch(tree, /Project:|Recorded at:|t-aa|Brief content:/);
-  assert.match(tree, /1 closed task hidden/);
+  assert.match(tree, /1 closed hidden/);
+  browser.handleInput('\x1b[B');
+  assert.match(plain(browser.render(120)), /Needs: Reference · open/);
   value.overview.progress.claimed = 2;
   assert.doesNotMatch(
     line(),
@@ -185,11 +187,10 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
   let redraws = 0;
   const inspector = new GoalPanel(
     {matches: () => false},
-    {release() {}, close() {}, cycle() {}},
+    {close() {}, cycle() {}},
     () => redraws++,
     () => 20,
   );
-  inspector.focused = true;
   inspector.setGoal({view: model, followed: 1}, theme);
   assert.doesNotMatch(plain(inspector.render(120)), /Accepted design|Project:/);
   inspector.handleInput('2');
@@ -199,7 +200,7 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
   assert.match(plain(inspector.render(120)), /Project:/);
   inspector.handleInput('1');
   assert.match(plain(inspector.render(120)), /· Waiting +Consumer/);
-  assert.equal(redraws, 3);
+  assert.equal(redraws, 4, 'setGoal and each key request one render');
 });
 
 test('followed overview keeps selection visible and reports display omissions without hiding context', () => {
