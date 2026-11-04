@@ -107,7 +107,7 @@ test('the summary cue animates only for a live assignment in the exact project a
 });
 
 test('the persistent surface is one bounded line naming progress, current work and other follows', () => {
-  for (const phase of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) {
+  for (const phase of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
     const views = goalFixtures(phase);
     const original = structuredClone(views);
     for (const name of ['dark', 'light'])
@@ -228,7 +228,7 @@ test('the popup is large and centered and fills small terminals', () => {
 });
 
 test('the panel shows live work, the claimed task tree and the goal result without changing records', () => {
-  for (let phase = 0; phase < 14; phase++) {
+  for (let phase = 0; phase < 15; phase++) {
     const views = goalFixtures(phase);
     const original = structuredClone(views);
     const context = views.map(view => orientation(view));
@@ -250,11 +250,8 @@ test('the panel shows live work, the claimed task tree and the goal result witho
       );
       for (const width of [0, 1, 2, 12, 30, 60, 120, 240]) {
         const lines = view.render(width);
-        assert.equal(
-          lines.length,
-          width ? 42 : 0,
-          'the overview fills the popup',
-        );
+        assert.ok(lines.length <= (width ? 42 : 0), 'the overview fits');
+        assert.ok(!width || lines.length >= 3, 'content stays visible');
         assert.ok(
           lines.every(line => visibleWidth(line) <= width),
           `${phase}/${name}/${width}`,
@@ -296,7 +293,7 @@ test('the panel shows live work, the claimed task tree and the goal result witho
 test('panel keys select sections, closed tasks and goals; Esc returns input and the shortcut closes', () => {
   const goal = goalFixtures(9)[0]!;
   const {result: view, calls} = panel(goal, 2);
-  assert.match(plain(view.render(120)), /Tab next goal · Esc\/alt\+g close/);
+  assert.match(plain(view.render(120)), /Tab goal · Esc\/alt\+g close/);
   view.handleInput('2');
   assert.match(plain(view.render(120)), /Two workstreams/);
   view.setGoal({view: goal, followed: 2}, getThemeByName('light')!);
@@ -331,11 +328,29 @@ test('panel keys select sections, closed tasks and goals; Esc returns input and 
       },
     },
   }).result;
+  assert.match(plain(hidden.render(120)), /Define shared types/);
+  assert.match(plain(hidden.render(120)), /all tasks/);
+  assert.match(plain(hidden.render(120)), /h hide closed/);
+  assert.doesNotMatch(plain(hidden.render(120)), /closed hidden/);
+  hidden.handleInput('h');
   assert.doesNotMatch(plain(hidden.render(120)), /Define shared types/);
   assert.match(plain(hidden.render(120)), /2 closed hidden · h shows them/);
+  assert.match(plain(hidden.render(120)), /h show closed/);
   hidden.handleInput('h');
   assert.match(plain(hidden.render(120)), /Define shared types/);
-  assert.match(plain(hidden.render(120)), /with closed/);
+  hidden.handleInput('h');
+  hidden.setGoal({view: goalFixtures(9)[0]!, followed: 1}, theme);
+  assert.doesNotMatch(
+    plain(hidden.render(120)),
+    /Define shared types/,
+    'refresh keeps the filter even with an unfiltered source snapshot',
+  );
+  hidden.setGoal({view: goalFixtures(3)[1]!, followed: 1}, theme);
+  assert.match(
+    plain(hidden.render(120)),
+    /Define shared types/,
+    'another goal starts with all tasks',
+  );
 });
 
 test('the graph lists leaves by dependency; the outline folds groups', () => {
@@ -347,8 +362,8 @@ test('the graph lists leaves by dependency; the outline folds groups', () => {
       ...goal.snapshot!,
       overview: {
         ...overview,
-        open_graph: {
-          ...overview.open_graph!,
+        graph: {
+          ...overview.graph!,
           notes: ['cycle: t-444444 waits on t-555555; edge omitted'],
         },
       },
@@ -362,6 +377,7 @@ test('the graph lists leaves by dependency; the outline folds groups', () => {
   noted.handleInput('o');
   assert.doesNotMatch(plain(noted.render(160)), /cycle:/);
   const {result: view} = panel(goal);
+  view.handleInput('h');
   const detail = () =>
     plain(view.render(160))
       .split('\n')
@@ -418,6 +434,87 @@ test('the graph lists leaves by dependency; the outline folds groups', () => {
   assert.doesNotMatch(narrow, / │ /);
 });
 
+test('graph lanes and title columns stay aligned when selection moves', () => {
+  for (const phase of [8, 14]) {
+    const goal = goalFixtures(phase)[0]!;
+    const view = panel(goal).result;
+    const graph = goal.snapshot!.overview.graph!;
+    const tasks = goal.snapshot!.allTasks!;
+    const taskLine = (id: string) => {
+      const task = tasks.find(task => task.id === id)!;
+      // At 160 columns the frame leaves 156; the list owns 45%, or 70.
+      return plain(view.render(160))
+        .split('\n')
+        .map(line => line.slice(2, 72))
+        .find(line => line.includes(task.title))!;
+    };
+    const before = graph.rows.map(({task, lines}) => {
+      const line = taskLine(task);
+      assert.equal(line.slice(2, 2 + lines[0]!.length), lines[0]);
+      const title = tasks.find(item => item.id === task)!.title;
+      return line.indexOf(title);
+    });
+    assert.equal(new Set(before).size, 1, 'titles share a fixed column');
+    view.handleInput('\x1b[B');
+    assert.match(taskLine(phase === 14 ? 't-dddddd' : 't-444444'), /^→ /);
+    for (const [i, {task, lines}] of graph.rows.entries()) {
+      const line = taskLine(task);
+      assert.equal(line.slice(2, 2 + lines[0]!.length), lines[0]);
+      assert.equal(
+        line.indexOf(tasks.find(item => item.id === task)!.title),
+        before[i],
+      );
+    }
+    const rendered = plain(view.render(160)).split('\n');
+    for (const {task, lines} of graph.rows) {
+      const title = tasks.find(item => item.id === task)!.title;
+      const at = rendered.findIndex(line => line.slice(2, 72).includes(title));
+      for (const [i, link] of lines.slice(1).entries())
+        assert.equal(rendered[at + i + 1]!.slice(4, 4 + link.length), link);
+    }
+  }
+});
+
+test('short content does not fill a tall popup, and long detail outlives a short list', () => {
+  const goal = goalFixtures(8)[0]!;
+  const view = panel(goal).result;
+  assert.ok(view.render(160).length < 25, 'no tall blank tail');
+  view.handleInput('o');
+  assert.ok(view.render(80).length < 35, 'stacked content has no padded tail');
+  const snapshot = goal.snapshot!;
+  const selected = snapshot.overview.tasks.find(
+    task => task.id === 't-333333',
+  )!;
+  const tasks = [
+    {
+      ...selected,
+      parent: snapshot.overview.goal.root.id,
+      result: 'First line\n\nLast detail line.',
+    },
+  ];
+  const one: GoalView = {
+    ...goal,
+    snapshot: {
+      ...snapshot,
+      allTasks: tasks,
+      overview: {
+        ...snapshot.overview,
+        tasks,
+        hidden_closed: 0,
+        graph: {rows: [{task: selected.id, lines: ['●']}], notes: []},
+        open_graph: null,
+      },
+    },
+  };
+  const single = panel(one).result;
+  assert.match(plain(single.render(160)), /Last detail line/);
+  for (const width of [80, 160]) {
+    const lines = plain(single.render(width)).split('\n');
+    assert.ok(lines.length < 25, 'one task does not fill the viewport');
+    assert.ok(lines.at(-2)!.trim() !== '│', 'no empty tail before the footer');
+  }
+});
+
 test('a stacked popup gives the list most rows and bounds the detail', () => {
   const leaf = (n: number, status: GoalTask['status']): GoalTask => ({
     ...goalFixtures(8)[0]!.snapshot!.overview.tasks[0]!,
@@ -460,7 +557,6 @@ test('a stacked popup gives the list most rows and bounds the detail', () => {
     () => panelHeight(32),
   );
   panel.setGoal({view, followed: 1}, theme);
-  panel.handleInput('h');
   const lines = plain(panel.render(80)).split('\n');
   const tasksAt = lines.findIndex(line => /Tasks ─/.test(line));
   const detailAt = lines.findIndex(line => /Detail ─/.test(line));
@@ -471,6 +567,57 @@ test('a stacked popup gives the list most rows and bounds the detail', () => {
     lines.join('\n'),
   );
   assert.match(lines.join('\n'), /… \d+ more lines · 3 record/);
+});
+
+test('a long graph keeps the selected task visible through movement and resize', () => {
+  const goal = goalFixtures(8)[0]!;
+  const tasks = Array.from({length: 40}, (_, i): GoalTask => ({
+    ...goal.snapshot!.overview.tasks[0]!,
+    id: `t-${i}`,
+    title: `Task number ${i}`,
+    parent: goal.focus.id,
+    children: 0,
+    status: 'open',
+    owner: null,
+    blocked_by: [],
+  }));
+  const graph = {
+    rows: tasks.map(task => ({task: task.id, lines: ['○', '│']})),
+    notes: [],
+  };
+  const view: GoalView = {
+    ...goal,
+    snapshot: {
+      ...goal.snapshot!,
+      allTasks: tasks,
+      overview: {
+        ...goal.snapshot!.overview,
+        tasks,
+        graph,
+        open_graph: null,
+        hidden_closed: 0,
+      },
+    },
+  };
+  let height = 12;
+  const popup = new GoalPanel(
+    {matches: () => false},
+    {close() {}, cycle() {}},
+    () => {},
+    () => height,
+  );
+  popup.setGoal({view, followed: 1}, theme);
+  for (const [index, task] of tasks.entries()) {
+    for (const width of [60, 160]) {
+      height = index % 2 ? 12 : 30;
+      const rendered = popup.render(width);
+      assert.ok(rendered.length <= height + 2);
+      assert.ok(rendered.every(line => visibleWidth(line) <= width));
+      assert.match(plain(rendered), new RegExp(`→ ○ Open +${task.title}\\b`));
+      assert.match(plain(rendered), /lines \d+–\d+ of 80/);
+    }
+    popup.handleInput('\x1b[B');
+  }
 });
 
 test('short popups give rows to the tree and detail before the goal result', () => {
@@ -489,8 +636,9 @@ test('short popups give rows to the tree and detail before the goal result', () 
       () => height,
     );
     view.setGoal({view: goal, followed: 1, owner: 'fixture-reviewer'}, theme);
+    view.handleInput('h');
     const output = plain(view.render(width));
-    assert.equal(view.render(width).length, height + 2);
+    assert.ok(view.render(width).length <= height + 2);
     assert.doesNotMatch(output, / 0 of /);
     return output;
   };

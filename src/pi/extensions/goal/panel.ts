@@ -12,6 +12,7 @@ import {
 import {
   PriorityRow,
   labelText,
+  sourceText,
   type RowModel,
   type Segment,
   type Tone,
@@ -320,26 +321,19 @@ function listRow(
   const state = taskState(task);
   const closed = task.status === 'done' || task.status === 'dropped';
   const [prefix = '', ...links] = lines;
+  // Graph whitespace locates lanes; it must not pass through label formatting.
+  const graphPrefix = tree
+    ? ''
+    : `${selected ? theme.fg('accent', '→ ') : '  '}${theme.fg('muted', sourceText(prefix).replaceAll('\n', ' '))} `;
   const line = row(
     {
       // The selection marker takes the place of two indent cells.
-      indent: Math.min(depth, 6) * 2 + (selected ? 0 : 2),
+      indent: tree ? Math.min(depth, 6) * 2 + (selected ? 0 : 2) : 0,
       layout: 'inline',
       groupSeparator: ' · ',
       endSeparator: ' · ',
       start: [
-        ...(selected ? [glyph('→')] : []),
-        ...(tree
-          ? []
-          : [
-              {
-                text: prefix,
-                tone: 'muted' as const,
-                width: visibleWidth(prefix),
-                priority: 100,
-                shrink: 'clip' as const,
-              },
-            ]),
+        ...(selected && tree ? [glyph('→')] : []),
         folding
           ? glyph(tree.expanded ? '▾' : '▸')
           : {
@@ -384,10 +378,16 @@ function listRow(
       ],
     },
     theme,
-  ).render(width);
+  ).render(Math.max(0, width - visibleWidth(graphPrefix)));
   return [
-    ...line,
-    ...links.map(link => truncateToWidth(theme.fg('dim', `  ${link}`), width)),
+    truncateToWidth(graphPrefix + (line[0] ?? ''), width, ''),
+    ...links.map(link =>
+      truncateToWidth(
+        theme.fg('muted', `  ${sourceText(link).replaceAll('\n', ' ')}`),
+        width,
+        '',
+      ),
+    ),
   ];
 }
 
@@ -457,7 +457,7 @@ function detail(
   return body;
 }
 
-/** Exactly `rows` lines of `lines`, marking clipped content. */
+/** At most `rows` lines, marking clipped content without padding short content. */
 function clip(
   lines: readonly string[],
   rows: number,
@@ -465,8 +465,7 @@ function clip(
   theme: Theme,
 ): string[] {
   if (rows <= 0) return [];
-  if (lines.length <= rows)
-    return [...lines, ...Array<string>(rows - lines.length).fill('')];
+  if (lines.length <= rows) return [...lines];
   return [
     ...lines.slice(0, rows - 1),
     truncateToWidth(
@@ -494,7 +493,7 @@ export class GoalPanel extends Inspector {
   private model: PanelModel | undefined;
   private theme: Theme | undefined;
   private section: 'overview' | 'brief' | 'record' = 'overview';
-  private history = false;
+  private history = true;
   private outline = false;
   private readonly collapsed = new Set<string>();
   private selected: string | undefined;
@@ -518,13 +517,16 @@ export class GoalPanel extends Inspector {
     return width > 0 ? super.render(width) : [];
   }
 
-  /** The displayed snapshot: closed tasks join only on request or for a closed goal. */
+  /** All recorded tasks by default; the filter changes only this popup. */
   private shown(): GoalView | undefined {
     const view = this.model?.view;
     const snapshot = view?.snapshot;
-    if (!view || !snapshot || view.error || !this.history) return view;
-    if (!snapshot.allTasks && snapshot.overview.hidden_closed) return view;
-    return {...view, snapshot: withHierarchy(snapshot, true), history: true};
+    if (!view || !snapshot || view.error) return view;
+    return {
+      ...view,
+      snapshot: withHierarchy(snapshot, this.history),
+      history: this.history,
+    };
   }
 
   private graph(view: GoalView | undefined) {
@@ -574,12 +576,11 @@ export class GoalPanel extends Inspector {
 
   setGoal(model: PanelModel, theme: Theme): void {
     const changed = this.model?.view.focus.id !== model.view.focus.id;
-    const status = model.view.snapshot?.overview.goal.root.status;
     if (changed) {
       this.section = 'overview';
       this.collapsed.clear();
       this.selected = undefined;
-      this.history = status === 'done' || status === 'dropped';
+      this.history = true;
     }
     this.model = model;
     this.theme = theme;
@@ -617,9 +618,9 @@ export class GoalPanel extends Inspector {
       this.section === 'overview' &&
         graphed &&
         (this.outline ? 'o graph' : 'o outline'),
-      view.snapshot?.allTasks && 'h closed',
-      model.followed > 1 && 'Tab next goal',
-      `Esc/${PANEL_KEY} close`,
+      view.snapshot?.allTasks &&
+        (this.history ? 'h hide closed' : 'h show closed'),
+      model.followed > 1 && 'Tab goal',
     ];
     this.setContent(
       {
@@ -634,7 +635,26 @@ export class GoalPanel extends Inspector {
               .filter(Boolean)
               .join(' · '),
         body,
-        hint: keys.filter(Boolean).join(' · '),
+        footer: {
+          layout: 'inline',
+          groupSeparator: ' · ',
+          start: [
+            {
+              text: keys.filter(Boolean).join(' · '),
+              tone: 'dim',
+              priority: 50,
+              shrink: 'clip',
+            },
+          ],
+          end: [
+            {
+              text: `Esc/${PANEL_KEY} close`,
+              tone: 'dim',
+              priority: 100,
+              shrink: 'clip',
+            },
+          ],
+        },
       },
       theme,
       resetScroll,
@@ -702,7 +722,7 @@ export class GoalPanel extends Inspector {
     );
   }
 
-  /** Header, then the task tree beside (or above) the selected task's detail, in exactly `height` lines. */
+  /** Header, then the task list beside (or above) detail, bounded by the available height. */
   private overview(
     view: GoalView,
     rows: readonly Item[],
@@ -834,7 +854,7 @@ export class GoalPanel extends Inspector {
       ...heading(
         'Tasks',
         [
-          view.history && 'with closed',
+          view.history && 'all tasks',
           spare < 1 && root.result && 'goal result: 3 record',
         ]
           .filter(Boolean)
@@ -853,9 +873,12 @@ export class GoalPanel extends Inspector {
     const rule = theme.fg('dim', ' │ ');
     return [
       ...header,
-      ...left.map(
-        (line, i) =>
-          truncateToWidth(line, treeWidth, '', true) + rule + (right[i] ?? ''),
+      ...Array.from(
+        {length: Math.max(left.length, right.length)},
+        (_, i) =>
+          truncateToWidth(left[i] ?? '', treeWidth, '', true) +
+          rule +
+          (right[i] ?? ''),
       ),
     ].slice(0, height);
   }

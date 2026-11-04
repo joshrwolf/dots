@@ -695,15 +695,16 @@ async function workbenchFlow() {
     }
     if (scenario === 'goal') {
       await wait(
-        () => shows('2/6 done') && shows('now: Update exports'),
+        () => shows('2/12 done') && shows('now: Update exports'),
         'summary line below the editor',
       );
       send('E');
       await wait(
         () =>
           state('goal', 0, true) &&
-          shows('Consumer migration') &&
-          shows('◌ Waiting'),
+          shows('Build CLI adapter') &&
+          shows('Build SDK adapter') &&
+          shows('├───┬─╮'),
         'popup over the transcript lists the graph',
       );
       send('o');
@@ -899,6 +900,7 @@ async function goalFlow() {
       `popup uses most of the width (${size[0]})`,
     );
     assert.ok(size[1] <= terminal.rows, `popup fits the screen (${size[1]})`);
+    assert.ok(size[1] < 20, `one task has no tall blank tail (${size[1]})`);
     const before = countLine('inspector-closed');
     send('\x1b');
     await wait(
@@ -947,12 +949,16 @@ async function goalFlow() {
   await fresh('/goal show t-abcdef');
   await wait(
     () =>
-      shows('● Claimed') &&
-      shows('◌ Waiting') &&
+      shows('Claimed') &&
+      shows('Waiting') &&
       shows('Adapt consumers') &&
+      shows('Define shared types') &&
+      shows('all tasks') &&
       !shows('▾'),
     'nested panel lists the dependency graph',
   );
+  send('h');
+  await wait(() => shows('2 closed hidden'), 'hide closed tasks on request');
   // A short screen still gives the list its rows before the goal result.
   terminal.capture = '';
   terminal.resize(14, 120);
@@ -965,11 +971,17 @@ async function goalFlow() {
     'short popup keeps the list',
   );
   terminal.capture = '';
+  const beforeRestore = renders().length;
   terminal.resize(40, 120);
-  await wait(
-    () => renders().at(-1) === 'inspector-render:108:34',
-    'restored height',
-  );
+  await wait(() => {
+    const size = renders().at(-1)?.split(':').slice(1).map(Number);
+    return (
+      renders().length > beforeRestore &&
+      size?.[0] === 108 &&
+      size[1] <= 34 &&
+      shows('h show closed')
+    );
+  }, 'restored content-sized popup');
   send('o');
   await wait(
     () => shows('o graph') && shows('▾') && shows('Core interface'),
@@ -1003,7 +1015,7 @@ async function goalFlow() {
   send('h');
   await wait(
     () =>
-      shows('with closed') &&
+      shows('all tasks') &&
       shows('Define shared types') &&
       shows('Document shared types'),
     'closed leaves on request',
@@ -1018,7 +1030,7 @@ async function goalFlow() {
   );
   await fresh('/goal');
   await wait(
-    () => shows('Second fixture goal') && shows('Tab next goal'),
+    () => shows('Second fixture goal') && shows('Tab goal'),
     'panel for the selected goal',
   );
   send('\t');
@@ -1080,7 +1092,7 @@ async function goalFlow() {
   );
   await fresh('/goal show t-fedcba');
   await wait(
-    () => shows('Completed fixture slice') && shows('with closed'),
+    () => shows('Completed fixture slice') && shows('all tasks'),
     'finished panel includes closed leaves',
   );
   await closePanel('finished panel closed');

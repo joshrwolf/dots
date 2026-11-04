@@ -323,11 +323,11 @@ class GoalScreen extends VStack {
 
 function goalScenario(): Scenario {
   const states = [
-    [8, 'nested groups'],
+    [14, 'branching release DAG'],
     [11, 'assigned live worker'],
     [12, 'worker asking'],
     [13, 'worker quiet'],
-    [9, 'closed history'],
+    [9, 'complete snapshot'],
     [10, 'incomplete snapshot'],
     [0, 'claimed'],
     [1, 'held'],

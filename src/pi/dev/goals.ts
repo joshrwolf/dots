@@ -65,6 +65,7 @@ const nestedGraph = (policy: string) => ({
 });
 
 export function goalFixtures(phase = 0): GoalView[] {
+  if (phase === 14) return [complexGoalFixture()];
   if (phase >= 8) return [nestedGoalFixture(phase)];
   const root = task('t-111111', 'Unify the export interface', {
     parent: null,
@@ -179,6 +180,98 @@ export function goalActivityFixture(
         state: phase === 11 ? 'running' : phase === 12 ? 'asking' : 'quiet',
       },
     ],
+  };
+}
+
+function complexGoalFixture(): GoalView {
+  const view = nestedGoalFixture(8);
+  const snapshot = view.snapshot!;
+  const existing = new Map(snapshot.allTasks!.map(task => [task.id, task]));
+  const tasks = [
+    existing.get('t-888888')!,
+    existing.get('t-222222')!,
+    existing.get('t-333333')!,
+    {...existing.get('t-999999')!, children: 3},
+    task('t-dddddd', 'Build CLI adapter', {
+      parent: 't-999999',
+      blocked_by: ['t-333333'],
+    }),
+    task('t-eeeeee', 'Build SDK adapter', {
+      parent: 't-999999',
+      blocked_by: ['t-333333'],
+    }),
+    {...existing.get('t-444444')!, blocked_by: ['t-dddddd', 't-eeeeee']},
+    task('t-151515', 'Release', {children: 3}),
+    task('t-ffffff', 'Run integration tests', {
+      parent: 't-151515',
+      blocked_by: ['t-444444'],
+    }),
+    {...existing.get('t-aaaaaa')!, children: 4},
+    existing.get('t-bbbbbb')!,
+    existing.get('t-cccccc')!,
+    {...existing.get('t-555555')!, blocked_by: ['t-333333', 't-cccccc']},
+    task('t-121212', 'Package release artifacts', {
+      parent: 't-151515',
+      blocked_by: ['t-ffffff', 't-555555'],
+    }),
+    task('t-131313', 'Write release notes', {
+      parent: 't-aaaaaa',
+      blocked_by: ['t-555555'],
+    }),
+    task('t-141414', 'Publish release', {
+      parent: 't-151515',
+      blocked_by: ['t-121212', 't-131313'],
+    }),
+  ];
+  return {
+    ...view,
+    snapshot: withHierarchy({
+      ...snapshot,
+      allTasks: tasks,
+      overview: {
+        ...snapshot.overview,
+        goal: {
+          ...snapshot.overview.goal,
+          root: {
+            ...snapshot.overview.goal.root,
+            children: 3,
+            result:
+              'Shared types are ready. CLI and SDK adapters join at consumer migration; tests and documentation join at packaging. Packaging and release notes gate publication.',
+          },
+        },
+        tasks,
+        progress: {...snapshot.overview.progress, total: 12, open: 9, ready: 0},
+        graph: graph([
+          ['t-222222', '✓      ', '├─╮    '],
+          ['t-333333', '● │    ', '├───┬─╮'],
+          ['t-dddddd', '◌ │ │ │', '│ │ │ │'],
+          ['t-eeeeee', '│ │ ◌ │', '├───╯ │'],
+          ['t-444444', '◌ │   │', '│ │   │'],
+          ['t-ffffff', '◌ │   │', '│ │   │'],
+          ['t-bbbbbb', '│ ✓   │', '│ │   │'],
+          ['t-cccccc', '│ │ ! │', '│ │ ├─╯'],
+          ['t-555555', '│ │ ◌  ', '╭─┬─╯  '],
+          ['t-121212', '◌ │    ', '│ │    '],
+          ['t-131313', '│ ◌    ', '├─╯    '],
+          ['t-141414', '◌      '],
+        ]),
+        open_graph: graph([
+          ['t-333333', '●    ', '├─┬─╮'],
+          ['t-dddddd', '◌ │ │', '│ │ │'],
+          ['t-eeeeee', '│ ◌ │', '├─╯ │'],
+          ['t-444444', '◌   │', '│   │'],
+          ['t-ffffff', '◌   │', '│   │'],
+          ['t-cccccc', '│ ! │', '│ ├─╯'],
+          ['t-555555', '│ ◌  ', '╭─┤  '],
+          ['t-121212', '◌ │  ', '│ │  '],
+          ['t-131313', '│ ◌  ', '├─╯  '],
+          ['t-141414', '◌    '],
+        ]),
+      },
+    }),
+    brief: {
+      text: '# Shared export interface\n\nThree workstreams share one release: core types fan out to adapters and documentation, the adapters converge on consumer migration, and tests, documentation, and release notes gate publication.',
+    },
   };
 }
 

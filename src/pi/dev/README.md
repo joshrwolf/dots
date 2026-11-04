@@ -49,9 +49,12 @@ transcript. `/ui-lab thinking` previews summaries, structured detail, and unfini
 streaming Markdown through Pi’s real assistant component; **E** toggles its native
 thinking disclosure. `/ui-lab goal` shows the goal summary line below the native editor.
 **E** opens the goal popup centered over the transcript and editor, at the size
-Alt+G opens it in a session. In the popup, **1/2/3**, **h**, **o**, **↑**/**↓** and
+Alt+G opens it in a session. It starts with a 12-task DAG: shared prerequisites,
+parallel CLI and SDK branches, and joins at migration, packaging, and publication.
+All tasks are visible by default; **h** hides or shows closed tasks.
+In the popup, **1/2/3**, **h**, **o**, **↑**/**↓** and
 **←**/**→** work as in a session; Space remains the workbench state switch and
-cycles running, asking and quiet workers, closed history, partial trees, multiple
+cycles running, asking and quiet workers, complete and partial trees, multiple
 follows, held work, unavailable data, and brief warnings. The **frame**
 scenario starts with a live assigned goal, asking/running workers, a job, and an update notice
 together below the native editor. Press **B** to see them. **Space** also reaches

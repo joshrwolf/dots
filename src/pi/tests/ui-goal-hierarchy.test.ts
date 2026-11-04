@@ -110,7 +110,7 @@ test('dropped leaves remain in denominators, released tasks are not claims, and 
   assert.equal(treeRows(tree)[1]?.depth, 1);
 });
 
-test('folding is presentation-only, nested, preserved across refresh, and history reveals closed leaves', () => {
+test('folding is presentation-only, nested, preserved across refresh, and includes closed leaves', () => {
   const model = goalFixtures(8)[0]!;
   const inspector = panel(model);
   const lines = inspector.render(160).map(stripTerminalSequences);
@@ -136,7 +136,8 @@ test('folding is presentation-only, nested, preserved across refresh, and histor
   assert.doesNotMatch(plain(inspector.render(160)), /Consumer migration/);
   inspector.handleInput('\x1b[C');
   assert.match(plain(inspector.render(160)), /Consumer migration/);
-  inspector.handleInput('\x1b[B');
+  inspector.handleInput('\x1b[B'); // Define shared types.
+  inspector.handleInput('\x1b[B'); // Update exports.
   inspector.handleInput('\x1b[B'); // Select nested Consumer migration.
   inspector.handleInput(' ');
   output = plain(inspector.render(160));

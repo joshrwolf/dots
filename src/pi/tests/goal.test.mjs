@@ -912,7 +912,7 @@ test('finished goal inspection shows closed slices without expanding ordinary ag
     if (mode === 'tui') {
       const output = host.view.render(100).join('\n');
       assert.match(output, /Reference slice/);
-      assert.match(output, /with closed/);
+      assert.match(output, /all tasks/);
     } else
       assert.doesNotMatch(h.messages.at(-1).message.content, /Reference slice/);
     const context = (await h.context())[0].content;

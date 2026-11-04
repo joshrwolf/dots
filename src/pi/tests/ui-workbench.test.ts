@@ -111,7 +111,7 @@ test('preview palettes validate the field they consume', () => {
   assert.doesNotThrow(() => pageBackground({export: {pageBg: '#ffffff'}}));
 });
 
-test('goal starts with nested groups and cycles every fixture in one scenario', () => {
+test('goal starts with a branching DAG and cycles every fixture in one scenario', () => {
   assert.equal(
     scenarios.filter(scenario => scenario.id.startsWith('goal')).length,
     1,
@@ -119,7 +119,7 @@ test('goal starts with nested groups and cycles every fixture in one scenario', 
   const h = harness('goal');
   try {
     for (const expected of [
-      /◎ ! Unify the export interface · 2\/6 done · 1 held · now: Update exports/,
+      /◎ ! Unify the export interface · 2\/12 done · 1 held · now: Update exports/,
       /◎ [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Unify.* 1 worker/,
       /◎ \? Unify.* 1 asking/,
       /◎ · Unify/,
@@ -143,7 +143,11 @@ test('goal starts with nested groups and cycles every fixture in one scenario', 
     const open = plain(h.view.render(160));
     assert.match(open, /popup open · alt\+g toggles/);
     assert.match(open, /Goal result[\s\S]*Tasks[\s\S]*Claimed by this session/);
-    assert.match(open, /→ ● Claimed +Update exports · Core interface · you/);
+    assert.match(open, /→ ● │ +Claimed +Update exports · Core interface · you/);
+    assert.match(open, /Build CLI adapter/);
+    assert.match(open, /Build SDK adapter/);
+    assert.match(open, /├───┬─╮/);
+    assert.doesNotMatch(open, /closed hidden/);
     assert.match(
       open,
       /│ Coordina/,
