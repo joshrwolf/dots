@@ -1,10 +1,22 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync, readdirSync, rmSync, existsSync} from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import test from 'node:test';
-import {JobsRuntime} from '../../extensions/jobs/runtime.ts';
+import {
+  JobsRuntime,
+  RETENTION_MS,
+  pruneRuntimes,
+} from '../../extensions/jobs/runtime.ts';
 import {emptyFacts, type Job} from '../../extensions/jobs/protocol.ts';
 import {restore} from '../../extensions/jobs/results.ts';
 
@@ -227,3 +239,24 @@ test(
     }
   },
 );
+
+test('pruning removes only runtime directories past retention', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dots-jobs-prune-'));
+  try {
+    const now = Date.now();
+    for (const [name, age] of [
+      ['old', RETENTION_MS + 60_000],
+      ['recent', RETENTION_MS - 60_000],
+    ] as const) {
+      mkdirSync(join(root, name, 'j-1'), {recursive: true});
+      const at = (now - age) / 1000;
+      utimesSync(join(root, name), at, at);
+    }
+    writeFileSync(join(root, 'stray'), '');
+    pruneRuntimes(root, now);
+    assert.deepEqual(readdirSync(root).sort(), ['recent', 'stray']);
+    pruneRuntimes(join(root, 'missing'), now);
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});

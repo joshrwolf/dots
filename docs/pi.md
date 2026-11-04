@@ -118,6 +118,8 @@ Root exit, stop intent, cleanup and capture completeness are separate facts.
 Process-group cleanup cannot contain every detached descendant. Historical jobs
 are inspection-only, never resumed. Output retains a bounded prefix and tail
 under `~/.pi/agent/dots/jobs/`; check capture warnings before treating it as complete.
+Startup removes other runtimes' output a week after their last job started;
+their history then reports the artifacts as evicted.
 
 ## Wakes
 
