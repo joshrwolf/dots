@@ -20,5 +20,5 @@
     }
   },
   "hideThinkingBlock": true,
-  "quietStartup": "header"
+  "quietStartup": true
 }
