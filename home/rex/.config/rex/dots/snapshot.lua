@@ -78,9 +78,10 @@ function M.worktree_paths(porcelain)
 end
 
 ---@param argv string[]
+---@param environment? table<string, string>
 ---@return string[] lines
-local function lines(argv)
-  local result = process.run(argv, { timeout = 5 })
+local function lines(argv, environment)
+  local result = process.run(argv, { timeout = 5 }, environment)
   local out = {}
   if result and result.ok then
     for line in result.stdout:gmatch("[^\n]+") do
@@ -91,13 +92,15 @@ local function lines(argv)
 end
 
 ---The directories zoxide knows, most frecent first.
+---@param environment? table<string, string>
 ---@return string[]
-function M.dirs()
-  return lines({ "zoxide", "query", "--list" })
+function M.dirs(environment)
+  return lines({ "zoxide", "query", "--list" }, environment)
 end
 
 ---@param snapshot dots.Snapshot
 local function add_places(snapshot)
+  local environment = must("reading places", process.environment())
   local seen, cwds = {}, {}
   for _, session in ipairs(snapshot.sessions) do
     for _, block in ipairs(session.blocks) do
@@ -106,22 +109,32 @@ local function add_places(snapshot)
       end
     end
   end
+  local ordered = {}
   for cwd in pairs(cwds) do
-    local listing = process.run(
-      { "git", "-C", cwd, "worktree", "list", "--porcelain", "-z" },
-      { timeout = 5 }
-    )
-    if listing and listing.ok then
-      for _, path in ipairs(M.worktree_paths(listing.stdout)) do
-        if not seen[path] then
-          seen[path] = true
-          snapshot.worktrees[#snapshot.worktrees + 1] = path
+    ordered[#ordered + 1] = cwd
+  end
+  table.sort(ordered)
+  for _, cwd in ipairs(ordered) do
+    -- A listing names every linked root in that repository. Subdirectories
+    -- still need a query: they may belong to a nested repository.
+    if not seen[cwd] then
+      local listing = process.run(
+        { "git", "-C", cwd, "worktree", "list", "--porcelain", "-z" },
+        { timeout = 5 },
+        environment
+      )
+      if listing and listing.ok then
+        for _, path in ipairs(M.worktree_paths(listing.stdout)) do
+          if not seen[path] then
+            seen[path] = true
+            snapshot.worktrees[#snapshot.worktrees + 1] = path
+          end
         end
       end
     end
   end
   table.sort(snapshot.worktrees)
-  snapshot.dirs = M.repos(M.dirs(), snapshot.home)
+  snapshot.dirs = M.repos(M.dirs(environment), snapshot.home)
 end
 
 ---The repositories among `dirs`: primary checkouts under `~/dev`, whose

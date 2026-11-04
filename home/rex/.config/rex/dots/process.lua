@@ -34,12 +34,20 @@ function M.environment()
 end
 
 ---@param opts? rex.ExecOpts
+---@param environment? table<string, string> Reuse one resolution within an operation.
 ---@return rex.ExecOpts? options
 ---@return string? err
-function M.with_path(opts)
-  local env, err = M.environment()
-  if not env then
+function M.with_path(opts, environment)
+  local err
+  if not environment then
+    environment, err = M.environment()
+  end
+  if not environment then
     return nil, err
+  end
+  local env = {}
+  for key, value in pairs(environment) do
+    env[key] = value
   end
   local merged = {}
   for key, value in pairs(opts or {}) do
@@ -55,10 +63,11 @@ end
 ---Run a command to completion, without changing its working directory.
 ---@param argv string[]
 ---@param opts? rex.ExecOpts
+---@param environment? table<string, string>
 ---@return rex.ExecResult?
 ---@return string? err
-function M.run(argv, opts)
-  local options, err = M.with_path(opts)
+function M.run(argv, opts, environment)
+  local options, err = M.with_path(opts, environment)
   if not options then
     return nil, err
   end

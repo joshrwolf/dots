@@ -39,6 +39,29 @@ return {
     expect.equal(opts, { cwd = "/src", env = { PATH = "/x", CI = "1" } })
   end,
 
+  ["reuses an operation environment without leaking command overrides"] = function(t)
+    t.stub(process, "environment", function()
+      error("must use the supplied environment")
+    end)
+    local shared = { PATH = "/tools:/usr/bin", CI = "0" }
+    local calls = {}
+    t.stub(rex, "exec", function(argv, opts)
+      calls[#calls + 1] = { argv = argv, opts = opts }
+      return { ok = true, stdout = "ready" }
+    end)
+    local first =
+      assert(process.run({ "git", "status" }, { cwd = "/src", env = { CI = "1" } }, shared))
+    local second = assert(process.run({ "zoxide", "query", "--list" }, { timeout = 5 }, shared))
+    expect.equal(first.ok, true)
+    expect.equal(second.stdout, "ready")
+    expect.equal(calls[1].opts.env, { PATH = "/tools:/usr/bin", CI = "1" })
+    expect.equal(calls[1].opts.cwd, "/src")
+    expect.equal(calls[2].opts.env, shared)
+    expect.equal(calls[2].opts.timeout, 5)
+    expect.equal(shared, { PATH = "/tools:/usr/bin", CI = "0" })
+    expect.equal(calls[2].opts.env == shared, false)
+  end,
+
   ["finds commands on the selected path"] = function(t)
     environment(t)
     expect.equal(

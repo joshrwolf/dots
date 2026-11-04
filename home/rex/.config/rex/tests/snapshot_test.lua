@@ -1,6 +1,7 @@
 local expect = require("tests.expect")
 local fake_rex = require("tests.fake_rex")
 local snapshot = require("dots.snapshot")
+local process = require("dots.process")
 
 local TERMINAL = "com.superlogical.terminal"
 local SHELL = "com.superlogical.terminal.shell"
@@ -151,6 +152,99 @@ return {
     expect.equal(s1.blocks[2].status.state, "blocked")
     expect.equal(s1.blocks[1].status, nil)
     expect.equal(s2.blocks, {})
+  end,
+
+  ["places resolve one environment per collection, fresh on refresh"] = function(t)
+    fake_rex.install(t, rex_with_two_sessions())
+    local resolutions, calls = 0, {}
+    t.stub(process, "environment", function()
+      resolutions = resolutions + 1
+      return { PATH = "/tools/" .. resolutions }
+    end)
+    t.stub(process, "run", function(argv, opts, environment)
+      calls[#calls + 1] = { command = argv[1], path = environment.PATH }
+      expect.equal(opts.timeout, 5)
+      if argv[1] == "git" then
+        return { ok = true, stdout = "worktree /src/dots\0\0worktree /trees/dots/topic\0\0" }
+      end
+      expect.equal(argv, { "zoxide", "query", "--list" })
+      return { ok = true, stdout = "" }
+    end)
+    for n = 1, 2 do
+      local result = snapshot.collect({ places = true, exclude = "picker" })
+      expect.equal(result.worktrees, { "/src/dots", "/trees/dots/topic" })
+      expect.equal(resolutions, n)
+      expect.equal(#calls, n * 3)
+      for i = (n - 1) * 3 + 1, n * 3 do
+        expect.equal(calls[i].path, "/tools/" .. n)
+      end
+    end
+  end,
+
+  ["one listing covers every known linked root"] = function(t)
+    local world = rex_with_two_sessions()
+    world.sessions[1].terminals.b1.process.foreground.cwd = "/src/dots"
+    world.sessions[1].terminals.b2.process.foreground.cwd = "/trees/dots/topic"
+    fake_rex.install(t, world)
+    local queries = {}
+    t.stub(process, "run", function(argv)
+      if argv[1] == "zoxide" then
+        return { ok = true, stdout = "" }
+      end
+      queries[#queries + 1] = argv[3]
+      return {
+        ok = true,
+        stdout = "worktree /src/dots\0\0worktree /trees/dots/topic\0\0",
+      }
+    end)
+    local result = snapshot.collect({ places = true, exclude = "picker" })
+    expect.equal(queries, { "/src/dots" })
+    expect.equal(result.worktrees, { "/src/dots", "/trees/dots/topic" })
+  end,
+
+  ["a nested repository is queried even inside an already listed root"] = function(t)
+    fake_rex.install(t, rex_with_two_sessions())
+    local queries = {}
+    t.stub(process, "run", function(argv)
+      if argv[1] == "zoxide" then
+        return { ok = true, stdout = "" }
+      end
+      queries[#queries + 1] = argv[3]
+      return { ok = true, stdout = "worktree " .. argv[3] .. "\0\0" }
+    end)
+    expect.equal(snapshot.collect({ places = true, exclude = "picker" }).worktrees, {
+      "/src/dots",
+      "/src/dots/sub",
+    })
+    expect.equal(queries, { "/src/dots", "/src/dots/sub" })
+  end,
+
+  ["environment failure is visible, but session-only collection still works"] = function(t)
+    local fake = fake_rex.install(t, rex_with_two_sessions())
+    t.stub(process, "environment", function()
+      return nil, "machine environment unavailable"
+    end)
+    expect.equal(#snapshot.collect({ exclude = "picker" }).sessions, 2)
+    expect.fails(function()
+      snapshot.collect({ places = true, exclude = "picker" })
+    end, "reading places: machine environment unavailable")
+    expect.equal(fake.only("exec"), {})
+  end,
+
+  ["keeps available places when one repository cannot be read"] = function(t)
+    local fake = rex_with_two_sessions()
+    fake.commands = {
+      ["git -C /src/dots worktree list --porcelain -z"] = { ok = false },
+      ["git -C /src/dots/sub worktree list --porcelain -z"] = {
+        stdout = "worktree /src/dots\0\0worktree /trees/dots/topic\0\0",
+      },
+      ["zoxide query --list"] = { stdout = "" },
+    }
+    fake_rex.install(t, fake)
+    expect.equal(snapshot.collect({ places = true, exclude = "picker" }).worktrees, {
+      "/src/dots",
+      "/trees/dots/topic",
+    })
   end,
 
   ["keeps the labels someone set and the program as invoked"] = function(t)
