@@ -167,8 +167,8 @@ test('creation validates kinds and the task, resolves the project, and starts at
   );
   await assert.rejects(taskWake(h, {until: undefined}), /task requires until/);
   await assert.rejects(
-    taskWake(h, {pane: {target: 'build'}}),
-    /exactly one of in, at, every, pane, or task/,
+    taskWake(h, {in: '5m'}),
+    /exactly one of in, at, every, or task/,
   );
   tasks.tree.get('t-c2').status = 'done';
   await assert.rejects(

@@ -77,8 +77,10 @@ catalog estimate; an unmarked total is provider-billed for every response.
 
 Workers belong to a session, not a conversation branch. `/tree` preserves them;
 `/fork` and `/clone` copy only read-only history. Reload/exit stops owned workers;
-`message` can resume their saved sessions. Stop retained worker processes before
-removing their worktrees.
+`message` can resume their saved sessions. A root session's startup removes worker
+sessions under `~/.pi/agent/dots/workers/` untouched for 30 days, unless a running
+process still owns them. Stop retained worker processes before removing their
+worktrees.
 
 Agents use `worker_spawn` for bounded work, `message` to steer or resume it, and
 completion events rather than polling. Tool schemas supply models, thinking
@@ -116,18 +118,17 @@ Root exit, stop intent, cleanup and capture completeness are separate facts.
 Process-group cleanup cannot contain every detached descendant. Historical jobs
 are inspection-only, never resumed. Output retains a bounded prefix and tail
 under `~/.pi/agent/dots/jobs/`; check capture warnings before treating it as complete.
+Startup removes other runtimes' output a week after their last job started;
+their history then reports the artifacts as evicted.
 
 ## Wakes
 
 `/wakes` inspects scheduled turns. Agents use `wake` for a one-shot reminder, a
-finite recurring check, a Rex pane reaching a status or exiting, or task store
-events on a task tree; native schemas describe the triggers. Use trusted finite
-checks, not daemons, and cancel schedules whose purpose is over.
-
-Pane wakes follow one `rex events --all` stream per Rex host while any exist,
-never autostart a server, and reconcile with snapshots after a reconnect or
-restart. A pane wake ends early when its program stops, its block or session
-closes, or the Rex server restarts, and gives up after its `for` deadline.
+finite recurring check, or task store events on a task tree; native schemas
+describe the triggers. Use trusted finite checks, not daemons, and cancel
+schedules whose purpose is over. To wait for a Rex block's program to exit,
+run `rex wait --for DURATION -s SESSION BLOCK` as a job; its completion wakes the
+session.
 
 Each task wake follows its own `dots task events --follow --under` stream. It
 matches `until` event kinds on the task and every descendant, as the store's

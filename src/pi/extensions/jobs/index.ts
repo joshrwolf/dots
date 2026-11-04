@@ -1,3 +1,4 @@
+import {existsSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {Type} from 'typebox';
 import {
@@ -7,7 +8,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import {renderJobMessage} from './transcript.ts';
 import {CompletionDelivery, registerDeliveryHooks} from './delivery.ts';
-import {JobsRuntime} from './runtime.ts';
+import {JobsRuntime, pruneRuntimes} from './runtime.ts';
 import {JobsPresentation} from './ui.ts';
 import {JobSchema, JobsSchema, restore} from './results.ts';
 import {
@@ -49,11 +50,23 @@ export default function jobs(pi: ExtensionAPI): void {
     humanStops.clear();
     context = ctx;
     delivery = new CompletionDelivery(pi, () => context);
+    const root = join(getAgentDir(), 'dots', 'jobs');
+    if (!runtime)
+      try {
+        pruneRuntimes(root);
+      } catch (error) {
+        if (ctx.hasUI)
+          ctx.ui.notify(
+            `Old job output could not be pruned: ${String(error).slice(0, 256)}`,
+            'warning',
+          );
+      }
     const restored = new Map<string, Job>();
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== 'custom' || entry.customType !== ENTRY_TYPE) continue;
       const job = restore(entry.data);
       if (job) {
+        if (!existsSync(job.directory)) job.artifactsEvicted = true;
         restored.set(job.id, job);
         if (restored.size > MAX_RETAINED) {
           const oldest = restored.keys().next().value;
@@ -65,7 +78,7 @@ export default function jobs(pi: ExtensionAPI): void {
     else
       runtime = new JobsRuntime(
         {
-          root: join(getAgentDir(), 'dots', 'jobs'),
+          root,
           persist: job => pi.appendEntry(ENTRY_TYPE, job),
           terminal: job => {
             // A human stop records its eventual outcome without buying a model turn.

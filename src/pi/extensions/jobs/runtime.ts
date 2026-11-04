@@ -1,5 +1,5 @@
 import {fork, type ChildProcess} from 'node:child_process';
-import {mkdirSync, rmSync, statSync} from 'node:fs';
+import {mkdirSync, readdirSync, rmSync, statSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
@@ -15,6 +15,29 @@ import {
   type OwnerMessage,
   type SupervisorMessage,
 } from './protocol.ts';
+
+/** Other runtimes' job output is kept this long after their last job started; a job runs at most a day. */
+export const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Removes the job directories of runtimes whose last job started before the
+ * retention period, so their jobs have long ended. A missing root has nothing to prune.
+ */
+export function pruneRuntimes(root: string, now = Date.now()): void {
+  let entries;
+  try {
+    entries = readdirSync(root, {withFileTypes: true});
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const directory = join(root, entry.name);
+    if (now - statSync(directory).mtimeMs >= RETENTION_MS)
+      rmSync(directory, {recursive: true, force: true});
+  }
+}
 
 interface Handle {
   child: ChildProcess;

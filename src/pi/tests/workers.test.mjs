@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -400,4 +407,36 @@ test('model and thinking resolve strictly against the catalog and the chosen mod
     ),
     {ok: true, model: 'beta/deep', thinking: 'high'},
   );
+});
+
+test('pruning removes worker sessions past retention unless kept', async () => {
+  const {pruneSessions, RETENTION_MS} =
+    await import('../extensions/workers/index.ts');
+  const root = mkdtempSync(path.join(tmpdir(), 'dots-worker-prune-'));
+  try {
+    const now = Date.now();
+    const old = (now - RETENTION_MS - 60_000) / 1000;
+    for (const id of ['w-old', 'w-kept', 'w-written', 'w-recent']) {
+      mkdirSync(path.join(root, id));
+      writeFileSync(path.join(root, id, 'session.jsonl'), '{}\n');
+      if (id !== 'w-recent') {
+        utimesSync(path.join(root, id), old, old);
+        if (id !== 'w-written')
+          utimesSync(path.join(root, id, 'session.jsonl'), old, old);
+      }
+    }
+    const removed = await pruneSessions(root, id => id === 'w-kept', now);
+    assert.deepEqual(removed, ['w-old']);
+    assert.deepEqual(readdirSync(root).sort(), [
+      'w-kept',
+      'w-recent',
+      'w-written',
+    ]);
+    assert.deepEqual(
+      await pruneSessions(path.join(root, 'missing'), () => false),
+      [],
+    );
+  } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
 });

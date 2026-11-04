@@ -1,5 +1,5 @@
+import path from 'node:path';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
-import {rexBinary} from '../../src/host/rex.ts';
 
 /**
  * Rex's agent setup gives Claude Code and Codex a session-start hook that adds
@@ -8,6 +8,11 @@ import {rexBinary} from '../../src/host/rex.ts';
  * changes with each Rex release. Program status belongs to the status
  * extension.
  */
+
+/** The Rex CLI: Rex puts its own bin directory in each terminal's environment. */
+function rexBinary(env: NodeJS.ProcessEnv): string {
+  return env.REX_BIN_DIR ? path.join(env.REX_BIN_DIR, 'rex') : 'rex';
+}
 
 /** Runs a program and resolves with its stdout; the test seam for the Rex invocation. */
 export type Run = (file: string, args: readonly string[]) => Promise<string>;

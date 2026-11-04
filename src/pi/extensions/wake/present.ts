@@ -13,7 +13,7 @@ import {
   type Notice,
   type Segment,
 } from '../../src/index.ts';
-import type {Outcome} from './event.ts';
+import type {Outcome} from './task.ts';
 
 type CustomMessage<T> = Parameters<MessageRenderer<T>>[0];
 
@@ -30,9 +30,8 @@ export interface WakeDetails {
   text?: string;
   /** The wake was set on another branch of this session than the one it fired into. */
   elsewhere?: boolean;
-  /** Event triggers: what fired the wake. */
-  trigger?: 'pane' | 'task';
-  pane?: string;
+  /** Task triggers: what fired the wake. */
+  trigger?: 'task';
   /** The watched task's ID. */
   task?: string;
   outcome?: Outcome;
@@ -77,13 +76,6 @@ export function renderWake(
     });
   if (d.manual)
     secondary.push({text: 'manual', tone: 'dim', priority: 40, shrink: 'omit'});
-  if (d.pane)
-    secondary.push({
-      text: `pane ${labelText(d.pane).slice(0, 40)}`,
-      tone: 'dim',
-      priority: 60,
-      shrink: 'omit',
-    });
   if (d.task)
     secondary.push({
       text: `task ${labelText(d.task).slice(0, 40)}`,

@@ -1,5 +1,6 @@
 import {randomBytes} from 'node:crypto';
 import {existsSync, mkdirSync} from 'node:fs';
+import {readdir, rm, stat} from 'node:fs/promises';
 import path from 'node:path';
 import {
   getAgentDir,
@@ -242,6 +243,48 @@ function sessionsRoot(): string {
   return path.join(getAgentDir(), 'dots/workers');
 }
 
+/** How long a worker's session outlives its last write; `message` can resume it until then. */
+export const RETENTION_MS = 30 * 86_400_000;
+
+const missing = (error: unknown) => fields(error)?.code === 'ENOENT';
+
+/**
+ * Removes worker session directories under `root` last written before the
+ * retention period, except those `keep` names. Resolves with the removed
+ * worker ids. Another runtime pruning the same directory is not an error.
+ */
+export async function pruneSessions(
+  root: string,
+  keep: (id: string) => boolean,
+  now = Date.now(),
+): Promise<string[]> {
+  let ids: string[];
+  try {
+    ids = await readdir(root);
+  } catch (error) {
+    if (missing(error)) return [];
+    throw error;
+  }
+  const removed: string[] = [];
+  for (const id of ids) {
+    const directory = path.join(root, id);
+    try {
+      const files = await readdir(directory);
+      const times = await Promise.all(
+        [directory, ...files.map(file => path.join(directory, file))].map(
+          async file => (await stat(file)).mtimeMs,
+        ),
+      );
+      if (now - Math.max(...times) < RETENTION_MS || keep(id)) continue;
+      await rm(directory, {recursive: true, force: true});
+      removed.push(id);
+    } catch (error) {
+      if (!missing(error)) throw error;
+    }
+  }
+  return removed;
+}
+
 /** One line of untrusted text for a listing; marks its own truncation. */
 function label(text: string, max = 60): string {
   const clean = labelText(text);
@@ -476,8 +519,8 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       `${worker.id} belongs to session ${worker.owner}, which this session was forked or cloned from; it is read-only history here. Spawn a new worker to continue that work.`,
     );
 
-  // Observation plane: best-effort, never authoritative. Opened lazily so a
-  // missing sqlite only disables the fleet view.
+  // Observation plane: best-effort, never authoritative. Opened lazily so an
+  // unusable database only disables the fleet view.
   let registry: Registry | undefined;
   let registryOpened = false;
   const ensureRegistry = () => {
@@ -1698,6 +1741,23 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     if (shuttingDown) return;
     for (const worker of workers.values()) observe(worker);
     widget();
+    // One root session prunes for the whole tree. Without the registry a
+    // worker's owner is unknown, so nothing is pruned.
+    if (selfId() === undefined && registry)
+      pruneSessions(
+        sessionsRoot(),
+        id =>
+          !!workers.get(id)?.process ||
+          withRegistry(r => r.ownerAlive(id)) !== false,
+      ).then(
+        removed => {
+          for (const id of removed) withRegistry(r => r.forget(id));
+        },
+        (error: unknown) =>
+          warn(
+            `old worker sessions could not be pruned: ${asError(error).message}`,
+          ),
+      );
   });
 
   pi.on('session_shutdown', async () => {
