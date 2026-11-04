@@ -1,7 +1,6 @@
 -- Rex configuration. Each feature installs its own actions and bindings.
 require("dots.tabs").install()
 require("dots.panes").install()
-require("dots.prompts").install()
 require("dots.nav").install()
 require("dots.views").install()
 require("dots.go").install()
