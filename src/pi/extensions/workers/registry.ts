@@ -116,6 +116,7 @@ export class Registry {
   private readonly loseStmt;
   private readonly trimWorkerEvents;
   private readonly trimEvents;
+  private readonly forgetStmts;
   private closed = false;
 
   constructor(db: DatabaseSync) {
@@ -173,6 +174,11 @@ export class Registry {
     this.livePidsStmt = this.db.prepare(
       "select distinct pid from workers where state in ('running','asking')",
     );
+    this.forgetStmts = [
+      'workers where id',
+      'worker_context where worker',
+      'events where worker',
+    ].map(table => this.db.prepare(`delete from ${table} = ?`));
     this.loseStmt = this.db.prepare(
       "update workers set state = 'lost', updated_at = ? where pid = ? and state in ('running','asking')",
     );
@@ -251,6 +257,20 @@ export class Registry {
     for (const pid of dead)
       marked += Number(this.loseStmt.run(Date.now(), pid).changes);
     return marked;
+  }
+
+  /** Whether a live process owns this worker's row. */
+  ownerAlive(
+    id: string,
+    alive: (pid: number) => boolean = processAlive,
+  ): boolean {
+    const row = this.get(id);
+    return row !== undefined && alive(row.pid);
+  }
+
+  /** Removes every row about a worker whose session is gone. */
+  forget(id: string): void {
+    for (const statement of this.forgetStmts) statement.run(id);
   }
 
   all(): RegistryRow[] {

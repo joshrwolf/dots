@@ -337,3 +337,32 @@ test('lock contention is transient; other database failures are not', async () =
     rmSync(dir, {recursive: true, force: true});
   }
 });
+
+test('forgetting a pruned worker removes its rows; owner liveness reads its row', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'dots-registry-forget-'));
+  const reg = openRegistry(path.join(dir, 'workers.db'), assert.fail);
+  try {
+    reg.upsert(row('a', null, 'a', 'completed'));
+    reg.upsert(row('b', null, 'b', 'completed'));
+    reg.event({worker: 'a', at: 1, kind: 'state', text: 'completed'});
+    assert.equal(
+      reg.ownerAlive('a', () => true),
+      true,
+    );
+    assert.equal(
+      reg.ownerAlive('a', () => false),
+      false,
+    );
+    assert.equal(
+      reg.ownerAlive('missing', () => true),
+      false,
+    );
+    reg.forget('a');
+    assert.equal(reg.get('a'), undefined);
+    assert.deepEqual(reg.events('a', 10), []);
+    assert.ok(reg.get('b'));
+  } finally {
+    reg.close();
+    rmSync(dir, {recursive: true, force: true});
+  }
+});

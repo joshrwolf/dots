@@ -79,8 +79,10 @@ catalog estimate; an unmarked total is provider-billed for every response.
 
 Workers belong to a session, not a conversation branch. `/tree` preserves them;
 `/fork` and `/clone` copy only read-only history. Reload/exit stops owned workers;
-`message` can resume their saved sessions. Stop retained worker processes before
-removing their worktrees.
+`message` can resume their saved sessions. A root session's startup removes worker
+sessions under `~/.pi/agent/dots/workers/` untouched for 30 days, unless a running
+process still owns them. Stop retained worker processes before removing their
+worktrees.
 
 Agents use `worker_spawn` for bounded work, `message` to steer or resume it, and
 completion events rather than polling. Tool schemas supply models, thinking
