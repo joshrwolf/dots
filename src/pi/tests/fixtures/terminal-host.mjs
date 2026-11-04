@@ -276,6 +276,10 @@ assert.deepEqual(
   [],
   'startup diagnostics',
 );
+if (flow === 'goal')
+  runtime.services.settingsManager.setTheme(
+    mode === 'regular' ? 'light' : 'dark',
+  );
 host.initTheme(runtime.services.settingsManager.getTheme(), true);
 
 const terminal = new VirtualTerminal();
@@ -1098,6 +1102,21 @@ async function goalFlow() {
   await closePanel('finished panel closed');
   await fresh('/goal unfollow t-fedcba');
   await wait(() => shows('Unfollowed t-fedcba'), 'remove finished fixture');
+  await fresh('/goal follow t-123abc');
+  for (const name of ['light', 'dark']) {
+    await fresh(`/goal-fixture-theme ${name}`);
+    await wait(
+      () => lines().includes(`fixture-theme:${name}`),
+      `${name} stock theme`,
+    );
+    const before = countLine(`inspector-surface:${name}`);
+    await fresh('/goal show t-123abc');
+    await wait(
+      () => countLine(`inspector-surface:${name}`) > before,
+      `${name} popup colors verified`,
+    );
+    await closePanel(`${name} popup closed`);
+  }
   await fresh('/goal-fixture-exit');
 }
 

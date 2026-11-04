@@ -1,5 +1,7 @@
 // Opt-in neutral fixture: real goal extension/components, no CLI or model calls.
+import assert from 'node:assert/strict';
 import {appendFileSync} from 'node:fs';
+import {backgroundCells} from '../../../pi-kit/tests/fixtures/ansi.ts';
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -95,6 +97,19 @@ export default function (pi: ExtensionAPI): void {
             view.render = width => {
               const lines = render(width);
               mark(`inspector-render:${width}:${lines.length}`);
+              const theme = parameters[1];
+              const expected = backgroundCells(
+                theme.getBgAnsi('customMessageBg') + ' ',
+              )[0]!;
+              for (const [index, line] of lines.entries()) {
+                const cells = backgroundCells(line);
+                assert.deepEqual(
+                  cells,
+                  Array<string>(cells.length).fill(expected),
+                  `${theme.name}: popup background at row ${index}`,
+                );
+              }
+              mark(`inspector-surface:${theme.name}`);
               return lines;
             };
             return view;
@@ -239,6 +254,14 @@ export default function (pi: ExtensionAPI): void {
   pi.on('session_start', () => mark('start'));
   pi.on('agent_start', () => mark('UNEXPECTED_PROVIDER_TURN'));
   pi.on('input', () => ({action: 'handled'}));
+  pi.registerCommand('goal-fixture-theme', {
+    description: 'Select a stock theme in the isolated fixture',
+    handler: async (name, ctx) => {
+      assert.ok(name === 'light' || name === 'dark');
+      assert.ok(ctx.ui.setTheme(name).success);
+      mark(`fixture-theme:${name}`);
+    },
+  });
   pi.registerCommand('goal-fixture-exit', {
     description: 'Exit isolated fixture',
     handler: async (_args, ctx) => ctx.shutdown(),

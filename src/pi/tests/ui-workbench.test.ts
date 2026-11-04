@@ -13,10 +13,15 @@ import {inspectorHeight} from '../src/ui/inspector.ts';
 import {FooterView} from '../src/features/frame.ts';
 import {scenarios} from '../dev/scenarios.ts';
 import {paintPreviewLine, pageBackground} from '../dev/surface.ts';
+import {backgroundCells} from '../../pi-kit/tests/fixtures/ansi.ts';
+import {Panel, PriorityRow} from '@joshrwolf/pi-kit/ui';
 import {Workbench, type WorkbenchState} from '../dev/workbench.ts';
 // Version-pinned host fixtures; no private imports in production or the workbench.
 import {KeybindingsManager} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js';
-import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
+import {
+  getThemeByName,
+  loadThemeFromPath,
+} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
 
 initTheme('dark', false);
 const dark = getThemeByName('dark')!;
@@ -426,39 +431,58 @@ test('simulated job actions require approval and cannot act on stale or retired 
   }
 });
 
-test('preview resets return to the page, preserving explicit child backgrounds and RGB payloads', () => {
+test('preview pages preserve an opaque panel surface rather than masking its defaults', () => {
   for (const theme of [dark, light]) {
-    const reset = paintPreviewLine('left\x1b[0mright', 9, theme);
-    const prefix = paintPreviewLine('', 0, theme).replace(/\x1b\[0m$/, '');
-    const fg = theme.getFgAnsi('text');
-    assert.ok(
-      reset.includes('\x1b[0m' + fg),
-      'full reset restores the page foreground',
+    const panel = new Panel();
+    const row = new PriorityRow();
+    row.update(
+      {
+        start: [{text: 'Task', tone: 'text', priority: 100, shrink: 'clip'}],
+        end: [],
+      },
+      theme,
     );
-    assert.equal(plain([reset]), 'leftright');
-    const bg = /\x1b\[48;[^m]*m/.exec(prefix)?.[0];
-    assert.ok(bg);
-    assert.ok(reset.includes('\x1b[0m' + fg + bg));
-    assert.ok(
-      paintPreviewLine('a\x1b[22;49mb', 2, theme).includes('\x1b[22;49m' + bg),
+    panel.update({heading: {start: [], end: []}, body: row}, theme);
+    const original = panel.render(40)[1]!;
+    const preview = paintPreviewLine(original, 40, theme);
+    const expected = backgroundCells(
+      theme.getBgAnsi('customMessageBg') + ' ',
+    )[0]!;
+    assert.deepEqual(
+      backgroundCells(original),
+      Array<string>(40).fill(expected),
     );
-    const child = '\x1b[48;2;0;39;49mselected\x1b[49m';
-    assert.ok(
-      paintPreviewLine(child, 8, theme).includes(child + bg),
-      'RGB channels are not interpreted as resets',
+    assert.deepEqual(backgroundCells(preview), backgroundCells(original));
+    assert.equal(plain([preview]), plain([original]));
+  }
+});
+
+test('transparent panels inherit the preview page without guessing a terminal RGB color', () => {
+  for (const appearance of ['light', 'dark']) {
+    const theme = loadThemeFromPath(
+      new URL(`../themes/dots-${appearance}.json`, import.meta.url).pathname,
+      'truecolor',
     );
-    const compound = '\x1b[0;48;2;10;20;30m';
-    assert.ok(
-      paintPreviewLine(compound + 'x', 1, theme).includes(compound + fg + 'x'),
-      'explicit background following reset wins',
+    assert.equal(theme.getBgAnsi('customMessageBg'), '\x1b[49m');
+    const panel = new Panel();
+    const row = new PriorityRow();
+    row.update(
+      {
+        start: [{text: 'Task', tone: 'text', priority: 100, shrink: 'clip'}],
+        end: [],
+      },
+      theme,
     );
-    assert.ok(
-      paintPreviewLine('\x1b[48:2::10:20:30mx', 1, theme).includes(
-        '\x1b[48:2::10:20:30mx',
-      ),
+    panel.update({heading: {start: [], end: []}, body: row}, theme);
+    const original = panel.render(40)[1]!;
+    assert.deepEqual(backgroundCells(original), Array<string>(40).fill(''));
+    assert.doesNotMatch(original, /\x1b\[48;/);
+    const page = backgroundCells(paintPreviewLine('', 1, theme))[0]!;
+    assert.notEqual(page, '');
+    assert.deepEqual(
+      backgroundCells(paintPreviewLine(original, 40, theme)),
+      Array<string>(40).fill(page),
     );
-    for (const width of [8, 40, 100])
-      assert.equal(visibleWidth(paintPreviewLine(child, width, theme)), width);
   }
 });
 

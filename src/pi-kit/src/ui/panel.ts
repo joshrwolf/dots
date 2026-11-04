@@ -9,6 +9,7 @@ import {
   type TuiMouseEventResult,
 } from '@earendil-works/pi-tui';
 import {PriorityRow, type RowModel} from './row.ts';
+import {paintSurfaceLine} from './surface.ts';
 
 export interface PanelModel {
   readonly heading: RowModel;
@@ -44,6 +45,12 @@ export class Panel implements Component {
     const model = this.model;
     const theme = this.theme;
     if (!model || !theme || width <= 0) return [];
+    const colors = {
+      fg: theme.getFgAnsi('text'),
+      bg: theme.getBgAnsi('customMessageBg'),
+    };
+    // Child styles and links end before frame-owned padding and borders.
+    const boundary = '\x1b[0m\x1b]8;;\x07';
     // At very narrow widths, spend the cells on content rather than decoration.
     if (width < 12) {
       this.bodyTop = this.heading.render(width).length;
@@ -54,7 +61,7 @@ export class Panel implements Component {
         ...this.heading.render(width),
         ...body,
         ...this.footer.render(width),
-      ].map(line => truncateToWidth(line, width, ''));
+      ].map(line => paintSurfaceLine(line, width, colors));
     }
     const inner = width - 4;
     this.bodyTop = 1;
@@ -66,7 +73,7 @@ export class Panel implements Component {
       const label = sliceByColumn(line, 0, cells, true);
       return (
         border(`${left}─`) +
-        (cells ? ` ${label} ` : '──') +
+        (cells ? ` ${label}${boundary} ` : '──') +
         border('─'.repeat(Math.max(0, inner - 1 - cells)) + right)
       );
     };
@@ -77,6 +84,7 @@ export class Panel implements Component {
       return (
         border('│ ') +
         bounded +
+        boundary +
         ' '.repeat(Math.max(0, inner - visibleWidth(bounded))) +
         border(' │')
       );
@@ -85,9 +93,7 @@ export class Panel implements Component {
       edge(this.heading, '╭', '╮'),
       ...body,
       edge(this.footer, '╰', '╯'),
-    ].map(line =>
-      theme.bg('customMessageBg', truncateToWidth(line, width, '')),
-    );
+    ].map(line => paintSurfaceLine(line, width, colors));
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {

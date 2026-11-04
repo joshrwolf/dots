@@ -1,15 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {getSelectListTheme, initTheme} from '@earendil-works/pi-coding-agent';
+import {
+  getSelectListTheme,
+  getMarkdownTheme,
+  initTheme,
+} from '@earendil-works/pi-coding-agent';
 import {
   SelectList,
   Text,
+  Markdown,
+  HStack,
+  VStack,
   stripTerminalSequences,
   visibleWidth,
+  getOsc8LinkAtColumn,
   colorToRgb,
   parseColor,
   type Color,
+  type TerminalColorMode,
 } from '@earendil-works/pi-tui';
+import {backgroundCells} from './fixtures/ansi.ts';
 import {
   Panel,
   PriorityRow,
@@ -27,13 +37,13 @@ initTheme('dark', false);
 const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
 const theme = getThemeByName('dark');
 assert.ok(theme);
-const builtin = (name: string) =>
+const builtin = (name: string, mode: TerminalColorMode = 'truecolor') =>
   loadThemeFromPath(
     new URL(
       `../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/${name}.json`,
       import.meta.url,
     ).pathname,
-    'truecolor',
+    mode,
   );
 const dark = builtin('dark');
 const light = builtin('light');
@@ -98,6 +108,127 @@ test('panel framing stays cell-safe, theme-owned and subordinate to content', ()
   assert.equal(plain(rendered[0]!), plain(rendered[1]!));
   assert.notDeepEqual(rendered[0], rendered[1]);
   assert.match(plain(rendered[0]!), /A recorded task/);
+});
+
+test('opaque panel surfaces survive native row and Markdown style resets at every column', () => {
+  for (const name of ['light', 'dark'])
+    for (const mode of ['truecolor', '256color'] as const) {
+      const theme = builtin(name, mode);
+      const row = new PriorityRow();
+      row.update(
+        {
+          start: [
+            {
+              text: 'Task 日本語 👩‍💻',
+              tone: 'text',
+              priority: 100,
+              shrink: 'clip',
+            },
+          ],
+          end: [],
+        },
+        theme,
+      );
+      const panel = new Panel();
+      panel.update(
+        {
+          heading: {
+            start: [
+              {text: 'Goal', tone: 'accent', priority: 100, shrink: 'clip'},
+            ],
+            end: [],
+          },
+          body: new VStack([
+            new HStack([row, new Text(theme.fg('muted', 'Detail'), 0, 0)]),
+            new Markdown(
+              '**Result** with [a link](https://example.com) and `code`.',
+              0,
+              0,
+              getMarkdownTheme(),
+            ),
+          ]),
+          footer: {
+            start: [
+              {text: 'Esc close', tone: 'dim', priority: 100, shrink: 'clip'},
+            ],
+            end: [],
+          },
+        },
+        theme,
+      );
+      for (const width of [1, 8, 12, 24, 80])
+        for (const [line, rendered] of panel.render(width).entries()) {
+          assert.deepEqual(
+            backgroundCells(rendered),
+            Array<string>(visibleWidth(rendered)).fill(
+              theme.getBgAnsi('customMessageBg'),
+            ),
+            `${name}/${mode}/${width}/row ${line}`,
+          );
+        }
+    }
+});
+
+test('frame-owned columns do not inherit an unclosed child background or hyperlink', () => {
+  for (const theme of [light, dark]) {
+    const child = '\x1b[48;2;10;20;30m';
+    const panel = new Panel();
+    panel.update(
+      {
+        heading: {start: [], end: []},
+        body: new Text(child + '\x1b]8;;https://example.com\x07X', 0, 0),
+      },
+      theme,
+    );
+    const line = panel.render(40)[1]!;
+    assert.deepEqual(backgroundCells(line), [
+      theme.getBgAnsi('customMessageBg'),
+      theme.getBgAnsi('customMessageBg'),
+      ...Array<string>(36).fill(child),
+      theme.getBgAnsi('customMessageBg'),
+      theme.getBgAnsi('customMessageBg'),
+    ]);
+    assert.equal(getOsc8LinkAtColumn(line, 2), 'https://example.com');
+    assert.equal(getOsc8LinkAtColumn(line, 39), undefined);
+  }
+});
+
+test('native selections retain their background through panel resize and theme changes', () => {
+  let theme = light;
+  const list = new SelectList(
+    [
+      {label: 'first', value: 'a'},
+      {label: 'second', value: 'b'},
+    ],
+    8,
+    {
+      ...getSelectListTheme(),
+      selectedText: text => theme.bg('selectedBg', theme.fg('text', text)),
+    },
+  );
+  const panel = new Panel();
+  for (const nextTheme of [light, dark, light]) {
+    theme = nextTheme;
+    panel.update({heading: {start: [], end: []}, body: list}, theme);
+    for (const index of [0, 1]) {
+      list.setSelectedIndex(index);
+      for (const width of [24, 80, 40]) {
+        const lines = panel.render(width);
+        const selected = lines[index + 1]!;
+        const other = lines[2 - index]!;
+        const label = index ? 'second' : 'first';
+        const at = stripTerminalSequences(selected).indexOf(label);
+        assert.deepEqual(
+          backgroundCells(selected).slice(at, at + label.length),
+          Array<string>(label.length).fill(theme.getBgAnsi('selectedBg')),
+        );
+        assert.deepEqual(
+          backgroundCells(other),
+          Array<string>(width).fill(theme.getBgAnsi('customMessageBg')),
+        );
+      }
+    }
+  }
 });
 
 test('panel forwards native picker mouse coordinates without owning selection', () => {

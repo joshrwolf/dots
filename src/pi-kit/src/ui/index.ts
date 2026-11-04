@@ -10,6 +10,7 @@ export {
   type Tone,
 } from './row.ts';
 export {readableForeground} from './color.ts';
+export {paintSurfaceLine, type SurfaceColors} from './surface.ts';
 export {
   sourceText,
   labelText,
