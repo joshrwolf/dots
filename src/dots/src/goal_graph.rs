@@ -115,9 +115,13 @@ fn rows(nodes: &[Node<'_>], order: &[usize], edges: &[(usize, usize)]) -> Vec<Ro
             let text = renderer.next_row(node, dependents, nodes[node].glyph.into(), String::new());
             Row {
                 task: nodes[node].id.into(),
+                // A head after an ended lane starts with a blank line that
+                // also drops the lanes passing through; the node line follows.
                 lines: text
                     .lines()
-                    .map(|line| line.trim_end().to_owned())
+                    .map(str::trim_end)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
                     .collect(),
             }
         })
@@ -216,6 +220,19 @@ mod tests {
                 graph.layered
             );
         }
+    }
+
+    #[test]
+    fn a_head_after_an_ended_lane_starts_at_its_node_line() {
+        let graph = render(&[
+            node("types", "✓", &[]),
+            node("exports", "○", &["types"]),
+            node("notes", "✓", &["types"]),
+            node("policy", "!", &[]),
+            node("docs", "○", &["exports", "policy"]),
+        ]);
+        let drawing: Vec<_> = graph.rows.iter().map(|row| row.lines.join("\n")).collect();
+        assert_eq!(drawing, ["✓  \n├─╮", "○ │", "│ ✓", "│ !\n├─╯", "○  "]);
     }
 
     #[test]
