@@ -14,7 +14,7 @@ import {
   stripTerminalSequences,
   visibleWidth,
 } from '@earendil-works/pi-tui';
-import {registerUI as register} from '../extensions/ui/index.ts';
+import register from '../extensions/ui/index.ts';
 import {
   editRenderers,
   writeRenderers,
@@ -125,7 +125,6 @@ test('pairing preserves unequal blocks, order, and explicit newline notes', () =
 test('registers only presentation; preserves other custom renderers', () => {
   let resolver;
   register({
-    registerCommand() {},
     registerMarkdownTransformer() {},
     on() {},
     registerToolRenderer(fn) {

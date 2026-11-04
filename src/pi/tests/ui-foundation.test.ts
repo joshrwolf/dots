@@ -14,25 +14,22 @@ import {
   stripTerminalSequences,
   visibleWidth,
 } from '@earendil-works/pi-tui';
+import {ActivityCard, activityHeader, OutputView} from '../src/ui/card.ts';
 import {
-  ActivityCard,
-  activityHeader,
   createSyntaxService,
-  createToolRenderers,
-  DetailView,
-  OutputView,
-  selectToolRenderers,
-  SourceView,
-  DiffView,
-  parsePatch,
-  type PresentationView,
   type SyntaxService,
   type Tokens,
+} from '../src/ui/previews/syntax.ts';
+import {
+  createToolRenderers,
+  type PresentationView,
   type ToolObservation,
   type ToolPresentation,
-} from '@joshrwolf/pi-dots/ui';
+} from '../src/host/tools.ts';
+import {DetailView} from '../src/ui/details.ts';
+import {SourceView, DiffView} from '../src/ui/previews/view.ts';
+import {parsePatch} from '../src/ui/previews/patch.ts';
 import type {SyntaxEngine} from '../src/ui/previews/syntax.ts';
-import {parsePreferences} from '../src/host/preferences.ts';
 // Version-pinned host harness only; production imports use public package roots.
 import {loadThemeFromPath} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
 
@@ -132,18 +129,7 @@ test('typed custom tool can use descriptor-to-renderers without registering our 
   assert.doesNotMatch(plain(component.render(80)), /example invocation/);
 });
 
-test('resolver delegation is only by selection, with explicit stable shell ownership', () => {
-  const selected = createToolRenderers(example);
-  let delegates = 0;
-  const next = () => {
-    delegates++;
-    return {renderShell: 'default' as const};
-  };
-  const resolve = selectToolRenderers(new Map([['example', selected]]));
-  assert.equal(resolve('example', next), selected);
-  assert.equal(delegates, 0);
-  assert.equal(resolve('foreign', next)?.renderShell, 'default');
-  assert.equal(delegates, 1);
+test('default shell presentations render inside the host box', () => {
   const nativeShell = createToolRenderers({...example, shell: 'default'});
   const component = new ToolExecutionComponent(
     'example',
@@ -483,36 +469,6 @@ test('disposal records cleanup failures exactly once without detached rejection'
   assert.equal(syntax.failure, failure);
   assert.equal(disposals, 1);
   assert.equal(syntax.active, false);
-});
-
-test('preferences allow independent ownership and reject malformed configuration', () => {
-  assert.deepEqual(
-    parsePreferences({version: 1, tools: ['write'], footer: 'native'}),
-    {
-      version: 1,
-      tools: ['write'],
-      otherTools: 'compact',
-      thinking: 'compact',
-      header: 'compact',
-      footer: 'native',
-      editor: 'soft',
-    },
-  );
-  assert.deepEqual(
-    parsePreferences({version: 1, tools: [], footer: 'native'}).tools,
-    [],
-  );
-  for (const value of [
-    {version: 2},
-    {version: 1, tools: ['bash', 'bash']},
-    {version: 1, tools: ['other']},
-    {version: 1, footer: 'hidden'},
-    {version: 1, footer: null},
-    {version: 1, tools: null},
-    {version: 1, unknown: true},
-    null,
-  ])
-    assert.throws(() => parsePreferences(value));
 });
 
 test('detail frames reuse framed rows until content, width or styling changes', () => {

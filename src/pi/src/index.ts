@@ -1,4 +1,4 @@
-// Consumer surface: importing the library registers nothing and starts no work.
+// Internal barrel for extensions: importing it registers nothing and starts no work.
 export {
   Panel,
   type PanelModel,
@@ -30,7 +30,6 @@ export {
 export {SoftEditor} from './features/editor.ts';
 export {
   createToolRenderers,
-  selectToolRenderers,
   type PresentationOptions,
   type PresentationView,
   type ToolObservation,

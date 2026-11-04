@@ -51,8 +51,6 @@ or restart. Pi and the development SDK must match the workspace catalog pin.
 
 ## Presentation
 
-- `/ui` selects compact/native displays, thinking, header, footer and editor
-  styling. **Apply and reload** saves; Cancel leaves settings unchanged.
 - Ctrl+T toggles thinking; Ctrl+O expands tool details. Compact displays retain
   errors, truncation and full-output links without changing recorded results.
 - `/goal`, `/workers`, `/jobs` and `/wakes` inspect activity without replacing
@@ -62,8 +60,8 @@ or restart. Pi and the development SDK must match the workspace catalog pin.
 - `/context` shows reported usage and prompt-source estimates, not billing or
   cache-hit measurements. Its overlapping estimates must not be added together.
 
-UI preferences live in `~/.pi/agent/dots-ui.json`. Disable the UI resource through
-`pi config` to restore native surfaces. Third-party custom renderers remain
+Disable the companion's `ui` extension through `pi config` to restore Pi's native
+tool rows, thinking, footer and editor. Third-party custom renderers remain
 owned by their packages.
 
 ## Workers

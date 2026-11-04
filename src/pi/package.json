@@ -4,9 +4,6 @@
   "private": true,
   "type": "module",
   "description": "Personal Pi workflow extensions maintained in dots",
-  "exports": {
-    "./ui": "./src/index.ts"
-  },
   "pi": {
     "extensions": [
       "extensions/anthropic-request-guard/index.ts",

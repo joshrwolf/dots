@@ -13,7 +13,6 @@ import {
 import {toolRenderers} from '../extensions/ui/index.ts';
 import {createSyntaxService} from '../src/index.ts';
 import {projectCodemode} from '../src/features/tools/codemode.ts';
-import {parsePreferences} from '../src/host/preferences.ts';
 import type {ToolObservation} from '../src/host/tools.ts';
 
 initTheme('dark', false);
@@ -453,19 +452,12 @@ test('script-only output remains discoverable and cancellation is not called suc
   assert.doesNotMatch(plain(component.render(100)), /done/);
 });
 
-test('only the exact native header block is removed; existing explicit preferences stay explicit', () => {
+test('only the exact native header block is removed', () => {
   const input = {
     ...frame({calls: []}),
     content: [{type: 'text' as const, text: 'Script completed\nuser output'}],
   };
   assert.equal(projectCodemode(input).output, 'Script completed\nuser output');
-  assert.deepEqual(parsePreferences({version: 1, tools: ['bash']}).tools, [
-    'bash',
-  ]);
-  assert.ok(parsePreferences({version: 1}).tools.includes('codemode'));
-  assert.deepEqual(parsePreferences({version: 1, tools: ['codemode']}).tools, [
-    'codemode',
-  ]);
 });
 
 test('a streamed script is highlighted once, when complete, and never again for progress or idle frames', async () => {

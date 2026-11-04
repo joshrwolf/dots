@@ -6,8 +6,7 @@ import {
   initTheme,
 } from '@earendil-works/pi-coding-agent';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
-import {registerUI} from '../extensions/ui/index.ts';
-import {parsePreferences} from '../src/host/preferences.ts';
+import register from '../extensions/ui/index.ts';
 import {renderEvent} from '../extensions/workers/present.ts';
 import {MarkdownView} from '../src/ui/markdown.ts';
 import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
@@ -18,19 +17,15 @@ const plain = (view, width = 160) =>
 function setup() {
   let resolver;
   let dispose;
-  registerUI(
-    {
-      registerCommand() {},
-      registerMarkdownTransformer() {},
-      registerToolRenderer(value) {
-        resolver = value;
-      },
-      on(name, handler) {
-        if (name === 'session_shutdown') dispose = handler;
-      },
+  register({
+    registerMarkdownTransformer() {},
+    registerToolRenderer(value) {
+      resolver = value;
     },
-    parsePreferences({version: 1}),
-  );
+    on(name, handler) {
+      if (name === 'session_shutdown') dispose = handler;
+    },
+  });
   return {
     dispose,
     tool(name, text, details) {

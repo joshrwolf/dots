@@ -33,7 +33,7 @@ import {readPresentation} from '../src/features/tools/read.ts';
 import {writePresentation} from '../src/features/tools/write.ts';
 import {editPresentation} from '../src/features/tools/edit.ts';
 import {codemodePresentation} from '../src/features/tools/codemode.ts';
-import {FooterView, createHeader} from '../src/features/frame.ts';
+import {FooterView} from '../src/features/frame.ts';
 import {JobInspector} from '../extensions/jobs/inspector.ts';
 import {emptyFacts, type Job} from '../extensions/jobs/protocol.ts';
 import {
@@ -552,7 +552,7 @@ export const scenarios: readonly Scenario[] = [
                 ...(combined || phase === 5
                   ? [
                       {
-                        key: 'dots-ui-release',
+                        key: 'example.notice',
                         text: 'Companion update · /reload when idle',
                       },
                     ]
@@ -599,8 +599,6 @@ export const scenarios: readonly Scenario[] = [
               title: 'Application frame',
               detail: 'icon footer · B bottom',
               body: new VStack([
-                createHeader(theme),
-                new Spacer(1),
                 new UserMessageComponent(
                   'Check the renderer and report any failures.',
                   undefined,

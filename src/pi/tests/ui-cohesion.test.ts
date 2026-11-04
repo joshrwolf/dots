@@ -15,9 +15,8 @@ import {
   stripTerminalSequences,
   visibleWidth,
 } from '@earendil-works/pi-tui';
-import {registerUI} from '../extensions/ui/index.ts';
+import register from '../extensions/ui/index.ts';
 import {backgroundToolNames} from '../src/features/tools/activity.ts';
-import {parsePreferences} from '../src/host/preferences.ts';
 import {recordedJobs, renderJobMessage} from '../extensions/jobs/transcript.ts';
 import {jobFixture} from '../dev/scenarios.ts';
 import {summary} from '../extensions/jobs/protocol.ts';
@@ -25,22 +24,18 @@ import {summary} from '../extensions/jobs/protocol.ts';
 initTheme('dark', false);
 const tui = new TuiMainScreen(new ProcessTerminal());
 const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
-function registration(preferences = parsePreferences({version: 1})) {
+function registration() {
   let resolver: ToolRendererResolver | undefined;
   let dispose = () => {};
-  registerUI(
-    {
-      registerCommand() {},
-      registerMarkdownTransformer() {},
-      registerToolRenderer(value: ToolRendererResolver) {
-        resolver = value;
-      },
-      on(name: string, handler: () => void) {
-        if (name === 'session_shutdown') dispose = handler;
-      },
-    } as unknown as ExtensionAPI,
-    preferences,
-  );
+  register({
+    registerMarkdownTransformer() {},
+    registerToolRenderer(value: ToolRendererResolver) {
+      resolver = value;
+    },
+    on(name: string, handler: () => void) {
+      if (name === 'session_shutdown') dispose = handler;
+    },
+  } as unknown as ExtensionAPI);
   assert.ok(resolver);
   const resolve = resolver;
   return {
@@ -74,7 +69,7 @@ function registration(preferences = parsePreferences({version: 1})) {
   };
 }
 
-test('live registration covers every owned background tool and preserves custom/native ownership', () => {
+test('live registration covers every owned background tool and preserves custom ownership', () => {
   const r = registration();
   try {
     const owned = ['jobs', 'workers', 'wake'].flatMap(name => {
@@ -116,34 +111,10 @@ test('live registration covers every owned background tool and preserves custom/
   } finally {
     r.dispose();
   }
-  const native = registration(
-    parsePreferences({version: 1, tools: [], otherTools: 'native'}),
-  );
-  try {
-    for (const name of ['read', 'job_start', 'example_lookup'])
-      assert.equal(
-        native.resolve(name, () => undefined),
-        undefined,
-      );
-  } finally {
-    native.dispose();
-  }
-  assert.equal(
-    parsePreferences({version: 1, tools: []}).otherTools,
-    'native',
-    'older all-native preferences stay native',
-  );
-  assert.throws(
-    () => parsePreferences({version: 1, otherTools: null}),
-    /otherTools/,
-  );
 });
 
-test('web adapters change only surrounding chrome and respect native preferences', () => {
+test('web adapters change only surrounding chrome', () => {
   const compact = registration();
-  const native = registration(
-    parsePreferences({version: 1, otherTools: 'native'}),
-  );
   const downstream = {
     renderCall: () => new Text('fetch example.com', 0, 0),
     renderResult: () =>
@@ -160,10 +131,6 @@ test('web adapters change only surrounding chrome and respect native preferences
       assert.equal(resolved.renderShell, 'self');
       assert.equal(resolved.renderCall, downstream.renderCall);
       assert.equal(resolved.renderResult, downstream.renderResult);
-      assert.equal(
-        native.resolve(name, () => downstream),
-        downstream,
-      );
       const self = {...downstream, renderShell: 'self' as const};
       assert.equal(
         compact.resolve(name, () => self),
@@ -177,7 +144,6 @@ test('web adapters change only surrounding chrome and respect native preferences
     assert.equal('renderShell' in downstream, false);
   } finally {
     compact.dispose();
-    native.dispose();
   }
 });
 

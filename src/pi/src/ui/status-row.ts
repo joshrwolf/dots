@@ -7,12 +7,11 @@ export interface StatusItem {
 }
 
 /** Keep publishers opaque, including their colors; never infer state from prose.
- * Our activity summaries precede notices, then unknown publishers in key order. */
+ * Job activity leads; other publishers follow in key order. */
 export function statusItems(
   items: readonly StatusItem[],
 ): readonly StatusItem[] {
-  const priority = (key: string) =>
-    key === 'dots.jobs' ? 2 : key === 'dots-ui-release' ? 1 : 0;
+  const priority = (key: string) => (key === 'dots.jobs' ? 1 : 0);
   return [
     ...new Map(
       items.map(item => [

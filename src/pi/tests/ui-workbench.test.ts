@@ -10,7 +10,7 @@ import {
 } from '@earendil-works/pi-tui';
 import {createSyntaxService, Inspector, OutputView} from '../src/index.ts';
 import {inspectorHeight} from '../src/ui/inspector.ts';
-import {FooterView, createHeader} from '../src/features/frame.ts';
+import {FooterView} from '../src/features/frame.ts';
 import {scenarios} from '../dev/scenarios.ts';
 import {paintPreviewLine, pageBackground} from '../dev/surface.ts';
 import {Workbench, type WorkbenchState} from '../dev/workbench.ts';
@@ -480,10 +480,6 @@ test('B jumps to the frame footer without changing its data or expansion state',
 test('frame presentation is deterministic, theme-owned, and shows unknown context honestly', () => {
   const footer = new FooterView();
   for (const theme of [dark, light]) {
-    assert.equal(
-      plain(createHeader(theme).render(100)).trimEnd(),
-      'Pi  /ui appearance',
-    );
     footer.update(
       {
         project: '日本語 👩🏽‍💻',

@@ -11,7 +11,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import {validateToolArguments} from '@earendil-works/pi-ai';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
-import {registerUI as register} from '../extensions/ui/index.ts';
+import register from '../extensions/ui/index.ts';
 import {compactRenderers} from './ui-fixture.mjs';
 import {readExcerpt} from '../src/features/tools/read.ts';
 
@@ -35,7 +35,6 @@ function result(text, details, isError = false) {
 test('selected builtins and otherwise unstyled tools share the compact shell', () => {
   let resolve;
   register({
-    registerCommand() {},
     registerMarkdownTransformer() {},
     on() {},
     registerToolRenderer(fn) {

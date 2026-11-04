@@ -6,11 +6,8 @@ import test from 'node:test';
 import {SessionManager, type Theme} from '@earendil-works/pi-coding-agent';
 import {Text} from '@earendil-works/pi-tui';
 import {toolRenderers} from '../extensions/ui/index.ts';
-import {
-  createSyntaxService,
-  createToolRenderers,
-  type ToolObservation,
-} from '@joshrwolf/pi-dots/ui';
+import {createSyntaxService} from '../src/ui/previews/syntax.ts';
+import {createToolRenderers, type ToolObservation} from '../src/host/tools.ts';
 // Private imports are confined to this exact-version host-contract test.
 import {exportSessionToHtml} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/index.js';
 import {createToolHtmlRenderer} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js';

@@ -53,22 +53,3 @@ export class FooterView implements Component {
     return lines;
   }
 }
-
-/** Startup chrome only: model, context and active work belong below the editor. */
-export function createHeader(theme: Theme): Component {
-  const row = new PriorityRow();
-  row.update(
-    {
-      layout: 'inline',
-      groupSeparator: '  ',
-      start: [
-        {text: 'Pi', tone: 'accent', bold: true, priority: 100, shrink: 'clip'},
-      ],
-      end: [
-        {text: '/ui appearance', tone: 'dim', priority: 10, shrink: 'omit'},
-      ],
-    },
-    theme,
-  );
-  return row;
-}

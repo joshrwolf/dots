@@ -1,7 +1,4 @@
 import assert from 'node:assert/strict';
-import {mkdtemp, rm, stat} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
 import test from 'node:test';
 import {
   CustomEditor,
@@ -18,27 +15,17 @@ import {
 } from '@earendil-works/pi-tui';
 import {
   activityDecoration,
-  activityHeader,
-  Notices,
   StateGutter,
   type ActivityState,
-  DiffView,
-  parsePatch,
-  ActivityCard,
-  SoftEditor,
-  createSyntaxService,
-} from '@joshrwolf/pi-dots/ui';
+} from '../src/ui/state.ts';
+import {activityHeader, Notices, ActivityCard} from '../src/ui/card.ts';
+import {DiffView} from '../src/ui/previews/view.ts';
+import {parsePatch} from '../src/ui/previews/patch.ts';
+import {SoftEditor} from '../src/features/editor.ts';
+import {createSyntaxService} from '../src/ui/previews/syntax.ts';
 import {duration} from '../src/features/tools/records.ts';
 import {toolRenderers} from '../extensions/ui/index.ts';
 import {installEditor} from '../src/features/editor.ts';
-import {configureUI} from '../src/features/settings.ts';
-import {
-  defaultPreferences,
-  loadPreferences,
-  parsePreferences,
-  savePreferences,
-  type Preferences,
-} from '../src/host/preferences.ts';
 // Exact-version host fixtures; production imports public APIs only.
 import {KeybindingsManager} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js';
 import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
@@ -452,148 +439,4 @@ test('editor installation and cleanup respect previous and subsequent owners', (
   assert.equal(installs, 3);
   installEditor({...host, mode: 'rpc'})();
   assert.equal(installs, 3);
-});
-
-test('settings cancel is side-effect free; apply saves before reload', async () => {
-  let saved: Preferences | undefined;
-  const events: string[] = [];
-  const choices = [
-    'Use native UI',
-    'Cancel',
-    'Use native UI',
-    'Apply and reload',
-  ];
-  const ui = {
-    async select() {
-      return choices.shift();
-    },
-    notify(text: string) {
-      assert.fail(text);
-    },
-  };
-  const store = {
-    load: () => defaultPreferences,
-    save(value: Preferences, expected: Preferences) {
-      assert.equal(expected, defaultPreferences);
-      saved = value;
-      events.push('save');
-    },
-  };
-  const reload = async () => {
-    events.push('reload');
-  };
-  await configureUI(ui, reload, store);
-  assert.equal(saved, undefined);
-  assert.deepEqual(events, []);
-  await configureUI(ui, reload, store);
-  assert.deepEqual(saved, {
-    version: 1,
-    tools: [],
-    otherTools: 'native',
-    thinking: 'native',
-    header: 'native',
-    footer: 'native',
-    editor: 'native',
-  });
-  assert.deepEqual(events, ['save', 'reload']);
-});
-
-test('settings shutdown cancels a pending selector and defeats a queued Apply', async () => {
-  for (const race of [false, true]) {
-    const controller = new AbortController();
-    let selectCalls = 0;
-    let choose: ((value: string | undefined) => void) | undefined;
-    const ui = {
-      select(
-        _title: string,
-        _items: string[],
-        options?: {signal?: AbortSignal},
-      ): Promise<string | undefined> {
-        selectCalls++;
-        return new Promise(resolve => {
-          choose = resolve;
-          options?.signal?.addEventListener('abort', () => resolve(undefined), {
-            once: true,
-          });
-        });
-      },
-      notify() {
-        assert.fail('retired UI must not be notified');
-      },
-    };
-    const pending = configureUI(
-      ui,
-      async () => {
-        assert.fail('reload after cancellation');
-      },
-      {
-        load: () => defaultPreferences,
-        save() {
-          assert.fail('save after cancellation');
-        },
-      },
-      controller.signal,
-    );
-    assert.ok(choose);
-    if (race) choose('Apply and reload');
-    controller.abort();
-    await pending;
-    assert.equal(selectCalls, 1);
-  }
-});
-
-test('reload failure is reported by the host, not through an invalidated settings UI', async () => {
-  const ui = {
-    async select() {
-      return 'Apply and reload';
-    },
-    notify() {
-      assert.fail('old UI used after reload');
-    },
-  };
-  await assert.rejects(
-    configureUI(
-      ui,
-      async () => {
-        throw new Error('replacement failed');
-      },
-      {
-        load: () => defaultPreferences,
-        save() {},
-      },
-    ),
-    /replacement failed/,
-  );
-});
-
-test('preference persistence is private, validated, and detects intervening edits', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'dots-ui-preferences-'));
-  const path = join(dir, 'preferences.json');
-  try {
-    const next = parsePreferences({
-      version: 1,
-      tools: ['read'],
-      editor: 'native',
-    });
-    savePreferences(next, defaultPreferences, path);
-    assert.deepEqual(loadPreferences(path), next);
-    assert.equal((await stat(path)).mode & 0o777, 0o600);
-    assert.throws(
-      () => savePreferences(defaultPreferences, defaultPreferences, path),
-      /changed while/,
-    );
-    assert.deepEqual(loadPreferences(path), next);
-    assert.throws(() => parsePreferences({version: 1, header: null}), /header/);
-    assert.throws(
-      () => parsePreferences({version: 1, header: 'unknown'}),
-      /header/,
-    );
-    assert.throws(() => parsePreferences({version: 1, editor: null}), /editor/);
-    assert.throws(
-      () => parsePreferences({version: 1, editor: 'unknown'}),
-      /editor/,
-    );
-  } finally {
-    await rm(dir, {recursive: true, force: true});
-  }
 });

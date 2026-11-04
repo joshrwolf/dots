@@ -360,10 +360,6 @@ async function packageFlow() {
     await sleep(150);
   }
   send('\x1b');
-  await sleep(150);
-  await command('/ui');
-  await wait(() => shows('Presentation'), 'packaged UI menu');
-  send('\x1b');
   await sleep(300);
   await fresh('/workers');
   await wait(

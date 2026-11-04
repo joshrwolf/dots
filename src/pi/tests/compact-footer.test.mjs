@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
-import {registerUI as register} from '../extensions/ui/index.ts';
+import register from '../extensions/ui/index.ts';
 import {createFooter} from '../src/features/footer.ts';
 
 const theme = {
@@ -204,7 +204,6 @@ test('dispose unsubscribes once and stops rendering stale session context', () =
 test('registration only installs frame surfaces in TUI mode, not RPC/print/JSON', () => {
   let start;
   register({
-    registerCommand() {},
     registerMarkdownTransformer() {},
     registerToolRenderer() {},
     on(event, fn) {
@@ -212,14 +211,9 @@ test('registration only installs frame surfaces in TUI mode, not RPC/print/JSON'
     },
   });
   let installed = 0;
-  let headers = 0;
   const ctx = {
     ui: {
       setHiddenThinkingLabel() {},
-      setHeader(factory) {
-        assert.equal(typeof factory, 'function');
-        headers++;
-      },
       getEditorComponent() {
         return () => {};
       },
@@ -231,8 +225,6 @@ test('registration only installs frame surfaces in TUI mode, not RPC/print/JSON'
   };
   for (const mode of ['rpc', 'print', 'json']) start({}, {...ctx, mode});
   assert.equal(installed, 0);
-  assert.equal(headers, 0);
   start({}, {...ctx, mode: 'tui'});
   assert.equal(installed, 1);
-  assert.equal(headers, 1);
 });

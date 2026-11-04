@@ -1,9 +1,8 @@
-# Pi presentation library
+# Pi presentation components
 
-`@joshrwolf/pi-dots/ui` supplies reusable presentation components without
-registering extensions, selecting themes, or starting resources on import.
-`Panel`, `PriorityRow`, and the text helpers live in `@joshrwolf/pi-kit/ui`,
-and are re-exported here.
+The companion's extensions compose these components. Importing them registers
+no extensions, selects no theme, and starts no resources. `Panel`,
+`PriorityRow`, and the text helpers live in `@joshrwolf/pi-kit/ui`.
 
 ## Use
 

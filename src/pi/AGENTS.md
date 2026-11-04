@@ -80,9 +80,10 @@
 
 ## Presentation code
 
-- The public library is `@joshrwolf/pi-dots/ui`; types and consumer tests own its
-  API reference. Keep lifecycle constraints in `src/README.md`. Importing it must
-  not register extensions or start resources.
+- `src/` holds presentation components that extensions compose; types and tests
+  own their API reference. Keep lifecycle constraints in `src/README.md`.
+  Importing them must not register extensions or start resources. Shared
+  primitives belong in `@joshrwolf/pi-kit/ui`.
 - Pi owns rendering, layout primitives, input, themes, scheduling, and persistence.
   Use public APIs; do not build a parallel UI framework or inspect private child arrays.
 - Project recorded tool data into readonly models, then present them. Rendering
@@ -103,8 +104,8 @@
 - Footer/header setters do not provide compare-and-restore ownership. Do not
   reset a later extension's surface during cleanup. Editor ownership is identity
   checked through the public API; preserve native input and working status.
-- Pi owns theme, startup, and editor settings. Validate our own preferences and
-  cancel pending dialogs at shutdown; never use an old context after reload.
+- Pi owns theme, startup, and editor settings. Cancel pending dialogs at
+  shutdown; never use an old context after reload.
 - Use `dev/` for opt-in, neutral fixture scenarios built from shipping components,
   not parallel mock implementations. Run `mise run //src/pi:verify-terminal` for
   presentation changes; real scrolling, focus, resize, and reload are contracts.

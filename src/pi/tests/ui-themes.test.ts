@@ -11,7 +11,9 @@ import {
   UserMessageComponent,
   type ThemeColor,
 } from '@earendil-works/pi-coding-agent';
-import {DiffView, createSyntaxService, parsePatch} from '@joshrwolf/pi-dots/ui';
+import {DiffView} from '../src/ui/previews/view.ts';
+import {createSyntaxService} from '../src/ui/previews/syntax.ts';
+import {parsePatch} from '../src/ui/previews/patch.ts';
 import {
   colorToRgb,
   parseColor,
