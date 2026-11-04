@@ -100,9 +100,11 @@ fn topological(count: usize, edges: &[(usize, usize)]) -> Vec<usize> {
 
 fn rows(nodes: &[Node<'_>], order: &[usize], edges: &[(usize, usize)]) -> Vec<Row> {
     // renderdag draws each node above its "parents"; dependents play that role.
+    // Two-line rows draw every continuing edge, so adjacent nodes in one column
+    // are linked only when a line joins them.
     let mut renderer = GraphRowRenderer::new()
         .output()
-        .with_min_row_height(1)
+        .with_min_row_height(2)
         .build_box_drawing();
     let mut rows: Vec<Row> = order
         .iter()
@@ -115,8 +117,7 @@ fn rows(nodes: &[Node<'_>], order: &[usize], edges: &[(usize, usize)]) -> Vec<Ro
             let text = renderer.next_row(node, dependents, nodes[node].glyph.into(), String::new());
             Row {
                 task: nodes[node].id.into(),
-                // A head after an ended lane starts with a blank line that
-                // also drops the lanes passing through; the node line follows.
+                // Blank lines only mark ended lanes; the missing link says the same.
                 lines: text
                     .lines()
                     .map(str::trim_end)
@@ -203,7 +204,7 @@ mod tests {
         ]);
         let order: Vec<_> = graph.rows.iter().map(|row| row.task.as_str()).collect();
         assert_eq!(order, ["types", "cli", "pi", "release"]);
-        let want = "✓  \n├─╮|types\n◌ │|cli\n│ ●\n├─╯|pi\n○  |release";
+        let want = "✓  \n├─╮|types\n◌ │\n│ │|cli\n│ ●\n├─╯|pi\n○  |release";
         assert_eq!(drawn(&graph), want);
         let widths: HashSet<usize> = graph
             .rows
@@ -223,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn a_head_after_an_ended_lane_starts_at_its_node_line() {
+    fn every_edge_has_a_link_and_ended_lanes_leave_no_blank_line() {
         let graph = render(&[
             node("types", "✓", &[]),
             node("exports", "○", &["types"]),
@@ -232,7 +233,10 @@ mod tests {
             node("docs", "○", &["exports", "policy"]),
         ]);
         let drawing: Vec<_> = graph.rows.iter().map(|row| row.lines.join("\n")).collect();
-        assert_eq!(drawing, ["✓  \n├─╮", "○ │", "│ ✓", "│ !\n├─╯", "○  "]);
+        assert_eq!(
+            drawing,
+            ["✓  \n├─╮", "○ │\n│ │", "│ ✓\n│  ", "│ !\n├─╯", "○  "]
+        );
     }
 
     #[test]
