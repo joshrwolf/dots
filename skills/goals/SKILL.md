@@ -1,62 +1,123 @@
 ---
 name: goals
-description: Coordinate a multi-part outcome across sessions, local work, and optional external issues or PRs. Use when planning an effort, resuming tracked work, checking progress, accepting results, or changing direction. Goals and tasks do not imply delegation or publication.
+description: Shape an outcome and execution mandate, then coordinate authorized work through verified completion using shared goals, tasks and durable attention. Use when planning, executing, resuming, accepting or changing a multi-part effort. Following a goal does not authorize execution or publication.
 ---
 
 # Goals
 
-A goal is a root task with a Markdown brief. Use `dots task --help` for the
-commands and `worktrees` for where work runs.
+Carry an agreed outcome to its finish line without making the user supervise
+skill handoffs. Goals, briefs, task IDs and reports are agent working material;
+user-facing questions and updates name the actual work and stand on their own.
+Small work needs no goal. Use `dots task --help` and `dots attention --help` for
+the installed contracts, and `worktrees` for isolation and local integration.
 
-- The brief owns the outcome, constraints, working agreement, and decisions.
-  Edit it in place when they change.
-- Tasks own the slices, dependencies, claims, and current results.
-- Git and GitHub own the code, branches, issues, and PRs. Recorded results and
-  references are claims to check, not current state.
-- Memory keeps reusable lessons, not task lists or progress.
+## Agree the outcome and mandate
 
-Planning or following a goal does not authorize implementation, delegation, or
-publication; the user's request and the brief's working agreement do.
+Collaboratively establish the outcome, scope boundary, verification and finish
+line. Establish whether delegation, publication and monitored feedback handling
+are authorized, and what remains excluded. A verified local change, a published
+PR and a PR ready for human review are different endpoints. None implies merge
+or deployment authority.
 
-## Plan
+Keep the mutable brief under the project workspace's `briefs/`. Record the
+accepted execution agreement as a shared durable decision, preserving the
+smallest relevant actual user instruction and its provenance separately from
+your interpretation. Progress edits do not rewrite consent. Current user
+instructions and repository policy prevail; absent or conflicting provenance
+is not permission. Do not build a permission DSL or ask the user to approve
+ordinary task splitting or editorial updates within the mandate.
 
-Write the brief under the project workspace's `briefs/`, create the goal with
-`dots task goal create`, and follow it with `goal_focus`. Split work into
-tasks that can each be verified on their own, add only real dependencies, and
-skip a speculative backlog. Small work needs no goal.
+Create and follow the goal using the native tools. Following only selects
+context and views; it neither claims coordination nor starts work. Split tasks
+into independently verifiable slices with real dependencies, not a speculative
+backlog or a fixed planner/implementer/reviewer pipeline.
 
-## Work
+## Coordinate and execute
 
-Claim a task before working on it or delegating it. A claim lasts until you
-release, hand off, or close the task; Pi releases a session's claims when it
-ends. Use `--take` only when the owning session has stopped working on it.
+One coordinator owns the goal-root claim. Only that coordinator dispatches or
+changes the goal's tasks, dependencies, results and lifecycle. Workers execute
+bounded briefs and report back; they do not claim or accept goal tasks.
+Followers inspect. A claim records responsibility, not authorization.
 
-Keep the task's result current with `update --result` as work progresses,
-replacing the previous text. Keep the goal's own result current the same way: where
-things stand overall and the next step. Pi shows it to every session following
-the goal, so it carries the thread across compactions and handoffs. Write it for the user in plain sentences: what
-changed, where it is (branch, commit, path), which checks ran, and what remains.
-No shorthand, and no lists of things that did not happen.
+Before dispatch, check both ownership and eligibility. Held ancestors and open
+or unincorporated attention requests block the named work and its descendants;
+claim takeover cannot bypass those prerequisites. Reconcile newly blocked work
+that is already running. Independent authorized work can continue.
 
-Workers report to the coordinating session, which records their results. Give
-each worker its own scratch directory under the workspace for drafts. To cite a
-report, publish it with `dots output publish` and pass `--evidence SLUG DIGEST`.
+Keep task results and the goal's overall result current: actual changes,
+locations/revisions, checks, remaining work and the next step. These summaries
+carry agent context across sessions; they are not user reading assignments or
+proof of acceptance. Give writers isolated worktrees and scratch paths under
+`worktrees`. Publish selected evidence before citing its exact revision, and
+inspect retained bytes when accepting a result.
 
-## Hand off and accept
+Compose the owning skills rather than copying them:
 
-Use `review` when work needs someone else to check or integrate it, and `done`
-only after you have verified the acceptance criteria yourself. A worker's
-success or a recorded result is not acceptance. Closing every task does not
-accept the goal: check the combined result, then close the root.
+- `review` independently checks the current changes and verifies findings.
+- `local-ship-it` owns authorized publication and its ordinary or monitored
+  finish line, with effective review/check policy read from the repository.
+- `worktrees` owns isolation, integration and cleanup.
+- `memory` keeps reusable learning, not progress or execution authority.
 
-Use `hold --reason` for paused work and `drop --reason` for abandoned work.
-Link a task to its PR or ticket, such as a Linear issue, with `ref set`. Links
-record context only; never comment on, close, or change the linked item because
-a task links it.
+Passing between skills does not require fresh approval for actions already
+within the mandate, and does not expand it. Continue useful authorized work
+through fixes, integration and verification. Wait on worker/task events or
+bounded native wakes for real external dependencies; do not busy-poll through
+model turns or claim a watcher will perform fixes it cannot perform.
 
-## Resume and change direction
+## Request attention only when needed
 
-Read the brief and `dots task goal show`, then check branches, worktrees,
-workers, and PRs before continuing. Resume existing work rather than
-duplicating it. When direction changes, update the brief, stop or steer
-affected workers, and hold, drop, or reopen tasks to match.
+Use durable attention for a decision, access/authentication, material scope
+change, human-only disposition or exhausted recovery. State the actual
+question/action, why it matters, the recommendation when useful and which work
+is blocked. Use a stable logical key; do not duplicate a pending question.
+Block only the affected work. Keep credentials out of requests and answers.
+
+The global viewer and Pi's active-goal view read the same records. Opening,
+closing, filtering, dismissing a notification or following a goal does not
+answer a request. Saving a response does not start a coordinator. An empty
+local goal set stays empty; it must not silently become a project/global inbox.
+
+An explicit UI answer binds to its immutable question. Ordinary chat is also
+valid: preserve the relevant human input and source separately from your
+interpretation, and clarify consequential ambiguity rather than treating any
+new message as assent. Worker/custom messages, silence and cancellation are
+not human consent. A changed question needs a replacement; a saved answer must
+be reconciled, not superseded away. Persist the shared decision before closing
+an answered request. External-action confirmation permits checking the result;
+it does not prove the action succeeded.
+
+## Pause, resume and change direction
+
+Read the brief, shared agreement/decisions, tasks and current Git/process/remote
+state before resuming. Native history, copied follow state and old summaries
+do not transfer coordination or authorization. Acquire coordination explicitly
+and reconcile saved answers, unfinished work and watchers. Takeover of an
+uncertain live coordinator needs user direction and reconciliation; a store
+claim does not fence commands it already issued. Release only your own claims.
+
+A durable pause holds the root and releases coordination; steer or stop actual
+workers/jobs and observe what settled. Escape cancels a turn, not the goal.
+Unrelated input, saved answers, reloads and overdue wakes cannot resume paused
+work. Session exit/change ends that runtime's coordination; reload preserves
+it. Do not imply unattended execution continues without a running coordinator.
+
+When direction changes, reconcile affected workers and tasks before dispatching
+replacement work. A queued message is not proof a worker complied. Record the
+new agreement when scope or authority changes; keep internal documents current
+without leaking session history into source comments.
+
+## Verify and finish
+
+Worker success and closed-task counts are not acceptance. Verify each result
+and the integrated current revision against the agreed outcome, using
+independent review where required. Dropping a prerequisite removes scope; it
+does not verify the requirement it represented. Reconcile dependents before
+accepting them. Links to PRs/issues record context, not permission to act there.
+
+Internal review and subtask completion return to the coordinator, not to the
+user for routine approval. At the agreed endpoint, give one concise handoff
+with the actual result, clickable evidence/PR links and material caveats. If
+blocked earlier, ask only for the smallest decision or action needed and name
+which work cannot proceed. Never claim deployment, merge, real-device behavior
+or real-model reliability from local/provider-free checks.

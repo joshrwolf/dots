@@ -8,17 +8,20 @@ description: Review a change with independent, fresh-context reviewers and a fal
 Reviews produce few, verified findings anchored to exact content. Precision
 beats recall: a wrong finding costs the user more than a missed nit, and model
 judges asked "is this valid?" accept almost everything, so every finding must
-survive an attempt to disprove it with evidence.
+survive an attempt to disprove it with evidence. When review is part of an
+agreed execution mandate, return findings to the coordinator for fixes and
+verification. A skill handoff does not require renewed approval or expand the
+mandate.
 
 `dots review --help` and each subcommand's help own the CLI contract (targets,
 thread fields, statuses, refresh). Read them before first use in a session.
 
 ## Profiles
 
-| Profile | Use | Reviewers | Verifier |
-|---|---|---|---|
-| `quick` | An agent checking its own work before reporting | one: correctness and guidance angles together | none; the reviewer falsifies its own findings |
-| `standard` (default) | A finished changeset, a colleague's PR | correctness from two model families, guidance from one | yes |
+| Profile              | Use                                             | Reviewers                                              | Verifier                                      |
+| -------------------- | ----------------------------------------------- | ------------------------------------------------------ | --------------------------------------------- |
+| `quick`              | An agent checking its own work before reporting | one: correctness and guidance angles together          | none; the reviewer falsifies its own findings |
+| `standard` (default) | A finished changeset, a colleague's PR          | correctness from two model families, guidance from one | yes                                           |
 
 Run each reviewer and the verifier as a fresh-context subagent (in Pi,
 `worker_spawn` with tools `read` and `bash`). Model family means provider:
@@ -33,8 +36,8 @@ one is available, with both angle files.
 1. **Target and intent.** Each worktree has one living review: its branch,
    through the working tree, against the base `dots review open` chooses and
    reports. That is the target for your own work and for a branch or PR checked
-   out in a worktree. For a PR URL, read `gh pr view <url> --json
-   title,body,baseRefName,headRefOid`, fetch the base, confirm `HEAD` is the PR
+   out in a worktree. For a PR URL, read
+   `gh pr view <url> --json title,body,baseRefName,headRefOid`, fetch the base, confirm `HEAD` is the PR
    head, and pass `--base <remote>/<baseRefName>` when the chosen base differs.
    Use `dots review start --uncommitted` or `--base REF` only for an ad hoc
    review beside the living one. Intent is the PR description, the task, or
@@ -53,14 +56,18 @@ one is available, with both angle files.
    [verifier.md](verifier.md) over the open threads. It marks each
    `accepted` or `dismissed` with its evidence as the body. Merge duplicates
    by dismissing the weaker copy with a body naming the kept one.
-5. **Report.** `dots review show <id>`. Give the user accepted findings, most
-   severe first, each with `path:line`, the failing scenario, and the fix;
-   then one line on what was dismissed and why. Say plainly when nothing
-   blocks. Do not post to GitHub.
-6. **Hand over.** In Rex, open the review beside your pane:
-   `rex split -s "$REX_SESSION" -b "$REX_BLOCK" --cwd <worktree> --label
-   review -- nvim +Review`. Without those variables, find your pane as the
-   rex skill describes.
+5. **Report.** `dots review show <id>`. Return accepted findings, most severe
+   first, each with `path:line`, the failing scenario, and the fix; then one
+   line on what was dismissed and why. Say plainly when nothing blocks. In an
+   ongoing effort this is an internal result: continue authorized fixes and
+   verification rather than handing routine work back to the user. Do not post
+   to GitHub.
+6. **Hand over when appropriate.** For a requested human review or the agreed
+   human handoff, show a concise, self-contained result. In Rex, open the review
+   beside your pane when useful:
+   `rex split -s "$REX_SESSION" -b "$REX_BLOCK" --cwd <worktree> --label review -- nvim +Review`.
+   Without those variables, find your pane as the rex
+   skill describes. Internal review loops do not require a user-facing pane.
 
 ## After fixes
 
