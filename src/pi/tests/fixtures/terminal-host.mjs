@@ -747,8 +747,8 @@ async function workbenchFlow() {
     if (scenario === 'edit') {
       send('E');
       await wait(
-        () => shows('before') && shows('after') && shows('Welcome'),
-        'native recorded comparison',
+        () => shows('Hello') && shows('Welcome'),
+        'native recorded diff',
       );
       send(' ');
       await wait(
