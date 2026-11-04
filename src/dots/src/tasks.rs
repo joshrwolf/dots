@@ -682,7 +682,34 @@ fn overview_text(overview: &Overview, now: i64) -> String {
     if overview.tasks.iter().any(|task| task.result.is_some()) {
         out.push_str("dots task show ID shows a task's full result and history.\n");
     }
+    dependency_text(&mut out, overview);
     out
+}
+
+/// The row graph, prerequisites above dependents, when any task waits on another.
+fn dependency_text(out: &mut String, overview: &Overview) {
+    let graph = &overview.graph;
+    if graph.rows.iter().all(|row| row.lines.len() < 2) && graph.notes.is_empty() {
+        return;
+    }
+    out.push_str("Dependencies:\n");
+    for row in &graph.rows {
+        let title = overview
+            .tasks
+            .iter()
+            .find(|task| task.id == row.task)
+            .map_or(row.task.as_str(), |task| task.title.as_str());
+        for (i, line) in row.lines.iter().enumerate() {
+            if i == 0 {
+                let _ = writeln!(out, "  {line} {} {}", row.task, preview(title));
+            } else {
+                let _ = writeln!(out, "  {}", line.trim_end());
+            }
+        }
+    }
+    for note in &graph.notes {
+        let _ = writeln!(out, "  {note}");
+    }
 }
 
 /// First line within a character budget, cut only between grapheme clusters.

@@ -3,6 +3,7 @@ mod agent;
 mod command;
 mod github_reviews;
 mod goal_brief;
+mod goal_graph;
 mod json;
 mod memory;
 mod outputs;

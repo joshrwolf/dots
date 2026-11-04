@@ -1,10 +1,13 @@
 //! Goal presentation resolves current Markdown through the shared document reader.
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, ensure};
 use dots_memory::{Document, Store};
-use dots_tasks::{Goal, GoalOverview, GoalProgress, Project, Task};
+use dots_tasks::{Goal, GoalOverview, GoalProgress, Project, Status, Task};
 use serde::Serialize;
+
+use crate::goal_graph::{self, Graph, Node};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Brief {
@@ -27,6 +30,10 @@ pub(crate) struct Overview {
     pub goal: ShownGoal,
     pub tasks: Vec<Task>,
     pub hidden_closed: usize,
+    /// Dependency graph of the leaf tasks in `tasks`.
+    pub graph: Graph,
+    /// The same graph without closed leaves, when `tasks` includes any.
+    pub open_graph: Option<Graph>,
 }
 
 fn documents(project: &Project) -> Result<Store> {
@@ -82,11 +89,85 @@ pub(crate) fn show(project: &Project, goal: Goal) -> Result<ShownGoal> {
 }
 
 pub(crate) fn overview(project: &Project, overview: GoalOverview) -> Result<Overview> {
+    let closed = overview
+        .tasks
+        .iter()
+        .any(|task| task.children == 0 && task.status.is_closed());
     Ok(Overview {
         goal: show(project, overview.goal)?,
+        graph: graph(&overview.tasks, false),
+        open_graph: closed.then(|| graph(&overview.tasks, true)),
         tasks: overview.tasks,
         hidden_closed: overview.hidden_closed,
     })
+}
+
+/// Project prerequisite edges onto leaf tasks: an edge to a group waits on its
+/// leaves, and a group's own prerequisites hold for every leaf below it.
+/// Closed prerequisites outside the drawing are satisfied and drop out; any
+/// other unknown prerequisite stays, so the drawing reports it.
+fn graph(tasks: &[Task], open_only: bool) -> Graph {
+    let by_id: HashMap<&str, &Task> = tasks.iter().map(|task| (task.id.as_str(), task)).collect();
+    let shown = |task: &Task| !open_only || !task.status.is_closed();
+    let leaves: Vec<&Task> = tasks
+        .iter()
+        .filter(|task| task.children == 0 && shown(task))
+        .collect();
+    let ancestors = |task: &Task| {
+        std::iter::successors(
+            task.parent.as_deref().and_then(|id| by_id.get(id)),
+            |task| task.parent.as_deref().and_then(|id| by_id.get(id)),
+        )
+        .copied()
+    };
+    let nodes: Vec<Node<'_>> = leaves
+        .iter()
+        .map(|&leaf| {
+            let mut prerequisites = Vec::new();
+            for prerequisite in std::iter::once(leaf)
+                .chain(ancestors(leaf))
+                .flat_map(|task| &task.prerequisites)
+            {
+                let id = prerequisite.id.as_str();
+                match by_id.get(id) {
+                    Some(group) if group.children > 0 => prerequisites.extend(
+                        leaves
+                            .iter()
+                            .filter(|other| ancestors(other).any(|task| task.id == group.id))
+                            .map(|other| other.id.as_str()),
+                    ),
+                    Some(task) if shown(task) => prerequisites.push(id),
+                    _ if prerequisite.status.is_closed() => {}
+                    _ => prerequisites.push(id),
+                }
+            }
+            prerequisites.sort_unstable();
+            prerequisites.dedup();
+            let group = leaf.parent.as_deref().and_then(|id| by_id.get(id));
+            Node {
+                id: &leaf.id,
+                label: match group {
+                    Some(group) => format!("{} · {}", leaf.title, group.title),
+                    None => leaf.title.clone(),
+                },
+                glyph: glyph(leaf),
+                prerequisites,
+            }
+        })
+        .collect();
+    goal_graph::render(&nodes)
+}
+
+fn glyph(task: &Task) -> &'static str {
+    match task.status {
+        Status::Done => "✓",
+        Status::Dropped => "−",
+        Status::Held => "!",
+        Status::Review => "◇",
+        Status::Open if task.owner.is_some() => "●",
+        Status::Open if !task.blocked_by.is_empty() => "◌",
+        Status::Open => "○",
+    }
 }
 
 impl Brief {

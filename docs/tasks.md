@@ -39,7 +39,11 @@ Goal briefs are ordinary Markdown under the project's `briefs/` directory.
 Create the file there, then pass `--brief briefs/<name>.md` to `task goal create`
 or `attach`. References stay project-relative across worktrees and checkout moves.
 `task goal show` returns a bounded current read and its content hash, with explicit
-missing, unreadable and truncation diagnostics. `task goal list` shows each
+missing, unreadable and truncation diagnostics. It also draws the goal's leaf
+tasks as a dependency graph, prerequisites above dependents: an edge to a group
+waits on the group's leaves, and a group's prerequisites hold for every leaf
+below it. Cycles and prerequisites outside the goal appear as notes rather than
+edges. `task goal list` shows each
 goal's task counts and last activity, most recent first, without reading briefs. Native edits are visible on the next inspection;
 association does not preserve historical bytes.
 

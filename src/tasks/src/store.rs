@@ -166,7 +166,7 @@ impl Status {
         }
     }
 
-    pub(super) fn is_closed(self) -> bool {
+    pub fn is_closed(self) -> bool {
         matches!(self, Self::Done | Self::Dropped)
     }
 }

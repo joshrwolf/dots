@@ -510,6 +510,65 @@ mod tests {
     }
 
     #[test]
+    fn goal_overview_draws_leaf_dependencies_through_groups() {
+        let fixture = Fixture::new();
+        let goal = fixture.ok(
+            "checkout",
+            &["goal", "create", "Goal", "--brief", "briefs/README.md"],
+        );
+        let root = goal.pointer("/goal/root/id").unwrap().as_str().unwrap();
+        let core = id(&fixture.ok("checkout", &["add", "Core", "--parent", root]));
+        let types = id(&fixture.ok("checkout", &["add", "Types", "--parent", &core]));
+        let exports = id(&fixture.ok(
+            "checkout",
+            &["add", "Exports", "--parent", &core, "--blocked-by", &types],
+        ));
+        let consumer = id(&fixture.ok(
+            "checkout",
+            &["add", "Consumer", "--parent", root, "--blocked-by", &core],
+        ));
+        fixture.ok("checkout", &["done", &types, "--result", "verified"]);
+
+        let shown = fixture.ok("checkout", &["goal", "show", root, "--all"]);
+        let rows = |pointer: &str| -> Vec<String> {
+            shown
+                .pointer(pointer)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["task"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(
+            rows("/overview/graph/rows"),
+            [types.as_str(), &exports, &consumer]
+        );
+        assert_eq!(
+            rows("/overview/open_graph/rows"),
+            [exports.as_str(), &consumer]
+        );
+        let first = &shown.pointer("/overview/graph/rows/0/lines").unwrap()[0];
+        assert!(first.as_str().unwrap().starts_with('✓'), "{shown}");
+        let layered = shown
+            .pointer("/overview/graph/layered")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert!(layered.contains("○ Exports · Core"), "{layered}");
+        assert_eq!(
+            shown.pointer("/overview/graph/notes").unwrap(),
+            &Value::Array(vec![])
+        );
+
+        let open = fixture.ok("checkout", &["goal", "show", root]);
+        assert_eq!(open.pointer("/overview/open_graph").unwrap(), &Value::Null);
+        let text = fixture.readable(&["goal", "show", root, "--all"]);
+        assert!(text.contains("Dependencies:\n  ✓"), "{text}");
+        assert!(text.contains(&format!("{consumer} Consumer")), "{text}");
+    }
+
+    #[test]
     fn goals_share_workspace_briefs_and_report_missing_documents() {
         let fixture = Fixture::new();
         let root = id(&fixture.ok("checkout", &["add", "Goal"]));
