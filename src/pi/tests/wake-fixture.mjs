@@ -38,12 +38,12 @@ export function fakeClock(start = Date.UTC(2026, 0, 1)) {
 /**
  * @param {import('../src/host/clock.ts').Clock} clock
  * @param {import('../extensions/wake/index.ts').WakeHost['run']} run
- * @param {{session?: string, mode?: string, rex?: import('../extensions/wake/index.ts').PaneSource, env?: NodeJS.ProcessEnv}} [options]
+ * @param {{session?: string, mode?: string, tasks?: import('../extensions/wake/index.ts').TaskSource, env?: NodeJS.ProcessEnv}} [options]
  */
 export function harness(
   clock,
   run,
-  {session = 'session-a', mode = 'rpc', rex, tasks, env = {}} = {},
+  {session = 'session-a', mode = 'rpc', tasks, env = {}} = {},
 ) {
   const listeners = {};
   /** @type {Record<string, any>} */
@@ -82,7 +82,6 @@ export function harness(
     clock,
     run,
     env,
-    ...(rex ? {rex} : {}),
     ...(tasks ? {tasks} : {}),
   });
   const notices = [];

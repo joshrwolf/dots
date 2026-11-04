@@ -7,9 +7,18 @@ import {mkdirSync, mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
+import {setTimeout as sleep} from 'node:timers/promises';
 import {systemClock} from '../../src/host/clock.ts';
-import {until} from '../fixtures/rex-server.ts';
 import {harness} from '../wake-fixture.mjs';
+
+/** Polls until `ready` holds, or fails after 10 seconds. */
+async function until(what: string, ready: () => boolean): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!ready()) {
+    assert.ok(Date.now() < deadline, `timed out waiting for ${what}`);
+    await sleep(25);
+  }
+}
 
 interface Catalog {
   readonly env: NodeJS.ProcessEnv;

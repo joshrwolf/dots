@@ -1,6 +1,5 @@
 import {Type, type Static} from 'typebox';
 import type {TaskEvent} from '../../src/host/tasks.ts';
-import {untrusted, type Transition} from './event.ts';
 
 // The task trigger's rules: which task store events match a wait or end it.
 // Pure; the store delivers only events in the watched tree, and the wake
@@ -32,9 +31,26 @@ export const TaskTriggerSchema = Type.Object(
 );
 export type TaskTrigger = Static<typeof TaskTriggerSchema>;
 
-export interface TaskTransition extends Transition {
+export type Outcome = 'matched' | 'ended' | 'timed out';
+
+export interface TaskTransition {
+  readonly outcome: Outcome;
+  /** One line in our own words; text task store writers wrote never appears here. */
+  readonly summary: string;
+  /** The wake finishes with this fire. */
+  readonly final: boolean;
   readonly event?: TaskEvent;
 }
+
+const INVISIBLE = /[\p{Cc}\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gu;
+
+/** Text another program wrote, as a bounded, quoted literal with controls and direction overrides removed. */
+export function untrusted(text: string, max = 300): string {
+  const clean = text.replace(INVISIBLE, '');
+  return JSON.stringify(clean.length > max ? `${clean.slice(0, max)}…` : clean);
+}
+
+export const untilLabel = (until: readonly string[]) => until.join('|');
 
 export interface TaskStep {
   readonly transitions: readonly TaskTransition[];

@@ -122,14 +122,11 @@ under `~/.pi/agent/dots/jobs/`; check capture warnings before treating it as com
 ## Wakes
 
 `/wakes` inspects scheduled turns. Agents use `wake` for a one-shot reminder, a
-finite recurring check, a Rex pane reaching a status or exiting, or task store
-events on a task tree; native schemas describe the triggers. Use trusted finite
-checks, not daemons, and cancel schedules whose purpose is over.
-
-Pane wakes follow one `rex events --all` stream per Rex host while any exist,
-never autostart a server, and reconcile with snapshots after a reconnect or
-restart. A pane wake ends early when its program stops, its block or session
-closes, or the Rex server restarts, and gives up after its `for` deadline.
+finite recurring check, or task store events on a task tree; native schemas
+describe the triggers. Use trusted finite checks, not daemons, and cancel
+schedules whose purpose is over. To wait for a Rex block's program to exit,
+run `rex wait --for DURATION -s SESSION BLOCK` as a job; its completion wakes the
+session.
 
 Each task wake follows its own `dots task events --follow --under` stream. It
 matches `until` event kinds on the task and every descendant, as the store's

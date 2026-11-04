@@ -1,5 +1,4 @@
 import {Type, type Static} from 'typebox';
-import {PaneTriggerSchema} from './pane.ts';
 import {TaskTriggerSchema} from './task.ts';
 
 export const ENTRY = 'dots.wake';
@@ -8,7 +7,7 @@ export const MIN_INTERVAL_MS = 60_000;
 export const DEFAULT_LIMIT = 50;
 export const MAX_LIMIT = 1000;
 export const MAX_FUTURE_MS = 30 * 24 * 3_600_000;
-/** Default give-up deadline for event triggers. */
+/** Default give-up deadline for task triggers. */
 export const DEFAULT_FOR_MS = 24 * 3_600_000;
 
 export const OnSchema = Type.Union([
@@ -43,16 +42,8 @@ export const TimeTriggerSchema = Type.Object(
 );
 export type TimeTrigger = Static<typeof TimeTriggerSchema>;
 
-/**
- * What a wake waits for. Event triggers (all but `time`) carry their own
- * `deadline`, observer state, and `until`, and share the engine's outcomes,
- * pending-fire merging and restore reconciliation.
- */
-export const TriggerSchema = Type.Union([
-  TimeTriggerSchema,
-  PaneTriggerSchema,
-  TaskTriggerSchema,
-]);
+/** What a wake waits for: a time, or task store events with their own `deadline`, cursor and `until`. */
+export const TriggerSchema = Type.Union([TimeTriggerSchema, TaskTriggerSchema]);
 export type Trigger = Static<typeof TriggerSchema>;
 
 /** The persisted record; each change appends the whole record and the latest one wins. */

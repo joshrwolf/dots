@@ -19,10 +19,10 @@
   Never install from an agent worktree, and do not install merely to test; use
   isolated temporary homes. Installation never reloads a session; changes use
   `/reload` when jobs/workers are idle, while CLI/SDK updates require restart.
-- Rex acceptance uses the disposable server in `tests/fixtures/rex-server.ts`:
-  an environment built from scratch, a socket inside the test's directory, and
-  no autostart. Never point tests at the live server or pass the parent's
-  `REX_*` or `HOME` to a Rex process.
+- A Rex process a test starts gets a disposable server: an environment built
+  from scratch, a socket inside the test's directory, and no autostart. Never
+  point tests at the live server or pass the parent's `REX_*` or `HOME` to a
+  Rex process.
 - Pi does not install local package dependencies. The native `runtime:deps`
   task installs the selected applications' production closure; root `deps`
   adds development tools for checks. The companion's host libraries stay peers;

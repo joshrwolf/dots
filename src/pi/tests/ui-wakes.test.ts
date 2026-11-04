@@ -92,59 +92,6 @@ test('wakes distinguish scheduled, checking and queued; bounded overview retains
   }
 });
 
-test('pane wakes show what they wait for, the time left, and a lost connection', () => {
-  const pane: WakeActivity = {
-    kind: 'pane',
-    id: 'k-pane',
-    text: 'Review the build',
-    pane: 'build',
-    where: 'block:fixture in work',
-    until: ['done', 'exit'],
-    deadline: 23 * 3_600_000,
-    status: 'working · msg "compiling"',
-    fired: 0,
-    limit: 1,
-    state: 'waiting',
-  };
-  for (const name of ['dark', 'light']) {
-    const theme = getThemeByName(name)!;
-    const shown = (rows: WakeActivity[]) =>
-      stripTerminalSequences(
-        createWakeWidget(
-          () => rows,
-          () => 0,
-          theme,
-        )
-          .render(140)
-          .join('\n'),
-      );
-    assert.match(
-      shown([pane]),
-      /waiting for build: until done\|exit · 23h left/,
-    );
-    assert.doesNotMatch(shown([pane]), /disconnected/);
-    assert.match(
-      shown([{...pane, disconnected: 'no Rex server'}]),
-      /disconnected/,
-    );
-    assert.match(shown([{...pane, state: 'queued'}]), /queued/);
-    const full = stripTerminalSequences(
-      wakeActivityBody(
-        [{...pane, disconnected: 'no Rex server'}],
-        0,
-        theme,
-        true,
-      )
-        .render(120)
-        .join('\n'),
-    );
-    assert.match(full, /Pane: build · block:fixture in work/);
-    assert.match(full, /Until: done\|exit · gives up 1970-01-01T23:00:00.000Z/);
-    assert.match(full, /Status: working · msg "compiling"/);
-    assert.match(full, /Disconnected: no Rex server/);
-  }
-});
-
 test('task wakes show the task, what they wait for, the time left, and a lost follower', () => {
   const task: WakeActivity = {
     kind: 'task',

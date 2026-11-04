@@ -24,21 +24,6 @@ export interface TimeActivity extends ActivityBase {
   readonly state: 'scheduled' | 'checking' | 'queued';
 }
 
-export interface PaneActivity extends ActivityBase {
-  readonly kind: 'pane';
-  /** The block's label, or the target as given. */
-  readonly pane: string;
-  /** Block, session and host, for full inspection. */
-  readonly where: string;
-  readonly until: readonly string[];
-  readonly deadline: number;
-  /** The latest root status as one line; quoted parts are program-reported. */
-  readonly status?: string;
-  /** Why Rex cannot be observed right now. */
-  readonly disconnected?: string;
-  readonly state: 'waiting' | 'queued';
-}
-
 export interface TaskActivity extends ActivityBase {
   readonly kind: 'task';
   readonly task: string;
@@ -55,8 +40,7 @@ export interface TaskActivity extends ActivityBase {
 }
 
 /** Observations only: presentation never arms or fires a wake. */
-export type WakeActivity = TimeActivity | PaneActivity | TaskActivity;
-type EventActivity = PaneActivity | TaskActivity;
+export type WakeActivity = TimeActivity | TaskActivity;
 
 export function wakeDelay(ms: number): string {
   const seconds = Math.ceil(Math.max(0, ms) / 1000);
@@ -88,7 +72,7 @@ function status(row: WakeActivity, now: number): string {
   if (row.kind !== 'time')
     return row.state === 'queued'
       ? 'queued'
-      : `waiting for ${row.kind === 'pane' ? labelText(row.pane.slice(0, 80)) : `task ${labelText(row.task)}`}: until ${row.until.join('|')}`;
+      : `waiting for task ${labelText(row.task)}: until ${row.until.join('|')}`;
   return row.state === 'scheduled'
     ? row.at <= now
       ? 'due'
@@ -96,7 +80,7 @@ function status(row: WakeActivity, now: number): string {
     : row.state;
 }
 
-function eventEnd(row: EventActivity, now: number): Segment[] {
+function taskEnd(row: TaskActivity, now: number): Segment[] {
   const end: Segment[] = [];
   if (row.disconnected !== undefined)
     end.push({
@@ -142,15 +126,6 @@ function timeEnd(row: TimeActivity): Segment[] {
 }
 
 function details(row: WakeActivity): string[] {
-  if (row.kind === 'pane')
-    return [
-      `Pane: ${displayText(row.pane, 240)} · ${displayText(row.where, 400)}`,
-      `Until: ${row.until.join('|')} · gives up ${new Date(row.deadline).toISOString()}`,
-      `Status: ${displayText(row.status ?? 'no status reported', 4000)}`,
-      ...(row.disconnected === undefined
-        ? []
-        : [`Disconnected: ${displayText(row.disconnected, 4000)}`]),
-    ];
   if (row.kind === 'task')
     return [
       `Task: ${labelText(row.task)} ${displayText(JSON.stringify(row.title), 240)} · ${labelText(row.project)}`,
@@ -190,7 +165,7 @@ export function wakeActivityBody(
         shrink: 'clip',
         minWidth: 4,
       },
-      ...(row.kind === 'time' ? timeEnd(row) : eventEnd(row, now)),
+      ...(row.kind === 'time' ? timeEnd(row) : taskEnd(row, now)),
     ];
     const line = new PriorityRow();
     line.update(
