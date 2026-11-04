@@ -7,7 +7,6 @@ local root = source:match("^(.*)/tests/contract%.lua$") or "."
 package.path = root .. "/?.lua;" .. root .. "/?/init.lua;" .. package.path
 require("tests.isolate").install()
 
-local attention = require("dots.attention")
 local go = require("dots.go")
 local prs = require("dots.prs")
 local snapshot = require("dots.snapshot")
@@ -18,7 +17,6 @@ local views = require("dots.views")
 local out = {}
 for name, snap in pairs(snapshots) do
   out["go/" .. name] = views.live(go.view(snap, nil, "studio"), snapshot.events({ places = true }))
-  out["attention/" .. name] = views.live(attention.view(snap), snapshot.events())
   for list_name, list in pairs(watch) do
     out["prs/" .. list_name .. "/" .. name] = prs.view(list, snap, "dots")
   end

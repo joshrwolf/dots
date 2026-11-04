@@ -93,10 +93,9 @@ memory or older notes.
 - A live view names what invalidates it: Rex events through
   `dots.views.live` and `scripts/watch.lua`, or its own watch command, as the
   PR view uses `dots github watch follow`.
-- Status views (Go's attention group, Attention) list any terminal whose
-  program reports status, agents and long shell commands alike. `dots.agents`
-  builds their rows and Go's tab rows alike: status, session, what, detail,
-  one row per piece of work. The picker lines columns up by position across
+- Go's status rows cover any terminal whose program reports status, agents
+  and long shell commands alike. `dots.agents` builds its attention and tab
+  rows alike: status, session, what, detail, one row per piece of work. The picker lines columns up by position across
   groups, so a view's other groups put matching values at the same position.
 - `dots.snapshot` runs two bounded commands for places (`git worktree list`,
   `zoxide query`); larger domain data belongs in Rust behind a `dots` command.

@@ -31,11 +31,10 @@ the app.
 
 Rex's default shortcuts cover the rest, such as Cmd+T for a new tab and
 Cmd+Up / Cmd+Down for shell prompts. `rex keymap` lists these bindings with
-the line that made each, and the command
-palette (Cmd+Shift+P) has every action, including "Agents needing attention…",
-a ranked list of everything reporting status. A tab shows one view at a
-time: a view's key closes it, and another view's key replaces it. Esc closes
-a view and returns focus to the pane you were in, zoomed again if it was.
+the line that made each, and the command palette (Cmd+Shift+P) has every
+action. A tab shows one view at a time: a view's key closes it, and another
+view's key replaces it. Esc closes a view and returns focus to the pane you
+were in, zoomed again if it was.
 
 In Go, each row is one piece of work: an agent that needs you (blocked,
 failed, or done), or a tab showing the status of the agent at work in it. A

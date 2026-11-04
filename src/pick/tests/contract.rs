@@ -67,7 +67,7 @@ fn chain(name: &str, error: &dyn std::error::Error) -> String {
 #[test]
 fn every_configured_view_is_a_valid_picker() -> Result {
     let views = views()?;
-    for name in ["go/busy", "go/empty", "attention/busy", "attention/empty"] {
+    for name in ["go/busy", "go/empty"] {
         if !views.contains_key(name) {
             return Err(format!("the builders produced no {name} view").into());
         }

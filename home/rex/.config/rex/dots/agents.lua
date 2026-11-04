@@ -26,30 +26,26 @@ M.columns = {
   { width = "fill" },
 }
 
----Agents that want the user, and the rest, each most urgent then most recent first.
+---Agents that want the user, most urgent then most recent first.
 ---@param snap dots.Snapshot
----@return dots.AgentEntry[] attention
----@return dots.AgentEntry[] others
-function M.split(snap)
-  local attention, others = {}, {}
+---@return dots.AgentEntry[]
+function M.wanting(snap)
+  local wanting = {}
   for _, session in ipairs(snap.sessions) do
     for _, block in ipairs(session.blocks) do
-      if block.status then
-        local bucket = status.needs_attention(block.status.state) and attention or others
-        bucket[#bucket + 1] = { session = session, block = block }
+      if block.status and status.needs_attention(block.status.state) then
+        wanting[#wanting + 1] = { session = session, block = block }
       end
     end
   end
-  local function urgent_first(a, b)
+  table.sort(wanting, function(a, b)
     local ra, rb = status.rank(a.block.status.state), status.rank(b.block.status.state)
     if ra ~= rb then
       return ra < rb
     end
     return (a.block.status.updated_at or "") > (b.block.status.updated_at or "")
-  end
-  table.sort(attention, urgent_first)
-  table.sort(others, urgent_first)
-  return attention, others
+  end)
+  return wanting
 end
 
 ---A shell command as zsh reports it, cut to what it runs: leading `cd DIR &&`

@@ -141,6 +141,38 @@ return {
     expect.equal(agents.message({ state = "idle" }), "")
   end,
 
+  ["agents wanting the user come by urgency, then recency; never working, idle, or plain shells"] = function()
+    local function block(id, state, at)
+      return { id = id, window_id = "w", tab = 1, status = { state = state, updated_at = at } }
+    end
+    local s = {
+      sessions = {
+        {
+          id = "s1",
+          label = "dots",
+          blocks = {
+            block("idle", "idle", "1"),
+            block("done-old", "done", "1"),
+            block("working", "working", "2"),
+            { id = "shell", window_id = "w", tab = 1 },
+          },
+        },
+        {
+          id = "s2",
+          label = "api",
+          blocks = { block("blocked", "blocked", "1"), block("done-new", "done", "3") },
+        },
+      },
+      worktrees = {},
+      dirs = {},
+    }
+    local ids = {}
+    for _, entry in ipairs(agents.wanting(s)) do
+      ids[#ids + 1] = entry.session.id .. "/" .. entry.block.id
+    end
+    expect.equal(ids, { "s2/blocked", "s2/done-new", "s1/done-old" })
+  end,
+
   ["a row's status is its first column"] = function()
     local s = snap({
       { id = "a", window_id = "w", tab = 1, status = { state = "blocked", app = "pi" } },
