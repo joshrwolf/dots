@@ -1,6 +1,6 @@
 import {mkdirSync} from 'node:fs';
 import path from 'node:path';
-import type {DatabaseSync as DatabaseSyncType} from 'node:sqlite';
+import {DatabaseSync} from 'node:sqlite';
 import {getAgentDir} from '@earendil-works/pi-coding-agent';
 import {isTimestamp} from '../../src/date.ts';
 import {fields} from './protocol.ts';
@@ -10,26 +10,6 @@ import {WorkerContextSchema, type WorkerContext} from './context.ts';
 export interface ContextObservation {
   readonly snapshot: WorkerContext;
   readonly observedAt: number;
-}
-
-// node:sqlite is stable enough for our use but still prints an ExperimentalWarning
-// on Node 22; silence only that one message, and only around the import.
-function loadSqlite(): typeof import('node:sqlite') {
-  const original = process.emitWarning;
-  process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
-    const text = typeof warning === 'string' ? warning : warning.message;
-    if (text.includes('SQLite')) return;
-    (original as (...args: unknown[]) => void).call(process, warning, ...rest);
-  }) as typeof process.emitWarning;
-  try {
-    // Synchronous builtin loading keeps the warning hook out of unrelated
-    // async work and concurrent registry opens (supported since Node 22.3).
-    return process.getBuiltinModule(
-      'node:sqlite',
-    ) as typeof import('node:sqlite');
-  } finally {
-    process.emitWarning = original;
-  }
 }
 
 // Machine-local observation plane for workers: every runtime (root sessions
@@ -122,7 +102,7 @@ create index if not exists events_worker on events(worker, seq);
 `;
 
 export class Registry {
-  private readonly db: DatabaseSyncType;
+  private readonly db: DatabaseSync;
   private readonly upsertStmt;
   private readonly contextWriteStmt;
   private readonly contextReadStmt;
@@ -138,7 +118,7 @@ export class Registry {
   private readonly trimEvents;
   private closed = false;
 
-  constructor(db: DatabaseSyncType) {
+  constructor(db: DatabaseSync) {
     this.db = db;
     this.db.exec(
       'pragma busy_timeout = 2000; pragma journal_mode = wal; pragma synchronous = normal;',
@@ -403,9 +383,8 @@ export function readTaskWorkers(
   ids: readonly string[],
   file = registryFile(),
 ): TaskWorkers {
-  let db: DatabaseSyncType | undefined;
+  let db: DatabaseSync | undefined;
   try {
-    const {DatabaseSync} = loadSqlite();
     db = new DatabaseSync(file, {readOnly: true});
     db.exec('pragma busy_timeout = 100;');
     const rows = db
@@ -447,14 +426,13 @@ function processAlive(pid: number): boolean {
   }
 }
 
-/** Opens the registry, or returns undefined when SQLite is unavailable or the file is unusable; observation is best-effort. */
+/** Opens the registry, or returns undefined when the file is unusable; observation is best-effort. */
 export function openRegistry(
   file: string,
   warn: (message: string) => void,
 ): Registry | undefined {
-  let db: DatabaseSyncType | undefined;
+  let db: DatabaseSync | undefined;
   try {
-    const {DatabaseSync} = loadSqlite();
     mkdirSync(path.dirname(file), {recursive: true});
     db = new DatabaseSync(file);
     return new Registry(db);

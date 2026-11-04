@@ -476,8 +476,8 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       `${worker.id} belongs to session ${worker.owner}, which this session was forked or cloned from; it is read-only history here. Spawn a new worker to continue that work.`,
     );
 
-  // Observation plane: best-effort, never authoritative. Opened lazily so a
-  // missing sqlite only disables the fleet view.
+  // Observation plane: best-effort, never authoritative. Opened lazily so an
+  // unusable database only disables the fleet view.
   let registry: Registry | undefined;
   let registryOpened = false;
   const ensureRegistry = () => {

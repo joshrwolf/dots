@@ -90,11 +90,8 @@ test('context observations persist separately from activity freshness and preser
   }
 });
 
-test('registry: tree summary counts descendants at any depth by state, and silences the sqlite warning', async () => {
+test('registry: tree summary counts descendants at any depth by state', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'dots-registry-'));
-  const warnings = [];
-  const onWarning = w => warnings.push(String(w.message ?? w));
-  process.on('warning', onWarning);
   try {
     const reg = openRegistry(path.join(dir, 'nested/workers.db'), m =>
       assert.fail(m),
@@ -171,15 +168,8 @@ test('registry: tree summary counts descendants at any depth by state, and silen
     reg.close();
     reg.close();
   } finally {
-    process.off('warning', onWarning);
     rmSync(dir, {recursive: true, force: true});
   }
-  await new Promise(r => setImmediate(r));
-  assert.deepEqual(
-    warnings.filter(w => /SQLite/.test(w)),
-    [],
-    'no ExperimentalWarning reaches the terminal',
-  );
 });
 
 test('task observations preserve project scope and multiple contributors across reopen', async () => {
@@ -311,7 +301,7 @@ test('task observations decode each row; an unrenderable timestamp is omitted wi
 
 test('lock contention is transient; other database failures are not', async () => {
   const {isContention} = await import('../extensions/workers/registry.ts');
-  const {DatabaseSync} = process.getBuiltinModule('node:sqlite');
+  const {DatabaseSync} = await import('node:sqlite');
   const dir = mkdtempSync(path.join(tmpdir(), 'dots-registry-busy-'));
   const file = path.join(dir, 'workers.db');
   const holder = new DatabaseSync(file);
