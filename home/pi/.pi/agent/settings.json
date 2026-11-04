@@ -13,17 +13,10 @@
   ],
   "compaction": {
     "modelOverrides": {
-      "anthropic/claude-fable-5": {"reserveTokens": 700000},
-      "anthropic/claude-fable-5-1": {"reserveTokens": 700000},
-      "anthropic/claude-haiku-5-5": {"reserveTokens": 700000},
-      "anthropic/claude-opus-4-6": {"reserveTokens": 700000},
-      "anthropic/claude-opus-4-7": {"reserveTokens": 700000},
-      "anthropic/claude-opus-4-8": {"reserveTokens": 700000},
-      "anthropic/claude-opus-5": {"reserveTokens": 700000},
       "anthropic/claude-opus-5-5": {"reserveTokens": 700000},
-      "anthropic/claude-sonnet-4-6": {"reserveTokens": 700000},
-      "anthropic/claude-sonnet-5": {"reserveTokens": 700000},
-      "anthropic/claude-sonnet-5-5": {"reserveTokens": 700000}
+      "anthropic/claude-fable-5-1": {"reserveTokens": 700000},
+      "anthropic/claude-sonnet-5-5": {"reserveTokens": 700000},
+      "anthropic/claude-haiku-5-5": {"reserveTokens": 700000}
     }
   },
   "hideThinkingBlock": true,

@@ -81,11 +81,6 @@ any optional skill is loaded.
   Delegate when I ask, or when the agreed task explicitly includes delegation;
   planning alone does not authorize implementation. Prefer small, useful slices
   over a fixed pipeline or a mandatory master plan.
-- Use `worker_spawn` for background execution; results, failures, and questions
-  arrive as events that start the next turn, so end the turn rather than polling
-  `worker_status`. Block with `worker_wait` only when there is nothing else to
-  do; use `worker_status <id>` to look inside a run. Give each worker a short
-  task-named label.
 - Consult the shared `worktrees` skill before creating or selecting an isolated
   checkout; use `goals` for coordinated local work.
   Choose isolation by likely edit overlap and coordination cost, not worker or
@@ -96,26 +91,15 @@ any optional skill is loaded.
   run, and stopping point; pass large context by path, not inline. Use fresh
   read-only workers when independent review is requested. Workers do not edit
   tasks or memory; the parent records results.
-- Do not assume a child inherits loaded skill content. When a skill materially
-  matters to a delegated task, pass it through the worker's skills field where
-  available; otherwise name the installed skill or its path in the brief. Do not
-  forward every loaded skill.
+- Do not assume a child inherits loaded skill content; pass only the skills
+  that materially matter to its brief.
 - Prefer Anthropic models for implementation, refactoring, debugging, and code
   review. Prefer OpenAI models for conversation, explanations, and documentation.
   For mixed tasks, choose by the dominant work. These are defaults, not hard
   restrictions: weigh task difficulty, observed results, latency, and cost when
   selecting the specific model and effort.
-- Choose each worker's model and thinking level for its work rather than
-  inheriting by habit; `worker_spawn` lists the options and tradeoffs.
-  `message` to a finished or paused worker continues it in its own session
-  instead of redoing the work; `message` with `wait` is how a worker asks and
-  how I answer.
-- Use `wake` instead of polling: `in`/`at` for a follow-up later, `every` with
-  `check` to wake only on a change or failure, `pane` to wake when a Rex
-  terminal's program reaches a status or exits, and `task` to wake on task
-  events. Launch watched commands with `rex run --keep-open` so their exit
-  persists. Keep intervals coarse, set a sensible `limit`, and cancel wakes
-  whose purpose is over.
+- Use `wake` instead of polling; keep intervals coarse and cancel wakes whose
+  purpose is over.
 - When coordinating a goal with other sessions, wait on its task events (such as
   `review` or `done`) rather than a peer's terminal `done`, which only means a
   turn ended.
