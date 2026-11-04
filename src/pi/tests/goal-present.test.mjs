@@ -152,7 +152,6 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
       {task: 't-cc', lines: ['!']},
       {task: 't-dd', lines: ['○']},
     ],
-    layered: '',
     notes: [],
   };
   value.overview.progress = {

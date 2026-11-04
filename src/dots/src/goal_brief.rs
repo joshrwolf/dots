@@ -143,13 +143,8 @@ fn graph(tasks: &[Task], open_only: bool) -> Graph {
             }
             prerequisites.sort_unstable();
             prerequisites.dedup();
-            let group = leaf.parent.as_deref().and_then(|id| by_id.get(id));
             Node {
                 id: &leaf.id,
-                label: match group {
-                    Some(group) => format!("{} · {}", leaf.title, group.title),
-                    None => leaf.title.clone(),
-                },
                 glyph: glyph(leaf),
                 prerequisites,
             }

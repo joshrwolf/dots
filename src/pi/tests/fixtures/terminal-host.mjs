@@ -706,12 +706,6 @@ async function workbenchFlow() {
           shows('◌ Waiting'),
         'popup over the transcript lists the graph',
       );
-      send('4');
-      await wait(
-        () => shows('[● Update exports · Core interface]'),
-        'layered graph in workbench',
-      );
-      send('1');
       send('o');
       await wait(() => shows('o graph'), 'outline in workbench');
       send('\x1b[D');
@@ -976,12 +970,6 @@ async function goalFlow() {
     () => renders().at(-1) === 'inspector-render:108:34',
     'restored height',
   );
-  send('4');
-  await wait(
-    () => shows('[◌ Adapt consumers · Consumer migration]'),
-    'layered graph tab',
-  );
-  send('1');
   send('o');
   await wait(
     () => shows('o graph') && shows('▾') && shows('Core interface'),

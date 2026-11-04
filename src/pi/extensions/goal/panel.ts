@@ -2,7 +2,6 @@ import type {KeybindingsManager, Theme} from '@earendil-works/pi-coding-agent';
 import {
   VStack,
   matchesKey,
-  sliceByColumn,
   truncateToWidth,
   visibleWidth,
   Text,
@@ -493,11 +492,9 @@ export interface PanelActions {
 export class GoalPanel extends Inspector {
   private model: PanelModel | undefined;
   private theme: Theme | undefined;
-  private section: 'overview' | 'brief' | 'record' | 'graph' = 'overview';
+  private section: 'overview' | 'brief' | 'record' = 'overview';
   private history = false;
   private outline = false;
-  /** Layered graph's first visible column. */
-  private column = 0;
   private readonly collapsed = new Set<string>();
   private selected: string | undefined;
   private readonly actions: PanelActions;
@@ -579,7 +576,6 @@ export class GoalPanel extends Inspector {
     const status = model.view.snapshot?.overview.goal.root.status;
     if (changed) {
       this.section = 'overview';
-      this.column = 0;
       this.collapsed.clear();
       this.selected = undefined;
       this.history = status === 'done' || status === 'dropped';
@@ -610,17 +606,13 @@ export class GoalPanel extends Inspector {
                   .join('\n\n'),
               theme,
             )
-          : this.section === 'record'
-            ? new OutputView(inspection(view))
-            : this.layered(view, theme);
+          : new OutputView(inspection(view));
     const graphed = Boolean(this.graph(view));
     const keys = [
-      '1 overview · 2 brief · 3 record · 4 graph',
+      '1 overview · 2 brief · 3 record',
       this.section === 'overview'
         ? `↑/↓ select${this.outline || !graphed ? ' · ←/→ fold' : ''}`
-        : this.section === 'graph'
-          ? '↑/↓ ←/→ scroll'
-          : '↑/↓ scroll',
+        : '↑/↓ scroll',
       this.section === 'overview' &&
         graphed &&
         (this.outline ? 'o graph' : 'o outline'),
@@ -651,9 +643,9 @@ export class GoalPanel extends Inspector {
   /** The list lines around the selection, with omissions and notes. */
   private window(
     view: GoalView,
-    tree: GoalTree,
     rows: readonly Item[],
     notes: string[],
+    warnings: readonly string[],
     height: number,
     width: number,
   ): string[] {
@@ -696,44 +688,17 @@ export class GoalPanel extends Inspector {
             ).render(width)
           : []),
         ...notes.flatMap(value =>
-          note(value, theme, value === tree.warning ? 'warning' : 'dim').render(
-            width,
-          ),
+          note(
+            value,
+            theme,
+            warnings.includes(value) ? 'warning' : 'dim',
+          ).render(width),
         ),
       ],
       height,
       width,
       theme,
     );
-  }
-
-  /** The layered graph, clipped at the current column; the viewport scrolls rows. */
-  private layered(view: GoalView, theme: Theme): Component {
-    const graph = this.graph(view);
-    const lines = graph
-      ? [
-          ...graph.layered.split('\n'),
-          ...graph.notes.map(note => theme.fg('warning', note)),
-        ]
-      : [theme.fg('muted', 'No dependency graph from dots.')];
-    const widest = Math.max(0, ...lines.map(line => visibleWidth(line)));
-    return {
-      render: (width: number) => {
-        this.column = Math.max(0, Math.min(this.column, widest - width));
-        return [
-          ...(widest > width
-            ? [
-                theme.fg(
-                  'dim',
-                  `columns ${this.column + 1}–${this.column + width} of ${widest} · ←/→`,
-                ),
-              ]
-            : []),
-          ...lines.map(line => sliceByColumn(line, this.column, width, true)),
-        ];
-      },
-      invalidate() {},
-    };
   }
 
   /** Header, then the task tree beside (or above) the selected task's detail, in exactly `height` lines. */
@@ -768,16 +733,20 @@ export class GoalPanel extends Inspector {
     ).length;
     const attention = [
       tree.warning && 'partial tree',
-      ...(this.graph(view)?.notes.length ? ['graph notes · 4 graph'] : []),
       work.workers.length &&
         `${work.workers.length} worker${work.workers.length === 1 ? '' : 's'}${asking ? ` · ${asking} asking` : ''}`,
       view.brief?.warning && text(view.brief.warning),
     ].filter(Boolean);
     const hidden = snapshot.overview.hidden_closed;
+    // dots reports what the graph could not draw, such as cycle edges.
+    const warnings = [
+      tree.warning,
+      ...(this.outline ? [] : (this.graph(view)?.notes ?? [])),
+    ].filter((value): value is string => Boolean(value));
     const notes = [
       !rows.length &&
         (hidden ? 'No open slices remain.' : 'No slices recorded.'),
-      tree.warning,
+      ...warnings,
       hidden && `${hidden} closed hidden · h shows them`,
     ].filter((value): value is string => Boolean(value));
     const split = width >= 100;
@@ -841,7 +810,7 @@ export class GoalPanel extends Inspector {
           .join(' · '),
         theme,
       ).render(treeWidth),
-      ...this.window(view, tree, rows, notes, treeRows - 1, treeWidth),
+      ...this.window(view, rows, notes, warnings, treeRows - 1, treeWidth),
     ];
     const right = clip(
       [
@@ -880,22 +849,12 @@ export class GoalPanel extends Inspector {
         ? 'brief'
         : matchesKey(data, '3')
           ? 'record'
-          : matchesKey(data, '4')
-            ? 'graph'
-            : undefined;
+          : undefined;
     const view = this.shown();
     const rows = this.rows(view);
-    const sideways = matchesKey(data, 'left')
-      ? -1
-      : matchesKey(data, 'right')
-        ? 1
-        : 0;
     if (section) {
       this.section = section;
-      this.column = 0;
       this.refresh(true);
-    } else if (this.section === 'graph' && sideways) {
-      this.column = Math.max(0, this.column + sideways * 8);
     } else if (
       matchesKey(data, 'o') &&
       this.section === 'overview' &&

@@ -106,9 +106,9 @@ Below it, the goal's leaf tasks sit beside the selected task's detail: status, c
 (this session or a named owner), blockers, result, branch and references, latest
 event, and live workers on it. The list follows the dependency graph that
 `dots task goal show` draws, prerequisites above dependents, with each task's
-group after its title; **o** switches to the group outline, which folds. **1–4**
-switch between this overview, the brief, the full record, and the layered graph,
-which scrolls both ways; the footer lists the remaining keys. **Esc** or **Alt+G**
+group after its title; **o** switches to the group outline, which folds. **1/2/3**
+switch between this overview, the brief, and the full record; the footer lists
+the remaining keys. **Esc** or **Alt+G**
 closes it and returns to the editor with its draft intact. On macOS, Alt+G needs
 a terminal that sends Option as Alt; `/goal` always works.
 

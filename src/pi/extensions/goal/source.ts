@@ -78,8 +78,6 @@ export interface DependencyGraph {
     readonly task: string;
     readonly lines: readonly string[];
   }[];
-  /** Layered overview, as wide as the graph needs. */
-  readonly layered: string;
   readonly notes: readonly string[];
 }
 export interface GoalList {
@@ -261,7 +259,6 @@ function dependencyGraph(
         throw new Error('Invalid dots goal graph row');
       return {task, lines};
     }),
-    layered: string(v.layered),
     notes: array(v.notes).map(string),
   };
 }

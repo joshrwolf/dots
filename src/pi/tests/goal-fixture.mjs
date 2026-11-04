@@ -31,7 +31,6 @@ export const snapshot = (id = 't-123abc', title = 'Consistent exports') => ({
     hidden_closed: 0,
     graph: {
       rows: [{task: 't-456def', lines: ['○']}],
-      layered: '  [○ Reference slice]',
       notes: [],
     },
     open_graph: null,

@@ -331,7 +331,29 @@ test('panel keys select sections, closed tasks and goals; Esc returns input and 
 });
 
 test('the graph lists leaves by dependency; the outline folds groups', () => {
-  const {result: view} = panel(goalFixtures(8)[0]!);
+  const goal = goalFixtures(8)[0]!;
+  const overview = goal.snapshot!.overview;
+  const noted = panel({
+    ...goal,
+    snapshot: {
+      ...goal.snapshot!,
+      overview: {
+        ...overview,
+        open_graph: {
+          ...overview.open_graph!,
+          notes: ['cycle: t-444444 waits on t-555555; edge omitted'],
+        },
+      },
+    },
+  }).result;
+  assert.match(
+    plain(noted.render(160)),
+    /Document the interface[\s\S]*cycle: t-444444 waits on t-555555; edge omitted/,
+    'what the graph omits is listed with it',
+  );
+  noted.handleInput('o');
+  assert.doesNotMatch(plain(noted.render(160)), /cycle:/);
+  const {result: view} = panel(goal);
   const detail = () =>
     plain(view.render(160))
       .split('\n')
@@ -355,14 +377,6 @@ test('the graph lists leaves by dependency; the outline folds groups', () => {
     /✓ +Done +Define shared types[\s\S]*├─╮[\s\S]*→ ◌ │ Waiting +Adapt consumers/,
     'closed leaves join the graph and keep the selection',
   );
-  view.handleInput('4');
-  const layered = plain(view.render(90));
-  assert.match(layered, /columns 1–86 of 138 · ←\/→/);
-  assert.match(layered, /\[✓ Define shared types · Core interface\]/);
-  view.handleInput('\x1b[C');
-  assert.match(plain(view.render(90)), /columns 9–94 of 138/);
-  assert.doesNotMatch(plain(view.render(90)), /\[✓ Define/);
-  view.handleInput('1');
   view.handleInput('h');
   view.handleInput('o');
   assert.match(

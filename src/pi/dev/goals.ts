@@ -30,77 +30,38 @@ const task = (
   ...fields,
 });
 // Drawn by dots task goal show for the same tasks and edges.
-const graph = (
-  rows: [string, ...string[]][],
-  layered: string[],
-): DependencyGraph => ({
+const graph = (rows: [string, ...string[]][]): DependencyGraph => ({
   rows: rows.map(([task, ...lines]) => ({task, lines})),
-  layered: layered.join('\n'),
   notes: [],
 });
 const flatGraph = {
-  graph: graph(
-    [
-      ['t-222222', '✓'],
-      ['t-333333', '●', '│'],
-      ['t-444444', '◌'],
-      ['t-555555', '○'],
-    ],
-    [
-      '  [✓ Define shared types]   [● Update exports]   [○ Document the interface]',
-      '                                     └┐',
-      '                                      ↓',
-      '                             [◌ Adapt consumers]',
-    ],
-  ),
-  open_graph: graph(
-    [
-      ['t-333333', '●', '│'],
-      ['t-444444', '◌'],
-      ['t-555555', '○'],
-    ],
-    [
-      '  [● Update exports]   [○ Document the interface]',
-      '           └─────────────┐',
-      '                         ↓',
-      '                [◌ Adapt consumers]',
-    ],
-  ),
+  graph: graph([
+    ['t-222222', '✓'],
+    ['t-333333', '●', '│'],
+    ['t-444444', '◌'],
+    ['t-555555', '○'],
+  ]),
+  open_graph: graph([
+    ['t-333333', '●', '│'],
+    ['t-444444', '◌'],
+    ['t-555555', '○'],
+  ]),
 };
 const nestedGraph = (policy: string) => ({
-  graph: graph(
-    [
-      ['t-222222', '✓  ', '├─╮'],
-      ['t-333333', '● │', '│ │'],
-      ['t-444444', '◌ │', '  │'],
-      ['t-bbbbbb', '  ✓'],
-      ['t-cccccc', `${policy}  `],
-      ['t-555555', '○  '],
-    ],
-    [
-      '  [✓ Define shared types · Core interface]   [! Resolve documentation policy · Documentation]   [○ Document the interface · Documentation]',
-      '                      └────────────────────────┬────────────────────────────────────────┐',
-      '                                               ↓                                        ↓',
-      '                              [● Update exports · Core interface]   [✓ Document shared types · Documentation]',
-      '                                               └──────────────────────┐',
-      '                                                                      ↓',
-      '                                                  [◌ Adapt consumers · Consumer migration]',
-    ].map(line => line.replace('[!', `[${policy}`)),
-  ),
-  open_graph: graph(
-    [
-      ['t-333333', '●', '│'],
-      ['t-444444', '◌'],
-      ['t-cccccc', policy],
-      ['t-555555', '○'],
-    ],
-    [
-      '  [● Update exports · Core interface]   [! Resolve documentation policy · Documentation]   [○ Document the interface · Documentation]',
-      '                   └───────────────────────────────────────────────┐',
-      '                                                                   ↓',
-      '                                               [◌ Adapt consumers · Consumer migration]',
-    ].map(line => line.replace('[!', `[${policy}`)),
-  ),
+  graph: graph([
+    ['t-222222', '✓  ', '├─╮'],
+    ['t-333333', '● │', '│ │'],
+    ['t-444444', '◌ │', '  │'],
+    ['t-bbbbbb', '  ✓'],
+    ['t-cccccc', `${policy}  `],
+    ['t-555555', '○  '],
+  ]),
+  open_graph: graph([
+    ['t-333333', '●', '│'],
+    ['t-444444', '◌'],
+    ['t-cccccc', policy],
+    ['t-555555', '○'],
+  ]),
 });
 
 export function goalFixtures(phase = 0): GoalView[] {

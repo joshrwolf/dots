@@ -550,12 +550,6 @@ mod tests {
         );
         let first = &shown.pointer("/overview/graph/rows/0/lines").unwrap()[0];
         assert!(first.as_str().unwrap().starts_with('✓'), "{shown}");
-        let layered = shown
-            .pointer("/overview/graph/layered")
-            .unwrap()
-            .as_str()
-            .unwrap();
-        assert!(layered.contains("○ Exports · Core"), "{layered}");
         assert_eq!(
             shown.pointer("/overview/graph/notes").unwrap(),
             &Value::Array(vec![])

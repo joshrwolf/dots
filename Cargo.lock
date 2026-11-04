@@ -83,12 +83,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ascii-dag"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4b39df9b298a34bc644332c381bc3740e2eb95ff755b6c5318bbd86f5a4c536"
-
-[[package]]
 name = "atomic"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -503,7 +497,6 @@ name = "dots-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ascii-dag",
  "clap",
  "dots-memory",
  "dots-process",

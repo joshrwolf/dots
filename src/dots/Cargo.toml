@@ -16,7 +16,6 @@ dots-review.workspace = true
 dots-memory.workspace = true
 clap.workspace = true
 anyhow.workspace = true
-ascii-dag.workspace = true
 github-inspect.workspace = true
 github-watch.workspace = true
 nix = { workspace = true, features = ["poll"] }

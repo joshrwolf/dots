@@ -413,7 +413,7 @@ function goalScenario(): Scenario {
                 : 'summary line',
               body: frame,
               hint: expanded
-                ? 'Space state · E hide popup · 1–4 · h · o outline · ↑/↓ select · ←/→ fold/scroll · Esc close'
+                ? 'Space state · E hide popup · 1/2/3 · h · o outline · ↑/↓ select · ←/→ fold · Esc close'
                 : 'Space state · E show popup · T theme · ↑/↓ scroll · Esc close',
             },
             theme,

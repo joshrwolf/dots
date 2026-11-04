@@ -1,6 +1,6 @@
-//! Dependency graph renderings of a goal's leaf tasks. The renderer sees only
-//! nodes, their prerequisite edges, labels and glyphs; callers own the store.
-use std::collections::{HashMap, HashSet};
+//! Dependency graph rendering of a goal's leaf tasks. The renderer sees only
+//! nodes, their prerequisite edges and glyphs; callers own the store.
+use std::collections::HashMap;
 
 use renderdag::{Ancestor, GraphRowRenderer, Renderer as _};
 use serde::Serialize;
@@ -10,8 +10,6 @@ use unicode_width::UnicodeWidthStr as _;
 #[derive(Debug)]
 pub(crate) struct Node<'a> {
     pub id: &'a str,
-    /// Text for the layered overview; the row graph leaves labels to the caller.
-    pub label: String,
     pub glyph: &'static str,
     pub prerequisites: Vec<&'a str>,
 }
@@ -20,8 +18,6 @@ pub(crate) struct Node<'a> {
 pub(crate) struct Graph {
     /// One row per node, prerequisites above dependents.
     pub rows: Vec<Row>,
-    /// Layered overview; its width follows the graph, so displays scroll it.
-    pub layered: String,
     /// What the drawings could not show, such as omitted cycle or missing edges.
     pub notes: Vec<String>,
 }
@@ -72,7 +68,6 @@ pub(crate) fn render(nodes: &[Node<'_>]) -> Graph {
     }
     Graph {
         rows: rows(nodes, &order, &kept),
-        layered: layered(nodes, &order, &kept),
         notes: omitted,
     }
 }
@@ -140,46 +135,15 @@ fn rows(nodes: &[Node<'_>], order: &[usize], edges: &[(usize, usize)]) -> Vec<Ro
     rows
 }
 
-fn layered(nodes: &[Node<'_>], order: &[usize], edges: &[(usize, usize)]) -> String {
-    if nodes.is_empty() {
-        return String::new();
-    }
-    let labels: Vec<String> = nodes
-        .iter()
-        .map(|node| format!("{} {}", node.glyph, node.label))
-        .collect();
-    let mut graph = ascii_dag::Graph::new();
-    let mut ids = vec![None; nodes.len()];
-    for &node in order {
-        ids[node] = Some(graph.add_node(ascii_dag::AUTO, labels[node].as_str()));
-    }
-    let mut seen = HashSet::new();
-    for &(before, after) in edges {
-        if seen.insert((before, after))
-            && let (Some(before), Some(after)) = (ids[before], ids[after])
-        {
-            graph.add_edge(before, after, None);
-        }
-    }
-    let text = graph
-        .compute_layout()
-        .render_string(&ascii_dag::RenderOptions::plain());
-    text.lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim_matches('\n')
-        .to_owned()
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     fn node<'a>(id: &'a str, glyph: &'static str, prerequisites: &[&'a str]) -> Node<'a> {
         Node {
             id,
-            label: id.to_uppercase(),
             glyph,
             prerequisites: prerequisites.to_vec(),
         }
@@ -214,13 +178,6 @@ mod tests {
             .collect();
         assert_eq!(widths.len(), 1, "lines share one width: {widths:?}");
         assert_eq!(graph.notes, Vec::<String>::new());
-        for label in ["✓ TYPES", "◌ CLI", "● PI", "○ RELEASE"] {
-            assert!(
-                graph.layered.contains(label),
-                "{label} in\n{}",
-                graph.layered
-            );
-        }
     }
 
     #[test]
@@ -269,9 +226,9 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_graph_has_no_rows_or_text() {
+    fn an_empty_graph_has_no_rows() {
         let graph = render(&[]);
         assert_eq!(graph.rows.len(), 0);
-        assert_eq!(graph.layered, "");
+        assert_eq!(graph.notes, Vec::<String>::new());
     }
 }
