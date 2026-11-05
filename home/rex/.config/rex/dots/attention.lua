@@ -1,6 +1,7 @@
 -- Attention: what goals in every registered project need from the user, and
 -- their work, in one popup. `dots attention view` owns the store, the
 -- presentation and the answers; this module only opens it as a view.
+local hosts = require("dots.hosts")
 local process = require("dots.process")
 local views = require("dots.views")
 
@@ -21,6 +22,10 @@ function M.install()
     category = "Navigation",
     keywords = "attention inbox requests questions decisions answer goals tasks work",
     run = function(ctx)
+      local forwarded, result = hosts.forward(ctx, "attention", {})
+      if forwarded then
+        return result
+      end
       local dots = process.which("dots") or error("dots is not installed on the command path", 0)
       views.open({ title = "attention", command = M.command(dots), at = ctx })
     end,

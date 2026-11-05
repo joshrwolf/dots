@@ -1,6 +1,7 @@
 local attention = require("dots.attention")
 local expect = require("tests.expect")
 local fake_rex = require("tests.fake_rex")
+local hosts = require("dots.hosts")
 local process = require("dots.process")
 local views = require("dots.views")
 
@@ -48,6 +49,40 @@ return {
       "views_dismiss",
     })
     expect.equal(views.open_views.picker.title, "attention")
+  end,
+
+  ["remote attention resolves commands and opens only on its owning host"] = function(t)
+    fake_rex.install(t, world())
+    local ctx = { session_id = "s", block_id = "pane", server = "remote" }
+    local forwarded = {}
+    t.stub(hosts, "forward", function(at, action, args)
+      forwarded = { at = at, action = action, args = args }
+      return true, "remote-layer"
+    end)
+    t.stub(process, "which", function()
+      error("resolved a command on the caller's host")
+    end)
+    t.stub(views, "open", function()
+      error("opened a view on the caller's host")
+    end)
+    local actions = fake_rex.registered(t, attention)
+    expect.equal(actions.attention.run(ctx, {}), "remote-layer")
+    expect.equal(forwarded, { at = ctx, action = "attention", args = {} })
+  end,
+
+  ["remote attention failure never falls back to local state"] = function(t)
+    local fake = fake_rex.install(t, world())
+    t.stub(hosts, "forward", function()
+      error("remote attention unavailable")
+    end)
+    t.stub(process, "which", function()
+      error("resolved a command on the caller's host")
+    end)
+    local actions = fake_rex.registered(t, attention)
+    expect.fails(function()
+      actions.attention.run({ session_id = "s", block_id = "pane", server = "remote" }, {})
+    end, "remote attention unavailable")
+    expect.equal(fake.only("session.new_layer"), {})
   end,
 
   ["the viewer refuses to open without dots"] = function(t)
