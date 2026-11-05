@@ -3,16 +3,18 @@ import type {InputEvent} from '@earendil-works/pi-coding-agent';
 import {agentEnv, type Agent} from '../../../src/host/agent.ts';
 import type {AttentionSource, GoalRef} from './source.ts';
 
-/** Native human messages kept for attestation; never persisted. */
+/** Interactive input messages kept for quoting; never persisted. */
 const RECEIPTS = 16;
 const RECEIPT_CHARS = 16_384;
 const QUOTE_CHARS = 4096;
 
 /**
- * Recent messages a person typed into this Pi session. Only native
- * interactive input counts: RPC, extension and worker input never does, and
- * a user-role message alone is not evidence of who wrote it. Bounded and in
- * memory; a new session starts empty.
+ * Recent messages Pi delivered to this extension as interactive input. RPC,
+ * extension and worker input never count, and a user-role message alone is
+ * not evidence of where it came from. Pi passes earlier input handlers'
+ * transforms on with the same source, and exposes no original text, so this
+ * is the text as delivered, not proof of unmodified keystrokes. Bounded and
+ * in memory; a new session starts empty.
  */
 export class HumanInputs {
   private readonly texts: string[] = [];
@@ -25,7 +27,7 @@ export class HumanInputs {
     if (this.texts.length > RECEIPTS) this.texts.shift();
   }
 
-  /** The quote appears verbatim in a recent message the person typed. */
+  /** The quote appears exactly in a recent interactive message. */
   attests(quote: string): boolean {
     const exact = quote.trim();
     return !!exact && this.texts.some(text => text.includes(exact));
@@ -48,7 +50,7 @@ export const RecordChatParameters = Type.Object({
     minLength: 1,
     maxLength: QUOTE_CHARS,
     description:
-      "The smallest relevant part of the person's own message, copied exactly. It must appear verbatim in a message they typed in this session.",
+      "The smallest relevant part of the person's own message, copied exactly. It must appear verbatim in a recent interactive message in this session.",
   }),
   request: Type.Optional(
     Type.String({
@@ -92,7 +94,7 @@ export const RECORD_CHAT_DESCRIPTION =
 
 /**
  * Record one chat-established answer or decision. The quote is checked
- * against what the person typed; the interpretation is stored separately
+ * against recent interactive input; the interpretation is stored separately
  * from it. This is cooperative provenance, not consent or a permission check:
  * the store still enforces request state and coordinator authority.
  */
@@ -108,7 +110,7 @@ export async function recordChat(
   const quote = params.quote.trim();
   if (!humans.attests(quote))
     throw new Error(
-      'The quote does not appear verbatim in a recent message the person typed in this session. Quote their exact words, or ask them to answer in the goal popup (Alt+G).',
+      'The quote does not appear verbatim in a recent interactive message in this session. Quote their exact words, or ask them to answer in the goal popup (Alt+G).',
     );
   const provenance = `pi session ${agent.session} · interactive input`;
   const actor = {env: agentEnv(agent)};

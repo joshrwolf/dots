@@ -134,9 +134,12 @@ An answer is saved before the popup says so. Only the runtime that currently
 coordinates the goal, and only while the goal is not held, receives a message
 to incorporate it; other sessions show the same requests without acting, and
 only the coordinator reports them to the terminal status. A held goal stays
-paused whatever arrives. Answers given in chat are recorded with the person's
-exact typed words through the `attention_record_chat` tool, separately from the
-agent's interpretation. Each followed goal's context carries its current
+paused whatever arrives. Answers given in chat are recorded through the
+`attention_record_chat` tool with a quote that must appear in a recent message
+Pi received as interactive input, separately from the agent's interpretation.
+Pi passes other extensions' input transforms on as interactive input, so the
+quote is the text as delivered, a cooperative record rather than proof of
+keystrokes; popup answers are the person's own selection. Each followed goal's context carries its current
 mandate with the human input it rests on, recent decisions, saved answers not
 yet incorporated, and open requests, read from the store rather than the
 transcript.
