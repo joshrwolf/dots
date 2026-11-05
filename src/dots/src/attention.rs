@@ -28,6 +28,16 @@ pub(crate) struct Invocation<'request> {
 }
 
 pub(crate) fn run(invocation: Invocation<'_>) -> Result<String> {
+    let command = match invocation.command {
+        AttentionCommand::View { scope, dismiss } => {
+            ensure!(
+                invocation.project.is_none(),
+                "view reads the --scope it is given; --project does not apply"
+            );
+            return crate::attention_view::run(scope.scope()?, dismiss, invocation.json);
+        }
+        command => command,
+    };
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let runtime = crate::agent::owner();
     let actor = Actor {
@@ -40,7 +50,7 @@ pub(crate) fn run(invocation: Invocation<'_>) -> Result<String> {
     };
     let json = invocation.json;
     let mut store = crate::project::open()?;
-    let value = match invocation.command {
+    let value = match command {
         AttentionCommand::List { scope, state } => {
             ensure!(
                 invocation.project.is_none(),
@@ -211,8 +221,10 @@ fn mutate(
             Outcome::Decision(store.record_decision(project, &goal, &decision, actor)?)
         }
         AttentionCommand::Show { request } => Outcome::Request(store.request(project, &request)?),
-        AttentionCommand::List { .. } | AttentionCommand::Decisions { .. } => {
-            anyhow::bail!("scoped reads are handled before project resolution")
+        AttentionCommand::List { .. }
+        | AttentionCommand::Decisions { .. }
+        | AttentionCommand::View { .. } => {
+            anyhow::bail!("scoped reads and views are handled before project resolution")
         }
     })
 }

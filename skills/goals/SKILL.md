@@ -34,9 +34,11 @@ backlog or a fixed planner/implementer/reviewer pipeline.
 
 ## Coordinate and execute
 
-One coordinator owns the goal-root claim. Only that coordinator dispatches or
-changes the goal's tasks, dependencies, results and lifecycle. Workers execute
-bounded briefs and report back; they do not claim or accept goal tasks.
+One coordinator owns each goal. Acquire its root claim with
+`dots task goal coordinate` before shaping tasks or dispatching work; ordinary
+task claims do not coordinate goals. Only that coordinator changes the goal's
+tasks, dependencies, results and lifecycle. Workers execute bounded briefs and
+report back; they do not claim or accept goal tasks.
 Followers inspect. A claim records responsibility, not authorization.
 
 Before dispatch, check both ownership and eligibility. Held ancestors and open

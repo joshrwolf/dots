@@ -1162,6 +1162,14 @@ pub(crate) enum AttentionCommand {
         #[arg(long, value_enum)]
         kind: Option<DecisionKinds>,
     },
+    /// Review and answer requests in an explicit scope in a terminal view
+    View {
+        #[command(flatten)]
+        scope: ScopeArgs,
+        /// Action the view runs when it closes, as given by the opener
+        #[arg(long, value_name = "ACTION")]
+        dismiss: Option<String>,
+    },
 }
 
 /// Which goals an attention read covers.

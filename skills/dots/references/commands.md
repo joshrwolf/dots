@@ -2091,6 +2091,7 @@ Commands:
   show         Show one request with its answer and closure
   list         List requests in an explicit scope; never falls back to another scope
   decisions    List goal decisions and mandates in an explicit scope, oldest first
+  view         Review and answer requests in an explicit scope in a terminal view
 
 Options:
       --json
@@ -2398,6 +2399,41 @@ Options:
 
       --kind <KIND>
           [possible values: mandate, decision]
+
+  -h, --help
+          Print help
+```
+
+## dots attention view
+
+```text
+Review and answer requests in an explicit scope in a terminal view
+
+Usage: dots attention view [OPTIONS] --scope <SCOPE>
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --scope <SCOPE>
+          global: every registered project; goals: exactly the --goal identities
+
+          [possible values: global, goals]
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --goal <PROJECT:GOAL>
+          Goal as PROJECT:GOAL; repeatable, only with --scope goals
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --dismiss <ACTION>
+          Action the view runs when it closes, as given by the opener
 
   -h, --help
           Print help

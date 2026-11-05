@@ -505,6 +505,7 @@ dependencies = [
  "github-inspect",
  "github-watch",
  "nix 0.31.3",
+ "ratatui",
  "sapling-renderdag",
  "serde",
  "serde_json",
