@@ -1202,6 +1202,22 @@ mod acceptance {
         let new = lab.mac.write(&[Edit::put("global/new.md", "new")])?;
         let latest = lab.scratch.0.join("latest.bundle");
         lab.mac.export_bundle(&latest)?;
+        let recovery = Store {
+            repository: Repository::init(&lab.scratch.0, "recovered.git")?,
+            genesis: lab.mac.genesis.clone(),
+        };
+        assert_eq!(recovery.import_bundle(&latest)?, new);
+        assert!(
+            recovery.repository.head().is_err(),
+            "recovery import is still only a candidate"
+        );
+        recovery
+            .repository
+            .checked(&["update-ref", HEAD, &new.0, ""])?;
+        assert_eq!(
+            recovery.read(&new, "global/new.md")?.as_deref(),
+            Some("new")
+        );
         assert_eq!(lab.linux.import_bundle(&latest)?, new);
         assert_eq!(lab.linux.import_bundle(&latest)?, new);
         assert_eq!(lab.linux.import_bundle(&older)?, old);
