@@ -33,6 +33,19 @@
   ready for my review or report a concrete blocker and any open discussions
   needing my input. This does not authorize merging a PR or enabling auto-merge.
 
+## Communicating with me
+
+- Assume I read chat, not goal briefs, task entries, agent notes, checkpoints or
+  reports. Those are agent working material, not deliverables for me.
+- Write a document specifically for me only when I explicitly request one.
+  Maintaining project documentation within an agreed change is separate; its
+  existence still does not mean I have read it.
+- Make questions, decisions, progress updates and completion handoffs stand on
+  their own in chat. State the actual work, relevant context, consequences and
+  needed action without requiring me to open a file or recognize an internal ID.
+  Links and artifacts can support the explanation, never replace it. Do not use
+  "see the brief/report/task" as the answer or treat my silence as document review.
+
 ## Go
 
 When writing, reviewing or refactoring Go, apply these defaults whether or not

@@ -11,6 +11,25 @@ user-facing questions and updates name the actual work and stand on their own.
 Small work needs no goal. Use `dots task --help` and `dots attention --help` for
 the installed contracts, and `worktrees` for isolation and local integration.
 
+## Audience: chat for the user, artifacts for agents
+
+Assume the user reads chat only. Briefs, tasks, plans, checkpoints, evidence and
+reports serve agent coordination and resumption; creating or linking them does
+not communicate their contents to the user. Do not ask the user to read, update,
+approve or identify internal artifacts as a prerequisite to answering you.
+
+A document written specifically for the user is opt-in: produce one when they
+explicitly request it. Project documentation required by an agreed change is
+separate, but never assume the user has read it. Optional inspection stays
+available without becoming homework.
+
+Every attention request, consequential decision and completion handoff must
+stand on its own in chat: explain the actual work, the relevant context and
+consequences, your recommendation when useful, and the smallest needed action.
+Artifacts and links support that explanation; they never replace it. A task
+result or published report is not a user-facing handoff. Never treat an unread
+brief, silence or document creation as approval.
+
 ## Agree the outcome and mandate
 
 Collaboratively establish the outcome, scope boundary, verification and finish

@@ -60,8 +60,10 @@ one is available, with both angle files.
    first, each with `path:line`, the failing scenario, and the fix; then one
    line on what was dismissed and why. Say plainly when nothing blocks. In an
    ongoing effort this is an internal result: continue authorized fixes and
-   verification rather than handing routine work back to the user. Do not post
-   to GitHub.
+   verification rather than handing routine work back to the user. At a human
+   handoff, explain the outcome in chat without assuming the user read threads,
+   reports or task entries; links are supporting evidence, not the explanation.
+   Do not post to GitHub.
 6. **Hand over when appropriate.** For a requested human review or the agreed
    human handoff, show a concise, self-contained result. In Rex, open the review
    beside your pane when useful:
