@@ -1,7 +1,8 @@
 // Goal attention through the pinned Pi host, the real goal extension with its
 // default dots sources and task stream, and the candidate `dots` CLI on PATH,
 // in a disposable home. The model is an in-process fixture provider: an
-// answer saved outside Pi must start the coordinator's next turn natively.
+// answer saved outside Pi must start the coordinator's next turn natively,
+// and a goal the session coordinates stays in view without a follow.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
@@ -276,12 +277,24 @@ test(
       answer(other);
       answer(held);
 
-      // Following another goal reads responsibilities and starts their streams.
+      // Following another goal reads responsibilities and starts their streams;
+      // unfollowing a coordinated goal does not take it out of view.
+      await session.prompt(`/goal follow ${owned}`);
       await session.prompt(`/goal follow ${theirs}`);
+      await session.prompt(`/goal unfollow ${owned}`);
+      const follows = session.sessionManager
+        .getBranch()
+        .findLast(
+          entry =>
+            entry.type === 'custom' && entry.customType === 'dots.goal.focus',
+        ).data.followed;
+      assert.deepEqual(
+        follows.map(item => item.id),
+        [theirs],
+        'the branch records only the follow',
+      );
       await until('the coordinator alert', () =>
-        signals.some(signal =>
-          signal.requests.some(item => item.id === mine && !item.followed),
-        ),
+        signals.some(signal => signal.requests.some(item => item.id === mine)),
       );
       assert.ok(
         signals.every(signal =>
@@ -304,14 +317,16 @@ test(
       );
       const turn = requests.at(-1);
       assert.match(turn.messages, new RegExp(`Request ${mine}`));
-      assert.match(turn.messages, /does not follow it/);
+      assert.doesNotMatch(turn.messages, /not follow/);
       const context = system => {
         assert.match(
           system,
           new RegExp(
-            `Goal ${owned} · project ${project} · coordinating, not followed here`,
+            `Goal ${owned} · project ${project} · Owned work \\[open\\]`,
           ),
+          'the coordinated goal keeps its tasks in context',
         );
+        assert.doesNotMatch(system, /not followed/);
         assert.match(system, /Ship the canary behind a flag\./);
         assert.match(
           system,
@@ -325,10 +340,10 @@ test(
           system,
           new RegExp(`Coordinated by ${OTHER}, not this session`),
         );
-        assert.match(
-          system,
-          /Canary brief/,
-          'the followed goal keeps its brief',
+        assert.equal(
+          system.match(/Canary brief/g)?.length,
+          2,
+          'the coordinated and the followed goal each keep their brief',
         );
         assert.doesNotMatch(
           system,

@@ -149,7 +149,7 @@ export class AttentionView implements Component, Focusable {
   >();
   private list: SelectList | undefined;
   private listKey = '';
-  private model: AttentionModel = {items: [], unavailable: [], elsewhere: []};
+  private model: AttentionModel = {items: [], unavailable: []};
   private theme: Theme | undefined;
   /**
    * The request the person is looking at, by ID. Selection never moves on
@@ -534,48 +534,20 @@ export class AttentionView implements Component, Focusable {
     return [...head, ...shown, ...extra, ...notes, ...tail].slice(0, rows);
   }
 
-  /** Requests on goals this session coordinates without following them. */
-  private elsewhere(): string[] {
-    const theme = this.theme!;
-    const outside = this.model.elsewhere;
-    if (!outside.length) return [];
-    return [
-      '',
-      theme.fg(
-        'warning',
-        `Also waiting on ${outside.length === 1 ? 'a goal' : 'goals'} this session coordinates but does not follow; answer in Attention, or ask to follow the goal:`,
-      ),
-      ...outside
-        .slice(0, 3)
-        .map(entry =>
-          theme.fg(
-            'text',
-            `  ${labelText(entry.title)} · ${labelText(entry.goal)}`,
-          ),
-        ),
-      ...(outside.length > 3
-        ? [theme.fg('dim', `  +${outside.length - 3} more`)]
-        : []),
-    ];
-  }
-
   /** Mouse targets mirror the rendered layout. */
   private body(width: number, rows: number): Component {
     const theme = this.theme!;
     const item = this.current();
     if (!item)
       return new Text(
-        [
-          theme.fg(
-            'muted',
-            this.model.unavailable.length
-              ? `Attention unavailable: ${this.model.unavailable.map(labelText).join('; ')}`
-              : this.cleared && this.model.items.length
-                ? 'Choose a request: ↑/↓ or Enter.'
-                : 'Nothing on the followed goals needs your answer.',
-          ),
-          ...this.elsewhere(),
-        ].join('\n'),
+        theme.fg(
+          'muted',
+          this.model.unavailable.length
+            ? `Attention unavailable: ${this.model.unavailable.map(labelText).join('; ')}`
+            : this.cleared && this.model.items.length
+              ? 'Choose a request: ↑/↓ or Enter.'
+              : 'Nothing needs your answer.',
+        ),
         0,
         0,
       );

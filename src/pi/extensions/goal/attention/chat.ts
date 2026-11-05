@@ -76,7 +76,8 @@ export const RecordChatParameters = Type.Object({
   goal: Type.Optional(
     Type.String({
       pattern: '^t-[a-f0-9]+$',
-      description: 'For decision or mandate: the followed goal it belongs to.',
+      description:
+        'For decision or mandate: the goal it belongs to, one this session follows or coordinates.',
     }),
   ),
   decision: Type.Optional(
@@ -103,7 +104,7 @@ export async function recordChat(
   agent: Agent,
   humans: HumanInputs,
   source: AttentionSource,
-  followed: readonly GoalRef[],
+  goals: readonly GoalRef[],
   projectOf: (request: string) => string | undefined,
   signal: AbortSignal,
 ): Promise<string> {
@@ -124,7 +125,7 @@ export async function recordChat(
     const project = projectOf(params.request);
     if (!project)
       throw new Error(
-        `Request ${params.request} is not outstanding on a followed goal. Check dots attention list --scope goals --goal PROJECT:GOAL.`,
+        `Request ${params.request} is not outstanding on a goal this session follows or coordinates. Check dots attention list --scope goals --goal PROJECT:GOAL.`,
       );
     const saved = await source.answer(
       project,
@@ -147,10 +148,10 @@ export async function recordChat(
     throw new Error(
       `kind ${params.kind} takes goal and decision, not request, choice or interpretation.`,
     );
-  const goal = followed.find(item => item.id === params.goal);
+  const goal = goals.find(item => item.id === params.goal);
   if (!goal)
     throw new Error(
-      `Goal ${params.goal} is not followed in this session. Followed: ${followed.map(item => item.id).join(', ') || 'none'}.`,
+      `Goal ${params.goal} is not followed or coordinated by this session. Its goals: ${goals.map(item => item.id).join(', ') || 'none'}.`,
     );
   const recorded = await source.decide(
     goal,

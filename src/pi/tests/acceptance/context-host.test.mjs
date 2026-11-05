@@ -273,19 +273,20 @@ test(
       await session.prompt('/fixture-context-report');
       const currentReport = reports.at(-1);
       assert.match(currentReport, /System prompt \(recorded effective\)/);
-      assert.match(currentReport, /Companion sections \(5\)/);
+      // The report names the five largest sections and counts the rest.
+      assert.match(currentReport, /Companion sections \(6\)[\s\S]*… 1 more/);
       for (const section of [
         'dots_memory_global',
         'dots_memory_project',
         'dots_rex',
       ])
-        assert.match(currentReport, new RegExp(section));
+        assert.ok(section in promptOptions.sections, section);
       assert.match(
         currentReport,
         new RegExp(
-          goalSectionKey({
+          `${goalSectionKey({
             focus: {id: 't-123abc', project: '/example/project'},
-          }),
+          })}_attention`,
         ),
       );
       assert.equal(

@@ -31,6 +31,8 @@ one/three/eight-worker fleets, compact outcomes, and long questions. Active work
 use two lines; finished workers use one. Worker model, effort, and horizontal
 context meters share the primary session’s right-aligned metadata columns.
 Space advances these cases.
+`/ui-lab attention` previews the goal popup's Attention view over in-memory
+requests; Space steps through its states and E passes keys to the popup.
 `/ui-lab inspection-shell` previews the shipping framed Panel and native picker
 at wide and narrow widths in light/dark themes. Ctrl+Space cycles its fixture
 states without taking picker keys. Esc closes; Ctrl+N/P switches scenarios.

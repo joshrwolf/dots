@@ -22,7 +22,7 @@ const panel = (view, theme, close = () => {}, bindings = () => false) => {
     () => {},
     () => 40,
   );
-  result.setGoal({view, followed: 1}, theme);
+  result.setGoal({view, goals: 1}, theme);
   return result;
 };
 
@@ -200,7 +200,7 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
     () => redraws++,
     () => 20,
   );
-  inspector.setGoal({view: model, followed: 1}, theme);
+  inspector.setGoal({view: model, goals: 1}, theme);
   assert.doesNotMatch(plain(inspector.render(120)), /Accepted design|Project:/);
   inspector.handleInput('2');
   assert.match(plain(inspector.render(120)), /Accepted design/);
@@ -226,7 +226,7 @@ test('followed overview keeps selection visible and reports display omissions wi
     const widget = summary(views, 't-7', getThemeByName(name));
     const output = plain(widget.render(160));
     assert.match(output, /Goal 7/);
-    assert.match(output, /\+7 followed · needs attention/);
+    assert.match(output, /\+7 more · needs attention/);
     assert.equal(widget.render(160).length, 1);
     for (const width of [0, 1, 2, 12, 45, 80])
       assert.ok(

@@ -373,8 +373,6 @@ test('native attention is signalled by the coordinator only, and only when it ch
         {
           id: requestId(1),
           title: 'Choose the rollout scope',
-          goal: 'Fixture goal',
-          followed: true,
         },
       ],
     },
@@ -402,7 +400,7 @@ test('an empty view reads only responsibilities and a failed read is unavailable
     [['coordinating', agent.owner]],
     'nothing is listed without follows or coordination',
   );
-  assert.deepEqual(ctl.coordinatedElsewhere(), {goals: [], failure: undefined});
+  assert.deepEqual(ctl.coordinated(), {goals: [], failure: undefined});
   assert.equal(
     store.state.calls[0].actor.env.DOTS_AGENT_OWNER,
     agent.owner,
@@ -425,7 +423,7 @@ const external = (store, id, choice = 'one') =>
 const notices = delivered =>
   delivered.filter(message => message.customType === ANSWER_MESSAGE);
 
-test('unfollowing a coordinated goal keeps delivery and its mandate; the view stays empty', async () => {
+test('unfollowing a coordinated goal keeps it actionable, delivered and in context until released', async () => {
   const store = attentionStore({
     coordinator: agent.owner,
     requests: [request()],
@@ -434,23 +432,18 @@ test('unfollowing a coordinated goal keeps delivery and its mandate; the view st
   const {ctl, delivered, signals} = controller(store);
   await ctl.setScope([goalRef]);
   await ctl.setScope([]);
-  assert.deepEqual(ctl.model().items, [], 'nothing joins the view');
-  assert.deepEqual(ctl.model().elsewhere, [
-    {title: 'Choose the rollout scope', goal: 'Fixture goal'},
-  ]);
+  assert.deepEqual(ctl.goals(), [goalRef], 'responsibility keeps it in scope');
+  assert.deepEqual(
+    ctl.model().items.map(item => item.request.id),
+    [requestId(1)],
+    'still answerable here',
+  );
   assert.equal(
     indicator(ctl.model()),
-    'Needs your attention: Choose the rollout scope · Fixture goal · not followed here; answer it in Attention',
+    'Needs your attention: Choose the rollout scope',
   );
   assert.deepEqual(signals.at(-1), {
-    requests: [
-      {
-        id: requestId(1),
-        title: 'Choose the rollout scope',
-        goal: 'Fixture goal',
-        followed: false,
-      },
-    ],
+    requests: [{id: requestId(1), title: 'Choose the rollout scope'}],
   });
   await external(store, requestId(1));
   await ctl.refresh();
@@ -458,48 +451,40 @@ test('unfollowing a coordinated goal keeps delivery and its mandate; the view st
   const sent = notices(delivered);
   assert.equal(sent.length, 1, 'delivered once');
   assert.deepEqual(sent[0].details, {requests: [requestId(1)]});
-  assert.match(
-    sent[0].content,
-    /does not follow it[\s\S]*goal_focus \{"id": "t-123abc", "project": "p-a+"\}[\s\S]*dots attention show r-0+1 --project p-a+/,
-  );
+  assert.doesNotMatch(sent[0].content, /goal_focus|not follow/);
   assert.deepEqual(signals.at(-1), {requests: []});
-  assert.deepEqual(ctl.model().items, []);
-  // Its execution context stays, labelled, while the view stays empty.
   const facts = await ctl.facts();
   assert.deepEqual([...facts.keys()], [`${PROJECT}:t-123abc`]);
-  assert.deepEqual(ctl.coordinatedElsewhere(), {
-    goals: [goalRef],
-    failure: undefined,
-  });
+  assert.deepEqual(ctl.coordinated(), {goals: [goalRef], failure: undefined});
   const context = attentionContext(
     goalRef,
     facts.get(`${PROJECT}:t-123abc`),
     agent.owner,
-    false,
   );
-  assert.match(context, /coordinating, not followed here/);
-  assert.match(
-    context,
-    /coordination continues until its root claim is released/,
-  );
-  assert.match(context, /goal_focus \{"id": "t-123abc"/);
+  assert.doesNotMatch(context, /not followed/);
   assert.match(context, /Current mandate d-0+1:\nShip behind a flag\./);
   assert.match(
     context,
     /Human input \(chat, pi session s · interactive input\): ship it behind a flag/,
   );
   assert.match(context, /Saved answer, not yet incorporated — r-0+1/);
-  assert.match(context, /Requests: dots attention list --scope goals --goal/);
+  // Release ends responsibility: the goal leaves scope and context.
+  store.state.coordinator = null;
+  await ctl.refresh();
+  assert.deepEqual(ctl.goals(), []);
+  assert.deepEqual(ctl.model().items, []);
+  assert.equal((await ctl.facts()).size, 0);
 });
 
-test('a never-followed coordinated goal delivers; release, takeover and pause stop it', async () => {
+test('a never-followed coordinated goal is in scope and delivers; release, takeover and pause remove it', async () => {
   const store = attentionStore({
     coordinator: agent.owner,
     requests: [request()],
   });
   const {ctl, delivered, signals} = controller(store);
   await ctl.refresh();
-  assert.equal(signals.at(-1).requests[0].followed, false);
+  assert.equal(signals.at(-1).requests[0].id, requestId(1));
+  assert.equal(ctl.model().items.length, 1, 'answerable without a follow');
   await external(store, requestId(1));
   await ctl.refresh();
   assert.equal(notices(delivered).length, 1);
@@ -519,6 +504,7 @@ test('a never-followed coordinated goal delivers; release, takeover and pause st
     change();
     await ctl.refresh();
     assert.deepEqual(signals.at(-1), {requests: []}, `${label}: no alert`);
+    assert.deepEqual(ctl.model().items, [], `${label}: out of scope`);
     await external(store, id);
     await ctl.refresh();
     assert.equal(notices(delivered).length, 1, `${label}: nothing delivered`);
@@ -543,10 +529,12 @@ test('a failed coordination read is unknown: no delivery, the alert stays', asyn
     ctl.model().unavailable.join(),
     /Goals this session coordinates could not be checked: catalog locked/,
   );
-  assert.deepEqual(ctl.coordinatedElsewhere(), {
-    goals: [],
-    failure: 'catalog locked',
-  });
+  assert.deepEqual(
+    ctl.coordinated(),
+    {goals: [goalRef], failure: 'catalog locked'},
+    'membership stays as last known',
+  );
+  assert.equal(ctl.model().items.length, 1, 'still shown, not acted on');
   store.state.coordinatingFail = undefined;
   await ctl.refresh();
   assert.equal(notices(delivered).length, 1);
@@ -576,7 +564,7 @@ test('a coordinated goal the store cannot read neither delivers nor clears its a
   assert.equal(notices(delivered).length, 0);
   assert.equal(signals.at(-1), alert);
   assert.deepEqual(ctl.model().unavailable, [
-    'A goal this session coordinates could not be read.',
+    't-123abc: project is not registered',
   ]);
   assert.deepEqual(ctl.model().items, []);
 });
@@ -859,26 +847,14 @@ test('status shows coordinator attention as a question, after a running agent', 
     activities: new Map(),
   };
   const attention = [
-    {
-      id: requestId(1),
-      title: 'Choose the rollout scope',
-      goal: 'Fixture goal',
-      followed: true,
-    },
-    {id: requestId(2), title: 'Other', goal: 'Fixture goal', followed: true},
+    {id: requestId(1), title: 'Choose the rollout scope'},
+    {id: requestId(2), title: 'Other'},
   ];
   assert.deepEqual(rootRecord({...base, attention}), {
     state: 'blocked',
     kind: 'question',
     message: 'Needs your attention: Choose the rollout scope (+1 more)',
   });
-  assert.equal(
-    rootRecord({
-      ...base,
-      attention: [{...attention[0], followed: false}],
-    }).message,
-    'Needs your attention: Choose the rollout scope · Fixture goal (a goal this session coordinates but does not follow; answer it in Attention)',
-  );
   assert.equal(
     rootRecord({...base, running: true, attention}).state,
     'working',

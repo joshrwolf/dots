@@ -161,7 +161,7 @@ function cue(
 const attentionRank = (glyph: string) =>
   glyph === '?' ? 0 : glyph === '!' ? 1 : glyph === '◇' ? 2 : 3;
 
-/** The persistent surface: one line for the followed set, selected goal first. */
+/** The persistent surface: one line for the session's goals, selected goal first. */
 export function summaryRow(
   views: readonly GoalView[],
   selected: string | undefined,
@@ -266,7 +266,7 @@ export function summaryRow(
     });
   if (others.length)
     segments.push({
-      text: `+${others.length} followed${urgent ? ' · needs attention' : ''}`,
+      text: `+${others.length} more${urgent ? ' · needs attention' : ''}`,
       tone: urgent ? 'warning' : 'dim',
       priority: 40,
       shrink: 'omit',
@@ -488,11 +488,12 @@ export interface PanelModel {
   readonly activity?: WorkerActivitySnapshot | undefined;
   /** This session's claim owner, to tell its own claims from others'. */
   readonly owner?: string | undefined;
-  readonly followed: number;
+  /** Goals in this session's view, followed or coordinated. */
+  readonly goals: number;
 }
 export interface PanelActions {
   readonly close: () => void;
-  /** Select the next followed goal. */
+  /** Select the next goal in view. */
   readonly cycle: () => void;
 }
 
@@ -628,7 +629,7 @@ export class GoalPanel extends Inspector {
         (this.outline ? 'o graph' : 'o outline'),
       view.snapshot?.allTasks &&
         (this.history ? 'h hide closed' : 'h show closed'),
-      model.followed > 1 && 'Tab goal',
+      model.goals > 1 && 'Tab goal',
     ];
     this.setContent(
       {
@@ -918,7 +919,7 @@ export class GoalPanel extends Inspector {
     } else if (matchesKey(data, 'h') && this.model?.view.snapshot?.allTasks) {
       this.history = !this.history;
       this.refresh();
-    } else if (matchesKey(data, 'tab') && (this.model?.followed ?? 0) > 1) {
+    } else if (matchesKey(data, 'tab') && (this.model?.goals ?? 0) > 1) {
       this.actions.cycle();
       return;
     } else if (

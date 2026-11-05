@@ -70,7 +70,7 @@ function panel(view: GoalView, followed = 1) {
     () => {},
     () => 40,
   );
-  result.setGoal({view, followed, owner: 'fixture-reviewer'}, theme);
+  result.setGoal({view, goals: followed, owner: 'fixture-reviewer'}, theme);
   return {result, calls};
 }
 
@@ -143,9 +143,9 @@ test('the persistent surface is one bounded line naming progress, current work a
   assert.match(plain(summary(goalFixtures(6))), /brief warning/);
   assert.match(plain(summary(goalFixtures(2))), /4\/4 done · done/);
   const many = goalFixtures(3);
-  assert.match(plain(summary(many)), /\+2 followed/);
+  assert.match(plain(summary(many)), /\+2 more/);
   const live = activity(many[2]!.focus.project, many[2]!.focus.id, 'asking');
-  assert.match(plain(summary(many, live)), /\+2 followed · needs attention/);
+  assert.match(plain(summary(many, live)), /\+2 more · needs attention/);
   assert.doesNotMatch(plain(summary(many, live)), /Align CLI output/);
   const long = goalFixtures(11)[0]!;
   const unicode = {
@@ -244,7 +244,7 @@ test('the panel shows live work, the claimed task tree and the goal result witho
           view: views[0]!,
           activity: goalActivityFixture(phase, 2),
           owner: 'fixture-reviewer',
-          followed: views.length,
+          goals: views.length,
         },
         getThemeByName(name)!,
       );
@@ -296,13 +296,13 @@ test('panel keys select sections, closed tasks and goals; Esc returns input and 
   assert.match(plain(view.render(120)), /Tab goal · Esc\/alt\+g close/);
   view.handleInput('2');
   assert.match(plain(view.render(120)), /Two workstreams/);
-  view.setGoal({view: goal, followed: 2}, getThemeByName('light')!);
+  view.setGoal({view: goal, goals: 2}, getThemeByName('light')!);
   assert.match(
     plain(view.render(120)),
     /Two workstreams/,
     'refresh keeps section',
   );
-  view.setGoal({view: goalFixtures(3)[1]!, followed: 2}, theme);
+  view.setGoal({view: goalFixtures(3)[1]!, goals: 2}, theme);
   assert.match(
     plain(view.render(120)),
     /Tasks[\s\S]*Detail/,
@@ -339,13 +339,13 @@ test('panel keys select sections, closed tasks and goals; Esc returns input and 
   hidden.handleInput('h');
   assert.match(plain(hidden.render(120)), /Define shared types/);
   hidden.handleInput('h');
-  hidden.setGoal({view: goalFixtures(9)[0]!, followed: 1}, theme);
+  hidden.setGoal({view: goalFixtures(9)[0]!, goals: 1}, theme);
   assert.doesNotMatch(
     plain(hidden.render(120)),
     /Define shared types/,
     'refresh keeps the filter even with an unfiltered source snapshot',
   );
-  hidden.setGoal({view: goalFixtures(3)[1]!, followed: 1}, theme);
+  hidden.setGoal({view: goalFixtures(3)[1]!, goals: 1}, theme);
   assert.match(
     plain(hidden.render(120)),
     /Define shared types/,
@@ -556,7 +556,7 @@ test('a stacked popup gives the list most rows and bounds the detail', () => {
     () => {},
     () => panelHeight(32),
   );
-  panel.setGoal({view, followed: 1}, theme);
+  panel.setGoal({view, goals: 1}, theme);
   const lines = plain(panel.render(80)).split('\n');
   const tasksAt = lines.findIndex(line => /Tasks ─/.test(line));
   const detailAt = lines.findIndex(line => /Detail ─/.test(line));
@@ -608,7 +608,7 @@ test('a long graph keeps the selected task visible through movement and resize',
     () => {},
     () => height,
   );
-  popup.setGoal({view, followed: 1}, theme);
+  popup.setGoal({view, goals: 1}, theme);
   for (const [index, task] of tasks.entries()) {
     for (const width of [60, 160]) {
       height = index % 2 ? 12 : 30;
@@ -637,7 +637,7 @@ test('short popups give rows to the tree and detail before the goal result', () 
       () => {},
       () => height,
     );
-    view.setGoal({view: goal, followed: 1, owner: 'fixture-reviewer'}, theme);
+    view.setGoal({view: goal, goals: 1, owner: 'fixture-reviewer'}, theme);
     view.handleInput('h');
     const output = plain(view.render(width));
     assert.ok(view.render(width).length <= height + 2);

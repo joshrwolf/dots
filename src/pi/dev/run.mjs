@@ -30,6 +30,7 @@ export function prepareWorkbench({
       'frame',
       'thinking',
       'goal',
+      'attention',
     ].includes(scenario)
   )
     throw new Error('Unknown workbench scenario');

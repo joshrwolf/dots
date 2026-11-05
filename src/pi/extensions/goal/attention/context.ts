@@ -70,25 +70,13 @@ export function attentionContext(
   ref: GoalRef,
   facts: AttentionFacts,
   owner: string | undefined,
-  followed = true,
 ): string {
   const scope = `--scope goals --goal ${ref.project}:${ref.id}`;
-  const identity = followed
-    ? `Goal ${ref.id} · project ${ref.project} · attention and decisions`
-    : `Goal ${ref.id} · project ${ref.project} · coordinating, not followed here`;
-  const unfollowed = followed
-    ? []
-    : [
-        `This session coordinates this goal without following it, so its brief and tasks are not in context; following is only the view, and coordination continues until its root claim is released. Before dispatching its work, read them with goal_focus {"id": "${ref.id}", "project": "${ref.project}"} or dots task goal show ${ref.id} --project ${ref.project}.`,
-      ];
+  const identity = `Goal ${ref.id} · project ${ref.project} · attention and decisions`;
   if (facts.failure || !facts.goal)
-    return [
-      identity,
-      ...unfollowed,
-      `Unavailable: ${line(facts.failure ?? 'not loaded', 512)}. Read with dots attention list ${scope} before relying on the mandate or answers.`,
-    ].join('\n');
+    return `${identity}\nUnavailable: ${line(facts.failure ?? 'not loaded', 512)}. Read with dots attention list ${scope} before relying on the mandate or answers.`;
   const {goal} = facts;
-  const lines = [identity, ...unfollowed, role(goal, owner)];
+  const lines = [identity, role(goal, owner)];
   const mandate = goal.mandate;
   if (mandate)
     lines.push(
@@ -143,9 +131,7 @@ export function attentionContext(
   if (omitted) lines.push(`${omitted} more requests not shown.`);
   if (open.length)
     lines.push(
-      followed
-        ? 'A person answers in the goal popup (Alt+G) or in chat. Never bind a chat message to a request without their words; record chat answers with attention_record_chat.'
-        : "A person answers in Attention, outside this session's goal popup; recording a chat answer needs the goal followed first.",
+      'A person answers in the goal popup (Alt+G) or in chat. Never bind a chat message to a request without their words; record chat answers with attention_record_chat.',
     );
   lines.push(`Requests: dots attention list ${scope}`);
   return lines.join('\n');

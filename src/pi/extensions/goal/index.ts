@@ -20,7 +20,6 @@ import {
 import {GoalPanel, PANEL_KEY, panelOverlay, summaryRow} from './panel.ts';
 import {
   GOAL_SECTION_PREFIX,
-  goalRefSectionKey,
   goalSectionKey,
   goalSections,
   orientation,
@@ -31,7 +30,7 @@ import {TurnMessages} from '../../src/host/delivery.ts';
 import {Tasks} from '../../src/host/tasks.ts';
 import {AttentionController} from './attention/controller.ts';
 import {attentionContext} from './attention/context.ts';
-import {indicator, needsAnswer} from './attention/model.ts';
+import {indicator} from './attention/model.ts';
 import {
   AttentionView,
   GoalPopup,
@@ -71,7 +70,7 @@ export const DISMISS_ENTRY = 'dots.goal.dismiss';
 const OFFERS_WIDGET = 'dots.goal.offers';
 const ATTENTION_WIDGET = 'dots.goal.attention';
 const HELP =
-  "/goal [new IDEA | follow [ID [PROJECT]] | show [ID] | evidence TASK [EVENT|current] [PROJECT] | list | followed | offers | dismiss ID | refresh | unfollow ID | clear]. PROJECT is another project's exact key (the project field of dots task --json output); without it, follow uses this session's project. focus aliases follow; unfocus without an ID clears all. No shared task state is changed.";
+  "/goal [new IDEA | follow [ID [PROJECT]] | show [ID] | evidence TASK [EVENT|current] [PROJECT] | list | followed | offers | dismiss ID | refresh | unfollow ID | clear]. PROJECT is another project's exact key (the project field of dots task --json output); without it, follow uses this session's project. focus aliases follow; unfocus without an ID clears all follows. Goals this session coordinates stay in view without a follow until paused, released, handed off or closed; unfollowing never does any of those. No shared task state is changed.";
 
 export function restoreGoals(
   entries: readonly {type: string; customType?: string; data?: unknown}[],
@@ -149,7 +148,10 @@ export default function goalExtension(
   };
   let focus: Focus | undefined;
   let model: GoalView | undefined;
-  const followed = new Map<string, GoalView>();
+  /** This session's goals: its follows plus the goals it coordinates. */
+  const views = new Map<string, GoalView>();
+  /** Explicit follows, all in views: the only membership a branch records. */
+  const follows = new Set<string>();
   const dismissed = new Set<string>();
   let offers: GoalList | undefined;
   let discovery: AbortController | undefined;
@@ -159,7 +161,7 @@ export default function goalExtension(
     offers?.goals.filter(
       ({root}) =>
         !dismissed.has(offerKey(offers!.project, root.id)) &&
-        followed.get(root.id)?.focus.project !== offers!.project,
+        views.get(root.id)?.focus.project !== offers!.project,
     ) ?? [];
   const offerLines = (limit = 3) => {
     const goals = candidates();
@@ -217,19 +219,50 @@ export default function goalExtension(
     if (ctx.hasUI) ctx.ui.setStatus(OFFERS_WIDGET, undefined);
     return undefined;
   };
-  /** Attention scope is exactly the followed (project, goal) pairs. */
-  const scope = (): GoalRef[] =>
-    [...followed.values()].map(view => ({
-      project: view.focus.project,
-      id: view.focus.id,
-    }));
+  const ref = (view: GoalView): GoalRef => ({
+    project: view.focus.project,
+    id: view.focus.id,
+  });
+  /** Every goal in view, followed or coordinated. */
+  const scope = (): GoalRef[] => [...views.values()].map(ref);
+  const followedViews = () => [...follows].map(id => views.get(id)!);
+  /** Record the follows; a coordinated goal's selection is not recorded. */
   const persist = () => {
+    const followed = followedViews().map(view => view.focus);
     pi.appendEntry(FOCUS_ENTRY, {
       version: 2,
-      focus: focus ?? null,
-      followed: [...followed.values()].map(view => view.focus),
+      focus: (focus && follows.has(focus.id) ? focus : followed[0]) ?? null,
+      followed,
     });
-    background(a => a.setScope(scope()));
+    background(a => a.setScope(followedViews().map(ref)));
+  };
+  /**
+   * Bring goals this session coordinates into view and drop those it no
+   * longer coordinates, as the store last said; follows stay. Returns whether
+   * a goal joined and needs reading.
+   */
+  const reconcile = (ctx: ExtensionContext): boolean => {
+    if (!active) return false;
+    const duties = attention?.coordinated().goals ?? [];
+    const coordinated = new Set(duties.map(goal => goal.id));
+    let joined = false;
+    let left = false;
+    for (const goal of duties)
+      if (!views.has(goal.id)) {
+        views.set(goal.id, {focus: {id: goal.id, project: goal.project}});
+        joined = true;
+      }
+    for (const id of views.keys())
+      if (!follows.has(id) && !coordinated.has(id)) {
+        views.delete(id);
+        left = true;
+      }
+    if (!joined && !left) return false;
+    if (!focus || !views.has(focus.id))
+      focus = views.values().next().value?.focus;
+    model = focus ? views.get(focus.id) : undefined;
+    draw(ctx);
+    return joined;
   };
   let generation = 0;
   let active = false;
@@ -238,6 +271,8 @@ export default function goalExtension(
         controller: AbortController;
         pending: boolean;
         selected: boolean;
+        /** The goals this read observes. */
+        targets: readonly string[];
         failure?: Error;
         result: Promise<GoalView | undefined>;
       }
@@ -283,7 +318,7 @@ export default function goalExtension(
     if (summary) {
       summary.row.update(
         summaryRow(
-          [...followed.values()],
+          [...views.values()],
           focus?.id,
           workerActivity,
           agent?.owner,
@@ -305,7 +340,7 @@ export default function goalExtension(
           view: model,
           activity: workerActivity,
           owner: agent?.owner,
-          followed: followed.size,
+          goals: views.size,
         },
         panel.theme,
       );
@@ -314,7 +349,8 @@ export default function goalExtension(
   const select = (ctx: ExtensionContext, chosen: GoalView) => {
     focus = chosen.focus;
     model = chosen;
-    persist();
+    // The branch records follows; a coordinated goal's selection is transient.
+    if (follows.has(chosen.focus.id)) persist();
     draw(ctx);
   };
   /** A focused popup; closing it returns input to the editor with its draft. */
@@ -353,11 +389,9 @@ export default function goalExtension(
               {
                 close: () => shown.popup?.back(),
                 cycle: () => {
-                  const views = [...followed.values()];
-                  const at = views.findIndex(
-                    view => view.focus.id === focus?.id,
-                  );
-                  select(ctx, views[(at + 1) % views.length]!);
+                  const all = [...views.values()];
+                  const at = all.findIndex(view => view.focus.id === focus?.id);
+                  select(ctx, all[(at + 1) % all.length]!);
                 },
               },
               () => tui.requestRender(),
@@ -393,8 +427,6 @@ export default function goalExtension(
         if (active && epoch === generation) notify(ctx, String(error), 'error');
       });
   };
-  /** Whether the popup has a request to answer; others belong to Attention. */
-  const opens = () => !!attention?.model().items.some(needsAnswer);
   /** One quiet clickable line near the editor while a request awaits the person. */
   const drawAttention = (ctx: ExtensionContext) => {
     if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
@@ -423,10 +455,7 @@ export default function goalExtension(
               active && epoch === generation && owned.text
                 ? [
                     truncateToWidth(
-                      theme.fg(
-                        'warning',
-                        opens() ? `${owned.text} · open` : owned.text,
-                      ),
+                      theme.fg('warning', `${owned.text} · open`),
                       width,
                     ),
                   ]
@@ -446,7 +475,7 @@ export default function goalExtension(
               return undefined;
             if (event.type === 'press') return {handled: true, render: false};
             if (event.type !== 'click') return undefined;
-            if (opens()) openPanel(ctx, 'attention');
+            openPanel(ctx, 'attention');
             return {handled: true, render: false};
           },
         );
@@ -544,10 +573,11 @@ export default function goalExtension(
   };
 
   // Ordinary observers share an in-flight read, including an explicit focus
-  // change. Only explicit selection may supersede it. Observers follow that
+  // change. Only explicit selection, or a goal joining the view after an
+  // ordinary read began, may supersede it. Observers follow that
   // replacement and consume its result, never the previous global model.
   // A selection rejects with its own failure; undefined means cancelled or superseded.
-  // Each followed goal is read from its recorded project, not the session cwd.
+  // Each goal is read from its recorded project, not the session cwd.
   const refresh = async (
     ctx: ExtensionContext,
     selected?: {id: string; project?: string | undefined},
@@ -555,13 +585,17 @@ export default function goalExtension(
   ): Promise<GoalView | undefined> => {
     const epoch = generation;
     if (!active || signal?.aborted) return undefined;
-    if (selected || !request?.pending) {
+    const stale = (read: NonNullable<typeof request>) =>
+      !read.selected &&
+      [...views.keys()].some(id => !read.targets.includes(id));
+    if (selected || !request?.pending || stale(request)) {
       if (!selected && !focus) return undefined;
       request?.controller.abort();
       const read: NonNullable<typeof request> = {
         controller: new AbortController(),
         pending: true,
         selected: !!selected,
+        targets: selected ? [selected.id] : [...views.keys()],
         result: Promise.resolve<GoalView | undefined>(undefined),
       };
       request = read;
@@ -574,10 +608,9 @@ export default function goalExtension(
         !read.controller.signal.aborted;
       read.result = (async () => {
         try {
-          const targets = selected ? [selected.id] : [...followed.keys()];
           const observations = await Promise.all(
-            targets.map(async (target): Promise<GoalView> => {
-              const saved = followed.get(target)?.focus;
+            read.targets.map(async (target): Promise<GoalView> => {
+              const saved = views.get(target)?.focus;
               const project = selected?.project ?? saved?.project;
               try {
                 const snapshot = await source.show(
@@ -605,13 +638,16 @@ export default function goalExtension(
             }),
           );
           if (!current()) return undefined;
+          // A goal that left the view meanwhile stays gone.
           for (const observation of observations)
-            followed.set(observation.focus.id, observation);
+            if (selected || views.has(observation.focus.id))
+              views.set(observation.focus.id, observation);
           if (selected) {
             focus = observations[0]!.focus;
+            follows.add(focus.id);
             persist();
           }
-          model = focus ? followed.get(focus.id) : undefined;
+          model = focus ? views.get(focus.id) : undefined;
           draw(ctx);
           return model;
         } catch (error) {
@@ -622,7 +658,7 @@ export default function goalExtension(
                 ? error
                 : new Error(String(error), {cause: error});
           // A rejected addition must not overwrite another goal's observation.
-          // Pre-run observers refresh the followed set after selection settles.
+          // Pre-run observers refresh the goals after selection settles.
           if (focus) return {focus, error: String(error)};
           return undefined;
         } finally {
@@ -651,7 +687,8 @@ export default function goalExtension(
     active = true;
     focus = undefined;
     model = undefined;
-    followed.clear();
+    views.clear();
+    follows.clear();
     offers = undefined;
     dismissed.clear();
     for (const entry of ctx.sessionManager.getBranch()) {
@@ -665,15 +702,19 @@ export default function goalExtension(
     try {
       const saved = restoreGoals(ctx.sessionManager.getBranch());
       focus = saved.focus;
-      for (const item of saved.followed) followed.set(item.id, {focus: item});
+      for (const item of saved.followed) {
+        views.set(item.id, {focus: item});
+        follows.add(item.id);
+      }
     } catch (error) {
       notify(ctx, String(error), 'error');
     }
     attention?.bind(agent);
-    background(a => a.setScope(scope()));
+    background(a => a.setScope(followedViews().map(ref)));
+    reconcile(ctx);
     const epoch = generation;
     if (focus) {
-      model = {focus};
+      model = views.get(focus.id);
       draw(ctx);
       await refresh(ctx);
     }
@@ -698,6 +739,10 @@ export default function goalExtension(
       coordinates: !process.env.DOTS_WORKER_ID,
       changed: () => {
         drawAttention(ctx);
+        if (reconcile(ctx))
+          refresh(ctx).catch((error: unknown) =>
+            notify(ctx, String(error), 'error'),
+          );
         paint();
       },
       signal: signal => pi.events.emit(ATTENTION_EVENT, signal),
@@ -740,7 +785,8 @@ export default function goalExtension(
     invalidate();
     focus = undefined;
     model = undefined;
-    followed.clear();
+    views.clear();
+    follows.clear();
     offers = undefined;
   });
   pi.on('before_agent_start', async (event, ctx) => {
@@ -752,38 +798,40 @@ export default function goalExtension(
     if (!active || startingEpoch !== generation) return;
     // Membership changes invalidate in-flight observations. Retry the remaining
     // set; an unfollow must neither resurrect a goal nor omit the other goals.
-    while (active && (focus || request?.pending)) {
-      const epoch = generation;
-      await refresh(ctx);
-      if (!active) return;
-      if (generation !== epoch) {
-        if (followed.size || request?.pending) continue;
+    const observe = async () => {
+      while (active && (focus || request?.pending)) {
+        const epoch = generation;
+        await refresh(ctx);
+        if (!active) return;
+        if (generation !== epoch) {
+          if (views.size || request?.pending) continue;
+          break;
+        }
+        if (!views.size) break;
+        if (request?.selected) continue; // Explicit follow reads only its target.
         break;
       }
-      if (!followed.size) break;
-      if (request?.selected) continue; // Explicit follow reads only its target.
-      break;
-    }
-    // Coordination outlives the view: goals this runtime coordinates keep
-    // their mandate, decisions and answers in context, followed or not.
+    };
+    await observe();
+    if (!active) return;
+    // Attention reads coordination fresh; a goal that joined, here or in a
+    // read it started, is read before the sections are built.
     const facts = await attention?.facts().catch(() => undefined);
     if (!active) return;
-    const elsewhere = attention?.coordinatedElsewhere();
-    for (const ref of elsewhere?.goals ?? []) {
-      const found = facts?.get(`${ref.project}:${ref.id}`);
-      if (found)
-        sections[`${goalRefSectionKey(ref.project, ref.id)}_attention`] =
-          attentionContext(ref, found, agent?.owner, false);
-    }
-    if (elsewhere?.failure)
+    reconcile(ctx);
+    if ([...views.values()].some(view => !view.snapshot && !view.error))
+      await observe();
+    if (!active) return;
+    const failure = attention?.coordinated().failure;
+    if (failure)
       sections[`${GOAL_SECTION_PREFIX}coordinating`] =
-        `Goals this session coordinates could not be checked: ${elsewhere.failure}. Unfollowed goals it coordinates may be missing from context; list them with dots task goal coordinating before dispatching work.`;
-    for (const view of followed.values()) {
+        `Goals this session coordinates could not be checked: ${failure}. The goals in context may be out of date; check them with dots task goal coordinating before dispatching work.`;
+    for (const view of views.values()) {
       Object.assign(sections, goalSections(view));
-      const ref = {project: view.focus.project, id: view.focus.id};
+      const goal = ref(view);
       sections[`${goalSectionKey(view)}_attention`] = attentionContext(
-        ref,
-        facts?.get(`${ref.project}:${ref.id}`) ?? {
+        goal,
+        facts?.get(`${goal.project}:${goal.id}`) ?? {
           goal: undefined,
           decisions: undefined,
           mandateRequest: undefined,
@@ -866,7 +914,7 @@ export default function goalExtension(
     name: 'goal_focus',
     label: 'Focus goal',
     description:
-      'Use after creating a goal or when coordinating an existing one so it appears in this session’s UI and context. Follow an existing goal in this session, additively, and select its details. Every followed goal gets fresh brief/task context before runs. Other goals remain followed; no tasks, claims, or execution state change. Use goal_unfocus to remove one or clear all. Create shared goals with dots task goal create TITLE --brief PATH --json.',
+      'Follow an existing goal in this session, additively, and select its details. Goals this session coordinates are already in its view and context; follow any other goal to watch it read-only, or to select a coordinated goal right after coordinating it. Every goal in view gets fresh brief/task context before runs. Other goals stay in view; no tasks, claims, or execution state change. Use goal_unfocus to remove a follow. Create shared goals with dots task goal create TITLE --brief PATH --json.',
     parameters: Type.Object({
       id: Type.String({pattern: '^t-[a-f0-9]+$', maxLength: 64}),
       project: Type.Optional(
@@ -905,26 +953,42 @@ export default function goalExtension(
 
   const unfollow = (ctx: ExtensionContext, id?: string) => {
     invalidate(ctx);
-    for (const view of followed.values()) {
-      if (!id || view.focus.id === id)
-        dismiss(view.focus.project, view.focus.id);
+    const coordinated = new Set(
+      (attention?.coordinated().goals ?? []).map(goal => goal.id),
+    );
+    const leaving = id ? [id].filter(goal => follows.has(goal)) : [...follows];
+    for (const goal of leaving) {
+      dismiss(views.get(goal)!.focus.project, goal);
+      follows.delete(goal);
+      if (!coordinated.has(goal)) views.delete(goal);
     }
-    if (id) followed.delete(id);
-    else followed.clear();
-    if (!focus || !followed.has(focus.id))
-      focus = followed.values().next().value?.focus;
-    model = focus ? followed.get(focus.id) : undefined;
+    if (!focus || !views.has(focus.id))
+      focus = views.values().next().value?.focus;
+    model = focus ? views.get(focus.id) : undefined;
     persist();
     draw(ctx);
-    return id
-      ? `Unfollowed ${id}: its brief, tasks and popup leave this session's view. Shared goals, tasks and claims are unchanged; if this session coordinates it, coordination continues, with its mandate, decisions and answers kept in context and answers delivered, until its root claim is released.`
-      : "All follows cleared: their briefs, tasks and popup leave this session's view. Shared goals, tasks and claims are unchanged; goals this session coordinates keep their mandate, decisions and answers in context and answers delivered until their root claims are released.";
+    const unchanged = 'Shared goals, tasks and claims are unchanged.';
+    const stays =
+      'Unfollowing does not pause, release or hand off a goal; a goal this session coordinates stays in its view and context until one of those happens or it closes.';
+    if (!id) {
+      const kept = leaving.filter(goal => coordinated.has(goal));
+      return kept.length
+        ? `All follows cleared. ${unchanged} Still coordinating, so still in view: ${kept.join(', ')}. ${stays}`
+        : `All follows cleared. ${unchanged}`;
+    }
+    if (!leaving.length)
+      return coordinated.has(id)
+        ? `${id} is not followed; this session coordinates it. ${stays}`
+        : `${id} is not followed.`;
+    return coordinated.has(id)
+      ? `Unfollowed ${id}, but this session coordinates it, so it stays in view. ${stays} ${unchanged}`
+      : `Unfollowed ${id}: its brief, tasks and popup leave this session. ${unchanged}`;
   };
   pi.registerTool({
     name: 'goal_unfocus',
     label: 'Unfollow goal',
     description:
-      "Remove one goal from this session's followed set, or clear all follows on request. Removes its popup and its brief and task context, not prior conversation. Does not change shared goals, tasks, claims, workers or other sessions, and does not end coordination: a goal this session coordinates keeps its mandate, decisions and answers in context and its answers delivered until its root claim is released. Specify id or all:true.",
+      "Remove one follow from this session, or clear all follows on request. A goal leaves this session's view and context only if the session does not coordinate it: unfollowing is not pausing, releasing or handing off, and a coordinated goal stays until one of those happens or it closes. Does not change shared goals, tasks, claims, workers or other sessions, or remove prior conversation. Specify id or all:true.",
     parameters: Type.Object({
       id: Type.Optional(Type.String({pattern: '^t-[a-f0-9]+$', maxLength: 64})),
       all: Type.Optional(Type.Boolean()),
@@ -941,15 +1005,15 @@ export default function goalExtension(
         throw new Error('Specify id or all:true, not both.');
       return {
         content: [{type: 'text', text: unfollow(ctx, id)}],
-        details: {followed: [...followed.keys()]},
+        details: {followed: [...follows]},
       };
     },
   });
   pi.registerTool({
     name: 'goal_list',
-    label: 'List followed goals',
+    label: 'List session goals',
     description:
-      "List this session's followed goal IDs and the selected details view. Read-only session state; use dots task goal list --json for all shared project goals. Selection is not execution state.",
+      "List this session's goals, the ones it follows and the ones it coordinates, and the selected details view. Read-only session state; use dots task goal list --json for all shared project goals. Selection is not execution state.",
     parameters: Type.Object({}),
     annotations: {
       readOnlyHint: true,
@@ -958,14 +1022,19 @@ export default function goalExtension(
       openWorldHint: false,
     },
     async execute() {
-      const goals = [...followed.values()].map(view => ({
+      const coordinated = new Set(
+        (attention?.coordinated().goals ?? []).map(goal => goal.id),
+      );
+      const goals = [...views.values()].map(view => ({
         ...view.focus,
         title: view.snapshot?.overview.goal.root.title,
         selected: view.focus.id === focus?.id,
+        followed: follows.has(view.focus.id),
+        coordinating: coordinated.has(view.focus.id),
       }));
       return {
-        content: [{type: 'text', text: JSON.stringify({followed: goals})}],
-        details: {followed: goals},
+        content: [{type: 'text', text: JSON.stringify({goals})}],
+        details: {goals},
       };
     },
   });
@@ -1085,26 +1154,26 @@ export default function goalExtension(
       if (action === 'followed') {
         notify(
           ctx,
-          followed.size
-            ? [...followed.values()]
+          views.size
+            ? [...views.values()]
                 .map(
                   view =>
-                    `${view.focus.id === focus?.id ? '> ' : '  '}${view.focus.id} ${view.snapshot?.overview.goal.root.title ?? ''} · ${compactSummary(view)}`,
+                    `${view.focus.id === focus?.id ? '> ' : '  '}${view.focus.id} ${view.snapshot?.overview.goal.root.title ?? ''} · ${compactSummary(view)}${follows.has(view.focus.id) ? '' : ' · coordinating'}`,
                 )
                 .join('\n')
-            : 'No followed goals.',
+            : 'No goals followed or coordinated.',
           'info',
-          'goal_list for complete session follows',
+          'goal_list for complete session goals',
         );
         return;
       }
       if (action === 'show') {
         if (words[1]) {
-          const chosen = followed.get(words[1]);
+          const chosen = views.get(words[1]);
           if (!chosen) {
             notify(
               ctx,
-              'Goal is not followed. Use /goal follow ID first.',
+              'Goal is not followed or coordinated here. Use /goal follow ID first.',
               'error',
             );
             return;
@@ -1123,16 +1192,16 @@ export default function goalExtension(
         background(a => a.refresh());
         await refresh(ctx);
         if (!active || generation !== epoch) return;
-        while (request?.selected && followed.size) {
+        while (request?.selected && views.size) {
           await refresh(ctx);
           if (!active || generation !== epoch) return;
         }
-        const failing = [...followed.values()].filter(
+        const failing = [...views.values()].filter(
           view => view.error || view.brief?.warning,
         );
-        const status = followed.size
-          ? `${followed.size} followed goal(s) refreshed (local records only).`
-          : 'No followed goals.';
+        const status = views.size
+          ? `${views.size} goal(s) refreshed (local records only).`
+          : 'No goals followed or coordinated.';
         notify(
           ctx,
           failing.length
@@ -1163,7 +1232,7 @@ export default function goalExtension(
                 ? list.goals
                     .map(
                       g =>
-                        `${g.root.id} [${g.root.status}]${followed.has(g.root.id) ? ' [followed]' : ''} ${g.root.title}`,
+                        `${g.root.id} [${g.root.status}]${follows.has(g.root.id) ? ' [followed]' : views.has(g.root.id) ? ' [coordinating]' : ''} ${g.root.title}`,
                     )
                     .join('\n') + '\nUse /goal focus ID.'
                 : 'No open goals. Attach a brief using dots task goal attach ID --brief PATH.',
@@ -1201,7 +1270,7 @@ export default function goalExtension(
         if (observed && observed.focus.id === id && current())
           notify(
             ctx,
-            `Focused ${id}; following ${followed.size} goal(s). Other goals are unchanged. No work started. Use /goal to inspect.`,
+            `Focused ${id}; following ${follows.size} goal(s). Other goals are unchanged. No work started. Use /goal to inspect.`,
           );
       } catch (error) {
         if (current()) notify(ctx, String(error), 'error');

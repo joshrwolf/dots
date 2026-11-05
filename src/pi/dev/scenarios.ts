@@ -27,6 +27,7 @@ import {
 } from '../src/index.ts';
 import {transcript} from './transcript.ts';
 import {workerInspectorScenario} from './workers.ts';
+import {attentionScenario} from './attention.ts';
 import {thinkingComponent} from './thinking.ts';
 import {goalActivityFixture, goalFixtures} from './goals.ts';
 import {
@@ -379,7 +380,7 @@ function goalScenario(): Scenario {
             theme,
           );
           panel.setGoal(
-            {view: views[0]!, activity, owner, followed: views.length},
+            {view: views[0]!, activity, owner, goals: views.length},
             theme,
           );
           const frame = new GoalScreen(
@@ -1135,4 +1136,5 @@ export const scenarios: readonly Scenario[] = [
   },
   thinkingScenario,
   goalScenario(),
+  attentionScenario,
 ];

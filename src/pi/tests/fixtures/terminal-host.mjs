@@ -731,7 +731,7 @@ async function workbenchFlow() {
         'now: Update exports',
         '1 held',
         '4/4 done',
-        '+2 followed',
+        '+2 more',
         'unavailable · /goal refresh',
         'loading',
         'brief warning',
@@ -1021,7 +1021,7 @@ async function goalFlow() {
   await wait(() => shows('Unfollowed t-abcdef'), 'remove hierarchy fixture');
   await fresh('/goal follow t-999999');
   await wait(
-    () => shows('Second fixture goal') && shows('+1 followed'),
+    () => shows('Second fixture goal') && shows('+1 more'),
     'two followed goals',
   );
   await fresh('/goal');
@@ -1040,7 +1040,7 @@ async function goalFlow() {
     () =>
       count('start') >= 2 &&
       shows('Unified fixture exports') &&
-      shows('+1 followed'),
+      shows('+1 more'),
     'reload followed set',
   );
   await fresh('/goal unfollow t-999999');

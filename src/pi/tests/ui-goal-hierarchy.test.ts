@@ -28,7 +28,7 @@ const panel = (view: GoalView, height = 30) => {
     () => {},
     () => height,
   );
-  result.setGoal({view, followed: 1}, theme);
+  result.setGoal({view, goals: 1}, theme);
   if (view.snapshot?.overview.graph) result.handleInput('o');
   return result;
 };
@@ -132,7 +132,7 @@ test('folding is presentation-only, nested, preserved across refresh, and includ
   );
   assert.match(output, /Core interface · 1\/3 done · 1 claimed/);
   assert.match(output, /Documentation/);
-  inspector.setGoal({view: model, followed: 1}, theme);
+  inspector.setGoal({view: model, goals: 1}, theme);
   assert.doesNotMatch(plain(inspector.render(160)), /Consumer migration/);
   inspector.handleInput(' ');
   assert.match(plain(inspector.render(160)), /Consumer migration/);
@@ -151,7 +151,7 @@ test('folding is presentation-only, nested, preserved across refresh, and includ
   inspector.handleInput(' ');
   assert.match(plain(inspector.render(160)), /Adapt consumers/);
   const history = goalFixtures(9)[0]!;
-  inspector.setGoal({view: history, followed: 1}, theme);
+  inspector.setGoal({view: history, goals: 1}, theme);
   assert.match(plain(inspector.render(160)), /Define shared types/);
   assert.match(plain(inspector.render(160)), /Document shared types/);
   assert.equal(treeRows(goalTree(history.snapshot!)).length, 9);

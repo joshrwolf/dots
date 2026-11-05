@@ -133,7 +133,7 @@ test('goal starts with a branching DAG and cycles every fixture in one scenario'
       /now: Update exports/,
       /1 held/,
       /4\/4 done · done/,
-      /\+2 followed/,
+      /\+2 more/,
       /unavailable · \/goal refresh/,
       /loading/,
       /brief warning/,
@@ -534,5 +534,30 @@ test('frame presentation is deterministic, theme-owned, and shows unknown contex
         footer.render(width).every(line => visibleWidth(line) <= width),
       );
     assert.match(plain(footer.render(8)), /95%/);
+  }
+});
+
+test('attention previews the shipping popup over coordinated and followed goals', () => {
+  const h = harness('attention');
+  try {
+    for (const expected of [
+      /Attention \(2\)[\s\S]*Should the first slice cover every project/,
+      /Saving/,
+      /\? Choose the rollout scope[\s\S]*! Choose the rollout scope/,
+      /Nothing needs your answer/,
+      /store is locked/,
+    ]) {
+      assert.match(plain(h.view.render(160)), expected);
+      h.view.handleInput(' ');
+    }
+    assert.equal(h.view.state.phase, 0);
+    h.view.handleInput('E');
+    h.view.handleInput('\x1b[B');
+    assert.match(
+      plain(h.view.render(160)),
+      /Release notes[\s\S]*Publish it as written\?/,
+    );
+  } finally {
+    h.dispose();
   }
 });

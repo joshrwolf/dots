@@ -147,14 +147,7 @@ test('a request moves from raise to answer, delivery, context and incorporation'
       [[first, 'self']],
     );
     assert.deepEqual(signals.at(-1), {
-      requests: [
-        {
-          id: first,
-          title: 'Choose the rollout scope',
-          goal: 'Fixture',
-          followed: true,
-        },
-      ],
+      requests: [{id: first, title: 'Choose the rollout scope'}],
     });
 
     // A replaced request keeps the draft and never answers the replacement.
@@ -293,7 +286,7 @@ test('a request moves from raise to answer, delivery, context and incorporation'
   });
 });
 
-test('root claims in the store decide delivery, followed or not', async () => {
+test('root claims in the store decide scope and delivery, followed or not', async () => {
   await withHome(async ({project, run, content}) => {
     const source = dotsAttention();
     const signal = new AbortController().signal;
@@ -354,18 +347,15 @@ test('root claims in the store decide delivery, followed or not', async () => {
       signal: next => signals.push(next),
     });
     controller.bind(agent);
-    // Never followed: the view is empty, the coordinator still alerts.
+    // Never followed: coordination alone puts the goal in scope.
     await controller.refresh();
-    assert.deepEqual(controller.model().items, []);
+    assert.deepEqual(controller.goals(), [{project, id: coordinated}]);
+    assert.deepEqual(
+      controller.model().items.map(item => item.request.id),
+      [first],
+    );
     assert.deepEqual(signals.at(-1), {
-      requests: [
-        {
-          id: first,
-          title: 'Decide first',
-          goal: 'Coordinated',
-          followed: false,
-        },
-      ],
+      requests: [{id: first, title: 'Decide first'}],
     });
     answer(first);
     await controller.refresh();
@@ -385,6 +375,8 @@ test('root claims in the store decide delivery, followed or not', async () => {
     await controller.refresh();
     assert.equal(branch.length, 1);
     assert.deepEqual(signals.at(-1), {requests: []});
+    assert.deepEqual(controller.goals(), [], 'handoff removes it');
+    assert.deepEqual(controller.model().items, []);
     assert.deepEqual(
       await source.coordinating(agent.owner, {env: agentEnv(agent)}, signal),
       [],

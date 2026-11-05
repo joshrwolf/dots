@@ -77,7 +77,7 @@ function harness(rows = 40, theme = 'dark') {
     () => {},
     () => popupBodyHeight(rows),
   );
-  work.setGoal({view: goalFixtures(8)[0]!, followed: 1}, palette);
+  work.setGoal({view: goalFixtures(8)[0]!, goals: 1}, palette);
   const popup = new GoalPopup(
     {
       attention,

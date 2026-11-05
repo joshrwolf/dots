@@ -163,7 +163,7 @@ test('claimed goals are offers, not follows; dismissal survives resume and expli
   assert.equal(owners.length, 1);
   assert.match(owners[0], runtimeOf('fixture-session'));
   assert.match(offer().join('\n'), /Follow: \/goal follow t-123abc/);
-  assert.deepEqual((await h.list()).details.followed, []);
+  assert.deepEqual((await h.list()).details.goals, []);
   assert.deepEqual(await h.context(), []);
   assert.equal(h.userMessages.length, 0);
   await h.command('dismiss t-123abc');
@@ -171,11 +171,11 @@ test('claimed goals are offers, not follows; dismissal survives resume and expli
   await h.event('session_start');
   assert.equal(offer(), undefined);
   await h.tool('t-123abc');
-  assert.equal((await h.list()).details.followed.length, 1);
+  assert.equal((await h.list()).details.goals.length, 1);
   backend.list = async () => ({project: '/example/project', goals: []});
   await h.event('agent_end');
   assert.equal(
-    (await h.list()).details.followed.length,
+    (await h.list()).details.goals.length,
     1,
     'claim release does not unfollow',
   );
@@ -183,7 +183,7 @@ test('claimed goals are offers, not follows; dismissal survives resume and expli
   await h.unfollow({id: 't-123abc'});
   await h.event('session_start');
   assert.equal(offer(), undefined);
-  assert.deepEqual((await h.list()).details.followed, []);
+  assert.deepEqual((await h.list()).details.goals, []);
 });
 
 test('offers stay bounded, explicit listing reaches the rest, and unfollow suppresses a new offer', async () => {
@@ -229,7 +229,7 @@ test('claim discovery cancels stale reads and reports failure without retaining 
   await h.event('session_start');
   await h.command('offers');
   assert.match(h.notices.at(-1)[0], /fixture unavailable/);
-  assert.deepEqual((await h.list()).details.followed, []);
+  assert.deepEqual((await h.list()).details.goals, []);
 });
 
 function gate() {
@@ -729,7 +729,7 @@ test('multiple goals survive selection, cold resume and per-goal failures; unfol
     2,
     'following is additive and idempotent',
   );
-  assert.equal((await h.list()).details.followed.length, 2);
+  assert.equal((await h.list()).details.goals.length, 2);
   const context = (await h.context())[0].content;
   assert.match(context, /First goal/);
   assert.match(context, /Second goal/);
@@ -752,7 +752,7 @@ test('multiple goals survive selection, cold resume and per-goal failures; unfol
   await h.unfollow({id: 't-123abc'});
   assert.equal(restoreGoals(h.entries).followed.length, 1);
   assert.equal(
-    (await resumed.list()).details.followed.length,
+    (await resumed.list()).details.goals.length,
     2,
     'other sessions keep their own set',
   );
@@ -775,10 +775,7 @@ test('refresh reports whole-set health, including unselected errors and brief wa
     return snapshot(id);
   };
   await h.command('refresh');
-  assert.match(
-    h.notices.at(-1)[0],
-    /2 followed goal\(s\) refreshed.*1 need attention/,
-  );
+  assert.match(h.notices.at(-1)[0], /2 goal\(s\) refreshed.*1 need attention/);
   assert.match(h.notices.at(-1)[0], /t-123abc: Error: First goal unavailable/);
   assert.equal(h.notices.at(-1)[1], 'error');
   await h.unfollow({id: 't-123abc'});
@@ -810,7 +807,7 @@ test('unfollow cancels pending additions, retains other context, and validates e
   const cancelled = new AbortController();
   cancelled.abort();
   await assert.rejects(h.unfollow({all: true}, cancelled.signal), /cancelled/);
-  assert.equal((await h.list()).details.followed.length, 2);
+  assert.equal((await h.list()).details.goals.length, 2);
   const pending = gate();
   let initial = true;
   h.backend.show = async (_cwd, id) => {
@@ -855,10 +852,10 @@ test('saved sets reject duplicates and inconsistent selection; restoring writes 
   await h.tool(second.id);
   h.entries.push(entry(null));
   await h.event('session_tree');
-  assert.deepEqual((await h.list()).details.followed, []);
+  assert.deepEqual((await h.list()).details.goals, []);
   h.entries.pop();
   await h.event('session_tree');
-  assert.equal((await h.list()).details.followed.length, 2);
+  assert.equal((await h.list()).details.goals.length, 2);
 });
 
 test('the summary line uses native press/click handling and cannot revive stale widgets', async () => {
@@ -1142,7 +1139,7 @@ test('a stale runtime releases only its own claims and leaves the next actor exp
 const settle = () => new Promise(resolve => setImmediate(resolve));
 const goalOf = h => ({project: '/example/project', id: 't-123abc'});
 
-test('attention scope is exactly the followed goals; none reads nothing', async () => {
+test('attention scope is the followed goals; no follows and no coordination read nothing', async () => {
   const h = harness();
   await h.event('session_start');
   await h.context();
@@ -1167,8 +1164,11 @@ test('attention scope is exactly the followed goals; none reads nothing', async 
   assert.equal(listCount(), before);
 });
 
-test('a coordinated goal delivers after unfollow, across reload and tree, once', async () => {
-  const attention = attentionStore({requests: [request({goal: 't-123abc'})]});
+test('a coordinated goal stays in view after unfollow until paused, and its answer arrives once', async () => {
+  const attention = attentionStore({
+    requests: [request({goal: 't-123abc'})],
+    goals: [focused()],
+  });
   const h = harness(source(), [], 'rpc', 'fixture-session', attention);
   await h.event('session_start');
   await h.tool('t-123abc');
@@ -1178,23 +1178,37 @@ test('a coordinated goal delivers after unfollow, across reload and tree, once',
   ).owner;
   assert.match(owner, runtimeOf('fixture-session'));
   attention.state.coordinator = owner;
-  await h.unfollow({id: 't-123abc'});
   await h.event('agent_end');
   await settle();
+  const result = await h.unfollow({id: 't-123abc'});
+  assert.match(
+    result.content[0].text,
+    /this session coordinates it, so it stays in view\. Unfollowing does not pause, release or hand off a goal/,
+  );
+  assert.deepEqual(result.details.followed, []);
+  assert.deepEqual(restoreGoals(h.entries), {followed: []}, 'no follow kept');
+  const membership = async () =>
+    (await h.list()).details.goals.map(({id, followed, coordinating}) => ({
+      id,
+      followed,
+      coordinating,
+    }));
+  assert.deepEqual(await membership(), [
+    {id: 't-123abc', followed: false, coordinating: true},
+  ]);
   const kept = (await h.context())[0].content;
   assert.match(
     kept,
-    /^Goal t-123abc · project p-a+ · coordinating, not followed here/,
+    /Use one shared export interface[\s\S]*Reference slice/,
+    'its brief and tasks stay in context',
   );
   assert.match(kept, /Awaiting a person — r-0+1/);
-  assert.doesNotMatch(
-    kept,
-    /Fixture brief|Reference fixture slice/,
-    'no view sections',
-  );
+  assert.doesNotMatch(kept, /not followed/);
   const alerts = () =>
     h.emitted.filter(({channel}) => channel === 'dots:attention');
-  assert.equal(alerts().at(-1).data.requests[0].followed, false);
+  assert.deepEqual(alerts().at(-1).data.requests, [
+    {id: requestId(1), title: 'Choose the rollout scope'},
+  ]);
   await attention.source.answer(
     PROJECT,
     requestId(1),
@@ -1206,6 +1220,7 @@ test('a coordinated goal delivers after unfollow, across reload and tree, once',
   await h.event('agent_end');
   await settle();
   assert.equal(sent().length, 1);
+  assert.doesNotMatch(sent()[0].message.content, /goal_focus|not follow/);
   // Pi records a delivered notice on the branch: the receipt.
   h.entries.push({type: 'custom_message', ...sent()[0].message});
   await h.event('session_shutdown', {reason: 'reload'});
@@ -1215,16 +1230,64 @@ test('a coordinated goal delivers after unfollow, across reload and tree, once',
   await h.event('agent_end');
   await settle();
   assert.equal(sent().length, 1, 'reload and tree do not repeat it');
+  assert.deepEqual(await membership(), [
+    {id: 't-123abc', followed: false, coordinating: true},
+  ]);
   assert.match(
     (await h.context())[0].content,
-    /coordinating, not followed here[\s\S]*Saved answer, not yet incorporated — r-0+1/,
-    'its context survives reload and tree',
+    /Reference slice[\s\S]*Saved answer, not yet incorporated — r-0+1/,
+    'its view and context survive reload and tree',
   );
   assert.equal(
     attention.state.calls.findLast(call => call.op === 'coordinating').owner,
     owner,
     'reload keeps the runtime and its responsibilities',
   );
+  // Pausing ends coordination: the goal leaves the view and context.
+  attention.state.status = 'held';
+  await h.event('agent_end');
+  await settle();
+  assert.deepEqual(await membership(), []);
+  assert.deepEqual(await h.context(), []);
+});
+
+test('a goal this session coordinates joins the view without a follow; a worker never derives one', async () => {
+  const attention = attentionStore({goals: [focused()]});
+  const h = harness(source(), [], 'rpc', 'fixture-session', attention);
+  await h.event('session_start');
+  await settle();
+  assert.deepEqual((await h.list()).details.goals, []);
+  attention.state.coordinator = attention.state.calls.find(
+    call => call.op === 'coordinating',
+  ).owner;
+  const files = await h.context();
+  assert.match(
+    files[0].content,
+    /Use one shared export interface[\s\S]*Reference slice/,
+  );
+  assert.match(files[0].content, /No mandate recorded/);
+  const [goal] = (await h.list()).details.goals;
+  assert.deepEqual(
+    {id: goal.id, selected: goal.selected, followed: goal.followed},
+    {id: 't-123abc', selected: true, followed: false},
+  );
+  await h.command('show t-123abc');
+  assert.doesNotMatch(h.notices.at(-1)?.[0] ?? '', /not followed/);
+  assert.equal(
+    h.entries.filter(entry => entry.customType === FOCUS_ENTRY).length,
+    0,
+    'derived membership writes nothing to the branch',
+  );
+  const cleared = await h.unfollow({all: true});
+  assert.match(cleared.content[0].text, /^All follows cleared\./);
+  assert.equal((await h.list()).details.goals.length, 1, 'clear keeps it');
+
+  process.env.DOTS_WORKER_ID = 'w-fixture';
+  const worker = harness(source(), [], 'rpc', 'worker-session', attention);
+  await worker.event('session_start');
+  await settle();
+  assert.deepEqual(await worker.context(), []);
+  assert.deepEqual((await worker.list()).details.goals, []);
 });
 
 test('context carries saved answers and the role across tree and compaction-independent restores', async () => {

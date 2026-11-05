@@ -14,13 +14,8 @@ const text = (value: string, max = 160) =>
 
 /** Source identity, not a render hash: revisions update the same native section. */
 export function goalSectionKey(view: GoalView): string {
-  return goalRefSectionKey(view.focus.project, view.focus.id);
-}
-
-/** One goal's section key, the same whether or not it is followed. */
-export function goalRefSectionKey(project: string, id: string): string {
   const digest = createHash('sha256')
-    .update(JSON.stringify([project, id]))
+    .update(JSON.stringify([view.focus.project, view.focus.id]))
     .digest('hex');
   return `${GOAL_SECTION_PREFIX}${digest}`;
 }
