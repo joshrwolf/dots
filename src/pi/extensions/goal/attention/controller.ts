@@ -290,7 +290,7 @@ export class AttentionController {
     const goals = this.goals();
     this.stream(goals);
     // The cursor precedes the snapshot, so nothing between them is missed.
-    await Promise.all(goals.map(goal => this.follows.get(refKey(goal))?.ready));
+    await Promise.all([...this.follows.values()].map(follow => follow.ready));
     if (epoch !== this.reads || this.lifetime.signal.aborted) return;
     if (!goals.length) {
       this.reading = undefined;
