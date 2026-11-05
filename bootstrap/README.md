@@ -21,9 +21,11 @@ The selected Git path supplies committed HEAD, not working-tree changes.
 Use a credential-free Git URL instead to install published source. Mise
 remembers that selection; it does not fall back to another repository.
 
-The base sets zsh as the login shell and shares its plugins, prompt, keybindings
-and mise activation across macOS and Linux. It also includes the editor, Rex,
-theme, skills, Pi and source-built commands. Dependencies live in [tools.toml](tools.toml) and
+The base shares zsh plugins, prompt, keybindings and mise activation across
+macOS and Linux. The desktop module selects zsh as the login shell; managed
+accounts need their provider's shell configuration or a machine-module login
+profile. The base also includes the editor, Rex, theme, skills, Pi and source-built
+commands. Dependencies live in [tools.toml](tools.toml) and
 [packages.toml](packages.toml). On Mac, missing Command Line Tools open Apple's
 attended installer. Rustup owns Rust; Cargo owns the commands it builds.
 
