@@ -623,7 +623,9 @@ mod attention_view {
         let at = screen.until(at, "consumers");
         send(&mut keyboard, "\r");
         send(&mut keyboard, "\r");
-        let at = screen.until(at, "Saved");
+        // The notice, not "Answer saved": the reload after a local answer
+        // must not read as an answer from elsewhere.
+        let at = screen.until(at, "“Pick");
         let mut store = Store::open(&home.catalog()).unwrap();
         let answered = store.request(&project, &names).unwrap();
         assert_eq!(answered.state, RequestState::Answered);

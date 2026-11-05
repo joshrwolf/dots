@@ -466,13 +466,18 @@ enum Region {
     Tasks,
 }
 
-/// A request that stopped waiting while the user had it selected or drafted:
-/// a closed copy that keeps its question and the draft under its own ID.
+/// A request the latest snapshot does not list: a closed copy of one that
+/// stopped waiting while the user had it selected or drafted, keeping its
+/// question and the draft under its own ID, or the last-read copy of one
+/// whose goal could not be read.
 #[derive(Debug)]
 struct Retired {
     goal: GoalAttention,
     request: Request,
     outcome: String,
+    /// Why its goal could not be read: the request is shown as last read,
+    /// not closed, until a snapshot reads its goal again.
+    unreadable: Option<String>,
 }
 
 /// The view's whole state: a pure function of inputs and store reads.
@@ -578,9 +583,12 @@ impl Viewer {
     }
 
     /// Reads a new store snapshot, keeping selection, drafts and the user's
-    /// place. A request that stops waiting while selected or drafted is
-    /// retired: it stays listed, closed, with its original question and
-    /// draft, and nothing moves onto a replacement or selects one.
+    /// place. The snapshot is authoritative for every goal it could read: a
+    /// request it lists is shown as listed. A request missing from a goal or
+    /// project the store could not read stays as last read, marked
+    /// unreadable. A request missing from a readable scope while selected or
+    /// drafted is retired: it stays listed, closed, with its original question
+    /// and draft, and nothing moves onto a replacement or selects one.
     fn refresh(&mut self, list: std::result::Result<AttentionList, String>) {
         let list = match list {
             Ok(list) => list,
@@ -596,24 +604,36 @@ impl Viewer {
         let watched: Vec<(GoalAttention, Request)> = self
             .requests()
             .into_iter()
-            .filter(|(_, request)| {
-                request.state != RequestState::Closed
-                    && (self.selected.as_deref() == Some(request.id.as_str())
-                        || self
-                            .drafts
-                            .get(&request.id)
-                            .is_some_and(|draft| !draft.text.is_empty()))
-            })
+            .filter(|(_, request)| request.state != RequestState::Closed)
             .map(|(goal, request)| (heading(goal), request.clone()))
             .collect();
         self.list = Some(list);
+        let listed = |goals: &[GoalAttention], id: &str| {
+            goals
+                .iter()
+                .flat_map(|goal| &goal.requests)
+                .any(|request| request.id == id)
+        };
+        let goals = self
+            .list
+            .as_ref()
+            .map_or(&[][..], |list| list.goals.as_slice());
+        self.retired
+            .retain(|retired| retired.unreadable.is_none() && !listed(goals, &retired.request.id));
         for (goal, request) in watched {
-            let outstanding = self.goals().iter().any(|goal| {
-                goal.requests
-                    .iter()
-                    .any(|now| now.id == request.id && now.state != RequestState::Closed)
-            });
-            if !outstanding {
+            if listed(self.goals(), &request.id) {
+                continue;
+            }
+            if let Some(error) = self.scope_error(&request) {
+                self.retired.push(Retired {
+                    goal,
+                    request,
+                    outcome: String::new(),
+                    unreadable: Some(error),
+                });
+            } else if self.selected.as_deref() == Some(request.id.as_str())
+                || self.drafted(&request.id)
+            {
                 let replacement = self
                     .goals()
                     .iter()
@@ -626,7 +646,8 @@ impl Viewer {
         let drafts = &self.drafts;
         let selected = self.selected.as_deref();
         self.retired.retain(|retired| {
-            selected == Some(retired.request.id.as_str())
+            retired.unreadable.is_some()
+                || selected == Some(retired.request.id.as_str())
                 || drafts
                     .get(&retired.request.id)
                     .is_some_and(|draft| !draft.text.is_empty())
@@ -653,6 +674,25 @@ impl Viewer {
                 .map(|goal| (goal.project.clone(), goal.goal.clone()));
             self.task_scroll = 0;
         }
+    }
+
+    fn drafted(&self, id: &str) -> bool {
+        self.drafts
+            .get(id)
+            .is_some_and(|draft| !draft.text.is_empty())
+    }
+
+    /// Why the last snapshot could not read the request's goal, if it could not.
+    fn scope_error(&self, request: &Request) -> Option<String> {
+        self.list
+            .as_ref()?
+            .errors
+            .iter()
+            .find(|error| {
+                error.project == request.project.as_str()
+                    && error.goal.as_ref().is_none_or(|goal| *goal == request.goal)
+            })
+            .map(|error| error.error.clone())
     }
 
     /// Keeps a request that no longer waits, closed and unanswerable, so its
@@ -685,6 +725,7 @@ impl Viewer {
             goal,
             request,
             outcome: outcome.to_owned(),
+            unreadable: None,
         });
     }
 
@@ -736,6 +777,20 @@ impl Viewer {
                     text: format!("Saved your answer to “{}”.", clean_line(&request.title)),
                     tone: Tone::Info,
                 });
+                // The committed request replaces the one the answer was sent
+                // to, so the reload that follows reads as no change rather
+                // than as an answer from elsewhere.
+                let goals = self
+                    .list
+                    .iter_mut()
+                    .flat_map(|list| list.goals.iter_mut())
+                    .flat_map(|goal| goal.requests.iter_mut());
+                let retired = self.retired.iter_mut().map(|retired| &mut retired.request);
+                for slot in goals.chain(retired) {
+                    if slot.id == request.id {
+                        *slot = request.clone();
+                    }
+                }
                 return;
             }
             Err(error) => error,
@@ -1648,7 +1703,7 @@ impl Viewer {
                     )
                 }
                 Item::Other => (other_label(request).to_owned(), None),
-                Item::Context => ("Read context…".to_owned(), None),
+                Item::Context => ("Read in full…".to_owned(), None),
             })
             .collect();
         let draft = self.drafts.get(&request.id).cloned().unwrap_or_default();
@@ -1664,14 +1719,32 @@ impl Viewer {
             None if typing => 2,
             None => item_labels.len(),
         };
+        let unreadable: Vec<String> = self
+            .retired
+            .iter()
+            .find(|retired| retired.request.id == request.id)
+            .and_then(|retired| retired.unreadable.as_deref())
+            .map(|error| {
+                wrap(
+                    &format!(
+                        "Cannot read this goal now ({}); shown as last read.",
+                        clean_line(error)
+                    ),
+                    max,
+                )
+            })
+            .unwrap_or_default();
         let notice_rows = notice.as_ref().map_or(0, |(lines, _)| lines.len() + 1);
-        let fixed = 1 + action_rows + notice_rows;
+        let fixed = 1 + unreadable.len() + action_rows + notice_rows;
         let room = usize::from(area.height).saturating_sub(fixed);
         let question_rows = question.len().min(room.max(1));
         let show_rationale = !rationale.is_empty() && room >= question_rows + rationale.len() + 2;
 
         let mut rows = Rows::new(buffer, area);
         rows.text(&heading, muted());
+        for line in &unreadable {
+            rows.text(line, warning());
+        }
         for (index, line) in question.iter().take(question_rows).enumerate() {
             let line = if index + 1 == question_rows && question_rows < question.len() {
                 fit(&format!("{line} …"), max)
@@ -1699,7 +1772,7 @@ impl Viewer {
                 rows.text(line, *style);
             }
             if let Some(row) = rows.text(
-                "› Read context…",
+                "› Read in full…",
                 if self.focus == Focus::Choices {
                     bold()
                 } else {
@@ -1776,7 +1849,7 @@ impl Viewer {
         if let Some(retired) = self
             .retired
             .iter()
-            .find(|retired| retired.request.id == request.id)
+            .find(|retired| retired.request.id == request.id && retired.unreadable.is_none())
         {
             add(&retired.outcome, warning());
         } else {
@@ -1817,6 +1890,21 @@ impl Viewer {
                 .into_iter()
                 .map(|line| (line, Style::new())),
         );
+        // Choice rows clip to one line; here every label and detail is whole.
+        if !request.choices.is_empty() {
+            lines.push((String::new(), Style::new()));
+            lines.push(("Choices".to_owned(), muted()));
+            let inner = max.saturating_sub(2).max(1);
+            for choice in &request.choices {
+                for (index, line) in wrap(&choice.label, inner).into_iter().enumerate() {
+                    let lead = if index == 0 { "• " } else { "  " };
+                    lines.push((format!("{lead}{line}"), bold()));
+                }
+                for line in choice.detail.iter().flat_map(|detail| wrap(detail, inner)) {
+                    lines.push((format!("  {line}"), muted()));
+                }
+            }
+        }
         let rationale = rationale(request, max);
         if !rationale.is_empty() {
             lines.push((String::new(), Style::new()));
@@ -2523,6 +2611,190 @@ mod tests {
             "{shown}"
         );
         assert!(shown.contains("Your unsent draft: mine"), "{shown}");
+    }
+
+    /// "r-1" of `two()` as the store returns it once answered with its first choice.
+    fn answered_first() -> Request {
+        let mut request = two().goals.remove(0).requests.remove(0);
+        request.state = RequestState::Answered;
+        request.answer = Some(Answer {
+            content: AnswerContent {
+                choice: Some("update".into()),
+                text: None,
+                source: Source::Ui,
+                provenance: "dots attention view --scope global".into(),
+                interpretation: None,
+            },
+            at: 2,
+            by: Some(HUMAN.into()),
+        });
+        request
+    }
+
+    /// `two()` after "r-1" was answered.
+    fn two_answered() -> AttentionList {
+        let mut list = two();
+        list.goals[0].requests[0] = answered_first();
+        list
+    }
+
+    fn unreadable(goal: Option<&str>) -> ScopeError {
+        ScopeError {
+            project: project().as_str().into(),
+            goal: goal.map(Into::into),
+            error: "database disk image is malformed".into(),
+        }
+    }
+
+    #[test]
+    fn a_local_answer_still_reads_as_saved_after_the_reload() {
+        let mut view = viewer(two());
+        press(&mut view, KeyCode::Enter);
+        let Effect::Answer { request, .. } = press(&mut view, KeyCode::Enter) else {
+            panic!("the first choice answers");
+        };
+        // Session::apply: the committed answer, then the reload.
+        view.answered(&request, Ok(answered_first()));
+        view.refresh(Ok(two_answered()));
+        let notice = view.notice.clone().unwrap();
+        assert_eq!(notice.text, "Saved your answer to “Public export names”.");
+        assert_eq!(notice.tone, Tone::Info);
+        let shown = screen(&mut view, 120, 30);
+        assert!(!shown.contains("elsewhere"), "{shown}");
+        assert!(
+            shown.contains("Answer saved: Update consumers together"),
+            "{shown}"
+        );
+
+        // Positive control: an answer from another session while this one
+        // only looked.
+        let mut view = viewer(two());
+        view.refresh(Ok(two_answered()));
+        let notice = view.notice.clone().unwrap();
+        assert!(
+            notice.text.contains("answered elsewhere"),
+            "{}",
+            notice.text
+        );
+        assert_eq!(notice.tone, Tone::Warning);
+    }
+
+    #[test]
+    fn an_unreadable_goal_keeps_its_requests_as_last_read_until_it_reads_again() {
+        let mut view = viewer(two());
+        press(&mut view, KeyCode::Enter);
+        press(&mut view, KeyCode::Down);
+        press(&mut view, KeyCode::Down);
+        press(&mut view, KeyCode::Enter);
+        type_text(&mut view, "mine");
+        for _ in 0..2 {
+            let mut failed = list(Vec::new());
+            failed.errors.push(unreadable(None));
+            view.refresh(Ok(failed));
+            let (_, now) = view.current().unwrap();
+            assert_eq!((now.id.as_str(), now.state), ("r-1", RequestState::Open));
+            assert_eq!(view.focus, Focus::Text, "typing goes on");
+            assert_eq!(view.waiting(), 2);
+            assert_eq!(view.drafts["r-1"].text, "mine");
+            let shown = screen(&mut view, 120, 30);
+            assert!(shown.contains("Cannot read this goal now"), "{shown}");
+            assert!(!shown.contains("No longer waits"), "{shown}");
+            assert!(!shown.contains("nothing was sent"), "{shown}");
+        }
+        view.refresh(Ok(two()));
+        assert!(view.retired.is_empty());
+        let (_, now) = view.current().unwrap();
+        assert_eq!((now.id.as_str(), now.state), ("r-1", RequestState::Open));
+        assert_eq!(view.drafts["r-1"].text, "mine");
+        let shown = screen(&mut view, 120, 30);
+        assert!(!shown.contains("Cannot read"), "{shown}");
+        assert!(shown.contains("Answer: mine"), "{shown}");
+        match press(&mut view, KeyCode::Enter) {
+            Effect::Answer { request, text, .. } => {
+                assert_eq!(request, "r-1");
+                assert_eq!(text.as_deref(), Some("mine"));
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // Healthy data stays authoritative: answered elsewhere during the outage.
+        let mut failed = list(Vec::new());
+        failed.errors.push(unreadable(Some("t-goal")));
+        view.refresh(Ok(failed));
+        view.refresh(Ok(two_answered()));
+        let (_, now) = view.current().unwrap();
+        assert_eq!(now.state, RequestState::Answered);
+        assert!(view.retired.is_empty());
+    }
+
+    #[test]
+    fn a_request_missing_from_a_readable_goal_still_stops_waiting() {
+        for error in [
+            unreadable(Some("t-other")),
+            ScopeError {
+                project: "p-00000000000000000000000000000002".into(),
+                goal: None,
+                error: "unsupported schema".into(),
+            },
+        ] {
+            let mut view = viewer(two());
+            let mut partial = two();
+            partial.goals[0].requests.remove(0);
+            partial.errors.push(error);
+            view.refresh(Ok(partial));
+            let (_, now) = view.current().unwrap();
+            assert_eq!((now.id.as_str(), now.state), ("r-1", RequestState::Closed));
+            let shown = screen(&mut view, 120, 30);
+            assert!(shown.contains("No longer waits for you"), "{shown}");
+            assert!(!shown.contains("Cannot read this goal"), "{shown}");
+            assert_eq!(view.waiting(), 1);
+        }
+    }
+
+    #[test]
+    fn narrow_choices_that_share_a_prefix_can_be_read_in_full() {
+        let mut deploy = request(
+            "r-1",
+            "Publish target",
+            &[
+                (
+                    "prod",
+                    "Publish the artifact to the designated production account",
+                ),
+                (
+                    "staging",
+                    "Publish the artifact to the designated staging account",
+                ),
+            ],
+        );
+        deploy.choices[0].detail =
+            Some("Uses the release signing key.\nVisible to customers.".into());
+        let mut view = viewer(list(vec![goal(vec![deploy], Some("pi-coordinator"))]));
+        press(&mut view, KeyCode::Enter);
+        let rows = screen(&mut view, 40, 20);
+        assert!(!rows.contains("production"), "clipped rows:\n{rows}");
+        assert!(!rows.contains("staging"), "clipped rows:\n{rows}");
+        press(&mut view, KeyCode::End);
+        assert!(screen(&mut view, 40, 20).contains("› Read in full…"));
+        press(&mut view, KeyCode::Enter);
+        assert_eq!(view.focus, Focus::Context);
+        let mut seen = String::new();
+        for _ in 0..12 {
+            seen.push_str(&screen(&mut view, 40, 20));
+            press(&mut view, KeyCode::Down);
+        }
+        for text in [
+            "Publish target: which way should this",
+            "• Publish the artifact to the",
+            "production account",
+            "Uses the release signing key.",
+            "Visible to customers.",
+            "staging account",
+        ] {
+            assert!(seen.contains(text), "{text:?} never shown:\n{seen}");
+        }
+        assert_eq!(press(&mut view, KeyCode::Enter), Effect::None);
+        assert_eq!(view.focus, Focus::Choices);
     }
 
     #[test]
