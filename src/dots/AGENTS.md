@@ -5,8 +5,10 @@
   shared behavior lives with its owner under `src/`.
 - `dots` groups operations by integration (`dots github ci`). Add a subcommand
   only for a concrete workflow; avoid generic API passthrough commands.
-- Help must work offline. Commands are noninteractive with bounded output,
-  no pager, and explicit follow-up commands when results are partial.
+- Help must work offline. Automation commands are noninteractive with bounded
+  output, no pager, and explicit follow-up commands when results are partial.
+  Human terminal views use explicit `view` subcommands, reject non-TTY/JSON
+  invocation, and never acquire coordination or execution authority by opening.
 - Output/reference formats have no compatibility guarantee; change them directly
   rather than adding version markers or compatibility layers. Separate stdout
   data from stderr errors. Failed CI is not command failure; validate arguments

@@ -80,17 +80,20 @@ that code is correct or a PR is merged. Reconcile them when resuming. Only the
 parent session edits tasks; workers return results for the parent to record.
 
 Claims are transactional. Claims and events default to the invoking agent's
-live runtime owner, else its session; pass `--owner` for direct CLI use. A claim lasts until its owner releases it, hands the
-task off for review, or closes it; Pi releases a session's claims when the
-session ends, and `release --all` does the same for other hosts. Another owner's
-claim protects edits and status changes unless forced; `claim --take` takes over
-a claim whose session has stopped.
+live runtime owner, else its session; pass `--owner` for direct CLI use. A claim
+lasts until its owner releases it, hands the task off for review, or closes it.
+Pi releases only the ending runtime's claims; reload preserves them.
+`release --all` releases the invoking owner's claims across projects. Outside
+goals, another owner's claim protects edits and status changes unless forced.
+Goal changes always require the current coordinator, including with `--force`.
+Takeover requires reconciling the previous work; `--take` does not stop commands
+or establish that a process ended.
 
-`ready` and `claim --next` select unblocked, unclaimed, unheld open leaves,
-including those with external references, and skip goal work coordinated by
-another owner. Grouping tasks can report readiness for closure
-but are never handed out as leaf work.
-`claim --next` fails when nothing is ready.
+`ready` lists unblocked, unclaimed, unheld open leaves, including those with
+external references. It reports eligibility, not coordinator authority.
+`claim --next` additionally skips goal work the invoking owner does not
+coordinate, and fails when it cannot claim a ready leaf. Grouping tasks can
+report readiness for closure but are never handed out as leaf work.
 
 Holding a group holds every descendant, and accepting or claiming held work
 fails even with `--force`. Adding a dependency to claimed
