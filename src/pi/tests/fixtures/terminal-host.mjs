@@ -1049,7 +1049,7 @@ async function goalFlow() {
     'remove one follow',
   );
   await fresh('/goal unfocus');
-  await wait(() => shows('Goal unfocused'), 'unfocus');
+  await wait(() => shows('All follows cleared'), 'unfocus');
   await fresh('/goal show');
   await wait(() => shows('No focused goal'), 'unfocused inspection');
   await fresh('/goal evidence t-456def 9');
