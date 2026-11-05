@@ -117,6 +117,7 @@ impl Store {
                 status: task.status.as_str(),
             });
         }
+        store::authorize(&tx, id, actor.name)?;
         if !outcome.force
             && let Some(owner) = task.claimed_by_other(actor.name)
         {
@@ -124,6 +125,18 @@ impl Store {
                 id: id.into(),
                 owner: owner.into(),
             });
+        }
+        // Acceptance waits on held ancestors and human answers, even when forced.
+        if outcome.operation.status().is_some()
+            && let Some(reason) = task.held_because()
+        {
+            return Err(Error::NotReady {
+                id: id.into(),
+                reason,
+            });
+        }
+        if outcome.operation == Operation::Done && task.is_goal_root() {
+            store::require_settled_goal(&tx, id)?;
         }
         if outcome.operation.status().is_some()
             && !outcome.force

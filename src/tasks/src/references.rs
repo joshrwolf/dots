@@ -55,6 +55,7 @@ impl Store {
         reference.validate()?;
         let tx = self.write()?;
         let task = store::load(&tx, project, id)?;
+        store::authorize(&tx, id, actor.name)?;
         check_owner(&task, actor, force)?;
         tx.execute(
             "INSERT INTO task_refs(task,url,label) VALUES(?1,?2,?3)
@@ -87,6 +88,7 @@ impl Store {
     ) -> Result<Task, Error> {
         let tx = self.write()?;
         let task = store::load(&tx, project, id)?;
+        store::authorize(&tx, id, actor.name)?;
         check_owner(&task, actor, force)?;
         if tx.execute(
             "DELETE FROM task_refs WHERE task=?1 AND url=?2",

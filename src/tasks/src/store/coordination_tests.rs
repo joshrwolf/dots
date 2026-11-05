@@ -395,12 +395,26 @@ fn references_are_scoped_claim_protected_and_do_not_change_readiness() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario covers review, acceptance and visibility"
+)]
 fn review_children_prevent_parent_acceptance_and_remain_visible() {
     let mut store = store();
     let root = store
         .create_goal(&project(), "goal", "briefs/brief.md", actor(1))
         .unwrap()
         .root;
+    store
+        .coordinate(
+            &project(),
+            &root.id,
+            actor(1).name.unwrap(),
+            false,
+            false,
+            1,
+        )
+        .unwrap();
     let slice = store
         .add(
             &project(),
@@ -426,7 +440,6 @@ fn review_children_prevent_parent_acceptance_and_remain_visible() {
         )
         .map(|receipt| receipt.task)
         .unwrap();
-    assert_eq!(store.unclosed_descendants(&project(), &root.id).unwrap(), 1);
     for status in [Status::Review, Status::Done] {
         assert!(matches!(
             store

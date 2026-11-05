@@ -20,7 +20,7 @@ pub(crate) fn run(
 ) -> Result<String> {
     let mut store = crate::project::open()?;
     let project = crate::project::resolve(&mut store, directory, selected)?;
-    let session = crate::agent::session();
+    let session = crate::agent::owner();
     let actor = Actor {
         name: owner
             .or(session.as_deref())

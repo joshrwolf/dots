@@ -97,6 +97,7 @@ pub(super) fn associate(
     if matches!(association, Association::Attach) == attached(tx, project, id, slug)? {
         return Ok(false);
     }
+    store::authorize(tx, id, actor.name)?;
     if let Some(owner) = task.claimed_by_other(actor.name) {
         return Err(Error::OwnedByAnother {
             id: id.into(),

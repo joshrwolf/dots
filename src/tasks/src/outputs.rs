@@ -149,6 +149,7 @@ impl Store {
         let _lock = MutationLock::acquire(&root.join("mutation.lock"))?;
         if let Some(task) = input.task {
             let existing = self.get(project, task)?;
+            self.check_authority(task, actor)?;
             if !output_discovery::attached(&self.connection, project, task, input.slug)?
                 && let Some(owner) = existing.claimed_by_other(actor.name)
             {

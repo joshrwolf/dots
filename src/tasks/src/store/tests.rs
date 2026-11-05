@@ -275,7 +275,6 @@ fn child_counts_and_descendants_track_closure() {
     let root = add(&mut store, "root");
     assert_eq!(root.children, 0);
     assert_eq!(root.unclosed_children, 0);
-    assert_eq!(store.unclosed_descendants(&project(), &root.id).unwrap(), 0);
 
     let child = store
         .add(
@@ -301,7 +300,6 @@ fn child_counts_and_descendants_track_closure() {
         .unwrap();
     let root = store.get(&project(), &root.id).unwrap();
     assert_eq!((root.children, root.unclosed_children), (1, 1));
-    assert_eq!(store.unclosed_descendants(&project(), &root.id).unwrap(), 2);
     assert!(!root.ready());
 
     store
@@ -318,7 +316,6 @@ fn child_counts_and_descendants_track_closure() {
         )
         .map(|receipt| receipt.task)
         .unwrap();
-    assert_eq!(store.unclosed_descendants(&project(), &root.id).unwrap(), 1);
     store
         .write_result(
             &project(),
@@ -335,7 +332,6 @@ fn child_counts_and_descendants_track_closure() {
         .unwrap();
     let root = store.get(&project(), &root.id).unwrap();
     assert_eq!((root.children, root.unclosed_children), (1, 0));
-    assert_eq!(store.unclosed_descendants(&project(), &root.id).unwrap(), 0);
     assert!(root.ready());
 }
 

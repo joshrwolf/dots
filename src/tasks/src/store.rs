@@ -13,6 +13,9 @@ pub const STORE_PATH: &str = "dots/workspace.sqlite3";
 
 const ID_ATTEMPTS: usize = 16;
 
+/// The only catalog schema this build reads or writes.
+const SCHEMA: i64 = 9;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
@@ -61,7 +64,7 @@ pub enum Error {
     Unchanged { id: String, status: &'static str },
     #[error("task {id} is {status}; reopen it before recording another result")]
     Closed { id: String, status: &'static str },
-    #[error("task {id} has an unreadable {field}")]
+    #[error("{id} has an unreadable {field}")]
     Corrupt { id: String, field: &'static str },
     #[error("could not allocate a fresh task id")]
     IdSpaceExhausted,
@@ -81,6 +84,41 @@ pub enum Error {
     AncestorCycle { id: String, through: String },
     #[error("task {id} already waits on {blocked_by}")]
     DuplicateDependency { id: String, blocked_by: String },
+    #[error(
+        "task {id} belongs to goal {goal}, coordinated by {coordinator}; only its coordinator changes goal work"
+    )]
+    NotCoordinator {
+        id: String,
+        goal: String,
+        coordinator: String,
+    },
+    #[error(
+        "task {id} belongs to goal {goal}, which has no coordinator; run dots task goal coordinate {goal} first, with --resume if it is held or closed"
+    )]
+    Uncoordinated { id: String, goal: String },
+    #[error("task {0} is a goal root; coordinate it with dots task goal coordinate {0}")]
+    GoalRoot(String),
+    #[error("goal {goal} is {status}; pass --resume to reopen and coordinate it")]
+    GoalNotOpen { goal: String, status: &'static str },
+    #[error(
+        "goal {goal} has claims held by others: {claims}; pass --take if those sessions have stopped"
+    )]
+    ClaimsHeld { goal: String, claims: String },
+    #[error("{id} is named by outstanding requests {requests}; incorporate or withdraw them first")]
+    Outstanding { id: String, requests: String },
+    #[error("request {0} does not exist in this project")]
+    RequestNotFound(String),
+    #[error("request {id} {reason}")]
+    RequestConflict { id: String, reason: String },
+    /// An open-only transition met a request that moved on; `replacement`
+    /// names the request that superseded it.
+    #[error("request {id} {}", crate::attention::not_open_reason(*state, *closure, replacement.as_deref()))]
+    RequestNotOpen {
+        id: String,
+        state: RequestState,
+        closure: Option<crate::attention::ClosureKind>,
+        replacement: Option<String>,
+    },
 }
 
 /// Stable local project identity, independent of checkout location and display name.
@@ -200,6 +238,72 @@ pub struct Task {
     pub unclosed_children: u64,
     /// Most recent history entry, so lists carry the last reason or note.
     pub last_event: Option<Event>,
+    /// Root of the goal this task belongs to (itself for a goal root).
+    pub goal: Option<String>,
+    /// Eligibility holds from outside the task's own prerequisites.
+    pub holds: Vec<Hold>,
+}
+
+/// Why work cannot proceed although its own prerequisites may be met.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Hold {
+    /// An ancestor is held; its whole subtree waits.
+    HeldAncestor { task: String },
+    /// An open or answered, not yet incorporated, request names this task or an ancestor.
+    Request {
+        request: String,
+        task: String,
+        state: RequestState,
+    },
+}
+
+impl Hold {
+    fn describe(&self) -> String {
+        match self {
+            Self::HeldAncestor { task } => format!("ancestor {task} is held"),
+            Self::Request {
+                request,
+                task,
+                state: RequestState::Answered,
+            } => format!(
+                "request {request} on {task} is answered but not yet incorporated by the coordinator"
+            ),
+            Self::Request { request, task, .. } => {
+                format!("request {request} on {task} awaits an answer")
+            }
+        }
+    }
+}
+
+/// Lifecycle of an attention request; transitions only move forward.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestState {
+    Open,
+    Answered,
+    Closed,
+}
+
+impl RequestState {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Answered => "answered",
+            Self::Closed => "closed",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "open" => Some(Self::Open),
+            "answered" => Some(Self::Answered),
+            "closed" => Some(Self::Closed),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -247,6 +351,9 @@ impl Task {
         if !matches!(self.status, Status::Open | Status::Review) {
             return Some(format!("status is {}", self.status.as_str()));
         }
+        if let Some(reason) = self.held_because() {
+            return Some(reason);
+        }
         if !self.blocked_by.is_empty() {
             return Some(self.blockers());
         }
@@ -260,6 +367,24 @@ impl Task {
         None
     }
 
+    /// The holds on this task, described, if any.
+    #[must_use]
+    pub fn held_because(&self) -> Option<String> {
+        (!self.holds.is_empty()).then(|| {
+            self.holds
+                .iter()
+                .map(Hold::describe)
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+    }
+
+    /// Whether this task is the root of an attached goal.
+    #[must_use]
+    pub fn is_goal_root(&self) -> bool {
+        self.goal.as_deref() == Some(self.id.as_str())
+    }
+
     /// Claim holder other than `owner`, if any.
     pub(super) fn claimed_by_other(&self, owner: Option<Owner<'_>>) -> Option<&str> {
         self.owner
@@ -270,6 +395,9 @@ impl Task {
     /// Why this task is not selectable by `claim --next`. Review needs explicit selection.
     #[must_use]
     pub fn not_ready_because(&self) -> Option<String> {
+        if self.is_goal_root() {
+            return Some("goal root; dots task goal coordinate takes coordination".into());
+        }
         if let Some(reason) = self.not_workable() {
             return Some(reason);
         }
@@ -309,11 +437,17 @@ pub enum EventKind {
     OutputDetached,
     GoalAttached,
     GoalDetached,
+    RequestRaised,
+    RequestAnswered,
+    RequestWithdrawn,
+    RequestSuperseded,
+    RequestIncorporated,
+    DecisionRecorded,
 }
 
 impl EventKind {
     /// Every kind, in the order help and listings present them.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 24] = [
         Self::Created,
         Self::Updated,
         Self::Claimed,
@@ -332,6 +466,12 @@ impl EventKind {
         Self::OutputDetached,
         Self::GoalAttached,
         Self::GoalDetached,
+        Self::RequestRaised,
+        Self::RequestAnswered,
+        Self::RequestWithdrawn,
+        Self::RequestSuperseded,
+        Self::RequestIncorporated,
+        Self::DecisionRecorded,
     ];
 
     /// The stored and printed name.
@@ -356,6 +496,12 @@ impl EventKind {
             Self::OutputDetached => "output-detached",
             Self::GoalAttached => "goal_attached",
             Self::GoalDetached => "goal_detached",
+            Self::RequestRaised => "request-raised",
+            Self::RequestAnswered => "request-answered",
+            Self::RequestWithdrawn => "request-withdrawn",
+            Self::RequestSuperseded => "request-superseded",
+            Self::RequestIncorporated => "request-incorporated",
+            Self::DecisionRecorded => "decision-recorded",
         }
     }
 }
@@ -462,7 +608,7 @@ impl Store {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version != 8 {
+        if version != SCHEMA {
             return Err(Error::Schema(version));
         }
         Self::initialize(connection)
@@ -533,13 +679,36 @@ impl Store {
                  CREATE TABLE event_evidence(event INTEGER NOT NULL REFERENCES events(seq), project TEXT NOT NULL, slug TEXT NOT NULL, digest TEXT NOT NULL, PRIMARY KEY(event,project,slug,digest), FOREIGN KEY(project,slug,digest) REFERENCES output_revisions(project,slug,digest));
                  CREATE UNIQUE INDEX result_predecessor ON events(task,COALESCE(predecessor,0)) WHERE result IS NOT NULL;
                  CREATE TABLE purged_digests(project TEXT NOT NULL REFERENCES projects(id), digest TEXT NOT NULL, at INTEGER NOT NULL, actor TEXT, PRIMARY KEY(project,digest));
-                 PRAGMA user_version=8;",
+                 CREATE TABLE requests(
+                    id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
+                    key TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, question TEXT NOT NULL, context TEXT, recommendation TEXT,
+                    state TEXT NOT NULL, created_at INTEGER NOT NULL, created_by TEXT, supersedes TEXT UNIQUE REFERENCES requests(id),
+                    answer_choice TEXT, answer_text TEXT, answer_source TEXT, answer_provenance TEXT, answer_interpretation TEXT,
+                    answered_at INTEGER, answered_by TEXT,
+                    closure TEXT, closed_at INTEGER, closed_by TEXT, close_reason TEXT);
+                 CREATE UNIQUE INDEX requests_key ON requests(goal,key) WHERE closure IS NOT 'superseded';
+                 CREATE INDEX requests_project ON requests(project,state);
+                 CREATE TABLE request_choices(request TEXT NOT NULL REFERENCES requests(id), position INTEGER NOT NULL, id TEXT NOT NULL, label TEXT NOT NULL, detail TEXT, PRIMARY KEY(request,position), UNIQUE(request,id));
+                 CREATE TABLE request_tasks(request TEXT NOT NULL REFERENCES requests(id), task TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY(request,task));
+                 CREATE INDEX request_tasks_task ON request_tasks(task);
+                 CREATE TABLE decisions(
+                    id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
+                    kind TEXT NOT NULL, decision TEXT NOT NULL, human_text TEXT, human_source TEXT, human_provenance TEXT,
+                    request TEXT UNIQUE REFERENCES requests(id), at INTEGER NOT NULL, actor TEXT);
+                 CREATE INDEX decisions_goal ON decisions(goal,kind);
+                 PRAGMA user_version=9;",
             )?,
-            8 => {}
+            SCHEMA => {}
             other => return Err(Error::Schema(other)),
         }
         tx.commit()?;
         Ok(Self { connection })
+    }
+
+    /// Early goal-authority check for operations that do work before their write transaction.
+    pub(super) fn check_authority(&mut self, id: &str, actor: Actor<'_>) -> Result<(), Error> {
+        let tx = self.connection.transaction()?;
+        authorize(&tx, id, actor.name)
     }
 
     pub(super) fn write(&mut self) -> Result<Transaction<'_>, Error> {
@@ -595,8 +764,9 @@ impl Store {
         Ok(tasks)
     }
 
-    /// Unclaimed leaf tasks below `parent`, oldest first. Grouping tasks are
-    /// excluded because `claim_next` never hands them out.
+    /// Unclaimed, eligible leaf tasks below `parent`, oldest first. Grouping
+    /// tasks and goal roots are excluded because `claim_next` never hands them
+    /// out; whether the caller coordinates a task's goal is checked on claim.
     pub fn ready(&mut self, project: &Project, parent: Option<&str>) -> Result<Vec<Task>, Error> {
         let open = self.list(
             project,
@@ -615,7 +785,8 @@ impl Store {
     }
 
     /// Atomically claim a task. Claiming one's own task again changes nothing;
-    /// another owner's claim requires `take`.
+    /// another owner's claim requires `take`. A goal task is claimable only by
+    /// its goal's coordinator; goal roots are coordinated, never claimed.
     pub fn claim(
         &mut self,
         project: &Project,
@@ -626,13 +797,18 @@ impl Store {
     ) -> Result<Task, Error> {
         let tx = self.write()?;
         let task = load(&tx, project, id)?;
+        if task.is_goal_root() {
+            return Err(Error::GoalRoot(task.id));
+        }
+        authorize(&tx, id, Some(owner))?;
         take(&tx, &task, owner, take_over, now)?;
         let claimed = load(&tx, project, id)?;
         tx.commit()?;
         Ok(claimed)
     }
 
-    /// Atomically claim the oldest ready task, if any.
+    /// Atomically claim the oldest ready task, if any, skipping goal work the
+    /// owner does not coordinate.
     pub fn claim_next(
         &mut self,
         project: &Project,
@@ -653,7 +829,7 @@ impl Store {
         };
         for id in ids {
             let task = load(&tx, project, &id)?;
-            if task.children == 0 && task.ready() {
+            if task.children == 0 && task.ready() && authorize(&tx, &id, Some(owner)).is_ok() {
                 take(&tx, &task, owner, false, now)?;
                 let claimed = load(&tx, project, &id)?;
                 tx.commit()?;
@@ -722,6 +898,7 @@ impl Store {
         }
         let tx = self.write()?;
         let before = load(&tx, project, id)?;
+        authorize(&tx, id, actor.name)?;
         if !force && let Some(owner) = before.claimed_by_other(actor.name) {
             return Err(Error::OwnedByAnother {
                 id: id.into(),
@@ -757,13 +934,19 @@ impl Store {
                 ));
             }
             if let Some(parent) = parent {
-                load(&tx, project, parent)?;
+                let target = load(&tx, project, parent)?;
                 if parent == id || descends_from(&tx, parent, id)? {
                     return Err(Error::AncestorCycle {
                         id: id.into(),
                         through: parent.clone(),
                     });
                 }
+                authorize(&tx, parent, actor.name)?;
+                if target.goal != before.goal {
+                    leaving_goal(&tx, id)?;
+                }
+            } else if before.goal.is_some() && !before.is_goal_root() {
+                leaving_goal(&tx, id)?;
             }
             tx.execute(
                 "UPDATE tasks SET parent=?2 WHERE id=?1",
@@ -807,6 +990,10 @@ impl Store {
         let task = load(&tx, project, id)?;
         if matches!(status, Status::Review | Status::Done) {
             return Err(Error::Invalid("review and done require a result"));
+        }
+        authorize(&tx, id, actor.name)?;
+        if status.is_closed() && task.is_goal_root() {
+            require_settled_goal(&tx, id)?;
         }
         if task.status == status {
             return Err(Error::Unchanged {
@@ -868,6 +1055,7 @@ impl Store {
         let tx = self.write()?;
         load(&tx, project, id)?;
         load(&tx, project, blocked_by)?;
+        authorize(&tx, id, actor.name)?;
         if reaches(&tx, blocked_by, id)? {
             return Err(Error::Cycle {
                 id: id.into(),
@@ -900,6 +1088,7 @@ impl Store {
     ) -> Result<Task, Error> {
         let tx = self.write()?;
         load(&tx, project, id)?;
+        authorize(&tx, id, actor.name)?;
         if tx.execute(
             "DELETE FROM deps WHERE task=?1 AND blocked_by=?2",
             params![id, blocked_by],
@@ -968,19 +1157,6 @@ impl Store {
             )?,
         };
         Ok(EventPage { events, through })
-    }
-
-    /// Unclosed descendants, for warning before holding a grouping task.
-    pub fn unclosed_descendants(&mut self, project: &Project, id: &str) -> Result<u64, Error> {
-        let tx = self.connection.transaction()?;
-        load(&tx, project, id)?;
-        let count: i64 = tx.query_row(
-            "WITH RECURSIVE below(id) AS (SELECT id FROM tasks WHERE parent=?1 UNION SELECT tasks.id FROM tasks JOIN below ON tasks.parent=below.id)
-             SELECT COUNT(*) FROM tasks WHERE id IN below AND status NOT IN ('done','dropped')",
-            params![id],
-            |row| row.get(0),
-        )?;
-        Ok(u64::try_from(count).expect("SQLite COUNT must be nonnegative"))
     }
 
     pub fn events(
@@ -1097,11 +1273,12 @@ pub(super) fn insert_task(
     }
     if let Some(parent) = &task.parent {
         load(tx, project, parent)?;
+        authorize(tx, parent, actor.name)?;
     }
     for blocker in &task.blocked_by {
         load(tx, project, blocker)?;
     }
-    let id = fresh_id(tx)?;
+    let id = fresh_id(tx, "t", "tasks")?;
     tx.execute(
         "INSERT INTO tasks(id,project,parent,title,body,status,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,'open',?6,?6)",
         params![id, project.0, task.parent, task.title.trim(), task.body, actor.now],
@@ -1137,13 +1314,18 @@ pub(super) fn record(
     Ok(())
 }
 
-fn fresh_id(tx: &Transaction<'_>) -> Result<String, Error> {
+/// A random `prefix-<32 hex>` identifier not yet used in `table`.
+pub(super) fn fresh_id(
+    tx: &Transaction<'_>,
+    prefix: &str,
+    table: &'static str,
+) -> Result<String, Error> {
     for _ in 0..ID_ATTEMPTS {
         let suffix: String =
             tx.query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
-        let id = format!("t-{suffix}");
+        let id = format!("{prefix}-{suffix}");
         let taken: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1)",
+            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id=?1)"),
             params![id],
             |row| row.get(0),
         )?;
@@ -1152,6 +1334,127 @@ fn fresh_id(tx: &Transaction<'_>) -> Result<String, Error> {
         }
     }
     Err(Error::IdSpaceExhausted)
+}
+
+/// Root of the goal `id` belongs to, and that root's current claim.
+pub(super) fn membership(
+    tx: &Transaction<'_>,
+    id: &str,
+) -> Result<Option<(String, Option<String>)>, Error> {
+    Ok(tx
+        .query_row(
+            "WITH RECURSIVE chain(id) AS (SELECT ?1 UNION SELECT tasks.parent FROM tasks JOIN chain ON tasks.id=chain.id WHERE tasks.parent IS NOT NULL)
+             SELECT tasks.id, tasks.owner FROM tasks JOIN goals ON goals.root=tasks.id WHERE tasks.id IN chain",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
+}
+
+/// Require `actor` to coordinate the goal `id` belongs to, if any. Tasks
+/// outside goals keep ordinary claim-based ownership.
+pub(super) fn authorize(
+    tx: &Transaction<'_>,
+    id: &str,
+    actor: Option<Owner<'_>>,
+) -> Result<(), Error> {
+    let Some((goal, coordinator)) = membership(tx, id)? else {
+        return Ok(());
+    };
+    match coordinator {
+        Some(current) if actor.is_some_and(|actor| actor.as_str() == current) => Ok(()),
+        Some(coordinator) => Err(Error::NotCoordinator {
+            id: id.into(),
+            goal,
+            coordinator,
+        }),
+        None => Err(Error::Uncoordinated {
+            id: id.into(),
+            goal,
+        }),
+    }
+}
+
+/// Open or answered requests of `goal`, oldest first.
+pub(super) fn outstanding_requests(tx: &Transaction<'_>, goal: &str) -> Result<Vec<String>, Error> {
+    let mut statement = tx.prepare(
+        "SELECT id FROM requests WHERE goal=?1 AND state IN ('open','answered') ORDER BY created_at, rowid",
+    )?;
+    Ok(statement
+        .query_map([goal], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?)
+}
+
+/// A goal root may close or lose its goal only once no request is outstanding,
+/// whichever task the request names; `force` never bypasses this.
+pub(super) fn require_settled_goal(tx: &Transaction<'_>, goal: &str) -> Result<(), Error> {
+    let requests = outstanding_requests(tx, goal)?;
+    if requests.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Outstanding {
+            id: goal.into(),
+            requests: requests.join(", "),
+        })
+    }
+}
+
+/// Refuse to move a subtree out of its goal while a request names any of it.
+fn leaving_goal(tx: &Transaction<'_>, id: &str) -> Result<(), Error> {
+    let mut statement = tx.prepare(
+        "WITH RECURSIVE subtree(id) AS (SELECT ?1 UNION SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent=subtree.id)
+         SELECT DISTINCT requests.id FROM request_tasks JOIN requests ON requests.id=request_tasks.request
+         WHERE request_tasks.task IN subtree AND requests.state IN ('open','answered') ORDER BY requests.id",
+    )?;
+    let requests = statement
+        .query_map([id], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+    if requests.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Outstanding {
+            id: id.into(),
+            requests: requests.join(", "),
+        })
+    }
+}
+
+/// Held ancestors and unresolved requests on the task or an ancestor.
+fn holds(tx: &Transaction<'_>, id: &str) -> Result<Vec<Hold>, Error> {
+    let mut holds = Vec::new();
+    let mut statement = tx.prepare(
+        "WITH RECURSIVE chain(id, depth) AS (SELECT parent, 1 FROM tasks WHERE id=?1 AND parent IS NOT NULL
+            UNION SELECT tasks.parent, chain.depth+1 FROM tasks JOIN chain ON tasks.id=chain.id WHERE tasks.parent IS NOT NULL)
+         SELECT tasks.id FROM tasks JOIN chain ON chain.id=tasks.id WHERE tasks.status='held' ORDER BY chain.depth",
+    )?;
+    for task in statement.query_map([id], |row| row.get::<_, String>(0))? {
+        holds.push(Hold::HeldAncestor { task: task? });
+    }
+    let mut statement = tx.prepare(
+        "WITH RECURSIVE chain(id) AS (SELECT ?1 UNION SELECT tasks.parent FROM tasks JOIN chain ON tasks.id=chain.id WHERE tasks.parent IS NOT NULL)
+         SELECT requests.id, request_tasks.task, requests.state FROM request_tasks JOIN requests ON requests.id=request_tasks.request
+         WHERE request_tasks.task IN chain AND requests.state<>'closed' ORDER BY requests.created_at, requests.rowid, request_tasks.task",
+    )?;
+    let rows = statement.query_map([id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (request, task, state) = row?;
+        let state = RequestState::parse(&state).ok_or_else(|| Error::Corrupt {
+            id: request.clone(),
+            field: "request state",
+        })?;
+        holds.push(Hold::Request {
+            request,
+            task,
+            state,
+        });
+    }
+    Ok(holds)
 }
 
 /// Whether `from` already waits, transitively, on `target`.
@@ -1306,7 +1609,10 @@ pub(super) fn load(tx: &Transaction<'_>, project: &Project, id: &str) -> Result<
         ),
         None => (Vec::new(), Vec::new()),
     };
+    let goal = membership(tx, id)?.map(|(root, _)| root);
     Ok(Task {
+        holds: holds(tx, id)?,
+        goal,
         id: id.to_owned(),
         parent,
         title,

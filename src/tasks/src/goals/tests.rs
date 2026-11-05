@@ -14,6 +14,18 @@ fn actor(now: i64) -> Actor<'static> {
 fn store() -> Store {
     crate::test_store(Store::initialize(Connection::open_in_memory().unwrap()).unwrap())
 }
+fn coordinate(store: &mut Store, root: &str, now: i64) {
+    store
+        .coordinate(
+            &project(),
+            root,
+            actor(now).name.unwrap(),
+            false,
+            false,
+            now,
+        )
+        .unwrap();
+}
 fn add(store: &mut Store, title: &str, parent: Option<&str>) -> Task {
     store
         .add(
@@ -34,10 +46,11 @@ fn claimed_goals_filter_claims_through_ancestors_and_project() {
     let root = store
         .create_goal(&project(), "goal", "briefs/brief.md", actor(1))
         .unwrap();
+    let owner = actor(1).name.unwrap();
+    coordinate(&mut store, &root.root.id, 1);
     let group = add(&mut store, "group", Some(&root.root.id));
     let leaf = add(&mut store, "leaf", Some(&group.id));
     let sibling = add(&mut store, "sibling", Some(&group.id));
-    let owner = Owner::try_new("session").unwrap();
     for id in [&leaf.id, &sibling.id] {
         store.claim(&project(), id, owner, false, 10).unwrap();
     }
@@ -63,6 +76,7 @@ fn claimed_goals_filter_claims_through_ancestors_and_project() {
     );
     store.release(&project(), &leaf.id, owner, 15).unwrap();
     store.release(&project(), &sibling.id, owner, 15).unwrap();
+    store.release(&project(), &root.root.id, owner, 15).unwrap();
     assert!(
         store
             .goals(&project(), false, Some(owner),)
@@ -72,9 +86,11 @@ fn claimed_goals_filter_claims_through_ancestors_and_project() {
     let empty = store
         .create_goal(&project(), "empty goal", "briefs/brief.md", actor(1))
         .unwrap();
-    store
-        .claim(&project(), &empty.root.id, owner, false, 10)
-        .unwrap();
+    assert!(matches!(
+        store.claim(&project(), &empty.root.id, owner, false, 10),
+        Err(Error::GoalRoot(_))
+    ));
+    coordinate(&mut store, &empty.root.id, 10);
     assert_eq!(
         store
             .goals(&project(), false, Some(owner),)
@@ -170,6 +186,7 @@ fn associations_are_optional_scoped_and_reversible() {
     store
         .attach_goal(&project(), &root.id, "briefs/brief.md", actor(2))
         .unwrap();
+    coordinate(&mut store, &root.id, 2);
     let count = store.events(&project(), &root.id, 100).unwrap().len();
     store
         .attach_goal(&project(), &root.id, "briefs/brief.md", actor(3))
@@ -238,6 +255,7 @@ fn overview_counts_leaves_and_does_not_invent_verified_state() {
     store
         .attach_goal(&project(), &root.id, "briefs/brief.md", actor(1))
         .unwrap();
+    coordinate(&mut store, &root.id, 1);
     assert_eq!(
         store
             .goal_overview(&project(), &root.id, true)
@@ -328,6 +346,7 @@ fn overview_counts_leaves_and_does_not_invent_verified_state() {
         (released.ready, released.claimed, released.review),
         (2, 0, 0)
     );
+    coordinate(&mut store, &root.id, 20);
     store
         .write_result(
             &project(),
@@ -354,10 +373,11 @@ fn association_changes_respect_live_root_claims() {
         .attach_goal(&project(), &root.id, "briefs/brief.md", actor(1))
         .unwrap();
     store
-        .claim(
+        .coordinate(
             &project(),
             &root.id,
             Owner::try_new("other").unwrap(),
+            false,
             false,
             2,
         )
@@ -367,10 +387,18 @@ fn association_changes_respect_live_root_claims() {
             .attach_goal(&project(), &root.id, "briefs/changed.md", actor(3))
             .is_err()
     );
-    assert!(store.detach_goal(&project(), &root.id, actor(3)).is_err());
+    assert!(matches!(
+        store.detach_goal(&project(), &root.id, actor(3)),
+        Err(Error::NotCoordinator { .. })
+    ));
     store
         .release(&project(), &root.id, Owner::try_new("other").unwrap(), 4)
         .unwrap();
+    assert!(matches!(
+        store.detach_goal(&project(), &root.id, actor(5)),
+        Err(Error::Uncoordinated { .. })
+    ));
+    coordinate(&mut store, &root.id, 5);
     store.detach_goal(&project(), &root.id, actor(5)).unwrap();
 }
 
@@ -395,6 +423,7 @@ fn goals_list_most_recently_active_first() {
         listed_ids(&mut store),
         [newer.root.id.clone(), older.root.id.clone()]
     );
+    coordinate(&mut store, &older.root.id, 1);
     add(&mut store, "slice", Some(&older.root.id));
     let slice = store
         .goal_overview(&project(), &older.root.id, false)
@@ -437,7 +466,7 @@ fn stores_reopen_and_other_schema_versions_fail() {
         "briefs/brief.md"
     );
     assert_eq!(reopened.events(&project(), &root.id, 100).unwrap().len(), 2);
-    for version in [2, 3, 99] {
+    for version in [2, 3, 8, 99] {
         let other = Connection::open_in_memory().unwrap();
         other.pragma_update(None, "user_version", version).unwrap();
         assert!(matches!(Store::initialize(other), Err(Error::Schema(v)) if v == version));

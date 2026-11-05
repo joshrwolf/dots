@@ -27,6 +27,20 @@ pub struct GoalOverview {
     pub hidden_closed: usize,
 }
 
+/// A goal as coordinated, and the claims moved to its coordinator.
+#[derive(Debug, Serialize)]
+pub struct Coordination {
+    pub goal: Goal,
+    /// Claims taken over from other owners, the root first.
+    pub transferred: Vec<Transfer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Transfer {
+    pub task: String,
+    pub from: String,
+}
+
 /// Leaf-task counts. The status counts partition `total`; ready and claimed overlap them.
 #[derive(Debug, Default, Serialize)]
 pub struct GoalProgress {
@@ -105,7 +119,15 @@ impl Store {
         if root.parent.is_some() {
             return Err(Error::Invalid("goal must be a root task"));
         }
-        protect(&root, actor)?;
+        if root.is_goal_root() {
+            store::authorize(&tx, id, actor.name)?;
+        } else if root.owner.is_some() {
+            // A claim never becomes coordination; the new goal starts unclaimed.
+            protect(&root, actor)?;
+            return Err(Error::Invalid(
+                "a claimed task cannot become a goal; release it first, then coordinate the goal",
+            ));
+        }
         let previous: Option<String> = tx
             .query_row("SELECT brief FROM goals WHERE root=?1", [id], |row| {
                 row.get(0)
@@ -132,12 +154,114 @@ impl Store {
     ) -> Result<(), Error> {
         let tx = self.write()?;
         let root = store::load(&tx, project, id)?;
-        protect(&root, actor)?;
+        if root.is_goal_root() {
+            store::authorize(&tx, id, actor.name)?;
+            let history: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM requests WHERE goal=?1) OR EXISTS(SELECT 1 FROM decisions WHERE goal=?1)",
+                [id],
+                |row| row.get(0),
+            )?;
+            if history {
+                return Err(Error::Invalid(
+                    "goal has requests or decisions; they stay with the goal, so it cannot be detached",
+                ));
+            }
+        } else {
+            protect(&root, actor)?;
+        }
         if tx.execute("DELETE FROM goals WHERE root=?1", [id])? > 0 {
             store::record(&tx, id, actor, EventKind::GoalDetached, None)?;
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Take coordination of a goal: claim its root although work remains below
+    /// it. Coordination is responsibility, not dispatch, so prerequisites,
+    /// held ancestors and request holds do not prevent it. Other owners' claims
+    /// on the root or any descendant move to `owner` only with `take_over`;
+    /// a held or closed root reopens only with `resume`.
+    pub fn coordinate(
+        &mut self,
+        project: &Project,
+        id: &str,
+        owner: Owner<'_>,
+        take_over: bool,
+        resume: bool,
+        now: i64,
+    ) -> Result<Coordination, Error> {
+        let tx = self.write()?;
+        let root = store::load(&tx, project, id)?;
+        if !root.is_goal_root() {
+            return Err(Error::Invalid("task has no goal association"));
+        }
+        let actor = Actor {
+            name: Some(owner),
+            now,
+        };
+        if !matches!(root.status, Status::Open | Status::Review) {
+            if !resume {
+                return Err(Error::GoalNotOpen {
+                    goal: id.into(),
+                    status: root.status.as_str(),
+                });
+            }
+            tx.execute(
+                "UPDATE tasks SET status='open', closed_at=NULL, owner=NULL, updated_at=?2 WHERE id=?1",
+                params![id, now],
+            )?;
+            store::record(&tx, id, actor, EventKind::Open, Some("resumed"))?;
+        }
+        let held = {
+            let mut statement = tx.prepare(
+                "WITH RECURSIVE subtree(id) AS (SELECT ?1 UNION SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent=subtree.id)
+                 SELECT id, owner FROM tasks WHERE id IN subtree AND owner IS NOT NULL AND owner<>?2
+                 ORDER BY id<>?1, created_at, rowid",
+            )?;
+            statement
+                .query_map(params![id, owner.as_str()], |row| {
+                    Ok(Transfer {
+                        task: row.get(0)?,
+                        from: row.get(1)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        if !held.is_empty() && !take_over {
+            return Err(Error::ClaimsHeld {
+                goal: id.into(),
+                claims: held
+                    .iter()
+                    .map(|claim| format!("{} ({})", claim.task, claim.from))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            });
+        }
+        let root_owner: Option<String> =
+            tx.query_row("SELECT owner FROM tasks WHERE id=?1", [id], |row| {
+                row.get(0)
+            })?;
+        if root_owner.as_deref() != Some(owner.as_str()) {
+            let detail = root_owner.map_or_else(
+                || "coordinating".to_owned(),
+                |from| format!("coordinating, taken from {from}"),
+            );
+            claim(&tx, id, actor, &detail)?;
+        }
+        for transfer in held.iter().filter(|transfer| transfer.task != id) {
+            claim(
+                &tx,
+                &transfer.task,
+                actor,
+                &format!("taken from {}", transfer.from),
+            )?;
+        }
+        let goal = load_goal(&tx, project, id)?;
+        tx.commit()?;
+        Ok(Coordination {
+            goal,
+            transferred: held,
+        })
     }
 
     /// List attached roots, most recently active first; ordinary root tasks are not goals.
@@ -226,6 +350,14 @@ fn protect(root: &Task, actor: Actor<'_>) -> Result<(), Error> {
         });
     }
     Ok(())
+}
+
+fn claim(tx: &Transaction<'_>, id: &str, actor: Actor<'_>, detail: &str) -> Result<(), Error> {
+    tx.execute(
+        "UPDATE tasks SET owner=?2, updated_at=?3 WHERE id=?1",
+        params![id, actor.name.map(Owner::as_str), actor.now],
+    )?;
+    store::record(tx, id, actor, EventKind::Claimed, Some(detail))
 }
 
 pub(super) fn attached(tx: &Transaction<'_>, id: &str) -> Result<bool, Error> {

@@ -33,7 +33,7 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
     }
     let mut store = crate::project::open()?;
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    let session_owner = crate::agent::session();
+    let session_owner = crate::agent::owner();
     let actor = Actor {
         name: request
             .owner
@@ -290,11 +290,17 @@ fn execute(
                 ));
             }
             if holds && task.children > 0 {
-                let below = store.unclosed_descendants(project, &task.id)?;
-                if below > 0 {
-                    warnings.push(format!(
-                        "{below} unclosed descendants stay claimable; hold them individually to pause the goal"
-                    ));
+                let below = Filter {
+                    parent: Some(&task.id),
+                    ..Filter::default()
+                };
+                for held in store.list(project, &below)? {
+                    if let Some(owner) = &held.owner {
+                        warnings.push(format!(
+                            "{} is claimed by {owner} and is now held; steer that work",
+                            held.id
+                        ));
+                    }
                 }
             }
             Ok(Outcome::Task {
