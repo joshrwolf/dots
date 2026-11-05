@@ -16,6 +16,7 @@ import {promisify} from 'node:util';
 import test from 'node:test';
 import register from '../../extensions/workers/index.ts';
 import {dotsSource} from '../../extensions/goal/source.ts';
+import {bindAgent, endAgent} from '../../src/host/agent.ts';
 import {inspection} from '../../extensions/goal/present.ts';
 import {fixtureModel} from '../fixtures/worker-assignment-provider.mjs';
 import {hostPins} from '../fixtures/host.ts';
@@ -104,7 +105,7 @@ function harness(cwd, entries = []) {
 }
 
 test(
-  'real Pi children preserve task associations through completion, reload and continuation',
+  'real Pi children preserve task associations through completion, reload and continuation; only the coordinator dispatches unheld goal work',
   {timeout: 60_000},
   async () => {
     const directory = realpathSync(
@@ -121,10 +122,15 @@ test(
       'DOTS_WORKER_ROOT',
       'DOTS_WORKER_DEPTH',
       'PI_OFFLINE',
+      'PI_SESSION_ID',
+      'DOTS_AGENT_OWNER',
     ];
     const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
     let parent;
     let resumed;
+    // This parent session's live runtime, bound as the goal extension would.
+    const agent = bindAgent('session-assignment', 'startup', {});
+    const coordinator = agent.owner;
     const git = (cwd, args) =>
       execFileSync('git', ['-C', cwd, ...args], {encoding: 'utf8'});
     // Synthetic commits stay independent of user hooks, identity and signing agents.
@@ -176,6 +182,8 @@ test(
         'DOTS_WORKER_ID',
         'DOTS_WORKER_ROOT',
         'DOTS_WORKER_DEPTH',
+        'PI_SESSION_ID',
+        'DOTS_AGENT_OWNER',
       ])
         delete process.env[key];
       writeFileSync(
@@ -254,6 +262,7 @@ test(
         '--brief',
         'briefs/goal.md',
       ]).goal.root.id;
+      task(['goal', 'coordinate', goal, '--owner', coordinator]);
       task([
         'ref',
         'set',
@@ -261,8 +270,17 @@ test(
         'https://example.com/issues/1',
         '--label',
         'Issue 1',
+        '--owner',
+        coordinator,
       ]);
-      const created = task(['add', 'Verify local result', '--parent', goal]);
+      const created = task([
+        'add',
+        'Verify local result',
+        '--parent',
+        goal,
+        '--owner',
+        coordinator,
+      ]);
       assert.deepEqual(
         created.task.references,
         [],
@@ -328,6 +346,103 @@ test(
         false,
         'overlapping child edits remain isolated',
       );
+
+      // Fresh spawns and continuations of a retained worker are both goal
+      // dispatch: each refuses paused, request-held or foreign-coordinated work.
+      const refused = async (why, reason) => {
+        await assert.rejects(
+          parent.call('worker_spawn', {
+            label: 'late',
+            task: 'Write result.txt in this checkout, then report task association',
+            assignment,
+            cwd: writer,
+          }),
+          reason,
+          `${why}: fresh spawn`,
+        );
+        await assert.rejects(
+          parent.call('message', {
+            to: first.id,
+            text: 'Report association again',
+            wait: true,
+            timeoutMs: 20_000,
+          }),
+          reason,
+          `${why}: continuation`,
+        );
+        const status = (await parent.call('worker_status', {id: first.id}))
+          .details;
+        assert.equal(status.state, 'completed', `${why}: worker unchanged`);
+      };
+      task([
+        'hold',
+        assignment.id,
+        '--reason',
+        'Paused',
+        '--owner',
+        coordinator,
+      ]);
+      await refused('held task', /is held; resume it before dispatch/);
+      task(['reopen', assignment.id, '--owner', coordinator]);
+      task(['hold', goal, '--reason', 'Goal paused', '--owner', coordinator]);
+      await refused('paused goal', /which has no coordinator/);
+      task(['goal', 'coordinate', goal, '--resume', '--owner', coordinator]);
+      const content = path.join(directory, 'request.json');
+      writeFileSync(
+        content,
+        JSON.stringify({
+          kind: 'decision',
+          title: 'Choose the result',
+          question: 'Which result should the goal keep?',
+          tasks: [goal],
+        }),
+      );
+      const request = JSON.parse(
+        execFileSync(
+          'dots',
+          [
+            '--json',
+            'attention',
+            'raise',
+            goal,
+            '--project',
+            project,
+            '--key',
+            'result',
+            '--content-file',
+            content,
+            '--owner',
+            coordinator,
+          ],
+          {cwd: root, encoding: 'utf8'},
+        ),
+      );
+      await refused('outstanding request', /is held by request/);
+      // Stopping your own worker never needs coordination.
+      await parent.call('worker_stop', {id: second.id});
+      assert.equal(
+        (await parent.call('worker_status', {id: second.id})).details.state,
+        'stopped',
+      );
+      execFileSync(
+        'dots',
+        [
+          'attention',
+          'withdraw',
+          request.request.id,
+          '--project',
+          project,
+          '--reason',
+          'Settled elsewhere',
+          '--owner',
+          coordinator,
+        ],
+        {cwd: root, encoding: 'utf8'},
+      );
+      const other = 'pi-session-other-0123456789abcdef';
+      task(['goal', 'coordinate', goal, '--take', '--owner', other]);
+      await refused('lost coordination', new RegExp(`coordinated by ${other}`));
+      task(['goal', 'coordinate', goal, '--take', '--owner', coordinator]);
       assert.equal(
         task(['show', assignment.id]).task.status,
         'open',
@@ -358,25 +473,18 @@ test(
         rendered,
         /Reference: Issue 1 https:\/\/example.com\/issues\/1/,
       );
-      task(['claim', assignment.id, '--owner', 'fixture-parent']);
+      task(['claim', assignment.id, '--owner', coordinator]);
       task([
         'review',
         assignment.id,
         '--owner',
-        'fixture-parent',
+        coordinator,
         '--result',
         'Both contributors completed; combined acceptance remains.',
       ]);
       assert.throws(
         () =>
-          task([
-            'claim',
-            '--next',
-            '--parent',
-            goal,
-            '--owner',
-            'fixture-parent',
-          ]),
+          task(['claim', '--next', '--parent', goal, '--owner', coordinator]),
         /Command failed/,
       );
       assert.equal(
@@ -413,7 +521,7 @@ test(
         'review',
         'continuation does not accept the handoff',
       );
-      task(['claim', assignment.id, '--owner', 'fixture-parent']);
+      task(['claim', assignment.id, '--owner', coordinator]);
       git(writer, ['add', 'result.txt']);
       commit(writer, 'Fixture result');
       wt(writer, [
@@ -441,7 +549,7 @@ test(
         'done',
         assignment.id,
         '--owner',
-        'fixture-parent',
+        coordinator,
         '--result',
         'Verified local integration, two contributors and restored session association.',
       ]);
@@ -460,6 +568,7 @@ test(
     } finally {
       await resumed?.close();
       await parent?.close();
+      endAgent(agent, {});
       for (const key of keys) {
         if (saved[key] === undefined) delete process.env[key];
         else process.env[key] = saved[key];

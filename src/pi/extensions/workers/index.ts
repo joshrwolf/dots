@@ -514,6 +514,16 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       throw new Error('the worker runtime has no session yet');
     return sessionId;
   };
+  /**
+   * This runtime's task actor, when the bound agent is this session's; read
+   * synchronously where a dispatch starts so no later runtime is adopted.
+   */
+  const runtimeActor = (): string | undefined => {
+    const bound = currentAgent();
+    return bound !== undefined && bound.session === sessionId
+      ? bound.owner
+      : undefined;
+  };
   /** Inherited workers belong to the session this one was forked or cloned from. */
   const inherited = (worker: Worker): Error =>
     new Error(
@@ -1320,11 +1330,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     if (shuttingDown) throw new Error('worker runtime is shutting down');
     const owner = ownerSession();
     // Captured before any await: goal dispatch is judged for this runtime.
-    const bound = currentAgent();
-    const actor =
-      bound?.session === ctx.sessionManager.getSessionId()
-        ? bound.owner
-        : undefined;
+    const actor = runtimeActor();
     const config = loadConfig();
     maxWidgetLines = config.widgetLines;
     // Validate against the live scope, not the schema built at session start.
@@ -1437,14 +1443,28 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     return worker;
   };
 
-  /** Deliver text to a worker we own, however it is currently occupied. */
+  /**
+   * Deliver text to a worker we own, however it is currently occupied. Every
+   * delivery to an assigned worker dispatches its task again, so it repeats
+   * the spawn preflight first; a refusal leaves the worker as it was.
+   */
   const deliver = (
     worker: Worker,
     text: string,
     onSending?: () => void,
   ): Promise<string> => {
     if (!owned(worker)) return Promise.reject(inherited(worker));
+    // Captured before any await: goal dispatch is judged for this runtime.
+    const actor = runtimeActor();
     return inOrder(worker, async () => {
+      if (worker.assignment) {
+        const epoch = epochs.get(worker) ?? 0;
+        await verifyAssignment(worker.assignment, worker.cwd, actor);
+        if (shuttingDown || epoch !== (epochs.get(worker) ?? 0))
+          throw new Error(
+            `${worker.id} operation cancelled by stop or shutdown`,
+          );
+      }
       refreshQuestions(worker);
       if (!worker.process) {
         if (!worker.sessionFile)
