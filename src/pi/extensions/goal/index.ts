@@ -20,6 +20,7 @@ import {
 import {GoalPanel, PANEL_KEY, panelOverlay, summaryRow} from './panel.ts';
 import {
   GOAL_SECTION_PREFIX,
+  goalRefSectionKey,
   goalSectionKey,
   goalSections,
   orientation,
@@ -30,7 +31,7 @@ import {TurnMessages} from '../../src/host/delivery.ts';
 import {Tasks} from '../../src/host/tasks.ts';
 import {AttentionController} from './attention/controller.ts';
 import {attentionContext} from './attention/context.ts';
-import {indicator} from './attention/model.ts';
+import {indicator, needsAnswer} from './attention/model.ts';
 import {
   AttentionView,
   GoalPopup,
@@ -392,6 +393,8 @@ export default function goalExtension(
         if (active && epoch === generation) notify(ctx, String(error), 'error');
       });
   };
+  /** Whether the popup has a request to answer; others belong to Attention. */
+  const opens = () => !!attention?.model().items.some(needsAnswer);
   /** One quiet clickable line near the editor while a request awaits the person. */
   const drawAttention = (ctx: ExtensionContext) => {
     if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
@@ -420,7 +423,10 @@ export default function goalExtension(
               active && epoch === generation && owned.text
                 ? [
                     truncateToWidth(
-                      theme.fg('warning', `${owned.text} · open`),
+                      theme.fg(
+                        'warning',
+                        opens() ? `${owned.text} · open` : owned.text,
+                      ),
                       width,
                     ),
                   ]
@@ -440,7 +446,7 @@ export default function goalExtension(
               return undefined;
             if (event.type === 'press') return {handled: true, render: false};
             if (event.type !== 'click') return undefined;
-            openPanel(ctx, 'attention');
+            if (opens()) openPanel(ctx, 'attention');
             return {handled: true, render: false};
           },
         );
@@ -688,6 +694,8 @@ export default function goalExtension(
       ...(attentionTasks ? {tasks: attentionTasks} : {}),
       deliver: (compose, delivered) => delivery.send(compose, delivered),
       branch: () => ctx.sessionManager.getBranch(),
+      // Managed workers never coordinate goals.
+      coordinates: !process.env.DOTS_WORKER_ID,
       changed: () => {
         drawAttention(ctx);
         paint();
@@ -741,28 +749,35 @@ export default function goalExtension(
       if (key.startsWith(GOAL_SECTION_PREFIX)) delete sections[key];
     const startingEpoch = generation;
     if (ctx.mode === 'tui' && ctx.hasUI) await discover(ctx);
-    if (
-      !active ||
-      startingEpoch !== generation ||
-      (!focus && !request?.pending)
-    )
-      return;
+    if (!active || startingEpoch !== generation) return;
     // Membership changes invalidate in-flight observations. Retry the remaining
     // set; an unfollow must neither resurrect a goal nor omit the other goals.
-    while (active) {
+    while (active && (focus || request?.pending)) {
       const epoch = generation;
       await refresh(ctx);
       if (!active) return;
       if (generation !== epoch) {
         if (followed.size || request?.pending) continue;
-        return;
+        break;
       }
-      if (!followed.size) return;
+      if (!followed.size) break;
       if (request?.selected) continue; // Explicit follow reads only its target.
       break;
     }
+    // Coordination outlives the view: goals this runtime coordinates keep
+    // their mandate, decisions and answers in context, followed or not.
     const facts = await attention?.facts().catch(() => undefined);
     if (!active) return;
+    const elsewhere = attention?.coordinatedElsewhere();
+    for (const ref of elsewhere?.goals ?? []) {
+      const found = facts?.get(`${ref.project}:${ref.id}`);
+      if (found)
+        sections[`${goalRefSectionKey(ref.project, ref.id)}_attention`] =
+          attentionContext(ref, found, agent?.owner, false);
+    }
+    if (elsewhere?.failure)
+      sections[`${GOAL_SECTION_PREFIX}coordinating`] =
+        `Goals this session coordinates could not be checked: ${elsewhere.failure}. Unfollowed goals it coordinates may be missing from context; list them with dots task goal coordinating before dispatching work.`;
     for (const view of followed.values()) {
       Object.assign(sections, goalSections(view));
       const ref = {project: view.focus.project, id: view.focus.id};
@@ -902,14 +917,14 @@ export default function goalExtension(
     persist();
     draw(ctx);
     return id
-      ? `Unfollowed ${id}; shared goals, tasks and claims are unchanged.`
-      : 'Goal unfocused; all session follows cleared. Shared goals, tasks and claims are unchanged.';
+      ? `Unfollowed ${id}: its brief, tasks and popup leave this session's view. Shared goals, tasks and claims are unchanged; if this session coordinates it, coordination continues, with its mandate, decisions and answers kept in context and answers delivered, until its root claim is released.`
+      : "All follows cleared: their briefs, tasks and popup leave this session's view. Shared goals, tasks and claims are unchanged; goals this session coordinates keep their mandate, decisions and answers in context and answers delivered until their root claims are released.";
   };
   pi.registerTool({
     name: 'goal_unfocus',
     label: 'Unfollow goal',
     description:
-      "Remove one goal from this session's followed set, or clear all follows on request. Removes its UI and future automatic context, not prior conversation. Does not change shared goals, tasks, claims, workers or other sessions. Specify id or all:true.",
+      "Remove one goal from this session's followed set, or clear all follows on request. Removes its popup and its brief and task context, not prior conversation. Does not change shared goals, tasks, claims, workers or other sessions, and does not end coordination: a goal this session coordinates keeps its mandate, decisions and answers in context and its answers delivered until its root claim is released. Specify id or all:true.",
     parameters: Type.Object({
       id: Type.Optional(Type.String({pattern: '^t-[a-f0-9]+$', maxLength: 64})),
       all: Type.Optional(Type.Boolean()),

@@ -31,10 +31,19 @@ export interface AttentionItem {
   readonly coordinator: string | null;
 }
 
+/** An open request on a goal this session coordinates but does not follow. */
+export interface Elsewhere {
+  readonly title: string;
+  /** The goal's title. */
+  readonly goal: string;
+}
+
 export interface AttentionModel {
   readonly items: readonly AttentionItem[];
   /** Goals or projects in scope that could not be read. */
   readonly unavailable: readonly string[];
+  /** Named, never answered here: it belongs to the global Attention view. */
+  readonly elsewhere: readonly Elsewhere[];
 }
 
 /** Local outcomes that outlive a refresh until the person dismisses them. */
@@ -138,6 +147,7 @@ export function attentionModel(
   );
   return {
     items,
+    elsewhere: [],
     unavailable: (list?.errors ?? []).map(
       error => `${error.goal ?? error.project}: ${error.error}`,
     ),
@@ -148,6 +158,16 @@ export function attentionModel(
 export function indicator(model: AttentionModel): string | undefined {
   const waiting = model.items.filter(needsAnswer);
   const first = waiting[0];
-  if (!first) return undefined;
-  return `Needs your attention: ${labelText(first.request.title)}${waiting.length > 1 ? ` (+${waiting.length - 1} more)` : ''}`;
+  const others = model.elsewhere.length;
+  if (first) {
+    const more = [
+      waiting.length > 1 && `+${waiting.length - 1} more`,
+      others &&
+        `${others} on ${others === 1 ? 'a goal' : 'goals'} not followed here`,
+    ].filter(Boolean);
+    return `Needs your attention: ${labelText(first.request.title)}${more.length ? ` (${more.join(', ')})` : ''}`;
+  }
+  const outside = model.elsewhere[0];
+  if (!outside) return undefined;
+  return `Needs your attention: ${labelText(outside.title)} · ${labelText(outside.goal)}${others > 1 ? ` (+${others - 1} more)` : ''} · not followed here; answer it in Attention`;
 }

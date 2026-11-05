@@ -1,4 +1,5 @@
 import type {ActivityItem} from '../../src/host/activity.ts';
+import type {AttentionRequest} from '../../src/host/attention.ts';
 
 /** One OSC 7501 record; no `id` addresses the root record. */
 export interface StatusRecord {
@@ -21,7 +22,7 @@ export interface StatusInputs {
   /** An open dialog the agent waits on. */
   readonly dialog?: {readonly kind: string; readonly title?: string};
   /** Goal requests this session coordinates that await a person. */
-  readonly attention?: readonly {readonly id: string; readonly title: string}[];
+  readonly attention?: readonly AttentionRequest[];
   /** How the last run ended, reported once nothing is active. */
   readonly rest: Rest;
   readonly activities: ReadonlyMap<string, readonly ActivityItem[]>;
@@ -70,7 +71,11 @@ export function rootRecord(inputs: StatusInputs): StatusRecord {
     return {
       state: 'blocked',
       kind: 'question',
-      message: `Needs your attention: ${waiting[0]!.title}${waiting.length > 1 ? ` (+${waiting.length - 1} more)` : ''}`,
+      message: `Needs your attention: ${waiting[0]!.title}${
+        waiting[0]!.followed
+          ? ''
+          : ` · ${waiting[0]!.goal} (a goal this session coordinates but does not follow; answer it in Attention)`
+      }${waiting.length > 1 ? ` (+${waiting.length - 1} more)` : ''}`,
     };
   const background = backgroundSummary(inputs);
   if (background) return {state: 'working', message: background};

@@ -1,6 +1,9 @@
 import type {TurnMessage} from '../../../src/host/delivery.ts';
 import {agentEnv, type Agent} from '../../../src/host/agent.ts';
-import type {AttentionSignal} from '../../../src/host/attention.ts';
+import type {
+  AttentionRequest,
+  AttentionSignal,
+} from '../../../src/host/attention.ts';
 import {
   attentionModel,
   answerText,
@@ -38,7 +41,14 @@ export interface AttentionHost {
   readonly signal: (signal: AttentionSignal) => void;
   /** Shared task events, so answers saved elsewhere arrive without polling. */
   readonly tasks?: Pick<Tasks, 'follow' | 'head'>;
+  /** False for managed workers, which never coordinate; skips that read. */
+  readonly coordinates?: boolean;
 }
+
+const refKey = (goal: GoalRef) => `${goal.project}:${goal.id}`;
+const unique = (goals: readonly GoalRef[]) => [
+  ...new Map(goals.map(goal => [refKey(goal), goal])).values(),
+];
 
 /** Events that change a goal's requests, decisions or coordination. */
 const relevant = (event: TaskEvent, root: string) =>
@@ -68,11 +78,22 @@ export function deliveredAnswers(branch: readonly unknown[]): Set<string> {
   return told;
 }
 
-function answerNotice(requests: readonly Request[]): TurnMessage {
+function answerNotice(
+  requests: readonly Request[],
+  viewed: ReadonlySet<string>,
+): TurnMessage {
   const body = requests.map(request => {
     const answer = request.answer!;
+    const followed = viewed.has(
+      refKey({project: request.project, id: request.goal}),
+    );
     return [
       `Request ${request.id} (goal ${request.goal}, project ${request.project}): ${request.title}`,
+      ...(followed
+        ? []
+        : [
+            `This session coordinates the goal but does not follow it, so its brief and tasks are not in context: follow it with goal_focus {"id": "${request.goal}", "project": "${request.project}"}, or read this request with \`dots attention show ${request.id} --project ${request.project}\`.`,
+          ]),
       `Question: ${request.question}`,
       `Answer (${answer.source}, ${answer.provenance}): ${answerText(request)}`,
       ...(answer.interpretation
@@ -94,9 +115,13 @@ function answerNotice(requests: readonly Request[]): TurnMessage {
 }
 
 /**
- * Attention for the goals this session follows. Scope is exactly the followed
- * (project, goal) pairs; with none, nothing is read or shown. Reads are
- * generation-guarded, so a late reply never overwrites a newer scope.
+ * Attention for the goals this session follows, and delivery for the goals it
+ * coordinates. The view is exactly the followed (project, goal) pairs: the
+ * popup, indicator, context and drafts show nothing else, and an empty view
+ * shows nothing. Responsibility is the store's root claims, read fresh on
+ * every refresh; requests on coordinated goals outside the view alert and
+ * deliver without joining the view. Reads are generation-guarded, so a late
+ * reply never overwrites a newer scope.
  *
  * Saving an answer persists it before the view says so. Only the goal's
  * current coordinator, by a fresh read, is told an answer to continue with,
@@ -108,9 +133,15 @@ export class AttentionController {
   /** Unsent answer text by request; outlives views, not the runtime. */
   readonly drafts = new Map<string, string>();
   private readonly host: AttentionHost;
-  private goals: readonly GoalRef[] = [];
+  /** Followed goals: everything the person sees. */
+  private view: readonly GoalRef[] = [];
+  /** Followed and coordinated goals, as last read. */
   private list: AttentionList | undefined;
   private readFailure: string | undefined;
+  /** The coordination read failed: responsibilities are unknown, not none. */
+  private dutyFailure: string | undefined;
+  /** Goals the last coordination read found this runtime coordinating. */
+  private duties: readonly GoalRef[] = [];
   private readonly local = new Map<
     string,
     {state: ItemState; request: Request; goal: string}
@@ -122,6 +153,12 @@ export class AttentionController {
   /** Handed to Pi but not yet seen on the branch. */
   private sent = new Set<string>();
   private signalled = '[]';
+  /** The last signal's requests, by goal, for goals a later read misses. */
+  private alerted: readonly {
+    goal: string;
+    at: number;
+    entry: AttentionRequest;
+  }[] = [];
   private readonly follows = new Map<string, () => void>();
   /** Answered requests that mandates rest on; immutable once answered. */
   private readonly sources = new Map<string, Request>();
@@ -140,61 +177,137 @@ export class AttentionController {
     return this.list;
   }
 
-  /** The project of an outstanding request in scope, as last read. */
+  /** The project of an outstanding request on a followed goal, as last read. */
   projectOf(request: string): string | undefined {
-    return this.list?.goals
-      .flatMap(goal => goal.requests)
+    return this.viewed()
+      ?.goals.flatMap(goal => goal.requests)
       .find(item => item.id === request)?.project;
   }
 
-  model(): AttentionModel {
-    const model = attentionModel(this.list, this.agent?.owner, this.local);
-    return this.readFailure
-      ? {...model, unavailable: [...model.unavailable, this.readFailure]}
-      : model;
+  /** The last read, narrowed to exactly the followed goals. */
+  private viewed(): AttentionList | undefined {
+    const list = this.list;
+    if (!list) return undefined;
+    const keys = new Set(this.view.map(refKey));
+    const projects = new Set(this.view.map(goal => goal.project));
+    return {
+      ...list,
+      goals: list.goals.filter(goal =>
+        keys.has(refKey({project: goal.project, id: goal.goal})),
+      ),
+      errors: list.errors.filter(error =>
+        error.goal
+          ? keys.has(refKey({project: error.project, id: error.goal}))
+          : projects.has(error.project),
+      ),
+    };
   }
 
-  /** Replace the scope; requests outside it leave with their local state. */
+  model(): AttentionModel {
+    const model = attentionModel(this.viewed(), this.agent?.owner, this.local);
+    const keys = new Set(this.view.map(refKey));
+    const elsewhere = this.responsible()
+      .filter(goal => !keys.has(refKey({project: goal.project, id: goal.goal})))
+      .flatMap(goal =>
+        goal.requests
+          .filter(request => request.state === 'open')
+          .map(request => ({title: request.title, goal: goal.title})),
+      );
+    const unread = (this.list?.errors ?? []).filter(
+      error =>
+        error.goal &&
+        !keys.has(refKey({project: error.project, id: error.goal})),
+    ).length;
+    const unavailable = [
+      ...model.unavailable,
+      ...(this.readFailure ? [this.readFailure] : []),
+      ...(this.dutyFailure
+        ? [
+            `Goals this session coordinates could not be checked: ${this.dutyFailure}`,
+          ]
+        : []),
+      ...(unread
+        ? [
+            `${unread === 1 ? 'A goal' : `${unread} goals`} this session coordinates could not be read.`,
+          ]
+        : []),
+    ];
+    return {...model, unavailable, elsewhere};
+  }
+
+  /** Replace the followed goals; requests outside them leave with their local state. */
   setScope(goals: readonly GoalRef[]): Promise<void> {
-    const key = (goal: GoalRef) => `${goal.project}:${goal.id}`;
-    const next = [...new Map(goals.map(goal => [key(goal), goal])).values()];
+    const next = unique(goals);
     const same =
-      next.length === this.goals.length &&
-      next.every((goal, at) => key(goal) === key(this.goals[at]!));
-    this.goals = next;
+      next.length === this.view.length &&
+      next.every((goal, at) => refKey(goal) === refKey(this.view[at]!));
+    this.view = next;
     if (same && this.list) return Promise.resolve();
-    const kept = new Set(next.map(key));
+    const kept = new Set(next.map(refKey));
     for (const [id, item] of this.local)
       if (!kept.has(`${item.request.project}:${item.request.goal}`))
         this.local.delete(id);
+    return this.refresh();
+  }
+
+  /** Stream exactly the goals read. */
+  private stream(goals: readonly GoalRef[]): void {
+    const kept = new Set(goals.map(refKey));
     for (const [goal, stop] of this.follows)
       if (!kept.has(goal)) {
         stop();
         this.follows.delete(goal);
       }
-    for (const goal of next)
-      if (!this.follows.has(key(goal))) this.follow(key(goal), goal);
-    return this.refresh();
+    for (const goal of goals)
+      if (!this.follows.has(refKey(goal))) this.follow(refKey(goal), goal);
   }
 
-  /** Read the scope again; equivalent results neither repaint nor signal. */
+  /**
+   * Read responsibilities, then the followed and coordinated goals together;
+   * equivalent results neither repaint nor signal.
+   */
   async refresh(): Promise<void> {
     this.reading?.abort();
     const epoch = ++this.reads;
-    if (!this.goals.length) {
+    const controller = new AbortController();
+    this.reading = controller;
+    const before = JSON.stringify([
+      this.list,
+      this.readFailure,
+      this.dutyFailure,
+    ]);
+    const agent = this.agent;
+    let duties: readonly GoalRef[] = [];
+    let dutyFailure: string | undefined;
+    if (agent && this.host.coordinates !== false)
+      try {
+        duties = await this.host.source.coordinating(
+          agent.owner,
+          {env: agentEnv(agent)},
+          controller.signal,
+        );
+      } catch (error) {
+        dutyFailure = failure(error);
+      }
+    if (epoch !== this.reads || this.lifetime.signal.aborted) return;
+    this.dutyFailure = dutyFailure;
+    this.duties = duties;
+    const goals = unique([...this.view, ...duties]);
+    this.stream(goals);
+    if (!goals.length) {
       this.reading = undefined;
-      const had = this.list !== undefined || this.readFailure !== undefined;
       this.list = undefined;
       this.readFailure = undefined;
       this.publish();
-      if (had) this.host.changed();
+      if (
+        JSON.stringify([this.list, this.readFailure, this.dutyFailure]) !==
+        before
+      )
+        this.host.changed();
       return;
     }
-    const controller = new AbortController();
-    this.reading = controller;
-    const before = JSON.stringify([this.list, this.readFailure]);
     try {
-      const list = await this.host.source.list(this.goals, controller.signal);
+      const list = await this.host.source.list(goals, controller.signal);
       if (epoch !== this.reads || this.lifetime.signal.aborted) return;
       this.list = list;
       this.readFailure = undefined;
@@ -207,7 +320,9 @@ export class AttentionController {
     }
     this.publish();
     this.deliverAnswers();
-    if (JSON.stringify([this.list, this.readFailure]) !== before)
+    if (
+      JSON.stringify([this.list, this.readFailure, this.dutyFailure]) !== before
+    )
       this.host.changed();
   }
 
@@ -339,13 +454,41 @@ export class AttentionController {
     );
   }
 
-  /** Only the responsible coordinator surfaces native attention, once per change. */
+  /**
+   * Only the responsible coordinator surfaces native attention, once per
+   * change. A failed read leaves the last signal: unknown is not nothing.
+   */
   private publish(): void {
-    const requests = this.responsible()
-      .flatMap(goal => goal.requests)
-      .filter(request => request.state === 'open')
-      .sort((a, b) => a.created_at - b.created_at)
-      .map(request => ({id: request.id, title: request.title}));
+    if (this.readFailure || this.dutyFailure) return;
+    const keys = new Set(this.view.map(refKey));
+    const errors = this.list?.errors ?? [];
+    // A goal or project the read missed keeps what it last alerted.
+    const unread = (goal: string) =>
+      errors.some(error =>
+        error.goal
+          ? refKey({project: error.project, id: error.goal}) === goal
+          : goal.startsWith(`${error.project}:`),
+      );
+    const fresh = this.responsible().flatMap(goal => {
+      const key = refKey({project: goal.project, id: goal.goal});
+      return goal.requests
+        .filter(request => request.state === 'open')
+        .map(request => ({
+          goal: key,
+          at: request.created_at,
+          entry: {
+            id: request.id,
+            title: request.title,
+            goal: goal.title,
+            followed: keys.has(key),
+          },
+        }));
+    });
+    this.alerted = [
+      ...fresh,
+      ...this.alerted.filter(alert => unread(alert.goal)),
+    ].sort((a, b) => a.at - b.at || a.entry.id.localeCompare(b.entry.id));
+    const requests = this.alerted.map(alert => alert.entry);
     const key = JSON.stringify(requests);
     if (key === this.signalled) return;
     this.signalled = key;
@@ -366,7 +509,8 @@ export class AttentionController {
       );
     if (!answered.length) return;
     for (const request of answered) this.sent.add(request.id);
-    this.host.deliver(() => answerNotice(answered));
+    const viewed = new Set(this.view.map(refKey));
+    this.host.deliver(() => answerNotice(answered, viewed));
   }
 
   /**
@@ -377,7 +521,7 @@ export class AttentionController {
   async facts(): Promise<Map<string, AttentionFacts>> {
     await this.refresh();
     const result = new Map<string, AttentionFacts>();
-    const goals = this.goals;
+    const goals = unique([...this.view, ...this.duties]);
     if (!goals.length) return result;
     let decisions: DecisionList | undefined;
     let decisionFailure: string | undefined;
@@ -419,6 +563,21 @@ export class AttentionController {
       });
     }
     return result;
+  }
+
+  /**
+   * Coordinated goals outside the view, as the last read found them, or why
+   * they are unknown. Their execution context stays; their views do not.
+   */
+  coordinatedElsewhere(): {
+    readonly goals: readonly GoalRef[];
+    readonly failure: string | undefined;
+  } {
+    const keys = new Set(this.view.map(refKey));
+    return {
+      goals: this.duties.filter(goal => !keys.has(refKey(goal))),
+      failure: this.dutyFailure,
+    };
   }
 
   /** Run work in the background; an unexpected failure shows, never vanishes. */

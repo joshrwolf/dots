@@ -12,6 +12,7 @@ import {dotsAttention} from '../extensions/goal/attention/source.ts';
 import {AttentionController} from '../extensions/goal/attention/controller.ts';
 import {attentionContext} from '../extensions/goal/attention/context.ts';
 import {HumanInputs, recordChat} from '../extensions/goal/attention/chat.ts';
+import {agentEnv} from '../src/host/agent.ts';
 
 const ISOLATED = [
   'HOME',
@@ -22,12 +23,14 @@ const ISOLATED = [
 // The fixture acts as its own runtime, never as an agent that ran the tests.
 const INHERITED = ['DOTS_WORKER_ID', 'DOTS_AGENT_OWNER', 'PI_SESSION_ID'];
 
-test('a request moves from raise to answer, delivery, context and incorporation', async () => {
+const agent = {session: 'fixture', owner: 'pi-fixture-0123456789abcdef'};
+
+/** A disposable home with one registered project, for one test's body. */
+async function withHome(body) {
   const dir = mkdtempSync(join(tmpdir(), 'dots-attention-cli-'));
   const saved = [...ISOLATED, ...INHERITED].map(key => [key, process.env[key]]);
   for (const key of ISOLATED) process.env[key] = join(dir, key);
   for (const key of INHERITED) delete process.env[key];
-  const agent = {session: 'fixture', owner: 'pi-fixture-0123456789abcdef'};
   let project;
   const run = (args, owner = agent.owner) =>
     JSON.parse(
@@ -69,6 +72,18 @@ test('a request moves from raise to answer, delivery, context and incorporation'
     );
     mkdirSync(join(brief, '..'), {recursive: true});
     writeFileSync(brief, '# Fixture goal');
+    await body({dir, project, run, content});
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
+test('a request moves from raise to answer, delivery, context and incorporation', async () => {
+  await withHome(async ({dir, project, run, content}) => {
     const id = run([
       'task',
       'goal',
@@ -132,7 +147,14 @@ test('a request moves from raise to answer, delivery, context and incorporation'
       [[first, 'self']],
     );
     assert.deepEqual(signals.at(-1), {
-      requests: [{id: first, title: 'Choose the rollout scope'}],
+      requests: [
+        {
+          id: first,
+          title: 'Choose the rollout scope',
+          goal: 'Fixture',
+          followed: true,
+        },
+      ],
     });
 
     // A replaced request keeps the draft and never answers the replacement.
@@ -268,11 +290,105 @@ test('a request moves from raise to answer, delivery, context and incorporation'
       ],
     );
     controller.close();
-  } finally {
-    for (const [key, value] of saved) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    rmSync(dir, {recursive: true, force: true});
-  }
+  });
+});
+
+test('root claims in the store decide delivery, followed or not', async () => {
+  await withHome(async ({project, run, content}) => {
+    const source = dotsAttention();
+    const signal = new AbortController().signal;
+    const create = title =>
+      run(['task', 'goal', 'create', title, '--brief', 'briefs/brief.md']).goal
+        .root.id;
+    const coordinated = create('Coordinated');
+    const other = create('Elsewhere');
+    run(['task', 'goal', 'coordinate', coordinated]);
+    run(['task', 'goal', 'coordinate', other], 'pi-other-fedcba9876543210');
+    assert.deepEqual(
+      await source.coordinating(agent.owner, {env: agentEnv(agent)}, signal),
+      [{project, id: coordinated}],
+      'exactly the root this runtime claims',
+    );
+    const raise = (goal, key) =>
+      run(
+        [
+          'attention',
+          'raise',
+          goal,
+          '--key',
+          key,
+          '--content-file',
+          content(`${key}.json`, {
+            kind: 'decision',
+            title: `Decide ${key}`,
+            question: `Which ${key}?`,
+            choices: [{id: 'a', label: 'A'}],
+          }),
+        ],
+        goal === other ? 'pi-other-fedcba9876543210' : agent.owner,
+      ).request.id;
+    const answer = id =>
+      run(
+        [
+          'attention',
+          'answer',
+          id,
+          '--content-file',
+          content('answer.json', {
+            source: 'ui',
+            choice: 'a',
+            provenance: 'dots attention view · fixture terminal',
+          }),
+        ],
+        'viewer-fixture',
+      );
+    const first = raise(coordinated, 'first');
+    raise(other, 'theirs');
+    const branch = [];
+    const signals = [];
+    const controller = new AttentionController({
+      source,
+      deliver: compose => branch.push({type: 'custom_message', ...compose()}),
+      branch: () => branch,
+      changed() {},
+      signal: next => signals.push(next),
+    });
+    controller.bind(agent);
+    // Never followed: the view is empty, the coordinator still alerts.
+    await controller.refresh();
+    assert.deepEqual(controller.model().items, []);
+    assert.deepEqual(signals.at(-1), {
+      requests: [
+        {
+          id: first,
+          title: 'Decide first',
+          goal: 'Coordinated',
+          followed: false,
+        },
+      ],
+    });
+    answer(first);
+    await controller.refresh();
+    await controller.refresh();
+    assert.deepEqual(
+      branch.map(entry => entry.details),
+      [{requests: [first]}],
+      'delivered once, without following',
+    );
+    // Taken over: responsibility leaves with the root claim.
+    const second = raise(coordinated, 'second');
+    run(
+      ['task', 'goal', 'coordinate', coordinated, '--take'],
+      'pi-other-fedcba9876543210',
+    );
+    answer(second);
+    await controller.refresh();
+    assert.equal(branch.length, 1);
+    assert.deepEqual(signals.at(-1), {requests: []});
+    assert.deepEqual(
+      await source.coordinating(agent.owner, {env: agentEnv(agent)}, signal),
+      [],
+    );
+    controller.close();
+  });
 });

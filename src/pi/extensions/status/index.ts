@@ -232,9 +232,11 @@ export default function status(
 
   pi.events.on(ATTENTION_EVENT, data => {
     if (!isAttentionSignal(data)) return;
-    attention = data.requests.map(({id, title}) => ({
+    attention = data.requests.map(({id, title, goal, followed}) => ({
       id,
       title: summaryLine(title) ?? id,
+      goal: summaryLine(goal) ?? '',
+      followed,
     }));
     report();
   });

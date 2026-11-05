@@ -130,6 +130,10 @@ const DecisionsSchema = Type.Object({
   errors: Type.Array(ScopeError),
 });
 const Shown = Type.Object({request: RequestSchema});
+const CoordinatingSchema = Type.Object({
+  goals: Type.Array(Type.Object({project: Project, goal: TaskId})),
+  now: Seconds,
+});
 
 /** An immutable human request. Text fields are writer-controlled. */
 export type Request = Static<typeof RequestSchema>;
@@ -204,6 +208,15 @@ export interface AttentionSource {
     actor: Actor,
     signal: AbortSignal,
   ): Promise<Decision>;
+  /**
+   * The goals whose open or in-review root `owner` claims, in every
+   * registered project: the store's root claims, read fresh each time.
+   */
+  coordinating(
+    owner: string,
+    actor: Actor,
+    signal: AbortSignal,
+  ): Promise<readonly GoalRef[]>;
 }
 
 const empty = {goals: [], errors: []};
@@ -217,7 +230,7 @@ function checked<T extends TSchema>(
   what: string,
 ): Static<T> {
   if (!Check(schema, value))
-    throw new Error(`dots attention ${what} returned an unexpected shape`);
+    throw new Error(`dots ${what} returned an unexpected shape`);
   return value;
 }
 
@@ -260,7 +273,7 @@ export function dotsAttention(
           ['attention', 'list', '--scope', 'goals', ...scope(goals)],
           signal,
         ),
-        'list',
+        'attention list',
       );
     },
     async decisions(goals, signal) {
@@ -271,7 +284,7 @@ export function dotsAttention(
           ['attention', 'decisions', '--scope', 'goals', ...scope(goals)],
           signal,
         ),
-        'decisions',
+        'attention decisions',
       );
     },
     async show(project, request, signal) {
@@ -281,7 +294,7 @@ export function dotsAttention(
           ['attention', 'show', request, '--project', project],
           signal,
         ),
-        'show',
+        'attention show',
       ).request;
     },
     async answer(project, request, content, actor, signal) {
@@ -302,7 +315,7 @@ export function dotsAttention(
           },
         ),
       );
-      return checked(Shown, shown, 'answer').request;
+      return checked(Shown, shown, 'attention answer').request;
     },
     async decide(goal, content, actor, signal) {
       const shown = await withContent(content, file =>
@@ -319,8 +332,22 @@ export function dotsAttention(
           {signal, env: actor.env},
         ),
       );
-      return checked(Type.Object({decision: DecisionSchema}), shown, 'decide')
-        .decision;
+      return checked(
+        Type.Object({decision: DecisionSchema}),
+        shown,
+        'attention decide',
+      ).decision;
+    },
+    async coordinating(owner, actor, signal) {
+      const listed = checked(
+        CoordinatingSchema,
+        await run(['task', '--owner', owner, 'goal', 'coordinating'], {
+          signal,
+          env: actor.env,
+        }),
+        'task goal coordinating',
+      );
+      return listed.goals.map(({project, goal}) => ({project, id: goal}));
     },
   };
 }

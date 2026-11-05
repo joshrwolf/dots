@@ -96,7 +96,8 @@ nor replaces a worker automatically. Unknown or stale context remains explicit.
 Use `/goal new IDEA` to plan an outcome, or `/goal follow ID` to follow an existing
 one. Following adds its brief and task outline to context; it does not authorize
 implementation or start work. Use `/goal refresh` to refresh and
-`/goal unfollow ID` to remove its future context.
+`/goal unfollow ID` to remove its popup and brief and task context. Following
+is only the view: unfollowing ends neither claims nor coordination.
 
 A followed goal shows one summary line below the editor: progress, attention,
 the task this session or its workers are on, and other followed goals.
@@ -139,10 +140,19 @@ paused whatever arrives. Answers given in chat are recorded through the
 Pi received as interactive input, separately from the agent's interpretation.
 Pi passes other extensions' input transforms on as interactive input, so the
 quote is the text as delivered, a cooperative record rather than proof of
-keystrokes; popup answers are the person's own selection. Each followed goal's context carries its current
-mandate with the human input it rests on, recent decisions, saved answers not
-yet incorporated, and open requests, read from the store rather than the
-transcript.
+keystrokes; popup answers are the person's own selection. Each followed goal's
+context carries its current mandate with the human input it rests on, recent
+decisions, saved answers not yet incorporated, and open requests, read from the
+store rather than the transcript.
+
+Responsibility comes from the store, not the view. Before each refresh the
+runtime reads the goals whose root it claims (`dots task goal coordinating`),
+in every project, and reads their requests with the followed goals'. A goal it
+coordinates but does not follow keeps that attention context, labelled as not
+followed, and its answers are still delivered; its requests alert the terminal
+status and the indicator line by name, to be answered in Attention, and never
+join the popup. When that read fails, the runtime acts on none of them and
+keeps its last alert rather than clearing it.
 
 For another project, supply its exact `project` key from `dots task --json`,
 not a guessed path. Several goals may be followed at once; selecting one changes

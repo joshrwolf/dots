@@ -8,7 +8,12 @@ import goal, {
   restoreGoals,
 } from '../extensions/goal/index.ts';
 import {source, snapshot} from './goal-fixture.mjs';
-import {attentionStore, request, requestId} from './attention-fixture.mjs';
+import {
+  PROJECT,
+  attentionStore,
+  request,
+  requestId,
+} from './attention-fixture.mjs';
 import {withHierarchy} from '../extensions/goal/source.ts';
 import {WORKER_ACTIVITY_EVENT} from '../src/ui/worker-activity.ts';
 
@@ -91,6 +96,7 @@ function harness(
     cwd: '/example/linked',
     mode,
     hasUI: mode !== 'json',
+    isIdle: () => true,
     sessionManager: {
       getBranch: () => entries,
       getSessionId: () => session,
@@ -1141,9 +1147,9 @@ test('attention scope is exactly the followed goals; none reads nothing', async 
   await h.event('session_start');
   await h.context();
   assert.deepEqual(
-    h.attention.state.calls,
+    h.attention.state.calls.filter(call => call.op !== 'coordinating'),
     [],
-    'no follows, no attention reads',
+    'no follows or coordination, no attention reads',
   );
   await h.command('focus t-123abc');
   await settle();
@@ -1154,9 +1160,71 @@ test('attention scope is exactly the followed goals; none reads nothing', async 
   assert.match(files[0].content, /No mandate recorded/);
   await h.command('unfocus');
   await settle();
-  const before = h.attention.state.calls.length;
+  const listCount = () =>
+    h.attention.state.calls.filter(call => call.op === 'list').length;
+  const before = listCount();
   assert.deepEqual(await h.context(), []);
-  assert.equal(h.attention.state.calls.length, before);
+  assert.equal(listCount(), before);
+});
+
+test('a coordinated goal delivers after unfollow, across reload and tree, once', async () => {
+  const attention = attentionStore({requests: [request({goal: 't-123abc'})]});
+  const h = harness(source(), [], 'rpc', 'fixture-session', attention);
+  await h.event('session_start');
+  await h.tool('t-123abc');
+  await settle();
+  const owner = attention.state.calls.find(
+    call => call.op === 'coordinating',
+  ).owner;
+  assert.match(owner, runtimeOf('fixture-session'));
+  attention.state.coordinator = owner;
+  await h.unfollow({id: 't-123abc'});
+  await h.event('agent_end');
+  await settle();
+  const kept = (await h.context())[0].content;
+  assert.match(
+    kept,
+    /^Goal t-123abc · project p-a+ · coordinating, not followed here/,
+  );
+  assert.match(kept, /Awaiting a person — r-0+1/);
+  assert.doesNotMatch(
+    kept,
+    /Fixture brief|Reference fixture slice/,
+    'no view sections',
+  );
+  const alerts = () =>
+    h.emitted.filter(({channel}) => channel === 'dots:attention');
+  assert.equal(alerts().at(-1).data.requests[0].followed, false);
+  await attention.source.answer(
+    PROJECT,
+    requestId(1),
+    {source: 'ui', choice: 'one', provenance: 'dots attention view'},
+    {env: {}},
+  );
+  const sent = () =>
+    h.messages.filter(m => m.message.customType === 'dots.attention.answer');
+  await h.event('agent_end');
+  await settle();
+  assert.equal(sent().length, 1);
+  // Pi records a delivered notice on the branch: the receipt.
+  h.entries.push({type: 'custom_message', ...sent()[0].message});
+  await h.event('session_shutdown', {reason: 'reload'});
+  await h.event('session_start', {reason: 'reload'});
+  await h.event('agent_end');
+  await h.event('session_tree');
+  await h.event('agent_end');
+  await settle();
+  assert.equal(sent().length, 1, 'reload and tree do not repeat it');
+  assert.match(
+    (await h.context())[0].content,
+    /coordinating, not followed here[\s\S]*Saved answer, not yet incorporated — r-0+1/,
+    'its context survives reload and tree',
+  );
+  assert.equal(
+    attention.state.calls.findLast(call => call.op === 'coordinating').owner,
+    owner,
+    'reload keeps the runtime and its responsibilities',
+  );
 });
 
 test('context carries saved answers and the role across tree and compaction-independent restores', async () => {

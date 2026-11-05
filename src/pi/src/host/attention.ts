@@ -7,9 +7,18 @@
 
 export const ATTENTION_EVENT = 'dots:attention';
 
+export interface AttentionRequest {
+  readonly id: string;
+  readonly title: string;
+  /** The goal's title. */
+  readonly goal: string;
+  /** False when the session coordinates the goal without following it. */
+  readonly followed: boolean;
+}
+
 export interface AttentionSignal {
   /** Open requests awaiting a person, oldest first. */
-  readonly requests: readonly {readonly id: string; readonly title: string}[];
+  readonly requests: readonly AttentionRequest[];
 }
 
 export function isAttentionSignal(value: unknown): value is AttentionSignal {
@@ -22,7 +31,9 @@ export function isAttentionSignal(value: unknown): value is AttentionSignal {
         !!item &&
         typeof item === 'object' &&
         typeof (item as {id?: unknown}).id === 'string' &&
-        typeof (item as {title?: unknown}).title === 'string',
+        typeof (item as {title?: unknown}).title === 'string' &&
+        typeof (item as {goal?: unknown}).goal === 'string' &&
+        typeof (item as {followed?: unknown}).followed === 'boolean',
     )
   );
 }

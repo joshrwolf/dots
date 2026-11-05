@@ -53,7 +53,9 @@ export function decision(overrides = {}) {
 
 /**
  * A fake AttentionSource; `goals` maps "project:goal" to goal records.
- * @param {{coordinator?: string | null, status?: string, requests?: object[], decisions?: object[], mandate?: object | null}} [options]
+ * Every goal shares one coordinator and status; `goals` lists the goal
+ * roots the store holds, for `coordinating`.
+ * @param {{coordinator?: string | null, status?: string, requests?: object[], decisions?: object[], mandate?: object | null, goals?: {project: string, id: string}[]}} [options]
  */
 export function attentionStore({
   coordinator = null,
@@ -61,10 +63,14 @@ export function attentionStore({
   requests = [],
   decisions = [],
   mandate = null,
+  goals = [{project: PROJECT, id: 't-123abc'}],
 } = {}) {
   const state = {
     coordinator,
     status,
+    goals,
+    /** Set to make `coordinating` fail with this message. */
+    coordinatingFail: undefined,
     requests: new Map(requests.map(item => [item.id, structuredClone(item)])),
     decisions: [...decisions],
     mandate,
@@ -126,6 +132,15 @@ export function attentionStore({
         by: actor.env.DOTS_AGENT_OWNER ?? null,
       };
       return structuredClone(found);
+    },
+    async coordinating(owner, actor) {
+      state.calls.push({op: 'coordinating', owner, actor});
+      await Promise.resolve();
+      if (state.coordinatingFail) throw new Error(state.coordinatingFail);
+      // Held and closed roots are not coordination.
+      return state.coordinator === owner && state.status === 'open'
+        ? structuredClone(state.goals)
+        : [];
     },
     async decide(goal, content, actor) {
       state.calls.push({op: 'decide', goal, content, actor});
