@@ -439,3 +439,42 @@ test('40x16, light and dark: the frame, question and options fit', () => {
     assert.match(out, /\[ Close \]/);
   }
 });
+
+test('long context yields to the options, and clicking prose answers nothing', () => {
+  const h = harness(40);
+  h.set([
+    request({
+      context: Array.from(
+        {length: 70},
+        (_, i) => `Contextual explanation line ${i}`,
+      ).join('\n'),
+    }),
+  ]);
+  const lines = h.popup.render(80).map(line => stripTerminalSequences(line));
+  assert.ok(lines.length <= 40);
+  assert.ok(lines.some(line => line.includes('This project only')));
+  assert.ok(lines.some(line => line.includes('Read in full for the rest')));
+  const mouse = (x: number, y: number) => {
+    for (const type of ['press', 'click'] as const)
+      h.popup.handleMouse({
+        type,
+        button: 'left',
+        x,
+        y,
+        screenX: x,
+        screenY: y,
+        width: 80,
+        height: lines.length,
+        shift: false,
+        alt: false,
+        ctrl: false,
+      });
+  };
+  for (const [y, line] of lines.entries())
+    if (line.includes('Contextual explanation'))
+      mouse(line.indexOf('Contextual'), y);
+  assert.deepEqual(h.answers, [], 'prose is not an answer target');
+  const y = lines.findIndex(line => line.includes('Every project'));
+  mouse(lines[y]!.indexOf('Every project'), y);
+  assert.deepEqual(h.answers, [[requestId(1), {choice: 'all'}]]);
+});

@@ -467,8 +467,15 @@ export class AttentionView implements Component, Focusable {
     this.redraw();
   }
 
-  /** The selected request's question, state and actions, within `rows`. */
-  private detail(item: AttentionItem, width: number, rows: number): string[] {
+  /**
+   * The selected request's question, state and actions, within `rows`. Prose
+   * yields to the controls, which start at `control`.
+   */
+  private detail(
+    item: AttentionItem,
+    width: number,
+    rows: number,
+  ): {lines: string[]; control: number} {
     const theme = this.theme!;
     const {request, state} = item;
     const lines = (text: string, tone: Parameters<Theme['fg']>[0] = 'text') =>
@@ -517,21 +524,27 @@ export class AttentionView implements Component, Focusable {
       0,
       0,
     ).render(width);
-    const room = Math.max(
-      1,
-      rows - head.length - notes.length - tail.length - extra.length,
-    );
-    const shown =
-      question.length <= room
-        ? question
+    const fit = (text: readonly string[], room: number) =>
+      text.length <= room
+        ? text
         : [
-            ...question.slice(0, Math.max(0, room - 1)),
+            ...text.slice(0, Math.max(0, room - 1)),
             truncateToWidth(
               theme.fg('dim', '… Read in full for the rest'),
               width,
             ),
           ];
-    return [...head, ...shown, ...extra, ...notes, ...tail].slice(0, rows);
+    const room = Math.max(0, rows - tail.length);
+    const shown = fit(question, Math.max(1, room - head.length - notes.length));
+    const summary = fit(
+      extra,
+      Math.max(0, room - head.length - notes.length - shown.length),
+    );
+    const prose = [...head, ...shown, ...summary, ...notes].slice(0, room);
+    return {
+      lines: [...prose, ...tail].slice(0, rows),
+      control: prose.length,
+    };
   }
 
   /** Mouse targets mirror the rendered layout. */
@@ -566,9 +579,13 @@ export class AttentionView implements Component, Focusable {
             ),
           ]
         : [];
-    const detailLines = this.detail(item, detailWidth, rows - position.length);
+    const {lines, control} = this.detail(
+      item,
+      detailWidth,
+      rows - position.length,
+    );
     const tail = this.focus === 'text' && this.answerable(item);
-    const detail = this.mouseDetail(item, detailLines, tail);
+    const detail = this.mouseDetail(item, lines, control, tail);
     if (!split)
       return new VStack([
         ...position.map(line => new Text(line, 0, 0)),
@@ -585,22 +602,22 @@ export class AttentionView implements Component, Focusable {
     return new Columns([{component: left, width: 30}, {component: detail}], 3);
   }
 
-  /** Detail lines, with the native choice list or input taking their own mouse events. */
+  /**
+   * Detail lines, with the native choice list or input taking mouse events
+   * on exactly the rows it rendered, from `control`; prose takes none.
+   */
   private mouseDetail(
     item: AttentionItem,
     lines: readonly string[],
+    control: number,
     typing: boolean,
   ): Component {
-    const control: Component = typing ? this.input(item) : this.choices(item);
-    const controlRows = typing ? 2 : control.render(1000).length;
-    const start = Math.max(0, lines.length - controlRows);
-    const before = lines.slice(0, start);
     return {
       render: () => [...lines],
       invalidate() {},
       handleMouse: (event: TuiMouseEvent) => {
-        if (event.y < before.length) return undefined;
-        const y = event.y - before.length;
+        if (event.y < control || event.y >= lines.length) return undefined;
+        const y = event.y - control;
         if (typing) {
           if (y === 1) {
             if (event.button === 'left' && event.type === 'press')
