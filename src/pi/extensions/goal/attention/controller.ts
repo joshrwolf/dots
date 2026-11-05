@@ -148,7 +148,11 @@ export class AttentionController {
     at: number;
     entry: {id: string; title: string};
   }[] = [];
-  private readonly follows = new Map<string, () => void>();
+  /** Per goal: stop its stream; `ready` settles once its cursor is known. */
+  private readonly follows = new Map<
+    string,
+    {readonly stop: () => void; readonly ready: Promise<void>}
+  >();
   /** Answered requests that mandates rest on; immutable once answered. */
   private readonly sources = new Map<string, Request>();
 
@@ -234,9 +238,9 @@ export class AttentionController {
   /** Stream exactly the goals read. */
   private stream(goals: readonly GoalRef[]): void {
     const kept = new Set(goals.map(refKey));
-    for (const [goal, stop] of this.follows)
+    for (const [goal, follow] of this.follows)
       if (!kept.has(goal)) {
-        stop();
+        follow.stop();
         this.follows.delete(goal);
       }
     for (const goal of goals)
@@ -281,6 +285,9 @@ export class AttentionController {
     }
     const goals = this.goals();
     this.stream(goals);
+    // The cursor precedes the snapshot, so nothing between them is missed.
+    await Promise.all(goals.map(goal => this.follows.get(refKey(goal))?.ready));
+    if (epoch !== this.reads || this.lifetime.signal.aborted) return;
     if (!goals.length) {
       this.reading = undefined;
       this.list = undefined;
@@ -306,17 +313,16 @@ export class AttentionController {
     if (state() !== before) this.host.changed();
   }
 
-  /** Follow one goal from the store's current head; a reconnect replays from the cursor. */
+  /**
+   * Follow one goal from the store's head, read before the next snapshot;
+   * a reconnect replays from the cursor.
+   */
   private follow(key: string, goal: GoalRef): void {
     const tasks = this.host.tasks;
     if (!tasks) return;
     let stop: (() => void) | undefined;
     let stopped = false;
-    this.follows.set(key, () => {
-      stopped = true;
-      stop?.();
-    });
-    void tasks.head(goal.project).then(
+    const ready = tasks.head(goal.project).then(
       head => {
         if (stopped || this.lifetime.signal.aborted) return;
         let cursor = head;
@@ -337,8 +343,17 @@ export class AttentionController {
         });
       },
       // Without a cursor, refreshes on runs and explicit reads still apply.
-      () => this.follows.delete(key),
+      () => {
+        if (this.follows.get(key)?.ready === ready) this.follows.delete(key);
+      },
     );
+    this.follows.set(key, {
+      stop: () => {
+        stopped = true;
+        stop?.();
+      },
+      ready,
+    });
   }
 
   private find(id: string): {request: Request; goal: string} | undefined {
@@ -565,7 +580,7 @@ export class AttentionController {
   }
 
   close(): void {
-    for (const stop of this.follows.values()) stop();
+    for (const follow of this.follows.values()) follow.stop();
     this.follows.clear();
     this.lifetime.abort();
     this.reading?.abort();

@@ -643,6 +643,56 @@ test('follows the shared stream from head and refreshes on attention events', as
   assert.equal(follows[0].stopped, true);
 });
 
+test('the stream cursor is read before the snapshot, so an answer between them is delivered', async () => {
+  const store = attentionStore({
+    coordinator: agent.owner,
+    requests: [request()],
+  });
+  let resolveHead;
+  let heads = 0;
+  const follows = [];
+  const delivered = [];
+  const ctl = new AttentionController({
+    source: store.source,
+    deliver: compose => delivered.push(compose()),
+    branch: () => [],
+    changed() {},
+    signal() {},
+    tasks: {
+      head: () => {
+        heads++;
+        return new Promise(resolve => (resolveHead = resolve));
+      },
+      follow(project, root, since, listener) {
+        follows.push({since, listener});
+        return () => {};
+      },
+    },
+  });
+  ctl.bind(agent);
+  try {
+    const first = ctl.setScope([goalRef]);
+    await settle();
+    // An overlapping refresh waits on the same cursor read.
+    const second = ctl.refresh();
+    await settle();
+    assert.equal(heads, 1);
+    assert.equal(
+      store.state.calls.some(call => call.op === 'list'),
+      false,
+      'no snapshot before the cursor',
+    );
+    await external(store, requestId(1));
+    resolveHead(42);
+    await Promise.all([first, second]);
+    assert.equal(follows[0].since(), 42);
+    assert.equal(notices(delivered).length, 1);
+    assert.equal(ctl.model().items[0].state.kind, 'answered');
+  } finally {
+    ctl.close();
+  }
+});
+
 test('context carries the mandate with its human basis kept apart, bounded decisions and roles', () => {
   const linked = decision({
     id: decisionId(9),
