@@ -1,7 +1,7 @@
 //! Transactional task results with immutable evidence. Each result event links
 //! to the one it replaced.
-use dots_memory::mutation_lock::MutationLock;
-use dots_memory::verified_text;
+use dots_documents::mutation_lock::MutationLock;
+use dots_documents::verified_text;
 use rusqlite::{OptionalExtension as _, Transaction, params};
 use serde::Serialize;
 

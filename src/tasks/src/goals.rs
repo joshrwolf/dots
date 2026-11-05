@@ -368,7 +368,7 @@ fn descendants(tx: &Transaction<'_>, project: &Project, id: &str) -> Result<Vec<
 }
 
 fn validate_brief(brief: &str) -> Result<(), Error> {
-    Ok(dots_memory::paths::validate_brief(Path::new(brief))?)
+    Ok(dots_documents::paths::validate_brief(Path::new(brief))?)
 }
 
 fn protect(root: &Task, actor: Actor<'_>) -> Result<(), Error> {

@@ -308,7 +308,7 @@ impl Repository {
                 .parse::<usize>()
                 .map_err(|_| Error::Invalid("invalid blob size".into()))?;
             total += size;
-            if size > dots_memory::MAX_FILE_BYTES || total > MAX_BYTES {
+            if size > dots_documents::MAX_FILE_BYTES || total > MAX_BYTES {
                 return Err(Error::Invalid("knowledge size limit exceeded".into()));
             }
             let content = self.checked(&["cat-file", "blob", parts[2]])?;
@@ -328,7 +328,7 @@ fn validate_path(path: &str) -> Result<()> {
     if path == "manifest.json" {
         return Ok(());
     }
-    dots_memory::paths::validate_markdown(Path::new(path))
+    dots_documents::paths::validate_markdown(Path::new(path))
         .map_err(|e| Error::Invalid(e.to_string()))?;
     if !path.is_ascii()
         || path.split('/').count() > 8
@@ -1097,7 +1097,7 @@ mod acceptance {
                 "{path}"
             );
         }
-        let oversized = "x".repeat(dots_memory::MAX_FILE_BYTES + 1);
+        let oversized = "x".repeat(dots_documents::MAX_FILE_BYTES + 1);
         assert!(
             lab.mac
                 .prepare(&base, &[Edit::put("global/large.md", &oversized)])

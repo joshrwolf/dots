@@ -58,7 +58,7 @@ fn missing_and_present_empty_documents_have_distinct_revisions() {
 fn excerpts_preserve_graphemes_and_byte_budget() {
     for text in ["cafe\u{301}", "a👨\u{200D}👩\u{200D}👧b", "é界"] {
         for limit in 0..=text.len() {
-            let excerpt = memory::bounded(text, limit);
+            let excerpt = memory::text::excerpt(text, limit);
             assert!(excerpt.len() <= limit);
             assert!(text.starts_with(&excerpt));
             assert!(
@@ -108,7 +108,7 @@ fn one_lock_coordinates_distinct_document_scopes() {
     let lock = MutationLock::acquire(&first.lock_path).unwrap();
     for store in [first, &second] {
         let error = store.publish(Path::new("MEMORY.md"), "missing", Some("a"));
-        assert!(error.unwrap_err().to_string().contains("busy"));
+        assert!(matches!(error, Err(memory::Error::Busy)));
         assert!(!store.read(Path::new("MEMORY.md"), 1, 1).unwrap().exists);
     }
     drop(lock);

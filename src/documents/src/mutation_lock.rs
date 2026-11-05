@@ -42,9 +42,7 @@ impl MutationLock {
         }
         match file.try_lock() {
             Ok(()) => Ok(Self { _file: file }),
-            Err(TryLockError::WouldBlock) => Err(invalid(
-                "workspace mutation is busy; retry after the writer finishes",
-            )),
+            Err(TryLockError::WouldBlock) => Err(crate::Error::Busy),
             Err(TryLockError::Error(error)) => Err(io("acquire mutation lock", path, error)),
         }
     }

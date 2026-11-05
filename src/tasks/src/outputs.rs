@@ -1,9 +1,9 @@
 //! Immutable output publication and exact-revision inspection in the workspace catalog.
 use std::path::{Path, PathBuf};
 
-use dots_memory::immutable::{self, Presence};
-use dots_memory::mutation_lock::MutationLock;
-use dots_memory::{Document, paths, text, verified_text};
+use dots_documents::immutable::{self, Presence};
+use dots_documents::mutation_lock::MutationLock;
+use dots_documents::{Document, paths, text, verified_text};
 use rusqlite::{OptionalExtension as _, params};
 use serde::Serialize;
 

@@ -4,8 +4,8 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
-use dots_memory::Store;
-use dots_memory::mutation_lock::MutationLock;
+use dots_documents::Store;
+use dots_documents::mutation_lock::MutationLock;
 
 #[test]
 fn lock_holder_fixture() {

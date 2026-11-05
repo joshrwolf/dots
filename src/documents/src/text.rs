@@ -61,6 +61,19 @@ pub fn bytes_revision(content: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(content)))
 }
 
+/// Bound excerpts by bytes without splitting a Unicode grapheme.
+#[must_use]
+pub fn excerpt(text: &str, bytes: usize) -> String {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    let mut output = String::new();
+    for grapheme in text.graphemes(true) {
+        if output.len() + grapheme.len() > bytes {
+            break;
+        }
+        output.push_str(grapheme);
+    }
+    output
+}
 pub fn validate_page(start: usize, lines: usize) -> Result<()> {
     if start == 0 || !(1..=200).contains(&lines) {
         return Err(invalid("start must be positive; lines must be 1..200"));
@@ -80,9 +93,7 @@ pub fn page(path: &Path, content: Option<&str>, start: usize, lines: usize) -> R
     for line in content.lines().skip(start - 1).take(lines) {
         if selected.len() + line.len() + 1 > 16 * 1024 {
             if count == 0 {
-                return Err(invalid(
-                    "text line exceeds read budget; use an ordinary file read",
-                ));
+                return Err(invalid("text line exceeds the read budget"));
             }
             break;
         }

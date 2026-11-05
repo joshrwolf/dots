@@ -199,7 +199,7 @@ mod tests {
         );
         let listed = fixture.ok("linked", &["goal", "list"]);
         assert!(listed.pointer("/goals/0/brief/document").unwrap().is_null());
-        for bytes in [vec![0xff], vec![b'x'; dots_memory::MAX_FILE_BYTES + 1]] {
+        for bytes in [vec![0xff], vec![b'x'; dots_documents::MAX_FILE_BYTES + 1]] {
             fs::write(&path, bytes).unwrap();
             let shown = fixture.ok("linked", &["goal", "show", id]);
             assert!(

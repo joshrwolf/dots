@@ -6,7 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-dots-memory.workspace = true
+dots-documents.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 thiserror.workspace = true

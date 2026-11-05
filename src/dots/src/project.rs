@@ -4,7 +4,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail, ensure};
-use dots_memory::mutation_lock::MutationLock;
+use dots_documents::mutation_lock::MutationLock;
 use dots_tasks::{Project, Store};
 use serde_json::json;
 

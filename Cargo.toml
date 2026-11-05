@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "src/bootstrap",
     "src/tasks",
+    "src/documents",
     "src/memory",
     "src/process",
     "src/review",
@@ -24,6 +25,7 @@ github-inspect = { path = "src/github/inspect" }
 github-client = { path = "src/github/client" }
 github-watch = { path = "src/github/watch" }
 dots-tasks = { path = "src/tasks" }
+dots-documents = { path = "src/documents" }
 dots-memory = { path = "src/memory" }
 dots-process = { path = "src/process" }
 dots-review = { path = "src/review" }

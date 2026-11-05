@@ -1,10 +1,10 @@
-//! Host scope discovery and CLI presentation; storage mechanics belong to dots-memory.
+//! Host scope discovery and CLI presentation; filesystem mechanics belong to dots-documents.
 use std::fmt::Write as _;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, ensure};
-use dots_memory::{Document, Search, Store};
+use dots_documents::{Document, Search, Store};
 use serde_json::json;
 
 use crate::command::{MemoryCommand, MemoryScope};
@@ -142,11 +142,11 @@ fn read_input(directory: &Path, content_file: &Path) -> Result<String> {
     let mut content = String::new();
     std::fs::File::open(&input)
         .context("open memory input file")?
-        .take((dots_memory::MAX_FILE_BYTES + 1) as u64)
+        .take((dots_documents::MAX_FILE_BYTES + 1) as u64)
         .read_to_string(&mut content)
         .context("read UTF-8 memory input")?;
     ensure!(
-        content.len() <= dots_memory::MAX_FILE_BYTES,
+        content.len() <= dots_documents::MAX_FILE_BYTES,
         "memory input exceeds 256 KiB"
     );
     Ok(content)

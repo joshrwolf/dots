@@ -226,7 +226,7 @@ mod tests {
                 "--expected",
                 "missing"
             ])
-            .contains("workspace mutation is busy")
+            .contains("mutation is busy")
         );
         assert!(lock_path.is_file());
         drop(lock);

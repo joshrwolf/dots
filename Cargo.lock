@@ -498,7 +498,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "dots-memory",
+ "dots-documents",
  "dots-process",
  "dots-review",
  "dots-tasks",
@@ -515,7 +515,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dots-memory"
+name = "dots-documents"
 version = "0.1.0"
 dependencies = [
  "dots-process",
@@ -525,6 +525,20 @@ dependencies = [
  "sha2 0.11.1",
  "thiserror 2.0.21",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "dots-memory"
+version = "0.1.0"
+dependencies = [
+ "dots-documents",
+ "dots-process",
+ "getrandom 0.4.3",
+ "hex",
+ "nix 0.31.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -570,7 +584,7 @@ dependencies = [
 name = "dots-tasks"
 version = "0.1.0"
 dependencies = [
- "dots-memory",
+ "dots-documents",
  "dots-process",
  "rusqlite",
  "serde",

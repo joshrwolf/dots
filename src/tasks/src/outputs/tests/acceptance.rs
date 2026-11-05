@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
-use dots_memory::mutation_lock::MutationLock;
-use dots_memory::staged_file::StagedFile;
-use dots_memory::{directories, text};
+use dots_documents::mutation_lock::MutationLock;
+use dots_documents::staged_file::StagedFile;
+use dots_documents::{directories, text};
 
 use super::{Fixture, actor, input};
 use crate::outputs::OutputContent;

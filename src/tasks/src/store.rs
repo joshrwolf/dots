@@ -19,7 +19,7 @@ const SCHEMA: i64 = 9;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Documents(#[from] dots_memory::Error),
+    Documents(#[from] dots_documents::Error),
     #[error("open or update workspace catalog")]
     Storage(#[from] rusqlite::Error),
     #[error(
@@ -619,7 +619,7 @@ impl Store {
         let parent = path
             .parent()
             .ok_or(Error::Invalid("catalog path has no parent"))?;
-        let staged = dots_memory::staged_file::StagedFile::create(parent)?;
+        let staged = dots_documents::staged_file::StagedFile::create(parent)?;
         let store = Self::initialize(Connection::open_with_flags(
             staged.path(),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,

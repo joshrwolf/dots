@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, ensure};
-use dots_memory::{Document, Store};
+use dots_documents::{Document, Store};
 use dots_tasks::{Goal, GoalOverview, GoalProgress, Project, Status, Task};
 use serde::Serialize;
 
@@ -45,7 +45,7 @@ fn documents(project: &Project) -> Result<Store> {
 
 /// Association requires an existing readable brief; no files are created or copied.
 pub(crate) fn existing(project: &Project, relative: &Path) -> Result<String> {
-    dots_memory::paths::validate_brief(relative)?;
+    dots_documents::paths::validate_brief(relative)?;
     let document = documents(project)?.read(relative, 1, 200)?;
     ensure!(
         document.exists,
@@ -61,7 +61,7 @@ pub(crate) fn existing(project: &Project, relative: &Path) -> Result<String> {
 pub(crate) fn reference(project: &Project, goal: Goal) -> Result<ShownGoal> {
     let root = crate::project::workspace(project)?;
     let relative = Path::new(&goal.brief);
-    dots_memory::paths::validate_brief(relative)?;
+    dots_documents::paths::validate_brief(relative)?;
     let path = root.join(relative);
     Ok(ShownGoal {
         root: goal.root,

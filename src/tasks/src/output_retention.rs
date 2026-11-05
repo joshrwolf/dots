@@ -3,9 +3,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dots_memory::inventory::{self, Kind};
-use dots_memory::mutation_lock::MutationLock;
-use dots_memory::{directories, paths, text};
+use dots_documents::inventory::{self, Kind};
+use dots_documents::mutation_lock::MutationLock;
+use dots_documents::{directories, paths, text};
 use rusqlite::params;
 use serde::Serialize;
 
@@ -92,7 +92,7 @@ impl Store {
             let content = match text::read_bytes(&entry.path, MAX_OUTPUT_BYTES) {
                 Ok(Some(content)) => content,
                 Ok(None) => continue,
-                Err(dots_memory::Error::TooLarge { .. }) => {
+                Err(dots_documents::Error::TooLarge { .. }) => {
                     receipt.issues.push(IntegrityIssue {
                         path: entry.path,
                         state: "outside_payload_limit".into(),
@@ -120,7 +120,7 @@ impl Store {
                 continue;
             }
             let removed = fs::remove_file(&entry.path)
-                .map_err(|source| dots_memory::Error::Io {
+                .map_err(|source| dots_documents::Error::Io {
                     operation: "remove purged output",
                     path: entry.path.clone(),
                     source,
@@ -275,7 +275,7 @@ fn inspect_unregistered(
                         "unregistered_output"
                     }
                 }
-                Err(dots_memory::Error::TooLarge { .. }) => "outside_payload_limit",
+                Err(dots_documents::Error::TooLarge { .. }) => "outside_payload_limit",
                 Err(error) => {
                     diagnostic = Some(error.to_string());
                     "unreadable"
@@ -322,12 +322,12 @@ fn catalog_integrity(
 fn catalog_remnants(root: &Path, report: &mut Integrity) -> Result<(), Error> {
     // A staged SQLite file can be a hard-link alias of the live catalog.
     // Enumerate names only: never open, adopt, or remove these as another database.
-    for entry in fs::read_dir(root).map_err(|source| dots_memory::Error::Io {
+    for entry in fs::read_dir(root).map_err(|source| dots_documents::Error::Io {
         operation: "inspect catalog directory",
         path: root.to_owned(),
         source,
     })? {
-        let entry = entry.map_err(|source| dots_memory::Error::Io {
+        let entry = entry.map_err(|source| dots_documents::Error::Io {
             operation: "inspect catalog entry",
             path: root.to_owned(),
             source,
