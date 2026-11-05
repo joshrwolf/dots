@@ -610,8 +610,8 @@ mod attention_view {
         assert_eq!(answer.content.source, Source::Ui);
         assert_eq!(answer.content.interpretation, None);
         assert_eq!(
-            answer.content.provenance.as_deref(),
-            Some("dots attention view --scope global")
+            answer.content.provenance,
+            "dots attention view --scope global"
         );
         assert_eq!(answer.by.as_deref(), Some("human"));
 

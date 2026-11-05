@@ -142,7 +142,7 @@ impl Session {
                     choice,
                     text,
                     source: Source::Ui,
-                    provenance: Some(self.provenance.clone()),
+                    provenance: self.provenance.clone(),
                     interpretation: None,
                 };
                 let now = time::OffsetDateTime::now_utc().unix_timestamp();
@@ -2372,7 +2372,7 @@ mod tests {
                 choice: Some("update".into()),
                 text: None,
                 source: Source::Ui,
-                provenance: None,
+                provenance: "dots attention view --scope global".into(),
                 interpretation: None,
             },
             at: 2,
