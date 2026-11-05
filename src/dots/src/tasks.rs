@@ -51,6 +51,27 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
             format!("Released {}.\n", plural(released.len(), "claim"))
         });
     }
+    // Coordination is held per owner across projects, so listing it needs no project.
+    if let TaskCommand::Goal {
+        command: GoalCommand::Coordinating,
+    } = request.command
+    {
+        anyhow::ensure!(
+            request.project.is_none(),
+            "goal coordinating lists every registered project; --project does not apply"
+        );
+        let goals = store.coordinated_goals(owner(actor)?)?;
+        return Ok(if request.json {
+            crate::json::render(serde_json::json!({ "goals": goals, "now": now }))
+        } else if goals.is_empty() {
+            "Coordinating no goals.\n".to_owned()
+        } else {
+            goals.iter().fold(String::new(), |mut out, goal| {
+                let _ = writeln!(out, "{} {}", goal.project.as_str(), goal.goal);
+                out
+            })
+        });
+    }
     if let TaskCommand::Goal {
         command: GoalCommand::Coordinate { .. },
     } = request.command
@@ -553,6 +574,9 @@ fn execute_goal(
                 store.goal_overview(project, &id, all)?,
             )?),
         }),
+        GoalCommand::Coordinating => {
+            anyhow::bail!("goal coordinating is answered before project resolution")
+        }
         GoalCommand::Coordinate { id, take, resume } => {
             let coordination =
                 store.coordinate(project, &id, owner(actor)?, take, resume, actor.now)?;

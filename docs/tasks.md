@@ -58,6 +58,8 @@ every other owner's claim in the goal to the coordinator in one recorded
 transaction, and `--resume` reopens a held or closed root. Managed workers
 cannot coordinate, and a Pi session coordinates as its live runtime owner.
 Releasing the root stops coordinating; holding it pauses the goal.
+`dots task goal coordinating` lists the exact goals the acting owner coordinates
+across every registered project, read from root claims alone.
 
 `dots attention` keeps the goal's durable questions for the user and its
 decisions, including the execution mandate, in the same catalog. A request

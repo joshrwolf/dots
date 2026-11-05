@@ -1,4 +1,5 @@
 //! Goal briefs attached to task roots. Documents stay outside the store.
+use crate::attention::GoalRef;
 use crate::store::{self, Actor, Error, EventKind, NewTask, Owner, Project, Status, Store, Task};
 use rusqlite::{OptionalExtension as _, Transaction, params};
 use serde::Serialize;
@@ -262,6 +263,34 @@ impl Store {
             goal,
             transferred: held,
         })
+    }
+
+    /// Goals whose open or in-review root `owner` claims, in every registered
+    /// project: the goals it coordinates. A claim records responsibility, not
+    /// that the owner's session is running. Held and closed roots coordinate
+    /// nothing, and claims below a root do not make coordination.
+    pub fn coordinated_goals(&mut self, owner: Owner<'_>) -> Result<Vec<GoalRef>, Error> {
+        let mut statement = self.connection.prepare(
+            "SELECT tasks.project, tasks.id FROM tasks
+               JOIN goals ON goals.root=tasks.id
+               JOIN projects ON projects.id=tasks.project
+             WHERE tasks.owner=?1 AND tasks.status IN ('open','review')
+             ORDER BY tasks.project, tasks.created_at, tasks.rowid",
+        )?;
+        let rows = statement
+            .query_map([owner.as_str()], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|(project, goal)| {
+                let project = Project::try_new(project).map_err(|_| Error::Corrupt {
+                    id: goal.clone(),
+                    field: "project",
+                })?;
+                Ok(GoalRef { project, goal })
+            })
+            .collect()
     }
 
     /// List attached roots, most recently active first; ordinary root tasks are not goals.

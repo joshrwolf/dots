@@ -326,6 +326,11 @@ pub(crate) enum GoalCommand {
         #[arg(long)]
         resume: bool,
     },
+    /// List the goals the acting owner coordinates, across every registered project
+    #[command(
+        long_about = "List exact PROJECT and GOAL identities for every open or in-review goal whose root the acting owner (--owner, else the invoking agent's runtime owner or session) claims, across every registered project. Claims below a root, held or closed roots, and released or taken-over roots are not coordination. A claim records responsibility, not that its session is running. Reads only the catalog; it never initializes one, and --project does not apply."
+    )]
+    Coordinating,
 }
 
 #[derive(Debug, Subcommand)]

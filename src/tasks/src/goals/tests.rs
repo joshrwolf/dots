@@ -1,4 +1,5 @@
 use super::{Actor, Error, Project, Status, Store, Task};
+use crate::attention::GoalRef;
 use crate::store::{NewTask, Owner, Update};
 use rusqlite::Connection;
 
@@ -471,4 +472,110 @@ fn stores_reopen_and_other_schema_versions_fail() {
         other.pragma_update(None, "user_version", version).unwrap();
         assert!(matches!(Store::initialize(other), Err(Error::Schema(v)) if v == version));
     }
+}
+
+#[test]
+fn coordinated_goals_are_exactly_the_open_roots_an_owner_claims() {
+    let mut store = store();
+    let other_project = Project::try_new("p-00000000000000000000000000000002").unwrap();
+    let first = Owner::try_new("first").unwrap();
+    let second = Owner::try_new("second").unwrap();
+    let as_ = |name, now| Actor {
+        name: Some(name),
+        now,
+    };
+    let goal = |store: &mut Store, project: &Project, owner| {
+        let root = store
+            .create_goal(project, "goal", "briefs/brief.md", as_(owner, 1))
+            .unwrap()
+            .root
+            .id;
+        store
+            .coordinate(project, &root, owner, false, false, 2)
+            .unwrap();
+        root
+    };
+    let here = goal(&mut store, &project(), first);
+    let there = goal(&mut store, &other_project, first);
+    let theirs = goal(&mut store, &project(), second);
+    let refs = |pairs: &[(&Project, &str)]| {
+        pairs
+            .iter()
+            .map(|(project, goal)| GoalRef {
+                project: (*project).clone(),
+                goal: (*goal).to_owned(),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        store.coordinated_goals(first).unwrap(),
+        refs(&[(&project(), &here), (&other_project, &there)])
+    );
+    assert_eq!(
+        store.coordinated_goals(second).unwrap(),
+        refs(&[(&project(), &theirs)])
+    );
+    let nobody = Owner::try_new("nobody").unwrap();
+    assert_eq!(store.coordinated_goals(nobody).unwrap(), []);
+
+    // A claim below a root is work, not coordination.
+    let leaf = store
+        .add(
+            &project(),
+            &NewTask {
+                title: "leaf".into(),
+                parent: Some(theirs.clone()),
+                ..NewTask::default()
+            },
+            as_(second, 3),
+        )
+        .unwrap()
+        .id;
+    store.release(&project(), &theirs, second, 4).unwrap();
+    store
+        .coordinate(&project(), &theirs, first, false, false, 5)
+        .unwrap();
+    store.claim(&project(), &leaf, first, false, 6).unwrap();
+    store.release(&project(), &theirs, first, 7).unwrap();
+    assert_eq!(store.coordinated_goals(first).unwrap().len(), 2);
+
+    // Takeover moves responsibility; releasing, pausing and closing end it.
+    store
+        .coordinate(&project(), &here, second, true, false, 8)
+        .unwrap();
+    assert_eq!(
+        store.coordinated_goals(second).unwrap(),
+        refs(&[(&project(), &here)])
+    );
+    store.release(&project(), &here, second, 9).unwrap();
+    store
+        .set_status(
+            &other_project,
+            &there,
+            Status::Held,
+            Some("pause"),
+            as_(first, 10),
+            false,
+        )
+        .unwrap();
+    assert_eq!(store.coordinated_goals(first).unwrap(), []);
+    assert_eq!(store.coordinated_goals(second).unwrap(), []);
+    store
+        .coordinate(&other_project, &there, first, false, true, 11)
+        .unwrap();
+    assert_eq!(
+        store.coordinated_goals(first).unwrap(),
+        refs(&[(&other_project, &there)])
+    );
+    store
+        .set_status(
+            &other_project,
+            &there,
+            Status::Dropped,
+            Some("stop"),
+            as_(first, 12),
+            false,
+        )
+        .unwrap();
+    assert_eq!(store.coordinated_goals(first).unwrap(), []);
 }

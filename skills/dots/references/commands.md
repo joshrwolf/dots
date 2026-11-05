@@ -1147,12 +1147,13 @@ A goal is a root task with a Markdown brief in the project workspace's briefs/ d
 Usage: dots task goal [OPTIONS] <COMMAND>
 
 Commands:
-  create      Create a root task with an existing brief
-  attach      Attach or replace a root task's brief
-  list        List unfinished goals with progress, most recently active first
-  show        Show a goal's brief, progress, and unfinished tasks
-  detach      Remove the brief association; refused once the goal has requests or decisions
-  coordinate  Take coordination of a goal: claim its root although work remains below it
+  create        Create a root task with an existing brief
+  attach        Attach or replace a root task's brief
+  list          List unfinished goals with progress, most recently active first
+  show          Show a goal's brief, progress, and unfinished tasks
+  detach        Remove the brief association; refused once the goal has requests or decisions
+  coordinate    Take coordination of a goal: claim its root although work remains below it
+  coordinating  List the goals the acting owner coordinates, across every registered project
 
 Options:
       --json
@@ -1351,6 +1352,30 @@ Options:
 
       --resume
           Reopen a held or closed goal root before coordinating it
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots task goal coordinating
+
+```text
+List exact PROJECT and GOAL identities for every open or in-review goal whose root the acting owner (--owner, else the invoking agent's runtime owner or session) claims, across every registered project. Claims below a root, held or closed roots, and released or taken-over roots are not coordination. A claim records responsibility, not that its session is running. Reads only the catalog; it never initializes one, and --project does not apply.
+
+Usage: dots task goal coordinating [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help (see a summary with '-h')

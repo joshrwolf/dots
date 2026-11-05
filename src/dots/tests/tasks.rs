@@ -6,7 +6,7 @@ mod tests {
     use std::process::{Command, Output};
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
     const HISTORY_FOOTER: &str = "dots task show ID shows a task's full result and history.";
 
@@ -445,6 +445,150 @@ mod tests {
             .success()
         );
         assert!(!run("", &[], &["claim", &task]).status.success());
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one scenario covers both projects, release and the runtime default actor"
+    )]
+    fn goal_coordinating_lists_exact_root_claims_of_the_acting_owner() {
+        const RUNTIME: &str = "pi-fixture-session-0123456789abcdef";
+        let f = Fixture::new();
+        let second = f.root.join("second");
+        fs::create_dir_all(&second).unwrap();
+        git(&second, &["init", "-q", "-b", "main"]);
+        let output = Command::new(env!("CARGO_BIN_EXE_dots"))
+            .args(["--json", "project", "init", "second", "--fresh"])
+            .current_dir(&second)
+            .env("HOME", f.root.join("home"))
+            .env("XDG_DATA_HOME", f.root.join("data"))
+            .env("XDG_STATE_HOME", f.root.join("state"))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let other: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let other = other.pointer("/project/id").unwrap().as_str().unwrap();
+        let other_briefs = f
+            .root
+            .join("data/dots/workspaces")
+            .join(other)
+            .join("briefs");
+        fs::create_dir_all(&other_briefs).unwrap();
+        fs::write(other_briefs.join("README.md"), "# Goal\n").unwrap();
+        let goal = |project: &str, owner: &str| {
+            let created = f.ok(
+                "checkout",
+                &[
+                    "--project",
+                    project,
+                    "goal",
+                    "create",
+                    "Goal",
+                    "--brief",
+                    "briefs/README.md",
+                ],
+            );
+            let root = id(&json!({"task": created["goal"]["root"]}));
+            f.ok(
+                "checkout",
+                &[
+                    "--project",
+                    project,
+                    "--owner",
+                    owner,
+                    "goal",
+                    "coordinate",
+                    &root,
+                ],
+            );
+            root
+        };
+        let here = goal(&f.project, "coord");
+        let there = goal(other, "coord");
+        let theirs = goal(&f.project, "rival");
+        let coordinating =
+            |owner: &str| f.ok("checkout", &["--owner", owner, "goal", "coordinating"]);
+        let mut expected = vec![
+            json!({"project": f.project, "goal": here}),
+            json!({"project": other, "goal": there}),
+        ];
+        expected.sort_by_key(|goal| goal["project"].as_str().unwrap().to_owned());
+        let listed = coordinating("coord");
+        assert_eq!(listed["goals"], Value::Array(expected));
+        assert!(listed["now"].is_i64(), "{listed}");
+        assert_eq!(
+            listed.as_object().unwrap().keys().collect::<Vec<_>>(),
+            ["goals", "now"]
+        );
+        assert_eq!(
+            coordinating("rival")["goals"],
+            json!([{"project": f.project, "goal": theirs}])
+        );
+        assert_eq!(coordinating("nobody")["goals"], json!([]));
+        f.ok("checkout", &["--owner", "coord", "release", &here]);
+        assert_eq!(
+            coordinating("coord")["goals"],
+            json!([{"project": other, "goal": there}])
+        );
+        assert!(
+            f.fail("checkout", &["goal", "coordinating"])
+                .contains("No session identity")
+        );
+        assert!(
+            f.fail(
+                "checkout",
+                &[
+                    "--owner",
+                    "coord",
+                    "--project",
+                    other,
+                    "goal",
+                    "coordinating"
+                ]
+            )
+            .contains("--project does not apply")
+        );
+
+        // The default actor is the live runtime owner, as for coordinate.
+        let pi = |env: &[(&str, &str)], args: &[&str]| {
+            let output = Command::new(env!("CARGO_BIN_EXE_dots"))
+                .args(["--json", "task"])
+                .args(args)
+                .current_dir(f.root.join("checkout"))
+                .env_remove("DOTS_AGENT_OWNER")
+                .env_remove("DOTS_WORKER_ID")
+                .env_remove("CLAUDE_CODE_SESSION_ID")
+                .env_remove("CODEX_SESSION_ID")
+                .env("HOME", f.root.join("home"))
+                .env("XDG_STATE_HOME", f.root.join("state"))
+                .env("XDG_DATA_HOME", f.root.join("data"))
+                .env("PI_SESSION_ID", "fixture-session")
+                .envs(env.iter().copied())
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            serde_json::from_slice::<Value>(&output.stdout).unwrap()
+        };
+        let live = [("DOTS_AGENT_OWNER", RUNTIME)];
+        pi(&live, &["goal", "coordinate", &here]);
+        assert_eq!(
+            pi(&live, &["goal", "coordinating"])["goals"],
+            json!([{"project": f.project, "goal": here}])
+        );
+        assert_eq!(pi(&[], &["goal", "coordinating"])["goals"], json!([]));
+    }
+
+    #[test]
+    fn goal_coordinating_never_reads_a_missing_or_corrupt_catalog_as_empty() {
+        let f = Fixture::new();
+        let args = ["--owner", "coord", "goal", "coordinating"];
+        let catalog = f.root.join("data/dots/workspace.sqlite3");
+        fs::write(&catalog, "not a catalog").unwrap();
+        assert!(f.fail("checkout", &args).contains("is invalid"));
+        fs::remove_file(&catalog).unwrap();
+        assert!(f.fail("checkout", &args).contains("workspace absent"));
+        assert!(!catalog.exists(), "a read initialized the catalog");
     }
 
     fn git(directory: &Path, args: &[&str]) {
