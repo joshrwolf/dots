@@ -62,7 +62,7 @@ const NOTHING: TaskStep = {transitions: []};
 
 /**
  * One consequence for a wait of an event on the root or one of its
- * descendants; `own` says whether this session wrote it.
+ * descendants; `own` says whether this runtime wrote it.
  */
 export function observeTask(
   trigger: TaskTrigger,

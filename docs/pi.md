@@ -185,7 +185,8 @@ session.
 Each task wake follows its own `dots task events --follow --under` stream. It
 matches `until` event kinds on the task and every descendant, as the store's
 tree stands when each event is read, so tasks created in or moved into the tree
-count and tasks moved out stop counting. It ignores the session's own changes.
+count and tasks moved out stop counting. It ignores changes the live runtime
+makes, which `dots` records as that runtime's owner.
 Each wake keeps the seq of the last event it saw, so a reconnect or restart
 resumes without gaps or repeats. A task wake ends when the task closes by a kind outside
 `until`, and gives up after its `for` deadline.

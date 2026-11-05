@@ -76,6 +76,18 @@ export function currentAgent(): Agent | undefined {
 }
 
 /**
+ * The actor `dots` records for commands this process runs in `session`: the
+ * bound runtime's owner, or `pi-<session>`, the session actor dots falls back
+ * to, while no runtime of that session is bound. Read it when judging an
+ * event rather than once at session start: extensions' start handlers run in
+ * load order, before or after the binding.
+ */
+export function sessionActor(session: string): string {
+  const bound = holder[BOUND];
+  return bound?.session === session ? bound.owner : `pi-${session}`;
+}
+
+/**
  * End `agent` when its session ends without reload, withdrawing its export.
  * A stale caller cannot end or erase a later runtime's, even one of the same
  * session.

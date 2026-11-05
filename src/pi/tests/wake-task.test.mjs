@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {fakeClock, harness} from './wake-fixture.mjs';
+import {bindAgent, endAgent} from '../src/host/agent.ts';
 
 const PROJECT = 'p-0000000000000000000000000000beef';
 const KINDS = [
@@ -186,7 +187,7 @@ test('creation validates kinds and the task, resolves the project, and starts at
   );
   assert.match(
     content[0].text,
-    /changes this session makes \(pi-session-a\) do not/,
+    /changes this runtime makes \(pi-session-a\) do not/,
   );
   assert.equal(details.trigger, 'task');
   const {trigger} = records(h).at(-1);
@@ -274,6 +275,53 @@ test("this session's own events never wake it; closing the root itself finishes 
   assert.equal(records(h).at(-1).active, false);
   assert.equal(tasks.live().length, 0, 'the follower stops with its last wake');
   h.handlers.session_shutdown({}, h.ctx);
+});
+
+test("a bound runtime's own events never wake it, judged by its current owner across reload and runtime changes", async () => {
+  const env = {};
+  let agent = bindAgent('session-a', 'startup', env);
+  const {tasks, h} = await started();
+  try {
+    const {content} = await taskWake(h, {until: ['review'], limit: 5});
+    assert.match(
+      content[0].text,
+      new RegExp(`changes this runtime makes \\(${agent.owner}\\) do not`),
+    );
+    const fires = async (actor, task = 't-b1') => {
+      const before = h.messages.length;
+      tasks.emit(event(task, 'review', {actor}));
+      await settle();
+      return h.messages.length - before;
+    };
+    assert.equal(await fires(agent.owner), 0, 'own change');
+    assert.equal(await fires('pi-other'), 1, 'an external actor still wakes');
+    assert.equal(
+      await fires('pi-session-a'),
+      1,
+      'the bare session actor is not this bound runtime',
+    );
+    // Reload keeps the runtime and the wake's judgement.
+    bindAgent('session-a', 'reload', env);
+    await h.handlers.session_start({reason: 'reload'}, h.ctx);
+    assert.equal(await fires(agent.owner), 0, 'own change after reload');
+    // A later runtime of the same session (here, or a second process) is another actor.
+    const earlier = agent.owner;
+    endAgent(agent, env);
+    await h.handlers.session_start({reason: 'resume'}, h.ctx);
+    agent = bindAgent('session-a', 'resume', env);
+    assert.notEqual(agent.owner, earlier);
+    assert.equal(await fires(agent.owner), 0, 'the new runtime is judged');
+    assert.equal(await fires(earlier), 1, 'the earlier runtime is external');
+    // A runtime bound for another session never counts as this session's.
+    endAgent(agent, env);
+    const other = bindAgent('session-b', 'new', env);
+    assert.equal(await fires(other.owner), 1, "another session's runtime");
+    assert.equal(await fires('pi-session-a'), 0, 'unbound: the session actor');
+    endAgent(other, env);
+  } finally {
+    endAgent(agent, env);
+    h.handlers.session_shutdown({}, h.ctx);
+  }
 });
 
 test('the root closing by a kind outside until ends the wait', async () => {

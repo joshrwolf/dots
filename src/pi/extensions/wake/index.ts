@@ -21,6 +21,7 @@ import {TurnMessages} from '../../src/host/delivery.ts';
 import {systemClock, type Clock} from '../../src/host/clock.ts';
 import type {StreamState} from '../../src/host/stream.ts';
 import {Tasks, type TaskEvent} from '../../src/host/tasks.ts';
+import {sessionActor} from '../../src/host/agent.ts';
 import {
   checkDigest,
   runCheck,
@@ -660,7 +661,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     const step = observeTask(
       wake.trigger,
       event,
-      owner !== undefined && event.actor === `pi-${owner}`,
+      owner !== undefined && event.actor === sessionActor(owner),
     );
     const runtime = taskRuntime(wake);
     wake.trigger.cursor = event.seq;
@@ -933,7 +934,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     refresh();
     const text = [
       `Wake ${wake.id} set: waiting for ${untilLabel(until)} on task ${info.id} ${untrusted(info.title, 200)} (${untrusted(info.status, 32)}) or any descendant in project ${info.project}, for ${describe(span)}, up to ${wake.limit} fire${wake.limit === 1 ? '' : 's'}.`,
-      `Events after #${cursor} count; changes this session makes (pi-${owner ?? '?'}) do not. The wake ends if the task closes by an event outside until.`,
+      `Events after #${cursor} count; changes this runtime makes (${owner === undefined ? '?' : sessionActor(owner)}) do not. The wake ends if the task closes by an event outside until.`,
       'End your turn; the fire will start a new one.',
     ].join('\n');
     return {wake, text};
@@ -968,7 +969,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     name: 'wake',
     label: 'Wake',
     description:
-      "Wake this session later with a note to self. Exactly one trigger: in or at (once), every (recurring; with check, a shell command runs each tick and the session wakes only per `on`), or task (a dots task event in until on a task or any of its descendants). The fire arrives as a message that starts a turn once the session is idle. A task wake fires on each matching event another session or person records (never on this session's own changes), ends if the task closes by another kind, and times out after `for`. To wait for a Rex block's program to exit, run `rex wait` in a job instead. Use for follow-ups, supervision, coordination and CI polling; not for sub-minute loops.",
+      "Wake this session later with a note to self. Exactly one trigger: in or at (once), every (recurring; with check, a shell command runs each tick and the session wakes only per `on`), or task (a dots task event in until on a task or any of its descendants). The fire arrives as a message that starts a turn once the session is idle. A task wake fires on each matching event another runtime, session or person records (never on changes this runtime makes), ends if the task closes by another kind, and times out after `for`. To wait for a Rex block's program to exit, run `rex wait` in a job instead. Use for follow-ups, supervision, coordination and CI polling; not for sub-minute loops.",
     promptSnippet:
       'Schedule a wake-up for this session at a time, on an interval gated by a shell check, or on dots task events.',
     parameters: Type.Object({
