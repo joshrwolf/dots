@@ -862,16 +862,53 @@ test('a drafted request survives an unreadable goal and is decided when the goal
     ctl.model().items.find(item => item.request.id === requestId(2)).state.kind,
     'stale',
   );
+  // A failed save keeps its error through an outage, then is decided.
+  ctl.drafts.set(requestId(3), 'draft after failed save');
+  const answer = store.source.answer;
+  store.source.answer = async () => {
+    throw new Error('write interrupted');
+  };
+  await ctl.answer(requestId(3), {text: 'draft after failed save'});
+  store.source.answer = answer;
+  const failed = () =>
+    ctl.model().items.find(item => item.request.id === requestId(3));
+  assert.deepEqual(failed().state, {
+    kind: 'error',
+    message: 'write interrupted',
+  });
+  store.source.list = unreadable;
+  await ctl.refresh();
+  await ctl.refresh();
+  assert.equal(failed(), undefined, 'unread, not closed');
+  store.source.list = list;
+  await ctl.refresh();
+  assert.deepEqual(
+    failed().state,
+    {kind: 'error', message: 'write interrupted'},
+    'still listed: the save error stays',
+  );
+  store.source.list = unreadable;
+  await ctl.refresh();
+  await ctl.refresh();
+  store.supersede(
+    requestId(3),
+    request({id: requestId(5), question: 'Replacement question'}),
+  );
+  store.source.list = list;
+  await ctl.refresh();
+  assert.equal(failed().state.kind, 'stale');
+  assert.equal(failed().state.replacement.id, requestId(5));
+  assert.equal(ctl.drafts.get(requestId(3)), 'draft after failed save');
   // Leaving scope during an outage still takes local outcomes with it.
-  ctl.drafts.set(requestId(3), 'third draft');
+  ctl.drafts.set(requestId(5), 'third draft');
   store.source.list = unreadable;
   await ctl.refresh();
   await ctl.setScope([]);
   store.source.list = list;
-  store.state.requests.get(requestId(3)).state = 'closed';
+  store.state.requests.get(requestId(5)).state = 'closed';
   await ctl.setScope([goalRef]);
   assert.equal(
-    ctl.model().items.some(item => item.request.id === requestId(3)),
+    ctl.model().items.some(item => item.request.id === requestId(5)),
     false,
   );
 });

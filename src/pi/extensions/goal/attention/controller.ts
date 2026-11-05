@@ -366,7 +366,8 @@ export class AttentionController {
    * draft as a local outcome: replaced when the read lists its replacement,
    * otherwise no longer outstanding. It never retargets; the person
    * dismisses it. While its goal cannot be read, its snapshot is held, not
-   * closed, until a read decides; a goal that left scope keeps nothing.
+   * closed, until a read decides; a failed save keeps its error meanwhile.
+   * A goal that left scope keeps nothing.
    */
   private retain(previous: AttentionList | undefined, next: AttentionList) {
     const scope = new Set(this.goals().map(refKey));
@@ -374,7 +375,9 @@ export class AttentionController {
       ...(previous?.goals ?? []).flatMap(goal =>
         goal.requests.map(request => ({request, goal: goal.title})),
       ),
-      ...[...this.local.values()].filter(item => item.state.kind === 'open'),
+      ...[...this.local.values()].filter(
+        item => item.state.kind === 'open' || item.state.kind === 'error',
+      ),
     ].filter(({request}) => this.drafts.get(request.id)?.trim());
     for (const {request, goal} of drafted) {
       const kept = this.local.get(request.id)?.state.kind;
