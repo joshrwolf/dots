@@ -756,6 +756,62 @@ test('a held answer notice is declined once a pause is observed, without a recei
   }
 });
 
+test('a held notice is declined once responsibility is read as lost, before the list returns', async () => {
+  const other = {project: PROJECT, id: 't-789aaa'};
+  for (const [label, follows] of [
+    ['followed and coordinated', [goalRef]],
+    ['formerly coordinated only', [other]],
+  ]) {
+    const store = attentionStore({
+      coordinator: agent.owner,
+      requests: [request()],
+    });
+    await external(store, requestId(1));
+    let idle = false;
+    const sent = [];
+    const delivery = new TurnMessages(
+      {on() {}, sendMessage: message => sent.push(message)},
+      5,
+    );
+    delivery.bind({isIdle: () => idle});
+    const ctl = new AttentionController({
+      source: store.source,
+      deliver: (compose, done) => delivery.send(compose, done),
+      branch: () => [],
+      changed() {},
+      signal() {},
+    });
+    ctl.bind(agent);
+    let release = () => {};
+    let pending = false;
+    try {
+      await ctl.setScope(follows);
+      assert.equal(delivery.holding(), true, label);
+      const list = store.source.list;
+      store.source.list = async (...args) => {
+        pending = true;
+        await new Promise(resolve => (release = resolve));
+        return list(...args);
+      };
+      store.state.coordinator = null;
+      const reading = ctl.refresh();
+      await settle();
+      assert.deepEqual(ctl.coordinated(), {goals: [], failure: undefined});
+      assert.equal(pending, true, `${label}: the list read is pending`);
+      idle = true;
+      await sleep(25);
+      assert.deepEqual(sent, [], `${label}: nothing sent`);
+      release();
+      await reading;
+      assert.deepEqual(sent, [], label);
+    } finally {
+      release();
+      ctl.close();
+      delivery.close();
+    }
+  }
+});
+
 test('a drafted request that leaves the list stays with its draft beside its replacement until dismissed', async () => {
   const store = attentionStore({
     requests: [

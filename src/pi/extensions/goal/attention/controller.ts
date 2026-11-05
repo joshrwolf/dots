@@ -554,9 +554,14 @@ export class AttentionController {
     for (const request of answered) this.sent.add(request.id);
     // Revalidated when Pi takes it: a pause, release or handoff observed
     // while it was held declines it, and a later coordinator is told instead.
+    // The latest responsibility read decides, even before its list returns.
     this.host.deliver(() => {
+      const duties = new Set(this.duties.map(refKey));
       const current = new Map(
         (this.dutyFailure ? [] : this.responsible())
+          .filter(goal =>
+            duties.has(refKey({project: goal.project, id: goal.goal})),
+          )
           .flatMap(goal => goal.requests)
           .filter(request => request.state === 'answered' && request.answer)
           .map(request => [request.id, request]),
