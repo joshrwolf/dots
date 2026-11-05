@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import test from 'node:test';
 import goal, {FOCUS_ENTRY} from '../../extensions/goal/index.ts';
 import {snapshot, source} from '../goal-fixture.mjs';
+import {attentionStore} from '../attention-fixture.mjs';
 import memory from '../../extensions/memory/index.ts';
 import rex from '../../extensions/rex/index.ts';
 import {goalSectionKey} from '../../extensions/goal/context.ts';
@@ -33,7 +34,19 @@ test(
     const dir = mkdtempSync(join(tmpdir(), 'dots-goal-host-'));
     const previous = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = dir;
+    // The session is its own coordinator, not a worker of the launching agent.
+    const inherited = [
+      'DOTS_WORKER_ID',
+      'DOTS_AGENT_OWNER',
+      'PI_SESSION_ID',
+    ].map(key => [key, process.env[key]]);
+    for (const [key] of inherited) delete process.env[key];
     const backend = source();
+    // Attention reads the same fixture records as the goals: no catalog, no
+    // task stream, nothing from this machine.
+    const attention = attentionStore({
+      goals: [{project: '/example/project', id: 't-123abc'}],
+    });
     const requests = [];
     const errors = [];
     const reports = [];
@@ -179,27 +192,32 @@ test(
             }));
           },
           pi =>
-            goal(pi, backend, {
-              async record(_cwd, id, signal, seq, project) {
-                assert.equal(signal.aborted, false);
-                return {
-                  task: id,
-                  project,
-                  seq,
-                  current: 10,
-                  result: 'Recorded fixture outcome',
-                  evidence: [
-                    {slug: 'report', digest: 'sha256:' + 'a'.repeat(64)},
-                  ],
-                  purged: [],
-                };
+            goal(
+              pi,
+              backend,
+              {
+                async record(_cwd, id, signal, seq, project) {
+                  assert.equal(signal.aborted, false);
+                  return {
+                    task: id,
+                    project,
+                    seq,
+                    current: 10,
+                    result: 'Recorded fixture outcome',
+                    evidence: [
+                      {slug: 'report', digest: 'sha256:' + 'a'.repeat(64)},
+                    ],
+                    purged: [],
+                  };
+                },
+                async page() {
+                  throw new Error(
+                    'Headless inspection must not read report bytes',
+                  );
+                },
               },
-              async page() {
-                throw new Error(
-                  'Headless inspection must not read report bytes',
-                );
-              },
-            }),
+              {source: attention.source, tasks: undefined},
+            ),
         ],
       });
       await loader.reload();
@@ -273,6 +291,11 @@ test(
       await session.prompt('/fixture-context-report');
       const currentReport = reports.at(-1);
       assert.match(currentReport, /System prompt \(recorded effective\)/);
+      assert.equal(
+        'dots_goal_coordinating' in promptOptions.sections,
+        false,
+        'coordination was read, not unavailable',
+      );
       // The report names the five largest sections and counts the rest.
       assert.match(currentReport, /Companion sections \(6\)[\s\S]*… 1 more/);
       for (const section of [
@@ -508,11 +531,19 @@ test(
       await session.prompt('Discuss the original branch.');
       assert.match(promptSections(requests.at(-1)), /Goal t-123abc/);
       assert.doesNotMatch(promptSections(requests.at(-1)), /Goal t-999999/);
+      assert.ok(
+        attention.state.calls.some(call => call.op === 'coordinating') &&
+          attention.state.calls.some(call => call.op === 'list'),
+        'attention reads went to the fixture',
+      );
       assert.deepEqual(errors, []);
     } finally {
       if (session) await close(session);
       if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
       else process.env.PI_CODING_AGENT_DIR = previous;
+      for (const [key, value] of inherited)
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
       rmSync(dir, {recursive: true, force: true});
     }
   },

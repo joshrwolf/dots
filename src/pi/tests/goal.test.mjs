@@ -1426,3 +1426,28 @@ test('the popup opens on attention, answers in place and keeps Work reachable', 
     data: {requests: []},
   });
 });
+
+test('an unreadable coordination record is an explicit unavailable section, followed or not', async () => {
+  const h = harness();
+  await h.event('session_start');
+  h.attention.state.coordinatingFail =
+    'catalog schema 8 is newer than this dots';
+  const banner =
+    /Goals this session coordinates could not be checked: .*catalog schema 8 is newer than this dots\. The goals in context may be out of date; check them with dots task goal coordinating before dispatching work\./;
+  const none = await h.context();
+  assert.equal(none.length, 1, 'unknown is not the empty session');
+  assert.match(none[0].content, banner);
+  await h.command('focus t-123abc');
+  await settle();
+  const followed = (await h.context())[0].content;
+  assert.match(followed, banner);
+  assert.match(
+    followed,
+    /Use one shared export interface/,
+    'follows still load',
+  );
+  h.attention.state.coordinatingFail = undefined;
+  assert.doesNotMatch((await h.context())[0].content, /could not be checked/);
+  await h.command('unfocus');
+  assert.deepEqual(await h.context(), [], 'a successful empty read is empty');
+});
