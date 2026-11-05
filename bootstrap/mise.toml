@@ -8,6 +8,9 @@ locked_scopes = ["project", "system"]
 task.run_auto_install = false
 dotfiles.root = "{{ config_source | canonicalize | dirname }}/../home"
 
+[bootstrap.user]
+login_shell = "zsh"
+
 [bootstrap.repos."~/.local/share/antidote"]
 url = "https://github.com/mattmc3/antidote.git"
 ref = "main"

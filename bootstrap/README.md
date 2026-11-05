@@ -21,8 +21,9 @@ The selected Git path supplies committed HEAD, not working-tree changes.
 Use a credential-free Git URL instead to install published source. Mise
 remembers that selection; it does not fall back to another repository.
 
-The base includes shell, editor, Rex, theme, skills, Pi and source-built
-commands. Dependencies live in [tools.toml](tools.toml) and
+The base sets zsh as the login shell and shares its plugins, prompt, keybindings
+and mise activation across macOS and Linux. It also includes the editor, Rex,
+theme, skills, Pi and source-built commands. Dependencies live in [tools.toml](tools.toml) and
 [packages.toml](packages.toml). On Mac, missing Command Line Tools open Apple's
 attended installer. Rustup owns Rust; Cargo owns the commands it builds.
 
@@ -35,7 +36,7 @@ mise -E desktop bootstrap --only files,repos,dotfiles,task
 ```
 
 - `desktop`: macOS arm64 desktop apps and configuration; Rex requires macOS 15+.
-- `bash`: Bash activation without changing the login shell.
+- `bash`: mise activation for auxiliary Bash sessions.
 - `rex-server`: Linux login service; requires glibc, GNU coreutils, systemd 253+,
   SSH PAM and an enrolled Tailscale node with account policy.
 
