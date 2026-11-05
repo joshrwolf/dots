@@ -261,7 +261,7 @@ test('the panel shows live work, the claimed task tree and the goal result witho
       const output = plain(view.render(120));
       if (phase === 0) {
         assert.match(output, /→ ● Claimed +Update exports · you/);
-        assert.match(output, /Detail[\s\S]*Claimed by this session/);
+        assert.match(output, /Detail[\s\S]*Claimed by this Pi runtime/);
       }
       if (phase === 1) assert.match(output, /! Held +Resolve compatibility/);
       if (phase === 4) assert.match(output, /Unavailable/);
@@ -385,7 +385,7 @@ test('the graph lists leaves by dependency; the outline folds groups', () => {
       .join('\n');
   assert.match(
     detail(),
-    /Update exports[\s\S]*Claimed by this session/,
+    /Update exports[\s\S]*Claimed by this Pi runtime/,
     'starts on this session’s claim',
   );
   assert.match(
@@ -410,20 +410,20 @@ test('the graph lists leaves by dependency; the outline folds groups', () => {
   view.handleInput('\x1b[A');
   assert.match(plain(view.render(160)), /→ ▾ Consumer migration/);
   assert.match(detail(), /0\/1 done/);
-  view.handleInput('\x1b[D');
+  view.handleInput(' ');
   assert.doesNotMatch(
     plain(view.render(160)),
     /Adapt consumers/,
-    'left folds a group',
+    'Space folds a group',
   );
-  view.handleInput('\x1b[C');
+  view.handleInput(' ');
   view.handleInput('\x1b[B');
   assert.match(detail(), /Adapt consumers[\s\S]*Needs: Update exports · open/);
   view.handleInput('\x1b[D');
   assert.match(
     plain(view.render(160)),
-    /→ ▾ Consumer migration/,
-    'left on a leaf selects its parent',
+    /→ ◌ Waiting +Adapt consumers/,
+    'Left is not a fold key; the popup owns it',
   );
   const narrow = plain(view.render(80));
   assert.match(
@@ -580,6 +580,8 @@ test('a long graph keeps the selected task visible through movement and resize',
     status: 'open',
     owner: null,
     blocked_by: [],
+    goal: null,
+    holds: [],
   }));
   const graph = {
     rows: tasks.map(task => ({task: task.id, lines: ['○', '│']})),
@@ -652,7 +654,7 @@ test('short popups give rows to the tree and detail before the goal result', () 
   assert.equal(tasks(output), 4, output);
   assert.doesNotMatch(output, /Goal result/);
   assert.match(output, /goal result: 3 record/);
-  assert.match(output, /Claimed by this session/, 'detail keeps its rows');
+  assert.match(output, /Claimed by this Pi runtime/, 'detail keeps its rows');
   output = at(90, 12);
   assert.equal(tasks(output), 4, output);
   assert.match(output, /Detail[\s\S]*Update exports/, 'stacked detail stays');

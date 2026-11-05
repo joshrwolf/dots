@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto';
 import {sliceByColumn} from '@earendil-works/pi-tui';
 import {labelText, sourceText} from '@joshrwolf/pi-kit/ui';
-import type {GoalView} from './present.ts';
+import {holdText, type GoalView} from './present.ts';
 import type {GoalTask} from './source.ts';
 
 export const GOAL_SECTION_PREFIX = 'dots_goal_';
@@ -80,7 +80,7 @@ export function taskContext(view: GoalView): string {
     task => task.status !== 'done' && task.status !== 'dropped',
   );
   const rank = (task: GoalTask) =>
-    task.status === 'held'
+    task.status === 'held' || task.holds.length
       ? 0
       : task.status === 'review'
         ? 1
@@ -98,6 +98,8 @@ export function taskContext(view: GoalView): string {
       task.children > 0 && `group of ${task.children}`,
       task.owner && `claimed by ${text(task.owner, 64)}`,
       task.branch && `branch ${text(task.branch, 80)}`,
+      task.holds.length > 0 &&
+        `held: ${task.holds.slice(0, 2).map(holdText).join('; ')}${task.holds.length > 2 ? '…' : ''}`,
       task.blocked_by.length > 0 &&
         `blocked by ${task.blocked_by.slice(0, 4).join(', ')}${task.blocked_by.length > 4 ? '…' : ''}`,
       // The event number changes when a result is revised, so a reader knows to reread it.

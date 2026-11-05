@@ -13,6 +13,8 @@ export const task = (id, title, extra = {}) => ({
   references: [],
   branch: null,
   blocked_by: [],
+  goal: null,
+  holds: [],
   last_event: null,
   ...extra,
 });

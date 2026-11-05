@@ -124,7 +124,7 @@ test('folding is presentation-only, nested, preserved across refresh, and includ
     /recorded state, not live[\s\S]*Goal result[\s\S]*Tasks[\s\S]*Detail/,
   );
   assert.match(plain(inspector.render(160)), /Consumer migration/);
-  inspector.handleInput('\x1b[D'); // Fold selected Core interface.
+  inspector.handleInput(' '); // Fold selected Core interface.
   let output = plain(inspector.render(160));
   assert.doesNotMatch(
     output,
@@ -134,7 +134,7 @@ test('folding is presentation-only, nested, preserved across refresh, and includ
   assert.match(output, /Documentation/);
   inspector.setGoal({view: model, followed: 1}, theme);
   assert.doesNotMatch(plain(inspector.render(160)), /Consumer migration/);
-  inspector.handleInput('\x1b[C');
+  inspector.handleInput(' ');
   assert.match(plain(inspector.render(160)), /Consumer migration/);
   inspector.handleInput('\x1b[B'); // Define shared types.
   inspector.handleInput('\x1b[B'); // Update exports.

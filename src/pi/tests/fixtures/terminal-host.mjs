@@ -713,20 +713,11 @@ async function workbenchFlow() {
       );
       send('o');
       await wait(() => shows('o graph'), 'outline in workbench');
-      send('\x1b[D');
+      send('\x1b[A');
+      send('\x1b[A');
       await wait(
         () => shows('→ ▾ Core interface'),
         'select parent in workbench',
-      );
-      send('\x1b[D');
-      await wait(
-        () => shows('Core interface') && shows('▸'),
-        'fold group in workbench',
-      );
-      send('\x1b[C');
-      await wait(
-        () => shows('Consumer migration'),
-        'unfold group in workbench',
       );
       send('E');
       await wait(() => state('goal', 0, false), 'panel hidden');
@@ -992,10 +983,10 @@ async function goalFlow() {
     'group outline',
   );
   send('\x1b[A');
-  send('\x1b[D');
+  send(' ');
   await wait(() => shows('▸') && shows('Core interface'), 'fold parent');
   assert.ok(!shows('Adapt consumers'), 'folded parent hides its leaves');
-  send('\x1b[C');
+  send(' ');
   await wait(
     () => shows('Consumer migration') && shows('Adapt consumers'),
     'unfold parent',
@@ -1008,13 +999,13 @@ async function goalFlow() {
     () => /→ ▾ Consumer migration/.test(plain()),
     'select nested group',
   );
-  send('\x1b[D');
+  send(' ');
   await wait(
     () => shows('▸') && shows('Consumer migration'),
     'fold nested group',
   );
   assert.ok(!shows('Adapt consumers'), 'folded nested group hides its leaves');
-  send('\x1b[C');
+  send(' ');
   await wait(() => shows('Adapt consumers'), 'unfold nested group');
   send('h');
   await wait(

@@ -26,6 +26,8 @@ const task = (
   references: [],
   branch: null,
   blocked_by: [],
+  goal: null,
+  holds: [],
   last_event: null,
   ...fields,
 });
@@ -89,6 +91,8 @@ export function goalFixtures(phase = 0): GoalView[] {
       status: 'done',
       owner: null,
       blocked_by: [],
+      goal: null,
+      holds: [],
     }));
   if (phase === 7) tasks = [];
   const view: GoalView = {
@@ -116,7 +120,11 @@ export function goalFixtures(phase = 0): GoalView[] {
           dropped: 0,
           claimed: tasks.filter(t => t.owner).length,
           ready: tasks.filter(
-            t => t.status === 'open' && !t.owner && !t.blocked_by.length,
+            t =>
+              t.status === 'open' &&
+              !t.owner &&
+              !t.blocked_by.length &&
+              !t.holds.length,
           ).length,
           review: 0,
         },

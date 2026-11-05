@@ -28,6 +28,7 @@ import {
 import {
   artifacts,
   briefNote,
+  holdText,
   progressSummary,
   inspection,
   latestEvent,
@@ -98,7 +99,7 @@ const heading = (title: string, detail: string, theme: Theme) =>
 const claimed = (task: GoalTask) =>
   task.owner !== null && (task.status === 'open' || task.status === 'review');
 
-/** Live work on one goal: this session's claims and its assigned workers. */
+/** Live work on one goal: this runtime's claims and its assigned workers. */
 export interface GoalWork {
   readonly mine: readonly GoalTask[];
   readonly workers: readonly {
@@ -190,7 +191,7 @@ export function summaryRow(
         ]
           .filter(Boolean)
           .join(' · ');
-  // Prefer this session's own claim, then a live worker's task, then any claim.
+  // Prefer this runtime's own claim, then a live worker's task, then any claim.
   const now =
     work.mine[0] ??
     work.workers.find(({task}) => task)?.task ??
@@ -285,6 +286,11 @@ function taskState(task: GoalTask): TaskState {
   if (task.status === 'dropped') return {label: '− Dropped', tone: 'dim'};
   if (task.status === 'review')
     return {label: '◇ Review', tone: 'accent', emphasized: true};
+  // Open, but dots holds it: a request or a held ancestor, not readiness.
+  if (task.status === 'open' && task.holds.length)
+    return task.holds.some(h => h.kind === 'request' && h.state === 'open')
+      ? {label: '? Needs answer', tone: 'warning'}
+      : {label: '! Held', tone: 'warning'};
   if (task.owner) return {label: '● Claimed', tone: 'accent', emphasized: true};
   if (task.blocked_by.length) return {label: '◌ Waiting', tone: 'muted'};
   return {label: '○ Open', tone: 'muted'};
@@ -415,7 +421,7 @@ function detail(
   ];
   if (claimed(task))
     lines.push([
-      `Claimed by ${task.owner === model.owner ? 'this session' : text(task.owner!, 128)}`,
+      `Claimed by ${task.owner === model.owner ? 'this Pi runtime' : text(task.owner!, 128)}`,
       'accent',
     ]);
   for (const {worker} of work.workers.filter(({task: t}) => t?.id === task.id))
@@ -423,6 +429,8 @@ function detail(
       `Worker ${text(worker.label, 64)} · ${worker.state === 'running' ? text(worker.doing ?? 'working', 160) : worker.state}`,
       worker.state === 'asking' ? 'warning' : 'accent',
     ]);
+  for (const held of task.holds.slice(0, 4))
+    lines.push([`Held: ${holdText(held)}`, 'warning']);
   for (const id of task.blocked_by.slice(0, 8)) {
     const blocker = tree.nodes.get(id)?.task;
     lines.push([
@@ -558,7 +566,7 @@ export class GoalPanel extends Inspector {
     });
   }
 
-  /** The selected row: the chosen task if visible, else this session's current work. */
+  /** The selected row: the chosen task if visible, else this runtime's current work. */
   private index(view: GoalView, rows: readonly Item[]): number {
     const at = rows.findIndex(item => item.task.id === this.selected);
     if (at >= 0) return at;
@@ -613,7 +621,7 @@ export class GoalPanel extends Inspector {
     const keys = [
       '1 overview · 2 brief · 3 record',
       this.section === 'overview'
-        ? `↑/↓ select${this.outline || !graphed ? ' · ←/→ fold' : ''}`
+        ? `↑/↓ select${this.outline || !graphed ? ' · Space fold' : ''}`
         : '↑/↓ scroll',
       this.section === 'overview' &&
         graphed &&
@@ -927,31 +935,20 @@ export class GoalPanel extends Inspector {
     this.requestRender();
   }
 
-  /** List keys: select; in the outline, fold and step to a leaf's parent. */
+  /** List keys: select; in the outline, Space folds or unfolds a group.
+   * Left/Right belong to the popup's views. */
   private move(data: string, view: GoalView, rows: readonly Item[]): boolean {
     const at = this.index(view, rows);
     const {task, tree} = rows[at]!;
     const step = matchesKey(data, 'up') ? -1 : matchesKey(data, 'down') ? 1 : 0;
     this.selected = task.id;
-    const group = tree && isGroup(tree.node);
     if (step)
       this.selected =
         rows[Math.max(0, Math.min(rows.length - 1, at + step))]!.task.id;
-    else if (
-      group &&
-      (matchesKey(data, 'left') || (matchesKey(data, 'space') && tree.expanded))
-    )
-      this.collapsed.add(task.id);
-    else if (group && (matchesKey(data, 'right') || matchesKey(data, 'space')))
-      this.collapsed.delete(task.id);
-    else if (
-      tree &&
-      matchesKey(data, 'left') &&
-      task.parent &&
-      rows.some(r => r.task.id === task.parent)
-    )
-      this.selected = task.parent;
-    else return false;
+    else if (tree && isGroup(tree.node) && matchesKey(data, 'space')) {
+      if (tree.expanded) this.collapsed.add(task.id);
+      else this.collapsed.delete(task.id);
+    } else return false;
     return true;
   }
 }

@@ -1,6 +1,14 @@
 import {sliceByColumn, visibleWidth} from '@earendil-works/pi-tui';
 import {labelText} from '@joshrwolf/pi-kit/ui';
-import type {Brief, GoalSnapshot, GoalTask} from './source.ts';
+import type {Brief, GoalSnapshot, GoalTask, Hold} from './source.ts';
+
+/** A hold as dots states it: what the work waits on. */
+export function holdText(hold: Hold): string {
+  if (hold.kind === 'held_ancestor') return `ancestor ${hold.task} is held`;
+  return hold.state === 'answered'
+    ? `request ${hold.request} on ${hold.task} is answered, awaiting its coordinator`
+    : `request ${hold.request} on ${hold.task} awaits a person's answer`;
+}
 
 export interface Focus {
   readonly id: string;
@@ -171,6 +179,7 @@ export function inspection(
       task.children > 0 && `group (${task.children} children)`,
       task.owner && `claimed by ${text(task.owner, 128)}`,
       task.blocked_by.length > 0 && `blocked by ${task.blocked_by.join(', ')}`,
+      task.holds.length > 0 && `held: ${task.holds.map(holdText).join('; ')}`,
       task.branch && `branch ${text(task.branch)}`,
     ].filter(Boolean);
     const events = latestEvent(task);

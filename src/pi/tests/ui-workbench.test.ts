@@ -147,7 +147,10 @@ test('goal starts with a branching DAG and cycles every fixture in one scenario'
     h.view.handleInput('E');
     const open = plain(h.view.render(160));
     assert.match(open, /popup open · alt\+g toggles/);
-    assert.match(open, /Goal result[\s\S]*Tasks[\s\S]*Claimed by this session/);
+    assert.match(
+      open,
+      /Goal result[\s\S]*Tasks[\s\S]*Claimed by this Pi runtime/,
+    );
     assert.match(open, /→ ● │ +Claimed +Update exports · Core interface · you/);
     assert.match(open, /Build CLI adapter/);
     assert.match(open, /Build SDK adapter/);
@@ -160,12 +163,10 @@ test('goal starts with a branching DAG and cycles every fixture in one scenario'
     );
     assert.match(open, /◎ ! Unif/, 'and over the editor and summary line');
     h.view.handleInput('o');
-    h.view.handleInput('\x1b[D');
+    // Space belongs to the workbench's states; the outline folds elsewhere.
+    h.view.handleInput('\x1b[A');
+    h.view.handleInput('\x1b[A');
     assert.match(plain(h.view.render(160)), /→ ▾ Core interface/);
-    h.view.handleInput('\x1b[D');
-    assert.doesNotMatch(plain(h.view.render(160)), /Consumer migration/);
-    h.view.handleInput('\x1b[C');
-    assert.match(plain(h.view.render(160)), /Consumer migration/);
   } finally {
     h.dispose();
   }

@@ -109,6 +109,16 @@ test('real isolated source reads complete history and selects the explicit proje
   for (const key of keys) process.env[key] = join(dir, key);
   let project;
   let owner = 'fixture';
+  // The fixture acts for itself, not for an agent that launched the tests.
+  const env = () =>
+    Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([key]) =>
+          !['DOTS_WORKER_ID', 'DOTS_AGENT_OWNER', 'PI_SESSION_ID'].includes(
+            key,
+          ),
+      ),
+    );
   const cli = (...args) =>
     JSON.parse(
       execFileSync(
@@ -124,7 +134,7 @@ test('real isolated source reads complete history and selects the explicit proje
           '--owner',
           owner,
         ],
-        {encoding: 'utf8'},
+        {encoding: 'utf8', env: env()},
       ),
     );
   try {
@@ -153,6 +163,8 @@ test('real isolated source reads complete history and selects the explicit proje
       'briefs/brief.md',
     );
     const id = created.goal.root.id;
+    // Only the goal's coordinator changes its tasks.
+    cli('goal', 'coordinate', id);
     const open = cli('add', 'Open slice', '--parent', id);
     const closed = cli('add', 'Closed slice', '--parent', id);
     cli('done', closed.task.id, '--result', 'Fixture verified');
@@ -202,10 +214,16 @@ test('real isolated source reads complete history and selects the explicit proje
     // same session.
     const ended = {session: 'fixture', owner: 'pi-fixture-0123456789abcdef'};
     const current = {session: 'fixture', owner: 'pi-fixture-fedcba9876543210'};
-    const second = cli('add', 'Second slice', '--parent', id);
+    // A goal has one coordinator, so each runtime coordinates its own goal.
+    cli('release', id);
     owner = ended.owner;
+    cli('goal', 'coordinate', id);
     cli('claim', open.task.id);
     owner = current.owner;
+    const other = cli('goal', 'create', 'Other', '--brief', 'briefs/brief.md')
+      .goal.root.id;
+    cli('goal', 'coordinate', other);
+    const second = cli('add', 'Second slice', '--parent', other);
     cli('claim', second.task.id);
     await dotsSource.release(ended);
     const released = await dotsSource.show(
@@ -219,8 +237,9 @@ test('real isolated source reads complete history and selects the explicit proje
       Object.fromEntries(
         released.overview.tasks.map(task => [task.id, task.owner]),
       ),
-      {[open.task.id]: null, [second.task.id]: current.owner},
+      {[open.task.id]: null},
     );
+    assert.equal(cli('show', second.task.id).task.owner, current.owner);
     await assert.rejects(
       dotsSource.show(
         dir,

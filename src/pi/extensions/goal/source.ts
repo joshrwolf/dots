@@ -14,7 +14,7 @@ export interface GoalTask {
   readonly status: 'open' | 'review' | 'held' | 'done' | 'dropped';
   readonly parent: string | null;
   readonly children: number;
-  /** Claiming session; a claim lasts until released, handed off, or closed. */
+  /** Claiming runtime actor; a claim lasts until released, handed off, or closed. */
   readonly owner: string | null;
   readonly result: string | null;
   /** Event that recorded the current result. */
@@ -24,9 +24,23 @@ export interface GoalTask {
   readonly references: readonly ExternalReference[];
   readonly branch: string | null;
   readonly blocked_by: readonly string[];
+  /** The goal root this task belongs to; itself for a root. */
+  readonly goal: string | null;
+  /** Why work waits beyond its prerequisites, as dots derives it. */
+  readonly holds: readonly Hold[];
   /** Latest recorded event only; a later claim or update can supersede a useful note. */
   readonly last_event: TaskEvent | null;
 }
+export type Hold =
+  /** An ancestor is held; its whole subtree waits. */
+  | {readonly kind: 'held_ancestor'; readonly task: string}
+  /** An open or answered, not yet incorporated, request names this task or an ancestor. */
+  | {
+      readonly kind: 'request';
+      readonly request: string;
+      readonly task: string;
+      readonly state: 'open' | 'answered';
+    };
 export interface TaskEvent {
   readonly seq: number;
   /** Unix seconds. */
@@ -170,6 +184,18 @@ function token(value: unknown): number | null {
   if (!result) throw new Error('Invalid dots result event');
   return result;
 }
+function hold(value: unknown): Hold {
+  const v = record(value);
+  if (v.kind === 'held_ancestor') return {kind: v.kind, task: string(v.task)};
+  if (v.kind === 'request' && (v.state === 'open' || v.state === 'answered'))
+    return {
+      kind: v.kind,
+      request: string(v.request),
+      task: string(v.task),
+      state: v.state,
+    };
+  throw new Error('Invalid dots task hold');
+}
 function task(value: unknown): GoalTask {
   const v = record(value);
   if (!['open', 'review', 'held', 'done', 'dropped'].includes(string(v.status)))
@@ -188,6 +214,8 @@ function task(value: unknown): GoalTask {
     references: array(v.references).map(reference),
     branch: nullableString(v.branch),
     blocked_by: array(v.blocked_by).map(string),
+    goal: nullableString(v.goal),
+    holds: array(v.holds).map(hold),
     last_event: event(v.last_event),
   };
 }

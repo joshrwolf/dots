@@ -33,7 +33,8 @@ export interface TreeState {
 }
 
 export function taskRank(task: GoalTask, now: number): number {
-  if (task.status === 'held' || task.status === 'review') return 1;
+  if (task.status === 'held' || task.status === 'review' || task.holds.length)
+    return 1;
   if (task.status === 'done') return 4;
   if (task.status === 'dropped') return 5;
   if (task.children > 0) return 6;
@@ -147,7 +148,8 @@ export function goalTree(snapshot: GoalSnapshot): GoalTree {
             !!node.task.owner,
         ),
         waiting: Number(
-          node.task.status === 'open' && node.task.blocked_by.length > 0,
+          node.task.status === 'open' &&
+            (node.task.blocked_by.length > 0 || node.task.holds.length > 0),
         ),
       };
   }

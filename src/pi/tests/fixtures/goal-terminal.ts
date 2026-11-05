@@ -30,6 +30,8 @@ export default function (pi: ExtensionAPI): void {
     references: [],
     branch: null,
     blocked_by: [],
+    goal: null,
+    holds: [],
     last_event: null,
   };
   const snapshot: GoalSnapshot = {
