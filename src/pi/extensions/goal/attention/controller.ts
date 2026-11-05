@@ -131,6 +131,10 @@ export class AttentionController {
    * coordinating; a failed read keeps them shown but acts on none.
    */
   private duties: readonly GoalRef[] = [];
+  /**
+   * Local outcomes by request. `open` is a drafted request's last snapshot,
+   * held unshown while its goal cannot be read.
+   */
   private readonly local = new Map<
     string,
     {state: ItemState; request: Request; goal: string}
@@ -361,33 +365,43 @@ export class AttentionController {
    * A drafted request that left its goal's outstanding list stays with its
    * draft as a local outcome: replaced when the read lists its replacement,
    * otherwise no longer outstanding. It never retargets; the person
-   * dismisses it. A goal the read missed or that left scope keeps nothing.
+   * dismisses it. While its goal cannot be read, its snapshot is held, not
+   * closed, until a read decides; a goal that left scope keeps nothing.
    */
   private retain(previous: AttentionList | undefined, next: AttentionList) {
-    for (const goal of previous?.goals ?? []) {
+    const scope = new Set(this.goals().map(refKey));
+    const drafted = [
+      ...(previous?.goals ?? []).flatMap(goal =>
+        goal.requests.map(request => ({request, goal: goal.title})),
+      ),
+      ...[...this.local.values()].filter(item => item.state.kind === 'open'),
+    ].filter(({request}) => this.drafts.get(request.id)?.trim());
+    for (const {request, goal} of drafted) {
+      const kept = this.local.get(request.id)?.state.kind;
+      if (kept && kept !== 'error' && kept !== 'open') continue;
       const now = next.goals.find(
-        item => item.project === goal.project && item.goal === goal.goal,
+        item => item.project === request.project && item.goal === request.goal,
       );
-      if (!now) continue;
-      for (const request of goal.requests) {
-        const kept = this.local.get(request.id)?.state.kind;
-        if (
-          !this.drafts.get(request.id)?.trim() ||
-          (kept && kept !== 'error') ||
-          now.requests.some(item => item.id === request.id)
-        )
-          continue;
-        const replacement = now.requests.find(
-          item => item.supersedes === request.id,
-        );
-        this.local.set(request.id, {
-          request,
-          goal: goal.title,
-          state: replacement
-            ? {kind: 'stale', replacement}
-            : {kind: 'closed', message: 'No longer outstanding.'},
-        });
+      if (!now) {
+        const key = refKey({project: request.project, id: request.goal});
+        if (!kept && scope.has(key))
+          this.local.set(request.id, {request, goal, state: {kind: 'open'}});
+        continue;
       }
+      if (now.requests.some(item => item.id === request.id)) {
+        if (kept === 'open') this.local.delete(request.id);
+        continue;
+      }
+      const replacement = now.requests.find(
+        item => item.supersedes === request.id,
+      );
+      this.local.set(request.id, {
+        request,
+        goal,
+        state: replacement
+          ? {kind: 'stale', replacement}
+          : {kind: 'closed', message: 'No longer outstanding.'},
+      });
     }
   }
 

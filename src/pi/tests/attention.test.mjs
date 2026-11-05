@@ -809,6 +809,73 @@ test('a drafted request that leaves the list stays with its draft beside its rep
   assert.deepEqual(ctl.model().items, []);
 });
 
+test('a drafted request survives an unreadable goal and is decided when the goal reads again', async () => {
+  const store = attentionStore({
+    requests: [
+      request(),
+      request({id: requestId(2), key: 'other', created_at: 200}),
+    ],
+  });
+  const {ctl} = controller(store);
+  await ctl.setScope([goalRef]);
+  ctl.drafts.set(requestId(1), 'my private draft');
+  ctl.drafts.set(requestId(2), 'still open draft');
+  const list = store.source.list;
+  const unreadable = async (goals, signal) => ({
+    ...(await list([], signal)),
+    errors: goals.map(goal => ({
+      project: goal.project,
+      goal: goal.id,
+      error: 'database is locked',
+    })),
+  });
+  store.source.list = unreadable;
+  await ctl.refresh();
+  await ctl.refresh();
+  assert.deepEqual(ctl.model().items, [], 'unread is not closed');
+  assert.deepEqual(ctl.model().unavailable, ['t-123abc: database is locked']);
+  store.supersede(
+    requestId(1),
+    request({id: requestId(3), question: 'A changed question'}),
+  );
+  store.source.list = list;
+  await ctl.refresh();
+  const byId = new Map(ctl.model().items.map(item => [item.request.id, item]));
+  const original = byId.get(requestId(1));
+  assert.equal(original.state.kind, 'stale');
+  assert.equal(original.state.replacement.id, requestId(3));
+  assert.equal(
+    original.request.question,
+    'Should the first slice cover every project or only this one?',
+  );
+  assert.equal(ctl.drafts.get(requestId(1)), 'my private draft');
+  assert.equal(byId.get(requestId(3)).state.kind, 'open', 'never retargeted');
+  assert.equal(
+    byId.get(requestId(2)).state.kind,
+    'open',
+    'still listed: the store decides',
+  );
+  // The held snapshot is gone once read, so a later supersede still applies.
+  store.supersede(requestId(2), request({id: requestId(4), key: 'other'}));
+  await ctl.refresh();
+  assert.equal(
+    ctl.model().items.find(item => item.request.id === requestId(2)).state.kind,
+    'stale',
+  );
+  // Leaving scope during an outage still takes local outcomes with it.
+  ctl.drafts.set(requestId(3), 'third draft');
+  store.source.list = unreadable;
+  await ctl.refresh();
+  await ctl.setScope([]);
+  store.source.list = list;
+  store.state.requests.get(requestId(3)).state = 'closed';
+  await ctl.setScope([goalRef]);
+  assert.equal(
+    ctl.model().items.some(item => item.request.id === requestId(3)),
+    false,
+  );
+});
+
 test('context carries the mandate with its human basis kept apart, bounded decisions and roles', () => {
   const linked = decision({
     id: decisionId(9),

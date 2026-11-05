@@ -551,3 +551,73 @@ test('a drafted request replaced while unselected stays reachable after switchin
     ctl.close();
   }
 });
+
+test('a selected draft whose goal is briefly unreadable is not called closed and survives the replacement', async () => {
+  const palette = getThemeByName('dark')!;
+  const store = attentionStore({requests: [request()]});
+  // The fixture mirrors the CLI-backed source shape.
+  const source = store.source as unknown as AttentionSource;
+  const ctl = new AttentionController({
+    source,
+    deliver() {},
+    branch: () => [],
+    changed() {},
+    signal() {},
+  });
+  ctl.bind({session: 'fixture-session', owner: 'pi-fixture-session-00aa'});
+  const open = () => {
+    const view = new AttentionView(
+      bindings,
+      {answer() {}, dismiss: id => ctl.dismiss(id), drafts: ctl.drafts},
+      () => 40,
+      () => {},
+    );
+    view.setModel(ctl.model(), palette);
+    return view;
+  };
+  try {
+    await ctl.setScope([{project: PROJECT, id: 't-123abc'}]);
+    const view = open();
+    view.handleInput('\r');
+    view.handleInput(DOWN);
+    view.handleInput(DOWN);
+    view.handleInput('\r');
+    view.handleInput('my private draft');
+    view.handleInput('\x1b');
+    assert.equal(view.selection, requestId(1));
+    const list = source.list;
+    source.list = async (goals, signal) => ({
+      ...(await list([], signal)),
+      errors: goals.map(goal => ({
+        project: goal.project,
+        goal: goal.id,
+        error: 'database is locked',
+      })),
+    });
+    await ctl.refresh();
+    view.setModel(ctl.model(), palette);
+    const outage = plain(view.render(120));
+    assert.doesNotMatch(outage, /No longer outstanding/);
+    assert.match(outage, /Could not be checked just now; your draft is kept/);
+    assert.match(outage, /my private draft/);
+    store.supersede(
+      requestId(1),
+      request({id: requestId(3), question: 'A changed question'}),
+    );
+    source.list = list;
+    await ctl.refresh();
+    view.setModel(ctl.model(), palette);
+    for (const shown of [view, open()]) {
+      let seen = '';
+      for (let i = 0; i < 4; i++) {
+        seen += plain(shown.render(120));
+        shown.handleInput(DOWN);
+      }
+      assert.match(seen, /my private draft/);
+      assert.match(seen, /New question: A changed question/);
+      assert.match(seen, /Should the first slice cover every project/);
+    }
+  } finally {
+    ctl.close();
+  }
+});

@@ -223,7 +223,10 @@ export class AttentionView implements Component, Focusable {
       previous.request.id === this.selected &&
       !model.items.some(item => item.request.id === this.selected)
     )
-      this.retired = previous === this.retired ? previous : retire(previous);
+      this.retired =
+        previous === this.retired
+          ? previous
+          : retire(previous, model.unavailable.length > 0);
     if (!this.current() && !this.cleared) {
       this.selected = model.items[0]?.request.id;
       this.focus = 'requests';
@@ -737,16 +740,19 @@ class BoundedBody implements Component {
   }
 }
 
-/** A selected request that left the outstanding list stays, unanswerable. */
-function retire(item: AttentionItem): AttentionItem {
+/**
+ * A selected request that left the outstanding list stays, unanswerable.
+ * While part of the scope is unreadable, its absence proves nothing.
+ */
+function retire(item: AttentionItem, unread: boolean): AttentionItem {
   if (item.state.kind === 'stale' || item.state.kind === 'closed') return item;
   const saved = item.request.answer
     ? `Answer saved: ${answerText(item.request)}. `
     : '';
-  return {
-    ...item,
-    state: {kind: 'closed', message: `${saved}No longer outstanding.`},
-  };
+  const status = unread
+    ? 'Could not be checked just now; your draft is kept.'
+    : 'No longer outstanding.';
+  return {...item, state: {kind: 'closed', message: `${saved}${status}`}};
 }
 
 function summaryText(request: AttentionItem['request']): string {
