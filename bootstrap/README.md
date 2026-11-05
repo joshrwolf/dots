@@ -2,7 +2,9 @@
 
 Mise installs committed source into `~/.local/share/dots/checkouts/dots`,
 registers its machine modules, then applies them from HOME. Development
-checkouts and machine-local credentials, settings and sessions stay separate.
+checkouts live under `~/dev/work`, `~/dev/personal/joshrwolf` and `~/dev/ref`;
+bootstrap creates these directories on every machine. Machine-local credentials,
+settings and sessions stay separate.
 
 ## Setup
 

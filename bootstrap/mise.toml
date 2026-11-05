@@ -12,6 +12,15 @@ dotfiles.root = "{{ config_source | canonicalize | dirname }}/../home"
 url = "https://github.com/mattmc3/antidote.git"
 ref = "main"
 
+[bootstrap.directories."~/dev/work"]
+mode = "0755"
+
+[bootstrap.directories."~/dev/personal/joshrwolf"]
+mode = "0755"
+
+[bootstrap.directories."~/dev/ref"]
+mode = "0755"
+
 [bootstrap.directories."~/.local/share/dots/skills"]
 mode = "0755"
 
