@@ -128,13 +128,11 @@ test(
   {timeout: 120_000},
   async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dots-agent-runtime-'));
+    // Only what the host, its shell and dots need; no credentials or identity.
     const env = Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([key]) =>
-          !/API_KEY|TOKEN|SECRET|PASSWORD|^DOTS_WORKER_|^REX_|^PI_SESSION_|^DOTS_AGENT_OWNER$/.test(
-            key,
-          ),
-      ),
+      ['PATH', 'TMPDIR', 'TERM', 'LANG']
+        .filter(key => process.env[key] !== undefined)
+        .map(key => [key, process.env[key]]),
     );
     // The child resolves the same host without the caller's mise home.
     env.PI_TEST_HOST_ROOT = dirname(

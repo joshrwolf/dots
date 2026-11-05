@@ -23,10 +23,29 @@ const extensions = [
 const agentDir = process.env.PI_CODING_AGENT_DIR;
 assert.ok(agentDir, 'PI_CODING_AGENT_DIR must name a disposable directory');
 
+// Provider-free: no model catalog, credentials or network; nothing prompts a model.
+const modelRuntime = await host.ModelRuntime.create({
+  authPath: join(agentDir, 'auth.json'),
+  modelsPath: null,
+  modelsStorePath: join(agentDir, 'models-store.json'),
+  allowModelNetwork: false,
+  refreshOnCreate: false,
+});
+assert.deepEqual(
+  await modelRuntime.getAvailable(),
+  [],
+  'no model may have credentials',
+);
 const createRuntime = async ({cwd, sessionManager, sessionStartEvent}) => {
   const services = await host.createAgentSessionServices({
     cwd,
     agentDir,
+    modelRuntime,
+    settingsManager: host.SettingsManager.inMemory({
+      compaction: {enabled: false},
+      retry: {enabled: false},
+      cacheWarming: 'off',
+    }),
     resourceLoaderOptions: {
       additionalExtensionPaths: extensions,
       noExtensions: true,
@@ -38,16 +57,13 @@ const createRuntime = async ({cwd, sessionManager, sessionStartEvent}) => {
   });
   const errors = services.resourceLoader.getExtensions().errors;
   assert.deepEqual(errors, []);
-  return {
-    ...(await host.createAgentSessionFromServices({
-      services,
-      sessionManager,
-      sessionStartEvent,
-      noTools: 'builtin',
-    })),
+  const created = await host.createAgentSessionFromServices({
     services,
-    diagnostics: services.diagnostics,
-  };
+    sessionManager,
+    sessionStartEvent,
+    noTools: 'builtin',
+  });
+  return {...created, services, diagnostics: services.diagnostics};
 };
 
 const failures = [];
