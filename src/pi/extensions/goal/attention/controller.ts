@@ -299,6 +299,7 @@ export class AttentionController {
     try {
       const list = await this.host.source.list(goals, controller.signal);
       if (epoch !== this.reads || this.lifetime.signal.aborted) return;
+      this.retain(this.list, list);
       this.list = list;
       this.readFailure = undefined;
     } catch (error) {
@@ -354,6 +355,40 @@ export class AttentionController {
       },
       ready,
     });
+  }
+
+  /**
+   * A drafted request that left its goal's outstanding list stays with its
+   * draft as a local outcome: replaced when the read lists its replacement,
+   * otherwise no longer outstanding. It never retargets; the person
+   * dismisses it. A goal the read missed or that left scope keeps nothing.
+   */
+  private retain(previous: AttentionList | undefined, next: AttentionList) {
+    for (const goal of previous?.goals ?? []) {
+      const now = next.goals.find(
+        item => item.project === goal.project && item.goal === goal.goal,
+      );
+      if (!now) continue;
+      for (const request of goal.requests) {
+        const kept = this.local.get(request.id)?.state.kind;
+        if (
+          !this.drafts.get(request.id)?.trim() ||
+          (kept && kept !== 'error') ||
+          now.requests.some(item => item.id === request.id)
+        )
+          continue;
+        const replacement = now.requests.find(
+          item => item.supersedes === request.id,
+        );
+        this.local.set(request.id, {
+          request,
+          goal: goal.title,
+          state: replacement
+            ? {kind: 'stale', replacement}
+            : {kind: 'closed', message: 'No longer outstanding.'},
+        });
+      }
+    }
   }
 
   private find(id: string): {request: Request; goal: string} | undefined {

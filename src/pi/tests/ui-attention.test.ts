@@ -11,13 +11,16 @@ import {
   popupBodyHeight,
   type Reply,
 } from '../extensions/goal/attention/panel.ts';
+import {AttentionController} from '../extensions/goal/attention/controller.ts';
 import {attentionModel} from '../extensions/goal/attention/model.ts';
 import type {
   AttentionList,
+  AttentionSource,
   Request,
 } from '../extensions/goal/attention/source.ts';
 import {
   PROJECT,
+  attentionStore,
   request as fixtureRequest,
   requestId,
 } from './attention-fixture.mjs';
@@ -477,4 +480,74 @@ test('long context yields to the options, and clicking prose answers nothing', (
   const y = lines.findIndex(line => line.includes('Every project'));
   mouse(lines[y]!.indexOf('Every project'), y);
   assert.deepEqual(h.answers, [[requestId(1), {choice: 'all'}]]);
+});
+
+test('a drafted request replaced while unselected stays reachable after switching and reopening', async () => {
+  const palette = getThemeByName('dark')!;
+  const store = attentionStore({
+    requests: [
+      request(),
+      request({id: requestId(2), title: 'Another question', created_at: 200}),
+    ],
+  });
+  const ctl = new AttentionController({
+    source: store.source as unknown as AttentionSource,
+    deliver() {},
+    branch: () => [],
+    changed() {},
+    signal() {},
+  });
+  ctl.bind({session: 'fixture-session', owner: 'pi-fixture-session-00aa'});
+  const open = () => {
+    const view = new AttentionView(
+      bindings,
+      {answer() {}, dismiss: id => ctl.dismiss(id), drafts: ctl.drafts},
+      () => 40,
+      () => {},
+    );
+    view.setModel(ctl.model(), palette);
+    return view;
+  };
+  const rows = (view: AttentionView) => {
+    let seen = '';
+    for (let i = 0; i < 6; i++) {
+      seen += plain(view.render(120));
+      view.handleInput(DOWN);
+    }
+    return seen;
+  };
+  try {
+    await ctl.setScope([{project: PROJECT, id: 't-123abc'}]);
+    const view = open();
+    // Type a draft on the first request with native keys, then select the other.
+    view.handleInput('\r');
+    view.handleInput(DOWN);
+    view.handleInput(DOWN);
+    view.handleInput('\r');
+    view.handleInput('my private draft');
+    view.handleInput('\x1b');
+    view.back();
+    view.handleInput(DOWN);
+    assert.equal(view.selection, requestId(2));
+    store.supersede(
+      requestId(1),
+      request({id: requestId(3), question: 'A changed question'}),
+    );
+    await ctl.refresh();
+    view.setModel(ctl.model(), palette);
+    assert.match(rows(view), /my private draft/);
+    // Closing and reopening the popup keeps it too.
+    const reopened = open();
+    const seen = rows(reopened);
+    assert.match(seen, /my private draft/);
+    assert.match(seen, /Should the first slice cover every project/);
+    assert.match(seen, /New question: A changed question/);
+    assert.equal(
+      (store.state.requests.get(requestId(3)) as Request).answer,
+      null,
+      'never retargeted',
+    );
+  } finally {
+    ctl.close();
+  }
 });

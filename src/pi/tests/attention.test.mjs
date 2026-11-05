@@ -756,6 +756,59 @@ test('a held answer notice is declined once a pause is observed, without a recei
   }
 });
 
+test('a drafted request that leaves the list stays with its draft beside its replacement until dismissed', async () => {
+  const store = attentionStore({
+    requests: [
+      request(),
+      request({id: requestId(2), key: 'other', created_at: 200}),
+    ],
+  });
+  const {ctl} = controller(store);
+  await ctl.setScope([goalRef]);
+  ctl.drafts.set(requestId(1), 'my private draft');
+  ctl.drafts.set(requestId(2), '  ');
+  store.supersede(
+    requestId(1),
+    request({id: requestId(3), question: 'A changed question'}),
+  );
+  store.supersede(requestId(2), request({id: requestId(4), key: 'other'}));
+  await ctl.refresh();
+  await ctl.refresh();
+  const byId = new Map(ctl.model().items.map(item => [item.request.id, item]));
+  assert.deepEqual(
+    [...byId.keys()].sort(),
+    [requestId(1), requestId(3), requestId(4)],
+    'only a non-empty draft keeps its original',
+  );
+  const original = byId.get(requestId(1));
+  assert.equal(original.state.kind, 'stale');
+  assert.equal(original.state.replacement.id, requestId(3));
+  assert.equal(
+    original.request.question,
+    'Should the first slice cover every project or only this one?',
+  );
+  assert.equal(ctl.drafts.get(requestId(1)), 'my private draft');
+  assert.equal(byId.get(requestId(3)).state.kind, 'open', 'never retargeted');
+  assert.equal(ctl.drafts.has(requestId(3)), false);
+  // Withdrawn without a replacement: kept as no longer outstanding.
+  ctl.drafts.set(requestId(3), 'second draft');
+  store.state.requests.get(requestId(3)).state = 'closed';
+  await ctl.refresh();
+  assert.equal(
+    ctl.model().items.find(item => item.request.id === requestId(3)).state.kind,
+    'closed',
+  );
+  ctl.dismiss(requestId(1));
+  assert.equal(ctl.drafts.has(requestId(1)), false);
+  assert.equal(
+    ctl.model().items.some(item => item.request.id === requestId(1)),
+    false,
+  );
+  // Leaving scope takes local outcomes with it.
+  await ctl.setScope([]);
+  assert.deepEqual(ctl.model().items, []);
+});
+
 test('context carries the mandate with its human basis kept apart, bounded decisions and roles', () => {
   const linked = decision({
     id: decisionId(9),
