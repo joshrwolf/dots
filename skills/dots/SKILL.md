@@ -9,7 +9,7 @@ description: "Use the dots CLI for supported coding-agent workflows. Available c
 
 Use `dots` for supported workflows before assembling equivalent shell/API calls. Native tools remain available for unsupported operations or useful follow-up.
 
-Run `dots COMMAND --help` for any command's details. For detailed syntax, read [the generated command reference](references/commands.md). Help is authoritative if this skill and the installed binary differ.
+Prefer `dots COMMAND --help` for command-specific syntax. The [generated command reference](references/commands.md) is an on-demand lookup, not required reading: search for the command and read only its section. Do not load the reference wholesale when loading this skill. Installed help is authoritative if it differs.
 
 For agent workflows, request `--json`; generated dots follow-up commands preserve JSON mode.
 

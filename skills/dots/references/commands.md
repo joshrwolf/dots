@@ -2,6 +2,8 @@
 
 # dots command reference
 
+On-demand reference, not required skill context. Prefer `dots COMMAND --help`; otherwise search for the command and read only its section. Do not load this file wholesale.
+
 ## dots
 
 ```text
