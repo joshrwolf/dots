@@ -15,5 +15,13 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+[features]
+testing = []
+
+[[bin]]
+name = "dots-memory-fixture"
+path = "tests/fixtures/peer.rs"
+required-features = ["testing"]
+
 [lints]
 workspace = true

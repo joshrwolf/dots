@@ -14,6 +14,7 @@ pub mod verified_text;
 use text::revision;
 pub mod mutation_lock;
 pub mod paths;
+pub mod staged_directory;
 pub mod staged_file;
 use mutation_lock::MutationLock;
 use staged_file::StagedFile;

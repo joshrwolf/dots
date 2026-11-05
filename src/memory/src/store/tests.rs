@@ -3,37 +3,40 @@ use std::fs::Permissions;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
-struct Fixture {
-    parent: PathBuf,
-    store: Store,
-}
-impl Fixture {
-    fn new() -> Result<Self> {
-        let parent = std::env::temp_dir().join(format!(
-            "dots-knowledge-{}-{:016x}",
-            std::process::id(),
-            getrandom::u64().map_err(|error| invalid(error.to_string()))?
-        ));
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&parent)
-            .map_err(|error| io("create test home", &parent, error))?;
-        let store = Store::initialize(&parent.join("knowledge"), "neutral-host")?;
-        Ok(Self { parent, store })
-    }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.parent);
-    }
-}
+use crate::fixture::Fixture;
 
 fn put(scope: Scope, path: &str, content: &str) -> Change {
     Change {
         scope,
         path: path.into(),
-        content: Some(content.into()),
+        action: Action::Write {
+            content: content.into(),
+        },
     }
+}
+
+#[test]
+fn serialized_changes_require_an_explicit_action() {
+    for value in [
+        r#"{"scope":{"kind":"global"},"path":"note.md"}"#,
+        r#"{"scope":{"kind":"global"},"path":"note.md","action":null}"#,
+        r#"{"scope":{"kind":"global"},"path":"note.md","action":{"kind":"write"}}"#,
+        r#"{"scope":{"kind":"global"},"path":"note.md","action":{"kind":"write","content":null}}"#,
+        r#"{"scope":{"kind":"global"},"path":"note.md","action":{"kind":"remove","content":"unexpected"}}"#,
+    ] {
+        assert!(serde_json::from_str::<Change>(value).is_err(), "{value}");
+    }
+    for value in [
+        r#"{"kind":"global","project":"p-00000000000000000000000000000000"}"#,
+        r#"{"kind":"global","unknown":true}"#,
+    ] {
+        assert!(serde_json::from_str::<Scope>(value).is_err(), "{value}");
+    }
+    let remove = serde_json::from_str::<Change>(
+        r#"{"scope":{"kind":"global"},"path":"note.md","action":{"kind":"remove"}}"#,
+    )
+    .expect("explicit removal");
+    assert!(matches!(remove.action, Action::Remove {}));
 }
 
 #[test]
@@ -200,7 +203,7 @@ fn empty_and_missing_documents_and_delete_have_distinct_contracts() -> TestResul
         &[Change {
             scope: Scope::Global,
             path: "empty.md".into(),
-            content: None,
+            action: Action::Remove {},
         }],
     )?;
     assert!(
@@ -454,6 +457,7 @@ fn relocation_preserves_identity_but_cannot_move_knowledge_into_a_checkout() -> 
 
 #[test]
 fn initialization_refuses_existing_or_checkout_destinations_without_adoption() -> TestResult {
+    use std::os::unix::fs::DirBuilderExt as _;
     let fixture = Fixture::new()?;
     let existing = fixture.parent.join("existing");
     fs::DirBuilder::new().mode(0o700).create(&existing)?;
@@ -469,7 +473,7 @@ fn initialization_refuses_existing_or_checkout_destinations_without_adoption() -
 }
 
 #[test]
-fn native_push_can_stage_a_candidate_but_cannot_publish_the_branch() -> TestResult {
+fn native_push_cannot_bypass_owned_reference_validation() -> TestResult {
     let fixture = Fixture::new()?;
     let base = fixture.store.snapshot()?;
     let tree = fixture.store.git.tree(&fixture.store.latest()?.entries)?;
@@ -486,8 +490,8 @@ fn native_push_can_stage_a_candidate_but_cannot_publish_the_branch() -> TestResu
             .git
             .run(&["push", "--", remote, &staged], None, MAX_METADATA_BYTES)?;
     assert!(
-        output.status.success(),
-        "stage fixture: {}",
+        !output.status.success(),
+        "raw push must not create candidate-cache references: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let published = format!("{candidate}:{}", crate::git::HEAD);
@@ -519,7 +523,7 @@ fn native_push_can_stage_a_candidate_but_cannot_publish_the_branch() -> TestResu
     fixture
         .store
         .git
-        .text(&["config", "receive.hiderefs", crate::git::HEAD], None)?;
+        .text(&["config", "receive.hiderefs", "refs/"], None)?;
     assert_eq!(Store::open(fixture.store.root())?.snapshot()?, candidate);
     Ok(())
 }

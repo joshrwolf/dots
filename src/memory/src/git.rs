@@ -25,7 +25,8 @@ const CONFIGURATION: &[(&str, &str)] = &[
     ("receive.autogc", "false"),
     ("receive.denynonfastforwards", "true"),
     ("receive.denydeletes", "true"),
-    ("receive.hiderefs", HEAD),
+    ("receive.hiderefs", "refs/"),
+    ("receive.maxinputsize", "134217728"),
     ("fetch.fsckobjects", "true"),
     ("transfer.fsckobjects", "true"),
 ];
@@ -47,7 +48,11 @@ impl Git {
         Self { root, actor }
     }
 
-    fn command(&self, args: &[&str]) -> Result<Command> {
+    pub(crate) fn repository(&self) -> PathBuf {
+        self.root.join("repo.git")
+    }
+
+    pub(crate) fn command(&self, args: &[&str]) -> Result<Command> {
         let mut command = Command::new("git");
         command
             .env_clear()
@@ -106,9 +111,28 @@ impl Git {
         if let Some(input) = input {
             runner = runner.stdin(input, INPUT_LIMIT);
         }
+        Self::execute(self.command(args)?, operation, runner)
+    }
+
+    pub(crate) fn execute(
+        command: Command,
+        operation: &'static str,
+        runner: dots_process::Runner,
+    ) -> Result<Output> {
         runner
-            .output(self.command(args)?)
+            .output(command)
             .map_err(|source| Error::Process { operation, source })
+    }
+
+    pub(crate) fn checked(output: Output, operation: &'static str) -> Result<Vec<u8>> {
+        if !output.status.success() {
+            return Err(Error::Git {
+                operation,
+                status: output.status.code(),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+            });
+        }
+        Ok(output.stdout)
     }
 
     pub(crate) fn bytes(
@@ -117,11 +141,7 @@ impl Git {
         input: Option<Vec<u8>>,
         limit: usize,
     ) -> Result<Vec<u8>> {
-        let output = self.run(args, input, limit)?;
-        if !output.status.success() {
-            return Err(failure(args, &output));
-        }
-        Ok(output.stdout)
+        Self::checked(self.run(args, input, limit)?, operation(args))
     }
 
     pub(crate) fn text(&self, args: &[&str], input: Option<Vec<u8>>) -> Result<String> {
@@ -130,6 +150,12 @@ impl Git {
     }
 
     pub(crate) fn initialize(&self) -> Result<()> {
+        use std::os::unix::fs::DirBuilderExt as _;
+        let repository = self.root.join("repo.git");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&repository)
+            .map_err(|source| crate::io("create knowledge repository", &repository, source))?;
         self.text(
             &[
                 "init",
@@ -232,27 +258,53 @@ impl Git {
     }
 
     pub(crate) fn head(&self) -> Result<Snapshot> {
-        dots_documents::paths::resolve(&self.root, Path::new("repo.git/refs/heads/knowledge"))?;
+        self.reference(HEAD)?
+            .ok_or_else(|| crate::invalid("published knowledge reference is absent"))
+    }
+
+    pub(crate) fn reference(&self, reference: &str) -> Result<Option<Snapshot>> {
+        dots_documents::paths::resolve(&self.root, Path::new(&format!("repo.git/{reference}")))?;
         let output = self.text(
             &[
                 "for-each-ref",
                 "--format=%(refname)%00%(objecttype)%00%(objectname)%00%(symref)",
-                HEAD,
+                reference,
             ],
             None,
         )?;
+        if output.is_empty() {
+            return Ok(None);
+        }
         let fields: Vec<_> = output
             .strip_suffix('\n')
             .ok_or_else(|| invalid("published knowledge reference is absent"))?
             .split('\0')
             .collect();
-        if fields.len() != 4 || fields[0] != HEAD || fields[1] != "commit" || !fields[3].is_empty()
+        if fields.len() != 4
+            || fields[0] != reference
+            || fields[1] != "commit"
+            || !fields[3].is_empty()
         {
             return Err(invalid(
-                "published knowledge reference must directly name one commit",
+                "owned knowledge reference must directly name one commit",
             ));
         }
-        fields[2].parse()
+        Ok(Some(fields[2].parse()?))
+    }
+
+    pub(crate) fn pin(&self, reference: &str, snapshot: &Snapshot) -> Result<()> {
+        match self.reference(reference)? {
+            Some(existing) if existing != *snapshot => Err(crate::invalid(
+                "owned snapshot reference changed unexpectedly",
+            )),
+            Some(_) => Ok(()),
+            None => self
+                .text(
+                    &["update-ref", "--no-deref", reference, snapshot.as_str(), ""],
+                    None,
+                )
+                .map(|_| ()),
+        }
     }
 
     pub(crate) fn is_ancestor(&self, ancestor: &Snapshot, descendant: &Snapshot) -> Result<bool> {
@@ -295,14 +347,25 @@ impl Git {
     }
 
     pub(crate) fn entries(&self, snapshot: &Snapshot) -> Result<BTreeMap<String, Entry>> {
-        let listing = self.text(&["ls-tree", "-r", "-l", "-z", snapshot.as_str()], None)?;
-        let mut entries = BTreeMap::new();
+        let listing = self.text(
+            &["ls-tree", "-r", "-t", "-l", "-z", snapshot.as_str()],
+            None,
+        )?;
+        let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
+        let mut directories = BTreeSet::new();
         let mut total = 0_usize;
         for record in listing.split('\0').filter(|record| !record.is_empty()) {
             let (metadata, path) = record
                 .split_once('\t')
                 .ok_or_else(|| invalid("invalid Git tree metadata"))?;
             let parts: Vec<_> = metadata.split_whitespace().collect();
+            if parts.len() == 4 && parts[0] == "040000" && parts[1] == "tree" && parts[3] == "-" {
+                let _: Snapshot = parts[2].parse()?;
+                if !directories.insert(format!("{path}/")) {
+                    return Err(invalid("duplicate Git tree directory"));
+                }
+                continue;
+            }
             if parts.len() != 4 || parts[0] != "100644" || parts[1] != "blob" {
                 return Err(invalid(format!(
                     "knowledge entry is not a regular document: {path}"
@@ -332,6 +395,15 @@ impl Git {
                 .is_some()
             {
                 return Err(invalid("duplicate Git tree path"));
+            }
+        }
+        for directory in directories {
+            if entries
+                .range(directory.clone()..)
+                .next()
+                .is_none_or(|(path, _)| !path.starts_with(&directory))
+            {
+                return Err(invalid("empty directories are not knowledge resources"));
             }
         }
         Ok(entries)

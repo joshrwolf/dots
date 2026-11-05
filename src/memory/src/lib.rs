@@ -1,12 +1,27 @@
 //! Versioned knowledge with explicit identities, immutable snapshots and atomic publication.
 //! Machine-local document mechanics live in dots-documents; Git owns knowledge history.
+mod coordinator;
+#[cfg(test)]
+mod fixture;
 mod git;
+mod history;
 mod identity;
+mod incoming;
+mod peer;
+mod protocol;
+pub use coordinator::{
+    Choice, Conflict, Coordinator, Delivery, DeliveryReceipt, Integration, IntegrationKind,
+    Resolution,
+};
+pub use incoming::{BundleReceipt, Candidate, CandidateRead, MAX_BUNDLE_BYTES};
+pub use peer::{Endpoint, Peer, Tailscale};
+pub use protocol::{Export, PeerRequest, PeerResponse, PeerStatus, serve_peer};
 mod store;
 
 pub use identity::{NodeId, ProjectId, Snapshot, StoreId};
 pub use store::{
-    Change, DocumentRead, Manifest, Publication, Registration, Role, Scope, Search, Store, View,
+    Action, Change, DocumentRead, Identity, Manifest, Publication, Registration, Resource, Role,
+    Scope, Search, Store, View,
 };
 
 use std::path::PathBuf;
@@ -34,6 +49,12 @@ pub enum Error {
         operation: &'static str,
         #[source]
         source: dots_process::Error,
+    },
+    #[error("peer {operation} failed ({status:?}): {stderr}")]
+    Peer {
+        operation: &'static str,
+        status: Option<i32>,
+        stderr: String,
     },
     #[error("git {operation} failed ({status:?}): {stderr}")]
     Git {

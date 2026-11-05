@@ -1,8 +1,9 @@
 //! Ownership of a private Git knowledge store and its immutable read views.
+use dots_documents::staged_directory::StagedDirectory;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, Metadata};
 use std::io::Write as _;
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use crate::{
     Result, Snapshot, StoreId, invalid, io,
 };
 
-const MANIFEST: &str = "knowledge.json";
+pub(crate) const MANIFEST: &str = "knowledge.json";
 const LOCAL: &str = "store.json";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -35,11 +36,77 @@ pub enum Scope {
     Project(ProjectId),
 }
 
+impl Scope {
+    fn prefix(&self, manifest: &Manifest) -> Result<String> {
+        match self {
+            Self::Global => Ok("global/".into()),
+            Self::Project(project) if manifest.projects.contains_key(project) => {
+                Ok(format!("projects/{project}/"))
+            }
+            Self::Project(project) => Err(Error::UnknownProject(project.clone())),
+        }
+    }
+}
+
+/// A document location within a shared scope, not a machine-local filesystem path.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Resource {
+    pub scope: Scope,
+    pub path: PathBuf,
+}
+
+impl Resource {
+    pub(crate) fn full_path(&self, manifest: &Manifest) -> Result<String> {
+        dots_documents::paths::validate_markdown(&self.path)?;
+        if self.path.components().count() > 8 {
+            return Err(invalid("knowledge path exceeds eight document components"));
+        }
+        let path = self
+            .path
+            .to_str()
+            .ok_or_else(|| invalid("knowledge path must be Unicode"))?;
+        Ok(format!("{}{path}", self.scope.prefix(manifest)?))
+    }
+
+    pub(crate) fn from_path(path: &str, manifest: &Manifest) -> Result<Self> {
+        let (scope, relative) = if let Some(relative) = path.strip_prefix("global/") {
+            (Scope::Global, relative)
+        } else if let Some(project) = path.strip_prefix("projects/") {
+            let (id, relative) = project
+                .split_once('/')
+                .ok_or_else(|| invalid("knowledge project path is incomplete"))?;
+            let id: ProjectId = id.parse()?;
+            if !manifest.projects.contains_key(&id) {
+                return Err(Error::UnknownProject(id));
+            }
+            (Scope::Project(id), relative)
+        } else {
+            return Err(invalid(format!("path is outside knowledge scopes: {path}")));
+        };
+        let resource = Self {
+            scope,
+            path: relative.into(),
+        };
+        resource.full_path(manifest)?;
+        Ok(resource)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub store: StoreId,
     pub projects: BTreeMap<ProjectId, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Identity {
+    pub store: StoreId,
+    pub node: NodeId,
+    pub genesis: Snapshot,
+    pub role: Role,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -57,7 +124,23 @@ struct Local {
 pub struct Change {
     pub scope: Scope,
     pub path: PathBuf,
-    pub content: Option<String>,
+    pub action: Action,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Action {
+    Write { content: String },
+    Remove {},
+}
+
+impl Action {
+    fn content(&self) -> Option<&str> {
+        match self {
+            Self::Write { content } => Some(content),
+            Self::Remove {} => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -95,18 +178,10 @@ pub struct Store {
 
 #[derive(Debug)]
 pub struct View<'store> {
-    store: &'store Store,
+    git: &'store Git,
     snapshot: Snapshot,
     manifest: Manifest,
-    entries: BTreeMap<String, Entry>,
-}
-
-#[derive(Debug)]
-struct Initialization(PathBuf);
-impl Drop for Initialization {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
+    pub(crate) entries: BTreeMap<String, Entry>,
 }
 
 fn private_metadata(path: &Path) -> Result<Metadata> {
@@ -160,48 +235,47 @@ fn reject_repository_ancestors(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn destination(root: &Path) -> Result<PathBuf> {
+    if !root.is_absolute() {
+        return Err(invalid("knowledge store root must be absolute"));
+    }
+    match fs::symlink_metadata(root) {
+        Ok(_) => {
+            return Err(invalid(
+                "knowledge store destination already exists; refusing adoption",
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(io("inspect knowledge destination", root, error)),
+    }
+    let parent = root
+        .parent()
+        .ok_or_else(|| invalid("knowledge store needs a parent"))?;
+    reject_repository_ancestors(parent)?;
+    dots_documents::directories::create_within(parent, parent)?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|error| io("resolve knowledge parent", parent, error))?;
+    reject_repository_ancestors(&parent)?;
+    let name = root
+        .file_name()
+        .ok_or_else(|| invalid("knowledge root needs a directory name"))?;
+    let destination = parent.join(name);
+    Ok(destination)
+}
+
 impl Store {
     /// Create a new authority atomically at an unused absolute location outside checkouts.
     /// Replica enrollment joins an existing store; it never invents another genesis.
     pub fn initialize(root: &Path, actor: &str) -> Result<Self> {
         validate_actor(actor)?;
-        if !root.is_absolute() {
-            return Err(invalid("knowledge store root must be absolute"));
-        }
-        match fs::symlink_metadata(root) {
-            Ok(_) => {
-                return Err(invalid(
-                    "knowledge store destination already exists; refusing adoption",
-                ));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io("inspect knowledge destination", root, error)),
-        }
-        let parent = root
+        let destination = destination(root)?;
+        let parent = destination
             .parent()
-            .ok_or_else(|| invalid("knowledge store needs a parent"))?;
-        reject_repository_ancestors(parent)?;
-        dots_documents::directories::create_within(parent, parent)?;
-        let parent = parent
-            .canonicalize()
-            .map_err(|error| io("resolve knowledge parent", parent, error))?;
-        reject_repository_ancestors(&parent)?;
-        let name = root
-            .file_name()
-            .ok_or_else(|| invalid("knowledge root needs a directory name"))?;
-        let destination = parent.join(name);
+            .expect("validated destination has a parent");
         let store = StoreId::allocate()?;
-        let staging_path = parent.join(format!(".knowledge-init-{store}"));
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&staging_path)
-            .map_err(|error| io("stage knowledge root", &staging_path, error))?;
-        let stage = Initialization(staging_path);
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(stage.0.join("repo.git"))
-            .map_err(|error| io("stage knowledge repository", &stage.0, error))?;
-        let git = Git::new(stage.0.clone(), actor.into());
+        let stage = StagedDirectory::create(parent)?;
+        let git = Git::new(stage.path().to_owned(), actor.into());
         git.initialize()?;
         let manifest = Manifest {
             store: store.clone(),
@@ -226,18 +300,60 @@ impl Store {
             role: Role::Authority,
             actor: actor.into(),
         };
-        let staged = dots_documents::staged_file::StagedFile::create(&stage.0)?;
-        let bytes = encode(&local, "local knowledge binding")?;
+        Self::publish_root(&stage, &local, &destination)
+    }
+
+    /// Restore an explicitly selected role from a trusted full export at a new location.
+    /// Shared history is retained; the restored instance gets its own local node identity.
+    pub fn restore(
+        root: &Path,
+        actor: &str,
+        role: Role,
+        bundle: &Path,
+        receipt: &crate::BundleReceipt,
+    ) -> Result<Self> {
+        validate_actor(actor)?;
+        let destination = destination(root)?;
+        let parent = destination
+            .parent()
+            .expect("validated destination has a parent");
+        let stage = StagedDirectory::create(parent)?;
+        let git = Git::new(stage.path().to_owned(), actor.into());
+        git.initialize()?;
+        let local = Local {
+            store: receipt.source.store.clone(),
+            genesis: receipt.source.genesis.clone(),
+            node: NodeId::allocate()?,
+            role,
+            actor: actor.into(),
+        };
+        let store = Self {
+            root: stage.path().to_owned(),
+            local,
+            git,
+        };
+        let candidate = crate::Candidate::import_bundle(&store, bundle, receipt, &BTreeSet::new())?;
+        store.git.publish(None, &candidate.snapshot)?;
+        Self::publish_root(&stage, &store.local, &destination)
+    }
+
+    fn publish_root(stage: &StagedDirectory, local: &Local, destination: &Path) -> Result<Self> {
+        let staged = dots_documents::staged_file::StagedFile::create(stage.path())?;
+        let bytes = encode(local, "local knowledge binding")?;
         staged
             .file()
             .write_all(&bytes)
             .map_err(|error| io("write knowledge binding", staged.path(), error))?;
-        staged.publish_new(&stage.0.join(LOCAL))?;
-        dots_documents::directories::sync(&stage.0)?;
-        fs::rename(&stage.0, &destination)
-            .map_err(|error| io("publish knowledge root", &destination, error))?;
-        dots_documents::directories::sync(&parent)?;
-        Self::open(&destination)
+        staged.publish_new(&stage.path().join(LOCAL))?;
+        dots_documents::directories::sync(stage.path())?;
+        fs::rename(stage.path(), destination)
+            .map_err(|error| io("publish knowledge root", destination, error))?;
+        dots_documents::directories::sync(
+            destination
+                .parent()
+                .expect("validated destination has a parent"),
+        )?;
+        Self::open(destination)
     }
 
     /// Open an existing owned store. This neither initializes data nor mutates knowledge.
@@ -270,6 +386,112 @@ impl Store {
         let store = Self { root, local, git };
         store.latest()?;
         Ok(store)
+    }
+
+    pub(crate) fn git(&self) -> &Git {
+        &self.git
+    }
+
+    /// Retain a verified full bundle without publishing any of its knowledge.
+    pub fn import_bundle(
+        &self,
+        path: &Path,
+        receipt: &crate::BundleReceipt,
+    ) -> Result<crate::Candidate> {
+        let known = crate::history::accepted(&self.git, &self.snapshot()?)?;
+        crate::Candidate::import_bundle(self, path, receipt, &known)
+    }
+
+    /// Export only one accepted snapshot's validated ancestry, without overwriting a file.
+    pub fn export_bundle(
+        &self,
+        snapshot: &Snapshot,
+        destination: &Path,
+    ) -> Result<crate::BundleReceipt> {
+        use dots_documents::staged_file::StagedFile;
+        use dots_process::Runner;
+        use std::time::Duration;
+        if !destination.is_absolute() {
+            return Err(invalid("bundle destination must be absolute"));
+        }
+        let export = self.prepare_export(snapshot)?;
+        let reference = export.reference;
+        let parent = destination
+            .parent()
+            .ok_or_else(|| invalid("bundle destination needs a parent"))?;
+        let staged = StagedFile::create(parent)?;
+        let sink = staged
+            .file()
+            .try_clone()
+            .map_err(|error| io("clone bundle output handle", staged.path(), error))?;
+        let command = self.git.command(&[
+            "-c",
+            "pack.allowPackReuse=false",
+            "bundle",
+            "create",
+            "-",
+            &reference,
+        ])?;
+        let runner = Runner::new(Duration::from_secs(60), MAX_METADATA_BYTES)
+            .stdout_limit(crate::MAX_BUNDLE_BYTES)
+            .stdout_to(sink);
+        Git::checked(
+            Git::execute(command, "export knowledge bundle", runner)?,
+            "export knowledge bundle",
+        )?;
+        let bytes = dots_documents::text::read_bytes(staged.path(), crate::MAX_BUNDLE_BYTES)?
+            .ok_or_else(|| invalid("staged bundle disappeared"))?;
+        let digest = dots_documents::text::bytes_revision(&bytes);
+        staged.publish_new(destination)?;
+        Ok(crate::BundleReceipt {
+            source: self.identity(),
+            snapshot: snapshot.clone(),
+            digest,
+        })
+    }
+
+    /// Pin an explicitly selected accepted snapshot for native Git transfer.
+    pub fn prepare_export(&self, snapshot: &Snapshot) -> Result<crate::Export> {
+        self.view(snapshot)?;
+        crate::history::validate(&self.git, &self.identity(), snapshot, &BTreeSet::new())?;
+        let reference = format!("refs/dots/export/{snapshot}");
+        self.git.pin(&reference, snapshot)?;
+        Ok(crate::Export {
+            source: self.identity(),
+            snapshot: snapshot.clone(),
+            reference,
+            repository: self.root.join("repo.git"),
+        })
+    }
+
+    /// Validate an authority's staged transfer before making it accepted knowledge.
+    pub fn accept_transfer(&self, delivery: &crate::Delivery) -> Result<crate::DeliveryReceipt> {
+        delivery.validate_recipient(self)?;
+        let candidate = &delivery.candidate;
+        if self.git.reference(&candidate.reference())? != Some(candidate.snapshot.clone()) {
+            let transfer = candidate.transfer_reference(&delivery.recipient);
+            if self.git.reference(&transfer)? != Some(candidate.snapshot.clone()) {
+                return Err(invalid("declared authority transfer is unavailable"));
+            }
+            let known = crate::history::accepted(&self.git, &self.snapshot()?)?;
+            crate::history::validate(&self.git, &self.identity(), &candidate.snapshot, &known)?;
+            self.git.pin(&candidate.reference(), &candidate.snapshot)?;
+        }
+        self.accept_return(delivery)
+    }
+
+    /// Accept an authority's already validated continuation against this exact node and head.
+    pub fn accept_return(&self, delivery: &crate::Delivery) -> Result<crate::DeliveryReceipt> {
+        crate::coordinator::accept_return(self, delivery)
+    }
+
+    pub fn identity(&self) -> Identity {
+        Identity {
+            store: self.local.store.clone(),
+            node: self.local.node.clone(),
+            genesis: self.local.genesis.clone(),
+            role: self.local.role,
+        }
     }
 
     pub fn node_id(&self) -> &NodeId {
@@ -306,31 +528,7 @@ impl Store {
         if roots.trim() != self.local.genesis.as_str() {
             return Err(invalid("knowledge contains unrelated history"));
         }
-        let entries = self.git.entries(snapshot)?;
-        let entry = entries
-            .get(MANIFEST)
-            .ok_or_else(|| invalid("knowledge manifest is absent"))?;
-        let bytes = self.git.blob(&entry.oid, entry.size)?;
-        let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|source| Error::Json {
-            operation: "knowledge manifest",
-            source,
-        })?;
-        if encode(&manifest, "knowledge manifest")? != bytes {
-            return Err(invalid("knowledge manifest is not canonical JSON"));
-        }
-        if manifest.store != self.local.store {
-            return Err(invalid("knowledge manifest belongs to another store"));
-        }
-        for name in manifest.projects.values() {
-            validate_name(name)?;
-        }
-        validate_layout(&layout(&entries), &manifest)?;
-        Ok(View {
-            store: self,
-            snapshot: snapshot.clone(),
-            manifest,
-            entries,
-        })
+        View::load(&self.git, snapshot, &self.local.store)
     }
 
     /// Publish one batch against the complete snapshot the caller observed.
@@ -352,7 +550,7 @@ impl Store {
                     "a publication names the same document more than once",
                 ));
             }
-            if let Some(content) = &change.content {
+            if let Some(content) = change.action.content() {
                 validate_content(content.as_bytes())?;
                 prospective.insert(path, content.len());
             } else {
@@ -364,7 +562,7 @@ impl Store {
         let mut count = 0;
         for change in changes {
             let path = view.resource(&change.scope, &change.path)?;
-            if let Some(content) = &change.content {
+            if let Some(content) = change.action.content() {
                 let oid = self.git.write_blob(content.as_bytes())?;
                 if entries.get(&path).is_some_and(|entry| entry.oid == oid) {
                     continue;
@@ -420,7 +618,7 @@ impl Store {
         Ok(Registration { snapshot, project })
     }
 
-    fn check_expected(&self, expected: &Snapshot) -> Result<()> {
+    pub(crate) fn check_expected(&self, expected: &Snapshot) -> Result<()> {
         let actual = self.git.head()?;
         if *expected != actual {
             return Err(Error::Conflict {
@@ -449,7 +647,35 @@ impl Store {
     }
 }
 
-impl View<'_> {
+impl<'git> View<'git> {
+    pub(crate) fn load(git: &'git Git, snapshot: &Snapshot, store: &StoreId) -> Result<Self> {
+        let entries = git.entries(snapshot)?;
+        let entry = entries
+            .get(MANIFEST)
+            .ok_or_else(|| invalid("knowledge manifest is absent"))?;
+        let bytes = git.blob(&entry.oid, entry.size)?;
+        let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|source| Error::Json {
+            operation: "knowledge manifest",
+            source,
+        })?;
+        if encode(&manifest, "knowledge manifest")? != bytes {
+            return Err(invalid("knowledge manifest is not canonical JSON"));
+        }
+        if manifest.store != *store {
+            return Err(invalid("knowledge manifest belongs to another store"));
+        }
+        for name in manifest.projects.values() {
+            validate_name(name)?;
+        }
+        validate_layout(&layout(&entries), &manifest)?;
+        Ok(View {
+            git,
+            snapshot: snapshot.clone(),
+            manifest,
+            entries,
+        })
+    }
+
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
     }
@@ -457,25 +683,12 @@ impl View<'_> {
         &self.manifest
     }
 
-    fn prefix(&self, scope: &Scope) -> Result<String> {
-        match scope {
-            Scope::Global => Ok("global/".into()),
-            Scope::Project(project) if self.manifest.projects.contains_key(project) => {
-                Ok(format!("projects/{project}/"))
-            }
-            Scope::Project(project) => Err(Error::UnknownProject(project.clone())),
-        }
-    }
-
     fn resource(&self, scope: &Scope, relative: &Path) -> Result<String> {
-        dots_documents::paths::validate_markdown(relative)?;
-        if relative.components().count() > 8 {
-            return Err(invalid("knowledge path exceeds eight document components"));
+        Resource {
+            scope: scope.clone(),
+            path: relative.into(),
         }
-        let relative = relative
-            .to_str()
-            .ok_or_else(|| invalid("knowledge path must be Unicode"))?;
-        Ok(format!("{}{relative}", self.prefix(scope)?))
+        .full_path(&self.manifest)
     }
 
     /// Return exact bounded UTF-8 bytes as text, without inspection-page normalization.
@@ -484,7 +697,7 @@ impl View<'_> {
         let content = self
             .entries
             .get(&path)
-            .map(|entry| self.store.git.blob(&entry.oid, entry.size))
+            .map(|entry| self.git.blob(&entry.oid, entry.size))
             .transpose()?;
         if let Some(content) = &content {
             validate_content(content)?;
@@ -524,7 +737,7 @@ impl View<'_> {
                 "query must contain 1..1024 bytes; limit must be 1..20",
             ));
         }
-        let prefix = self.prefix(scope)?;
+        let prefix = scope.prefix(&self.manifest)?;
         let selected: Vec<_> = self
             .entries
             .iter()
@@ -538,7 +751,6 @@ impl View<'_> {
             .collect();
         let ids: Vec<_> = ids.into_iter().collect();
         let blobs = self
-            .store
             .git
             .blobs(&ids, MAX_CORPUS_BYTES + MAX_METADATA_BYTES)?;
         let query = query.to_lowercase();
@@ -587,14 +799,14 @@ impl View<'_> {
     }
 }
 
-fn encode(value: &impl Serialize, operation: &'static str) -> Result<Vec<u8>> {
+pub(crate) fn encode(value: &impl Serialize, operation: &'static str) -> Result<Vec<u8>> {
     let mut content =
         serde_json::to_vec_pretty(value).map_err(|source| Error::Json { operation, source })?;
     content.push(b'\n');
     Ok(content)
 }
 
-fn validate_content(content: &[u8]) -> Result<()> {
+pub(crate) fn validate_content(content: &[u8]) -> Result<()> {
     if content.len() > MAX_FILE_BYTES {
         return Err(invalid("knowledge document exceeds 256 KiB"));
     }
@@ -604,14 +816,17 @@ fn validate_content(content: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn layout(entries: &BTreeMap<String, Entry>) -> BTreeMap<String, usize> {
+pub(crate) fn layout(entries: &BTreeMap<String, Entry>) -> BTreeMap<String, usize> {
     entries
         .iter()
         .map(|(path, entry)| (path.clone(), entry.size))
         .collect()
 }
 
-fn validate_layout(entries: &BTreeMap<String, usize>, manifest: &Manifest) -> Result<()> {
+pub(crate) fn validate_layout(
+    entries: &BTreeMap<String, usize>,
+    manifest: &Manifest,
+) -> Result<()> {
     let mut folded = BTreeMap::new();
     let mut total = 0_usize;
     let mut metadata = 0_usize;
@@ -619,12 +834,6 @@ fn validate_layout(entries: &BTreeMap<String, usize>, manifest: &Manifest) -> Re
         return Err(invalid("knowledge corpus contains too many documents"));
     }
     for (path, &size) in entries {
-        metadata = metadata
-            .checked_add(path.len() + 128)
-            .ok_or_else(|| invalid("knowledge metadata size overflow"))?;
-        if metadata > MAX_METADATA_BYTES {
-            return Err(invalid("knowledge tree metadata exceeds the read budget"));
-        }
         total = total
             .checked_add(size)
             .ok_or_else(|| invalid("knowledge size overflow"))?;
@@ -633,10 +842,19 @@ fn validate_layout(entries: &BTreeMap<String, usize>, manifest: &Manifest) -> Re
         }
         let mut component = path.as_str();
         loop {
-            if let Some(previous) = folded.insert(component.to_lowercase(), component)
-                && previous != component
-            {
-                return Err(invalid("knowledge paths have a case ambiguity"));
+            match folded.insert(component.to_lowercase(), component) {
+                Some(previous) if previous != component => {
+                    return Err(invalid("knowledge paths have a case ambiguity"));
+                }
+                Some(_) => {}
+                None => {
+                    metadata = metadata
+                        .checked_add(component.len() + 128)
+                        .ok_or_else(|| invalid("knowledge metadata size overflow"))?;
+                    if metadata > MAX_METADATA_BYTES {
+                        return Err(invalid("knowledge tree metadata exceeds the read budget"));
+                    }
+                }
             }
             let Some((parent, _)) = component.rsplit_once('/') else {
                 break;
@@ -646,24 +864,7 @@ fn validate_layout(entries: &BTreeMap<String, usize>, manifest: &Manifest) -> Re
         if path == MANIFEST {
             continue;
         }
-        let relative = if let Some(relative) = path.strip_prefix("global/") {
-            relative
-        } else if let Some(project) = path.strip_prefix("projects/") {
-            let (id, relative) = project
-                .split_once('/')
-                .ok_or_else(|| invalid("knowledge project path is incomplete"))?;
-            let id: ProjectId = id.parse()?;
-            if !manifest.projects.contains_key(&id) {
-                return Err(Error::UnknownProject(id));
-            }
-            relative
-        } else {
-            return Err(invalid(format!("path is outside knowledge scopes: {path}")));
-        };
-        dots_documents::paths::validate_markdown(Path::new(relative))?;
-        if relative.split('/').count() > 8 {
-            return Err(invalid("knowledge path exceeds eight document components"));
-        }
+        Resource::from_path(path, manifest)?;
         let mut ancestor = path.as_str();
         while let Some((parent, _)) = ancestor.rsplit_once('/') {
             if entries.contains_key(parent) {
@@ -675,5 +876,7 @@ fn validate_layout(entries: &BTreeMap<String, usize>, manifest: &Manifest) -> Re
     Ok(())
 }
 
+#[cfg(test)]
+mod bundle_tests;
 #[cfg(test)]
 mod tests;
