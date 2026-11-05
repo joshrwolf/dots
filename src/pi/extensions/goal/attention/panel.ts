@@ -375,15 +375,15 @@ export class AttentionView implements Component, Focusable {
           ? [{value: 'replacement', label: 'Answer the new question…'}]
           : []),
         {value: 'dismiss', label: 'Discard my draft'},
-        {value: 'context', label: 'Read context…'},
+        {value: 'context', label: 'Read in full…'},
       ];
     if (state.kind === 'closed')
       return [
         {value: 'dismiss', label: 'Dismiss'},
-        {value: 'context', label: 'Read context…'},
+        {value: 'context', label: 'Read in full…'},
       ];
     if (!this.answerable(item))
-      return [{value: 'context', label: 'Read context…'}];
+      return [{value: 'context', label: 'Read in full…'}];
     return [
       ...request.choices.map(choice => ({
         value: `choice:${choice.id}`,
@@ -396,7 +396,7 @@ export class AttentionView implements Component, Focusable {
           ? 'Type a different answer…'
           : 'Send an update…',
       },
-      {value: 'context', label: 'Read context…'},
+      {value: 'context', label: 'Read in full…'},
     ];
   }
 
@@ -527,7 +527,7 @@ export class AttentionView implements Component, Focusable {
         : [
             ...question.slice(0, Math.max(0, room - 1)),
             truncateToWidth(
-              theme.fg('dim', '… Read context for the rest'),
+              theme.fg('dim', '… Read in full for the rest'),
               width,
             ),
           ];
@@ -778,13 +778,14 @@ function contextText(item: AttentionItem): string {
     request.question,
     request.context,
     request.recommendation && `**Recommend:** ${request.recommendation}`,
+    // Every choice's full label and detail; the list may clip them.
     request.choices.length &&
-      request.choices
+      `Choices:\n${request.choices
         .map(
           choice =>
             `- **${choice.label}**${choice.detail ? `: ${choice.detail}` : ''}`,
         )
-        .join('\n'),
+        .join('\n')}`,
     request.tasks.length &&
       `Waiting work:\n${request.tasks.map(task => `- ${task.title} (${task.status})`).join('\n')}`,
     `Goal: ${item.goal} · request ${request.id}`,

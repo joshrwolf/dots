@@ -385,6 +385,46 @@ test('mouse: tabs switch views and a clicked option answers', () => {
   assert.deepEqual(h.answers, [[requestId(1), {choice: 'all'}]]);
 });
 
+test('narrow: clipped choices read in full, labels and details', () => {
+  const h = harness(16);
+  const keep = 'Migrate every project now, keeping the legacy catalog online';
+  const drop = 'Migrate every project now, dropping the legacy catalog today';
+  const detail =
+    'Keeps old readers working for one release, at the cost of a second write path that must be retired by hand later.';
+  h.set([
+    request({
+      choices: [
+        {id: 'keep', label: keep, detail},
+        {id: 'drop', label: drop, detail: null},
+      ],
+    }),
+  ]);
+  const width = panelWidth(40);
+  const clipped = plain(h.popup.render(width));
+  assert.doesNotMatch(clipped.replace(/\s+/g, ' '), /legacy catalog online/);
+  assert.match(clipped, /Read in full…/);
+  h.popup.handleInput('\r');
+  for (let i = 0; i < 3; i++) h.popup.handleInput(DOWN);
+  h.popup.handleInput('\r');
+  const seen: string[] = [];
+  for (let i = 0; i < 40; i++) {
+    seen.push(plain(h.popup.render(width)));
+    h.popup.handleInput(DOWN);
+  }
+  const text = seen
+    .join('\n')
+    .split('\n')
+    .map(line => line.replace(/^[│\s]+|[│\s]+$/g, ''))
+    // Body lines only: the frame and controls repeat on every page.
+    .filter(line => !/^[╭╰›\[]/.test(line))
+    .filter((line, at, all) => all.indexOf(line) === at)
+    .join(' ')
+    .replace(/\s+/g, ' ');
+  for (const full of [keep, drop, detail])
+    assert.ok(text.includes(full), `full text: ${full}`);
+  assert.deepEqual(h.answers, [], 'reading answers nothing');
+});
+
 test('40x16, light and dark: the frame, question and options fit', () => {
   for (const theme of ['dark', 'light']) {
     const h = harness(16, theme);
