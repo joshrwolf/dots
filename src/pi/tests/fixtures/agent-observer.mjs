@@ -1,7 +1,8 @@
 import {createBashToolDefinition} from '@earendil-works/pi-coding-agent';
 
 // Runs a native bash command the way a model call does and records what it
-// sees; with a task ID and project, claims it there as the shell's own actor.
+// sees. With a task ID and project it claims the task there without --owner,
+// so dots records the actor the shell carries.
 export default function agentObserver(pi) {
   pi.registerCommand('fixture-agent', {
     description: 'Observe the actor a native shell carries',
@@ -9,7 +10,7 @@ export default function agentObserver(pi) {
       const [step, task, project] = args.trim().split(/\s+/);
       const bash = createBashToolDefinition(ctx.cwd);
       const claim = task
-        ? `dots --json task claim ${task} --project '${project}' --owner "$DOTS_AGENT_OWNER" >/dev/null && `
+        ? `dots --json task claim ${task} --project '${project}' >/dev/null && `
         : '';
       const result = await bash.execute(
         'fixture',
