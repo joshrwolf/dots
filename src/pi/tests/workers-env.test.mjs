@@ -14,8 +14,21 @@ test('a worker belongs to its parent terminal Rex session without owning a termi
       DOTS_REX_SESSION: 'session:top',
       REX_SESSION: undefined,
       REX_BLOCK: undefined,
+      PI_SESSION_ID: undefined,
+      DOTS_AGENT_OWNER: undefined,
     },
   );
+});
+
+test("a worker inherits neither its parent's session nor its runtime actor", () => {
+  const env = workerEnv(worker, {
+    PI_SESSION_ID: 'parent',
+    DOTS_AGENT_OWNER: 'pi-parent-0123456789abcdef',
+  });
+  for (const name of ['PI_SESSION_ID', 'DOTS_AGENT_OWNER']) {
+    assert.ok(name in env, name);
+    assert.equal(env[name], undefined, name);
+  }
 });
 
 test('a nested worker inherits the top Rex session', () => {

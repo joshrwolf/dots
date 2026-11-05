@@ -53,8 +53,8 @@ export function source() {
     calls,
     releases,
     releaseFailure: undefined,
-    async release(owner) {
-      releases.push(owner);
+    async release(agent) {
+      releases.push(agent.owner);
       if (this.releaseFailure) throw new Error(this.releaseFailure);
     },
     async show(cwd, id, signal, history, project) {

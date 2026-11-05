@@ -25,6 +25,7 @@ import {
   summaryRow,
 } from './panel.ts';
 import {GOAL_SECTION_PREFIX, goalSections, orientation} from './context.ts';
+import {bindAgent, endAgent, type Agent} from '../../src/host/agent.ts';
 import {
   dotsSource,
   dotsEvidenceSource,
@@ -137,17 +138,14 @@ export default function goalExtension(
   };
   const discover = async (ctx: ExtensionContext) => {
     // A worker does not take on goals; offering them is its owner's concern.
-    if (!active || process.env.DOTS_WORKER_ID) return false;
+    if (!active || !agent || process.env.DOTS_WORKER_ID) return false;
+    const claimedBy = agent.owner;
     discovery?.abort();
     const controller = new AbortController();
     discovery = controller;
     const epoch = generation;
     try {
-      const result = await source.list(
-        ctx.cwd,
-        controller.signal,
-        `pi-${ctx.sessionManager.getSessionId()}`,
-      );
+      const result = await source.list(ctx.cwd, controller.signal, claimedBy);
       if (!active || generation !== epoch || controller.signal.aborted)
         return false;
       offers = result;
@@ -189,7 +187,8 @@ export default function goalExtension(
     | undefined;
   let dialog: AbortController | undefined;
   let mounted = false;
-  let owner: string | undefined;
+  /** This runtime's actor, bound once at session start; reload keeps it. */
+  let agent: Agent | undefined;
   let workerActivity: WorkerActivitySnapshot | undefined;
   let stopWorkerActivity: (() => void) | undefined;
   let summary: {row: PriorityRow; theme: Theme; redraw: () => void} | undefined;
@@ -219,7 +218,12 @@ export default function goalExtension(
   const paint = () => {
     if (summary) {
       summary.row.update(
-        summaryRow([...followed.values()], focus?.id, workerActivity, owner),
+        summaryRow(
+          [...followed.values()],
+          focus?.id,
+          workerActivity,
+          agent?.owner,
+        ),
         summary.theme,
       );
       summary.redraw();
@@ -229,7 +233,7 @@ export default function goalExtension(
         {
           view: model,
           activity: workerActivity,
-          owner,
+          owner: agent?.owner,
           followed: followed.size,
         },
         panel.theme,
@@ -473,7 +477,6 @@ export default function goalExtension(
     invalidate(ctx);
     workerActivity = undefined;
     active = true;
-    owner = `pi-${ctx.sessionManager.getSessionId()}`;
     focus = undefined;
     model = undefined;
     followed.clear();
@@ -503,7 +506,8 @@ export default function goalExtension(
     if (active && epoch === generation && ctx.mode === 'tui' && ctx.hasUI)
       await discover(ctx);
   };
-  pi.on('session_start', (_event, ctx) => {
+  pi.on('session_start', (event, ctx) => {
+    agent = bindAgent(ctx.sessionManager.getSessionId(), event.reason);
     stopWorkerActivity?.();
     workerActivity = undefined;
     stopWorkerActivity = pi.events.on(WORKER_ACTIVITY_EVENT, data => {
@@ -515,15 +519,19 @@ export default function goalExtension(
   });
   pi.on('session_tree', (_event, ctx) => restore(ctx));
   pi.on('session_shutdown', async (event, ctx) => {
-    // A claim names the session working on a task; an ended session is not.
-    // Reload keeps the session, and workers never claim.
-    if (event.reason !== 'reload' && !process.env.DOTS_WORKER_ID)
-      await source
-        .release(`pi-${ctx.sessionManager.getSessionId()}`)
-        .catch((error: unknown) => {
+    // A claim names the runtime working on a task; an ended runtime is not.
+    // Reload keeps the runtime, and workers never claim. Release acts only
+    // as this runtime's own actor, never a later one's.
+    const ending = agent;
+    if (ending && event.reason !== 'reload') {
+      if (!process.env.DOTS_WORKER_ID)
+        await source.release(ending).catch((error: unknown) => {
           if (ctx.hasUI)
             ctx.ui.notify(`Claims not released: ${String(error)}`, 'warning');
         });
+      endAgent(ending);
+      agent = undefined;
+    }
     if (ctx.mode === 'tui' && ctx.hasUI)
       ctx.ui.setWidget(OFFERS_WIDGET, undefined);
     if (ctx.hasUI) ctx.ui.setStatus(OFFERS_WIDGET, undefined);

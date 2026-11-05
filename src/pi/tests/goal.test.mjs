@@ -11,15 +11,22 @@ import {source, snapshot} from './goal-fixture.mjs';
 import {withHierarchy} from '../extensions/goal/source.ts';
 import {WORKER_ACTIVITY_EVENT} from '../src/ui/worker-activity.ts';
 
-// Tests own whether they simulate a worker; the launching agent does not.
-const inheritedWorker = process.env.DOTS_WORKER_ID;
+// Tests own whether they simulate a worker or inherit an actor; the launching
+// agent does not.
+const inherited = {
+  DOTS_WORKER_ID: process.env.DOTS_WORKER_ID,
+  DOTS_AGENT_OWNER: process.env.DOTS_AGENT_OWNER,
+};
 beforeEach(() => {
-  delete process.env.DOTS_WORKER_ID;
+  for (const name of Object.keys(inherited)) delete process.env[name];
 });
 afterEach(() => {
-  if (inheritedWorker === undefined) delete process.env.DOTS_WORKER_ID;
-  else process.env.DOTS_WORKER_ID = inheritedWorker;
+  for (const [name, value] of Object.entries(inherited)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
 });
+const runtimeOf = session => new RegExp(`^pi-${session}-[0-9a-f]{16}$`);
 
 const entry = focus => ({
   type: 'custom',
@@ -27,7 +34,12 @@ const entry = focus => ({
   data: {version: 2, focus, followed: focus ? [focus] : []},
 });
 const focused = () => ({id: 't-123abc', project: '/example/project'});
-function harness(backend = source(), saved = [], mode = 'rpc') {
+function harness(
+  backend = source(),
+  saved = [],
+  mode = 'rpc',
+  session = 'fixture-session',
+) {
   const handlers = new Map();
   const commands = new Map();
   const tools = new Map();
@@ -74,7 +86,7 @@ function harness(backend = source(), saved = [], mode = 'rpc') {
     hasUI: mode !== 'json',
     sessionManager: {
       getBranch: () => entries,
-      getSessionId: () => 'fixture-session',
+      getSessionId: () => session,
     },
     ui: {
       setStatus() {},
@@ -131,7 +143,8 @@ test('claimed goals are offers, not follows; dismissal survives resume and expli
   const offer = () =>
     h.widgets.findLast(([key]) => key === 'dots.goal.offers')?.[1];
   await h.event('session_start');
-  assert.deepEqual(owners, ['pi-fixture-session']);
+  assert.equal(owners.length, 1);
+  assert.match(owners[0], runtimeOf('fixture-session'));
   assert.match(offer().join('\n'), /Follow: \/goal follow t-123abc/);
   assert.deepEqual((await h.list()).details.followed, []);
   assert.deepEqual(await h.context(), []);
@@ -997,23 +1010,33 @@ test("a worker session never discovers goal offers; that is its owner's concern"
   }
 });
 
-test('ending a session releases its claims; reload keeps them and workers never release', async () => {
+test('ending a runtime releases its claims; reload keeps them and workers never release', async () => {
   for (const reason of ['quit', 'new', 'resume', 'fork']) {
     const h = harness();
-    await h.event('session_start');
+    await h.event('session_start', {reason: 'startup'});
+    const owner = process.env.DOTS_AGENT_OWNER;
+    assert.match(owner, runtimeOf('fixture-session'));
     await h.event('session_shutdown', {type: 'session_shutdown', reason});
-    assert.deepEqual(h.backend.releases, ['pi-fixture-session'], reason);
+    assert.deepEqual(h.backend.releases, [owner], reason);
+    assert.equal(process.env.DOTS_AGENT_OWNER, undefined, reason);
   }
   const reload = harness();
-  await reload.event('session_start');
+  await reload.event('session_start', {reason: 'startup'});
+  const kept = process.env.DOTS_AGENT_OWNER;
   await reload.event('session_shutdown', {
     type: 'session_shutdown',
     reason: 'reload',
   });
   assert.deepEqual(reload.backend.releases, []);
+  assert.equal(process.env.DOTS_AGENT_OWNER, kept);
+  await reload.event('session_shutdown', {
+    type: 'session_shutdown',
+    reason: 'quit',
+  });
   process.env.DOTS_WORKER_ID = 'w-fixture';
   const worker = harness();
-  await worker.event('session_start');
+  await worker.event('session_start', {reason: 'startup'});
+  assert.match(process.env.DOTS_AGENT_OWNER, runtimeOf('fixture-session'));
   await worker.event('session_shutdown', {
     type: 'session_shutdown',
     reason: 'quit',
@@ -1022,14 +1045,74 @@ test('ending a session releases its claims; reload keeps them and workers never 
   delete process.env.DOTS_WORKER_ID;
   const failing = harness(source(), [], 'tui');
   failing.backend.releaseFailure = 'catalog unavailable';
-  await failing.event('session_start');
+  await failing.event('session_start', {reason: 'startup'});
+  const failed = process.env.DOTS_AGENT_OWNER;
   await failing.event('session_shutdown', {
     type: 'session_shutdown',
     reason: 'quit',
   });
-  assert.deepEqual(failing.backend.releases, ['pi-fixture-session']);
+  assert.deepEqual(failing.backend.releases, [failed]);
   assert.match(
     failing.notices.map(([text]) => text).join('\n'),
     /Claims not released: Error: catalog unavailable/,
   );
+});
+
+test('each runtime is its own actor: reload and tree keep it, every other start mints one', async () => {
+  // An owner inherited from a parent process is never adopted.
+  process.env.DOTS_AGENT_OWNER = 'pi-fixture-session-0123456789abcdef';
+  const first = harness();
+  await first.event('session_start', {reason: 'startup'});
+  const a1 = process.env.DOTS_AGENT_OWNER;
+  assert.match(a1, runtimeOf('fixture-session'));
+  assert.notEqual(a1, 'pi-fixture-session-0123456789abcdef');
+  await first.event('session_tree');
+  assert.equal(process.env.DOTS_AGENT_OWNER, a1);
+  await first.event('session_shutdown', {reason: 'reload'});
+  // Pi re-imports the extension on reload; the new instance keeps the actor.
+  const reloaded = harness(first.backend);
+  await reloaded.event('session_start', {reason: 'reload'});
+  assert.equal(process.env.DOTS_AGENT_OWNER, a1);
+  await reloaded.event('session_shutdown', {reason: 'resume'});
+  assert.deepEqual(first.backend.releases, [a1]);
+
+  const other = harness(source(), [], 'rpc', 'other-session');
+  await other.event('session_start', {reason: 'resume'});
+  const b = process.env.DOTS_AGENT_OWNER;
+  assert.match(b, runtimeOf('other-session'));
+  await other.event('session_shutdown', {reason: 'resume'});
+
+  // Back to the first session in the same process: a new actor.
+  const back = harness();
+  await back.event('session_start', {reason: 'resume'});
+  const a2 = process.env.DOTS_AGENT_OWNER;
+  assert.match(a2, runtimeOf('fixture-session'));
+  assert.notEqual(a2, a1);
+  assert.equal(new Set([a1, b, a2]).size, 3);
+
+  await back.event('session_shutdown', {reason: 'quit'});
+  assert.deepEqual(back.backend.releases, [a2]);
+});
+
+test('a stale runtime releases only its own claims and leaves the next actor exported', async () => {
+  const slow = source();
+  let finish;
+  slow.release = async agent => {
+    slow.releases.push(agent.owner);
+    await new Promise(resolve => (finish = resolve));
+  };
+  const old = harness(slow);
+  await old.event('session_start', {reason: 'startup'});
+  const previous = process.env.DOTS_AGENT_OWNER;
+  const ending = old.event('session_shutdown', {reason: 'new'});
+  const next = harness();
+  await next.event('session_start', {reason: 'new'});
+  const current = process.env.DOTS_AGENT_OWNER;
+  assert.notEqual(current, previous);
+  finish();
+  await ending;
+  assert.deepEqual(slow.releases, [previous]);
+  assert.equal(process.env.DOTS_AGENT_OWNER, current);
+  await next.event('session_shutdown', {reason: 'quit'});
+  assert.deepEqual(next.backend.releases, [current]);
 });

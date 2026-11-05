@@ -1,6 +1,7 @@
 import path from 'node:path';
 import {isTimestamp} from '../../src/date.ts';
 import {DotsError, dots} from '@joshrwolf/pi-kit/dots';
+import {agentEnv, type Agent} from '../../src/host/agent.ts';
 import {readTaskWorkers, type TaskWorkers} from '../workers/registry.ts';
 
 export interface Evidence {
@@ -99,8 +100,8 @@ export interface GoalSource {
     history?: boolean,
     project?: string,
   ): Promise<GoalSnapshot>;
-  /** Release every claim `owner` holds, in every project. */
-  release(owner: string): Promise<void>;
+  /** Release every claim `agent` holds, in every project, acting as it. */
+  release(agent: Agent): Promise<void>;
 }
 
 // Decode the fields this consumer uses; ignore additional CLI fields. Invalid
@@ -614,7 +615,9 @@ export const dotsSource: GoalSource = {
       history,
     );
   },
-  async release(owner) {
-    await dots(['task', '--owner', owner, 'release', '--all']);
+  async release(agent) {
+    await dots(['task', '--owner', agent.owner, 'release', '--all'], {
+      env: agentEnv(agent),
+    });
   },
 };

@@ -108,6 +108,7 @@ test('real isolated source reads complete history and selects the explicit proje
   const previous = keys.map(key => process.env[key]);
   for (const key of keys) process.env[key] = join(dir, key);
   let project;
+  let owner = 'fixture';
   const cli = (...args) =>
     JSON.parse(
       execFileSync(
@@ -121,7 +122,7 @@ test('real isolated source reads complete history and selects the explicit proje
           '--project',
           project,
           '--owner',
-          'fixture',
+          owner,
         ],
         {encoding: 'utf8'},
       ),
@@ -197,6 +198,29 @@ test('real isolated source reads complete history and selects the explicit proje
       /claimed by fixture/,
     );
     cli('release', open.task.id);
+    // Release acts as the captured runtime only, never a later runtime of the
+    // same session.
+    const ended = {session: 'fixture', owner: 'pi-fixture-0123456789abcdef'};
+    const current = {session: 'fixture', owner: 'pi-fixture-fedcba9876543210'};
+    const second = cli('add', 'Second slice', '--parent', id);
+    owner = ended.owner;
+    cli('claim', open.task.id);
+    owner = current.owner;
+    cli('claim', second.task.id);
+    await dotsSource.release(ended);
+    const released = await dotsSource.show(
+      dir,
+      id,
+      new AbortController().signal,
+      false,
+      project,
+    );
+    assert.deepEqual(
+      Object.fromEntries(
+        released.overview.tasks.map(task => [task.id, task.owner]),
+      ),
+      {[open.task.id]: null, [second.task.id]: current.owner},
+    );
     await assert.rejects(
       dotsSource.show(
         dir,

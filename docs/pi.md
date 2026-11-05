@@ -119,9 +119,14 @@ not a guessed path. Several goals may be followed at once; selecting one changes
 only the display. The followed set survives session reload/resume.
 
 Briefs hold agreements, tasks hold progress, and retained outputs hold evidence.
-The agent manages claims through `dots`; direct CLI use needs an explicit
-`--owner` rather than an inherited session identity. See [tasks](tasks.md) and
-[documents](documents.md).
+The agent manages claims through `dots`. Each live Pi runtime claims as its own
+owner, `pi-<session id>-<nonce>`, which its shell commands receive as
+`DOTS_AGENT_OWNER` beside the native `PI_SESSION_ID`. `/reload` and `/tree` keep
+the owner; a restart, `/new`, `/resume`, `/fork`, a second process on the same
+session and each worker get a new one. Ending a runtime other than by reload
+releases that owner's claims only. Owners are cooperative records, not access
+control. Direct CLI use needs an explicit `--owner` rather than an inherited
+identity. See [tasks](tasks.md) and [documents](documents.md).
 
 ## Jobs
 
