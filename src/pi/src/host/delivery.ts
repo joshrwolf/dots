@@ -12,7 +12,7 @@ export type TurnMessage = Parameters<ExtensionAPI['sendMessage']>[0];
 export const FALLBACK_POLL_MS = 1_000;
 
 interface Held {
-  compose: () => TurnMessage;
+  compose: () => TurnMessage | undefined;
   delivered: (() => void) | undefined;
 }
 
@@ -70,13 +70,14 @@ export class TurnMessages {
 
   /**
    * Deliver the message `compose` builds once the session is idle. It is built
-   * at delivery, so branch-dependent content reflects the branch it lands on.
+   * at delivery, so branch-dependent content reflects the branch it lands on;
+   * returning undefined declines a message that became stale while held.
    * The first check follows the current synchronous work, so messages sent
    * together share one run.
    * `delivered` runs once Pi has it, whether or not it starts a run; Pi
    * reports a message appended without a run to no extension event.
    */
-  send(compose: () => TurnMessage, delivered?: () => void): void {
+  send(compose: () => TurnMessage | undefined, delivered?: () => void): void {
     if (!this.context) return;
     this.held.push({compose, delivered});
     queueMicrotask(() => this.flush());
@@ -121,12 +122,16 @@ export class TurnMessages {
       return;
     }
     this.clear();
-    const batch = this.held;
+    const held = this.held;
     this.held = [];
+    const batch = held.flatMap(({compose, delivered}) => {
+      const message = compose();
+      return message ? [{message, delivered}] : [];
+    });
     // While idle, a non-triggering message is appended at once; the last one
     // starts the run that reads them all.
-    batch.forEach(({compose, delivered}, index) => {
-      this.pi.sendMessage(compose(), {
+    batch.forEach(({message, delivered}, index) => {
+      this.pi.sendMessage(message, {
         triggerTurn: !this.cancelled && index === batch.length - 1,
       });
       delivered?.();

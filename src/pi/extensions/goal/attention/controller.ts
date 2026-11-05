@@ -27,7 +27,7 @@ export interface AttentionHost {
   readonly source: AttentionSource;
   /** Native turn delivery: holds the message until the session is idle. */
   readonly deliver: (
-    compose: () => TurnMessage,
+    compose: () => TurnMessage | undefined,
     delivered?: () => void,
   ) => void;
   /** The current branch, for delivery receipts. */
@@ -500,7 +500,22 @@ export class AttentionController {
       );
     if (!answered.length) return;
     for (const request of answered) this.sent.add(request.id);
-    this.host.deliver(() => answerNotice(answered));
+    // Revalidated when Pi takes it: a pause, release or handoff observed
+    // while it was held declines it, and a later coordinator is told instead.
+    this.host.deliver(() => {
+      const current = new Map(
+        (this.dutyFailure ? [] : this.responsible())
+          .flatMap(goal => goal.requests)
+          .filter(request => request.state === 'answered' && request.answer)
+          .map(request => [request.id, request]),
+      );
+      const still = answered.flatMap(request => {
+        const fresh = current.get(request.id);
+        if (!fresh) this.sent.delete(request.id);
+        return fresh ? [fresh] : [];
+      });
+      return still.length ? answerNotice(still) : undefined;
+    });
   }
 
   /**

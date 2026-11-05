@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {existsSync, readFileSync, statSync} from 'node:fs';
 import {dirname} from 'node:path';
+import {setTimeout as sleep} from 'node:timers/promises';
 import test from 'node:test';
 import {dotsAttention} from '../extensions/goal/attention/source.ts';
 import {
@@ -12,6 +13,7 @@ import {attentionContext} from '../extensions/goal/attention/context.ts';
 import {attentionModel, indicator} from '../extensions/goal/attention/model.ts';
 import {HumanInputs, recordChat} from '../extensions/goal/attention/chat.ts';
 import {rootRecord} from '../extensions/status/model.ts';
+import {TurnMessages} from '../src/host/delivery.ts';
 import {
   PROJECT,
   attentionStore,
@@ -690,6 +692,67 @@ test('the stream cursor is read before the snapshot, so an answer between them i
     assert.equal(ctl.model().items[0].state.kind, 'answered');
   } finally {
     ctl.close();
+  }
+});
+
+test('a held answer notice is declined once a pause is observed, without a receipt, and resume delivers it', async () => {
+  const store = attentionStore({
+    coordinator: agent.owner,
+    requests: [request()],
+  });
+  await external(store, requestId(1));
+  let idle = false;
+  const sent = [];
+  const branch = [];
+  const delivery = new TurnMessages(
+    {
+      on() {},
+      sendMessage(message, options) {
+        sent.push({message, options});
+        branch.push({type: 'custom_message', ...message});
+      },
+    },
+    5,
+  );
+  delivery.bind({isIdle: () => idle});
+  const ctl = new AttentionController({
+    source: store.source,
+    deliver: (compose, done) => delivery.send(compose, done),
+    branch: () => branch,
+    changed() {},
+    signal() {},
+  });
+  ctl.bind(agent);
+  try {
+    await ctl.setScope([goalRef]);
+    assert.equal(delivery.holding(), true);
+    store.state.status = 'held';
+    await ctl.refresh();
+    idle = true;
+    await sleep(25);
+    assert.deepEqual(sent, [], 'a paused goal starts nothing');
+    assert.deepEqual([...deliveredAnswers(branch)], [], 'no receipt');
+    // Explicit resume: the saved answer is delivered to the coordinator.
+    store.state.status = 'open';
+    await ctl.refresh();
+    await sleep(25);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].options.triggerTurn, true);
+    assert.deepEqual(sent[0].message.details, {requests: [requestId(1)]});
+    // A handoff while held declines the notice the same way.
+    const id = requestId(2);
+    store.state.requests.set(id, request({id, key: id}));
+    await external(store, id);
+    idle = false;
+    await ctl.refresh();
+    store.state.coordinator = 'pi-other-runtime';
+    await ctl.refresh();
+    idle = true;
+    await sleep(25);
+    assert.equal(sent.length, 1);
+  } finally {
+    ctl.close();
+    delivery.close();
   }
 });
 

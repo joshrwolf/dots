@@ -149,3 +149,25 @@ test('discarded and closed messages are never sent', async () => {
   await sleep(50);
   assert.deepEqual(h.sent, []);
 });
+
+test('a message declined when built is not sent, and the run starts on the last one sent', async () => {
+  const h = host();
+  h.state.idle = false;
+  const delivered: string[] = [];
+  h.delivery.send(
+    () => h.message('kept'),
+    () => delivered.push('kept'),
+  );
+  h.delivery.send(
+    () => undefined,
+    () => delivered.push('declined'),
+  );
+  await sleep(10);
+  h.state.idle = true;
+  h.emit('agent_settled', {aborted: false});
+  await sleep(10);
+  assert.deepEqual(h.sent, [{content: 'kept', triggerTurn: true}]);
+  assert.deepEqual(delivered, ['kept']);
+  assert.equal(h.delivery.holding(), false);
+  h.delivery.close();
+});
