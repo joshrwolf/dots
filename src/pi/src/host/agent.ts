@@ -67,6 +67,15 @@ export function bindAgent(
 }
 
 /**
+ * The actor bound for this process's current runtime, if any. Capture it
+ * synchronously where an operation starts, so work that outlives its runtime
+ * never picks up a later one.
+ */
+export function currentAgent(): Agent | undefined {
+  return holder[BOUND];
+}
+
+/**
  * End `agent` when its session ends without reload, withdrawing its export.
  * A stale caller cannot end or erase a later runtime's, even one of the same
  * session.

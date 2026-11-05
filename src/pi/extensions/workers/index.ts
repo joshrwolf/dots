@@ -75,6 +75,7 @@ import {
   type WorkerRecord,
 } from './record.ts';
 import {publishActivity, recordId} from '../../src/host/activity.ts';
+import {currentAgent} from '../../src/host/agent.ts';
 import {summaryLine} from '../../src/host/summary.ts';
 import {
   WORKER_ACTIVITY_EVENT,
@@ -1318,6 +1319,12 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     ensureRegistry();
     if (shuttingDown) throw new Error('worker runtime is shutting down');
     const owner = ownerSession();
+    // Captured before any await: goal dispatch is judged for this runtime.
+    const bound = currentAgent();
+    const actor =
+      bound?.session === ctx.sessionManager.getSessionId()
+        ? bound.owner
+        : undefined;
     const config = loadConfig();
     maxWidgetLines = config.widgetLines;
     // Validate against the live scope, not the schema built at session start.
@@ -1340,7 +1347,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       skills = selectSkills(input.skills, selectable);
     }
     const assignment = input.assignment
-      ? await verifyAssignment(input.assignment, cwd, signal)
+      ? await verifyAssignment(input.assignment, cwd, actor, signal)
       : undefined;
     signal?.throwIfAborted();
     if (shuttingDown) throw new Error('worker runtime is shutting down');
