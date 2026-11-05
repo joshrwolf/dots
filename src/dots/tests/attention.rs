@@ -315,6 +315,18 @@ mod tests {
     }
 
     #[test]
+    fn a_terminal_view_rejects_noninteractive_calls_before_opening_the_catalog() {
+        let f = Fixture::new();
+        let data = f.root.join("data/dots");
+        fs::remove_dir_all(&data).unwrap();
+        let error = f.fail(&["attention", "view", "--scope", "global"], None);
+        assert!(error.contains("needs a terminal"), "{error}");
+        let error = f.fail(&["--json", "attention", "view", "--scope", "global"], None);
+        assert!(error.contains("is interactive"), "{error}");
+        assert!(!data.exists(), "view initialized the absent catalog");
+    }
+
+    #[test]
     fn a_missing_catalog_fails_instead_of_reading_nothing() {
         let f = Fixture::new();
         fs::remove_dir_all(f.root.join("data/dots")).unwrap();
