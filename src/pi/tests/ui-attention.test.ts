@@ -35,6 +35,7 @@ const bindings = {
 const RIGHT = '\x1b[C';
 const LEFT = '\x1b[D';
 const DOWN = '\x1b[B';
+const UP = '\x1b[A';
 
 const list = (requests: Request[]): AttentionList => ({
   goals: [
@@ -240,13 +241,114 @@ test('stale and closed records keep the draft beside the replacement', () => {
   );
   assert.match(out, /Answer the new question…[\s\S]*Discard my draft/);
   h.popup.handleInput('\r');
-  h.popup.handleInput('\r'); // Go to the replacement.
+  h.popup.handleInput('\r'); // Enter rests on reading context.
+  assert.equal(h.attention.selection, requestId(1));
+  h.popup.handleInput('\r'); // Back from context.
+  h.popup.handleInput(UP);
+  h.popup.handleInput(UP);
+  h.popup.handleInput('\r'); // Deliberately go to the replacement.
   assert.equal(h.attention.selection, requestId(2));
+  assert.doesNotMatch(h.render(), /only this one/, 'no inherited draft');
   assert.deepEqual(
     h.answers,
     [],
     'nothing applies to the replacement automatically',
   );
+});
+
+const answered = (overrides: Partial<Request> = {}) =>
+  request({
+    state: 'answered',
+    answer: {
+      source: 'ui',
+      choice: 'one',
+      text: null,
+      provenance: 'pi session s · goal popup',
+      at: 150,
+      by: 'pi-fixture-0000000000000000',
+    } as Request['answer'],
+    ...overrides,
+  });
+
+test('repeated Enter after a save never answers the next question', () => {
+  const h = harness();
+  const next = request({
+    id: requestId(2),
+    title: 'Approve the release',
+    question: 'Release on Friday?',
+    created_at: 50,
+  });
+  h.set([request(), next]);
+  // The next question sorts first; the person deliberately picks the first.
+  h.popup.handleInput(DOWN);
+  assert.equal(h.attention.selection, requestId(1));
+  h.popup.handleInput('\r');
+  h.popup.handleInput('\r');
+  assert.deepEqual(h.answers, [[requestId(1), {choice: 'one'}]]);
+  const mash = () => {
+    for (let i = 0; i < 6; i++) h.popup.handleInput('\r');
+  };
+  // Saved: the answered request moves down the list, the selection does not.
+  h.set([answered(), next]);
+  mash();
+  assert.equal(h.attention.selection, requestId(1));
+  assert.match(h.render(), /Answer saved: This project only/);
+  // Incorporated: it leaves the store's list but stays selected and inert.
+  h.set([next]);
+  mash();
+  assert.equal(h.attention.selection, requestId(1));
+  const out = h.render();
+  assert.match(out, /Should the first slice cover every project/);
+  assert.match(out, /No longer outstanding/);
+  assert.doesNotMatch(out, /Release on Friday\?/);
+  assert.equal(h.answers.length, 1, 'the next question was never answered');
+  // Moving to the next question is deliberate and drops the retired one.
+  h.popup.handleInput('\x1b');
+  h.popup.handleInput('\x1b');
+  h.popup.handleInput(UP);
+  assert.equal(h.attention.selection, requestId(2));
+  assert.match(h.render(), /Release on Friday\?/);
+  h.popup.handleInput(DOWN);
+  assert.equal(h.attention.selection, requestId(2), 'the retired row is gone');
+});
+
+test('repeated Enter after a stale save never answers the replacement', () => {
+  const h = harness();
+  h.set([request()]);
+  h.popup.handleInput('\r');
+  h.popup.handleInput(DOWN);
+  h.popup.handleInput(DOWN);
+  h.popup.handleInput('\r'); // Type a different answer.
+  for (const key of 'Atlas') h.popup.handleInput(key);
+  h.popup.handleInput('\r');
+  assert.deepEqual(h.answers, [[requestId(1), {text: 'Atlas'}]]);
+  const replacement = request({
+    id: requestId(2),
+    question: 'Atlas, Beacon or Compass?',
+    supersedes: requestId(1),
+  });
+  h.set(
+    [replacement],
+    new Map([
+      [
+        requestId(1),
+        {
+          state: {kind: 'stale', replacement},
+          request: request({state: 'closed', superseded_by: requestId(2)}),
+          goal: 'Fixture goal',
+        },
+      ],
+    ]),
+  );
+  for (let i = 0; i < 6; i++) h.popup.handleInput('\r');
+  assert.equal(h.attention.selection, requestId(1));
+  assert.equal(h.answers.length, 1, 'the replacement was never answered');
+  const out = h.render();
+  assert.match(out, /Should the first slice cover every project/);
+  assert.match(out, /Your draft \(not sent\): Atlas/);
+  assert.match(out, /New question: Atlas, Beacon or Compass\?/);
+  assert.equal(h.drafts.get(requestId(1)), 'Atlas');
+  assert.equal(h.drafts.get(requestId(2)), undefined);
 });
 
 test('mouse: tabs switch views and a clicked option answers', () => {

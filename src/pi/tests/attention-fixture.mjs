@@ -51,7 +51,10 @@ export function decision(overrides = {}) {
   };
 }
 
-/** A fake AttentionSource; `goals` maps "project:goal" to goal records. */
+/**
+ * A fake AttentionSource; `goals` maps "project:goal" to goal records.
+ * @param {{coordinator?: string | null, status?: string, requests?: object[], decisions?: object[], mandate?: object | null}} [options]
+ */
 export function attentionStore({
   coordinator = null,
   status = 'open',

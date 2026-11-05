@@ -18,7 +18,12 @@ import {
   type SelectListTheme,
   type TuiMouseEvent,
 } from '@earendil-works/pi-tui';
-import {Panel, labelText, sourceText} from '@joshrwolf/pi-kit/ui';
+import {
+  Panel,
+  labelText,
+  paintSurfaceLine,
+  sourceText,
+} from '@joshrwolf/pi-kit/ui';
 import {Inspector} from '../../../src/ui/inspector.ts';
 import {MarkdownView} from '../../../src/ui/markdown.ts';
 import {PANEL_KEY, panelHeight, type GoalPanel} from '../panel.ts';
@@ -146,7 +151,16 @@ export class AttentionView implements Component, Focusable {
   private listKey = '';
   private model: AttentionModel = {items: [], unavailable: []};
   private theme: Theme | undefined;
+  /**
+   * The request the person is looking at, by ID. Selection never moves on
+   * its own once made: saving, incorporation and refresh leave it on the same
+   * request, and the next or replacement question needs a deliberate choice.
+   */
   private selected: string | undefined;
+  /** The selected request after it left the store's outstanding list. */
+  private retired: AttentionItem | undefined;
+  /** The person dismissed their selection; nothing is selected for them. */
+  private cleared = false;
   private focus: Focus = 'requests';
   private isFocused = true;
 
@@ -197,11 +211,20 @@ export class AttentionView implements Component, Focusable {
   }
 
   setModel(model: AttentionModel, theme: Theme, select?: string): void {
+    const previous = this.current();
     this.model = model;
     this.theme = theme;
-    if (select && model.items.some(item => item.request.id === select))
+    if (select && model.items.some(item => item.request.id === select)) {
       this.selected = select;
-    if (!this.current()) {
+      this.cleared = false;
+    }
+    if (
+      previous &&
+      previous.request.id === this.selected &&
+      !model.items.some(item => item.request.id === this.selected)
+    )
+      this.retired = previous === this.retired ? previous : retire(previous);
+    if (!this.current() && !this.cleared) {
       this.selected = model.items[0]?.request.id;
       this.focus = 'requests';
     }
@@ -209,7 +232,7 @@ export class AttentionView implements Component, Focusable {
     if (this.focus === 'text' && !this.answerable(this.current()))
       this.focus = 'choices';
     for (const id of this.inputs.keys())
-      if (!model.items.some(item => item.request.id === id))
+      if (!this.entries().some(item => item.request.id === id))
         this.inputs.delete(id);
     this.invalidate();
   }
@@ -235,8 +258,18 @@ export class AttentionView implements Component, Focusable {
     this.context.invalidate();
   }
 
+  /** Listed requests, plus the retired selection while it stays selected. */
+  private entries(): readonly AttentionItem[] {
+    const retired = this.retired;
+    return retired &&
+      retired.request.id === this.selected &&
+      !this.model.items.some(item => item.request.id === retired.request.id)
+      ? [...this.model.items, retired]
+      : this.model.items;
+  }
+
   private current(): AttentionItem | undefined {
-    return this.model.items.find(item => item.request.id === this.selected);
+    return this.entries().find(item => item.request.id === this.selected);
   }
 
   private answerable(item: AttentionItem | undefined): boolean {
@@ -250,7 +283,9 @@ export class AttentionView implements Component, Focusable {
   }
 
   private select(id: string): void {
+    if (this.retired?.request.id !== id) this.retired = undefined;
     this.selected = id;
+    this.cleared = false;
     this.focus = 'requests';
     this.syncFocus();
     this.redraw();
@@ -273,12 +308,12 @@ export class AttentionView implements Component, Focusable {
   private requestList(): SelectList {
     const key = JSON.stringify([
       this.focus === 'requests',
-      this.model.items.map(item => [item.request.id, glyph(item), item.goal]),
+      this.entries().map(item => [item.request.id, glyph(item), item.goal]),
     ]);
     if (!this.list || key !== this.listKey) {
       this.listKey = key;
       const list = new SelectList(
-        this.model.items.map(item => ({
+        this.entries().map(item => ({
           value: item.request.id,
           label: `${glyph(item)} ${labelText(item.request.title)}`,
           description: labelText(item.goal),
@@ -289,11 +324,13 @@ export class AttentionView implements Component, Focusable {
       list.setSelectedIndex(
         Math.max(
           0,
-          this.model.items.findIndex(item => item.request.id === this.selected),
+          this.entries().findIndex(item => item.request.id === this.selected),
         ),
       );
       list.onSelectionChange = item => this.select(item.value);
-      list.onSelect = () => {
+      // Enter on an unselected row selects it; only the shown request opens.
+      list.onSelect = item => {
+        if (item.value !== this.selected) return this.select(item.value);
         this.focus = 'choices';
         this.redraw();
       };
@@ -371,6 +408,13 @@ export class AttentionView implements Component, Focusable {
     ]);
     const existing = this.choiceLists.get(item.request.id);
     if (existing?.key === key) return existing.list;
+    // A changed record keeps the highlighted action when it remains; an
+    // unanswerable or changed one rests on reading context, so a repeated
+    // Enter never lands on an action the person did not see highlighted.
+    const kept = existing?.list.getSelectedItem()?.value;
+    const start = [kept, (existing || !this.answerable(item)) && 'context']
+      .map(value => items.findIndex(entry => entry.value === value))
+      .find(index => index >= 0);
     const native = getSelectListTheme();
     const theme = this.theme!;
     const list = new SelectList(items, 5, {
@@ -384,13 +428,14 @@ export class AttentionView implements Component, Focusable {
           ? theme.fg('text', text)
           : theme.bold(native.selectedText(text)),
     });
+    if (start !== undefined) list.setSelectedIndex(start);
     list.onSelect = entry => this.choose(item.request.id, entry.value);
     this.choiceLists.set(item.request.id, {key, list});
     return list;
   }
 
   private choose(id: string, value: string): void {
-    const item = this.model.items.find(entry => entry.request.id === id);
+    const item = this.entries().find(entry => entry.request.id === id);
     if (!item) return;
     if (value === 'context') {
       this.focus = 'context';
@@ -407,8 +452,11 @@ export class AttentionView implements Component, Focusable {
       this.focus = 'text';
       this.input(item);
     } else if (value === 'dismiss') {
-      this.actions.dismiss(id);
+      this.selected = undefined;
+      this.retired = undefined;
+      this.cleared = true;
       this.focus = 'requests';
+      this.actions.dismiss(id);
     } else if (value === 'replacement' && item.state.kind === 'stale') {
       const next = item.state.replacement?.id;
       if (next) this.select(next);
@@ -496,7 +544,9 @@ export class AttentionView implements Component, Focusable {
           'muted',
           this.model.unavailable.length
             ? `Attention unavailable: ${this.model.unavailable.map(labelText).join('; ')}`
-            : 'Nothing needs your answer.',
+            : this.cleared && this.model.items.length
+              ? 'Choose a request: ↑/↓ or Enter.'
+              : 'Nothing needs your answer.',
         ),
         0,
         0,
@@ -510,7 +560,7 @@ export class AttentionView implements Component, Focusable {
             truncateToWidth(
               theme.fg(
                 'muted',
-                `${this.model.items.indexOf(item) + 1}/${this.model.items.length} · `,
+                `${this.entries().indexOf(item) + 1}/${this.entries().length} · `,
               ) + theme.fg('accent', theme.bold(labelText(item.request.title))),
               width,
             ),
@@ -670,6 +720,18 @@ class BoundedBody implements Component {
   }
 }
 
+/** A selected request that left the outstanding list stays, unanswerable. */
+function retire(item: AttentionItem): AttentionItem {
+  if (item.state.kind === 'stale' || item.state.kind === 'closed') return item;
+  const saved = item.request.answer
+    ? `Answer saved: ${answerText(item.request)}. `
+    : '';
+  return {
+    ...item,
+    state: {kind: 'closed', message: `${saved}No longer outstanding.`},
+  };
+}
+
 function summaryText(request: AttentionItem['request']): string {
   return [
     request.context && sourceText(request.context),
@@ -810,7 +872,16 @@ export class GoalPopup implements Component, Focusable {
         2,
       ),
     );
-    return this.root.render(width);
+    const colors = {
+      fg: theme.getFgAnsi('text'),
+      bg: theme.getBgAnsi('customMessageBg'),
+    };
+    // The tab and control rows share the popup's surface.
+    const lines = this.root.render(width);
+    const last = lines.length - 1;
+    return lines.map((line, row) =>
+      row === 0 || row === last ? paintSurfaceLine(line, width, colors) : line,
+    );
   }
 
   private theme(): Theme | undefined {

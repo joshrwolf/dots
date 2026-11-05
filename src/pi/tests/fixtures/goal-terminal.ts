@@ -12,6 +12,9 @@ import {
   type GoalSnapshot,
 } from '../../extensions/goal/source.ts';
 import {goalFixtures} from '../../dev/goals.ts';
+import {attentionStore, request} from '../attention-fixture.mjs';
+import {stripTerminalSequences} from '@earendil-works/pi-tui';
+import type {AttentionSource} from '../../extensions/goal/attention/source.ts';
 
 export default function (pi: ExtensionAPI): void {
   const mark = (text: string) =>
@@ -86,6 +89,7 @@ export default function (pi: ExtensionAPI): void {
       },
     },
   };
+  let lastFrame = '';
   type Handler = (data: unknown, ctx: ExtensionContext) => unknown;
   // Every context the extension receives records its overlay's renders and close.
   const observe = <C extends ExtensionContext>(ctx: C): C => {
@@ -112,6 +116,20 @@ export default function (pi: ExtensionAPI): void {
                 );
               }
               mark(`inspector-surface:${theme.name}`);
+              // What one frame shows: the view, the question, the answer field.
+              const text = stripTerminalSequences(lines.join('\n'));
+              const frame = [
+                /› \[ ← Attention/.test(text)
+                  ? 'attention'
+                  : /› \[ Work/.test(text)
+                    ? 'work'
+                    : 'panel',
+                /Should the first slice/.test(text) ? 'question' : '-',
+                /This project only/.test(text) ? 'options' : '-',
+                /Answer: (\S*)/.exec(text)?.[1] ?? '-',
+                /Answer saved: (.+?) +│/.exec(text)?.[1] ?? '-',
+              ].join(':');
+              if (frame !== lastFrame) mark(`frame:${(lastFrame = frame)}`);
               return lines;
             };
             return view;
@@ -251,6 +269,15 @@ export default function (pi: ExtensionAPI): void {
       async manifest() {
         return {revisions: [], next: null};
       },
+    },
+    {
+      // The attention flow seeds one open request on the fixture goal.
+      source: attentionStore(
+        process.env.DOTS_FIXTURE_ATTENTION
+          ? {requests: [request({goal: 't-123abc'})]}
+          : {},
+      ).source as AttentionSource,
+      tasks: undefined,
     },
   );
   pi.on('session_start', () => mark('start'));

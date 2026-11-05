@@ -13,12 +13,13 @@ const companion = fileURLToPath(new URL('../../', import.meta.url)).replace(
 );
 const fixtures = join(companion, 'tests/fixtures');
 const [flow, mode] = process.argv.slice(2);
+if (flow === 'attention') process.env.DOTS_FIXTURE_ATTENTION = '1';
 if (
-  !['package', 'workbench', 'goal'].includes(flow) ||
+  !['package', 'workbench', 'goal', 'attention'].includes(flow) ||
   !['regular', 'fullscreen'].includes(mode)
 )
   throw new Error(
-    'usage: terminal-host.mjs <package|workbench|goal> <regular|fullscreen>',
+    'usage: terminal-host.mjs <package|workbench|goal|attention> <regular|fullscreen>',
   );
 
 import {hostModule} from './host.ts';
@@ -1111,10 +1112,92 @@ async function goalFlow() {
   await fresh('/goal-fixture-exit');
 }
 
+async function attentionFlow() {
+  const frames = () => lines().filter(line => line.startsWith('frame:'));
+  const framed = pattern => frames().some(line => pattern.test(line));
+  await wait(() => events().includes('start'), 'startup');
+  await sleep(500);
+  await fresh('/goal focus t-123abc');
+  await wait(
+    () => shows('Needs your attention: Choose the rollout scope'),
+    'one quiet attention line',
+  );
+  send('\x1bg');
+  await wait(
+    () => framed(/^frame:attention:question:options:/),
+    'popup opens on the question and its options',
+  );
+  send('\r'); // Into the options.
+  send('\x1b[B');
+  send('\x1b[B');
+  send('\r'); // Type a different answer.
+  for (const key of ['a', 'b', 'c', '\x1b[D', 'X']) send(key);
+  await wait(
+    () => framed(/^frame:attention:question:-:abXc:/),
+    'Left moves the cursor while typing and the question stays',
+  );
+  send('\x1b'); // Leave the field.
+  send('\x1b[C');
+  await wait(() => framed(/^frame:work:/), 'Right switches to Work');
+  send('\x1b[D');
+  await wait(
+    () => frames().at(-1)?.startsWith('frame:attention:question:options'),
+    'Left returns to Attention',
+  );
+  const closed = countLine('inspector-closed');
+  send('\x1bg');
+  await wait(() => countLine('inspector-closed') > closed, 'Alt+G closes');
+  assert.ok(!lines().some(line => /Answer saved/.test(line)));
+  const opened = renders().length;
+  send('\x1bg');
+  await wait(() => renders().length > opened, 'the popup reopens');
+  send('\r');
+  send('\x1b[B');
+  send('\x1b[B');
+  send('\r'); // The unsent draft returns to the answer field.
+  await wait(
+    () => frames().at(-1) === 'frame:attention:question:-:abXc:-',
+    'the draft survives closing',
+  );
+  for (const [rows, columns] of [
+    [16, 40],
+    [40, 120],
+  ]) {
+    const before = renders().length;
+    terminal.resize(rows, columns);
+    await wait(() => {
+      const size = renders().slice(before).at(-1)?.split(':').slice(1);
+      return !!size && Number(size[0]) <= columns && Number(size[1]) <= rows;
+    }, `popup fits ${columns}x${rows}`);
+    assert.ok(
+      frames().at(-1)?.startsWith('frame:attention:question:-:abXc'),
+      `question and draft stay at ${columns}x${rows}`,
+    );
+  }
+  send('\r');
+  await wait(
+    () => framed(/:abXc$/),
+    'the answer is saved before the view says so',
+  );
+  await closePanel('popup closes');
+  await fresh('/goal-fixture-exit');
+  function renders() {
+    return lines().filter(line => line.startsWith('inspector-render:'));
+  }
+  async function closePanel(label) {
+    const before = countLine('inspector-closed');
+    send('\x1bg');
+    await wait(() => countLine('inspector-closed') > before, label);
+  }
+}
+
 try {
-  await {package: packageFlow, workbench: workbenchFlow, goal: goalFlow}[
-    flow
-  ]();
+  await {
+    package: packageFlow,
+    workbench: workbenchFlow,
+    goal: goalFlow,
+    attention: attentionFlow,
+  }[flow]();
   await sleep(15_000);
   throw new Error(`${flow}/${mode}: Pi did not shut down`);
 } catch (error) {
