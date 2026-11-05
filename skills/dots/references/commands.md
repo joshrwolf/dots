@@ -12,13 +12,14 @@ Help and skill generation work offline. Commands document their own effects and 
 Usage: dots [OPTIONS] [COMMAND]
 
 Commands:
-  output   Publish and inspect immutable project evidence; publication does not accept tasks
-  project  Initialize the workspace catalog and explicitly bind local Git projects
-  github   Inspect GitHub CI evidence and PR review threads, and keep a PR watch list
-  task     Track shared, claimable work for a project across concurrent sessions
-  memory   Read, publish, and search scoped Markdown memory without a service
-  review   Review a repository's changes in threads anchored to exact revisions, across its worktrees
-  skills   Export agent discovery documentation from this command tree
+  output     Publish and inspect immutable project evidence; publication does not accept tasks
+  project    Initialize the workspace catalog and explicitly bind local Git projects
+  github     Inspect GitHub CI evidence and PR review threads, and keep a PR watch list
+  task       Track shared, claimable work for a project across concurrent sessions
+  attention  Ask the user durable questions about goal work and record goal decisions
+  memory     Read, publish, and search scoped Markdown memory without a service
+  review     Review a repository's changes in threads anchored to exact revisions, across its worktrees
+  skills     Export agent discovery documentation from this command tree
 
 Options:
       --json
@@ -1096,6 +1097,7 @@ Options:
 Local work list shared by every session and worktree of one project: tasks, dependencies, claims, results, and issue/PR references. Git and GitHub remain the source of truth for code.
 The project comes from the Git checkout at --directory, bound with dots project init; --project selects a registered project ID.
 A claim marks which session is working on a task. It lasts until that session releases, hands off, or closes the task; Pi releases a session's claims when the session ends. Workers report results to their parent session, which records them.
+A goal's tasks change only through its coordinator, the owner of its root claim (dots task goal coordinate); other sessions read them, and dots attention requests hold the work they name until incorporated.
 The catalog is $XDG_DATA_HOME/dots/workspace.sqlite3 (default ~/.local/share/dots/workspace.sqlite3).
 
 Usage: dots task [OPTIONS] <COMMAND>
@@ -1131,7 +1133,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1145,11 +1147,12 @@ A goal is a root task with a Markdown brief in the project workspace's briefs/ d
 Usage: dots task goal [OPTIONS] <COMMAND>
 
 Commands:
-  create  Create a root task with an existing brief
-  attach  Attach or replace a root task's brief
-  list    List unfinished goals with progress, most recently active first
-  show    Show a goal's brief, progress, and unfinished tasks
-  detach  Remove the brief association; the tasks and the document stay
+  create      Create a root task with an existing brief
+  attach      Attach or replace a root task's brief
+  list        List unfinished goals with progress, most recently active first
+  show        Show a goal's brief, progress, and unfinished tasks
+  detach      Remove the brief association; refused once the goal has requests or decisions
+  coordinate  Take coordination of a goal: claim its root although work remains below it
 
 Options:
       --json
@@ -1162,7 +1165,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1193,7 +1196,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1224,7 +1227,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1254,7 +1257,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1285,7 +1288,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1294,7 +1297,7 @@ Options:
 ## dots task goal detach
 
 ```text
-Remove the brief association; the tasks and the document stay
+Remove the brief association; refused once the goal has requests or decisions
 
 Usage: dots task goal detach [OPTIONS] <ID>
 
@@ -1313,10 +1316,44 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
+```
+
+## dots task goal coordinate
+
+```text
+Claim a goal's root as its coordinator. Only the coordinator dispatches, edits, accepts or closes the goal's tasks and raises or incorporates its attention requests; other sessions read, and anyone can answer a request. Coordination is responsibility, not dispatch: it works with unfinished children, prerequisites and held work. A managed worker (DOTS_WORKER_ID set) cannot coordinate, and a Pi session needs its live runtime owner unless --owner is given. Another owner's claim on the root or any descendant fails unless --take, which moves every such claim to this owner in one transaction and records each transfer. A held (paused) or closed root needs --resume, which reopens it. Coordinating again is a no-op. Stop coordinating with dots task release ID; pause with dots task hold ID, which holds every descendant.
+
+Usage: dots task goal coordinate [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --take
+          Take over claims held by other owners on the root and its descendants
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --resume
+          Reopen a held or closed goal root before coordinating it
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## dots task list
@@ -1343,7 +1380,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
       --roots
           Only top-level tasks (the default unless --parent, --flat, or --claimed-by is given)
@@ -1384,7 +1421,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1412,7 +1449,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1443,7 +1480,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1480,7 +1517,7 @@ Options:
           [default: 100]
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
       --under <ID>
           Only events on this task and its descendants
@@ -1510,7 +1547,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1541,7 +1578,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
       --parent <ID>
           Parent task ID
@@ -1578,7 +1615,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
       --parent <ID>
           With --next, only consider tasks anywhere below this one
@@ -1615,7 +1652,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1649,7 +1686,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
       --result <RESULT>
           Current result in Markdown: what changed, where it is, checks run, and what remains
@@ -1698,7 +1735,7 @@ Options:
           Published output revision the result cites; repeatable
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
       --force
           Ignore blockers, unfinished children, and another session's claim
@@ -1735,7 +1772,7 @@ Options:
           Published output revision the result cites; repeatable
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
       --force
           Ignore blockers, unfinished children, and another session's claim
@@ -1772,7 +1809,7 @@ Options:
           Pause a task claimed by another session
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1806,7 +1843,7 @@ Options:
           Ignore blockers, unfinished children, and another session's claim
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1840,7 +1877,7 @@ Options:
           Reopen a task claimed by another session
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1868,7 +1905,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1905,7 +1942,7 @@ Options:
 
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1939,7 +1976,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1967,7 +2004,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -1998,7 +2035,7 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
   -h, --help
           Print help
@@ -2029,7 +2066,338 @@ Options:
           Working directory for commands that use checkout context
 
       --owner <NAME>
-          Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help
+```
+
+## dots attention
+
+```text
+Attention requests are durable questions a goal's coordinator raises when only the user can decide, authorize or act; decisions record what was decided, including the execution mandate. Both belong to the goal in the workspace catalog, not to a session, so they survive session ends, handoffs and history rewinds.
+A request moves open -> answered -> closed; its content never changes. An open or answered (not yet incorporated) request holds the tasks it names and their descendants on every claim and acceptance path. Answers come from any session; everything else belongs to the goal's coordinator (dots task goal coordinate). Incorporating an answer records a decision and closes the request in one transaction.
+Content files are JSON (or - for stdin) with unknown fields refused; see each command's help for its shape. Never put credentials in requests, answers or decisions. Provenance is cooperative bookkeeping that keeps the human's own words apart from an agent's interpretation; it is not authentication.
+
+Usage: dots attention [OPTIONS] <COMMAND>
+
+Commands:
+  raise        Raise a request for a goal this session coordinates; a repeated key returns the existing request
+  supersede    Replace an open request's content with a new request under the same key
+  withdraw     Close an open request without an answer
+  answer       Record a human answer to an open request, from any session
+  incorporate  Record the coordinator's decision on an answered request and close it
+  decide       Record a goal decision or execution mandate established outside any request
+  show         Show one request with its answer and closure
+  list         List requests in an explicit scope; never falls back to another scope
+  decisions    List goal decisions and mandates in an explicit scope, oldest first
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots attention raise
+
+```text
+Raise a request. The content file holds {"kind": "decision"|"authorization"|"action", "title": one line of at most 120 bytes, "question": Markdown of at most 4096 bytes, "context": optional rationale (8192), "recommendation": optional (1024), "choices": optional, at most 8 of {"id": 1..32 of a-z 0-9 -, "label": one line (80), "detail": optional (512)} and none for an action, "tasks": goal root or descendant IDs it holds (at most 32; naming the root holds the whole goal; none holds nothing)}. --key names the question's purpose within the goal (1..64 of a-z 0-9 . _ -). The same key with identical content returns the existing request in whatever state it reached (created false), with its answer or closure; different content fails: supersede an open request, or choose a new key once it is answered or closed. Claims on newly held work are reported; steer their holders.
+
+Usage: dots attention raise [OPTIONS] --key <KEY> --content-file <PATH> <GOAL>
+
+Arguments:
+  <GOAL>
+          Goal root ID
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --key <KEY>
+
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --content-file <PATH>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots attention supersede
+
+```text
+Close an open request as superseded and raise its replacement, in one transaction, with content shaped as for raise. An answered request cannot be superseded: incorporate its answer. Answers sent to the old request later fail and name the replacement; they are never moved onto it.
+
+Usage: dots attention supersede [OPTIONS] --content-file <PATH> <REQUEST>
+
+Arguments:
+  <REQUEST>
+
+
+Options:
+      --content-file <PATH>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots attention withdraw
+
+```text
+Close an open request without an answer
+
+Usage: dots attention withdraw [OPTIONS] --reason <REASON> <REQUEST>
+
+Arguments:
+  <REQUEST>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --reason <REASON>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help
+```
+
+## dots attention answer
+
+```text
+Answer an open request. The content file holds {"choice": one of the request's choice ids, "text": the human's own words (4096), "source": "ui"|"chat", "provenance": required one line (512) naming where the human input came from (the viewer and terminal for ui; the session and message entry for chat), "interpretation": an agent's reading (4096)}; give a choice, text or both. source ui is an explicit human selection or entry and has no interpretation. source chat maps a real user message: quote the smallest relevant instruction as text and record the interpretation. Vague assent, cancellation, silence or dismissing a prompt is not an answer. Fails when the request is already answered, closed or superseded, naming the replacement.
+
+Usage: dots attention answer [OPTIONS] --content-file <PATH> <REQUEST>
+
+Arguments:
+  <REQUEST>
+
+
+Options:
+      --content-file <PATH>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots attention incorporate
+
+```text
+Incorporate an answered request: the content file holds {"kind": "decision"|"mandate", "decision": Markdown (8192) stating what was decided and how the work changes}. The decision and the closure are recorded together, which releases the tasks the request held.
+
+Usage: dots attention incorporate [OPTIONS] --content-file <PATH> <REQUEST>
+
+Arguments:
+  <REQUEST>
+
+
+Options:
+      --content-file <PATH>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots attention decide
+
+```text
+Record a decision the user made in ordinary conversation. The content file holds {"kind": "mandate"|"decision", "decision": the coordinator's account (8192), "human": {"text": the user's own relevant words (4096), "source": "chat"|"ui", "provenance": required one line (512): the session and message entry where the user said it}}. A mandate records the accepted execution agreement: outcome and scope, finish line, delegated work, publication and monitoring, and excluded actions; the newest mandate is current. Human input is required: a model-authored summary is not consent.
+
+Usage: dots attention decide [OPTIONS] --content-file <PATH> <GOAL>
+
+Arguments:
+  <GOAL>
+          Goal root ID
+
+Options:
+      --content-file <PATH>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots attention show
+
+```text
+Show one request with its answer and closure
+
+Usage: dots attention show [OPTIONS] <REQUEST>
+
+Arguments:
+  <REQUEST>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help
+```
+
+## dots attention list
+
+```text
+List requests grouped by goal. --scope global reads every registered project: goals with matching requests, plus unfinished goals with a recorded mandate (requests may be empty) so stopped work stays discoverable. --scope goals reads exactly the --goal identities, listing each even without requests; none reads nothing. coordinator is the current root claim holder, not evidence that its session is running; null means nobody coordinates. Projects or goals that cannot be read appear under errors; a missing or unreadable catalog fails the command.
+
+Usage: dots attention list [OPTIONS] --scope <SCOPE>
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --scope <SCOPE>
+          global: every registered project; goals: exactly the --goal identities
+
+          [possible values: global, goals]
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --goal <PROJECT:GOAL>
+          Goal as PROJECT:GOAL; repeatable, only with --scope goals
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --state <STATE>
+          Possible values:
+          - outstanding: Open or answered but not yet incorporated
+          - open
+          - answered
+          - closed
+          - all
+
+          [default: outstanding]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots attention decisions
+
+```text
+List goal decisions and mandates in an explicit scope, oldest first
+
+Usage: dots attention decisions [OPTIONS] --scope <SCOPE>
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+
+      --scope <SCOPE>
+          global: every registered project; goals: exactly the --goal identities
+
+          [possible values: global, goals]
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --goal <PROJECT:GOAL>
+          Goal as PROJECT:GOAL; repeatable, only with --scope goals
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --kind <KIND>
+          [possible values: mandate, decision]
 
   -h, --help
           Print help

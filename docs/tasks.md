@@ -47,23 +47,50 @@ edges. `task goal list` shows each
 goal's task counts and last activity, most recent first, without reading briefs. Native edits are visible on the next inspection;
 association does not preserve historical bytes.
 
+## Goals and attention
+
+Each goal has one coordinator: the owner of its root claim, taken with
+`dots task goal coordinate ROOT`. A new goal starts uncoordinated. Only the
+coordinator adds, edits, claims, accepts or closes the goal's tasks, edits its
+references and brief association, and raises or incorporates its requests;
+other sessions read, and workers report to the coordinator. `--take` moves
+every other owner's claim in the goal to the coordinator in one recorded
+transaction, and `--resume` reopens a held or closed root. Managed workers
+cannot coordinate, and a Pi session coordinates as its live runtime owner.
+Releasing the root stops coordinating; holding it pauses the goal.
+
+`dots attention` keeps the goal's durable questions for the user and its
+decisions, including the execution mandate, in the same catalog. A request
+moves open, answered, closed and never changes content; its logical key makes
+raising idempotent. An open or answered request holds the tasks it names and
+their descendants until the coordinator incorporates the answer, which records
+a decision and closes the request together. Every answer and standalone
+decision carries the human's own input with its source and provenance, separate
+from any agent interpretation; provenance is cooperative bookkeeping, not
+authentication. `attention list` and `decisions` read an explicit scope: every
+registered project, or exact `PROJECT:GOAL` identities. `dots attention --help`
+has the content-file shapes.
+
 ## Constraints
 
 Git and GitHub remain authoritative. Tasks coordinate work; they are not evidence
 that code is correct or a PR is merged. Reconcile them when resuming. Only the
 parent session edits tasks; workers return results for the parent to record.
 
-Claims are transactional. A claim lasts until its owner releases it, hands the
+Claims are transactional. Claims and events default to the invoking agent's
+live runtime owner, else its session; pass `--owner` for direct CLI use. A claim lasts until its owner releases it, hands the
 task off for review, or closes it; Pi releases a session's claims when the
 session ends, and `release --all` does the same for other hosts. Another owner's
 claim protects edits and status changes unless forced; `claim --take` takes over
 a claim whose session has stopped.
 
-`ready` and `claim --next` select unblocked, unclaimed open leaves,
-including those with external references. Grouping tasks can report readiness for closure
+`ready` and `claim --next` select unblocked, unclaimed, unheld open leaves,
+including those with external references, and skip goal work coordinated by
+another owner. Grouping tasks can report readiness for closure
 but are never handed out as leaf work.
 `claim --next` fails when nothing is ready.
 
-Holding a group does not hold its descendants. Adding a dependency to claimed
+Holding a group holds every descendant, and accepting or claiming held work
+fails even with `--force`. Adding a dependency to claimed
 work warns but does not revoke the claim; tell the holder. Closing a task
 unblocks dependents, and status changes clear its claim.

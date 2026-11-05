@@ -74,6 +74,8 @@ mod tests {
                 .env_remove("PI_SESSION_ID")
                 .env_remove("CLAUDE_CODE_SESSION_ID")
                 .env_remove("CODEX_SESSION_ID")
+                .env_remove("DOTS_AGENT_OWNER")
+                .env_remove("DOTS_WORKER_ID")
                 .current_dir(self.root.join(directory))
                 .env("XDG_STATE_HOME", self.root.join("state"))
                 .env("HOME", self.root.join("home"))
@@ -99,6 +101,8 @@ mod tests {
                 .env_remove("PI_SESSION_ID")
                 .env_remove("CLAUDE_CODE_SESSION_ID")
                 .env_remove("CODEX_SESSION_ID")
+                .env_remove("DOTS_AGENT_OWNER")
+                .env_remove("DOTS_WORKER_ID")
                 .current_dir(self.root.join("checkout"))
                 .env("XDG_STATE_HOME", self.root.join("state"))
                 .env("HOME", self.root.join("home"))
@@ -111,6 +115,13 @@ mod tests {
                 String::from_utf8_lossy(&output.stderr)
             );
             String::from_utf8(output.stdout).unwrap()
+        }
+
+        /// Runs a goal operation as the goal's coordinator.
+        fn coord(&self, args: &[&str]) -> Value {
+            let mut owned = vec!["--owner", "coord"];
+            owned.extend_from_slice(args);
+            self.ok("checkout", &owned)
         }
 
         fn fail(&self, directory: &str, args: &[&str]) -> String {
@@ -287,7 +298,12 @@ mod tests {
     }
 
     #[test]
-    fn pi_session_ownership_and_claimed_goal_discovery() {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one Pi session scenario covers coordination identity, claims and discovery"
+    )]
+    fn pi_session_coordination_ownership_and_claimed_goal_discovery() {
+        const RUNTIME: &str = "pi-fixture-session-0123456789abcdef";
         let f = Fixture::new();
         fs::write(f.workspace().join("briefs/brief.md"), "# Goal").unwrap();
         let goal = f.ok(
@@ -302,56 +318,133 @@ mod tests {
                 .contains("goal_focus")
         );
         let root = goal.pointer("/goal/root/id").unwrap().as_str().unwrap();
-        let leaf = f.ok("checkout", &["add", "leaf", "--parent", root]);
-        let id = leaf.pointer("/task/id").unwrap().as_str().unwrap();
-        let run = |session: &str, args: &[&str]| {
+        let run = |session: &str, env: &[(&str, &str)], args: &[&str]| {
             Command::new(env!("CARGO_BIN_EXE_dots"))
                 .args(["--json", "task"])
                 .args(args)
                 .current_dir(f.root.join("linked"))
+                .env_remove("DOTS_AGENT_OWNER")
+                .env_remove("DOTS_WORKER_ID")
+                .env_remove("CLAUDE_CODE_SESSION_ID")
+                .env_remove("CODEX_SESSION_ID")
                 .env("XDG_STATE_HOME", f.root.join("state"))
                 .env("XDG_DATA_HOME", f.root.join("data"))
                 .env("PI_SESSION_ID", session)
+                .envs(env.iter().copied())
                 .output()
                 .unwrap()
         };
-        let output = run("fixture-session", &["claim", id]);
+        let live = [("DOTS_AGENT_OWNER", RUNTIME)];
+        let coordinate = ["goal", "coordinate", root];
+        // A Pi session coordinates as its live runtime, never as the bare session.
+        for env in [
+            &[][..],
+            &[("DOTS_AGENT_OWNER", "pi-other-session-0123456789abcdef")][..],
+        ] {
+            let output = run("fixture-session", env, &coordinate);
+            assert!(!output.status.success(), "{output:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("live runtime owner"),
+                "{output:?}"
+            );
+        }
+        let output = run(
+            "fixture-session",
+            &[("DOTS_AGENT_OWNER", RUNTIME), ("DOTS_WORKER_ID", "w-1")],
+            &coordinate,
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("managed workers"),
+            "{output:?}"
+        );
+        let output = run("fixture-session", &live, &coordinate);
+        assert!(output.status.success(), "{output:?}");
+        let coordinated: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(coordinated.pointer("/goal/root/owner").unwrap(), RUNTIME);
+        // An explicit owner is the caller's choice: it passes the runtime guard
+        // and then meets the live coordinator's claim.
+        let output = run(
+            "fixture-session",
+            &[],
+            &["goal", "coordinate", root, "--owner", "explicit"],
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success() && !stderr.contains("live runtime owner"),
+            "{stderr}"
+        );
+
+        let output = run("fixture-session", &live, &["add", "leaf", "--parent", root]);
+        assert!(output.status.success(), "{output:?}");
+        let leaf = id(&serde_json::from_slice(&output.stdout).unwrap());
+        assert!(
+            !run("other-session", &[], &["claim", &leaf])
+                .status
+                .success()
+        );
+        let output = run("fixture-session", &live, &["claim", &leaf]);
+        assert!(output.status.success(), "{output:?}");
+        let claimed: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(claimed.pointer("/task/owner").unwrap(), RUNTIME);
+        assert_eq!(
+            f.ok("checkout", &["goal", "list", "--claimed-by", RUNTIME])
+                .pointer("/goals/0/root/id")
+                .unwrap(),
+            root
+        );
+        assert!(
+            !run("other-session", &[], &["release", &leaf])
+                .status
+                .success()
+        );
+        assert!(
+            run("fixture-session", &live, &["release", &leaf])
+                .status
+                .success()
+        );
+        assert!(
+            run("fixture-session", &live, &["release", root])
+                .status
+                .success()
+        );
+        assert_eq!(
+            f.ok("checkout", &["goal", "list", "--claimed-by", RUNTIME])
+                .get("goals")
+                .unwrap(),
+            &serde_json::json!([])
+        );
+
+        let task = id(&f.ok("checkout", &["add", "ordinary"]));
+        let output = run("fixture-session", &[], &["claim", &task]);
         assert!(output.status.success(), "{output:?}");
         let claimed: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(
             claimed.pointer("/task/owner").unwrap(),
             "pi-fixture-session"
         );
-        assert_eq!(
-            f.ok(
-                "checkout",
-                &["goal", "list", "--claimed-by", "pi-fixture-session"]
-            )
-            .pointer("/goals/0/root/id")
-            .unwrap(),
-            root
+        assert!(
+            run("fixture-session", &[], &["release", &task])
+                .status
+                .success()
         );
-        assert!(!run("other-session", &["release", id]).status.success());
-        assert!(run("fixture-session", &["release", id]).status.success());
-        assert_eq!(
-            f.ok(
-                "checkout",
-                &["goal", "list", "--claimed-by", "pi-fixture-session"]
-            )
-            .get("goals")
-            .unwrap(),
-            &serde_json::json!([])
+        let output = run(
+            "fixture-session",
+            &[],
+            &["claim", &task, "--owner", "explicit"],
         );
-        let output = run("fixture-session", &["claim", id, "--owner", "explicit"]);
         assert!(output.status.success());
         let claimed: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(claimed.pointer("/task/owner").unwrap(), "explicit");
         assert!(
-            run("another-session", &["release", id, "--owner", "explicit"])
-                .status
-                .success()
+            run(
+                "another-session",
+                &[],
+                &["release", &task, "--owner", "explicit"]
+            )
+            .status
+            .success()
         );
-        assert!(!run("", &["claim", id]).status.success());
+        assert!(!run("", &[], &["claim", &task]).status.success());
     }
 
     fn git(directory: &Path, args: &[&str]) {
@@ -400,9 +493,10 @@ mod tests {
             &["goal", "create", "Goal", "--brief", "briefs/README.md"],
         );
         let root = created.pointer("/goal/root/id").unwrap().as_str().unwrap();
-        let closed = id(&fixture.ok("checkout", &["add", "Finished", "--parent", root]));
-        let active = id(&fixture.ok("checkout", &["add", "Next", "--parent", root]));
-        fixture.ok("checkout", &["done", &closed, "--result", "verified"]);
+        fixture.coord(&["goal", "coordinate", root]);
+        let closed = id(&fixture.coord(&["add", "Finished", "--parent", root]));
+        let active = id(&fixture.coord(&["add", "Next", "--parent", root]));
+        fixture.coord(&["done", &closed, "--result", "verified"]);
         let roots = fixture.ok("linked", &["list"]);
         assert_eq!(
             roots.pointer("/tasks").unwrap().as_array().unwrap().len(),
@@ -446,11 +540,8 @@ mod tests {
             2
         );
         assert_eq!(history.pointer("/overview/hidden_closed").unwrap(), 0);
-        fixture.ok("checkout", &["done", &active, "--result", "verified"]);
-        fixture.ok(
-            "checkout",
-            &["done", root, "--result", "combined outcome verified"],
-        );
+        fixture.coord(&["done", &active, "--result", "verified"]);
+        fixture.coord(&["done", root, "--result", "combined outcome verified"]);
         assert_eq!(
             fixture
                 .ok("checkout", &["goal", "list"])
@@ -481,19 +572,20 @@ mod tests {
             &["goal", "create", "Goal", "--brief", "briefs/README.md"],
         );
         let root = goal.pointer("/goal/root/id").unwrap().as_str().unwrap();
-        let fresh = id(&fixture.ok("checkout", &["add", "Fresh", "--parent", root]));
+        fixture.coord(&["goal", "coordinate", root]);
+        let fresh = id(&fixture.coord(&["add", "Fresh", "--parent", root]));
         let text = fixture.readable(&["goal", "show", root]);
         assert!(text.contains(&fresh), "{text}");
         assert!(!text.contains(HISTORY_FOOTER), "{text}");
 
-        let slice = id(&fixture.ok("checkout", &["add", "Slice", "--parent", root]));
-        fixture.ok("checkout", &["update", &slice, "--branch", "topic/slice"]);
+        let slice = id(&fixture.coord(&["add", "Slice", "--parent", root]));
+        fixture.coord(&["update", &slice, "--branch", "topic/slice"]);
         let result = format!(
             "{}👨\u{200d}👩\u{200d}👧 tail\nFurther verification details",
             "a".repeat(158)
         );
-        fixture.ok("checkout", &["update", &slice, "--result", &result]);
-        fixture.ok("checkout", &["hold", &slice, "--reason", "awaiting review"]);
+        fixture.coord(&["update", &slice, "--result", &result]);
+        fixture.coord(&["hold", &slice, "--reason", "awaiting review"]);
 
         let text = fixture.readable(&["goal", "show", root]);
         assert!(text.contains("  Branch: topic/slice\n"), "{text}");
@@ -517,17 +609,14 @@ mod tests {
             &["goal", "create", "Goal", "--brief", "briefs/README.md"],
         );
         let root = goal.pointer("/goal/root/id").unwrap().as_str().unwrap();
-        let core = id(&fixture.ok("checkout", &["add", "Core", "--parent", root]));
-        let types = id(&fixture.ok("checkout", &["add", "Types", "--parent", &core]));
-        let exports = id(&fixture.ok(
-            "checkout",
-            &["add", "Exports", "--parent", &core, "--blocked-by", &types],
-        ));
-        let consumer = id(&fixture.ok(
-            "checkout",
-            &["add", "Consumer", "--parent", root, "--blocked-by", &core],
-        ));
-        fixture.ok("checkout", &["done", &types, "--result", "verified"]);
+        fixture.coord(&["goal", "coordinate", root]);
+        let core = id(&fixture.coord(&["add", "Core", "--parent", root]));
+        let types = id(&fixture.coord(&["add", "Types", "--parent", &core]));
+        let exports =
+            id(&fixture.coord(&["add", "Exports", "--parent", &core, "--blocked-by", &types]));
+        let consumer =
+            id(&fixture.coord(&["add", "Consumer", "--parent", root, "--blocked-by", &core]));
+        fixture.coord(&["done", &types, "--result", "verified"]);
 
         let shown = fixture.ok("checkout", &["goal", "show", root, "--all"]);
         let rows = |pointer: &str| -> Vec<String> {
@@ -652,7 +741,13 @@ mod tests {
         let text = String::from_utf8(text.stdout).unwrap();
         assert!(text.contains("  1 open · last activity "), "{text}");
         assert!(text.contains("Brief unavailable"), "{text}");
-        fixture.ok("linked", &["goal", "detach", &root]);
+        assert!(
+            fixture
+                .fail("linked", &["goal", "detach", &root])
+                .contains("no coordinator")
+        );
+        fixture.coord(&["goal", "coordinate", &root]);
+        fixture.coord(&["goal", "detach", &root]);
         assert_eq!(id(&fixture.ok("checkout", &["show", &slice])), slice);
         assert!(
             fixture
@@ -901,14 +996,13 @@ mod tests {
         );
         let below = fixture.ok("checkout", &["list", "--parent", epic]);
         assert!(below.pointer("/tasks").unwrap().as_array().unwrap().len() >= 3);
-        let warned = fixture.ok("checkout", &["hold", &group, "--reason", "pause"]);
-        assert!(
-            warned
-                .pointer("/warnings/0")
-                .unwrap()
-                .as_str()
-                .unwrap()
-                .contains("1 unclosed descendants")
+        let held = fixture.ok("checkout", &["hold", &group, "--reason", "pause"]);
+        assert!(held.pointer("/warnings/0").is_none(), "{held}");
+        let waiting = fixture.ok("checkout", &["ready", "--parent", epic]);
+        assert_eq!(
+            waiting.pointer("/tasks").unwrap(),
+            &serde_json::json!([]),
+            "holding a group holds its descendants"
         );
         fixture.ok("checkout", &["reopen", &group]);
         let claimed = fixture.ok(

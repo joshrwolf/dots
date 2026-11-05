@@ -1,5 +1,6 @@
 //! Agent-facing command parsing and presentation over shared domain operations.
 mod agent;
+mod attention;
 mod command;
 mod github_reviews;
 mod goal_brief;
@@ -161,6 +162,17 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
                 out,
             })
         }
+        Command::Attention {
+            project,
+            owner,
+            command,
+        } => attention::run(attention::Invocation {
+            command,
+            project,
+            owner: owner.as_deref(),
+            directory: &environment.directory(cli.directory)?,
+            json: cli.json,
+        }),
         Command::Review { command } => {
             review::run(command, &environment.directory(cli.directory)?, cli.json)
         }

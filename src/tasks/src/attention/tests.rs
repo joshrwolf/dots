@@ -139,7 +139,7 @@ fn ui_answer(choice: &str) -> AnswerContent {
         choice: Some(choice.into()),
         text: None,
         source: Source::Ui,
-        provenance: Some("viewer rex:session:1".into()),
+        provenance: "viewer rex:session:1".into(),
         interpretation: None,
     }
 }
@@ -1094,6 +1094,14 @@ fn content_and_answers_are_validated_against_the_request() {
             interpretation: Some("a".into()),
             ..ui_answer("a")
         },
+        AnswerContent {
+            provenance: " ".into(),
+            ..ui_answer("a")
+        },
+        AnswerContent {
+            provenance: "viewer\nentry".into(),
+            ..ui_answer("a")
+        },
     ];
     for answer in invalid {
         assert!(matches!(
@@ -1109,7 +1117,7 @@ fn content_and_answers_are_validated_against_the_request() {
         choice: Some("a".into()),
         text: Some("one table is fine".into()),
         source: Source::Chat,
-        provenance: Some("pi session s entry e".into()),
+        provenance: "pi session s entry e".into(),
         interpretation: Some("Selects choice a".into()),
     };
     let answered = store
@@ -1132,7 +1140,7 @@ fn standalone_decisions_need_the_coordinator_and_human_input() {
         human: HumanInput {
             text: "go ahead, local commits only".into(),
             source: Source::Chat,
-            provenance: Some("pi session s entry e".into()),
+            provenance: "pi session s entry e".into(),
         },
     };
     assert!(matches!(
@@ -1141,6 +1149,17 @@ fn standalone_decisions_need_the_coordinator_and_human_input() {
     ));
     assert!(matches!(
         store.record_decision(&project(), &goal.leaf, &mandate, by("coord", 2)),
+        Err(Error::Invalid(_))
+    ));
+    let unsourced = DecisionContent {
+        human: HumanInput {
+            provenance: String::new(),
+            ..mandate.human.clone()
+        },
+        ..mandate.clone()
+    };
+    assert!(matches!(
+        store.record_decision(&project(), &goal.goal, &unsourced, by("coord", 2)),
         Err(Error::Invalid(_))
     ));
     let blank = DecisionContent {
@@ -1211,7 +1230,7 @@ fn global_and_exact_scopes_read_the_same_records() {
                 human: HumanInput {
                     text: "ship it".into(),
                     source: Source::Chat,
-                    provenance: None,
+                    provenance: "pi session s entry e".into(),
                 },
             },
             by("coord", 2),

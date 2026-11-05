@@ -95,9 +95,10 @@ pub struct AnswerContent {
     #[serde(default)]
     pub text: Option<String>,
     pub source: Source,
-    /// Where the input came from, such as a session and entry.
-    #[serde(default)]
-    pub provenance: Option<String>,
+    /// Where the human input came from: the viewer and terminal that took a
+    /// UI answer, or the session and entry of the quoted chat message.
+    /// Cooperative bookkeeping for audit, not authentication.
+    pub provenance: String,
     /// An agent's reading of chat input; absent for explicit UI answers.
     #[serde(default)]
     pub interpretation: Option<String>,
@@ -116,8 +117,8 @@ pub struct Incorporation {
 pub struct HumanInput {
     pub text: String,
     pub source: Source,
-    #[serde(default)]
-    pub provenance: Option<String>,
+    /// Where the human said it, as for [`AnswerContent::provenance`].
+    pub provenance: String,
 }
 
 /// A decision established outside any request, such as an agreement in chat.
@@ -466,7 +467,7 @@ impl Store {
                 id,
                 answer.choice,
                 answer.text,
-                source_str(answer.source),
+                answer.source.as_str(),
                 answer.provenance,
                 answer.interpretation,
                 actor.now,
@@ -547,7 +548,7 @@ impl Store {
     ) -> Result<Decision, Error> {
         validate_decision(&content.decision)?;
         multiline(&content.human.text, 4096, "human text: 1..4096 bytes")?;
-        validate_provenance(content.human.provenance.as_deref())?;
+        validate_provenance(&content.human.provenance)?;
         let tx = self.write()?;
         require_goal(&tx, project, goal)?;
         store::authorize(&tx, goal, actor.name)?;
@@ -783,7 +784,9 @@ fn goal_decision_list(
             "SELECT id FROM decisions WHERE goal=?1 AND (?2 IS NULL OR kind=?2) ORDER BY at, rowid",
         )?;
         statement
-            .query_map(params![goal, kind.map(decision_kind_str)], |row| row.get(0))?
+            .query_map(params![goal, kind.map(DecisionKind::as_str)], |row| {
+                row.get(0)
+            })?
             .collect::<Result<Vec<String>, _>>()?
     };
     ids.iter()
@@ -831,7 +834,7 @@ pub(crate) fn not_open_reason(
         (RequestState::Answered, _, None) => {
             "is already answered; its coordinator incorporates the answer".into()
         }
-        (_, Some(closure), None) => format!("is closed ({})", closure_str(closure)),
+        (_, Some(closure), None) => format!("is closed ({})", closure.as_str()),
         (state, None, None) => format!("is {}", state.as_str()),
     }
 }
@@ -866,7 +869,7 @@ fn insert(
             project.as_str(),
             goal,
             key,
-            request_kind_str(content.kind),
+            content.kind.as_str(),
             content.title,
             content.question,
             content.context,
@@ -914,7 +917,7 @@ fn close(
          WHERE id=?1 AND state=?6",
         params![
             id,
-            closure_str(kind),
+            kind.as_str(),
             actor.now,
             actor.name.map(Owner::as_str),
             reason,
@@ -949,11 +952,11 @@ fn insert_decision(
             id,
             project.as_str(),
             goal,
-            decision_kind_str(kind),
+            kind.as_str(),
             decision,
             human.map(|human| human.text.as_str()),
-            human.map(|human| source_str(human.source)),
-            human.and_then(|human| human.provenance.as_deref()),
+            human.map(|human| human.source.as_str()),
+            human.map(|human| human.provenance.as_str()),
             request,
             actor.now,
             actor.name.map(Owner::as_str)
@@ -1150,9 +1153,9 @@ fn load_answer(tx: &Transaction<'_>, id: &str) -> Result<Option<Answer>, Error> 
         },
     )?;
     let (choice, text, source, provenance, interpretation, at, by) = row;
-    let (source, at) = match (source, at) {
-        (None, None) => return Ok(None),
-        (Some(source), Some(at)) => (source, at),
+    let (source, provenance, at) = match (source, provenance, at) {
+        (None, None, None) => return Ok(None),
+        (Some(source), Some(provenance), Some(at)) => (source, provenance, at),
         _ => {
             return Err(Error::Corrupt {
                 id: id.to_owned(),
@@ -1253,12 +1256,12 @@ fn load_decision(tx: &Transaction<'_>, project: &Project, id: &str) -> Result<De
         field,
     };
     let kind = parse_decision_kind(&kind).ok_or_else(|| corrupt("kind"))?;
-    let human = match (human_text, human_source) {
-        (None, None) => None,
-        (Some(text), Some(source)) => Some(HumanInput {
+    let human = match (human_text, human_source, human_provenance) {
+        (None, None, None) => None,
+        (Some(text), Some(source), Some(provenance)) => Some(HumanInput {
             text,
             source: parse_source(&source).ok_or_else(|| corrupt("human source"))?,
-            provenance: human_provenance,
+            provenance,
         }),
         _ => return Err(corrupt("human input")),
     };
@@ -1395,7 +1398,7 @@ fn validate_answer(answer: &AnswerContent) -> Result<(), Error> {
     if let Some(text) = &answer.text {
         multiline(text, 4096, "answer text: 1..4096 bytes when given")?;
     }
-    validate_provenance(answer.provenance.as_deref())?;
+    validate_provenance(&answer.provenance)?;
     match (answer.source, &answer.interpretation) {
         (Source::Ui, Some(_)) => Err(Error::Invalid(
             "answer interpretation: an explicit UI answer carries no interpretation",
@@ -1417,14 +1420,12 @@ fn validate_decision(decision: &str) -> Result<(), Error> {
     multiline(decision, 8192, "decision: 1..8192 bytes")
 }
 
-fn validate_provenance(provenance: Option<&str>) -> Result<(), Error> {
-    provenance.map_or(Ok(()), |provenance| {
-        single_line(
-            provenance,
-            512,
-            "provenance: one line, 1..512 bytes when given",
-        )
-    })
+fn validate_provenance(provenance: &str) -> Result<(), Error> {
+    single_line(
+        provenance,
+        512,
+        "provenance: one line of 1..512 bytes naming where the human input came from",
+    )
 }
 
 fn single_line(value: &str, max: usize, message: &'static str) -> Result<(), Error> {
@@ -1446,11 +1447,14 @@ fn multiline(value: &str, max: usize, message: &'static str) -> Result<(), Error
     Ok(())
 }
 
-fn request_kind_str(kind: RequestKind) -> &'static str {
-    match kind {
-        RequestKind::Decision => "decision",
-        RequestKind::Authorization => "authorization",
-        RequestKind::Action => "action",
+impl RequestKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            RequestKind::Decision => "decision",
+            RequestKind::Authorization => "authorization",
+            RequestKind::Action => "action",
+        }
     }
 }
 
@@ -1461,40 +1465,49 @@ fn parse_request_kind(value: &str) -> Option<RequestKind> {
         RequestKind::Action,
     ]
     .into_iter()
-    .find(|kind| request_kind_str(*kind) == value)
+    .find(|kind| kind.as_str() == value)
 }
 
-fn source_str(source: Source) -> &'static str {
-    match source {
-        Source::Ui => "ui",
-        Source::Chat => "chat",
+impl Source {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Source::Ui => "ui",
+            Source::Chat => "chat",
+        }
     }
 }
 
 fn parse_source(value: &str) -> Option<Source> {
     [Source::Ui, Source::Chat]
         .into_iter()
-        .find(|source| source_str(*source) == value)
+        .find(|source| source.as_str() == value)
 }
 
-fn decision_kind_str(kind: DecisionKind) -> &'static str {
-    match kind {
-        DecisionKind::Mandate => "mandate",
-        DecisionKind::Decision => "decision",
+impl DecisionKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            DecisionKind::Mandate => "mandate",
+            DecisionKind::Decision => "decision",
+        }
     }
 }
 
 fn parse_decision_kind(value: &str) -> Option<DecisionKind> {
     [DecisionKind::Mandate, DecisionKind::Decision]
         .into_iter()
-        .find(|kind| decision_kind_str(*kind) == value)
+        .find(|kind| kind.as_str() == value)
 }
 
-fn closure_str(kind: ClosureKind) -> &'static str {
-    match kind {
-        ClosureKind::Incorporated => "incorporated",
-        ClosureKind::Withdrawn => "withdrawn",
-        ClosureKind::Superseded => "superseded",
+impl ClosureKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ClosureKind::Incorporated => "incorporated",
+            ClosureKind::Withdrawn => "withdrawn",
+            ClosureKind::Superseded => "superseded",
+        }
     }
 }
 
@@ -1505,5 +1518,5 @@ fn parse_closure(value: &str) -> Option<ClosureKind> {
         ClosureKind::Superseded,
     ]
     .into_iter()
-    .find(|kind| closure_str(*kind) == value)
+    .find(|kind| kind.as_str() == value)
 }

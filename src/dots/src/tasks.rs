@@ -51,6 +51,17 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
             format!("Released {}.\n", plural(released.len(), "claim"))
         });
     }
+    if let TaskCommand::Goal {
+        command: GoalCommand::Coordinate { .. },
+    } = request.command
+    {
+        require_coordinator_identity(
+            request.owner,
+            std::env::var("DOTS_WORKER_ID").ok(),
+            crate::agent::session(),
+            session_owner.as_deref(),
+        )?;
+    }
     let project =
         crate::project::resolve(&mut store, request.directory, request.project.as_deref())?;
     if let TaskCommand::Query(TaskQuery::Events {
@@ -158,6 +169,10 @@ enum Outcome {
     Goal {
         goal: Box<ShownGoal>,
         follow_hint: &'static str,
+    },
+    Coordinated {
+        goal: Box<ShownGoal>,
+        transferred: Vec<dots_tasks::Transfer>,
     },
     Goals {
         goals: Vec<ShownGoal>,
@@ -538,11 +553,57 @@ fn execute_goal(
                 store.goal_overview(project, &id, all)?,
             )?),
         }),
+        GoalCommand::Coordinate { id, take, resume } => {
+            let coordination =
+                store.coordinate(project, &id, owner(actor)?, take, resume, actor.now)?;
+            Ok(Outcome::Coordinated {
+                goal: Box::new(goal_brief::show(project, coordination.goal)?),
+                transferred: coordination.transferred,
+            })
+        }
         GoalCommand::Detach { id } => {
             store.detach_goal(project, &id, actor)?;
             Ok(Outcome::Detached { detached: id })
         }
     }
+}
+
+fn coordinated_text(goal: &ShownGoal, transferred: &[dots_tasks::Transfer], now: i64) -> String {
+    let mut out = goal_text(goal, now);
+    let _ = writeln!(
+        out,
+        "Coordinating as {}.",
+        goal.root.owner.as_deref().unwrap_or_default()
+    );
+    for transfer in transferred {
+        let _ = writeln!(out, "Took over {} from {}.", transfer.task, transfer.from);
+    }
+    out
+}
+
+/// Coordination needs a top-level runtime identity: managed workers report to
+/// their coordinator, and a Pi session acts as its live runtime so that two
+/// processes of one session never share a coordinator claim. An explicit
+/// `--owner` is the caller's cooperative choice.
+fn require_coordinator_identity(
+    explicit: Option<&str>,
+    worker: Option<String>,
+    session: Option<String>,
+    runtime: Option<&str>,
+) -> Result<()> {
+    anyhow::ensure!(
+        worker.is_none_or(|id| id.trim().is_empty()),
+        "managed workers (DOTS_WORKER_ID) report to their coordinator and cannot coordinate a goal"
+    );
+    if explicit.is_none()
+        && let Some(session) = session.filter(|session| session.starts_with("pi-"))
+        && runtime == Some(session.as_str())
+    {
+        anyhow::bail!(
+            "this Pi session has no live runtime owner: DOTS_AGENT_OWNER is absent or names another session; reload the dots Pi companion, or pass --owner deliberately"
+        );
+    }
+    Ok(())
 }
 
 fn owner(actor: Actor<'_>) -> Result<Owner<'_>> {
@@ -571,6 +632,7 @@ fn text(outcome: &Outcome, now: i64) -> String {
             )
         ),
         Outcome::Goal { goal, follow_hint } => format!("{}{follow_hint}\n", goal_text(goal, now)),
+        Outcome::Coordinated { goal, transferred } => coordinated_text(goal, transferred, now),
         Outcome::Goals { goals } if goals.is_empty() => "No matching goals.\n".into(),
         Outcome::Goals { goals } => goals.iter().map(|goal| goal_text(goal, now)).collect(),
         Outcome::Detached { detached } => {
@@ -812,6 +874,9 @@ fn line(task: &Task, now: i64) -> String {
     }
     if task.status == Status::Open && !task.blocked_by.is_empty() {
         out.push_str("  (blocked)");
+    }
+    if task.status == Status::Open && !task.holds.is_empty() {
+        out.push_str("  (waiting)");
     }
     if task.children > 0 {
         let _ = write!(

@@ -46,17 +46,31 @@ pub(crate) enum Command {
     },
     /// Track shared, claimable work for a project across concurrent sessions
     #[command(
-        long_about = "Local work list shared by every session and worktree of one project: tasks, dependencies, claims, results, and issue/PR references. Git and GitHub remain the source of truth for code.\nThe project comes from the Git checkout at --directory, bound with dots project init; --project selects a registered project ID.\nA claim marks which session is working on a task. It lasts until that session releases, hands off, or closes the task; Pi releases a session's claims when the session ends. Workers report results to their parent session, which records them.\nThe catalog is $XDG_DATA_HOME/dots/workspace.sqlite3 (default ~/.local/share/dots/workspace.sqlite3)."
+        long_about = "Local work list shared by every session and worktree of one project: tasks, dependencies, claims, results, and issue/PR references. Git and GitHub remain the source of truth for code.\nThe project comes from the Git checkout at --directory, bound with dots project init; --project selects a registered project ID.\nA claim marks which session is working on a task. It lasts until that session releases, hands off, or closes the task; Pi releases a session's claims when the session ends. Workers report results to their parent session, which records them.\nA goal's tasks change only through its coordinator, the owner of its root claim (dots task goal coordinate); other sessions read them, and dots attention requests hold the work they name until incorporated.\nThe catalog is $XDG_DATA_HOME/dots/workspace.sqlite3 (default ~/.local/share/dots/workspace.sqlite3)."
     )]
     Task {
         /// Registered project ID instead of the current Git common-directory binding
         #[arg(long, global = true, value_name = "KEY")]
         project: Option<String>,
-        /// Session identity for claims and events; defaults to the invoking agent session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+        /// Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
         #[arg(long, global = true, value_name = "NAME")]
         owner: Option<String>,
         #[command(subcommand)]
         command: TaskCommand,
+    },
+    /// Ask the user durable questions about goal work and record goal decisions
+    #[command(
+        long_about = "Attention requests are durable questions a goal's coordinator raises when only the user can decide, authorize or act; decisions record what was decided, including the execution mandate. Both belong to the goal in the workspace catalog, not to a session, so they survive session ends, handoffs and history rewinds.\nA request moves open -> answered -> closed; its content never changes. An open or answered (not yet incorporated) request holds the tasks it names and their descendants on every claim and acceptance path. Answers come from any session; everything else belongs to the goal's coordinator (dots task goal coordinate). Incorporating an answer records a decision and closes the request in one transaction.\nContent files are JSON (or - for stdin) with unknown fields refused; see each command's help for its shape. Never put credentials in requests, answers or decisions. Provenance is cooperative bookkeeping that keeps the human's own words apart from an agent's interpretation; it is not authentication."
+    )]
+    Attention {
+        /// Registered project ID instead of the current Git common-directory binding; list and decisions use --scope instead
+        #[arg(long, global = true, value_name = "KEY")]
+        project: Option<String>,
+        /// Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+        #[arg(long, global = true, value_name = "NAME")]
+        owner: Option<String>,
+        #[command(subcommand)]
+        command: AttentionCommand,
     },
     /// Read, publish, and search scoped Markdown memory without a service
     #[command(
@@ -297,8 +311,21 @@ pub(crate) enum GoalCommand {
         #[arg(long)]
         all: bool,
     },
-    /// Remove the brief association; the tasks and the document stay
+    /// Remove the brief association; refused once the goal has requests or decisions
     Detach { id: String },
+    /// Take coordination of a goal: claim its root although work remains below it
+    #[command(
+        long_about = "Claim a goal's root as its coordinator. Only the coordinator dispatches, edits, accepts or closes the goal's tasks and raises or incorporates its attention requests; other sessions read, and anyone can answer a request. Coordination is responsibility, not dispatch: it works with unfinished children, prerequisites and held work. A managed worker (DOTS_WORKER_ID set) cannot coordinate, and a Pi session needs its live runtime owner unless --owner is given. Another owner's claim on the root or any descendant fails unless --take, which moves every such claim to this owner in one transaction and records each transfer. A held (paused) or closed root needs --resume, which reopens it. Coordinating again is a no-op. Stop coordinating with dots task release ID; pause with dots task hold ID, which holds every descendant."
+    )]
+    Coordinate {
+        id: String,
+        /// Take over claims held by other owners on the root and its descendants
+        #[arg(long)]
+        take: bool,
+        /// Reopen a held or closed goal root before coordinating it
+        #[arg(long)]
+        resume: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1057,4 +1084,115 @@ pub(crate) struct GitHubReviewThreadArgs {
     /// Skip this many comments in chronological API order
     #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=100000))]
     pub offset: u32,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum AttentionCommand {
+    /// Raise a request for a goal this session coordinates; a repeated key returns the existing request
+    #[command(
+        long_about = "Raise a request. The content file holds {\"kind\": \"decision\"|\"authorization\"|\"action\", \"title\": one line of at most 120 bytes, \"question\": Markdown of at most 4096 bytes, \"context\": optional rationale (8192), \"recommendation\": optional (1024), \"choices\": optional, at most 8 of {\"id\": 1..32 of a-z 0-9 -, \"label\": one line (80), \"detail\": optional (512)} and none for an action, \"tasks\": goal root or descendant IDs it holds (at most 32; naming the root holds the whole goal; none holds nothing)}. --key names the question's purpose within the goal (1..64 of a-z 0-9 . _ -). The same key with identical content returns the existing request in whatever state it reached (created false), with its answer or closure; different content fails: supersede an open request, or choose a new key once it is answered or closed. Claims on newly held work are reported; steer their holders."
+    )]
+    Raise {
+        /// Goal root ID
+        goal: String,
+        #[arg(long, value_name = "KEY")]
+        key: String,
+        #[arg(long, value_name = "PATH")]
+        content_file: PathBuf,
+    },
+    /// Replace an open request's content with a new request under the same key
+    #[command(
+        long_about = "Close an open request as superseded and raise its replacement, in one transaction, with content shaped as for raise. An answered request cannot be superseded: incorporate its answer. Answers sent to the old request later fail and name the replacement; they are never moved onto it."
+    )]
+    Supersede {
+        request: String,
+        #[arg(long, value_name = "PATH")]
+        content_file: PathBuf,
+    },
+    /// Close an open request without an answer
+    Withdraw {
+        request: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Record a human answer to an open request, from any session
+    #[command(
+        long_about = "Answer an open request. The content file holds {\"choice\": one of the request's choice ids, \"text\": the human's own words (4096), \"source\": \"ui\"|\"chat\", \"provenance\": required one line (512) naming where the human input came from (the viewer and terminal for ui; the session and message entry for chat), \"interpretation\": an agent's reading (4096)}; give a choice, text or both. source ui is an explicit human selection or entry and has no interpretation. source chat maps a real user message: quote the smallest relevant instruction as text and record the interpretation. Vague assent, cancellation, silence or dismissing a prompt is not an answer. Fails when the request is already answered, closed or superseded, naming the replacement."
+    )]
+    Answer {
+        request: String,
+        #[arg(long, value_name = "PATH")]
+        content_file: PathBuf,
+    },
+    /// Record the coordinator's decision on an answered request and close it
+    #[command(
+        long_about = "Incorporate an answered request: the content file holds {\"kind\": \"decision\"|\"mandate\", \"decision\": Markdown (8192) stating what was decided and how the work changes}. The decision and the closure are recorded together, which releases the tasks the request held."
+    )]
+    Incorporate {
+        request: String,
+        #[arg(long, value_name = "PATH")]
+        content_file: PathBuf,
+    },
+    /// Record a goal decision or execution mandate established outside any request
+    #[command(
+        long_about = "Record a decision the user made in ordinary conversation. The content file holds {\"kind\": \"mandate\"|\"decision\", \"decision\": the coordinator's account (8192), \"human\": {\"text\": the user's own relevant words (4096), \"source\": \"chat\"|\"ui\", \"provenance\": required one line (512): the session and message entry where the user said it}}. A mandate records the accepted execution agreement: outcome and scope, finish line, delegated work, publication and monitoring, and excluded actions; the newest mandate is current. Human input is required: a model-authored summary is not consent."
+    )]
+    Decide {
+        /// Goal root ID
+        goal: String,
+        #[arg(long, value_name = "PATH")]
+        content_file: PathBuf,
+    },
+    /// Show one request with its answer and closure
+    Show { request: String },
+    /// List requests in an explicit scope; never falls back to another scope
+    #[command(
+        long_about = "List requests grouped by goal. --scope global reads every registered project: goals with matching requests, plus unfinished goals with a recorded mandate (requests may be empty) so stopped work stays discoverable. --scope goals reads exactly the --goal identities, listing each even without requests; none reads nothing. coordinator is the current root claim holder, not evidence that its session is running; null means nobody coordinates. Projects or goals that cannot be read appear under errors; a missing or unreadable catalog fails the command."
+    )]
+    List {
+        #[command(flatten)]
+        scope: ScopeArgs,
+        #[arg(long, value_enum, default_value_t = RequestStates::Outstanding)]
+        state: RequestStates,
+    },
+    /// List goal decisions and mandates in an explicit scope, oldest first
+    Decisions {
+        #[command(flatten)]
+        scope: ScopeArgs,
+        #[arg(long, value_enum)]
+        kind: Option<DecisionKinds>,
+    },
+}
+
+/// Which goals an attention read covers.
+#[derive(Debug, Args)]
+pub(crate) struct ScopeArgs {
+    /// global: every registered project; goals: exactly the --goal identities
+    #[arg(long, value_enum)]
+    pub scope: AttentionScope,
+    /// Goal as PROJECT:GOAL; repeatable, only with --scope goals
+    #[arg(long = "goal", value_name = "PROJECT:GOAL")]
+    pub goals: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum AttentionScope {
+    Global,
+    Goals,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum RequestStates {
+    /// Open or answered but not yet incorporated
+    Outstanding,
+    Open,
+    Answered,
+    Closed,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub(crate) enum DecisionKinds {
+    Mandate,
+    Decision,
 }
