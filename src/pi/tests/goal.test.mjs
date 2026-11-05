@@ -8,6 +8,7 @@ import goal, {
   restoreGoals,
 } from '../extensions/goal/index.ts';
 import {source, snapshot} from './goal-fixture.mjs';
+import {attentionStore, request, requestId} from './attention-fixture.mjs';
 import {withHierarchy} from '../extensions/goal/source.ts';
 import {WORKER_ACTIVITY_EVENT} from '../src/ui/worker-activity.ts';
 
@@ -40,7 +41,9 @@ function harness(
   saved = [],
   mode = 'rpc',
   session = 'fixture-session',
+  attention = attentionStore(),
 ) {
+  const emitted = [];
   const handlers = new Map();
   const commands = new Map();
   const tools = new Map();
@@ -53,6 +56,9 @@ function harness(
   const bus = new Map();
   const pi = {
     events: {
+      emit(channel, data) {
+        emitted.push({channel, data});
+      },
       on(channel, handler) {
         bus.set(channel, handler);
         return () => bus.delete(channel);
@@ -80,7 +86,7 @@ function harness(
       messages.push({message, options});
     },
   };
-  goal(pi, backend);
+  goal(pi, backend, undefined, {source: attention.source, tasks: undefined});
   const ctx = {
     cwd: '/example/linked',
     mode,
@@ -97,6 +103,10 @@ function harness(
     },
   };
   return {
+    attention,
+    emitted,
+    handlers,
+    tools,
     backend,
     entries,
     notices,
@@ -1121,4 +1131,167 @@ test('a stale runtime releases only its own claims and leaves the next actor exp
   assert.equal(process.env.PI_SESSION_ID, 'fixture-session');
   await next.event('session_shutdown', {reason: 'quit'});
   assert.deepEqual(next.backend.releases, [current]);
+});
+
+const settle = () => new Promise(resolve => setImmediate(resolve));
+const goalOf = h => ({project: '/example/project', id: 't-123abc'});
+
+test('attention scope is exactly the followed goals; none reads nothing', async () => {
+  const h = harness();
+  await h.event('session_start');
+  await h.context();
+  assert.deepEqual(
+    h.attention.state.calls,
+    [],
+    'no follows, no attention reads',
+  );
+  await h.command('focus t-123abc');
+  await settle();
+  const files = await h.context();
+  const lists = h.attention.state.calls.filter(call => call.op === 'list');
+  assert.deepEqual(lists.at(-1).goals, [goalOf(h)]);
+  assert.match(files[0].content, /attention and decisions/);
+  assert.match(files[0].content, /No mandate recorded/);
+  await h.command('unfocus');
+  await settle();
+  const before = h.attention.state.calls.length;
+  assert.deepEqual(await h.context(), []);
+  assert.equal(h.attention.state.calls.length, before);
+});
+
+test('context carries saved answers and the role across tree and compaction-independent restores', async () => {
+  const answered = request({
+    goal: 't-123abc',
+    state: 'answered',
+    answer: {
+      choice: 'one',
+      text: null,
+      source: 'ui',
+      provenance: 'pi session s · goal popup',
+      interpretation: null,
+      at: 2,
+      by: null,
+    },
+  });
+  const attention = attentionStore({
+    coordinator: 'pi-other-runtime',
+    requests: [answered],
+  });
+  const h = harness(
+    source(),
+    [entry(focused())],
+    'rpc',
+    'fixture-session',
+    attention,
+  );
+  await h.event('session_start');
+  const first = (await h.context())[0].content;
+  assert.match(first, /Saved answer, not yet incorporated — r-0+1/);
+  assert.match(first, /not this session: do not incorporate/);
+  assert.equal(
+    h.messages.filter(m => m.message.customType === 'dots.attention.answer')
+      .length,
+    0,
+    'followers never deliver',
+  );
+  await h.event('session_tree');
+  const again = (await h.context())[0].content;
+  assert.equal(
+    again,
+    first,
+    'deterministic from the store, not the transcript',
+  );
+});
+
+test('only native interactive input attests a chat answer', async () => {
+  const attention = attentionStore({requests: [request({goal: 't-123abc'})]});
+  const h = harness(
+    source(),
+    [entry(focused())],
+    'rpc',
+    'fixture-session',
+    attention,
+  );
+  await h.event('session_start');
+  const tool = h.tools.get('attention_record_chat');
+  const params = {
+    kind: 'answer',
+    quote: 'only this project',
+    request: requestId(1),
+    interpretation: 'Chose this project.',
+  };
+  await h.handlers.get('input')(
+    {type: 'input', text: 'only this project', source: 'rpc'},
+    h.ctx,
+  );
+  await assert.rejects(
+    tool.execute('c', params, undefined, undefined, h.ctx),
+    /verbatim/,
+  );
+  await h.handlers.get('input')(
+    {
+      type: 'input',
+      text: 'ok, only this project please',
+      source: 'interactive',
+    },
+    h.ctx,
+  );
+  const result = await tool.execute('c', params, undefined, undefined, h.ctx);
+  assert.match(result.content[0].text, /Saved the answer/);
+  const call = attention.state.calls.find(c => c.op === 'answer');
+  assert.equal(
+    call.content.provenance,
+    'pi session fixture-session · interactive input',
+  );
+  assert.match(call.actor.env.DOTS_AGENT_OWNER, runtimeOf('fixture-session'));
+  // A new session does not inherit the previous one's typed words.
+  await h.event('session_shutdown', {reason: 'new'});
+  await h.event('session_start', {reason: 'new'});
+  await assert.rejects(
+    tool.execute('c', params, undefined, undefined, h.ctx),
+    /verbatim/,
+  );
+});
+
+test('the popup opens on attention, answers in place and keeps Work reachable', async () => {
+  initTheme('dark', false);
+  const theme = getThemeByName('dark');
+  const attention = attentionStore({requests: [request({goal: 't-123abc'})]});
+  const h = harness(
+    source(),
+    [entry(focused())],
+    'tui',
+    'fixture-session',
+    attention,
+  );
+  await h.event('session_start');
+  await settle();
+  const indicator = h.widgets.findLast(
+    ([key]) => key === 'dots.goal.attention',
+  );
+  assert.ok(indicator?.[1], 'a quiet indicator mounts');
+  const host = overlayHost(h, theme);
+  h.shortcuts.get('alt+g').handler(h.ctx);
+  const out = host.view.render(120).join('\n');
+  assert.match(out, /Needs your attention/);
+  assert.match(out, /Should the first slice cover every project/);
+  host.view.handleInput('\r');
+  host.view.handleInput('\r');
+  await settle();
+  await settle();
+  const answer = attention.state.calls.find(c => c.op === 'answer');
+  assert.deepEqual(answer.content, {
+    source: 'ui',
+    choice: 'one',
+    provenance: 'pi session fixture-session · goal popup',
+  });
+  host.view.handleInput('\x1b[C');
+  assert.match(host.view.render(120).join('\n'), /Consistent exports/);
+  host.view.handleInput('\x1bg');
+  assert.equal(host.closed, 1);
+  await h.event('session_shutdown');
+  assert.deepEqual(h.emitted.at(-1), {
+    channel: 'dots:attention',
+    data: {requests: []},
+  });
 });

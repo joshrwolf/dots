@@ -20,6 +20,8 @@ export interface StatusInputs {
   readonly compacting: boolean;
   /** An open dialog the agent waits on. */
   readonly dialog?: {readonly kind: string; readonly title?: string};
+  /** Goal requests this session coordinates that await a person. */
+  readonly attention?: readonly {readonly id: string; readonly title: string}[];
   /** How the last run ended, reported once nothing is active. */
   readonly rest: Rest;
   readonly activities: ReadonlyMap<string, readonly ActivityItem[]>;
@@ -44,7 +46,9 @@ function backgroundSummary(inputs: StatusInputs): string | undefined {
 
 /**
  * The root record: blocked while the user must answer a dialog, working while
- * the agent or any background work is active, then how the last run ended.
+ * the agent runs, blocked while a goal request this session coordinates awaits
+ * the person, working while background work is active, then how the last run
+ * ended.
  * Background work keeps the session `working`, so it never reports an unread
  * `done` while something it started still runs.
  */
@@ -61,6 +65,13 @@ export function rootRecord(inputs: StatusInputs): StatusRecord {
   const subject = inputs.sessionName ?? inputs.prompt;
   const sessionMessage = subject === undefined ? {} : {message: subject};
   if (inputs.running) return {state: 'working', ...sessionMessage};
+  const waiting = inputs.attention ?? [];
+  if (waiting.length)
+    return {
+      state: 'blocked',
+      kind: 'question',
+      message: `Needs your attention: ${waiting[0]!.title}${waiting.length > 1 ? ` (+${waiting.length - 1} more)` : ''}`,
+    };
   const background = backgroundSummary(inputs);
   if (background) return {state: 'working', message: background};
   if (inputs.rest.state === 'done')

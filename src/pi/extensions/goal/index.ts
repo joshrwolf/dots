@@ -1,5 +1,5 @@
 import {Type} from 'typebox';
-import {MouseRegion} from '@earendil-works/pi-tui';
+import {MouseRegion, truncateToWidth} from '@earendil-works/pi-tui';
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -17,15 +17,38 @@ import {
   type Focus,
   type GoalView,
 } from './present.ts';
+import {GoalPanel, PANEL_KEY, panelOverlay, summaryRow} from './panel.ts';
 import {
-  GoalPanel,
-  PANEL_KEY,
-  panelHeight,
-  panelOverlay,
-  summaryRow,
-} from './panel.ts';
-import {GOAL_SECTION_PREFIX, goalSections, orientation} from './context.ts';
+  GOAL_SECTION_PREFIX,
+  goalSectionKey,
+  goalSections,
+  orientation,
+} from './context.ts';
 import {bindAgent, endAgent, type Agent} from '../../src/host/agent.ts';
+import {ATTENTION_EVENT} from '../../src/host/attention.ts';
+import {TurnMessages} from '../../src/host/delivery.ts';
+import {Tasks} from '../../src/host/tasks.ts';
+import {AttentionController} from './attention/controller.ts';
+import {attentionContext} from './attention/context.ts';
+import {indicator} from './attention/model.ts';
+import {
+  AttentionView,
+  GoalPopup,
+  popupBodyHeight,
+  type PopupView,
+} from './attention/panel.ts';
+import {
+  HumanInputs,
+  RECORD_CHAT_DESCRIPTION,
+  RecordChatParameters,
+  recordChat,
+} from './attention/chat.ts';
+import {
+  dotsAttention,
+  failure as attentionFailure,
+  type AttentionSource,
+  type GoalRef,
+} from './attention/source.ts';
 import {
   dotsSource,
   dotsEvidenceSource,
@@ -45,6 +68,7 @@ export const FOCUS_ENTRY = 'dots.goal.focus';
 const WIDGET = 'dots.goal';
 export const DISMISS_ENTRY = 'dots.goal.dismiss';
 const OFFERS_WIDGET = 'dots.goal.offers';
+const ATTENTION_WIDGET = 'dots.goal.attention';
 const HELP =
   "/goal [new IDEA | follow [ID [PROJECT]] | show [ID] | evidence TASK [EVENT|current] [PROJECT] | list | followed | offers | dismiss ID | refresh | unfollow ID | clear]. PROJECT is another project's exact key (the project field of dots task --json output); without it, follow uses this session's project. focus aliases follow; unfocus without an ID clears all. No shared task state is changed.";
 
@@ -93,11 +117,35 @@ export function restoreFocus(
   return restoreGoals(entries).focus;
 }
 
+/** Where attention is read and how shared events arrive; tests replace both. */
+export interface AttentionOptions {
+  readonly source?: AttentionSource;
+  /** Undefined reads attention only on runs, opens and explicit refreshes. */
+  readonly tasks?: Pick<Tasks, 'follow' | 'head'> | undefined;
+}
+
 export default function goalExtension(
   pi: ExtensionAPI,
   source: GoalSource = dotsSource,
   evidenceSource: EvidenceSource = dotsEvidenceSource,
+  attentionOptions: AttentionOptions = {},
 ): void {
+  const attentionSource = attentionOptions.source ?? dotsAttention();
+  const attentionTasks =
+    'tasks' in attentionOptions ? attentionOptions.tasks : new Tasks();
+  const delivery = new TurnMessages(pi);
+  const humans = new HumanInputs();
+  /** Per session: scope, drafts and local outcomes end with it. */
+  let attention: AttentionController | undefined;
+  let attentionLine:
+    {text: string | undefined; theme: Theme; redraw: () => void} | undefined;
+  let attentionMounted = false;
+  let lastView: PopupView | undefined;
+  const background = (
+    run: (controller: AttentionController) => Promise<void>,
+  ) => {
+    if (attention) attention.track(run(attention));
+  };
   let focus: Focus | undefined;
   let model: GoalView | undefined;
   const followed = new Map<string, GoalView>();
@@ -168,12 +216,20 @@ export default function goalExtension(
     if (ctx.hasUI) ctx.ui.setStatus(OFFERS_WIDGET, undefined);
     return undefined;
   };
-  const persist = () =>
+  /** Attention scope is exactly the followed (project, goal) pairs. */
+  const scope = (): GoalRef[] =>
+    [...followed.values()].map(view => ({
+      project: view.focus.project,
+      id: view.focus.id,
+    }));
+  const persist = () => {
     pi.appendEntry(FOCUS_ENTRY, {
       version: 2,
       focus: focus ?? null,
       followed: [...followed.values()].map(view => view.focus),
     });
+    background(a => a.setScope(scope()));
+  };
   let generation = 0;
   let active = false;
   let request:
@@ -192,7 +248,14 @@ export default function goalExtension(
   let workerActivity: WorkerActivitySnapshot | undefined;
   let stopWorkerActivity: (() => void) | undefined;
   let summary: {row: PriorityRow; theme: Theme; redraw: () => void} | undefined;
-  let panel: {view: GoalPanel; theme: Theme; close: () => void} | undefined;
+  let panel:
+    | {
+        view: GoalPanel;
+        attention: AttentionView;
+        theme: Theme;
+        close: () => void;
+      }
+    | undefined;
 
   const notify = (
     ctx: ExtensionContext,
@@ -228,6 +291,13 @@ export default function goalExtension(
       );
       summary.redraw();
     }
+    if (panel && attention)
+      panel.attention.setModel(attention.model(), panel.theme);
+    if (attentionLine) {
+      const model = attention?.model();
+      attentionLine.text = model && indicator(model);
+      attentionLine.redraw();
+    }
     if (panel && model) {
       panel.view.setGoal(
         {
@@ -247,8 +317,11 @@ export default function goalExtension(
     draw(ctx);
   };
   /** A focused popup; closing it returns input to the editor with its draft. */
-  const openPanel = (ctx: ExtensionContext) => {
+  const openPanel = (ctx: ExtensionContext, requested?: PopupView) => {
     if (!active || ctx.mode !== 'tui' || !ctx.hasUI || panel) return;
+    const outstanding = attention?.model().items.length ?? 0;
+    const view = requested ?? lastView ?? (outstanding ? 'attention' : 'work');
+    background(a => a.refresh());
     if (!model) {
       notify(ctx, 'No focused goal. Use /goal follow ID or /goal list.');
       return;
@@ -261,11 +334,23 @@ export default function goalExtension(
             done();
             return {render: () => [], invalidate() {}};
           }
+          const shown: {popup?: GoalPopup} = {};
+          const drafts = attention?.drafts ?? new Map<string, string>();
           const owned: NonNullable<typeof panel> = {
+            attention: new AttentionView(
+              bindings,
+              {
+                answer: (id, reply) => background(a => a.answer(id, reply)),
+                dismiss: id => attention?.dismiss(id),
+                drafts,
+              },
+              () => tui.terminal.rows,
+              () => tui.requestRender(),
+            ),
             view: new GoalPanel(
               bindings,
               {
-                close: () => done(),
+                close: () => shown.popup?.back(),
                 cycle: () => {
                   const views = [...followed.values()];
                   const at = views.findIndex(
@@ -275,14 +360,27 @@ export default function goalExtension(
                 },
               },
               () => tui.requestRender(),
-              () => panelHeight(tui.terminal.rows),
+              () => popupBodyHeight(tui.terminal.rows),
             ),
             theme,
             close: () => done(),
           };
+          const popup = new GoalPopup(
+            {
+              attention: owned.attention,
+              work: owned.view,
+              close: () => done(),
+              viewed: shown => {
+                lastView = shown;
+              },
+            },
+            view,
+          );
+          popup.themeSource = () => theme;
+          shown.popup = popup;
           panel = owned;
           paint();
-          return Object.assign(owned.view, {
+          return Object.assign(popup, {
             dispose: () => {
               if (panel === owned) panel = undefined;
             },
@@ -293,6 +391,70 @@ export default function goalExtension(
       .catch((error: unknown) => {
         if (active && epoch === generation) notify(ctx, String(error), 'error');
       });
+  };
+  /** One quiet clickable line near the editor while a request awaits the person. */
+  const drawAttention = (ctx: ExtensionContext) => {
+    if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
+    const model = attention?.model();
+    const text = model && indicator(model);
+    if (!text) {
+      if (attentionMounted) ctx.ui.setWidget(ATTENTION_WIDGET, undefined);
+      attentionMounted = false;
+      attentionLine = undefined;
+      return;
+    }
+    if (attentionMounted) {
+      paint();
+      return;
+    }
+    attentionMounted = true;
+    const epoch = generation;
+    ctx.ui.setWidget(
+      ATTENTION_WIDGET,
+      (tui, theme) => {
+        const owned = {text, theme, redraw: () => tui.requestRender()};
+        attentionLine = owned;
+        const region = new MouseRegion(
+          {
+            render: width =>
+              active && epoch === generation && owned.text
+                ? [
+                    truncateToWidth(
+                      theme.fg('warning', `${owned.text} · open`),
+                      width,
+                    ),
+                  ]
+                : [],
+            invalidate() {},
+          },
+          event => {
+            if (
+              !active ||
+              epoch !== generation ||
+              dialog ||
+              event.button !== 'left' ||
+              event.shift ||
+              event.alt ||
+              event.ctrl
+            )
+              return undefined;
+            if (event.type === 'press') return {handled: true, render: false};
+            if (event.type !== 'click') return undefined;
+            openPanel(ctx, 'attention');
+            return {handled: true, render: false};
+          },
+        );
+        return Object.assign(region, {
+          dispose: () => {
+            if (attentionLine === owned) {
+              attentionLine = undefined;
+              attentionMounted = false;
+            }
+          },
+        });
+      },
+      {placement: 'belowEditor'},
+    );
   };
   const draw = (ctx: ExtensionContext) => {
     if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
@@ -367,8 +529,12 @@ export default function goalExtension(
     panel?.close();
     if (ctx && mounted && ctx.mode === 'tui' && ctx.hasUI)
       ctx.ui.setWidget(WIDGET, undefined);
+    if (ctx && attentionMounted && ctx.mode === 'tui' && ctx.hasUI)
+      ctx.ui.setWidget(ATTENTION_WIDGET, undefined);
     mounted = false;
     summary = undefined;
+    attentionMounted = false;
+    attentionLine = undefined;
   };
 
   // Ordinary observers share an in-flight read, including an explicit focus
@@ -497,6 +663,8 @@ export default function goalExtension(
     } catch (error) {
       notify(ctx, String(error), 'error');
     }
+    attention?.bind(agent);
+    background(a => a.setScope(scope()));
     const epoch = generation;
     if (focus) {
       model = {focus};
@@ -506,8 +674,26 @@ export default function goalExtension(
     if (active && epoch === generation && ctx.mode === 'tui' && ctx.hasUI)
       await discover(ctx);
   };
+  pi.on('input', event => {
+    humans.observe(event);
+  });
   pi.on('session_start', (event, ctx) => {
     agent = bindAgent(ctx.sessionManager.getSessionId(), event.reason);
+    // Typed messages attest only within the session they were typed in.
+    if (event.reason !== 'reload') humans.clear();
+    delivery.bind(ctx);
+    attention?.close();
+    attention = new AttentionController({
+      source: attentionSource,
+      ...(attentionTasks ? {tasks: attentionTasks} : {}),
+      deliver: (compose, delivered) => delivery.send(compose, delivered),
+      branch: () => ctx.sessionManager.getBranch(),
+      changed: () => {
+        drawAttention(ctx);
+        paint();
+      },
+      signal: signal => pi.events.emit(ATTENTION_EVENT, signal),
+    });
     stopWorkerActivity?.();
     workerActivity = undefined;
     stopWorkerActivity = pi.events.on(WORKER_ACTIVITY_EVENT, data => {
@@ -536,6 +722,10 @@ export default function goalExtension(
       ctx.ui.setWidget(OFFERS_WIDGET, undefined);
     if (ctx.hasUI) ctx.ui.setStatus(OFFERS_WIDGET, undefined);
     active = false;
+    attention?.close();
+    attention = undefined;
+    delivery.close();
+    pi.events.emit(ATTENTION_EVENT, {requests: []});
     stopWorkerActivity?.();
     stopWorkerActivity = undefined;
     workerActivity = undefined;
@@ -571,11 +761,26 @@ export default function goalExtension(
       if (request?.selected) continue; // Explicit follow reads only its target.
       break;
     }
-    for (const view of followed.values())
+    const facts = await attention?.facts().catch(() => undefined);
+    if (!active) return;
+    for (const view of followed.values()) {
       Object.assign(sections, goalSections(view));
+      const ref = {project: view.focus.project, id: view.focus.id};
+      sections[`${goalSectionKey(view)}_attention`] = attentionContext(
+        ref,
+        facts?.get(`${ref.project}:${ref.id}`) ?? {
+          goal: undefined,
+          decisions: undefined,
+          mandateRequest: undefined,
+          failure: 'attention not read',
+        },
+        agent?.owner,
+      );
+    }
   });
   pi.on('agent_end', async (_event, ctx) => {
     const epoch = generation;
+    background(a => a.refresh());
     await refresh(ctx);
     if (active && epoch === generation && ctx.mode === 'tui' && ctx.hasUI)
       await discover(ctx);
@@ -603,6 +808,37 @@ export default function goalExtension(
         {triggerTurn: false},
       );
   };
+  pi.registerTool({
+    name: 'attention_record_chat',
+    label: 'Record chat answer',
+    description: RECORD_CHAT_DESCRIPTION,
+    parameters: RecordChatParameters,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+    async execute(_callId, params, signal) {
+      const actor = agent;
+      if (!actor) throw new Error('No live Pi session to record for.');
+      try {
+        const text = await recordChat(
+          params,
+          actor,
+          humans,
+          attentionSource,
+          scope(),
+          request => attention?.projectOf(request),
+          signal ?? new AbortController().signal,
+        );
+        background(a => a.refresh());
+        return {content: [{type: 'text', text}], details: {kind: params.kind}};
+      } catch (error) {
+        throw new Error(attentionFailure(error), {cause: error});
+      }
+    },
+  });
   pi.registerShortcut(PANEL_KEY, {
     description: 'Toggle the goal popup',
     handler: ctx => {
@@ -869,13 +1105,14 @@ export default function goalExtension(
       }
       if (action === 'refresh') {
         const epoch = generation;
+        background(a => a.refresh());
         await refresh(ctx);
         if (!active || generation !== epoch) return;
         while (request?.selected && followed.size) {
           await refresh(ctx);
           if (!active || generation !== epoch) return;
         }
-        const attention = [...followed.values()].filter(
+        const failing = [...followed.values()].filter(
           view => view.error || view.brief?.warning,
         );
         const status = followed.size
@@ -883,10 +1120,10 @@ export default function goalExtension(
           : 'No followed goals.';
         notify(
           ctx,
-          attention.length
-            ? `${status} ${attention.length} need attention.\n${attention.map(view => `${view.focus.id}: ${view.error ?? view.brief?.warning}`).join('\n')}`
+          failing.length
+            ? `${status} ${failing.length} need attention.\n${failing.map(view => `${view.focus.id}: ${view.error ?? view.brief?.warning}`).join('\n')}`
             : status,
-          attention.some(view => view.error) ? 'error' : 'info',
+          failing.some(view => view.error) ? 'error' : 'info',
         );
         return;
       }

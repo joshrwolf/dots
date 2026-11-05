@@ -103,16 +103,43 @@ the task this session or its workers are on, and other followed goals.
 **Alt+G**, `/goal`, or a click on the summary line opens the goal popup over
 the session. It fits its content up to the available screen height. Its header
 shows progress, attention, and the goal's current result. Below it, the goal's
-leaf tasks sit beside the selected task's detail: status, claim (this session or
-a named owner), blockers, result, branch and references, latest
+leaf tasks sit beside the selected task's detail: status, claim (this Pi runtime
+or a named owner), blockers, holds from requests or held ancestors, result,
+branch and references, latest
 event, and live workers on it. The list follows the dependency graph that
 `dots task goal show` draws, prerequisites above dependents, with each task's
 group after its title. The popup includes completed and dropped tasks by default;
-**h** hides or shows them. **o** switches to the group outline, which folds. **1/2/3**
+**h** hides or shows them. **o** switches to the group outline; **Space** folds
+a group. **1/2/3**
 switch between this overview, the brief, and the full record; the footer lists
 the remaining keys. **Esc** or **Alt+G**
 closes it and returns to the editor with its draft intact. On macOS, Alt+G needs
 a terminal that sends Option as Alt; `/goal` always works.
+
+### Attention
+
+A goal's coordinator asks a person through `dots attention` requests; a request
+holds the tasks it names until the coordinator incorporates the answer. While a
+followed goal has an open request, one line below the editor names it and counts
+the others; a click opens the popup's **Attention** view. The popup opens there
+whenever requests are outstanding, otherwise on **Work**. **←/→** switch views,
+except while typing an answer, where they move the cursor. The selected
+question and its options show at once and stay visible while typing. **Enter**
+chooses an option or sends typed text; **Esc** steps back, then closes. Closing
+never answers or withdraws a request, and unsent drafts stay for the session.
+If the coordinator replaced the question meanwhile, the popup shows the new one
+beside your unsent draft and applies nothing to it.
+
+An answer is saved before the popup says so. Only the runtime that currently
+coordinates the goal, and only while the goal is not held, receives a message
+to incorporate it; other sessions show the same requests without acting, and
+only the coordinator reports them to the terminal status. A held goal stays
+paused whatever arrives. Answers given in chat are recorded with the person's
+exact typed words through the `attention_record_chat` tool, separately from the
+agent's interpretation. Each followed goal's context carries its current
+mandate with the human input it rests on, recent decisions, saved answers not
+yet incorporated, and open requests, read from the store rather than the
+transcript.
 
 For another project, supply its exact `project` key from `dots task --json`,
 not a guessed path. Several goals may be followed at once; selecting one changes
