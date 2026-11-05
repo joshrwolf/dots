@@ -1,10 +1,13 @@
-// One Pi process with the real goal extension loaded from source (re-imported
-// on reload, as Pi loads it). Prints one JSON line per observation of what a
-// native bash command sees, then exits through Pi's own shutdown.
+// One Pi process with the real goal and jobs extensions loaded from source
+// (re-imported on reload, as Pi loads them). Prints one JSON line per
+// observation of what a model's bash command, a `!` command and a job see,
+// then exits through Pi's own shutdown.
 // Usage: agent-runtime.mjs lifecycle <cwd> <project> <task> <task>
 //        agent-runtime.mjs observe <cwd> <session file>
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
+import {existsSync, readFileSync} from 'node:fs';
+import {setTimeout as delay} from 'node:timers/promises';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -14,6 +17,7 @@ const host = await import(hostModule('pi-coding-agent'));
 const [flow, cwd, ...rest] = process.argv.slice(2);
 const extensions = [
   fileURLToPath(new URL('../../extensions/goal/index.ts', import.meta.url)),
+  fileURLToPath(new URL('../../extensions/jobs/index.ts', import.meta.url)),
   fileURLToPath(new URL('./agent-observer.mjs', import.meta.url)),
 ];
 const agentDir = process.env.PI_CODING_AGENT_DIR;
@@ -52,7 +56,12 @@ const bind = () =>
     mode: 'rpc',
     onError: error => failures.push(String(error.error ?? error)),
   });
-/** What native bash sees, as the observer command reports it. */
+const PRINT = `printf '%s\\n%s' "$PI_SESSION_ID" "$DOTS_AGENT_OWNER"`;
+const parse = text => {
+  const [session = '', owner = ''] = text.trim().split('\n');
+  return {session, owner};
+};
+/** What a model's bash command, a `!` command and a job see. */
 async function observe(step, claim) {
   const session = runtime.session;
   await session.prompt(
@@ -60,14 +69,32 @@ async function observe(step, claim) {
   );
   const report = globalThis.fixtureAgentReport;
   assert.equal(report?.step, step);
+  const user = await session.executeBash(PRINT);
+  assert.equal(user.exitCode, 0);
+  const file = join(agentDir, `job-${process.pid}-${step}.txt`);
+  const runner = session.extensionRunner;
+  await runner
+    .getToolDefinition('job_start')
+    .execute(
+      'fixture-job',
+      {command: `${PRINT} > '${file}.tmp' && mv '${file}.tmp' '${file}'`},
+      undefined,
+      undefined,
+      runner.createToolContext('fixture-job', undefined),
+    );
+  for (let waited = 0; !existsSync(file); waited += 50) {
+    assert.ok(waited < 10_000, `job for ${step} did not finish`);
+    await delay(50);
+  }
   console.log(
     JSON.stringify({
       step,
       session: session.sessionManager.getSessionId(),
       shell: report.shell,
+      user: parse(user.output),
+      job: parse(readFileSync(file, 'utf8')),
     }),
   );
-  return report.shell;
 }
 const owner = task =>
   JSON.parse(

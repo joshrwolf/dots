@@ -16,6 +16,7 @@ import {WORKER_ACTIVITY_EVENT} from '../src/ui/worker-activity.ts';
 const inherited = {
   DOTS_WORKER_ID: process.env.DOTS_WORKER_ID,
   DOTS_AGENT_OWNER: process.env.DOTS_AGENT_OWNER,
+  PI_SESSION_ID: process.env.PI_SESSION_ID,
 };
 beforeEach(() => {
   for (const name of Object.keys(inherited)) delete process.env[name];
@@ -1019,6 +1020,7 @@ test('ending a runtime releases its claims; reload keeps them and workers never 
     await h.event('session_shutdown', {type: 'session_shutdown', reason});
     assert.deepEqual(h.backend.releases, [owner], reason);
     assert.equal(process.env.DOTS_AGENT_OWNER, undefined, reason);
+    assert.equal(process.env.PI_SESSION_ID, undefined, reason);
   }
   const reload = harness();
   await reload.event('session_start', {reason: 'startup'});
@@ -1059,13 +1061,15 @@ test('ending a runtime releases its claims; reload keeps them and workers never 
 });
 
 test('each runtime is its own actor: reload and tree keep it, every other start mints one', async () => {
-  // An owner inherited from a parent process is never adopted.
+  // Identity inherited from a parent process is never adopted or left standing.
+  process.env.PI_SESSION_ID = 'outer-session';
   process.env.DOTS_AGENT_OWNER = 'pi-fixture-session-0123456789abcdef';
   const first = harness();
   await first.event('session_start', {reason: 'startup'});
   const a1 = process.env.DOTS_AGENT_OWNER;
   assert.match(a1, runtimeOf('fixture-session'));
   assert.notEqual(a1, 'pi-fixture-session-0123456789abcdef');
+  assert.equal(process.env.PI_SESSION_ID, 'fixture-session');
   await first.event('session_tree');
   assert.equal(process.env.DOTS_AGENT_OWNER, a1);
   await first.event('session_shutdown', {reason: 'reload'});
@@ -1080,6 +1084,7 @@ test('each runtime is its own actor: reload and tree keep it, every other start 
   await other.event('session_start', {reason: 'resume'});
   const b = process.env.DOTS_AGENT_OWNER;
   assert.match(b, runtimeOf('other-session'));
+  assert.equal(process.env.PI_SESSION_ID, 'other-session');
   await other.event('session_shutdown', {reason: 'resume'});
 
   // Back to the first session in the same process: a new actor.
@@ -1113,6 +1118,7 @@ test('a stale runtime releases only its own claims and leaves the next actor exp
   await ending;
   assert.deepEqual(slow.releases, [previous]);
   assert.equal(process.env.DOTS_AGENT_OWNER, current);
+  assert.equal(process.env.PI_SESSION_ID, 'fixture-session');
   await next.event('session_shutdown', {reason: 'quit'});
   assert.deepEqual(next.backend.releases, [current]);
 });

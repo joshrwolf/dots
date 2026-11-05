@@ -10,9 +10,10 @@ import {randomBytes} from 'node:crypto';
  * session) and `/fork` each get their own actor, while `/reload` and `/tree`
  * keep it. Pi re-imports extension modules on reload; the binding survives
  * as process-global state, which child processes never inherit. The
- * exported `DOTS_AGENT_OWNER` is only how children learn it: it is always
- * overwritten here, so an owner inherited from a parent process is never
- * adopted. `PI_SESSION_ID` stays the host's.
+ * process exports it as `DOTS_AGENT_OWNER` beside the true native
+ * `PI_SESSION_ID`, so native bash, `!` commands, jobs and other children
+ * agree on both. Binding always overwrites them: values inherited from a
+ * parent process are never adopted or left standing.
  *
  * This is cooperative provenance for the task store, not authentication or a
  * fence: any process can set the variable.
@@ -35,8 +36,8 @@ type Holder = {[BOUND]?: Agent};
 const holder = globalThis as Holder;
 
 /**
- * The actor for a session that has just started, exported to `env` so
- * native shells, jobs and other children carry it.
+ * The actor for a session that has just started, exported to `env` with its
+ * native session ID so native shells, jobs and other children carry both.
  */
 export function bindAgent(
   session: string,
@@ -60,13 +61,15 @@ export function bindAgent(
     };
   }
   holder[BOUND] = agent;
+  env.PI_SESSION_ID = agent.session;
   env[OWNER_VARIABLE] = agent.owner;
   return agent;
 }
 
 /**
- * End `agent` when its session ends without reload. A stale caller cannot
- * end a later runtime's actor.
+ * End `agent` when its session ends without reload, withdrawing its export.
+ * A stale caller cannot end or erase a later runtime's, even one of the same
+ * session.
  */
 export function endAgent(
   agent: Agent,
@@ -74,7 +77,9 @@ export function endAgent(
 ): void {
   if (holder[BOUND] !== agent) return;
   delete holder[BOUND];
-  if (env[OWNER_VARIABLE] === agent.owner) delete env[OWNER_VARIABLE];
+  if (env[OWNER_VARIABLE] !== agent.owner) return;
+  delete env[OWNER_VARIABLE];
+  if (env.PI_SESSION_ID === agent.session) delete env.PI_SESSION_ID;
 }
 
 /**

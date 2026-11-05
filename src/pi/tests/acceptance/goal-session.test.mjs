@@ -124,8 +124,8 @@ test(
 const runtimeOf = session => new RegExp(`^pi-${session}-[0-9a-f]{16}$`);
 
 test(
-  'each live runtime is its own actor in native bash, and ending one releases only its claims',
-  {timeout: 60_000},
+  'each live runtime is its own actor in model bash, ! commands and jobs, and ending one releases only its claims',
+  {timeout: 120_000},
   async () => {
     const dir = mkdtempSync(join(tmpdir(), 'dots-agent-runtime-'));
     const env = Object.fromEntries(
@@ -166,7 +166,7 @@ test(
         execFile(
           process.execPath,
           [fixture, ...args],
-          {env: {...env, ...extra}, cwd, encoding: 'utf8', timeout: 30_000},
+          {env: {...env, ...extra}, cwd, encoding: 'utf8', timeout: 60_000},
           (error, stdout, stderr) =>
             error
               ? reject(new Error(`${error.message}\n${stderr}`, {cause: error}))
@@ -190,7 +190,11 @@ test(
           .task.id;
       const first = add('First');
       const second = add('Second');
-      const steps = await run(['lifecycle', cwd, project, first, second]);
+      // Stale identity inherited from an outer process never stands.
+      const steps = await run(['lifecycle', cwd, project, first, second], {
+        PI_SESSION_ID: 'outer-session',
+        DOTS_AGENT_OWNER: 'pi-outer-session-0123456789abcdef',
+      });
       for (const step of [
         'startup',
         'reload',
@@ -199,10 +203,12 @@ test(
         'resume',
         'fork',
       ]) {
-        const {session, shell} = steps[step];
-        // PI_SESSION_ID stays native; the owner names that session.
+        const {session, shell, user, job} = steps[step];
+        // Every child agrees on the true session and its runtime's owner.
         assert.equal(shell.session, session, step);
         assert.match(shell.owner, runtimeOf(session), step);
+        assert.deepEqual(user, shell, `${step} !`);
+        assert.deepEqual(job, shell, `${step} job`);
       }
       const owner = step => steps[step].shell.owner;
       assert.equal(owner('reload'), owner('startup'));
@@ -233,10 +239,12 @@ test(
         }),
       ]);
       const observed = [one, two, nested].map(steps => steps.observe);
-      for (const {session, shell} of observed) {
+      for (const {session, shell, user, job} of observed) {
         assert.equal(session, steps.startup.session);
         assert.equal(shell.session, session);
         assert.match(shell.owner, runtimeOf(session));
+        assert.deepEqual(user, shell);
+        assert.deepEqual(job, shell);
       }
       assert.equal(
         new Set([owner('startup'), ...observed.map(({shell}) => shell.owner)])
