@@ -40,6 +40,10 @@ task claims do not coordinate goals. Only that coordinator changes the goal's
 tasks, dependencies, results and lifecycle. Workers execute bounded briefs and
 report back; they do not claim or accept goal tasks.
 Followers inspect. A claim records responsibility, not authorization.
+Coordinated goals remain active in the local view/context until pause, release,
+handoff or closure. Unfollowing removes read-only following; it cannot hide
+ongoing responsibility. Active scope comes from current root claims, not copied
+session history.
 
 Before dispatch, check both ownership and eligibility. Held ancestors and open
 or unincorporated attention requests block the named work and its descendants;
