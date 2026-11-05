@@ -5,7 +5,7 @@
 
 use std::error::Error;
 use std::fs::File;
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -27,6 +27,17 @@ fn hold_lock(lock: &str) -> Result {
     Ok(())
 }
 
+fn echo_stdin(prefix: usize) -> Result {
+    std::io::stdout().write_all(&vec![b'o'; prefix])?;
+    std::io::stderr().write_all(&vec![b'e'; prefix])?;
+    let mut input = Vec::new();
+    std::io::stdin()
+        .take(4 * 1024 * 1024)
+        .read_to_end(&mut input)?;
+    std::io::stdout().write_all(&input)?;
+    Ok(())
+}
+
 fn main() -> Result {
     let mut args = std::env::args().skip(1);
     let role = args.next().unwrap_or_default();
@@ -39,6 +50,8 @@ fn main() -> Result {
             std::io::stderr().write_all(stderr.as_bytes())?;
             std::process::exit(code);
         }
+        // stdin PREFIX: fill both outputs before consuming and echoing bounded input.
+        "stdin" => echo_stdin(arg()?.parse()?)?,
         // write STREAM BYTES exit|hold: write BYTES zeros, then exit or keep running.
         "write" => {
             let (stream, length, then) = (arg()?, arg()?.parse()?, arg()?);

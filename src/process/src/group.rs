@@ -13,7 +13,7 @@ use std::process::{Command, ExitStatus, Stdio};
 
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
-use tokio::process::{Child, ChildStderr, ChildStdout};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 
 use crate::Error;
 
@@ -25,11 +25,14 @@ pub(crate) struct Group {
 }
 
 impl Group {
-    /// Starts `command` in a new process group, with stdin closed and both
+    /// Starts `command` in a new process group with the selected stdin and both
     /// output streams piped. Call from inside a Tokio runtime with I/O enabled.
-    pub(crate) fn spawn(mut command: Command) -> Result<(Self, ChildStdout, ChildStderr), Error> {
+    pub(crate) fn spawn(
+        mut command: Command,
+        stdin: Stdio,
+    ) -> Result<(Self, ChildStdout, ChildStderr), Error> {
         command
-            .stdin(Stdio::null())
+            .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
@@ -43,6 +46,10 @@ impl Group {
         let stdout = leader.stdout.take().expect("stdout was piped");
         let stderr = leader.stderr.take().expect("stderr was piped");
         Ok((Self { leader, id }, stdout, stderr))
+    }
+
+    pub(crate) fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.leader.stdin.take()
     }
 
     /// Waits for the leader to exit and reaps it. After this the group is

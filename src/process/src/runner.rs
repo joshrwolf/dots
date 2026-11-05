@@ -2,10 +2,11 @@
 
 use std::fs::File;
 use std::io;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
-use tokio::io::{AsyncRead, AsyncReadExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::process::ChildStdin;
 
 use crate::Error;
 use crate::group::Group;
@@ -24,6 +25,8 @@ pub struct Runner {
     stdout_limit: usize,
     stderr_limit: usize,
     stdout_sink: Option<File>,
+    stdin: Option<Vec<u8>>,
+    stdin_limit: usize,
 }
 
 impl Runner {
@@ -34,7 +37,21 @@ impl Runner {
             stdout_limit: limit,
             stderr_limit: limit,
             stdout_sink: None,
+            stdin: None,
+            stdin_limit: 0,
         }
+    }
+
+    /// Deliver bounded input while concurrently draining both output streams.
+    ///
+    /// Rejects excess input before spawning. The pipe closes after delivery so
+    /// the child observes EOF. A write failure, cancellation or timeout does not
+    /// prove that the child did not consume input or perform a side effect.
+    #[must_use]
+    pub fn stdin(mut self, bytes: Vec<u8>, limit: usize) -> Self {
+        self.stdin = Some(bytes);
+        self.stdin_limit = limit;
+        self
     }
 
     /// Give stdout its own byte budget; stderr keeps the original limit.
@@ -53,7 +70,7 @@ impl Runner {
         self
     }
 
-    /// Run `command` with stdin closed and stdout/stderr captured.
+    /// Run `command` with the configured input (closed by default) and captured output.
     ///
     /// The caller supplies operation-specific context and interprets the exit
     /// status. A timeout never proves a side effect did not occur.
@@ -79,13 +96,20 @@ impl Runner {
     /// completes kills the command's process group.
     pub async fn run(self, command: Command) -> Result<Output, Error> {
         self.validate()?;
-        let (mut group, stdout, stderr) = Group::spawn(command)?;
+        let stdin_mode = if self.stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        };
+        let (mut group, stdout, stderr) = Group::spawn(command, stdin_mode)?;
+        let stdin = group.take_stdin();
         let result = tokio::time::timeout(self.deadline, async {
             // Do not reap the leader while descendants may still hold the pipes.
             // Its reserved PID makes process-group cleanup safe on failure.
-            let (stdout, stderr) = tokio::try_join!(
+            let (stdout, stderr, ()) = tokio::try_join!(
                 capture(stdout, "stdout", self.stdout_limit, self.stdout_sink),
                 capture(stderr, "stderr", self.stderr_limit, None),
+                deliver(stdin, self.stdin),
             )?;
             Ok(Output {
                 status: group.wait().await?,
@@ -103,11 +127,34 @@ impl Runner {
     }
 
     fn validate(&self) -> Result<(), Error> {
-        if self.deadline.is_zero() || self.stdout_limit == 0 || self.stderr_limit == 0 {
+        if self.deadline.is_zero()
+            || self.stdout_limit == 0
+            || self.stderr_limit == 0
+            || (self.stdin.is_some() && self.stdin_limit == 0)
+        {
             return Err(Error::InvalidLimits);
+        }
+        if self
+            .stdin
+            .as_ref()
+            .is_some_and(|input| input.len() > self.stdin_limit)
+        {
+            return Err(Error::InputLimit {
+                limit: self.stdin_limit,
+            });
         }
         Ok(())
     }
+}
+
+async fn deliver(stdin: Option<ChildStdin>, input: Option<Vec<u8>>) -> Result<(), Error> {
+    if let Some(input) = input {
+        let mut pipe = stdin.expect("configured input has a piped child stdin");
+        pipe.write_all(&input).await.map_err(Error::Stdin)?;
+    } else {
+        assert!(stdin.is_none(), "default subprocess stdin is not piped");
+    }
+    Ok(())
 }
 
 async fn capture(
@@ -172,12 +219,19 @@ mod tests {
             Runner::new(Duration::ZERO, 1),
             Runner::new(Duration::from_secs(1), 0),
             Runner::new(Duration::from_secs(1), 1).stdout_limit(0),
+            Runner::new(Duration::from_secs(1), 1).stdin(Vec::new(), 0),
         ] {
             assert!(matches!(
                 runner.output(missing()),
                 Err(Error::InvalidLimits)
             ));
         }
+        assert!(matches!(
+            Runner::new(Duration::from_secs(1), 1)
+                .stdin(vec![0; 2], 1)
+                .output(missing()),
+            Err(Error::InputLimit { limit: 1 })
+        ));
         assert!(matches!(
             output(missing(), Duration::from_secs(1), 1),
             Err(Error::Spawn(_))

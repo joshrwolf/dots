@@ -584,10 +584,12 @@ fn command_error(
         },
         Process::Runtime(source) => Error::CommandRuntime { source },
         Process::Wait(source) => Error::InspectCommand { program, source },
-        error @ Process::InvalidLimits => Error::InspectCommand {
-            program,
-            source: std::io::Error::other(error),
-        },
+        error @ (Process::InvalidLimits | Process::InputLimit { .. } | Process::Stdin(_)) => {
+            Error::InspectCommand {
+                program,
+                source: std::io::Error::other(error),
+            }
+        }
     }
 }
 
@@ -605,6 +607,28 @@ fn configured_command(cwd: &Path, program: &str, args: &[OsString]) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unexpected_input_errors_keep_their_process_error_identity() {
+        let errors = [
+            dots_process::Error::InputLimit { limit: 16 },
+            dots_process::Error::Stdin(std::io::Error::from(std::io::ErrorKind::BrokenPipe)),
+        ];
+        for error in errors {
+            let mapped = command_error(error, Path::new("/neutral"), "git", &[]);
+            let Error::InspectCommand { source, .. } = mapped else {
+                panic!("input failure must remain an operational command error");
+            };
+            let original = source
+                .get_ref()
+                .and_then(|error| error.downcast_ref::<dots_process::Error>())
+                .expect("retain original process error as the source");
+            assert!(matches!(
+                original,
+                dots_process::Error::InputLimit { limit: 16 } | dots_process::Error::Stdin(_)
+            ));
+        }
+    }
 
     #[test]
     fn registered_pr_identity_is_canonical_and_supported() {

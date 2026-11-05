@@ -5,7 +5,7 @@ use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("subprocess deadline and output limits must be positive")]
+    #[error("subprocess deadline and configured input/output limits must be positive")]
     InvalidLimits,
     #[error("starting subprocess runtime")]
     Runtime(#[source] io::Error),
@@ -19,6 +19,10 @@ pub enum Error {
     },
     #[error("writing subprocess stdout to its destination")]
     Sink(#[source] io::Error),
+    #[error("subprocess stdin exceeded {limit} bytes before spawning")]
+    InputLimit { limit: usize },
+    #[error("writing subprocess stdin; a partial input may have been delivered")]
+    Stdin(#[source] io::Error),
     #[error("waiting for subprocess")]
     Wait(#[source] io::Error),
     #[error("subprocess exceeded its {0:?} deadline")]

@@ -69,6 +69,87 @@ fn captures_both_streams_of_a_successful_command() {
 }
 
 #[test]
+fn bounded_input_and_both_outputs_make_progress_without_pipe_deadlock() {
+    let input = vec![b'i'; 256 * 1024];
+    let prefix = 128 * 1024;
+    let got = Runner::new(LONG, prefix)
+        .stdin(input.clone(), input.len())
+        .stdout_limit(prefix + input.len())
+        .output(fixture(&["stdin", "131072"]))
+        .expect("input and both output streams must complete together");
+    assert!(got.status.success());
+    let mut expected = vec![b'o'; prefix];
+    expected.extend(input);
+    assert_eq!(got.stdout, expected);
+    assert_eq!(got.stderr, vec![b'e'; prefix]);
+}
+
+#[test]
+fn default_and_explicit_empty_input_deliver_eof() {
+    for runner in [
+        Runner::new(LONG, 16),
+        Runner::new(LONG, 16).stdin(Vec::new(), 1),
+    ] {
+        let got = runner
+            .output(fixture(&["stdin", "0"]))
+            .expect("closed or empty input must terminate the reader");
+        assert!(got.status.success());
+        assert_eq!(got.stdout, b"");
+        assert_eq!(got.stderr, b"");
+    }
+}
+
+#[test]
+fn early_input_closure_is_not_reported_as_successful_delivery() {
+    let result = Runner::new(LONG, 1024)
+        .stdin(vec![0; 2 * 1024 * 1024], 2 * 1024 * 1024)
+        .output(fixture(&["emit", "", "", "0"]));
+    assert!(
+        matches!(result, Err(Error::Stdin(ref error))
+        if error.kind() == std::io::ErrorKind::BrokenPipe),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn blocked_input_obeys_deadline_and_kills_the_process_group() {
+    let scratch = Scratch::new("stdin-group").expect("create fixture directory");
+    let (ready, lock) = (scratch.path("ready"), scratch.path("lock"));
+    let result = Runner::new(DEADLINE, 1024)
+        .stdin(vec![0; 2 * 1024 * 1024], 2 * 1024 * 1024)
+        .output(fixture(&["group", &ready, &lock]));
+    assert!(matches!(result, Err(Error::Timeout(_))), "{result:?}");
+    assert_eq!(
+        signal::kill(pid(&ready).expect("fixture became ready"), None),
+        Err(Errno::ESRCH)
+    );
+    within(move || {
+        File::open(lock)
+            .expect("open descendant lock")
+            .lock()
+            .expect("lock released");
+    })
+    .expect("descendant survived the input deadline");
+}
+
+#[test]
+fn output_limit_cancels_a_simultaneously_blocked_input() {
+    let result = Runner::new(LONG, 1024)
+        .stdin(vec![0; 2 * 1024 * 1024], 2 * 1024 * 1024)
+        .output(fixture(&["write", "stdout", "65536", "hold"]));
+    assert!(
+        matches!(
+            result,
+            Err(Error::OutputLimit {
+                stream: "stdout",
+                ..
+            })
+        ),
+        "{result:?}"
+    );
+}
+
+#[test]
 fn returns_a_nonzero_status_to_the_caller() {
     let got = dots_process::output(fixture(&["emit", "", "failed", "7"]), LONG, 32).unwrap();
     assert_eq!(got.status.code(), Some(7));

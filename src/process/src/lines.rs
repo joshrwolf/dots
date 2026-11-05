@@ -8,7 +8,7 @@
 //! been reaped, and closes both pipes.
 
 use std::io;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
 use tokio::process::{ChildStderr, ChildStdout};
@@ -45,7 +45,7 @@ impl Lines {
         if limit == 0 {
             return Err(Error::InvalidLimits);
         }
-        let (group, stdout, stderr) = Group::spawn(command)?;
+        let (group, stdout, stderr) = Group::spawn(command, Stdio::null())?;
         Ok(Self {
             group,
             stdout: BufReader::new(stdout),
