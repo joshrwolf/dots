@@ -122,7 +122,7 @@ impl Session {
         };
         let overview = self
             .store()
-            .and_then(|store| Ok(store.goal_overview(&project, &goal, false)?))
+            .and_then(|store| Ok(store.goal_overview(&project, &goal, true)?))
             .map_err(|error| format!("{error:#}"));
         self.viewer.set_overview(goal, overview);
     }
@@ -466,6 +466,15 @@ enum Region {
     Tasks,
 }
 
+/// A request that stopped waiting while the user had it selected or drafted:
+/// a closed copy that keeps its question and the draft under its own ID.
+#[derive(Debug)]
+struct Retired {
+    goal: GoalAttention,
+    request: Request,
+    outcome: String,
+}
+
 /// The view's whole state: a pure function of inputs and store reads.
 #[derive(Debug)]
 struct Viewer {
@@ -481,6 +490,7 @@ struct Viewer {
     selected: Option<String>,
     items: HashMap<String, usize>,
     drafts: HashMap<String, Draft>,
+    retired: Vec<Retired>,
     notice: Option<Notice>,
     context_scroll: usize,
     goal: Option<(Project, String)>,
@@ -512,6 +522,7 @@ impl Viewer {
             selected: None,
             items: HashMap::new(),
             drafts: HashMap::new(),
+            retired: Vec::new(),
             notice: None,
             context_scroll: 0,
             goal: None,
@@ -527,16 +538,28 @@ impl Viewer {
     }
 
     /// Waiting requests first, then answered ones awaiting their coordinator,
-    /// each oldest first.
+    /// then retired ones, each oldest first.
     fn requests(&self) -> Vec<(&GoalAttention, &Request)> {
+        let retired = |id: &str| self.retired.iter().any(|retired| retired.request.id == id);
         let mut requests: Vec<_> = self
             .goals()
             .iter()
             .flat_map(|goal| goal.requests.iter().map(move |request| (goal, request)))
-            .filter(|(_, request)| request.state != RequestState::Closed)
+            .filter(|(_, request)| request.state != RequestState::Closed && !retired(&request.id))
+            .chain(
+                self.retired
+                    .iter()
+                    .map(|retired| (&retired.goal, &retired.request)),
+            )
             .collect();
-        requests
-            .sort_by_key(|(_, request)| (request.state != RequestState::Open, request.created_at));
+        requests.sort_by_key(|(_, request)| {
+            let rank = match request.state {
+                RequestState::Open => 0,
+                RequestState::Answered => 1,
+                RequestState::Closed => 2,
+            };
+            (rank, request.created_at)
+        });
         requests
     }
 
@@ -554,16 +577,10 @@ impl Viewer {
             .find(|(_, request)| request.id == id)
     }
 
-    fn find(&self, id: &str) -> Option<&Request> {
-        self.goals()
-            .iter()
-            .flat_map(|goal| &goal.requests)
-            .find(|request| request.id == id)
-    }
-
     /// Reads a new store snapshot, keeping selection, drafts and the user's
-    /// place. A request replaced while the user was looking at it hands its
-    /// draft to the replacement, which the user must still send.
+    /// place. A request that stops waiting while selected or drafted is
+    /// retired: it stays listed, closed, with its original question and
+    /// draft, and nothing moves onto a replacement or selects one.
     fn refresh(&mut self, list: std::result::Result<AttentionList, String>) {
         let list = match list {
             Ok(list) => list,
@@ -573,18 +590,49 @@ impl Viewer {
             }
         };
         self.unavailable = None;
-        let before = self.selected.as_deref().and_then(|id| {
-            self.find(id)
-                .map(|request| (request.id.clone(), request.title.clone(), request.state))
-        });
-        let index = self.selected.as_deref().and_then(|id| {
-            self.requests()
-                .iter()
-                .position(|(_, request)| request.id == id)
-        });
+        let before = self
+            .current()
+            .map(|(_, request)| (request.id.clone(), request.state));
+        let watched: Vec<(GoalAttention, Request)> = self
+            .requests()
+            .into_iter()
+            .filter(|(_, request)| {
+                request.state != RequestState::Closed
+                    && (self.selected.as_deref() == Some(request.id.as_str())
+                        || self
+                            .drafts
+                            .get(&request.id)
+                            .is_some_and(|draft| !draft.text.is_empty()))
+            })
+            .map(|(goal, request)| (heading(goal), request.clone()))
+            .collect();
         self.list = Some(list);
-        if let Some((id, title, state)) = before {
-            self.follow(&id, &title, state, index);
+        for (goal, request) in watched {
+            let outstanding = self.goals().iter().any(|goal| {
+                goal.requests
+                    .iter()
+                    .any(|now| now.id == request.id && now.state != RequestState::Closed)
+            });
+            if !outstanding {
+                let replacement = self
+                    .goals()
+                    .iter()
+                    .flat_map(|goal| &goal.requests)
+                    .find(|now| now.supersedes.as_deref() == Some(request.id.as_str()))
+                    .map(|now| now.id.clone());
+                self.retire(goal, request, None, replacement);
+            }
+        }
+        let drafts = &self.drafts;
+        let selected = self.selected.as_deref();
+        self.retired.retain(|retired| {
+            selected == Some(retired.request.id.as_str())
+                || drafts
+                    .get(&retired.request.id)
+                    .is_some_and(|draft| !draft.text.is_empty())
+        });
+        if let Some((id, state)) = before {
+            self.follow(&id, state);
         }
         if self.current().is_none() {
             self.selected = self
@@ -607,78 +655,82 @@ impl Viewer {
         }
     }
 
-    /// Keeps the user's place after the selected request changed in the store.
-    fn follow(&mut self, id: &str, title: &str, state: RequestState, index: Option<usize>) {
-        if let Some((_, now)) = self.current() {
-            if state == RequestState::Open
-                && now.state != RequestState::Open
-                && matches!(self.focus, Focus::Choices | Focus::Text)
-            {
-                self.focus = Focus::Requests;
-                self.notice = Some(Notice {
-                    request: Some(id.to_owned()),
-                    text: "This was answered elsewhere while you were here; your draft is kept."
-                        .into(),
-                    tone: Tone::Warning,
-                });
+    /// Keeps a request that no longer waits, closed and unanswerable, so its
+    /// question and the user's draft stay readable under its own ID.
+    fn retire(
+        &mut self,
+        goal: GoalAttention,
+        mut request: Request,
+        closure: Option<ClosureKind>,
+        replacement: Option<String>,
+    ) {
+        let outcome = if replacement.is_some() {
+            "Replaced by a newer question, listed separately; nothing was sent. Select the new question to answer it."
+        } else if request.state == RequestState::Answered {
+            "The coordinator took up this answer."
+        } else {
+            match closure {
+                Some(ClosureKind::Withdrawn) => "Withdrawn; nothing was sent.",
+                Some(ClosureKind::Incorporated) => "Closed by the coordinator.",
+                Some(ClosureKind::Superseded) | None => {
+                    "No longer waits for you; nothing was sent."
+                }
             }
-            return;
-        }
-        let replacement = self
-            .requests()
-            .iter()
-            .find(|(_, request)| request.supersedes.as_deref() == Some(id))
-            .map(|(_, request)| request.id.clone());
-        if let Some(replacement) = replacement {
-            self.carry_draft(id, &replacement);
-            self.selected = Some(replacement.clone());
-            if self.focus == Focus::Text {
-                self.focus = Focus::Choices;
-            }
-            self.notice = Some(Notice {
-                request: Some(replacement),
-                text: "The question changed while you were reading it. Nothing was sent; review the new question. Your draft is kept.".into(),
-                tone: Tone::Warning,
-            });
-            return;
-        }
-        let requests = self.requests();
-        self.selected = index
-            .and_then(|index| requests.get(index.min(requests.len().saturating_sub(1))))
-            .map(|(_, request)| request.id.clone());
-        self.focus = Focus::Requests;
-        self.notice = Some(Notice {
-            request: None,
-            text: format!("“{}” no longer waits for you.", clean_line(title)),
-            tone: Tone::Info,
+        };
+        request.state = RequestState::Closed;
+        request.superseded_by = replacement;
+        self.retired
+            .retain(|retired| retired.request.id != request.id);
+        self.retired.push(Retired {
+            goal,
+            request,
+            outcome: outcome.to_owned(),
         });
     }
 
-    fn carry_draft(&mut self, from: &str, to: &str) {
-        if let Some(draft) = self.drafts.get(from).cloned()
-            && !draft.text.is_empty()
-        {
-            self.drafts.entry(to.to_owned()).or_insert(draft);
+    /// Tells the user the selected request changed in the store. Selection
+    /// never moves, so no queued key can act on a different question.
+    fn follow(&mut self, id: &str, state: RequestState) {
+        let Some((_, now)) = self.current() else {
+            return;
+        };
+        if state != RequestState::Open || now.state == RequestState::Open {
+            return;
         }
+        let what = if now.superseded_by.is_some() {
+            "The question changed while you were here. Nothing was sent; the new question is listed separately."
+        } else if now.state == RequestState::Answered {
+            "This was answered elsewhere while you were here."
+        } else {
+            "This no longer waits for you; nothing was sent."
+        };
+        let drafted = self
+            .drafts
+            .get(id)
+            .is_some_and(|draft| !draft.text.is_empty());
+        if self.focus == Focus::Text {
+            self.focus = Focus::Choices;
+        }
+        self.notice = Some(Notice {
+            request: Some(id.to_owned()),
+            text: if drafted {
+                format!("{what} Your draft is kept here.")
+            } else {
+                what.to_owned()
+            },
+            tone: Tone::Warning,
+        });
     }
 
     /// The outcome of an answer the user sent. Only success removes the draft;
-    /// a stale answer is never moved onto a replacement.
+    /// a stale answer is never moved onto a replacement, and the selection
+    /// stays on the request the answer was for.
     fn answered(&mut self, id: &str, result: Result<Request>) {
         self.focus = Focus::Requests;
         let error = match result {
             Ok(request) => {
                 self.drafts.remove(id);
                 self.items.remove(id);
-                // On to the next question still waiting, if any.
-                let next = self
-                    .requests()
-                    .iter()
-                    .find(|(_, other)| other.id != id && other.state == RequestState::Open)
-                    .map(|(_, other)| other.id.clone());
-                if let Some(next) = next {
-                    self.select_request(next);
-                }
                 self.notice = Some(Notice {
                     request: None,
                     text: format!("Saved your answer to “{}”.", clean_line(&request.title)),
@@ -688,51 +740,50 @@ impl Viewer {
             }
             Err(error) => error,
         };
-        let stale = matches!(
-            error.downcast_ref::<dots_tasks::Error>(),
-            Some(dots_tasks::Error::RequestNotOpen { .. })
-        );
-        let (text, replacement) = match error.downcast_ref::<dots_tasks::Error>() {
-            Some(dots_tasks::Error::RequestNotOpen {
-                replacement: Some(replacement),
-                ..
-            }) => (
-                "The question changed before your answer was saved. Nothing was sent; review the new question. Your draft is kept.".to_owned(),
-                Some(replacement.clone()),
-            ),
-            Some(dots_tasks::Error::RequestNotOpen {
-                state: RequestState::Answered,
-                ..
-            }) => (
-                "This was already answered elsewhere; yours was not saved. Your draft is kept."
-                    .to_owned(),
-                None,
-            ),
-            Some(dots_tasks::Error::RequestNotOpen { closure, .. }) => (
-                format!(
-                    "This request was {} before your answer was saved; nothing was sent.",
-                    match closure {
-                        Some(ClosureKind::Withdrawn) => "withdrawn",
-                        Some(ClosureKind::Superseded) => "replaced",
-                        Some(ClosureKind::Incorporated) | None => "closed",
-                    }
-                ),
-                None,
-            ),
-            _ => (
-                format!("Not saved: {error:#}. Your draft is kept."),
-                None,
-            ),
+        let Some(dots_tasks::Error::RequestNotOpen {
+            state,
+            closure,
+            replacement,
+            ..
+        }) = error.downcast_ref::<dots_tasks::Error>()
+        else {
+            self.notice = Some(Notice {
+                request: Some(id.to_owned()),
+                text: format!("Not saved: {error:#}. Your draft is kept."),
+                tone: Tone::Error,
+            });
+            return;
         };
-        if let Some(replacement) = &replacement {
-            self.carry_draft(id, replacement);
-            self.selected = Some(replacement.clone());
-            self.focus = Focus::Choices;
+        let text = if replacement.is_some() {
+            "The question changed before your answer was saved. Nothing was sent; the new question is listed separately. Your draft is kept here.".to_owned()
+        } else if *state == RequestState::Answered {
+            "This was already answered elsewhere; yours was not saved. Your draft is kept here."
+                .to_owned()
+        } else {
+            format!(
+                "This request was {} before your answer was saved; nothing was sent.",
+                match closure {
+                    Some(ClosureKind::Withdrawn) => "withdrawn",
+                    Some(ClosureKind::Superseded) => "replaced",
+                    Some(ClosureKind::Incorporated) | None => "closed",
+                }
+            )
+        };
+        if *state == RequestState::Closed {
+            let (closure, replacement) = (*closure, replacement.clone());
+            if let Some((goal, request)) = self
+                .requests()
+                .into_iter()
+                .find(|(_, request)| request.id == id)
+                .map(|(goal, request)| (heading(goal), request.clone()))
+            {
+                self.retire(goal, request, closure, replacement);
+            }
         }
         self.notice = Some(Notice {
-            request: Some(replacement.unwrap_or_else(|| id.to_owned())),
+            request: Some(id.to_owned()),
             text,
-            tone: if stale { Tone::Warning } else { Tone::Error },
+            tone: Tone::Warning,
         });
     }
 
@@ -1237,10 +1288,10 @@ fn row_style(selected: bool, focused: bool) -> (Span<'static>, Style) {
 }
 
 fn state_glyph(request: &Request) -> Span<'static> {
-    if request.state == RequestState::Open {
-        Span::styled("? ", warning())
-    } else {
-        Span::styled("✓ ", Style::new().fg(Color::Green))
+    match request.state {
+        RequestState::Open => Span::styled("? ", warning()),
+        RequestState::Answered => Span::styled("✓ ", Style::new().fg(Color::Green)),
+        RequestState::Closed => Span::styled("− ", muted()),
     }
 }
 
@@ -1600,18 +1651,16 @@ impl Viewer {
                 Item::Context => ("Read context…".to_owned(), None),
             })
             .collect();
-        let saved = (!open).then(|| (answer_text(request), coordination(goal)));
+        let draft = self.drafts.get(&request.id).cloned().unwrap_or_default();
+        let outcome = (!open).then(|| self.outcome(goal, request, &draft, max));
         let rationale = if typing {
             Vec::new()
         } else {
             rationale(request, max)
         };
-        let draft = self.drafts.get(&request.id).cloned().unwrap_or_default();
 
-        let action_rows = match &saved {
-            Some((answer, (note, _))) => {
-                wrap(&format!("Answer saved: {answer}"), max).len() + wrap(note, max).len() + 1
-            }
+        let action_rows = match &outcome {
+            Some(lines) => lines.len() + 1,
             None if typing => 2,
             None => item_labels.len(),
         };
@@ -1644,13 +1693,10 @@ impl Viewer {
                 rows.text(line, *style);
             }
         }
-        if let Some((answer, (note, style))) = saved {
+        if let Some(lines) = outcome {
             rows.blank();
-            for line in wrap(&format!("Answer saved: {answer}"), max) {
-                rows.text(&line, muted());
-            }
-            for line in wrap(&note, max) {
-                rows.text(&line, style);
+            for (line, style) in &lines {
+                rows.text(line, *style);
             }
             if let Some(row) = rows.text(
                 "› Read context…",
@@ -1713,6 +1759,38 @@ impl Viewer {
             }
         }
         None
+    }
+
+    /// What became of a request that no longer waits, and any unsent draft.
+    fn outcome(
+        &self,
+        goal: &GoalAttention,
+        request: &Request,
+        draft: &Draft,
+        max: usize,
+    ) -> Vec<(String, Style)> {
+        let mut lines: Vec<(String, Style)> = Vec::new();
+        let mut add = |text: &str, style: Style| {
+            lines.extend(wrap(text, max).into_iter().map(|line| (line, style)));
+        };
+        if let Some(retired) = self
+            .retired
+            .iter()
+            .find(|retired| retired.request.id == request.id)
+        {
+            add(&retired.outcome, warning());
+        } else {
+            add(&format!("Answer saved: {}", answer_text(request)), muted());
+            let (note, style) = coordination(goal);
+            add(&note, style);
+        }
+        if !draft.text.is_empty() {
+            add(
+                &format!("Your unsent draft: {}", clean_line(&draft.text)),
+                muted(),
+            );
+        }
+        lines
     }
 
     fn context(&mut self, buffer: &mut Buffer, area: Rect) {
@@ -1850,9 +1928,14 @@ impl Viewer {
                 ),
                 muted(),
             ),
-            (None, _) => (
-                "No coordinator: nothing advances until someone resumes the goal in Pi.".to_owned(),
+            (None, _) if goal.mandate.is_some() => (
+                "Stopped: work was agreed but nobody coordinates it; resume the goal in Pi."
+                    .to_owned(),
                 warning(),
+            ),
+            (None, _) => (
+                "Not started: no execution is agreed and nobody coordinates it.".to_owned(),
+                muted(),
             ),
         };
         head.extend(
@@ -1916,6 +1999,21 @@ impl Viewer {
     }
 }
 
+/// The goal fields a retired request is shown with; its requests and mandate
+/// stay in the live list.
+fn heading(goal: &GoalAttention) -> GoalAttention {
+    GoalAttention {
+        project: goal.project.clone(),
+        project_name: goal.project_name.clone(),
+        goal: goal.goal.clone(),
+        title: goal.title.clone(),
+        status: goal.status,
+        coordinator: goal.coordinator.clone(),
+        mandate: None,
+        requests: Vec::new(),
+    }
+}
+
 fn goal_glyph(goal: &GoalAttention) -> Span<'static> {
     if goal
         .requests
@@ -1923,7 +2021,9 @@ fn goal_glyph(goal: &GoalAttention) -> Span<'static> {
         .any(|request| request.state == RequestState::Open)
     {
         Span::styled("? ", warning())
-    } else if goal.status == Status::Held {
+    } else if goal.status == Status::Held
+        || (goal.coordinator.is_none() && goal.mandate.is_some() && !goal.status.is_closed())
+    {
         Span::styled("! ", warning())
     } else if goal.coordinator.is_none() && !goal.status.is_closed() {
         Span::styled("○ ", muted())
@@ -1935,13 +2035,18 @@ fn goal_glyph(goal: &GoalAttention) -> Span<'static> {
 /// A task's state as the goal popup in Pi names it, with holds first.
 fn task_state(task: &Task) -> (&'static str, Style) {
     let open = matches!(task.status, Status::Open | Status::Review);
-    if open
-        && task
-            .holds
+    let request_hold = |wanted: RequestState| {
+        task.holds
             .iter()
-            .any(|hold| matches!(hold, Hold::Request { .. }))
-    {
+            .any(|hold| matches!(hold, Hold::Request { state, .. } if *state == wanted))
+    };
+    if open && request_hold(RequestState::Open) {
         return ("? Needs you", warning());
+    }
+    // The human already answered; the hold lifts when the coordinator
+    // incorporates the answer.
+    if open && request_hold(RequestState::Answered) {
+        return ("◇ Awaiting coordinator", muted());
     }
     if open
         && task
@@ -2048,7 +2153,7 @@ fn window(draft: &Draft, max: usize) -> (String, usize) {
 
 #[cfg(test)]
 mod tests {
-    use dots_tasks::attention::{Answer, Choice, RequestTask, ScopeError};
+    use dots_tasks::attention::{Answer, Choice, Decision, DecisionKind, RequestTask, ScopeError};
     use dots_tasks::{Goal, GoalProgress};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -2278,29 +2383,100 @@ mod tests {
         assert_eq!(view.drafts["r-1"].text, "draft");
     }
 
+    /// `two()` with "r-1" replaced by "r-3".
+    fn replaced() -> AttentionList {
+        let mut list = two();
+        let mut replacement = request("r-3", "Public export names", &[("rename", "Rename")]);
+        replacement.supersedes = Some("r-1".into());
+        replacement.created_at = 3;
+        list.goals[0].requests[0] = replacement;
+        list
+    }
+
+    /// Queued Enters, as a user pressing Return again would send them.
+    fn enters(view: &mut Viewer) -> Vec<Effect> {
+        (0..6)
+            .map(|_| press(view, KeyCode::Enter))
+            .filter(|effect| *effect != Effect::None)
+            .collect()
+    }
+
     #[test]
-    fn a_question_replaced_during_a_refresh_hands_over_the_draft_but_sends_nothing() {
+    fn a_question_replaced_while_typing_keeps_the_draft_with_the_original() {
         let mut view = viewer(two());
         press(&mut view, KeyCode::Enter);
         press(&mut view, KeyCode::Down);
         press(&mut view, KeyCode::Down);
         press(&mut view, KeyCode::Enter);
         type_text(&mut view, "half typed");
-        let mut replaced = two();
-        let mut replacement = request("r-3", "Public export names", &[("update", "Update")]);
-        replacement.supersedes = Some("r-1".into());
-        replaced.goals[0].requests[0] = replacement;
-        view.refresh(Ok(replaced));
-        assert_eq!(view.selected.as_deref(), Some("r-3"));
+        view.refresh(Ok(replaced()));
+        assert_eq!(view.selected.as_deref(), Some("r-1"));
         assert_eq!(view.focus, Focus::Choices);
-        assert_eq!(view.drafts["r-3"].text, "half typed");
         assert_eq!(view.drafts["r-1"].text, "half typed");
-        let shown = screen(&mut view, 60, 20);
+        assert!(
+            !view.drafts.contains_key("r-3"),
+            "the replacement starts fresh"
+        );
+        let shown = screen(&mut view, 120, 30);
         assert!(shown.contains("question changed"), "{shown}");
+        assert!(shown.contains("Public export names: which way"), "{shown}");
+        assert!(shown.contains("Your unsent draft: half typed"), "{shown}");
+        assert!(shown.contains("− Public export names"), "{shown}");
+        assert!(shown.contains("? Public export names"), "{shown}");
+        assert_eq!(enters(&mut view), []);
+
+        // A later refresh keeps the original; the replacement needs a deliberate choice.
+        view.refresh(Ok(replaced()));
+        assert_eq!(view.selected.as_deref(), Some("r-1"));
+        press(&mut view, KeyCode::Esc);
+        press(&mut view, KeyCode::Up);
+        assert_eq!(view.selected.as_deref(), Some("r-3"));
+        press(&mut view, KeyCode::Enter);
+        match press(&mut view, KeyCode::Enter) {
+            Effect::Answer {
+                request, choice, ..
+            } => {
+                assert_eq!(request, "r-3");
+                assert_eq!(choice.as_deref(), Some("rename"));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
-    fn a_stale_answer_shows_the_replacement_and_keeps_the_draft() {
+    fn repeated_return_after_a_stale_answer_never_answers_the_replacement() {
+        let mut view = viewer(two());
+        press(&mut view, KeyCode::Enter);
+        let Effect::Answer { request, .. } = press(&mut view, KeyCode::Enter) else {
+            panic!("the first choice answers");
+        };
+        assert_eq!(request, "r-1");
+        view.answered(
+            "r-1",
+            Err(dots_tasks::Error::RequestNotOpen {
+                id: "r-1".into(),
+                state: RequestState::Closed,
+                closure: Some(ClosureKind::Superseded),
+                replacement: Some("r-3".into()),
+            }
+            .into()),
+        );
+        assert_eq!(enters(&mut view), [], "before the reload");
+        view.refresh(Ok(replaced()));
+        assert_eq!(view.selected.as_deref(), Some("r-1"));
+        assert_eq!(enters(&mut view), [], "after the reload");
+        press(&mut view, KeyCode::Esc);
+        let notice = view.notice.clone().unwrap();
+        assert_eq!(notice.request.as_deref(), Some("r-1"));
+        assert!(notice.text.contains("Nothing was sent"), "{}", notice.text);
+        assert!(!view.drafts.contains_key("r-3"));
+        let shown = screen(&mut view, 120, 30);
+        assert!(shown.contains("Replaced by a newer question"), "{shown}");
+        assert!(shown.contains("Attention (2)"), "{shown}");
+    }
+
+    #[test]
+    fn an_answer_saved_elsewhere_keeps_the_draft_on_its_own_request() {
         let mut view = viewer(two());
         view.drafts.insert(
             "r-1".into(),
@@ -2313,53 +2489,62 @@ mod tests {
             "r-1",
             Err(dots_tasks::Error::RequestNotOpen {
                 id: "r-1".into(),
-                state: RequestState::Closed,
-                closure: Some(ClosureKind::Superseded),
-                replacement: Some("r-2".into()),
-            }
-            .into()),
-        );
-        assert_eq!(view.selected.as_deref(), Some("r-2"));
-        assert_eq!(view.drafts["r-1"].text, "mine");
-        assert_eq!(view.drafts["r-2"].text, "mine");
-        let notice = view.notice.clone().unwrap();
-        assert_eq!(notice.request.as_deref(), Some("r-2"));
-        assert!(notice.text.contains("Nothing was sent"), "{}", notice.text);
-
-        view.answered(
-            "r-1",
-            Err(dots_tasks::Error::RequestNotOpen {
-                id: "r-1".into(),
                 state: RequestState::Answered,
                 closure: None,
                 replacement: None,
             }
             .into()),
         );
-        assert!(view.notice.unwrap().text.contains("already answered"));
-        assert_eq!(view.drafts["r-1"].text, "mine");
-    }
-
-    #[test]
-    fn only_a_saved_answer_clears_its_draft_and_moves_on() {
-        let mut view = viewer(two());
-        view.drafts.insert("r-1".into(), Draft::default());
-        view.answered("r-1", Err(anyhow::anyhow!("disk full")));
-        assert!(view.drafts.contains_key("r-1"));
         assert!(
             view.notice
                 .clone()
                 .unwrap()
                 .text
-                .contains("Not saved: disk full")
+                .contains("already answered")
         );
+        let mut answered = two();
+        answered.goals[0].requests[0].state = RequestState::Answered;
+        view.refresh(Ok(answered));
+        assert_eq!(view.selected.as_deref(), Some("r-1"));
+        assert_eq!(view.drafts["r-1"].text, "mine");
+        assert_eq!(enters(&mut view), []);
+        press(&mut view, KeyCode::Esc);
+        assert!(screen(&mut view, 120, 30).contains("Your unsent draft: mine"));
+
+        // Once the coordinator takes up the answer the request leaves the
+        // list; the draft stays readable with it.
+        let mut withdrawn = two();
+        withdrawn.goals[0].requests.remove(0);
+        view.refresh(Ok(withdrawn));
+        assert_eq!(view.selected.as_deref(), Some("r-1"));
+        let shown = screen(&mut view, 120, 30);
+        assert!(
+            shown.contains("The coordinator took up this answer"),
+            "{shown}"
+        );
+        assert!(shown.contains("Your unsent draft: mine"), "{shown}");
+    }
+
+    #[test]
+    fn only_a_saved_answer_clears_its_draft() {
+        let mut view = viewer(two());
+        view.drafts.insert("r-1".into(), Draft::default());
+        view.answered("r-1", Err(anyhow::anyhow!("disk full")));
+        assert!(view.drafts.contains_key("r-1"));
+        let notice = view.notice.clone().unwrap();
+        assert!(
+            notice.text.contains("Not saved: disk full"),
+            "{}",
+            notice.text
+        );
+        assert_eq!(notice.tone, Tone::Error);
         let saved = two().goals.remove(0).requests.remove(0);
         view.answered("r-1", Ok(saved));
         assert!(!view.drafts.contains_key("r-1"));
         assert_eq!(
             view.selected.as_deref(),
-            Some("r-2"),
-            "on to the next question"
+            Some("r-1"),
+            "selection never jumps"
         );
     }
 
@@ -2520,7 +2705,7 @@ mod tests {
     }
 
     #[test]
-    fn work_shows_stopped_goals_and_tasks_waiting_on_the_user() {
+    fn work_shows_every_task_and_who_each_hold_waits_on() {
         let mut view = viewer(list(vec![goal(Vec::new(), None)]));
         press(&mut view, KeyCode::Right);
         let mut root = task("t-goal", "t-goal", "Refactor exports", Status::Open);
@@ -2533,8 +2718,16 @@ mod tests {
             task: "t-api".into(),
             state: RequestState::Open,
         });
+        let mut answered = task("t-cli", "t-goal", "Adapt the CLI", Status::Open);
+        answered.holds.push(Hold::Request {
+            request: "r-2".into(),
+            task: "t-cli".into(),
+            state: RequestState::Answered,
+        });
         let mut claimed = task("t-docs", "t-goal", "Write docs", Status::Open);
         claimed.owner = Some("pi-worker".into());
+        let done = task("t-spike", "t-goal", "Spike", Status::Done);
+        let dropped = task("t-alias", "t-goal", "Aliases", Status::Dropped);
         view.set_overview(
             "t-goal".into(),
             Ok(GoalOverview {
@@ -2544,20 +2737,57 @@ mod tests {
                     progress: GoalProgress::default(),
                     last_activity: 1,
                 },
-                tasks: vec![group, held, claimed],
-                hidden_closed: 2,
+                tasks: vec![group, held, answered, claimed, done, dropped],
+                hidden_closed: 0,
             }),
         );
         let shown = screen(&mut view, 120, 30);
-        assert!(shown.contains("No coordinator"), "{shown}");
         assert!(shown.contains("○ Open      API"), "{shown}");
         assert!(shown.contains("  ? Needs you Adapt the API"), "{shown}");
+        assert!(
+            shown.contains("◇ Awaiting coordinator Adapt the CLI"),
+            "{shown}"
+        );
         assert!(
             shown.contains("● Claimed   Write docs · pi-worker"),
             "{shown}"
         );
-        assert!(shown.contains("2 closed tasks hidden"), "{shown}");
-        assert!(!shown.contains("Nothing needs you"), "{shown}");
+        assert!(shown.contains("✓ Done      Spike"), "{shown}");
+        assert!(shown.contains("− Dropped   Aliases"), "{shown}");
+        assert!(!shown.contains("hidden"), "{shown}");
+    }
+
+    #[test]
+    fn only_agreed_work_without_a_coordinator_reads_as_stopped() {
+        let mut draft = goal(Vec::new(), None);
+        draft.goal = "t-draft".into();
+        draft.title = "Someday".into();
+        let mut stopped = goal(Vec::new(), None);
+        stopped.mandate = Some(Decision {
+            id: "d-1".into(),
+            project: project(),
+            goal: "t-goal".into(),
+            kind: DecisionKind::Mandate,
+            decision: "Refactor and update every consumer.".into(),
+            human: None,
+            request: None,
+            at: 1,
+            by: Some("pi-coordinator".into()),
+        });
+        let mut view = viewer(list(vec![draft, stopped]));
+        press(&mut view, KeyCode::Right);
+        let shown = screen(&mut view, 120, 20);
+        assert!(shown.contains("› ○ Someday"), "{shown}");
+        assert!(shown.contains("! Refactor exports"), "{shown}");
+        assert!(shown.contains("Not started"), "{shown}");
+        assert!(!shown.contains("Stopped"), "{shown}");
+        press(&mut view, KeyCode::Down);
+        let shown = screen(&mut view, 120, 20);
+        assert!(shown.contains("Stopped: work was agreed"), "{shown}");
+        assert!(
+            shown.contains("Agreed: Refactor and update every consumer."),
+            "{shown}"
+        );
     }
 
     #[test]

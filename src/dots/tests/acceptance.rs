@@ -511,6 +511,28 @@ mod attention_view {
                 1,
             )
             .unwrap();
+        let spike = store
+            .add(
+                &project,
+                &dots_tasks::NewTask {
+                    title: "Old spike".into(),
+                    body: None,
+                    parent: Some(goal.clone()),
+                    blocked_by: Vec::new(),
+                },
+                actor(COORDINATOR),
+            )
+            .unwrap();
+        store
+            .set_status(
+                &project,
+                &spike.id,
+                dots_tasks::Status::Dropped,
+                Some("superseded by the plan"),
+                actor(COORDINATOR),
+                false,
+            )
+            .unwrap();
         let names = store
             .raise_request(
                 &project,
@@ -619,7 +641,10 @@ mod attention_view {
         resize(&slave, 120, 40, &viewer);
         let at = screen.until(at, "Requests");
 
-        // A question replaced while the user types keeps the draft and sends nothing.
+        // The answered request stays selected; the user moves to the next one.
+        // A question replaced while the user types keeps the draft with the
+        // original, and repeated Return never answers the replacement.
+        send(&mut keyboard, "\x1b[A");
         send(&mut keyboard, "\r");
         send(&mut keyboard, "\r");
         send(&mut keyboard, "half typed");
@@ -634,12 +659,17 @@ mod attention_view {
             .request
             .id;
         let at = screen.until(at, "changed");
+        for _ in 0..4 {
+            send(&mut keyboard, "\r");
+        }
+        let at = screen.until(at, "unsent");
         send(&mut keyboard, "\x1b");
 
         // Mouse: the Work tab, then Close.
         click(&mut keyboard, 27, 1);
         let at = screen.until(at, "Goals");
-        screen.until(at, "refactor");
+        let at = screen.until(at, "refactor");
+        screen.until(at, "Dropped");
         click(&mut keyboard, 14, 40);
 
         let deadline = Instant::now() + WATCHDOG;
