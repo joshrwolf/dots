@@ -360,3 +360,314 @@ mod task_events {
         assert_eq!(status.code(), Some(0), "{status}");
     }
 }
+
+/// `dots attention view` on a pseudo-terminal over a disposable catalog: real
+/// keys, mouse reports and a resize; answers persist and closing answers
+/// nothing. No Rex server, agent or provider is involved.
+#[cfg(test)]
+mod attention_view {
+    use std::fs::File;
+    use std::io::{Read as _, Write as _};
+    use std::os::fd::OwnedFd;
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use dots_tasks::attention::{Choice, RequestContent, RequestKind, Scope, Source, StateFilter};
+    use dots_tasks::{Actor, Owner, Project, RequestState, Store};
+    use nix::pty::{self, Winsize};
+    use nix::sys::signal::{Signal, kill};
+    use nix::sys::termios::{self, LocalFlags};
+    use nix::unistd::Pid;
+
+    const WATCHDOG: Duration = Duration::from_secs(15);
+    const COORDINATOR: &str = "pi-coordinator";
+
+    struct Home(PathBuf);
+    impl Home {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "dots-attention-view-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(path.join("data/dots")).unwrap();
+            Self(path)
+        }
+        fn catalog(&self) -> PathBuf {
+            self.0.join("data").join(dots_tasks::STORE_PATH)
+        }
+    }
+    impl Drop for Home {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct Viewer(Child);
+    impl Drop for Viewer {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    struct Screen {
+        chunks: mpsc::Receiver<Vec<u8>>,
+        seen: Vec<u8>,
+    }
+    impl Screen {
+        fn read(master: File) -> Self {
+            let (sender, chunks) = mpsc::channel();
+            std::thread::spawn(move || {
+                let mut master = master;
+                let mut buffer = [0_u8; 4096];
+                while let Ok(count @ 1..) = master.read(&mut buffer) {
+                    if sender.send(buffer[..count].to_vec()).is_err() {
+                        return;
+                    }
+                }
+            });
+            Self {
+                chunks,
+                seen: Vec::new(),
+            }
+        }
+
+        /// Reads until `needle` appears after `from`, returning where it ends.
+        /// Ratatui moves the cursor over unchanged cells, spaces included, so
+        /// a needle is one word.
+        fn until(&mut self, from: usize, needle: &str) -> usize {
+            let deadline = Instant::now() + WATCHDOG;
+            loop {
+                if let Some(at) = self.seen[from.min(self.seen.len())..]
+                    .windows(needle.len())
+                    .position(|window| window == needle.as_bytes())
+                {
+                    return from + at + needle.len();
+                }
+                let left = deadline.saturating_duration_since(Instant::now());
+                match self.chunks.recv_timeout(left) {
+                    Ok(chunk) => self.seen.extend(chunk),
+                    Err(error) => panic!(
+                        "{needle:?} never appeared ({error}): {}",
+                        String::from_utf8_lossy(&self.seen[from.min(self.seen.len())..])
+                            .escape_debug()
+                    ),
+                }
+            }
+        }
+    }
+
+    fn actor(name: &str) -> Actor<'_> {
+        Actor {
+            name: Some(Owner::try_new(name).unwrap()),
+            now: 1,
+        }
+    }
+
+    fn content(kind: RequestKind, title: &str, choices: &[(&str, &str)]) -> RequestContent {
+        RequestContent {
+            kind,
+            title: title.into(),
+            question: format!("{title} now?"),
+            context: None,
+            recommendation: None,
+            choices: choices
+                .iter()
+                .map(|(id, label)| Choice {
+                    id: (*id).into(),
+                    label: (*label).into(),
+                    detail: None,
+                })
+                .collect(),
+            tasks: Vec::new(),
+        }
+    }
+
+    /// A project with one coordinated goal and two open requests.
+    fn fixture(catalog: &Path) -> (Project, String, String) {
+        let mut store = Store::create(catalog).unwrap();
+        let project = store.register_project("fixture").unwrap();
+        let goal = store
+            .create_goal(
+                &project,
+                "Ship the refactor",
+                "briefs/goal.md",
+                actor(COORDINATOR),
+            )
+            .unwrap();
+        let goal = goal.root.id;
+        store
+            .coordinate(
+                &project,
+                &goal,
+                Owner::try_new(COORDINATOR).unwrap(),
+                false,
+                false,
+                1,
+            )
+            .unwrap();
+        let names = store
+            .raise_request(
+                &project,
+                &goal,
+                "names",
+                &content(
+                    RequestKind::Decision,
+                    "Pick names",
+                    &[("update", "Update consumers"), ("keep", "Keep aliases")],
+                ),
+                actor(COORDINATOR),
+            )
+            .unwrap()
+            .request
+            .id;
+        let signin = store
+            .raise_request(
+                &project,
+                &goal,
+                "signin",
+                &content(RequestKind::Action, "Sign in", &[]),
+                actor(COORDINATOR),
+            )
+            .unwrap()
+            .request
+            .id;
+        (project, names, signin)
+    }
+
+    fn send(keyboard: &mut File, bytes: &str) {
+        keyboard.write_all(bytes.as_bytes()).unwrap();
+        keyboard.flush().unwrap();
+        // Lone escapes are told apart from sequences by timing.
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    fn resize(slave: &OwnedFd, columns: u16, rows: u16, viewer: &Viewer) {
+        let status = Command::new("stty")
+            .args(["cols", &columns.to_string(), "rows", &rows.to_string()])
+            .stdin(Stdio::from(slave.try_clone().unwrap()))
+            .status()
+            .unwrap();
+        assert!(status.success(), "stty {status}");
+        let pid = Pid::from_raw(i32::try_from(viewer.0.id()).unwrap());
+        kill(pid, Signal::SIGWINCH).unwrap();
+    }
+
+    /// An SGR left click, 1-based.
+    fn click(keyboard: &mut File, column: u16, row: u16) {
+        send(
+            keyboard,
+            &format!("\x1b[<0;{column};{row}M\x1b[<0;{column};{row}m"),
+        );
+    }
+
+    #[test]
+    fn answers_persist_from_a_real_terminal_and_closing_answers_nothing() {
+        let home = Home::new();
+        let (project, names, signin) = fixture(&home.catalog());
+        let size = Winsize {
+            ws_row: 24,
+            ws_col: 80,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let pty::OpenptyResult { master, slave } = pty::openpty(&size, None).unwrap();
+        let stdio = || Stdio::from(slave.try_clone().unwrap());
+        let mut viewer = Viewer(
+            Command::new(env!("CARGO_BIN_EXE_dots"))
+                .args(["attention", "view", "--scope", "global"])
+                .env_clear()
+                .env("HOME", &home.0)
+                .env("XDG_DATA_HOME", home.0.join("data"))
+                .env("PATH", "/usr/bin:/bin")
+                .env("TERM", "xterm-256color")
+                .stdin(stdio())
+                .stdout(stdio())
+                .stderr(stdio())
+                .spawn()
+                .unwrap(),
+        );
+        let master = File::from(master);
+        let mut keyboard = master.try_clone().unwrap();
+        let mut screen = Screen::read(master);
+
+        // The oldest question and its choices show at once on a narrow terminal.
+        let at = screen.until(0, "names");
+        let at = screen.until(at, "consumers");
+        send(&mut keyboard, "\r");
+        send(&mut keyboard, "\r");
+        let at = screen.until(at, "Saved");
+        let mut store = Store::open(&home.catalog()).unwrap();
+        let answered = store.request(&project, &names).unwrap();
+        assert_eq!(answered.state, RequestState::Answered);
+        let answer = answered.answer.unwrap();
+        assert_eq!(answer.content.choice.as_deref(), Some("update"));
+        assert_eq!(answer.content.source, Source::Ui);
+        assert_eq!(answer.content.interpretation, None);
+        assert_eq!(
+            answer.content.provenance.as_deref(),
+            Some("dots attention view --scope global")
+        );
+        assert_eq!(answer.by.as_deref(), Some("human"));
+
+        // Wide enough, requests and the answer sit side by side.
+        resize(&slave, 120, 40, &viewer);
+        let at = screen.until(at, "Requests");
+
+        // A question replaced while the user types keeps the draft and sends nothing.
+        send(&mut keyboard, "\r");
+        send(&mut keyboard, "\r");
+        send(&mut keyboard, "half typed");
+        let replacement = store
+            .supersede_request(
+                &project,
+                &signin,
+                &content(RequestKind::Action, "Sign in again", &[]),
+                actor(COORDINATOR),
+            )
+            .unwrap()
+            .request
+            .id;
+        let at = screen.until(at, "changed");
+        send(&mut keyboard, "\x1b");
+
+        // Mouse: the Work tab, then Close.
+        click(&mut keyboard, 27, 1);
+        let at = screen.until(at, "Goals");
+        screen.until(at, "refactor");
+        click(&mut keyboard, 14, 40);
+
+        let deadline = Instant::now() + WATCHDOG;
+        let status = loop {
+            if let Some(status) = viewer.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "the view did not close");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(status.success(), "{status}");
+        let flags = termios::tcgetattr(&slave).unwrap().local_flags;
+        assert!(
+            flags.contains(LocalFlags::ICANON | LocalFlags::ECHO),
+            "{flags:?}"
+        );
+        screen.until(0, "\x1b[?1000l");
+
+        let list = store.attention(&Scope::Global, StateFilter::All).unwrap();
+        let requests = &list.goals[0].requests;
+        let state = |id: &str| {
+            requests
+                .iter()
+                .find(|request| request.id == id)
+                .map(|request| (request.state, request.answer.is_some()))
+        };
+        assert_eq!(state(&names), Some((RequestState::Answered, true)));
+        assert_eq!(state(&signin), Some((RequestState::Closed, false)));
+        assert_eq!(state(&replacement), Some((RequestState::Open, false)));
+    }
+}

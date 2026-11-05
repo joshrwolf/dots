@@ -670,6 +670,15 @@ impl Viewer {
             Ok(request) => {
                 self.drafts.remove(id);
                 self.items.remove(id);
+                // On to the next question still waiting, if any.
+                let next = self
+                    .requests()
+                    .iter()
+                    .find(|(_, other)| other.id != id && other.state == RequestState::Open)
+                    .map(|(_, other)| other.id.clone());
+                if let Some(next) = next {
+                    self.select_request(next);
+                }
                 self.notice = Some(Notice {
                     request: None,
                     text: format!("Saved your answer to “{}”.", clean_line(&request.title)),
@@ -679,6 +688,10 @@ impl Viewer {
             }
             Err(error) => error,
         };
+        let stale = matches!(
+            error.downcast_ref::<dots_tasks::Error>(),
+            Some(dots_tasks::Error::RequestNotOpen { .. })
+        );
         let (text, replacement) = match error.downcast_ref::<dots_tasks::Error>() {
             Some(dots_tasks::Error::RequestNotOpen {
                 replacement: Some(replacement),
@@ -700,9 +713,8 @@ impl Viewer {
                     "This request was {} before your answer was saved; nothing was sent.",
                     match closure {
                         Some(ClosureKind::Withdrawn) => "withdrawn",
-                        Some(ClosureKind::Incorporated) => "closed",
                         Some(ClosureKind::Superseded) => "replaced",
-                        None => "closed",
+                        Some(ClosureKind::Incorporated) | None => "closed",
                     }
                 ),
                 None,
@@ -720,7 +732,7 @@ impl Viewer {
         self.notice = Some(Notice {
             request: Some(replacement.unwrap_or_else(|| id.to_owned())),
             text,
-            tone: Tone::Warning,
+            tone: if stale { Tone::Warning } else { Tone::Error },
         });
     }
 
@@ -1183,19 +1195,19 @@ impl<'a> Rows<'a> {
     }
 
     /// Draws one line, returning its row, or `None` once the area is full.
-    fn line(&mut self, line: Line<'_>) -> Option<Rect> {
+    fn line(&mut self, line: &Line<'_>) -> Option<Rect> {
         if self.next >= self.area.height {
             return None;
         }
         let row = Rect::new(self.area.x, self.area.y + self.next, self.area.width, 1);
-        self.buffer.set_line(row.x, row.y, &line, row.width);
+        self.buffer.set_line(row.x, row.y, line, row.width);
         self.next += 1;
         Some(row)
     }
 
     fn text(&mut self, text: &str, style: Style) -> Option<Rect> {
         let text = fit(text, self.width());
-        self.line(Line::from(Span::styled(text, style)))
+        self.line(&Line::from(Span::styled(text, style)))
     }
 
     fn blank(&mut self) {
@@ -1324,7 +1336,11 @@ impl Viewer {
         self.header(buffer, header);
         if let Some(status) = self.status_line() {
             let mut rows = Rows::new(buffer, body);
-            rows.text(&status, warning());
+            // Up to two lines: what failed must stay readable, the body must stay visible.
+            let max = rows.width();
+            for line in wrap(&status, max).iter().take(2) {
+                rows.text(line, warning());
+            }
             body = rows.rest();
         }
         let cursor = match self.tab {
@@ -1501,7 +1517,7 @@ impl Viewer {
                 let mut rows = Rows::new(buffer, area);
                 let counter = format!("{}/{count} · ", position + 1);
                 let title = fit(&title, rows.width().saturating_sub(width(&counter)));
-                if let Some(row) = rows.line(Line::from(vec![
+                if let Some(row) = rows.line(&Line::from(vec![
                     Span::styled(counter, muted()),
                     Span::styled(title, accent().add_modifier(Modifier::BOLD)),
                 ])) {
@@ -1534,7 +1550,7 @@ impl Viewer {
             let is_selected = Some(id.as_str()) == selected;
             let (marker, style) = row_style(is_selected, focused);
             let title = fit(title, rows.width().saturating_sub(4));
-            if let Some(row) = rows.line(Line::from(vec![
+            if let Some(row) = rows.line(&Line::from(vec![
                 marker,
                 glyph.clone(),
                 Span::styled(title, style),
@@ -1546,6 +1562,10 @@ impl Viewer {
 
     /// The selected request: its question first, then what the user can do,
     /// with the rationale only when all of it fits.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one row budget decides how the question, rationale and actions share the area"
+    )]
     fn detail(&mut self, buffer: &mut Buffer, area: Rect) -> Option<Position> {
         let (goal, request) = self.current()?;
         let max = usize::from(area.width);
@@ -1587,7 +1607,6 @@ impl Viewer {
             rationale(request, max)
         };
         let draft = self.drafts.get(&request.id).cloned().unwrap_or_default();
-        let id = request.id.clone();
 
         let action_rows = match &saved {
             Some((answer, (note, _))) => {
@@ -1654,7 +1673,7 @@ impl Viewer {
             } else {
                 Span::raw(shown)
             };
-            let row = rows.line(Line::from(vec![Span::styled(prompt, muted()), text]));
+            let row = rows.line(&Line::from(vec![Span::styled(prompt, muted()), text]));
             let send = rows.text("[ Send answer ]", accent());
             if let Some(row) = row {
                 self.hits.push((row, Target::Input));
@@ -1689,11 +1708,10 @@ impl Viewer {
                     spans.push(Span::styled(format!(" · {}", fit(detail, left)), muted()));
                 }
             }
-            if let Some(row) = rows.line(Line::from(spans)) {
+            if let Some(row) = rows.line(&Line::from(spans)) {
                 self.hits.push((row, Target::Item(index)));
             }
         }
-        let _ = id;
         None
     }
 
@@ -1767,7 +1785,7 @@ impl Viewer {
             for (index, (glyph, title)) in entries.iter().enumerate().skip(first).take(visible) {
                 let (marker, style) = row_style(index == at, true);
                 let title = fit(title, rows.width().saturating_sub(4));
-                if let Some(row) = rows.line(Line::from(vec![
+                if let Some(row) = rows.line(&Line::from(vec![
                     marker,
                     glyph.clone(),
                     Span::styled(title, style),
@@ -1788,7 +1806,7 @@ impl Viewer {
                 &entries[at].1,
                 rows.width().saturating_sub(width(&counter) + 2),
             );
-            if let Some(row) = rows.line(Line::from(vec![
+            if let Some(row) = rows.line(&Line::from(vec![
                 Span::styled(counter, muted()),
                 entries[at].0.clone(),
                 Span::styled(title, accent().add_modifier(Modifier::BOLD)),
@@ -2026,4 +2044,567 @@ fn window(draft: &Draft, max: usize) -> (String, usize) {
         cells += grapheme.width();
     }
     (shown, caret)
+}
+
+#[cfg(test)]
+mod tests {
+    use dots_tasks::attention::{Answer, Choice, RequestTask, ScopeError};
+    use dots_tasks::{Goal, GoalProgress};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+
+    fn project() -> Project {
+        Project::try_new("p-00000000000000000000000000000001").unwrap()
+    }
+
+    fn request(id: &str, title: &str, choices: &[(&str, &str)]) -> Request {
+        Request {
+            id: id.into(),
+            project: project(),
+            goal: "t-goal".into(),
+            key: id.into(),
+            kind: RequestKind::Decision,
+            title: title.into(),
+            question: format!("{title}: which way should this go?"),
+            context: Some("This decides the public API after the refactor.".into()),
+            recommendation: Some("Update consumers together.".into()),
+            choices: choices
+                .iter()
+                .map(|(id, label)| Choice {
+                    id: (*id).into(),
+                    label: (*label).into(),
+                    detail: None,
+                })
+                .collect(),
+            tasks: vec![RequestTask {
+                id: "t-api".into(),
+                title: "Adapt the API".into(),
+                status: Status::Open,
+            }],
+            state: RequestState::Open,
+            created_at: 1,
+            created_by: Some("pi-coordinator".into()),
+            supersedes: None,
+            superseded_by: None,
+            answer: None,
+            closure: None,
+        }
+    }
+
+    fn goal(requests: Vec<Request>, coordinator: Option<&str>) -> GoalAttention {
+        GoalAttention {
+            project: project(),
+            project_name: "fixture".into(),
+            goal: "t-goal".into(),
+            title: "Refactor exports".into(),
+            status: Status::Open,
+            coordinator: coordinator.map(Into::into),
+            mandate: None,
+            requests,
+        }
+    }
+
+    fn list(goals: Vec<GoalAttention>) -> AttentionList {
+        AttentionList {
+            goals,
+            errors: Vec::new(),
+        }
+    }
+
+    fn two() -> AttentionList {
+        let mut second = request("r-2", "CLI output format", &[("text", "Readable text")]);
+        second.created_at = 2;
+        list(vec![goal(
+            vec![
+                request(
+                    "r-1",
+                    "Public export names",
+                    &[
+                        ("update", "Update consumers together"),
+                        ("keep", "Keep aliases"),
+                    ],
+                ),
+                second,
+            ],
+            Some("pi-coordinator"),
+        )])
+    }
+
+    fn viewer(loaded: AttentionList) -> Viewer {
+        let mut viewer = Viewer::new(&Scope::Global);
+        viewer.refresh(Ok(loaded));
+        viewer
+    }
+
+    fn screen(viewer: &mut Viewer, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| viewer.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn press(viewer: &mut Viewer, code: KeyCode) -> Effect {
+        viewer.key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn type_text(viewer: &mut Viewer, text: &str) {
+        for c in text.chars() {
+            press(viewer, KeyCode::Char(c));
+        }
+    }
+
+    fn click(viewer: &mut Viewer, column: u16, row: u16) -> Effect {
+        let at = |kind| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        viewer.mouse(at(MouseEventKind::Down(MouseButton::Left)));
+        viewer.mouse(at(MouseEventKind::Up(MouseButton::Left)))
+    }
+
+    /// Where `text` starts on the screen.
+    fn locate(screen: &str, text: &str) -> (u16, u16) {
+        for (row, line) in screen.lines().enumerate() {
+            if let Some(at) = line.find(text) {
+                let column = line[..at].width();
+                return (u16::try_from(column).unwrap(), u16::try_from(row).unwrap());
+            }
+        }
+        panic!("{text:?} is not on screen:\n{screen}");
+    }
+
+    #[test]
+    fn the_selected_question_and_its_choices_show_at_once_narrow_and_wide() {
+        let mut view = viewer(two());
+        let narrow = screen(&mut view, 40, 16);
+        assert!(narrow.contains("1/2 · Public export names"), "{narrow}");
+        assert!(narrow.contains("which way"), "{narrow}");
+        assert!(narrow.contains("Update consumers together"), "{narrow}");
+        assert!(narrow.contains("Attention (2)"), "{narrow}");
+        let wide = screen(&mut view, 120, 40);
+        assert!(wide.contains("Requests"), "{wide}");
+        assert!(wide.contains("CLI output format"), "{wide}");
+        assert!(
+            wide.contains("Recommend: Update consumers together."),
+            "{wide}"
+        );
+        assert!(
+            wide.contains("Waits on this: Adapt the API (open)"),
+            "{wide}"
+        );
+        let (list_column, _) = locate(&wide, "? CLI output format");
+        let (detail_column, _) = locate(&wide, "Keep aliases");
+        assert!(detail_column > list_column + 20, "side by side:\n{wide}");
+    }
+
+    #[test]
+    fn typing_keeps_the_question_and_arrows_edit_instead_of_switching_views() {
+        let mut view = viewer(two());
+        press(&mut view, KeyCode::Enter);
+        for _ in 0..2 {
+            press(&mut view, KeyCode::Down);
+        }
+        assert_eq!(press(&mut view, KeyCode::Enter), Effect::None);
+        assert_eq!(view.focus, Focus::Text);
+        type_text(&mut view, "use both");
+        press(&mut view, KeyCode::Left);
+        press(&mut view, KeyCode::Left);
+        type_text(&mut view, "X");
+        assert_eq!(view.tab, Tab::Attention);
+        assert_eq!(view.drafts["r-1"].text, "use boXth");
+        let typing = screen(&mut view, 40, 16);
+        assert!(typing.contains("which way"), "{typing}");
+        assert!(typing.contains("Answer: use boXth"), "{typing}");
+        assert!(!typing.contains("Recommend"), "{typing}");
+        press(&mut view, KeyCode::End);
+        match press(&mut view, KeyCode::Enter) {
+            Effect::Answer {
+                request,
+                choice,
+                text,
+                ..
+            } => {
+                assert_eq!(request, "r-1");
+                assert_eq!(choice, None);
+                assert_eq!(text.as_deref(), Some("use boXth"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_choice_answers_the_request_it_belongs_to() {
+        let mut view = viewer(two());
+        press(&mut view, KeyCode::Down);
+        press(&mut view, KeyCode::Enter);
+        match press(&mut view, KeyCode::Enter) {
+            Effect::Answer {
+                request, choice, ..
+            } => {
+                assert_eq!(request, "r-2");
+                assert_eq!(choice.as_deref(), Some("text"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn views_switch_with_left_and_right_and_escape_closes_without_answering() {
+        let mut view = viewer(two());
+        assert_eq!(press(&mut view, KeyCode::Right), Effect::Overview);
+        assert_eq!(view.tab, Tab::Work);
+        assert_eq!(press(&mut view, KeyCode::Left), Effect::None);
+        assert_eq!(view.tab, Tab::Attention);
+        press(&mut view, KeyCode::Enter);
+        press(&mut view, KeyCode::Down);
+        press(&mut view, KeyCode::Down);
+        press(&mut view, KeyCode::Enter);
+        type_text(&mut view, "draft");
+        let steps: Vec<Effect> = (0..3).map(|_| press(&mut view, KeyCode::Esc)).collect();
+        assert_eq!(steps, [Effect::None, Effect::None, Effect::Close]);
+        assert_eq!(view.drafts["r-1"].text, "draft");
+    }
+
+    #[test]
+    fn a_question_replaced_during_a_refresh_hands_over_the_draft_but_sends_nothing() {
+        let mut view = viewer(two());
+        press(&mut view, KeyCode::Enter);
+        press(&mut view, KeyCode::Down);
+        press(&mut view, KeyCode::Down);
+        press(&mut view, KeyCode::Enter);
+        type_text(&mut view, "half typed");
+        let mut replaced = two();
+        let mut replacement = request("r-3", "Public export names", &[("update", "Update")]);
+        replacement.supersedes = Some("r-1".into());
+        replaced.goals[0].requests[0] = replacement;
+        view.refresh(Ok(replaced));
+        assert_eq!(view.selected.as_deref(), Some("r-3"));
+        assert_eq!(view.focus, Focus::Choices);
+        assert_eq!(view.drafts["r-3"].text, "half typed");
+        assert_eq!(view.drafts["r-1"].text, "half typed");
+        let shown = screen(&mut view, 60, 20);
+        assert!(shown.contains("question changed"), "{shown}");
+    }
+
+    #[test]
+    fn a_stale_answer_shows_the_replacement_and_keeps_the_draft() {
+        let mut view = viewer(two());
+        view.drafts.insert(
+            "r-1".into(),
+            Draft {
+                text: "mine".into(),
+                cursor: 4,
+            },
+        );
+        view.answered(
+            "r-1",
+            Err(dots_tasks::Error::RequestNotOpen {
+                id: "r-1".into(),
+                state: RequestState::Closed,
+                closure: Some(ClosureKind::Superseded),
+                replacement: Some("r-2".into()),
+            }
+            .into()),
+        );
+        assert_eq!(view.selected.as_deref(), Some("r-2"));
+        assert_eq!(view.drafts["r-1"].text, "mine");
+        assert_eq!(view.drafts["r-2"].text, "mine");
+        let notice = view.notice.clone().unwrap();
+        assert_eq!(notice.request.as_deref(), Some("r-2"));
+        assert!(notice.text.contains("Nothing was sent"), "{}", notice.text);
+
+        view.answered(
+            "r-1",
+            Err(dots_tasks::Error::RequestNotOpen {
+                id: "r-1".into(),
+                state: RequestState::Answered,
+                closure: None,
+                replacement: None,
+            }
+            .into()),
+        );
+        assert!(view.notice.unwrap().text.contains("already answered"));
+        assert_eq!(view.drafts["r-1"].text, "mine");
+    }
+
+    #[test]
+    fn only_a_saved_answer_clears_its_draft_and_moves_on() {
+        let mut view = viewer(two());
+        view.drafts.insert("r-1".into(), Draft::default());
+        view.answered("r-1", Err(anyhow::anyhow!("disk full")));
+        assert!(view.drafts.contains_key("r-1"));
+        assert!(
+            view.notice
+                .clone()
+                .unwrap()
+                .text
+                .contains("Not saved: disk full")
+        );
+        let saved = two().goals.remove(0).requests.remove(0);
+        view.answered("r-1", Ok(saved));
+        assert!(!view.drafts.contains_key("r-1"));
+        assert_eq!(
+            view.selected.as_deref(),
+            Some("r-2"),
+            "on to the next question"
+        );
+    }
+
+    #[test]
+    fn an_answered_request_says_who_incorporates_it_and_whether_anyone_does() {
+        let mut answered = request("r-1", "Public export names", &[("update", "Update")]);
+        answered.state = RequestState::Answered;
+        answered.answer = Some(Answer {
+            content: AnswerContent {
+                choice: Some("update".into()),
+                text: None,
+                source: Source::Ui,
+                provenance: None,
+                interpretation: None,
+            },
+            at: 2,
+            by: Some(HUMAN.into()),
+        });
+        let mut view = viewer(list(vec![goal(vec![answered.clone()], None)]));
+        let shown = screen(&mut view, 80, 20);
+        assert!(shown.contains("Answer saved: Update"), "{shown}");
+        assert!(
+            shown.contains("No session coordinates this goal"),
+            "{shown}"
+        );
+        assert!(shown.contains("Attention (0)"), "{shown}");
+        let mut view = viewer(list(vec![goal(vec![answered], Some("pi-x"))]));
+        let shown = screen(&mut view, 80, 20);
+        assert!(shown.contains("claimed by pi-x"), "{shown}");
+    }
+
+    #[test]
+    fn unavailable_and_empty_states_never_read_as_nothing_needing_you() {
+        let mut view = Viewer::new(&Scope::Global);
+        view.refresh(Err("workspace absent".into()));
+        let shown = screen(&mut view, 60, 12);
+        assert!(
+            shown.contains("Attention is unavailable: workspace absent"),
+            "{shown}"
+        );
+        assert!(!shown.contains("Nothing needs you"), "{shown}");
+
+        let mut view = viewer(two());
+        view.refresh(Err("database is locked".into()));
+        let shown = screen(&mut view, 60, 16);
+        assert!(shown.contains("Refresh failed"), "{shown}");
+        assert!(shown.contains("Public export names"), "{shown}");
+
+        let mut view = Viewer::new(&Scope::Goals(Vec::new()));
+        view.refresh(Ok(list(Vec::new())));
+        assert!(screen(&mut view, 60, 12).contains("No goals are selected."));
+
+        let mut partial = list(Vec::new());
+        partial.errors.push(ScopeError {
+            project: "p-00000000000000000000000000000002".into(),
+            goal: None,
+            error: "unsupported schema".into(),
+        });
+        let mut view = viewer(partial);
+        let shown = screen(&mut view, 100, 12);
+        assert!(shown.contains("unsupported"), "{shown}");
+        assert!(
+            shown.contains("parts of the scope that could be read"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn mouse_clicks_select_views_and_answer_while_the_wheel_moves_lists() {
+        let mut view = viewer(two());
+        let shown = screen(&mut view, 120, 30);
+        let (column, row) = locate(&shown, "Work →");
+        assert_eq!(click(&mut view, column + 1, row), Effect::Overview);
+        assert_eq!(view.tab, Tab::Work);
+        let shown = screen(&mut view, 120, 30);
+        let (column, row) = locate(&shown, "Attention (2)");
+        click(&mut view, column, row);
+        assert_eq!(view.tab, Tab::Attention);
+
+        let shown = screen(&mut view, 120, 30);
+        let (column, row) = locate(&shown, "? Public export names");
+        view.mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(view.selected.as_deref(), Some("r-2"));
+        let shown = screen(&mut view, 120, 30);
+        let (column, row) = locate(&shown, "Readable text");
+        match click(&mut view, column, row) {
+            Effect::Answer {
+                request, choice, ..
+            } => {
+                assert_eq!(request, "r-2");
+                assert_eq!(choice.as_deref(), Some("text"));
+            }
+            other => panic!("{other:?}"),
+        }
+        // A press that ends elsewhere does nothing.
+        let shown = screen(&mut view, 120, 30);
+        let (column, row) = locate(&shown, "[ Close ]");
+        view.mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+        let released = view.mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 0,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(released, Effect::None);
+    }
+
+    #[test]
+    fn every_size_draws_within_bounds_and_tiny_ones_ask_for_room() {
+        let mut view = viewer(two());
+        for tab in [Tab::Attention, Tab::Work] {
+            view.tab = tab;
+            for width in 1..=130 {
+                for height in [1, 3, 5, 6, 8, 12, 16, 24, 45] {
+                    screen(&mut view, width, height);
+                }
+            }
+        }
+        view.tab = Tab::Attention;
+        assert!(screen(&mut view, 20, 5).contains("Enlarge"));
+    }
+
+    fn task(id: &str, parent: &str, title: &str, status: Status) -> Task {
+        Task {
+            id: id.into(),
+            parent: Some(parent.into()),
+            title: title.into(),
+            body: None,
+            result: None,
+            result_event: None,
+            evidence: Vec::new(),
+            purged_evidence: Vec::new(),
+            status,
+            references: Vec::new(),
+            branch: None,
+            owner: None,
+            created_at: 1,
+            updated_at: 1,
+            closed_at: None,
+            blocked_by: Vec::new(),
+            prerequisites: Vec::new(),
+            children: 0,
+            unclosed_children: 0,
+            last_event: None,
+            goal: Some("t-goal".into()),
+            holds: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn work_shows_stopped_goals_and_tasks_waiting_on_the_user() {
+        let mut view = viewer(list(vec![goal(Vec::new(), None)]));
+        press(&mut view, KeyCode::Right);
+        let mut root = task("t-goal", "t-goal", "Refactor exports", Status::Open);
+        root.parent = None;
+        let mut group = task("t-group", "t-goal", "API", Status::Open);
+        group.children = 1;
+        let mut held = task("t-api", "t-group", "Adapt the API", Status::Open);
+        held.holds.push(Hold::Request {
+            request: "r-1".into(),
+            task: "t-api".into(),
+            state: RequestState::Open,
+        });
+        let mut claimed = task("t-docs", "t-goal", "Write docs", Status::Open);
+        claimed.owner = Some("pi-worker".into());
+        view.set_overview(
+            "t-goal".into(),
+            Ok(GoalOverview {
+                goal: Goal {
+                    root,
+                    brief: "briefs/goal.md".into(),
+                    progress: GoalProgress::default(),
+                    last_activity: 1,
+                },
+                tasks: vec![group, held, claimed],
+                hidden_closed: 2,
+            }),
+        );
+        let shown = screen(&mut view, 120, 30);
+        assert!(shown.contains("No coordinator"), "{shown}");
+        assert!(shown.contains("○ Open      API"), "{shown}");
+        assert!(shown.contains("  ? Needs you Adapt the API"), "{shown}");
+        assert!(
+            shown.contains("● Claimed   Write docs · pi-worker"),
+            "{shown}"
+        );
+        assert!(shown.contains("2 closed tasks hidden"), "{shown}");
+        assert!(!shown.contains("Nothing needs you"), "{shown}");
+    }
+
+    #[test]
+    fn drafts_edit_by_grapheme_within_the_store_bound() {
+        let mut draft = Draft::default();
+        draft.insert("e\u{301}👍🏽 x\ty\nz\u{7}");
+        assert_eq!(draft.text, "e\u{301}👍🏽 x y z");
+        draft.cursor = "e\u{301}👍🏽".len();
+        draft.edit(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert_eq!(draft.text, "e\u{301} x y z");
+        draft.edit(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(draft.cursor, 0);
+        draft.edit(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+        assert_eq!(draft.text, "e\u{301} x y z");
+        draft.edit(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        draft.edit(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+        assert_eq!(draft.text, "e\u{301} x y ");
+        draft.insert(&"a".repeat(ANSWER_LIMIT));
+        assert_eq!(draft.text.len(), ANSWER_LIMIT);
+        let (shown, caret) = window(&draft, 10);
+        assert!(shown.width() <= 10);
+        assert_eq!(caret, shown.width());
+    }
+
+    #[test]
+    fn provenance_names_the_view_and_its_rex_terminal_within_bounds() {
+        assert_eq!(
+            provenance(&Scope::Global, Some("session:1"), Some("block:2\u{7}")),
+            "dots attention view --scope global rex:session:1 block:block:2"
+        );
+        assert_eq!(
+            provenance(&Scope::Goals(Vec::new()), None, Some(" ")),
+            "dots attention view --scope goals"
+        );
+        let long = "x".repeat(1000);
+        assert_eq!(
+            provenance(&Scope::Global, Some(&long), None).len(),
+            PROVENANCE_LIMIT
+        );
+    }
+
+    #[test]
+    fn wrapping_and_fitting_measure_cells() {
+        assert_eq!(wrap("one two three", 7), ["one two", "three"]);
+        assert_eq!(wrap("界界界界", 5), ["界界", "界界"]);
+        assert_eq!(wrap("a\n\nb", 10), ["a", "", "b"]);
+        assert_eq!(fit("界界界", 5), "界界…");
+        assert_eq!(clean_line("a\u{1b}[31mb\nc"), "a[31mb c");
+    }
 }
