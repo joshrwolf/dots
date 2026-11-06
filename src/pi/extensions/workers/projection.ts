@@ -83,112 +83,131 @@ function userText(message: Message<'user'>): string {
         .join('');
 }
 
-/**
- * Rows for the active entries of a saved session. Tool calls pair with their
- * results by tool call id; a result without its call, which compaction can
- * leave behind, is not shown, as in Pi.
- */
+/** Rows for the active entries of a saved session; see {@link TranscriptProjection}. */
 export function projectTranscript(
   entries: readonly SessionEntry[],
-): TranscriptItem[] {
-  const items: TranscriptItem[] = [];
-  const pending = new Map<string, number>();
-  for (const entry of entries) {
-    const messages = sessionEntryToContextMessages(entry);
-    for (const [index, message] of messages.entries()) {
-      const key = `${entry.id}:${index}`;
-      switch (message.role) {
-        case 'user': {
-          const text = userText(message);
-          if (!text) break;
-          const skill = parseSkillBlock(text);
-          if (skill) {
-            items.push({kind: 'skill', key: `${key}:skill`, block: skill});
-            if (skill.userMessage)
+): readonly TranscriptItem[] {
+  const projection = new TranscriptProjection();
+  projection.append(entries);
+  return projection.items;
+}
+
+/**
+ * Rows for the active entries of a saved session, extended as entries are
+ * appended to the same branch. Tool calls pair with their results by tool
+ * call id; a result without its call, which compaction can leave behind, is
+ * not shown, as in Pi. Appending entries in parts yields the same rows as
+ * projecting them at once.
+ */
+export class TranscriptProjection {
+  private readonly rows: TranscriptItem[] = [];
+  /** Shown tool calls still waiting for a result, by call id: their row index. */
+  private readonly pending = new Map<string, number>();
+
+  get items(): readonly TranscriptItem[] {
+    return this.rows;
+  }
+
+  append(entries: readonly SessionEntry[]): void {
+    const items = this.rows;
+    const pending = this.pending;
+    for (const entry of entries) {
+      const messages = sessionEntryToContextMessages(entry);
+      for (const [index, message] of messages.entries()) {
+        const key = `${entry.id}:${index}`;
+        switch (message.role) {
+          case 'user': {
+            const text = userText(message);
+            if (!text) break;
+            const skill = parseSkillBlock(text);
+            if (skill) {
+              items.push({kind: 'skill', key: `${key}:skill`, block: skill});
+              if (skill.userMessage)
+                items.push({
+                  kind: 'user',
+                  key,
+                  text: skill.userMessage,
+                  entryId: entry.id,
+                  timestamp: entry.timestamp,
+                });
+            } else
               items.push({
                 kind: 'user',
                 key,
-                text: skill.userMessage,
+                text,
                 entryId: entry.id,
                 timestamp: entry.timestamp,
               });
-          } else
+            break;
+          }
+          case 'assistant': {
             items.push({
-              kind: 'user',
+              kind: 'assistant',
               key,
-              text,
+              message,
               entryId: entry.id,
               timestamp: entry.timestamp,
             });
-          break;
-        }
-        case 'assistant': {
-          items.push({
-            kind: 'assistant',
-            key,
-            message,
-            entryId: entry.id,
-            timestamp: entry.timestamp,
-          });
-          const failed =
-            message.stopReason === 'aborted' || message.stopReason === 'error';
-          for (const block of message.content) {
-            if (block.type !== 'toolCall') continue;
-            const result: ToolOutcome | undefined = failed
-              ? {
-                  content: [
-                    {
-                      type: 'text',
-                      text:
-                        message.stopReason === 'aborted'
-                          ? 'Operation aborted'
-                          : message.errorMessage || 'Error',
-                    },
-                  ],
-                  isError: true,
-                }
-              : undefined;
-            if (!failed) pending.set(block.id, items.length);
-            items.push({
-              kind: 'tool',
-              key: `${key}:${block.id}`,
-              call: block,
-              result,
-            });
+            const failed =
+              message.stopReason === 'aborted' ||
+              message.stopReason === 'error';
+            for (const block of message.content) {
+              if (block.type !== 'toolCall') continue;
+              const result: ToolOutcome | undefined = failed
+                ? {
+                    content: [
+                      {
+                        type: 'text',
+                        text:
+                          message.stopReason === 'aborted'
+                            ? 'Operation aborted'
+                            : message.errorMessage || 'Error',
+                      },
+                    ],
+                    isError: true,
+                  }
+                : undefined;
+              if (!failed) pending.set(block.id, items.length);
+              items.push({
+                kind: 'tool',
+                key: `${key}:${block.id}`,
+                call: block,
+                result,
+              });
+            }
+            break;
           }
-          break;
+          case 'toolResult': {
+            const at = pending.get(message.toolCallId);
+            const item = at === undefined ? undefined : items[at];
+            if (item?.kind !== 'tool') break;
+            pending.delete(message.toolCallId);
+            items[at!] = {
+              ...item,
+              result: {
+                content: message.content,
+                details: message.details,
+                isError: message.isError,
+              },
+            };
+            break;
+          }
+          case 'bashExecution':
+            items.push({kind: 'bash', key, message});
+            break;
+          case 'custom':
+            if (message.display) items.push({kind: 'custom', key, message});
+            break;
+          case 'compactionSummary':
+            items.push({kind: 'compaction', key, message});
+            break;
+          case 'branchSummary':
+            items.push({kind: 'branch', key, message});
+            break;
+          default:
+            break;
         }
-        case 'toolResult': {
-          const at = pending.get(message.toolCallId);
-          const item = at === undefined ? undefined : items[at];
-          if (item?.kind !== 'tool') break;
-          pending.delete(message.toolCallId);
-          items[at!] = {
-            ...item,
-            result: {
-              content: message.content,
-              details: message.details,
-              isError: message.isError,
-            },
-          };
-          break;
-        }
-        case 'bashExecution':
-          items.push({kind: 'bash', key, message});
-          break;
-        case 'custom':
-          if (message.display) items.push({kind: 'custom', key, message});
-          break;
-        case 'compactionSummary':
-          items.push({kind: 'compaction', key, message});
-          break;
-        case 'branchSummary':
-          items.push({kind: 'branch', key, message});
-          break;
-        default:
-          break;
       }
     }
   }
-  return items;
 }

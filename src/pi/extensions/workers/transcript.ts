@@ -30,7 +30,7 @@ import {
 } from '../../src/features/thinking.ts';
 import type {SessionFollower} from './follow.ts';
 import {
-  projectTranscript,
+  TranscriptProjection,
   type ToolOutcome,
   type TranscriptItem,
 } from './projection.ts';
@@ -140,6 +140,9 @@ export class WorkerTranscript implements Component {
   private readonly options: TranscriptOptions;
   private readonly rows = new Map<string, Row>();
   private readonly toolKeys = new Map<string, string>();
+  private projection = new TranscriptProjection();
+  /** The follower generation and number of its entries `projection` holds. */
+  private projected = {generation: Number.NaN, entries: 0};
   private children: Component[] = [];
   private renderers: ((name: string) => ToolRenderers | undefined) | undefined;
   private rendererCwd: string | undefined;
@@ -407,7 +410,13 @@ export class WorkerTranscript implements Component {
   /** Brings row components in line with the saved items and the live response. */
   private rebuild(): void {
     const session = this.follower.session;
-    const items = projectTranscript(session.entries);
+    if (session.generation !== this.projected.generation) {
+      this.projection = new TranscriptProjection();
+      this.projected = {generation: session.generation, entries: 0};
+    }
+    this.projection.append(session.entries.slice(this.projected.entries));
+    this.projected.entries = session.entries.length;
+    const items = this.projection.items;
     const shown = items.slice(-TRANSCRIPT_ROWS);
     this.toolKeys.clear();
     for (const item of shown)
@@ -494,6 +503,8 @@ export class WorkerTranscript implements Component {
     this.live = undefined;
     this.rows.clear();
     this.toolKeys.clear();
+    this.projection = new TranscriptProjection();
+    this.projected = {generation: Number.NaN, entries: 0};
     this.children = [];
     this.started.clear();
     this.partial.clear();

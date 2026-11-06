@@ -12,6 +12,11 @@ interface FollowedSession {
   readonly header: SessionHeader | undefined;
   /** The active branch with compaction applied, as Pi renders it. */
   readonly entries: readonly SessionEntry[];
+  /**
+   * Changes whenever `entries` is rebuilt rather than extended. While it is
+   * unchanged, each `entries` starts with the previous one.
+   */
+  readonly generation: number;
   /** Records before the follower's read window were not read. */
   readonly truncated: boolean;
   /** Why the view may be incomplete; undefined when every saved line was read. */
@@ -35,7 +40,9 @@ const LF = 0x0a;
  *
  * The first read covers the header and at most the last `window` bytes. The
  * active branch is then rebuilt from the records in that window: its walk
- * back to the root stops at the first record outside it.
+ * back to the root stops at the first record outside it. Records that only
+ * extend the active branch are appended to it; anything else, such as a
+ * compaction or a new branch, rebuilds it.
  */
 export class SessionFollower {
   readonly file: string | undefined;
@@ -54,6 +61,7 @@ export class SessionFollower {
   private foreign = false;
   private notice: string | undefined;
   private active: readonly SessionEntry[] = [];
+  private generation = 0;
 
   constructor(file: string | undefined, window = READ_WINDOW) {
     this.file = file;
@@ -72,6 +80,7 @@ export class SessionFollower {
     return {
       header: this.header,
       entries: this.active,
+      generation: this.generation,
       truncated: this.truncated,
       notice: notices.length ? notices.join('; ') : undefined,
     };
@@ -125,6 +134,7 @@ export class SessionFollower {
     this.skipped = 0;
     this.foreign = false;
     this.active = [];
+    this.generation++;
   }
 
   /** Reads the header, then starts reading at the window; true when that changed the session. */
@@ -161,6 +171,7 @@ export class SessionFollower {
 
   private read(fd: number, size: number): boolean {
     let added = false;
+    const known = this.all.length;
     let pending = Buffer.alloc(0);
     let position = this.consumed;
     while (position < size) {
@@ -183,13 +194,42 @@ export class SessionFollower {
       bytes = bytes.subarray(start);
       pending = Buffer.from(bytes);
     }
-    if (added)
+    if (this.all.length === known) return added;
+    const appended = this.all.slice(known);
+    if (this.extendsLeaf(this.all[known - 1], appended))
+      this.active = [...this.active, ...appended];
+    else {
       this.active = buildContextEntries(
         this.all,
         this.all.at(-1)?.id ?? null,
         this.byId,
       );
+      this.generation++;
+    }
     return added;
+  }
+
+  /**
+   * Whether the appended records continue the active branch from its leaf
+   * with nothing the full rebuild would place elsewhere: each is the child of
+   * the one before, has an id of its own, and none is a compaction.
+   */
+  private extendsLeaf(
+    leaf: SessionEntry | undefined,
+    appended: readonly SessionEntry[],
+  ): boolean {
+    if (!leaf || this.byId.get(leaf.id) !== leaf) return false;
+    let parent = leaf;
+    for (const entry of appended) {
+      if (
+        entry.type === 'compaction' ||
+        entry.parentId !== parent.id ||
+        this.byId.get(entry.id) !== entry
+      )
+        return false;
+      parent = entry;
+    }
+    return true;
   }
 
   /** One complete line; true when it changed the session. */

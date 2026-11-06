@@ -16,7 +16,10 @@ import {initTheme, type SessionEntry} from '@earendil-works/pi-coding-agent';
 import {stripTerminalSequences, type TUI} from '@earendil-works/pi-tui';
 import {SessionFixture, assistantMessage} from '../dev/sessions.ts';
 import {SessionFollower} from '../extensions/workers/follow.ts';
-import {projectTranscript} from '../extensions/workers/projection.ts';
+import {
+  TranscriptProjection,
+  projectTranscript,
+} from '../extensions/workers/projection.ts';
 import {WorkerTranscript} from '../extensions/workers/transcript.ts';
 
 initTheme('dark', false);
@@ -426,4 +429,145 @@ test('transcript bounds its rows and says where the full history is', t => {
   );
   assert.match(tail, /row 229/);
   windowed.dispose();
+});
+
+test('follower and projection extend an appended branch and rebuild after a compaction or branch change', t => {
+  const file = path.join(scratch(t), 'session.jsonl');
+  let clock = 0;
+  const record = (
+    id: string,
+    parentId: string | null,
+    fields: Record<string, unknown>,
+  ) => {
+    const timestamp = new Date(Date.UTC(2026, 0, 1, 0, 0, ++clock));
+    appendFileSync(
+      file,
+      JSON.stringify({
+        type: 'message',
+        id,
+        parentId,
+        timestamp: timestamp.toISOString(),
+        ...fields,
+      }) + '\n',
+    );
+  };
+  const user = (id: string, parentId: string | null, text: string) =>
+    record(id, parentId, {
+      message: {role: 'user', content: text, timestamp: clock},
+    });
+  const call = (id: string, parentId: string, callId: string) =>
+    record(id, parentId, {
+      message: {
+        ...assistantMessage(
+          [
+            {type: 'text', text: `calling ${callId}`},
+            {type: 'toolCall', id: callId, name: 'fixture_tool', arguments: {}},
+          ],
+          'toolUse',
+        ),
+        timestamp: clock,
+      },
+    });
+  const result = (id: string, parentId: string, callId: string) =>
+    record(id, parentId, {
+      message: {
+        role: 'toolResult',
+        toolCallId: callId,
+        toolName: 'fixture_tool',
+        content: [{type: 'text', text: `result of ${callId}`}],
+        isError: false,
+        timestamp: clock,
+      },
+    });
+  writeFileSync(
+    file,
+    JSON.stringify({
+      type: 'session',
+      id: 's',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      cwd: '/fixture',
+    }) + '\n',
+  );
+
+  const follower = new SessionFollower(file);
+  let projection = new TranscriptProjection();
+  let projected = 0;
+  let generation = follower.session.generation;
+  /** Polls and extends the projection as the transcript does; both must match a fresh read. */
+  const step = (rebuilt: boolean) => {
+    assert.equal(follower.poll(), true);
+    const {entries} = follower.session;
+    assert.equal(follower.session.generation !== generation, rebuilt);
+    if (rebuilt) {
+      generation = follower.session.generation;
+      projection = new TranscriptProjection();
+      projected = 0;
+    }
+    projection.append(entries.slice(projected));
+    projected = entries.length;
+    const full = new SessionFollower(file);
+    full.poll();
+    assert.deepEqual(entries, full.session.entries);
+    assert.deepEqual(projection.items, projectTranscript(entries));
+    return entries;
+  };
+
+  user('a', null, 'first');
+  call('b', 'a', 'call-1');
+  step(true);
+  result('c', 'b', 'call-1');
+  call('d', 'c', 'call-2');
+  step(false);
+  result('e', 'd', 'call-2');
+  step(false);
+  user('f', 'e', 'second');
+  let entries = step(false);
+  assert.deepEqual(
+    projection.items.map(item =>
+      item.kind === 'tool'
+        ? `${item.call.id}:${item.result ? 'done' : 'open'}`
+        : item.kind,
+    ),
+    ['user', 'assistant', 'call-1:done', 'assistant', 'call-2:done', 'user'],
+  );
+
+  // A record continuing an earlier entry starts a new branch.
+  user('g', 'c', 'retried');
+  entries = step(true);
+  assert.deepEqual(texts(follower).slice(-1), ['retried']);
+  assert.ok(!entries.some(entry => entry.id === 'f'));
+
+  // A compaction rewrites the start of the branch.
+  record('h', 'g', {
+    type: 'compaction',
+    summary: 'Earlier work summarized.',
+    firstKeptEntryId: 'c',
+    tokensBefore: 100,
+  });
+  entries = step(true);
+  assert.deepEqual(
+    entries.map(entry => entry.id),
+    ['h', 'c', 'g'],
+  );
+
+  // Appends after a rebuild extend the rebuilt branch again.
+  const transcript = new WorkerTranscript(
+    {requestRender() {}} as unknown as TUI,
+    new SessionFollower(file),
+    options,
+  );
+  user('i', 'h', 'after compaction');
+  transcript.refresh();
+  step(false);
+  const shown = plain(transcript.render(100));
+  assert.match(shown, /Compacted from 100 tokens/);
+  assert.match(shown, /after compaction/);
+  assert.doesNotMatch(shown, /second/);
+  user('j', 'g', 'other branch');
+  transcript.refresh();
+  step(true);
+  const branched = plain(transcript.render(100));
+  assert.match(branched, /other branch/);
+  assert.doesNotMatch(branched, /after compaction/);
+  transcript.dispose();
 });
