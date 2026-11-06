@@ -19,8 +19,11 @@ import {WorkerTranscript, transcriptOptions} from '../workers/transcript.ts';
  * flight appears once saved. Without `--worker-session` it does nothing.
  */
 
-/** Rows the view leaves to Pi's own chrome around the editor area. */
-const RESERVED_ROWS = 3;
+/**
+ * Rows the view leaves to Pi's own chrome: the transcript's one row in
+ * fullscreen, the spacer above the editor area otherwise.
+ */
+const RESERVED_ROWS = 1;
 
 export default function register(pi: ExtensionAPI): void {
   pi.registerFlag('worker-session', {

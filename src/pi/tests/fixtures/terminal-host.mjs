@@ -14,6 +14,8 @@ const companion = fileURLToPath(new URL('../../', import.meta.url)).replace(
 const fixtures = join(companion, 'tests/fixtures');
 const [flow, mode] = process.argv.slice(2);
 if (flow === 'attention') process.env.DOTS_FIXTURE_ATTENTION = '1';
+// Rex terminals declare truecolor, as the viewer's terminal does here.
+if (flow === 'viewer') process.env.COLORTERM = 'truecolor';
 if (
   !['package', 'workbench', 'goal', 'attention', 'viewer'].includes(flow) ||
   !['regular', 'fullscreen'].includes(mode)
@@ -27,6 +29,39 @@ import {hostModule} from './host.ts';
 const host = await import(hostModule('pi-coding-agent'));
 const tui = await import(hostModule('pi-tui'));
 
+/** Answers to Pi's color query as a terminal sends them: OSC 10, 11 and 4, then DA1. */
+function colorReplies({foreground, background, palette}) {
+  const rgb = hex =>
+    'rgb:' + [1, 3, 5].map(i => hex.slice(i, i + 2).repeat(2)).join('/');
+  return (
+    `\x1b]10;${rgb(foreground)}\x07\x1b]11;${rgb(background)}\x07` +
+    palette.map((hex, i) => `\x1b]4;${i};${rgb(hex)}\x07`).join('') +
+    '\x1b[?62;22c'
+  );
+}
+const palette = [
+  '#000000',
+  '#cd0000',
+  '#00cd00',
+  '#cdcd00',
+  '#0000ee',
+  '#cd00cd',
+  '#00cdcd',
+  '#e5e5e5',
+  '#7f7f7f',
+  '#ff0000',
+  '#00ff00',
+  '#ffff00',
+  '#5c5cff',
+  '#ff00ff',
+  '#00ffff',
+  '#ffffff',
+];
+const terminalColors = {
+  light: {foreground: '#000000', background: '#ffffff', palette},
+  dark: {foreground: '#e5e5e5', background: '#000000', palette},
+};
+
 /** Records output and feeds input through Pi's own sequence splitter. */
 class VirtualTerminal {
   columns = 120;
@@ -34,6 +69,8 @@ class VirtualTerminal {
   kittyProtocolActive = false;
   capture = '';
   transcript = '';
+  /** Colors this terminal reports when asked; unset, it answers nothing. */
+  colors;
   start(onInput, onResize) {
     this.buffer = new tui.StdinBuffer();
     this.buffer.on('data', onInput);
@@ -49,6 +86,15 @@ class VirtualTerminal {
     this.transcript += data;
     if (this.transcript.length > 8 * 1024 * 1024)
       throw new Error('terminal output exceeded bound');
+    if (this.colors && data.includes('\x1b]11;?\x07')) {
+      const replies = colorReplies(this.colors);
+      setTimeout(() => this.input(replies), 5);
+    }
+  }
+  /** Switches colors and reports the appearance change (mode 2031), as a terminal does. */
+  setAppearance(name) {
+    this.colors = terminalColors[name];
+    this.input(`\x1b[?997;${name === 'dark' ? 1 : 2}n`);
   }
   moveBy(lines) {
     if (lines) this.write(`\x1b[${Math.abs(lines)}${lines > 0 ? 'B' : 'A'}`);
@@ -322,6 +368,8 @@ if (flow === 'goal')
 host.initTheme(runtime.services.settingsManager.getTheme(), true);
 
 const terminal = new VirtualTerminal();
+// Like Rex, the viewer's terminal reports its colors to the system theme.
+if (flow === 'viewer') terminal.colors = terminalColors.light;
 const marker = process.env.DOTS_TUI_MARKER ?? process.env.DOTS_GOAL_MARKER;
 const events = () => (existsSync(marker) ? readFileSync(marker, 'utf8') : '');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -366,9 +414,12 @@ process.on('exit', code => {
   );
   const unexpected = events().includes('UNEXPECTED_PROVIDER_TURN');
   const written = viewed && !viewedUnchanged();
-  if (leaked.length || unexpected || written) {
+  // Pi strips prompt marks from its lines; one that reaches the terminal was
+  // drawn mid-line, where 133;A starts a new shell prompt.
+  const marks = terminal.transcript.includes('\x1b]133;');
+  if (leaked.length || unexpected || written || marks) {
     console.error(
-      `${flow}/${mode}: ${leaked.join(', ')}${unexpected ? ' provider turn' : ''}${written ? ' worker session written' : ''}`,
+      `${flow}/${mode}: ${leaked.join(', ')}${unexpected ? ' provider turn' : ''}${written ? ' worker session written' : ''}${marks ? ' OSC 133 prompt mark sent' : ''}`,
     );
     process.exitCode = 1;
   }
@@ -1040,6 +1091,29 @@ async function viewerFlow() {
       shows('RUNTIME_TOOL_COMMAND') &&
       shows('streaming not shown'),
     'saved transcript in Pi message components',
+  );
+  // The system theme paints from the reported colors, and a light/dark switch
+  // restyles the whole view, its Pi components included.
+  const backgrounds = () =>
+    [...terminal.capture.matchAll(/\x1b\[48;2;(\d+);(\d+);(\d+)m/g)].map(
+      ([, r, g, b]) => (Number(r) + Number(g) + Number(b)) / 3,
+    );
+  assert.ok(
+    backgrounds().length && backgrounds().every(level => level > 128),
+    'light surfaces from the reported colors',
+  );
+  terminal.capture = '';
+  terminal.setAppearance('dark');
+  await wait(
+    () =>
+      backgrounds().some(level => level < 128) &&
+      shows('Runtime recorded response'),
+    'view restyled for the dark terminal',
+  );
+  await sleep(200);
+  assert.ok(
+    backgrounds().every(level => level < 128),
+    'no light surface after the switch',
   );
   // Typing and Enter go to the view, never to a prompt.
   send('submit this\r');

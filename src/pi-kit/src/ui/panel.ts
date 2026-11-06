@@ -11,6 +11,16 @@ import {
 import {PriorityRow, type RowModel} from './row.ts';
 import {paintSurfaceLine} from './surface.ts';
 
+/**
+ * Pi's message components start lines with OSC 133 prompt marks, which the
+ * host strips only from the start of the lines it draws. Framed, they would
+ * reach the terminal mid-line, where it reads 133;A as a new shell prompt and
+ * breaks the row.
+ */
+const promptMarks = /^(?:\x1b\]133;[ABC](?:\x07|\x1b\\))+/;
+const renderBody = (body: Component, width: number): string[] =>
+  body.render(width).map(line => line.replace(promptMarks, ''));
+
 export interface PanelModel {
   readonly heading: RowModel;
   readonly body: Component;
@@ -55,7 +65,7 @@ export class Panel implements Component {
     if (width < 12) {
       this.bodyTop = this.heading.render(width).length;
       this.bodyWidth = width;
-      const body = model.body.render(width);
+      const body = renderBody(model.body, width);
       this.bodyHeight = body.length;
       return [
         ...this.heading.render(width),
@@ -77,7 +87,7 @@ export class Panel implements Component {
         border('─'.repeat(Math.max(0, inner - 1 - cells)) + right)
       );
     };
-    const bodyLines = model.body.render(inner);
+    const bodyLines = renderBody(model.body, inner);
     this.bodyHeight = bodyLines.length;
     const body = bodyLines.map(line => {
       const bounded = truncateToWidth(line, inner, '');

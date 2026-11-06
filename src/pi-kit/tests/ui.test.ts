@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  UserMessageComponent,
   getSelectListTheme,
   getMarkdownTheme,
   initTheme,
@@ -167,6 +168,25 @@ test('opaque panel surfaces survive native row and Markdown style resets at ever
           );
         }
     }
+});
+
+test('framed Pi messages send no prompt marks, which would land mid-line', () => {
+  const panel = new Panel();
+  panel.update(
+    {
+      heading: {start: [], end: []},
+      body: new UserMessageComponent('Prompt', getMarkdownTheme(), 0),
+    },
+    dark,
+  );
+  for (const width of [8, 40]) {
+    const lines = panel.render(width);
+    assert.match(plain(lines), /Prompt/);
+    assert.deepEqual(
+      lines.filter(line => line.includes('\x1b]133;')),
+      [],
+    );
+  }
 });
 
 test('frame-owned columns do not inherit an unclosed child background or hyperlink', () => {
