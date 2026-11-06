@@ -6,9 +6,8 @@
   "packageManager": "pnpm@12.16.1",
   "scripts": {
     "typecheck:tooling": "tsc --noEmit",
-    "lint": "eslint \"src/{pi,pi-kit}/**/*.{ts,mjs,js}\" eslint.config.mjs home/finicky/.config/finicky/finicky.js --max-warnings 0",
-    "format:check": "prettier --check \"src/{pi,pi-kit}/**/*.{ts,mjs,js}\" eslint.config.mjs home/finicky/.config/finicky/finicky.js",
-    "check:finicky": "node --check home/finicky/.config/finicky/finicky.js"
+    "lint": "eslint \"src/{pi,pi-kit}/**/*.{ts,mjs,js}\" eslint.config.mjs --max-warnings 0",
+    "format:check": "prettier --check \"src/{pi,pi-kit}/**/*.{ts,mjs,js}\" eslint.config.mjs"
   },
   "devDependencies": {
     "@types/node": "26.6.6",

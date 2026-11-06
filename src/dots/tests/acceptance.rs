@@ -125,7 +125,8 @@ mod task_events {
                 .env_remove("PI_SESSION_FILE")
                 .env_remove("PI_SESSION_ID")
                 .env_remove("CLAUDE_CODE_SESSION_ID")
-                .env_remove("CODEX_SESSION_ID");
+                .env_remove("CODEX_SESSION_ID")
+                .env_remove("DOTS_AGENT_OWNER");
             command
         }
 
@@ -641,8 +642,10 @@ mod attention_view {
         );
         assert_eq!(answer.by.as_deref(), Some("human"));
 
-        // Wide enough, the inbox and the answer sit side by side.
+        // The narrow view becomes side by side at ordinary and large sizes.
         resize(&slave, 120, 40, &viewer);
+        let at = screen.until(at, "Inbox");
+        resize(&slave, 340, 170, &viewer);
         let at = screen.until(at, "Inbox");
 
         // The answered request stays selected; the user moves to the next one.
@@ -670,11 +673,11 @@ mod attention_view {
         send(&mut keyboard, "\x1b");
 
         // Mouse: the footer's Goals button, then Close in the drawer.
-        click(&mut keyboard, 6, 39);
+        click(&mut keyboard, 6, 169);
         let at = screen.until(at, "projects");
         let at = screen.until(at, "refactor");
         screen.until(at, "Dropped");
-        click(&mut keyboard, 15, 39);
+        click(&mut keyboard, 15, 169);
 
         let deadline = Instant::now() + WATCHDOG;
         let status = loop {

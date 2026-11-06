@@ -4,7 +4,6 @@ import tseslint from 'typescript-eslint';
 const sourceFiles = [
   'src/{pi,pi-kit}/**/*.{ts,mjs,js}',
   'private/src/**/*.{ts,mjs,js}',
-  'home/finicky/.config/finicky/finicky.js',
   'eslint.config.mjs',
 ];
 

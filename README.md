@@ -33,7 +33,7 @@ operation enrolls file synchronization or prunes unrelated packages.
 - [Shared skills](docs/skills.md) and [Claude mods](docs/claude-mods.md).
 - [Rex](home/rex/.config/rex/README.md): sessions and fuzzy navigation.
 - [Neovim](home/nvim/.config/nvim/README.md).
-- [Commit signing](docs/gitsign.md) and [Finicky routing](docs/finicky.md).
+- [Commit signing](docs/gitsign.md).
 
 Shared themes live under `home/theme/.config/theme/themes/`; the `current`
 link selects their adapters.

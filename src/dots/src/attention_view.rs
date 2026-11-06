@@ -44,6 +44,7 @@ const PROVENANCE_LIMIT: usize = 512;
 /// Side by side from this width; stacked below it.
 const WIDE: u16 = 72;
 const LIST_WIDTH: u16 = 34;
+const READING_WIDTH: u16 = 96;
 const GOALS_WIDTH: u16 = 34;
 const GAP: u16 = 2;
 /// Below this the view asks for more room instead of drawing a broken layout.
@@ -571,7 +572,7 @@ enum Region {
 
 struct InboxEntry {
     id: String,
-    session: String,
+    name: String,
     project: String,
     subject: String,
     glyph: Span<'static>,
@@ -1657,9 +1658,6 @@ fn rationale(palette: Palette, request: &Request, max: usize) -> Vec<(String, St
         }
         lines.extend(wrap(text, max).into_iter().map(|line| (line, style)));
     };
-    if let Some(context) = &request.context {
-        block(context, Style::new());
-    }
     if let Some(recommendation) = &request.recommendation {
         block(
             &format!("↳ Recommendation: {recommendation}"),
@@ -1855,20 +1853,38 @@ impl Viewer {
             );
             let entries: Vec<InboxEntry> = requests
                 .iter()
-                .map(|(goal, request)| InboxEntry {
-                    id: request.id.clone(),
-                    session: self.conversation_name(goal),
-                    project: clean_line(&goal.project_name),
-                    subject: format!(
-                        "{} · {}",
-                        match request.state {
-                            RequestState::Open => "Needs you",
-                            RequestState::Answered => "Reply saved",
-                            RequestState::Closed => "Closed",
+                .map(|(goal, request)| {
+                    let reported = self.session_error.is_none()
+                        && goal
+                            .coordinator
+                            .as_ref()
+                            .and_then(|owner| self.conversations.get(owner))
+                            .is_some_and(|conversation| {
+                                matches!(conversation, Conversation::Reported { .. })
+                            });
+                    InboxEntry {
+                        id: request.id.clone(),
+                        name: if reported {
+                            self.conversation_name(goal)
+                        } else {
+                            clean_line(&request.title)
                         },
-                        clean_line(&request.title)
-                    ),
-                    glyph: state_glyph(self.palette, request),
+                        project: clean_line(&goal.project_name),
+                        subject: format!(
+                            "{} · {}",
+                            match request.state {
+                                RequestState::Open => "Needs you",
+                                RequestState::Answered => "Reply saved",
+                                RequestState::Closed => "Closed",
+                            },
+                            if reported {
+                                clean_line(&request.title)
+                            } else {
+                                "No session link".to_owned()
+                            }
+                        ),
+                        glyph: state_glyph(self.palette, request),
+                    }
                 })
                 .collect();
             drop(requests);
@@ -1911,7 +1927,7 @@ impl Viewer {
                 rows.buffer
                     .set_style(row_area, Style::new().bg(self.palette.selection_bg));
             }
-            let name = fit(&entry.session, rows.width().saturating_sub(2));
+            let name = fit(&entry.name, rows.width().saturating_sub(2));
             rows.text(
                 &format!("{} {name}", if is_selected { "›" } else { " " }),
                 if is_selected {
@@ -1939,6 +1955,10 @@ impl Viewer {
         reason = "one row budget decides how the question, rationale and actions share the area"
     )]
     fn detail(&mut self, buffer: &mut Buffer, area: Rect) -> Option<Position> {
+        let area = Rect {
+            width: area.width.min(READING_WIDTH),
+            ..area
+        };
         let (goal, request) = self.current()?;
         let max = usize::from(area.width);
         let heading = format!(
@@ -2031,8 +2051,7 @@ impl Viewer {
                 rows.text(line, *style);
             }
             rows.blank();
-        }
-        while rows.left() > action_rows + notice_rows + 1 {
+        } else if rows.left() > action_rows + notice_rows + 1 {
             rows.blank();
         }
         rows.section("↳ Reply", self.palette);
@@ -2169,6 +2188,10 @@ impl Viewer {
     }
 
     fn context(&mut self, buffer: &mut Buffer, area: Rect) {
+        let area = Rect {
+            width: area.width.min(READING_WIDTH),
+            ..area
+        };
         let Some((goal, request)) = self.current() else {
             return;
         };
@@ -2206,6 +2229,18 @@ impl Viewer {
                     lines.push((format!("  {line}"), muted(self.palette)));
                 }
             }
+        }
+        if let Some(context) = &request.context {
+            lines.push((String::new(), Style::new()));
+            lines.push((
+                "Context supplied by the agent".to_owned(),
+                muted(self.palette),
+            ));
+            lines.extend(
+                wrap(context, max)
+                    .into_iter()
+                    .map(|line| (line, Style::new())),
+            );
         }
         let rationale = rationale(self.palette, request, max);
         if !rationale.is_empty() {
@@ -2717,9 +2752,78 @@ mod tests {
             wide.contains("Waits on this: Adapt the API (open)"),
             "{wide}"
         );
-        let (list_column, _) = locate(&wide, "Needs you · CLI output format");
+        let (list_column, _) = locate(&wide, "CLI output format");
         let (detail_column, _) = locate(&wide, "Keep aliases");
         assert!(detail_column > list_column + 20, "side by side:\n{wide}");
+    }
+
+    #[test]
+    fn missing_session_rows_use_distinct_question_titles_without_guessing_a_target() {
+        let mut data = two();
+        data.goals[0]
+            .requests
+            .push(request("r-3", "Release timing", &[("wait", "Wait")]));
+        let mut view = viewer(data);
+        let shown = screen(&mut view, 160, 40);
+        for title in ["Public export names", "CLI output format", "Release timing"] {
+            let (column, _) = locate(&shown, title);
+            assert!(
+                column < LIST_WIDTH,
+                "inbox title {title:?} is missing: {shown}"
+            );
+        }
+        assert!(shown.contains("Session not reported in Rex"), "{shown}");
+        assert_eq!(view.open_conversation(), Effect::None);
+        view.session_error = Some("Rex cannot be reached".into());
+        let unavailable = screen(&mut view, 160, 40);
+        assert!(unavailable.contains("Public export names"), "{unavailable}");
+        assert!(unavailable.contains("Rex unavailable"), "{unavailable}");
+    }
+
+    #[test]
+    fn large_terminals_keep_reading_width_and_replies_near_the_question() {
+        let mut data = two();
+        let request = &mut data.goals[0].requests[0];
+        request.question =
+            "Choose the public interface after considering the caller and its permissions. "
+                .repeat(8);
+        request.context = Some("Context stays verbatim in the detailed view.".into());
+        let mut view = viewer(data);
+        let shown = screen(&mut view, 340, 170);
+        let (column, question_row) = locate(&shown, "Choose the public interface");
+        let (_, reply_row) = locate(&shown, "↳ Reply");
+        assert!(
+            reply_row > question_row && reply_row < 25,
+            "reply row: {reply_row}"
+        );
+        assert!(!shown.contains("Context stays verbatim"));
+        for line in shown
+            .lines()
+            .skip(usize::from(question_row))
+            .take(usize::from(reply_row - question_row))
+        {
+            let detail = line.chars().skip(usize::from(column)).collect::<String>();
+            assert!(
+                detail.trim_end_matches([' ', '│']).width() <= usize::from(READING_WIDTH),
+                "reading line is too wide: {detail}"
+            );
+        }
+        let (choice_x, choice_y) = locate(&shown, "Keep aliases");
+        assert!(
+            matches!(click(&mut view, choice_x, choice_y), Effect::Answer { request, choice: Some(choice), .. } if request == "r-1" && choice == "keep")
+        );
+        let (context_x, context_y) = locate(&shown, "Read in full");
+        assert_eq!(click(&mut view, context_x, context_y), Effect::None);
+        let full = screen(&mut view, 340, 170);
+        assert!(full.contains("Context supplied by the agent"));
+        assert!(full.contains("Context stays verbatim in the detailed view."));
+        assert_eq!(press(&mut view, KeyCode::Esc), Effect::None);
+        press(&mut view, KeyCode::Char('r'));
+        type_text(&mut view, "Keep the boundary narrow");
+        let typing = screen(&mut view, 340, 170);
+        assert!(typing.contains("Choose the public interface"));
+        let (_, answer_row) = locate(&typing, "Answer: Keep the boundary narrow");
+        assert!(answer_row < 25, "answer row: {answer_row}");
     }
 
     #[test]
@@ -2828,11 +2932,8 @@ mod tests {
         assert!(shown.contains("question changed"), "{shown}");
         assert!(shown.contains("Public export names: which way"), "{shown}");
         assert!(shown.contains("Your unsent draft: half typed"), "{shown}");
-        assert!(shown.contains("○ Closed · Public export names"), "{shown}");
-        assert!(
-            shown.contains("● Needs you · Public export names"),
-            "{shown}"
-        );
+        assert!(shown.contains("○ Closed · No session link"), "{shown}");
+        assert!(shown.contains("● Needs you · No session link"), "{shown}");
         assert_eq!(enters(&mut view), []);
 
         // A later refresh keeps the original; the replacement needs a deliberate choice.

@@ -629,23 +629,6 @@ fn private_module_selection_persists_without_cross_source_writes() -> Result {
 }
 
 #[test]
-fn desktop_adds_platform_configuration_to_the_same_portable_base() -> Result {
-    let f = Fixture::new()?;
-    f.apply(&["-E", "desktop"], &[])?;
-    assert!(f.home.join(".zshrc").exists());
-    assert_eq!(
-        f.home.join(".config/aerospace/aerospace.toml").exists(),
-        cfg!(target_os = "macos")
-    );
-    assert_eq!(
-        f.home.join(".config/finicky/finicky.js").exists(),
-        cfg!(target_os = "macos")
-    );
-    assert_eq!(f.git(&f.checkout(), &["status", "--porcelain"])?, "");
-    Ok(())
-}
-
-#[test]
 fn first_use_preview_stops_at_uncloned_source_without_activation() -> Result {
     let f = Fixture::new()?;
     let output = f.bootstrap(&[], &["--dry-run"])?;

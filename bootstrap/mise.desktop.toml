@@ -18,8 +18,6 @@ adopt = true
 
 [bootstrap.packages]
 "brew-cask:brave-browser" = { os = "macos" }
-"brew-cask:finicky" = { os = "macos" }
-"brew-cask:nikitabobko/tap/aerospace" = { os = "macos" }
 "brew-cask:orbstack" = { os = "macos" }
 "brew-cask:raycast" = { os = "macos" }
 
@@ -30,7 +28,3 @@ sha256 = "e500d137e4344b3d26e2f12fcfe11a25562f60eb563ac1c0a31ccd2ad6297248"
 artifact = "Rex Beta.app"
 os = "macos/arm64"
 adopt = true
-
-[dotfiles]
-"~/.config/aerospace" = { source = "../home/aerospace/.config/aerospace", mode = "symlink-each", variants = [{ os = "macos" }] }
-"~/.config/finicky" = { source = "../home/finicky/.config/finicky", mode = "symlink-each", variants = [{ os = "macos" }] }

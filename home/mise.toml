@@ -12,7 +12,6 @@ env = { REX_SERVER = "unix:///nonexistent/dots-check.sock" }
 depends = ["//src/dots:skills-check"]
 dir = "{{config_root}}/.."
 run = [
-  "pnpm run check:finicky",
   "claude plugin validate skills",
   "stylua --check home/rex/.config/rex",
   "cd home/rex/.config/rex && selene --quiet .",
