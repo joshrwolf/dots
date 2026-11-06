@@ -46,7 +46,6 @@ const PROVENANCE_LIMIT: usize = 512;
 const WIDE: u16 = 72;
 const LIST_WIDTH: u16 = 34;
 const READING_WIDTH: u16 = 96;
-const GOALS_WIDTH: u16 = 34;
 const GAP: u16 = 2;
 /// Below this the view asks for more room instead of drawing a broken layout.
 const MIN_WIDTH: u16 = 24;
@@ -2583,52 +2582,40 @@ impl Viewer {
             })
             .collect();
         let count = entries.len();
-        let detail = if area.width >= WIDE {
-            let list = Rect::new(area.x, area.y, GOALS_WIDTH, area.height);
-            self.hits.push((list, Target::Region(Region::Goals)));
-            let mut rows = Rows::new(buffer, list);
-            rows.text("Browse", accent(self.palette));
-            let visible = rows.left().max(1);
-            let first = at.saturating_sub(visible - 1);
-            for (index, (glyph, title)) in entries.iter().enumerate().skip(first).take(visible) {
-                let (marker, style) = row_style(self.palette, index == at, !self.tasks_focused);
-                let title = fit(title, rows.width().saturating_sub(4));
-                if let Some(row) = rows.line(&Line::from(vec![
-                    marker,
-                    glyph.clone(),
-                    Span::styled(title, style),
-                ])) {
-                    self.hits.push((row, Target::Goal(index)));
-                }
-            }
-            Rect::new(
-                area.x + GOALS_WIDTH + GAP,
-                area.y,
-                area.width - GOALS_WIDTH - GAP,
-                area.height,
-            )
-        } else {
-            let mut rows = Rows::new(buffer, area);
-            let counter = format!("{}/{count} · ", at + 1);
-            let title = fit(
-                &entries[at].1,
-                rows.width().saturating_sub(width(&counter) + 2),
-            );
+        let list_height = (area.height / 3)
+            .max(2)
+            .min(u16::try_from(count.saturating_add(1)).unwrap_or(u16::MAX))
+            .min(area.height.saturating_sub(2));
+        let list = Rect::new(area.x, area.y, area.width, list_height);
+        self.hits.push((list, Target::Region(Region::Goals)));
+        let mut rows = Rows::new(buffer, list);
+        rows.text(
+            &format!("Browse · {}/{count}", at + 1),
+            accent(self.palette),
+        );
+        let visible = rows.left().max(1);
+        let first = at.saturating_sub(visible - 1);
+        for (index, (glyph, title)) in entries.iter().enumerate().skip(first).take(visible) {
+            let (marker, style) = row_style(self.palette, index == at, !self.tasks_focused);
+            let title = fit(title, rows.width().saturating_sub(4));
             if let Some(row) = rows.line(&Line::from(vec![
-                Span::styled(counter, muted(self.palette)),
-                entries[at].0.clone(),
-                Span::styled(title, accent(self.palette).add_modifier(Modifier::BOLD)),
+                marker,
+                glyph.clone(),
+                Span::styled(title, style),
             ])) {
-                self.hits.push((row, Target::Region(Region::Goals)));
+                self.hits.push((row, Target::Goal(index)));
             }
-            rows.rest()
-        };
-        if area.width >= WIDE {
-            Block::new()
-                .borders(Borders::LEFT)
-                .border_style(muted(self.palette))
-                .render(Rect::new(detail.x - 1, detail.y, 1, detail.height), buffer);
         }
+        Block::new()
+            .borders(Borders::TOP)
+            .border_style(muted(self.palette))
+            .render(Rect::new(area.x, list.bottom(), area.width, 1), buffer);
+        let detail = Rect::new(
+            area.x,
+            list.bottom() + 1,
+            area.width,
+            area.bottom().saturating_sub(list.bottom() + 1),
+        );
         self.goal_detail(buffer, detail, at);
     }
 
@@ -4159,6 +4146,66 @@ mod tests {
         view.goals_entry = true;
         view.tasks_focused = false;
         assert_eq!(press(&mut view, KeyCode::Esc), Effect::Close);
+    }
+
+    #[test]
+    fn goals_stack_full_width_above_details_and_keep_selection_visible_on_resize() {
+        let goals = (0..20)
+            .map(|index| {
+                let mut entry = goal(Vec::new(), None);
+                entry.goal = format!("t-goal-{index}");
+                entry.title = format!("Goal {index:02}: define the shared contract and update both independent clients");
+                entry
+            })
+            .collect();
+        let mut view = viewer(list(goals));
+        press(&mut view, KeyCode::Char('g'));
+        for width in [45, 80, 160, 340] {
+            for height in [16, 24, 40, 170] {
+                let shown = screen(&mut view, width, height);
+                let top = view
+                    .hits
+                    .iter()
+                    .find_map(|(rect, target)| {
+                        (*target == Target::Region(Region::Goals)).then_some(*rect)
+                    })
+                    .unwrap();
+                assert_eq!(top.width, width - 2, "goal list spans {width}-column view");
+                assert!(
+                    top.height <= (height - 3) / 3,
+                    "top list leaves space for details"
+                );
+                let (_, detail_row) = locate(&shown, "fixture · open");
+                assert!(
+                    detail_row > top.bottom(),
+                    "details appear below the list: {shown}"
+                );
+                assert!(view.hits.iter().any(|(rect, target)| {
+                    *target == Target::Goal(0) && rect.width == top.width
+                }));
+                if width >= 160 {
+                    assert!(shown.contains("Goal 00: define the shared contract and update both independent clients"), "{shown}");
+                }
+            }
+        }
+        let shown = screen(&mut view, 160, 24);
+        let (_, row) = locate(&shown, "Goal 01:");
+        assert_eq!(click(&mut view, 120, row), Effect::Overview);
+        assert_eq!(view.goal_index(), Some(1));
+        screen(&mut view, 160, 24);
+        assert_eq!(view.scroll(120, row, 1), Effect::Overview);
+        assert_eq!(view.goal_index(), Some(2));
+        view.select_goal(19);
+        for (width, height) in [(45, 16), (340, 170), (80, 24)] {
+            let shown = screen(&mut view, width, height);
+            assert!(shown.contains("Browse · 20/20"), "{shown}");
+            assert!(
+                view.hits
+                    .iter()
+                    .any(|(_, target)| *target == Target::Goal(19))
+            );
+            assert_eq!(view.goal_index(), Some(19));
+        }
     }
 
     #[test]
