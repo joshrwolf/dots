@@ -14,7 +14,7 @@ pub(crate) fn data_root() -> Result<PathBuf> {
     Ok(crate::xdg::base("XDG_DATA_HOME", ".local/share")?.join("dots"))
 }
 
-/// The project's document directory: briefs/, knowledge/, outputs/ and scratch/.
+/// The project's machine-local documents: briefs/, outputs/ and scratch/.
 pub(crate) fn workspace(project: &Project) -> Result<PathBuf> {
     Ok(data_root()?.join("workspaces").join(project.as_str()))
 }
