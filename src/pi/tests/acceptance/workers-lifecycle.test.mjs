@@ -341,6 +341,14 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       .text;
     assert.match(oneText, /one · completed · age \d+s · \d+ tok · \d+ calls?/);
     assert.match(oneText, /result:\n.*done: count things/s);
+    const states = [...oneText.matchAll(/^ {2}\S+ state {2}(.*)$/gm)].map(
+      m => m[1],
+    );
+    assert.deepEqual(
+      states,
+      ['running', 'completed'],
+      'the activity trail logs state changes, not every save',
+    );
     assert.match(
       (await h.run('worker_status', {})).content[0].text,
       /result: done: count things/,

@@ -689,17 +689,20 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     }
   };
 
+  /** The last state each worker logged, so the activity trail records changes, not every save. */
+  const loggedState = new WeakMap<Worker, string>();
   const save = (worker: Worker) => {
     if (shuttingDown || !owned(worker)) return;
     worker.updatedAt = Date.now();
     if (live(worker)) worker.finishedAt = undefined;
     else if (worker.state !== 'paused') worker.finishedAt ??= worker.updatedAt;
     pi.appendEntry(WORKER_ENTRY, persisted(worker));
-    log(
-      worker,
-      'state',
-      worker.state + (worker.error ? `: ${worker.error.slice(0, 200)}` : ''),
-    );
+    const state =
+      worker.state + (worker.error ? `: ${worker.error.slice(0, 200)}` : '');
+    if (loggedState.get(worker) !== state) {
+      loggedState.set(worker, state);
+      log(worker, 'state', state);
+    }
     observe(worker);
     widget();
   };
