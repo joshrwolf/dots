@@ -11,15 +11,13 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined;
 
-export interface TranscriptWindow {
+interface TranscriptWindow {
   messages: Record<string, unknown>[];
   notice?: string;
 }
 
 /** Recent recorded messages, bounded before parsing; not an active-branch reconstruction. */
-export function transcriptWindow(
-  sessionFile: string | undefined,
-): TranscriptWindow {
+function transcriptWindow(sessionFile: string | undefined): TranscriptWindow {
   if (!sessionFile)
     return {messages: [], notice: 'session transcript not saved yet'};
   let fd: number | undefined;

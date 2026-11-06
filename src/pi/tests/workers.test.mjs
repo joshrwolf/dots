@@ -18,8 +18,7 @@ import {
   resolveChoice,
 } from '../extensions/workers/models.ts';
 import {PiProcess} from '../extensions/workers/rpc.ts';
-import {transcriptTail, transcriptWindow} from '../extensions/workers/tail.ts';
-import {messageText} from '../extensions/workers/inspector.ts';
+import {transcriptTail} from '../extensions/workers/tail.ts';
 
 // A stand-in for `pi --mode rpc`: answers commands, emits a question and a
 // settled run, and leaves a U+2028 inside a string to prove LF-only framing.
@@ -111,7 +110,12 @@ test('protocol: correlation, LF-only framing, ui request/response, settle, order
     );
     assert.deepEqual(
       records.find(record => record.type === 'tool_execution_start'),
-      {type: 'tool_execution_start', toolName: 'bash', args: {}},
+      {
+        type: 'tool_execution_start',
+        toolCallId: 't1',
+        toolName: 'bash',
+        args: {},
+      },
       'decoded to consumed fields',
     );
     const ended = nextRecord(child, 'message_end');
@@ -121,7 +125,12 @@ test('protocol: correlation, LF-only framing, ui request/response, settle, order
     assert.deepEqual(await settled, {type: 'agent_settled', aborted: false});
     assert.deepEqual(
       records.find(record => record.type === 'tool_execution_end'),
-      {type: 'tool_execution_end', toolName: 'bash', isError: false},
+      {
+        type: 'tool_execution_end',
+        toolCallId: 't1',
+        toolName: 'bash',
+        isError: false,
+      },
     );
     assert.equal(
       records.some(record => record.type === 'fixture_ready'),
@@ -203,46 +212,9 @@ test('transcript tails bound reads and tolerate malformed records and content', 
     assert.deepEqual(transcriptTail(file, 1), ['latest']);
     assert.deepEqual(transcriptTail(file, 0), []);
     assert.match(transcriptTail(path.join(dir, 'absent'))[0], /missing/);
-    const window = transcriptWindow(file);
-    assert.match(window.notice, /older or oversized records omitted/);
-    assert.equal(window.messages.at(-1).content[2].text, 'latest');
-    assert.match(transcriptWindow(path.join(dir, 'absent')).notice, /missing/);
-    assert.match(transcriptWindow(undefined).notice, /not saved/);
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
-});
-
-test('inspector projects recent recorded content without terminal escapes or unbounded text', () => {
-  assert.deepEqual(
-    messageText({
-      role: 'assistant',
-      content: [{type: 'text', text: 'hello\x1b[31m'}],
-    }),
-    {role: 'assistant', text: 'hello\x1b[31m', markdown: true},
-  ); // renderer sanitizes, projection keeps the record
-  const tool = messageText({
-    role: 'assistant',
-    content: [{type: 'toolCall', name: 'read', arguments: {path: 'fixture'}}],
-  });
-  assert.match(tool.text, /→ read/);
-  assert.equal(tool.markdown, false);
-  assert.equal(
-    messageText({
-      role: 'toolResult',
-      toolName: 'read',
-      content: [{type: 'text', text: 'result'}],
-    }).role,
-    'tool read',
-  );
-  assert.match(
-    messageText({
-      role: 'assistant',
-      content: [{type: 'text', text: 'a'.repeat(25_000)}],
-    }).text,
-    /message display limited/,
-  );
-  assert.equal(messageText({role: 'assistant', content: []}), undefined);
 });
 
 test('closing during spawn failure resolves and isolates throwing exit listeners', async () => {

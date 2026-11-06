@@ -3,7 +3,7 @@
 // The terminal is virtual: Pi's renderer, input parser, overlays, reload, and
 // shutdown are real; raw-mode tty handling is Pi's own ProcessTerminal concern.
 import assert from 'node:assert/strict';
-import {existsSync, readFileSync, writeFileSync} from 'node:fs';
+import {existsSync, readFileSync, statSync} from 'node:fs';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -15,12 +15,13 @@ const fixtures = join(companion, 'tests/fixtures');
 const [flow, mode] = process.argv.slice(2);
 if (flow === 'attention') process.env.DOTS_FIXTURE_ATTENTION = '1';
 if (
-  !['package', 'workbench', 'goal', 'attention'].includes(flow) ||
+  !['package', 'workbench', 'goal', 'attention', 'viewer'].includes(flow) ||
   !['regular', 'fullscreen'].includes(mode)
 )
   throw new Error(
-    'usage: terminal-host.mjs <package|workbench|goal|attention> <regular|fullscreen>',
+    'usage: terminal-host.mjs <package|workbench|goal|attention|viewer> <regular|fullscreen>',
   );
+const {SessionFixture} = await import(join(companion, 'dev/sessions.ts'));
 
 import {hostModule} from './host.ts';
 const host = await import(hostModule('pi-coding-agent'));
@@ -149,6 +150,22 @@ if (flow === 'workbench') {
     themes: [],
     noThemes: false,
   };
+} else if (flow === 'viewer') {
+  // What the Rex `workers_view` action runs: the viewer extension alone,
+  // no tools and no saved session, over the worker's session file.
+  config = {
+    cwd: process.cwd(),
+    // The observer loads first, so it sees any prompt before the viewer's
+    // own input guard handles it.
+    extensions: [
+      join(fixtures, 'terminal-observer.ts'),
+      join(companion, 'extensions/worker-view/index.ts'),
+    ],
+    themes: [],
+    noThemes: true,
+    noTools: 'all',
+    flags: new Map([['worker-session', join(process.cwd(), 'viewed.jsonl')]]),
+  };
 } else {
   config = {
     cwd: process.cwd(),
@@ -163,6 +180,7 @@ const createRuntime = async ({cwd, sessionManager, sessionStartEvent}) => {
   const services = await host.createAgentSessionServices({
     cwd,
     agentDir,
+    extensionFlagValues: config.flags,
     resourceLoaderOptions: {
       additionalExtensionPaths: config.extensions,
       additionalThemePaths: config.themes,
@@ -231,17 +249,34 @@ const runtime = await host.createAgentSessionRuntime(createRuntime, {
   agentDir,
   sessionManager,
 });
-if (flow === 'package') {
-  writeFileSync(
-    join(agentDir, 'fixture-worker.jsonl'),
-    JSON.stringify({
-      type: 'message',
-      message: {
-        role: 'assistant',
-        content: [{type: 'text', text: 'Runtime recorded response'}],
+/** A worker's saved transcript, and the only bytes it may hold. */
+let viewed;
+const viewedUnchanged = () =>
+  readFileSync(viewed.session.file).equals(viewed.bytes) &&
+  statSync(viewed.session.file).mtimeMs === viewed.mtime;
+if (flow === 'package' || flow === 'viewer') {
+  const file =
+    flow === 'package'
+      ? join(agentDir, 'fixture-worker.jsonl')
+      : config.flags.get('worker-session');
+  const session = new SessionFixture(file, '/fixture/runtime');
+  session.user('Run the fixture check');
+  session.assistant(
+    [
+      {type: 'text', text: 'Runtime recorded response'},
+      {
+        type: 'toolCall',
+        id: 'call-1',
+        name: 'bash',
+        arguments: {command: 'echo RUNTIME_TOOL_COMMAND'},
       },
-    }) + '\n',
+    ],
+    'toolUse',
   );
+  session.toolResult('call-1', 'bash', 'RUNTIME_TOOL_OUTPUT');
+  viewed = {session, bytes: readFileSync(file), mtime: statSync(file).mtimeMs};
+}
+if (flow === 'package') {
   const {openRegistry} = await import('../../extensions/workers/registry.ts');
   const registry = openRegistry(join(agentDir, 'dots/workers.db'), warning =>
     assert.fail(warning),
@@ -327,9 +362,10 @@ process.on('exit', code => {
     tui.stripTerminalSequences(terminal.transcript).includes(text),
   );
   const unexpected = events().includes('UNEXPECTED_PROVIDER_TURN');
-  if (leaked.length || unexpected) {
+  const written = viewed && !viewedUnchanged();
+  if (leaked.length || unexpected || written) {
     console.error(
-      `${flow}/${mode}: ${leaked.join(', ')}${unexpected ? ' provider turn' : ''}`,
+      `${flow}/${mode}: ${leaked.join(', ')}${unexpected ? ' provider turn' : ''}${written ? ' worker session written' : ''}`,
     );
     process.exitCode = 1;
   }
@@ -380,9 +416,13 @@ async function packageFlow() {
   await sleep(150);
   await fresh('/workers w-runtime');
   await wait(
-    () => shows('Runtime recorded response'),
-    'real runtime recorded worker',
+    () =>
+      shows('Runtime recorded response') &&
+      shows('Run the fixture check') &&
+      shows('RUNTIME_TOOL_COMMAND'),
+    'real runtime recorded worker in Pi message components',
   );
+  assert.ok(!shows('open in Rex'), 'Rex view offered only inside Rex');
   send('\x1b');
   await sleep(150);
   await fresh('/workers w-runtime-child');
@@ -1191,8 +1231,44 @@ async function attentionFlow() {
   }
 }
 
+async function viewerFlow() {
+  await wait(() => events().includes('start'), 'startup');
+  await wait(
+    () =>
+      shows('Worker · viewed.jsonl') &&
+      shows('Run the fixture check') &&
+      shows('Runtime recorded response') &&
+      shows('RUNTIME_TOOL_COMMAND') &&
+      shows('streaming not shown'),
+    'saved transcript in Pi message components',
+  );
+  // Typing and Enter go to the view, never to a prompt.
+  send('submit this\r');
+  await sleep(500);
+  assert.ok(
+    !events().includes('prompt submitted') &&
+      !events().includes('UNEXPECTED_PROVIDER_TURN'),
+    'no prompt was submitted',
+  );
+  assert.ok(viewedUnchanged(), 'viewer left the session file as written');
+  viewed.session.assistant([{type: 'text', text: 'VIEWER_APPENDED_REPLY'}]);
+  viewed.bytes = readFileSync(viewed.session.file);
+  viewed.mtime = statSync(viewed.session.file).mtimeMs;
+  await wait(() => shows('VIEWER_APPENDED_REPLY'), 'follows appended records');
+  for (const [rows, columns] of [
+    [24, 44],
+    [48, 160],
+  ]) {
+    terminal.resize(rows, columns);
+    await sleep(200);
+  }
+  await wait(() => shows('VIEWER_APPENDED_REPLY'), 'resized view');
+  send(mode === 'regular' ? 'q' : '\x1b');
+}
+
 try {
   await {
+    viewer: viewerFlow,
     package: packageFlow,
     workbench: workbenchFlow,
     goal: goalFlow,

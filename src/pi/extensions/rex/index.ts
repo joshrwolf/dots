@@ -10,7 +10,7 @@ import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
  */
 
 /** The Rex CLI: Rex puts its own bin directory in each terminal's environment. */
-function rexBinary(env: NodeJS.ProcessEnv): string {
+export function rexBinary(env: NodeJS.ProcessEnv): string {
   return env.REX_BIN_DIR ? path.join(env.REX_BIN_DIR, 'rex') : 'rex';
 }
 

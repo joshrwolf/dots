@@ -1,6 +1,7 @@
 // Real interactive host in regular and fullscreen TUI modes, through Pi's public
 // virtual-terminal seam: package load, resize, theme, reload, the UI
-// workbench, goal inspection, and orderly shutdown. No tty, provider, or install.
+// workbench, goal inspection, the worker transcript viewer, and orderly
+// shutdown. No tty, provider, or install.
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
@@ -68,7 +69,7 @@ async function drive(flow, mode) {
   }
 }
 
-for (const flow of ['package', 'workbench', 'goal', 'attention']) {
+for (const flow of ['package', 'workbench', 'goal', 'attention', 'viewer']) {
   test(`${flow} in both TUI modes`, {concurrency: true}, async t => {
     await Promise.all(
       ['regular', 'fullscreen'].map(mode =>

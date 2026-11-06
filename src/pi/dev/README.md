@@ -38,8 +38,9 @@ at wide and narrow widths in light/dark themes. Ctrl+Space cycles its fixture
 states without taking picker keys. Esc closes; Ctrl+N/P switches scenarios.
 `/ui-lab worker-inspector` opens the interactive picker: Enter inspects, L returns
 to the list, M composes a fixture message, and X confirms a fixture stop.
-Descendants are read-only. Scroll to pause follow; **F** resumes. All actions stay
-in memory. Ctrl+N/P switches scenarios without consuming message text.
+Descendants are read-only. Scroll to pause follow; **F** resumes. Transcripts are
+neutral session files in a temporary directory; actions append to them and
+contact no process. Ctrl+N/P switches scenarios without consuming message text.
 Scenarios cover tools, nested codemode activity, job inspection, workers, thinking, and the
 application frame (the default), including its native editor. For responsive tool layout,
 open `/ui-lab bash`, `/ui-lab codemode`, and `/ui-lab edit`; advance to their long

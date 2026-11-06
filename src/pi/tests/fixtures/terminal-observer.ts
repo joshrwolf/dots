@@ -1,10 +1,13 @@
-import {appendFileSync} from 'node:fs';
+import {appendFileSync, mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
 import assert from 'node:assert/strict';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
 import {JobsPresentation} from '../../extensions/jobs/ui.ts';
 import {WorkerInspection} from '../../extensions/workers/inspection.ts';
 import type {WorkerInspectionSource} from '../../extensions/workers/inspector.ts';
 import {jobFixture} from '../../dev/scenarios.ts';
+import {SessionFixture, assistantMessage} from '../../dev/sessions.ts';
 
 export default function (pi: ExtensionAPI): void {
   const file = process.env['DOTS_TUI_MARKER'];
@@ -52,6 +55,10 @@ export default function (pi: ExtensionAPI): void {
     mark('shutdown');
   });
   pi.on('agent_start', () => mark('UNEXPECTED_PROVIDER_TURN'));
+  pi.on('input', event => {
+    mark(`prompt submitted: ${JSON.stringify(event.text)}`);
+    return {action: 'continue'};
+  });
   pi.registerCommand('accept-job-inspect', {
     async handler(_args, ctx) {
       const job = jobFixture(5); // Historical fixture: no process, timer or stop control.
@@ -80,9 +87,37 @@ export default function (pi: ExtensionAPI): void {
   pi.registerCommand('accept-worker-inspect', {
     async handler(_args, ctx) {
       let state = 'running';
-      let text =
-        'Question: Which revision?\n' +
-        Array.from({length: 60}, (_, i) => `Recorded line ${i}`).join('\n');
+      const directory = mkdtempSync(path.join(tmpdir(), 'dots-worker-view-'));
+      const review = new SessionFixture(
+        path.join(directory, 'review.jsonl'),
+        '/fixture/review',
+      );
+      review.user('Which revision?');
+      review.assistant(
+        [
+          {
+            type: 'text',
+            text:
+              'Question: Which revision?\n\n' +
+              Array.from({length: 60}, (_, i) => `Recorded line ${i}`).join(
+                '\n\n',
+              ),
+          },
+          {
+            type: 'toolCall',
+            id: 'call-1',
+            name: 'bash',
+            arguments: {command: 'echo RECORDED_TOOL_CALL'},
+          },
+        ],
+        'toolUse',
+      );
+      review.toolResult('call-1', 'bash', 'RECORDED_TOOL_OUTPUT');
+      const childSession = new SessionFixture(
+        path.join(directory, 'child.jsonl'),
+        '/fixture/child',
+      );
+      childSession.assistant([{type: 'text', text: 'Child response'}]);
       const owner = {
         id: 'w-parent',
         label: 'Review',
@@ -100,29 +135,60 @@ export default function (pi: ExtensionAPI): void {
         canMessage: false,
         canStop: false,
       };
+      let childSeen = false;
+      let update: ReturnType<typeof setTimeout> | undefined;
+      let settled: ReturnType<typeof setTimeout> | undefined;
+      // The worker streams once the transcript is reopened after visiting
+      // the descendant, so the flow sees the response live, then saved.
+      const stream = () => {
+        const live = assistantMessage([]);
+        live.timestamp = Date.parse('2026-01-01T01:00:00.000Z');
+        update = setTimeout(() => {
+          inspections.record(owner.id, {type: 'message_start', message: live});
+          inspections.record(owner.id, {
+            type: 'message_update',
+            assistantMessageEvent: {type: 'text_start', contentIndex: 0},
+          });
+          inspections.record(owner.id, {
+            type: 'message_update',
+            assistantMessageEvent: {
+              type: 'text_delta',
+              contentIndex: 0,
+              delta: 'STREAMED_ACCEPTANCE_TEXT',
+            },
+          });
+          mark('worker-streamed');
+        }, 900);
+        settled = setTimeout(() => {
+          state = 'completed';
+          owner.state = state;
+          const saved = review.message({
+            ...live,
+            content: [{type: 'text', text: 'STREAMED_ACCEPTANCE_TEXT'}],
+          });
+          inspections.record(owner.id, {type: 'message_end', message: saved});
+          mark('worker-completed');
+        }, 1500);
+      };
       const source: WorkerInspectionSource = {
         list: () => [owner, child],
-        read: id =>
-          id === owner.id
+        read: id => {
+          if (id === child.id) childSeen = true;
+          else if (id === owner.id && childSeen && !update) stream();
+          return id === owner.id
             ? {
                 worker: {...owner, state},
                 detail: `Directory: /fixture/review\n${state}`,
-                messages: [
-                  {role: 'assistant', content: [{type: 'text', text}]},
-                ],
+                sessionFile: review.file,
               }
             : id === child.id
               ? {
                   worker: child,
                   detail: 'Directory: /fixture/child',
-                  messages: [
-                    {
-                      role: 'assistant',
-                      content: [{type: 'text', text: 'Child response'}],
-                    },
-                  ],
+                  sessionFile: childSession.file,
                 }
-              : undefined,
+              : undefined;
+        },
         message: async (id, value) => {
           assert(id === owner.id, 'descendant must not be messaged');
           if (value === 'reject') {
@@ -140,29 +206,17 @@ export default function (pi: ExtensionAPI): void {
         },
       };
       ctx.ui.setEditorText('keep this activity draft');
-      const update = setTimeout(() => {
-        text += '\nSTREAMED_ACCEPTANCE_TEXT';
-        inspections.record(owner.id, {
-          type: 'message_update',
-          assistantMessageEvent: {
-            type: 'text_delta',
-            contentIndex: 0,
-            delta: 'STREAMED_ACCEPTANCE_TEXT',
-          },
-        });
-        mark('worker-streamed');
-      }, 900);
-      const settled = setTimeout(() => {
-        state = 'completed';
-        owner.state = state;
-        inspections.record(owner.id, {type: 'message_end'});
-        mark('worker-completed');
-      }, 1500);
       try {
-        await inspections.open(ctx, source);
+        await inspections.open(ctx, source, {
+          outputPad: 1,
+          hideThinkingBlock: false,
+          showImages: false,
+          imageWidthCells: 60,
+        });
       } finally {
         clearTimeout(update);
         clearTimeout(settled);
+        rmSync(directory, {recursive: true, force: true});
       }
       if (!closed) {
         mark(

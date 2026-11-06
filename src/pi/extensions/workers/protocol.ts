@@ -53,14 +53,23 @@ export type WorkerEvent =
   | {readonly type: 'agent_settled'; readonly aborted: boolean}
   | {
       readonly type: 'tool_execution_start';
+      readonly toolCallId?: string;
       readonly toolName: string;
       readonly args: unknown;
     }
+  /** The tool's latest partial result; the inspector shows it until the saved result arrives. */
+  | {
+      readonly type: 'tool_execution_update';
+      readonly toolCallId: string;
+      readonly partialResult: unknown;
+    }
   | {
       readonly type: 'tool_execution_end';
+      readonly toolCallId?: string;
       readonly toolName: string;
       readonly isError: boolean;
     }
+  | {readonly type: 'message_start'; readonly message: unknown}
   | {
       readonly type: 'message_update';
       readonly usage?: {readonly totalTokens: number};
@@ -154,20 +163,40 @@ function event(record: Fields): WorkerEvent | undefined {
       return {type: 'agent_settled', aborted: record.aborted === true};
     case 'tool_execution_start': {
       const toolName = text(record.toolName);
+      const toolCallId = text(record.toolCallId);
       return toolName === undefined
         ? undefined
-        : {type: 'tool_execution_start', toolName, args: record.args};
+        : {
+            type: 'tool_execution_start',
+            ...(toolCallId === undefined ? {} : {toolCallId}),
+            toolName,
+            args: record.args,
+          };
+    }
+    case 'tool_execution_update': {
+      const toolCallId = text(record.toolCallId);
+      return toolCallId === undefined
+        ? undefined
+        : {
+            type: 'tool_execution_update',
+            toolCallId,
+            partialResult: record.partialResult,
+          };
     }
     case 'tool_execution_end': {
       const toolName = text(record.toolName);
+      const toolCallId = text(record.toolCallId);
       return toolName === undefined
         ? undefined
         : {
             type: 'tool_execution_end',
+            ...(toolCallId === undefined ? {} : {toolCallId}),
             toolName,
             isError: record.isError === true,
           };
     }
+    case 'message_start':
+      return {type: 'message_start', message: record.message};
     case 'message_update': {
       const update = assistantUpdate(record.assistantMessageEvent);
       if (!update) return undefined;

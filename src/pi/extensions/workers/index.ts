@@ -2,6 +2,7 @@ import {randomBytes} from 'node:crypto';
 import {existsSync, mkdirSync} from 'node:fs';
 import {readdir, rm, stat} from 'node:fs/promises';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {
   getAgentDir,
   type ExtensionAPI,
@@ -84,7 +85,9 @@ import {
 import {WorkerInspection} from './inspection.ts';
 import {createCheckoutResolver} from './checkout.ts';
 import {type WorkerInspectionSource, type WorkerListItem} from './inspector.ts';
-import {transcriptTail, transcriptWindow} from './tail.ts';
+import {transcriptTail} from './tail.ts';
+import {transcriptOptions} from './transcript.ts';
+import {rexBinary} from '../rex/index.ts';
 import {
   addCost,
   assistantResponse,
@@ -219,6 +222,11 @@ function excerpt(text: string): {body: string; truncated: boolean} {
 const MARK = 'dots.message:';
 
 /** This session's nesting depth. We set the variable ourselves, so a malformed value is a broken invariant, not depth 0. */
+/** The read-only transcript viewer a Rex view runs; see the Rex `workers_view` action. */
+const VIEWER = fileURLToPath(
+  new URL('../worker-view/index.ts', import.meta.url),
+);
+
 function depth(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.DOTS_WORKER_DEPTH;
   if (raw === undefined || raw === '') return 0;
@@ -1126,6 +1134,10 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       }
       case 'extension_ui_request':
         onUiRequest(worker, record);
+        return;
+      case 'message_start':
+      case 'tool_execution_update':
+        // Only the inspector's live transcript reads these.
         return;
       default:
         return record satisfies never;
@@ -2555,7 +2567,6 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
           ...(own.sessionFile === undefined
             ? {}
             : {sessionFile: own.sessionFile}),
-          ...transcriptWindow(own.sessionFile),
         };
       }
       const foreign = withRegistry(r => r.get(id));
@@ -2578,9 +2589,41 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         ...(foreign.session_file === null
           ? {}
           : {sessionFile: foreign.session_file}),
-        ...transcriptWindow(foreign.session_file ?? undefined),
       };
     },
+    ...(process.env.REX_SESSION
+      ? {
+          openInRex: async (id: string) => {
+            const snapshot = inspectionSource.read(id);
+            if (!snapshot) throw new Error('Worker is no longer available');
+            if (!snapshot.sessionFile)
+              throw new Error('Worker has no saved transcript yet');
+            const result = await pi.exec(
+              rexBinary(process.env),
+              [
+                '--timeout',
+                '30s',
+                'do',
+                'workers_view',
+                '--json',
+                '--args',
+                JSON.stringify({
+                  session_file: path.resolve(snapshot.sessionFile),
+                  viewer: VIEWER,
+                  label: snapshot.worker.label,
+                }),
+              ],
+              {timeout: 35_000},
+            );
+            if (result.killed || result.code !== 0)
+              throw new Error(
+                labelText(
+                  result.stderr.trim() || 'rex do workers_view failed',
+                ).slice(0, 256),
+              );
+          },
+        }
+      : {}),
     message: async (id, text) => {
       const worker = workers.get(id);
       if (!worker || !canMessage(worker))
@@ -2651,7 +2694,12 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
             }
           })()
         : undefined;
-      await inspection.open(ctx, inspectionSource, id);
+      await inspection.open(
+        ctx,
+        inspectionSource,
+        transcriptOptions(pi.getSettings()),
+        id,
+      );
     },
   });
 }

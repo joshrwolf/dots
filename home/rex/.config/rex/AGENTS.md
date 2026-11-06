@@ -90,8 +90,9 @@ memory or older notes.
 - Prefer Rex's built-in client actions over custom ones.
 - Search-first views are data for `dots-pick`, typed by `types/pick.lua`, which
   mirrors `src/pick/src/spec.rs`; change both together, and add every new picker
-  view to `tests/contract.lua`. Interactive command views, such as attention,
-  use the same `dots.views` placement and dismissal owner without a picker spec.
+  view to `tests/contract.lua`. Interactive command views, such as attention
+  and the Pi worker transcript (`workers_view`), use the same `dots.views`
+  placement and dismissal owner without a picker spec.
 - A live view names what invalidates it: Rex events through
   `dots.views.live` and `scripts/watch.lua`, or its own watch command, as the
   PR view uses `dots github watch follow`.

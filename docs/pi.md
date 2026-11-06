@@ -70,7 +70,11 @@ Workers are headless Pi sessions managed by their parent. An interactive Pi
 opened in a Rex pane is independent, not a managed worker.
 
 Use `/workers` to inspect progress, transcripts and results; M messages an owned
-worker and X offers stop confirmation. Descendants are read-only. Completion
+worker and X offers stop confirmation. Descendants are read-only. A transcript
+uses Pi's own message and tool rendering, follows the worker's saved session and
+shows the owned worker's response while it streams. Inside Rex, R opens it in a
+floating view instead: a minimal Pi with only the companion's read-only viewer,
+which shows saved records and cannot submit prompts. Completion
 means a result is ready, not that its process exited or its work was accepted.
 Worker costs are shown separately from the parent's session cost. A `~` marks a
 catalog estimate; an unmarked total is provider-billed for every response.
