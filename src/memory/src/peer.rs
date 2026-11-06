@@ -65,6 +65,7 @@ impl Tailscale {
                 env::var_os("PATH").ok_or_else(|| crate::invalid("PATH is unavailable"))?,
             )
             .env("HOME", &self.home)
+            .env("TERM", "dumb")
             .env("SSH_ASKPASS_REQUIRE", "never");
         if let Some(config) =
             env::var_os("XDG_CONFIG_HOME").filter(|path| Path::new(path).is_absolute())
@@ -131,6 +132,7 @@ impl Tailscale {
         command
             .env("HOME", &self.home)
             .env("GIT_ALLOW_PROTOCOL", "ssh")
+            .env("TERM", "dumb")
             .env("SSH_ASKPASS_REQUIRE", "never");
         if let Some(config) =
             env::var_os("XDG_CONFIG_HOME").filter(|path| Path::new(path).is_absolute())

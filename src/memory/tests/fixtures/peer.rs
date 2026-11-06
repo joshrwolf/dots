@@ -17,6 +17,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let [ssh, host, remote] = args.as_slice() else {
         return Err("fixture needs ssh, host and one command".into());
     };
+    if std::env::var("TERM").as_deref() != Ok("dumb") {
+        return Err("native transport needs a headless terminal environment".into());
+    }
     if ssh != "ssh" || host != "replica.tail.invalid" {
         return Err("unexpected fixture endpoint".into());
     }
