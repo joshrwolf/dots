@@ -1,5 +1,5 @@
 //! `dots attention view`: the user's interactive view of what goals need from
-//! them (Attention) and of the goals' durable work (Work), over the same store
+//! them, with a session-oriented inbox and separate goal inspection over the same store
 //! every other command reads.
 //!
 //! Viewing never claims, coordinates, resumes or starts anything. The only
@@ -11,7 +11,8 @@ use std::io::{self, IsTerminal as _};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, bail, ensure};
+use anyhow::{Context as _, Result, ensure};
+use dots_pick::Palette;
 use dots_tasks::attention::{
     AnswerContent, AttentionList, ClosureKind, GoalAttention, Request, RequestKind, Scope, Source,
     StateFilter,
@@ -24,8 +25,10 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::{Position, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Widget as _};
+use serde::Deserialize;
 use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::UnicodeWidthStr as _;
 
@@ -39,16 +42,15 @@ const ANSWER_LIMIT: usize = 4096;
 /// The store's bound on provenance.
 const PROVENANCE_LIMIT: usize = 512;
 /// Side by side from this width; stacked below it.
-const WIDE: u16 = 100;
-const LIST_WIDTH: u16 = 30;
+const WIDE: u16 = 72;
+const LIST_WIDTH: u16 = 34;
 const GOALS_WIDTH: u16 = 34;
-const GAP: u16 = 3;
+const GAP: u16 = 2;
 /// Below this the view asks for more room instead of drawing a broken layout.
 const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 6;
 /// `rex do` for the dismiss action: config actions get 30 seconds.
-const DISMISS_TIMEOUT: &str = "30s";
-const DISMISS_DEADLINE: Duration = Duration::from_secs(35);
+const SESSION_REFRESH: Duration = Duration::from_secs(5);
 
 /// Runs the view on this terminal until the user closes it, then runs the
 /// `dismiss` Rex action (`views_dismiss`) so focus returns where it was.
@@ -64,10 +66,31 @@ pub(crate) fn run(scope: Scope, dismiss: Option<String>, json: bool) -> Result<S
     let mut session = Session::new(scope);
     session.reload();
     let drawn = terminal(&mut session);
-    let dismissed = dismiss.map_or(Ok(()), |action| run_dismiss(&action));
+    let dismissed = if session.navigated {
+        Ok(())
+    } else {
+        dismiss.map_or(Ok(()), |action| run_dismiss(&action))
+    };
     drawn?;
     dismissed?;
     Ok(String::new())
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+enum Conversation {
+    Reported {
+        label: String,
+        session: String,
+        block: String,
+    },
+    Ambiguous,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Conversations {
+    owners: HashMap<String, Conversation>,
 }
 
 /// The store and what the view last read from it.
@@ -76,6 +99,8 @@ struct Session {
     store: Option<Store>,
     viewer: Viewer,
     provenance: String,
+    sessions_at: Option<Instant>,
+    navigated: bool,
 }
 
 impl Session {
@@ -91,6 +116,8 @@ impl Session {
             store: None,
             viewer,
             provenance,
+            sessions_at: None,
+            navigated: false,
         }
     }
 
@@ -104,6 +131,18 @@ impl Session {
     }
 
     fn reload(&mut self) {
+        match Palette::load() {
+            Ok(palette) => self.viewer.palette = palette,
+            Err(error) => {
+                self.viewer
+                    .refresh(Err(format!("Cannot read the picker theme: {error:#}")));
+                return;
+            }
+        }
+        let selected = self
+            .viewer
+            .current()
+            .map(|(_, request)| (request.project.clone(), request.id.clone()));
         let scope = self.scope.clone();
         let list = self
             .store()
@@ -113,7 +152,38 @@ impl Session {
             self.store = None;
         }
         self.viewer.refresh(list);
+        if self.viewer.unavailable.is_none()
+            && let Some((project, id)) = selected
+            && self
+                .viewer
+                .retired
+                .iter()
+                .any(|retired| retired.request.id == id && retired.unreadable.is_none())
+        {
+            let result = self
+                .store()
+                .and_then(|store| Ok(store.request(&project, &id)?));
+            self.viewer.reconciled(&id, result);
+        }
         self.load_overview();
+        if !self.viewer.requests().is_empty()
+            && std::env::var_os("REX_SESSION").is_some()
+            && self
+                .sessions_at
+                .is_none_or(|at| at.elapsed() >= SESSION_REFRESH)
+        {
+            self.sessions_at = Some(Instant::now());
+            match rex_action("attention_sessions", &serde_json::json!({}), 5).and_then(|bytes| {
+                serde_json::from_slice::<Conversations>(&bytes)
+                    .context("reading Rex conversation identities")
+            }) {
+                Ok(snapshot) => {
+                    self.viewer.conversations = snapshot.owners;
+                    self.viewer.session_error = None;
+                }
+                Err(error) => self.viewer.session_error = Some(format!("{error:#}")),
+            }
+        }
     }
 
     fn load_overview(&mut self) {
@@ -132,6 +202,31 @@ impl Session {
             Effect::None => {}
             Effect::Close => return false,
             Effect::Overview => self.load_overview(),
+            Effect::Open {
+                owner,
+                session,
+                block,
+            } => {
+                let result = rex_action(
+                    "attention_open",
+                    &serde_json::json!({"owner":owner,"session":session,"block":block}),
+                    30,
+                )
+                .map(|_| ());
+                match result {
+                    Ok(()) => {
+                        self.navigated = true;
+                        return false;
+                    }
+                    Err(error) => {
+                        self.viewer.notice = Some(Notice {
+                            request: self.viewer.selected.clone(),
+                            text: format!("Conversation not opened: {error:#}"),
+                            tone: Tone::Error,
+                        });
+                    }
+                }
+            }
             Effect::Answer {
                 project,
                 request,
@@ -193,27 +288,29 @@ fn provenance(scope: &Scope, rex_session: Option<&str>, rex_block: Option<&str>)
 }
 
 fn run_dismiss(action: &str) -> Result<()> {
+    rex_action(action, &serde_json::json!({}), 30).map(|_| ())
+}
+
+fn rex_action(action: &str, args: &serde_json::Value, timeout: u64) -> Result<Vec<u8>> {
     let mut command = Command::new("rex");
     command.args([
         "--timeout",
-        DISMISS_TIMEOUT,
+        &format!("{timeout}s"),
         "do",
         action,
         "--json",
         "--args",
-        "{}",
+        &serde_json::to_string(args)?,
     ]);
-    let output = dots_process::output(command, DISMISS_DEADLINE, 64 * 1024)
+    let output = dots_process::output(command, Duration::from_secs(timeout + 5), 256 * 1024)
         .with_context(|| format!("running rex do {action}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "rex do {action} failed ({}): {}",
-            output.status,
-            stderr.trim()
-        );
-    }
-    Ok(())
+    ensure!(
+        output.status.success(),
+        "rex do {action} failed ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(output.stdout)
 }
 
 /// Takes the terminal, runs the loop, and gives the terminal back whatever the
@@ -323,6 +420,11 @@ enum Effect {
     Close,
     /// The selected Work goal changed.
     Overview,
+    Open {
+        owner: String,
+        session: String,
+        block: String,
+    },
     Answer {
         project: Project,
         request: String,
@@ -446,6 +548,7 @@ enum Item {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Target {
     Tab(Tab),
+    Open,
     Request(String),
     Item(usize),
     Input,
@@ -466,6 +569,14 @@ enum Region {
     Tasks,
 }
 
+struct InboxEntry {
+    id: String,
+    session: String,
+    project: String,
+    subject: String,
+    glyph: Span<'static>,
+}
+
 /// A request the latest snapshot does not list: a closed copy of one that
 /// stopped waiting while the user had it selected or drafted, keeping its
 /// question and the draft under its own ID, or the last-read copy of one
@@ -483,6 +594,9 @@ struct Retired {
 /// The view's whole state: a pure function of inputs and store reads.
 #[derive(Debug)]
 struct Viewer {
+    palette: Palette,
+    conversations: HashMap<String, Conversation>,
+    session_error: Option<String>,
     /// Exact scope with no goals: nothing was asked for, which is not "nothing
     /// needs you".
     nothing_selected: bool,
@@ -502,7 +616,7 @@ struct Viewer {
     overview: Option<(String, std::result::Result<GoalOverview, String>)>,
     task_scroll: usize,
     hits: Vec<(Rect, Target)>,
-    pressed: Option<Target>,
+    pressed: Option<(Option<String>, Target)>,
 }
 
 impl Viewer {
@@ -518,6 +632,9 @@ impl Viewer {
             ),
         };
         Self {
+            palette: Palette::default(),
+            conversations: HashMap::new(),
+            session_error: None,
             nothing_selected,
             scope_label,
             list: None,
@@ -536,6 +653,49 @@ impl Viewer {
             hits: Vec::new(),
             pressed: None,
         }
+    }
+
+    fn conversation_name(&self, goal: &GoalAttention) -> String {
+        if self.session_error.is_some() {
+            return "Rex unavailable".into();
+        }
+        match goal
+            .coordinator
+            .as_ref()
+            .and_then(|owner| self.conversations.get(owner))
+        {
+            Some(Conversation::Reported { label, .. }) => clean_line(label),
+            Some(Conversation::Ambiguous) => "Multiple reporting sessions".into(),
+            None if goal.coordinator.is_none() => "No coordinator".into(),
+            None => "Session not reported in Rex".into(),
+        }
+    }
+
+    fn open_conversation(&mut self) -> Effect {
+        if self.drafts.values().any(|draft| !draft.text.is_empty()) {
+            self.notice = Some(Notice { request: self.selected.clone(), text: "Send or clear your unsent drafts before opening a conversation. Your drafts are kept here.".into(), tone: Tone::Warning });
+            return Effect::None;
+        }
+        let Some((goal, _)) = self.current() else {
+            return Effect::None;
+        };
+        if self.session_error.is_none()
+            && let Some(owner) = &goal.coordinator
+            && let Some(Conversation::Reported { session, block, .. }) =
+                self.conversations.get(owner)
+        {
+            return Effect::Open {
+                owner: owner.clone(),
+                session: session.clone(),
+                block: block.clone(),
+            };
+        }
+        self.notice = Some(Notice {
+            request: self.selected.clone(),
+            text: "No exact Rex conversation is available. Nothing was started.".into(),
+            tone: Tone::Warning,
+        });
+        Effect::None
     }
 
     fn goals(&self) -> &[GoalAttention] {
@@ -707,7 +867,7 @@ impl Viewer {
         let outcome = if replacement.is_some() {
             "Replaced by a newer question, listed separately; nothing was sent. Select the new question to answer it."
         } else if request.state == RequestState::Answered {
-            "The coordinator took up this answer."
+            "No longer listed; incorporation has not been confirmed."
         } else {
             match closure {
                 Some(ClosureKind::Withdrawn) => "Withdrawn; nothing was sent.",
@@ -727,6 +887,38 @@ impl Viewer {
             outcome: outcome.to_owned(),
             unreadable: None,
         });
+    }
+
+    /// Canonical closure evidence, not disappearance from an outstanding query.
+    fn reconciled(&mut self, id: &str, result: Result<Request>) {
+        let Some(retired) = self
+            .retired
+            .iter_mut()
+            .find(|retired| retired.request.id == id)
+        else {
+            return;
+        };
+        match result {
+            Ok(request) if request.state != RequestState::Open => {
+                retired.outcome = match request.closure.as_ref().map(|closure| closure.kind) {
+                    Some(ClosureKind::Incorporated) => "✓ Incorporated. A decision is recorded; this does not confirm that work resumed.",
+                    Some(ClosureKind::Withdrawn) => "Withdrawn; nothing was sent.",
+                    Some(ClosureKind::Superseded) => "Replaced by a newer question, listed separately. Nothing was retargeted.",
+                    None => "Reply saved. Incorporation has not been confirmed.",
+                }.into();
+                retired.request = request;
+            }
+            Ok(_) => {
+                retired.outcome =
+                    "The question is open but absent from this scope; refresh before answering."
+                        .into();
+            }
+            Err(error) => {
+                retired.outcome = format!(
+                    "Cannot confirm the question's outcome: {error:#}. The original question and draft are kept."
+                );
+            }
+        }
     }
 
     /// Tells the user the selected request changed in the store. Selection
@@ -773,7 +965,7 @@ impl Viewer {
                 self.drafts.remove(id);
                 self.items.remove(id);
                 self.notice = Some(Notice {
-                    request: None,
+                    request: Some(id.to_owned()),
                     text: format!("Saved your answer to “{}”.", clean_line(&request.title)),
                     tone: Tone::Info,
                 });
@@ -1050,8 +1242,52 @@ impl Viewer {
         }
         match key.code {
             KeyCode::Esc => return self.back(),
-            KeyCode::Left => return self.switch(Tab::Attention),
-            KeyCode::Right => return self.switch(Tab::Work),
+            KeyCode::Char('g') => {
+                return self.switch(if self.tab == Tab::Attention {
+                    Tab::Work
+                } else {
+                    Tab::Attention
+                });
+            }
+            KeyCode::Char('o') if self.tab == Tab::Attention => return self.open_conversation(),
+            KeyCode::Char('r') if self.tab == Tab::Attention => {
+                if let Some((_, request)) = self.current()
+                    && request.state == RequestState::Open
+                {
+                    let id = request.id.clone();
+                    self.focus = Focus::Text;
+                    self.drafts.entry(id).or_default();
+                }
+                return Effect::None;
+            }
+            KeyCode::Char(c @ '1'..='8') if self.tab == Tab::Attention => {
+                let index = usize::try_from(c.to_digit(10).expect("ASCII digit"))
+                    .expect("single digit fits")
+                    - 1;
+                if self
+                    .hits
+                    .iter()
+                    .any(|(_, target)| *target == Target::Item(index))
+                    && let Some((_, request)) = self.current()
+                    && request.state == RequestState::Open
+                    && index < request.choices.len()
+                {
+                    let id = request.id.clone();
+                    self.items.insert(id, index);
+                    return self.activate();
+                }
+                return Effect::None;
+            }
+            KeyCode::Left if self.tab == Tab::Attention => {
+                self.move_request(-1);
+                self.focus = Focus::Requests;
+                return Effect::None;
+            }
+            KeyCode::Right if self.tab == Tab::Attention => {
+                self.move_request(1);
+                self.focus = Focus::Requests;
+                return Effect::None;
+            }
             _ => {}
         }
         let step = match key.code {
@@ -1117,13 +1353,20 @@ impl Viewer {
     fn mouse(&mut self, mouse: MouseEvent) -> Effect {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                self.pressed = self.hit(mouse.column, mouse.row).cloned();
+                self.pressed = self
+                    .hit(mouse.column, mouse.row)
+                    .cloned()
+                    .map(|target| (self.selected.clone(), target));
                 Effect::None
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 let pressed = self.pressed.take();
                 match self.hit(mouse.column, mouse.row).cloned() {
-                    Some(target) if pressed.as_ref() == Some(&target) => self.click(target),
+                    Some(target)
+                        if pressed.as_ref() == Some(&(self.selected.clone(), target.clone())) =>
+                    {
+                        self.click(target)
+                    }
                     _ => Effect::None,
                 }
             }
@@ -1150,9 +1393,10 @@ impl Viewer {
     fn click(&mut self, target: Target) -> Effect {
         match target {
             Target::Tab(tab) => return self.switch(tab),
+            Target::Open => return self.open_conversation(),
             Target::Request(id) => {
                 self.select_request(id);
-                self.open_choices();
+                self.focus = Focus::Requests;
             }
             Target::Item(index) => {
                 if let Some(id) = self.selected.clone() {
@@ -1252,27 +1496,27 @@ fn wrap(text: &str, max: usize) -> Vec<String> {
     lines
 }
 
-fn accent() -> Style {
-    Style::new().fg(Color::Blue)
+fn accent(palette: Palette) -> Style {
+    Style::new().fg(palette.accent)
 }
 
-fn muted() -> Style {
-    Style::new().fg(Color::DarkGray)
+fn muted(palette: Palette) -> Style {
+    Style::new().fg(palette.muted)
 }
 
-fn warning() -> Style {
-    Style::new().fg(Color::Yellow)
+fn warning(palette: Palette) -> Style {
+    Style::new().fg(palette.yellow)
 }
 
 fn bold() -> Style {
     Style::new().add_modifier(Modifier::BOLD)
 }
 
-fn tone(tone: Tone) -> Style {
+fn tone(palette: Palette, tone: Tone) -> Style {
     match tone {
-        Tone::Info => muted(),
-        Tone::Warning => warning(),
-        Tone::Error => Style::new().fg(Color::Red),
+        Tone::Info => muted(palette),
+        Tone::Warning => warning(palette),
+        Tone::Error => Style::new().fg(palette.red),
     }
 }
 
@@ -1316,6 +1560,15 @@ impl<'a> Rows<'a> {
         self.line(&Line::from(Span::styled(text, style)))
     }
 
+    fn section(&mut self, label: &str, palette: Palette) {
+        let tail = "─".repeat(self.width().saturating_sub(width(label) + 4));
+        self.line(&Line::from(vec![
+            Span::styled("── ", muted(palette)),
+            Span::styled(label, accent(palette).add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" {tail}"), muted(palette)),
+        ]));
+    }
+
     fn blank(&mut self) {
         if self.next < self.area.height {
             self.next += 1;
@@ -1334,19 +1587,19 @@ impl<'a> Rows<'a> {
 }
 
 /// The selection marker and styles of one list row.
-fn row_style(selected: bool, focused: bool) -> (Span<'static>, Style) {
+fn row_style(palette: Palette, selected: bool, focused: bool) -> (Span<'static>, Style) {
     match (selected, focused) {
-        (true, true) => (Span::styled("› ", accent()), bold()),
-        (true, false) => (Span::raw("  "), muted()),
+        (true, true) => (Span::styled("› ", accent(palette)), bold()),
+        (true, false) => (Span::raw("  "), muted(palette)),
         (false, _) => (Span::raw("  "), Style::new()),
     }
 }
 
-fn state_glyph(request: &Request) -> Span<'static> {
+fn state_glyph(palette: Palette, request: &Request) -> Span<'static> {
     match request.state {
-        RequestState::Open => Span::styled("? ", warning()),
-        RequestState::Answered => Span::styled("✓ ", Style::new().fg(Color::Green)),
-        RequestState::Closed => Span::styled("− ", muted()),
+        RequestState::Open => Span::styled("● ", warning(palette)),
+        RequestState::Answered => Span::styled("✓ ", Style::new().fg(palette.green)),
+        RequestState::Closed => Span::styled("○ ", muted(palette)),
     }
 }
 
@@ -1381,24 +1634,22 @@ fn answer_text(request: &Request) -> String {
 
 /// What happens to a saved answer. A claim says who is responsible, not that
 /// its session is running.
-fn coordination(goal: &GoalAttention) -> (String, Style) {
+fn coordination(palette: Palette, goal: &GoalAttention) -> (String, Style) {
     match &goal.coordinator {
-        Some(owner) => (
-            format!(
-                "Saved for the goal's coordinator (claimed by {}) to incorporate.",
-                clean_line(owner)
-            ),
-            muted(),
+        Some(_) => (
+            "Saved. Pickup has not been confirmed; waiting for the coordinator to incorporate it."
+                .into(),
+            muted(palette),
         ),
         None => (
-            "Saved. No session coordinates this goal; resume it in Pi to continue.".into(),
-            warning(),
+            "Saved. No coordinator owns this goal; the answer stays available.".into(),
+            warning(palette),
         ),
     }
 }
 
 /// The rationale shown under a question when there is room for all of it.
-fn rationale(request: &Request, max: usize) -> Vec<(String, Style)> {
+fn rationale(palette: Palette, request: &Request, max: usize) -> Vec<(String, Style)> {
     let mut lines = Vec::new();
     let mut block = |text: &str, style: Style| {
         if !lines.is_empty() {
@@ -1410,7 +1661,10 @@ fn rationale(request: &Request, max: usize) -> Vec<(String, Style)> {
         block(context, Style::new());
     }
     if let Some(recommendation) = &request.recommendation {
-        block(&format!("Recommend: {recommendation}"), Style::new());
+        block(
+            &format!("↳ Recommendation: {recommendation}"),
+            accent(palette),
+        );
     }
     if !request.tasks.is_empty() {
         let tasks = request
@@ -1419,7 +1673,7 @@ fn rationale(request: &Request, max: usize) -> Vec<(String, Style)> {
             .map(|task| format!("{} ({})", clean_line(&task.title), task.status.as_str()))
             .collect::<Vec<_>>()
             .join(", ");
-        block(&format!("Waits on this: {tasks}"), muted());
+        block(&format!("Waits on this: {tasks}"), muted(palette));
     }
     lines
 }
@@ -1429,23 +1683,45 @@ impl Viewer {
         let area = frame.area();
         self.hits.clear();
         let buffer = frame.buffer_mut();
+        buffer.set_style(
+            area,
+            Style::new()
+                .bg(self.palette.background)
+                .fg(self.palette.strong),
+        );
         if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
             let mut rows = Rows::new(buffer, area);
-            rows.text("Enlarge this view to see attention.", muted());
-            rows.text("Esc closes.", muted());
+            rows.text("Enlarge this view to see attention.", muted(self.palette));
+            rows.text("Esc closes.", muted(self.palette));
             return;
         }
-        let inner = Rect::new(area.x + 1, area.y, area.width - 2, area.height);
-        let header = Rect::new(inner.x, inner.y, inner.width, 1);
+        let title = if self.tab == Tab::Attention {
+            format!(" Attention · {} need you ", self.waiting())
+        } else {
+            " Goals ".into()
+        };
+        Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(muted(self.palette))
+            .title(Line::from(Span::styled(
+                title,
+                accent(self.palette).add_modifier(Modifier::BOLD),
+            )))
+            .render(area, buffer);
+        let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
         let footer = Rect::new(inner.x, inner.bottom() - 1, inner.width, 1);
-        let mut body = Rect::new(inner.x, inner.y + 1, inner.width, inner.height - 2);
-        self.header(buffer, header);
+        let mut body = Rect::new(inner.x, inner.y, inner.width, inner.height - 1);
+        if self.tab == Tab::Work {
+            self.header(buffer, Rect::new(body.x, body.y, body.width, 1));
+            body.y += 1;
+            body.height -= 1;
+        }
         if let Some(status) = self.status_line() {
             let mut rows = Rows::new(buffer, body);
             // Up to two lines: what failed must stay readable, the body must stay visible.
             let max = rows.width();
             for line in wrap(&status, max).iter().take(2) {
-                rows.text(line, warning());
+                rows.text(line, warning(self.palette));
             }
             body = rows.rest();
         }
@@ -1462,37 +1738,17 @@ impl Viewer {
         }
     }
 
-    fn header(&mut self, buffer: &mut Buffer, area: Rect) {
-        let tabs = [
-            (Tab::Attention, format!("← Attention ({})", self.waiting())),
-            (Tab::Work, "Work →".to_owned()),
-        ];
-        let mut x = area.x;
-        for (tab, label) in tabs {
-            let active = self.tab == tab;
-            let text = format!("{}[ {label} ]", if active { "› " } else { "" });
-            let style = if active {
-                accent().add_modifier(Modifier::BOLD)
-            } else {
-                muted()
-            };
-            let cells = u16::try_from(width(&text)).unwrap_or(u16::MAX);
-            if x + cells > area.right() {
-                break;
-            }
-            buffer.set_string(x, area.y, &text, style);
-            self.hits
-                .push((Rect::new(x, area.y, cells, 1), Target::Tab(tab)));
-            x += cells + 2;
-        }
+    fn header(&self, buffer: &mut Buffer, area: Rect) {
         let label = fit(
-            &self.scope_label,
-            usize::from(area.right().saturating_sub(x)),
+            &format!("Goals · {}", self.scope_label),
+            usize::from(area.width),
         );
-        let cells = u16::try_from(width(&label)).unwrap_or(0);
-        if cells > 0 {
-            buffer.set_string(area.right() - cells, area.y, &label, muted());
-        }
+        buffer.set_string(
+            area.x,
+            area.y,
+            label,
+            accent(self.palette).add_modifier(Modifier::BOLD),
+        );
     }
 
     fn status_line(&self) -> Option<String> {
@@ -1507,7 +1763,12 @@ impl Viewer {
             });
         }
         let errors = &self.list.as_ref()?.errors;
-        let first = errors.first()?;
+        let Some(first) = errors.first() else {
+            return self
+                .session_error
+                .as_ref()
+                .map(|error| format!("Session navigation unavailable: {}", clean_line(error)));
+        };
         let what = first.goal.as_deref().map_or_else(
             || format!("project {}", first.project),
             |goal| format!("{} goal {goal}", first.project),
@@ -1524,11 +1785,11 @@ impl Viewer {
 
     fn hints(&self) -> &'static str {
         match (self.tab, self.focus) {
-            (Tab::Work, _) => "← Attention · ↑/↓ goal · PgUp/PgDn tasks · Esc back",
+            (Tab::Work, _) => "G inbox · ↑/↓ goal · PgUp/PgDn tasks · Esc back",
             (_, Focus::Text) => "Enter send · Esc back · ←/→ edit answer",
             (_, Focus::Context) => "↑/↓ scroll · Enter/Esc back",
-            (_, Focus::Requests) => "→ Work · ↑/↓ request · Enter answer · Esc close",
-            (_, Focus::Choices) => "← Attention · → Work · ↑/↓ choice · Enter select · Esc back",
+            (_, Focus::Requests) => "↑/↓ inbox · 1–8 reply · R write · O open · Esc close",
+            (_, Focus::Choices) => "↑/↓ choice · Enter reply · R write · O open · Esc back",
         }
     }
 
@@ -1537,6 +1798,9 @@ impl Viewer {
         if !(self.tab == Tab::Attention && self.focus == Focus::Requests) {
             buttons.push(("[ Back ]", Target::Back));
         }
+        if self.tab == Tab::Attention {
+            buttons.push(("[ G Goals ]", Target::Tab(Tab::Work)));
+        }
         buttons.push(("[ Close ]", Target::Close));
         let mut x = area.x;
         for (label, target) in buttons {
@@ -1544,21 +1808,20 @@ impl Viewer {
             if x + cells > area.right() {
                 return;
             }
-            buffer.set_string(x, area.y, label, muted());
+            buffer.set_string(x, area.y, label, muted(self.palette));
             self.hits.push((Rect::new(x, area.y, cells, 1), target));
             x += cells + 2;
         }
         let hints = fit(self.hints(), usize::from(area.right().saturating_sub(x)));
-        buffer.set_string(x, area.y, hints, muted());
+        buffer.set_string(x, area.y, hints, muted(self.palette));
     }
 
-    /// Draws Attention, returning where the caret goes while typing.
     fn attention(&mut self, buffer: &mut Buffer, area: Rect) -> Option<Position> {
         let requests = self.requests();
         if requests.is_empty() {
             let mut rows = Rows::new(buffer, area);
             let message = if self.list.is_none() {
-                "Nothing can be shown until the store can be read. Nothing was changed."
+                "Attention could not be read. Nothing was changed."
             } else if self.nothing_selected {
                 "No goals are selected."
             } else if self
@@ -1571,16 +1834,8 @@ impl Viewer {
                 "Nothing needs you."
             };
             rows.text(message, bold());
-            let goals = self.goals().len();
-            if goals > 0 {
-                rows.blank();
-                rows.text(
-                    &format!(
-                        "Work → shows {goals} {}.",
-                        if goals == 1 { "goal" } else { "goals" }
-                    ),
-                    muted(),
-                );
+            if !self.goals().is_empty() {
+                rows.text("G  Inspect goals and unfinished work", muted(self.palette));
             }
             return None;
         }
@@ -1590,48 +1845,42 @@ impl Viewer {
         }
         let selected = self.selected.clone();
         if area.width >= WIDE {
-            let list = Rect::new(area.x, area.y, LIST_WIDTH, area.height);
+            let list_width = (area.width / 3).clamp(22, LIST_WIDTH);
+            let list = Rect::new(area.x, area.y, list_width, area.height);
             let detail = Rect::new(
-                area.x + LIST_WIDTH + GAP,
+                area.x + list_width + GAP,
                 area.y,
-                area.width - LIST_WIDTH - GAP,
+                area.width - list_width - GAP,
                 area.height,
             );
-            let entries: Vec<(String, Span<'static>, String)> = requests
+            let entries: Vec<InboxEntry> = requests
                 .iter()
-                .map(|(_, request)| {
-                    (
-                        request.id.clone(),
-                        state_glyph(request),
-                        clean_line(&request.title),
-                    )
+                .map(|(goal, request)| InboxEntry {
+                    id: request.id.clone(),
+                    session: self.conversation_name(goal),
+                    project: clean_line(&goal.project_name),
+                    subject: format!(
+                        "{} · {}",
+                        match request.state {
+                            RequestState::Open => "Needs you",
+                            RequestState::Answered => "Reply saved",
+                            RequestState::Closed => "Closed",
+                        },
+                        clean_line(&request.title)
+                    ),
+                    glyph: state_glyph(self.palette, request),
                 })
                 .collect();
             drop(requests);
             self.request_list(buffer, list, &entries, selected.as_deref());
+            Block::new()
+                .borders(Borders::LEFT)
+                .border_style(muted(self.palette))
+                .render(Rect::new(detail.x - 1, area.y, 1, area.height), buffer);
             self.detail(buffer, detail)
         } else {
-            let position = selected
-                .as_deref()
-                .and_then(|id| requests.iter().position(|(_, request)| request.id == id))
-                .unwrap_or(0);
-            let count = requests.len();
-            let title = clean_line(&requests[position].1.title);
             drop(requests);
-            let mut rest = area;
-            if self.focus == Focus::Requests {
-                let mut rows = Rows::new(buffer, area);
-                let counter = format!("{}/{count} · ", position + 1);
-                let title = fit(&title, rows.width().saturating_sub(width(&counter)));
-                if let Some(row) = rows.line(&Line::from(vec![
-                    Span::styled(counter, muted()),
-                    Span::styled(title, accent().add_modifier(Modifier::BOLD)),
-                ])) {
-                    self.hits.push((row, Target::Region(Region::Requests)));
-                }
-                rest = rows.rest();
-            }
-            self.detail(buffer, rest)
+            self.detail(buffer, area)
         }
     }
 
@@ -1639,30 +1888,47 @@ impl Viewer {
         &mut self,
         buffer: &mut Buffer,
         area: Rect,
-        entries: &[(String, Span<'static>, String)],
+        entries: &[InboxEntry],
         selected: Option<&str>,
     ) {
-        let focused = self.focus == Focus::Requests;
         self.hits.push((area, Target::Region(Region::Requests)));
         let mut rows = Rows::new(buffer, area);
-        rows.text("Requests", if focused { accent() } else { muted() });
-        let visible = rows.left().max(1);
+        rows.text("≡ Inbox", accent(self.palette).add_modifier(Modifier::BOLD));
+        rows.blank();
+        let visible = (rows.left() / 4).max(1);
         let at = entries
             .iter()
-            .position(|(id, _, _)| Some(id.as_str()) == selected)
+            .position(|row| Some(row.id.as_str()) == selected)
             .unwrap_or(0);
         let first = at.saturating_sub(visible - 1);
-        for (id, glyph, title) in entries.iter().skip(first).take(visible) {
-            let is_selected = Some(id.as_str()) == selected;
-            let (marker, style) = row_style(is_selected, focused);
-            let title = fit(title, rows.width().saturating_sub(4));
-            if let Some(row) = rows.line(&Line::from(vec![
-                marker,
-                glyph.clone(),
-                Span::styled(title, style),
-            ])) {
-                self.hits.push((row, Target::Request(id.clone())));
+        for entry in entries.iter().skip(first).take(visible) {
+            if rows.left() < 3 {
+                break;
             }
+            let is_selected = Some(entry.id.as_str()) == selected;
+            let row_area = Rect::new(area.x, rows.area.y + rows.next, area.width, 3);
+            if is_selected {
+                rows.buffer
+                    .set_style(row_area, Style::new().bg(self.palette.selection_bg));
+            }
+            let name = fit(&entry.session, rows.width().saturating_sub(2));
+            rows.text(
+                &format!("{} {name}", if is_selected { "›" } else { " " }),
+                if is_selected {
+                    accent(self.palette).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new()
+                },
+            );
+            rows.text(&format!("  {}", entry.project), muted(self.palette));
+            let subject = fit(&entry.subject, rows.width().saturating_sub(2));
+            rows.line(&Line::from(vec![
+                entry.glyph.clone(),
+                Span::styled(subject, muted(self.palette)),
+            ]));
+            self.hits
+                .push((row_area, Target::Request(entry.id.clone())));
+            rows.blank();
         }
     }
 
@@ -1680,6 +1946,7 @@ impl Viewer {
             clean_line(&goal.project_name),
             clean_line(&goal.title)
         );
+        let session_name = self.conversation_name(goal);
         let question = wrap(&request.question, max);
         let notice = self
             .notice
@@ -1687,7 +1954,7 @@ impl Viewer {
             .filter(|notice| {
                 notice.request.is_none() || notice.request.as_deref() == Some(&request.id)
             })
-            .map(|notice| (wrap(&notice.text, max), tone(notice.tone)));
+            .map(|notice| (wrap(&notice.text, max), tone(self.palette, notice.tone)));
         let open = request.state == RequestState::Open;
         let typing = self.focus == Focus::Text && open;
         let items = Self::items_for(request);
@@ -1711,11 +1978,11 @@ impl Viewer {
         let rationale = if typing {
             Vec::new()
         } else {
-            rationale(request, max)
+            rationale(self.palette, request, max)
         };
 
-        let action_rows = match &outcome {
-            Some(lines) => lines.len() + 1,
+        let action_rows = 1 + match &outcome {
+            Some(lines) => lines.len() + 2,
             None if typing => 2,
             None => item_labels.len(),
         };
@@ -1735,15 +2002,20 @@ impl Viewer {
             })
             .unwrap_or_default();
         let notice_rows = notice.as_ref().map_or(0, |(lines, _)| lines.len() + 1);
-        let fixed = 1 + unreadable.len() + action_rows + notice_rows;
+        let fixed = 4 + unreadable.len() + action_rows + notice_rows;
         let room = usize::from(area.height).saturating_sub(fixed);
         let question_rows = question.len().min(room.max(1));
         let show_rationale = !rationale.is_empty() && room >= question_rows + rationale.len() + 2;
 
         let mut rows = Rows::new(buffer, area);
-        rows.text(&heading, muted());
+        rows.text(
+            &session_name,
+            accent(self.palette).add_modifier(Modifier::BOLD),
+        );
+        rows.text(&heading, muted(self.palette));
+        rows.section(&format!("? {}", clean_line(&request.title)), self.palette);
         for line in &unreadable {
-            rows.text(line, warning());
+            rows.text(line, warning(self.palette));
         }
         for (index, line) in question.iter().take(question_rows).enumerate() {
             let line = if index + 1 == question_rows && question_rows < question.len() {
@@ -1760,6 +2032,10 @@ impl Viewer {
             }
             rows.blank();
         }
+        while rows.left() > action_rows + notice_rows + 1 {
+            rows.blank();
+        }
+        rows.section("↳ Reply", self.palette);
         if let Some((lines, style)) = &notice {
             rows.blank();
             for line in lines {
@@ -1781,6 +2057,9 @@ impl Viewer {
             ) {
                 self.hits.push((row, Target::Item(0)));
             }
+            if let Some(row) = rows.text("O  Open conversation ↗", accent(self.palette)) {
+                self.hits.push((row, Target::Open));
+            }
             return None;
         }
         if typing {
@@ -1788,12 +2067,18 @@ impl Viewer {
             let field = max.saturating_sub(width(prompt)).max(1);
             let (shown, caret) = window(&draft, field);
             let text = if draft.text.is_empty() {
-                Span::styled("Your answer", muted())
+                Span::styled("Your answer", muted(self.palette))
             } else {
                 Span::raw(shown)
             };
-            let row = rows.line(&Line::from(vec![Span::styled(prompt, muted()), text]));
-            let send = rows.text("[ Send answer ]", accent());
+            let row = rows.line(&Line::from(vec![
+                Span::styled(prompt, muted(self.palette)),
+                text,
+            ]));
+            let send = rows.text("[ Send answer ]", accent(self.palette));
+            if let Some(row) = rows.text("O  Open conversation ↗", accent(self.palette)) {
+                self.hits.push((row, Target::Open));
+            }
             if let Some(row) = row {
                 self.hits.push((row, Target::Input));
             }
@@ -1810,26 +2095,40 @@ impl Viewer {
         let items_area = rows.rest();
         let focused = self.focus == Focus::Choices;
         self.hits.push((items_area, Target::Region(Region::Items)));
-        let visible = rows.left().max(1);
-        let first = item_at.saturating_sub(visible - 1);
+        let visible = rows.left().saturating_sub(1);
+        let first = item_at.saturating_sub(visible.saturating_sub(1));
         for (index, (label, detail)) in item_labels.iter().enumerate().skip(first).take(visible) {
             let selected = focused && index == item_at;
             let (marker, style) = if selected {
-                (Span::styled("› ", accent()), bold())
+                (Span::styled("› ", accent(self.palette)), bold())
             } else {
                 (Span::raw("  "), Style::new())
+            };
+            let marker = match items[index] {
+                Item::Choice(choice) => Span::styled(
+                    format!("{} ", choice + 1),
+                    accent(self.palette).add_modifier(Modifier::BOLD),
+                ),
+                Item::Other => Span::styled("R ", accent(self.palette)),
+                Item::Context => marker,
             };
             let label = fit(label, max.saturating_sub(2));
             let mut spans = vec![marker, Span::styled(label.clone(), style)];
             if let Some(detail) = detail {
                 let left = max.saturating_sub(2 + width(&label) + 3);
                 if left > 8 {
-                    spans.push(Span::styled(format!(" · {}", fit(detail, left)), muted()));
+                    spans.push(Span::styled(
+                        format!(" · {}", fit(detail, left)),
+                        muted(self.palette),
+                    ));
                 }
             }
             if let Some(row) = rows.line(&Line::from(spans)) {
                 self.hits.push((row, Target::Item(index)));
             }
+        }
+        if let Some(row) = rows.text("O  Open conversation ↗", accent(self.palette)) {
+            self.hits.push((row, Target::Open));
         }
         None
     }
@@ -1851,16 +2150,19 @@ impl Viewer {
             .iter()
             .find(|retired| retired.request.id == request.id && retired.unreadable.is_none())
         {
-            add(&retired.outcome, warning());
+            add(&retired.outcome, warning(self.palette));
         } else {
-            add(&format!("Answer saved: {}", answer_text(request)), muted());
-            let (note, style) = coordination(goal);
+            add(
+                &format!("Answer saved: {}", answer_text(request)),
+                muted(self.palette),
+            );
+            let (note, style) = coordination(self.palette, goal);
             add(&note, style);
         }
         if !draft.text.is_empty() {
             add(
                 &format!("Your unsent draft: {}", clean_line(&draft.text)),
-                muted(),
+                muted(self.palette),
             );
         }
         lines
@@ -1877,7 +2179,7 @@ impl Viewer {
                 clean_line(&goal.project_name),
                 clean_line(&goal.title)
             ),
-            muted(),
+            muted(self.palette),
         )];
         lines.extend(
             wrap(&request.title, max)
@@ -1893,7 +2195,7 @@ impl Viewer {
         // Choice rows clip to one line; here every label and detail is whole.
         if !request.choices.is_empty() {
             lines.push((String::new(), Style::new()));
-            lines.push(("Choices".to_owned(), muted()));
+            lines.push(("Choices".to_owned(), muted(self.palette)));
             let inner = max.saturating_sub(2).max(1);
             for choice in &request.choices {
                 for (index, line) in wrap(&choice.label, inner).into_iter().enumerate() {
@@ -1901,11 +2203,11 @@ impl Viewer {
                     lines.push((format!("{lead}{line}"), bold()));
                 }
                 for line in choice.detail.iter().flat_map(|detail| wrap(detail, inner)) {
-                    lines.push((format!("  {line}"), muted()));
+                    lines.push((format!("  {line}"), muted(self.palette)));
                 }
             }
         }
-        let rationale = rationale(request, max);
+        let rationale = rationale(self.palette, request, max);
         if !rationale.is_empty() {
             lines.push((String::new(), Style::new()));
             lines.extend(rationale);
@@ -1938,18 +2240,18 @@ impl Viewer {
         let at = self.goal_index().unwrap_or(0);
         let entries: Vec<(Span<'static>, String)> = goals
             .iter()
-            .map(|goal| (goal_glyph(goal), clean_line(&goal.title)))
+            .map(|goal| (goal_glyph(self.palette, goal), clean_line(&goal.title)))
             .collect();
         let count = entries.len();
         let detail = if area.width >= WIDE {
             let list = Rect::new(area.x, area.y, GOALS_WIDTH, area.height);
             self.hits.push((list, Target::Region(Region::Goals)));
             let mut rows = Rows::new(buffer, list);
-            rows.text("Goals", accent());
+            rows.text("Goals", accent(self.palette));
             let visible = rows.left().max(1);
             let first = at.saturating_sub(visible - 1);
             for (index, (glyph, title)) in entries.iter().enumerate().skip(first).take(visible) {
-                let (marker, style) = row_style(index == at, true);
+                let (marker, style) = row_style(self.palette, index == at, true);
                 let title = fit(title, rows.width().saturating_sub(4));
                 if let Some(row) = rows.line(&Line::from(vec![
                     marker,
@@ -1973,9 +2275,9 @@ impl Viewer {
                 rows.width().saturating_sub(width(&counter) + 2),
             );
             if let Some(row) = rows.line(&Line::from(vec![
-                Span::styled(counter, muted()),
+                Span::styled(counter, muted(self.palette)),
                 entries[at].0.clone(),
-                Span::styled(title, accent().add_modifier(Modifier::BOLD)),
+                Span::styled(title, accent(self.palette).add_modifier(Modifier::BOLD)),
             ])) {
                 self.hits.push((row, Target::Region(Region::Goals)));
             }
@@ -1984,10 +2286,15 @@ impl Viewer {
         self.goal_detail(buffer, detail, at);
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "One row budget keeps the goal summary and task outline visible together."
+    )]
     fn goal_detail(&mut self, buffer: &mut Buffer, area: Rect, at: usize) {
         let Some(goal) = self.goals().get(at) else {
             return;
         };
+        let palette = self.palette;
         let max = usize::from(area.width);
         let mut head: Vec<(String, Style)> = Vec::new();
         head.extend(
@@ -2001,29 +2308,31 @@ impl Viewer {
                 clean_line(&goal.project_name),
                 goal.status.as_str()
             ),
-            muted(),
+            muted(palette),
         ));
         let (coordination, style) = match (&goal.coordinator, goal.status) {
             (_, Status::Held) => (
                 "Paused: the goal is held until someone resumes it.".to_owned(),
-                warning(),
+                warning(palette),
             ),
-            (_, status) if status.is_closed() => (format!("Goal is {}.", status.as_str()), muted()),
+            (_, status) if status.is_closed() => {
+                (format!("Goal is {}.", status.as_str()), muted(palette))
+            }
             (Some(owner), _) => (
                 format!(
                     "Coordinator claim: {} (a claim does not show the session is running)",
                     clean_line(owner)
                 ),
-                muted(),
+                muted(palette),
             ),
             (None, _) if goal.mandate.is_some() => (
                 "Stopped: work was agreed but nobody coordinates it; resume the goal in Pi."
                     .to_owned(),
-                warning(),
+                warning(palette),
             ),
             (None, _) => (
                 "Not started: no execution is agreed and nobody coordinates it.".to_owned(),
-                muted(),
+                muted(palette),
             ),
         };
         head.extend(
@@ -2049,7 +2358,7 @@ impl Viewer {
             if answered > 0 {
                 parts.push(format!("{answered} answered, not yet incorporated"));
             }
-            head.push((parts.join(" · "), warning()));
+            head.push((parts.join(" · "), warning(palette)));
         }
         if let Some(mandate) = &goal.mandate {
             let first = mandate
@@ -2057,17 +2366,22 @@ impl Viewer {
                 .lines()
                 .find(|line| !line.trim().is_empty())
                 .unwrap_or("");
-            head.push((fit(&format!("Agreed: {}", clean_line(first)), max), muted()));
+            head.push((
+                fit(&format!("Agreed: {}", clean_line(first)), max),
+                muted(palette),
+            ));
         }
         let lines: Vec<(String, Style)> = match &self.overview {
-            Some((id, Ok(overview))) if *id == goal.goal => task_lines(&goal.goal, overview, max),
+            Some((id, Ok(overview))) if *id == goal.goal => {
+                task_lines(palette, &goal.goal, overview, max)
+            }
             Some((id, Err(error))) if *id == goal.goal => {
                 wrap(&format!("Tasks unavailable: {error}"), max)
                     .into_iter()
-                    .map(|line| (line, warning()))
+                    .map(|line| (line, warning(palette)))
                     .collect()
             }
-            _ => vec![("Reading tasks…".to_owned(), muted())],
+            _ => vec![("Reading tasks…".to_owned(), muted(palette))],
         };
         let mut rows = Rows::new(buffer, area);
         for (line, style) in &head {
@@ -2102,26 +2416,26 @@ fn heading(goal: &GoalAttention) -> GoalAttention {
     }
 }
 
-fn goal_glyph(goal: &GoalAttention) -> Span<'static> {
+fn goal_glyph(palette: Palette, goal: &GoalAttention) -> Span<'static> {
     if goal
         .requests
         .iter()
         .any(|request| request.state == RequestState::Open)
     {
-        Span::styled("? ", warning())
+        Span::styled("? ", warning(palette))
     } else if goal.status == Status::Held
         || (goal.coordinator.is_none() && goal.mandate.is_some() && !goal.status.is_closed())
     {
-        Span::styled("! ", warning())
+        Span::styled("! ", warning(palette))
     } else if goal.coordinator.is_none() && !goal.status.is_closed() {
-        Span::styled("○ ", muted())
+        Span::styled("○ ", muted(palette))
     } else {
-        Span::styled("● ", accent())
+        Span::styled("● ", accent(palette))
     }
 }
 
 /// A task's state as the goal popup in Pi names it, with holds first.
-fn task_state(task: &Task) -> (&'static str, Style) {
+fn task_state(palette: Palette, task: &Task) -> (&'static str, Style) {
     let open = matches!(task.status, Status::Open | Status::Review);
     let request_hold = |wanted: RequestState| {
         task.holds
@@ -2129,12 +2443,12 @@ fn task_state(task: &Task) -> (&'static str, Style) {
             .any(|hold| matches!(hold, Hold::Request { state, .. } if *state == wanted))
     };
     if open && request_hold(RequestState::Open) {
-        return ("? Needs you", warning());
+        return ("? Needs you", warning(palette));
     }
     // The human already answered; the hold lifts when the coordinator
     // incorporates the answer.
     if open && request_hold(RequestState::Answered) {
-        return ("◇ Awaiting coordinator", muted());
+        return ("◇ Awaiting coordinator", muted(palette));
     }
     if open
         && task
@@ -2142,21 +2456,26 @@ fn task_state(task: &Task) -> (&'static str, Style) {
             .iter()
             .any(|hold| matches!(hold, Hold::HeldAncestor { .. }))
     {
-        return ("! Paused", warning());
+        return ("! Paused", warning(palette));
     }
     match task.status {
-        Status::Done => ("✓ Done", Style::new().fg(Color::Green)),
-        Status::Held => ("! Held", warning()),
-        Status::Dropped => ("− Dropped", muted()),
-        Status::Review => ("◇ Review", accent()),
-        Status::Open if task.owner.is_some() => ("● Claimed", accent()),
-        Status::Open if !task.blocked_by.is_empty() => ("◌ Waiting", muted()),
-        Status::Open => ("○ Open", muted()),
+        Status::Done => ("✓ Done", Style::new().fg(palette.green)),
+        Status::Held => ("! Held", warning(palette)),
+        Status::Dropped => ("− Dropped", muted(palette)),
+        Status::Review => ("◇ Review", accent(palette)),
+        Status::Open if task.owner.is_some() => ("● Claimed", accent(palette)),
+        Status::Open if !task.blocked_by.is_empty() => ("◌ Waiting", muted(palette)),
+        Status::Open => ("○ Open", muted(palette)),
     }
 }
 
 /// The goal's tasks as an outline under the root, oldest first.
-fn task_lines(root: &str, overview: &GoalOverview, max: usize) -> Vec<(String, Style)> {
+fn task_lines(
+    palette: Palette,
+    root: &str,
+    overview: &GoalOverview,
+    max: usize,
+) -> Vec<(String, Style)> {
     let p = &overview.goal.progress;
     let mut lines = vec![(
         if p.total == 0 {
@@ -2167,7 +2486,7 @@ fn task_lines(root: &str, overview: &GoalOverview, max: usize) -> Vec<(String, S
                 p.done, p.total, p.open, p.claimed
             )
         },
-        muted(),
+        muted(palette),
     )];
     let mut children: HashMap<&str, Vec<&Task>> = HashMap::new();
     for task in &overview.tasks {
@@ -2183,7 +2502,7 @@ fn task_lines(root: &str, overview: &GoalOverview, max: usize) -> Vec<(String, S
     let mut seen = 0;
     while let Some((task, depth)) = stack.pop() {
         seen += 1;
-        let (label, style) = task_state(task);
+        let (label, style) = task_state(palette, task);
         let indent = "  ".repeat(depth.min(6));
         let owner = task
             .owner
@@ -2203,13 +2522,13 @@ fn task_lines(root: &str, overview: &GoalOverview, max: usize) -> Vec<(String, S
     if seen < overview.tasks.len() {
         lines.push((
             format!("{} tasks outside the outline", overview.tasks.len() - seen),
-            warning(),
+            warning(palette),
         ));
     }
     if overview.hidden_closed > 0 {
         lines.push((
             format!("{} closed tasks hidden", overview.hidden_closed),
-            muted(),
+            muted(palette),
         ));
     }
     lines
@@ -2383,22 +2702,22 @@ mod tests {
     fn the_selected_question_and_its_choices_show_at_once_narrow_and_wide() {
         let mut view = viewer(two());
         let narrow = screen(&mut view, 40, 16);
-        assert!(narrow.contains("1/2 · Public export names"), "{narrow}");
+        assert!(narrow.contains("Public export names"), "{narrow}");
         assert!(narrow.contains("which way"), "{narrow}");
         assert!(narrow.contains("Update consumers together"), "{narrow}");
-        assert!(narrow.contains("Attention (2)"), "{narrow}");
+        assert!(narrow.contains("Attention · 2 need you"), "{narrow}");
         let wide = screen(&mut view, 120, 40);
-        assert!(wide.contains("Requests"), "{wide}");
+        assert!(wide.contains("≡ Inbox"), "{wide}");
         assert!(wide.contains("CLI output format"), "{wide}");
         assert!(
-            wide.contains("Recommend: Update consumers together."),
+            wide.contains("Recommendation: Update consumers together."),
             "{wide}"
         );
         assert!(
             wide.contains("Waits on this: Adapt the API (open)"),
             "{wide}"
         );
-        let (list_column, _) = locate(&wide, "? CLI output format");
+        let (list_column, _) = locate(&wide, "Needs you · CLI output format");
         let (detail_column, _) = locate(&wide, "Keep aliases");
         assert!(detail_column > list_column + 20, "side by side:\n{wide}");
     }
@@ -2455,11 +2774,11 @@ mod tests {
     }
 
     #[test]
-    fn views_switch_with_left_and_right_and_escape_closes_without_answering() {
+    fn goals_opens_with_g_and_escape_closes_without_answering() {
         let mut view = viewer(two());
-        assert_eq!(press(&mut view, KeyCode::Right), Effect::Overview);
+        assert_eq!(press(&mut view, KeyCode::Char('g')), Effect::Overview);
         assert_eq!(view.tab, Tab::Work);
-        assert_eq!(press(&mut view, KeyCode::Left), Effect::None);
+        assert_eq!(press(&mut view, KeyCode::Char('g')), Effect::None);
         assert_eq!(view.tab, Tab::Attention);
         press(&mut view, KeyCode::Enter);
         press(&mut view, KeyCode::Down);
@@ -2509,8 +2828,11 @@ mod tests {
         assert!(shown.contains("question changed"), "{shown}");
         assert!(shown.contains("Public export names: which way"), "{shown}");
         assert!(shown.contains("Your unsent draft: half typed"), "{shown}");
-        assert!(shown.contains("− Public export names"), "{shown}");
-        assert!(shown.contains("? Public export names"), "{shown}");
+        assert!(shown.contains("○ Closed · Public export names"), "{shown}");
+        assert!(
+            shown.contains("● Needs you · Public export names"),
+            "{shown}"
+        );
         assert_eq!(enters(&mut view), []);
 
         // A later refresh keeps the original; the replacement needs a deliberate choice.
@@ -2560,7 +2882,7 @@ mod tests {
         assert!(!view.drafts.contains_key("r-3"));
         let shown = screen(&mut view, 120, 30);
         assert!(shown.contains("Replaced by a newer question"), "{shown}");
-        assert!(shown.contains("Attention (2)"), "{shown}");
+        assert!(shown.contains("Attention · 2 need you"), "{shown}");
     }
 
     #[test]
@@ -2607,7 +2929,7 @@ mod tests {
         assert_eq!(view.selected.as_deref(), Some("r-1"));
         let shown = screen(&mut view, 120, 30);
         assert!(
-            shown.contains("The coordinator took up this answer"),
+            shown.contains("incorporation has not been confirmed"),
             "{shown}"
         );
         assert!(shown.contains("Your unsent draft: mine"), "{shown}");
@@ -2838,14 +3160,11 @@ mod tests {
         let mut view = viewer(list(vec![goal(vec![answered.clone()], None)]));
         let shown = screen(&mut view, 80, 20);
         assert!(shown.contains("Answer saved: Update"), "{shown}");
-        assert!(
-            shown.contains("No session coordinates this goal"),
-            "{shown}"
-        );
-        assert!(shown.contains("Attention (0)"), "{shown}");
+        assert!(shown.contains("No coordinator owns this goal"), "{shown}");
+        assert!(shown.contains("Attention · 0 need you"), "{shown}");
         let mut view = viewer(list(vec![goal(vec![answered], Some("pi-x"))]));
         let shown = screen(&mut view, 80, 20);
-        assert!(shown.contains("claimed by pi-x"), "{shown}");
+        assert!(shown.contains("Pickup has not been confirmed"), "{shown}");
     }
 
     #[test]
@@ -2888,16 +3207,16 @@ mod tests {
     fn mouse_clicks_select_views_and_answer_while_the_wheel_moves_lists() {
         let mut view = viewer(two());
         let shown = screen(&mut view, 120, 30);
-        let (column, row) = locate(&shown, "Work →");
+        let (column, row) = locate(&shown, "[ G Goals ]");
         assert_eq!(click(&mut view, column + 1, row), Effect::Overview);
         assert_eq!(view.tab, Tab::Work);
         let shown = screen(&mut view, 120, 30);
-        let (column, row) = locate(&shown, "Attention (2)");
+        let (column, row) = locate(&shown, "[ Back ]");
         click(&mut view, column, row);
         assert_eq!(view.tab, Tab::Attention);
 
         let shown = screen(&mut view, 120, 30);
-        let (column, row) = locate(&shown, "? Public export names");
+        let (column, row) = locate(&shown, "● Needs you");
         view.mouse(MouseEvent {
             kind: MouseEventKind::ScrollDown,
             column,
@@ -2979,7 +3298,7 @@ mod tests {
     #[test]
     fn work_shows_every_task_and_who_each_hold_waits_on() {
         let mut view = viewer(list(vec![goal(Vec::new(), None)]));
-        press(&mut view, KeyCode::Right);
+        press(&mut view, KeyCode::Char('g'));
         let mut root = task("t-goal", "t-goal", "Refactor exports", Status::Open);
         root.parent = None;
         let mut group = task("t-group", "t-goal", "API", Status::Open);
@@ -3047,7 +3366,7 @@ mod tests {
             by: Some("pi-coordinator".into()),
         });
         let mut view = viewer(list(vec![draft, stopped]));
-        press(&mut view, KeyCode::Right);
+        press(&mut view, KeyCode::Char('g'));
         let shown = screen(&mut view, 120, 20);
         assert!(shown.contains("› ○ Someday"), "{shown}");
         assert!(shown.contains("! Refactor exports"), "{shown}");
@@ -3098,6 +3417,189 @@ mod tests {
         assert_eq!(
             provenance(&Scope::Global, Some(&long), None).len(),
             PROVENANCE_LIMIT
+        );
+    }
+
+    #[test]
+    fn conversation_navigation_requires_the_current_exact_runtime() {
+        let mut data = two();
+        data.goals[0].coordinator = Some("pi-current".into());
+        let mut view = viewer(data);
+        view.conversations.insert(
+            "pi-other".into(),
+            Conversation::Reported {
+                label: "other-session".into(),
+                session: "other".into(),
+                block: "other".into(),
+            },
+        );
+        assert_eq!(view.open_conversation(), Effect::None);
+        view.conversations.insert(
+            "pi-current".into(),
+            Conversation::Reported {
+                label: "service-cleanup".into(),
+                session: "target".into(),
+                block: "agent".into(),
+            },
+        );
+        assert!(screen(&mut view, 120, 24).contains("service-cleanup"));
+        let Effect::Open {
+            owner,
+            session,
+            block,
+            ..
+        } = view.open_conversation()
+        else {
+            panic!("exact conversation not opened");
+        };
+        assert_eq!(
+            (owner.as_str(), session.as_str(), block.as_str()),
+            ("pi-current", "target", "agent")
+        );
+        view.conversations
+            .insert("pi-current".into(), Conversation::Ambiguous);
+        assert_eq!(view.open_conversation(), Effect::None);
+        view.session_error = Some("Rex is unavailable".into());
+        assert_eq!(view.open_conversation(), Effect::None);
+    }
+
+    #[test]
+    fn navigation_cannot_silently_discard_another_questions_draft() {
+        let mut view = viewer(two());
+        view.drafts.insert(
+            "r-2".into(),
+            Draft {
+                text: "still thinking".into(),
+                cursor: 14,
+            },
+        );
+        assert_eq!(view.open_conversation(), Effect::None);
+        assert_eq!(view.drafts["r-2"].text, "still thinking");
+        assert!(view.notice.as_ref().unwrap().text.contains("unsent drafts"));
+    }
+
+    #[test]
+    fn number_shortcuts_answer_only_visible_choices() {
+        let mut view = viewer(two());
+        screen(&mut view, 40, 16);
+        let Effect::Answer {
+            request, choice, ..
+        } = press(&mut view, KeyCode::Char('1'))
+        else {
+            panic!("visible first choice not answered");
+        };
+        assert_eq!(request, "r-1");
+        assert_eq!(choice.as_deref(), Some("update"));
+        screen(&mut view, 24, 6);
+        assert_eq!(press(&mut view, KeyCode::Char('1')), Effect::None);
+    }
+
+    #[test]
+    fn mouse_release_cannot_answer_a_question_other_than_the_pressed_one() {
+        let mut view = viewer(two());
+        screen(&mut view, 120, 30);
+        let rect = view
+            .hits
+            .iter()
+            .find(|(_, target)| *target == Target::Item(0))
+            .unwrap()
+            .0;
+        view.mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x,
+            row: rect.y,
+            modifiers: KeyModifiers::NONE,
+        });
+        view.select_request("r-2".into());
+        screen(&mut view, 120, 30);
+        assert_eq!(
+            view.mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: rect.x,
+                row: rect.y,
+                modifiers: KeyModifiers::NONE
+            }),
+            Effect::None
+        );
+    }
+
+    #[test]
+    fn incorporation_requires_canonical_closure_not_disappearance() {
+        let mut view = viewer(two_answered());
+        view.select_request("r-1".into());
+        let mut absent = two_answered();
+        absent.goals[0].requests.remove(0);
+        view.refresh(Ok(absent));
+        let shown = screen(&mut view, 120, 30);
+        assert!(
+            shown.contains("incorporation has not been confirmed"),
+            "{shown}"
+        );
+        let mut closed = answered_first();
+        closed.state = RequestState::Closed;
+        closed.closure = Some(dots_tasks::attention::Closure {
+            kind: ClosureKind::Incorporated,
+            at: 3,
+            by: Some("coordinator".into()),
+            reason: None,
+            decision: Some("decision".into()),
+        });
+        view.reconciled("r-1", Ok(closed));
+        let shown = screen(&mut view, 120, 30);
+        assert!(shown.contains("✓ Incorporated"), "{shown}");
+        assert!(
+            shown.contains("does not confirm that work resumed"),
+            "{shown}"
+        );
+        view.reconciled("r-1", Err(anyhow::anyhow!("catalog unavailable")));
+        let shown = screen(&mut view, 120, 30);
+        assert!(
+            shown.contains("Cannot confirm the question's outcome"),
+            "{shown}"
+        );
+        let mut absent = two_answered();
+        absent.goals[0].requests.remove(0);
+        view.refresh(Ok(absent));
+        assert_eq!(
+            view.selected.as_deref(),
+            Some("r-1"),
+            "an outcome read failure cannot lose the original question"
+        );
+    }
+
+    #[test]
+    fn saved_feedback_stays_bound_to_its_question() {
+        let mut view = viewer(two());
+        view.answered("r-1", Ok(answered_first()));
+        assert_eq!(
+            view.notice.as_ref().unwrap().request.as_deref(),
+            Some("r-1")
+        );
+        view.select_request("r-2".into());
+        assert!(view.notice.is_none());
+    }
+
+    #[test]
+    fn the_real_view_uses_picker_palette_surfaces_and_selected_rows() {
+        use ratatui::style::Color;
+        let mut view = viewer(two());
+        view.palette.background = Color::Rgb(250, 248, 246);
+        view.palette.selection_bg = Color::Rgb(220, 230, 240);
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| view.draw(frame)).unwrap();
+        let rect = view
+            .hits
+            .iter()
+            .find(|(_, target)| *target == Target::Request("r-1".into()))
+            .unwrap()
+            .0;
+        assert_eq!(
+            terminal.backend().buffer()[(0, 0)].bg,
+            view.palette.background
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(rect.x, rect.y)].bg,
+            view.palette.selection_bg
         );
     }
 

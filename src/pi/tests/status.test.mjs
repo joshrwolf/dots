@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import register from '../extensions/status/index.ts';
 import {
+  agentStatusId,
   childRecords,
   formatClear,
   formatRecord,
@@ -13,6 +14,7 @@ import {
   recordId,
 } from '../src/host/activity.ts';
 import {summaryLine} from '../src/host/summary.ts';
+import {bindAgent, endAgent} from '../src/host/agent.ts';
 
 const idle = {
   running: false,
@@ -104,7 +106,7 @@ test("reports follow the protocol's syntax and limits", () => {
   // Children inherit `app` from the root record.
   assert.equal(
     formatRecord({state: 'working', id: 'job/j-1', title: 'x'.repeat(300)}),
-    `\x1b]7501;state=working:id=job/j-1:title=${b64('x'.repeat(192))}\x1b\\`,
+    `\x1b]7501;state=working:id=job/j-1:app=pi:title=${b64('x'.repeat(192))}\x1b\\`,
   );
   assert.equal(
     formatRecord({
@@ -125,6 +127,37 @@ test("reports follow the protocol's syntax and limits", () => {
   );
 });
 
+test('named root status carries a precise runtime identity and still names Pi', () => {
+  const agent = {
+    session: '01234567-89ab-7cde-8fab-0123456789ab',
+    owner: 'pi-01234567-89ab-7cde-8fab-0123456789ab-0123456789abcdef',
+  };
+  const id = agentStatusId(agent);
+  assert.equal(id, 'pi/0123456789ab7cde8fab0123456789ab/0123456789abcdef');
+  assert.equal(
+    formatRecord({state: 'working', id}),
+    `\x1b]7501;state=working:id=${id}:app=pi\x1b\\`,
+  );
+});
+
+test('runtime rotation withdraws the old identity and publishes the current one', () => {
+  const sessionId = '01234567-89ab-7cde-8fab-0123456789ab';
+  const first = bindAgent(sessionId, 'startup', {});
+  let second;
+  try {
+    const h = host({sessionId});
+    assert.ok(h.writes.at(-1).includes(`id=${agentStatusId(first)}:app=pi`));
+    second = bindAgent(sessionId, 'resume', {});
+    h.fire('agent_start');
+    assert.ok(h.writes.includes(formatClear()));
+    assert.ok(h.writes.at(-1).includes(`id=${agentStatusId(second)}:app=pi`));
+    h.fire('session_shutdown', {reason: 'switch'});
+    assert.equal(h.writes.at(-1), formatClear());
+  } finally {
+    endAgent(second ?? first, {});
+  }
+});
+
 test("record ids keep to the protocol's alphabet", () => {
   assert.equal(
     recordId('worker', 'review: auth/login'),
@@ -143,6 +176,7 @@ function host({
   name = 'docs',
   branch = [],
   workerId,
+  sessionId = 'status-fixture',
 } = {}) {
   const handlers = new Map();
   const listeners = new Map();
@@ -184,7 +218,13 @@ function host({
   const fire = (name, event = {}) =>
     handlers.get(name)?.(
       {type: name, ...event},
-      {mode, sessionManager: {getBranch: () => branch}},
+      {
+        mode,
+        sessionManager: {
+          getBranch: () => branch,
+          getSessionId: () => sessionId,
+        },
+      },
     );
   fire('session_start', {reason: 'startup'});
   return {fire, events, writes, env, settle, pending: () => timers.length};
@@ -203,7 +243,7 @@ test('worker completion stays quiet until the parent handles its result and sett
   const {fire, events, writes, env, settle} = host();
   assert.equal(env.PI_PROGRAM_STATUS, '0');
   // Starting replaces whatever an earlier instance left.
-  assert.deepEqual(writes, [formatRecord({state: 'idle'})]);
+  assert.deepEqual(writes, [formatClear(), formatRecord({state: 'idle'})]);
   writes.length = 0;
   fire('agent_start');
   publishActivity(events, 'workers', [worker]);
@@ -316,7 +356,7 @@ test('finished work that wakes the agent never flashes done', () => {
   );
 });
 
-test('quitting clears every record; a reload reports nothing the next instance would contradict', () => {
+test('shutdown withdraws every record without flushing a pending completion', () => {
   // The next instance reports the current state when it starts; flushing "done" first would be a false notification.
   const reload = host();
   reload.fire('agent_start');
@@ -326,7 +366,8 @@ test('quitting clears every record; a reload reports nothing the next instance w
   const before = reload.writes.length;
   reload.fire('session_shutdown', {reason: 'reload'});
   assert.equal(reload.pending(), 0);
-  assert.equal(reload.writes.length, before);
+  assert.equal(reload.writes.length, before + 1);
+  assert.equal(reload.writes.at(-1), formatClear());
   assert.ok(!reload.writes.some(w => w.includes('state=done')));
   const quit = host();
   quit.fire('session_shutdown', {reason: 'quit'});

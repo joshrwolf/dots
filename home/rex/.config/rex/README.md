@@ -21,7 +21,7 @@ the app.
 | In Go: Ctrl+R / Ctrl+T / Ctrl+O | Start Pi in a worktree: review the typed PR, work on the typed Linear issue, or a new session in the selected row's repo |
 | Cmd+O | Back to the last tab you jumped from; again to return |
 | Cmd+Shift+R | PRs: the watch list agents keep, with review and CI status |
-| Cmd+I | Attention: decisions goals need from you and their work, across registered projects |
+| Cmd+I | Attention: session-oriented inbox across registered projects |
 | Cmd+Shift+A | Rex's activity panel: everything reporting status, across sessions |
 | Cmd+H / Cmd+K, Cmd+J / Cmd+L | Previous, next tab |
 | Cmd+Shift+H / Cmd+Shift+L | Move tab back, forward |
@@ -36,6 +36,13 @@ the line that made each, and the command palette (Cmd+Shift+P) has every
 action. A tab shows one view at a time: a view's key closes it, and another
 view's key replaces it. Esc closes a view and returns focus to the pane you
 were in, zoomed again if it was.
+
+Attention shows its inbox on the left and the selected question, context and
+reply actions on the right. **O** opens the exact reporting conversation without
+starting an agent; **G** opens separate goal and work inspection. Missing or
+ambiguous sessions stay explicit. A saved reply does not prove pickup, and an
+incorporated decision does not prove work resumed. Drafts last for the open popup;
+send or clear them before jumping to a conversation. Closing answers nothing.
 
 In Go, each row is one piece of work: an agent that needs you (blocked,
 failed, or done), or a tab showing the status of the agent at work in it. A

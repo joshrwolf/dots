@@ -25,6 +25,7 @@ local M = {}
 ---@field title? string The title its program set, such as Pi's `π - dots`.
 ---@field focused? boolean The focused block of its window.
 ---@field status? dots.StatusRecord
+---@field agent_owner? string Exact runtime named by native program status.
 
 ---@class dots.Session
 ---@field id string
@@ -221,6 +222,8 @@ function M.collect(opts)
               title = titled and titled.title ~= "" and titled.title or nil,
               focused = placed.block_id == window.focused_block_id or nil,
               status = status.headline(reported and reported.records or {}),
+              agent_owner = foreground
+                and status.agent_owner(reported and reported.records or {}, foreground.pid),
             }
             session.blocks[#session.blocks + 1] = block
           end

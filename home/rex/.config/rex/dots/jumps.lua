@@ -144,6 +144,18 @@ function M.here(ctx)
   return active and { session_id = ctx.session_id, window_id = active } or nil
 end
 
+---Focus one existing terminal and record the jump on the viewing client.
+---@param ctx rex.Context
+---@param session_id string
+---@param block_id string
+function M.open_block(ctx, session_id, block_id)
+  local from = M.here(ctx)
+  must("focusing the terminal", sessions.focus(session_id, block_id))
+  local window = sessions.window_of(session_id, block_id)
+  app.show(session_id, window, ctx.session_id, ctx.client_id)
+  M.record(from, { session_id = session_id, window_id = window })
+end
+
 ---Record a jump from `from` to `to`. A destination without a window is
 ---recorded at its session's active window, when Rex reports one.
 ---@param from? dots.Location
