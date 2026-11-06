@@ -33,6 +33,7 @@ pub struct Chosen<'a, T> {
 #[derive(Debug)]
 pub enum Action<T: Entry> {
     Close,
+    Stay,
     Push(crate::Picker<T>),
     Replace(crate::Picker<T>),
     Back,

@@ -1,7 +1,7 @@
 //! The command tree is the source for parsing, help, and agent documentation.
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use dots_memory::{NodeId, ProjectId, Scope as MemoryScope, Snapshot};
 use github_inspect::{Repository, SnapshotRef};
 
@@ -410,8 +410,49 @@ pub(crate) enum TaskCommand {
     Mutation(TaskMutation),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum GoalPreview {
+    Graph,
+    Brief,
+    Decisions,
+    History,
+    Record,
+    Task,
+}
+
+impl GoalPreview {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Graph => "graph",
+            Self::Brief => "brief",
+            Self::Decisions => "decisions",
+            Self::History => "history",
+            Self::Record => "record",
+            Self::Task => "task",
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Graph => "Dependency graph",
+            Self::Brief => "Brief",
+            Self::Decisions => "Decisions",
+            Self::History => "History",
+            Self::Record => "Full record",
+            Self::Task => "Task record",
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum GoalCommand {
+    /// Render a goal's read-only graph or inspection page
+    Preview {
+        id: String,
+        #[arg(long, value_enum, default_value = "graph")]
+        page: GoalPreview,
+        #[arg(long, required_if_eq("page", "task"))]
+        task: Option<String>,
+    },
     /// Browse goals across registered projects without claiming or starting work
     View {
         /// Preselect an exact goal, including a completed one

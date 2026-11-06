@@ -160,8 +160,8 @@ impl<T: Entry> Picker<T> {
     }
 
     /// Runs `actions` in place: Enter or a shortcut starts the host's action
-    /// while the picker stays on screen, and keys are ignored until it
-    /// finishes. Actions can close, push or replace a page, or go back; a failure shows its message and
+    /// while the picker stays on screen. Navigation preserves pending input;
+    /// closing or failing actions discard it. Actions can close, push or replace a page, or go back; a failure shows its message and
     /// keeps the query, selection, and scope. Back restores the parent page. Returns once an action closes
     /// or the user cancels, and says which. Shortcuts work even when a query matches nothing;
     /// normal editing keys are reserved.
@@ -223,6 +223,16 @@ mod tests {
                 .build(),
             Err(Error::MissingSelection { .. })
         ));
+    }
+
+    #[test]
+    fn an_equivalent_live_snapshot_does_not_invalidate_the_preview() {
+        let mut model = Picker::new(vec![Item])
+            .group(Group::new((), "items", vec![Column::fill()]))
+            .build()
+            .unwrap();
+        assert!(!model.replace_all(vec![Item]).unwrap());
+        assert!(model.replace_all(Vec::new()).unwrap());
     }
 
     #[test]

@@ -117,6 +117,14 @@ impl Previewer {
         self.cache.clear();
     }
 
+    pub(crate) fn refresh(&mut self) {
+        let requested = self.requested.clone();
+        let offset = self.offset;
+        self.invalidate();
+        self.select(requested.as_deref());
+        self.offset = offset;
+    }
+
     pub(crate) fn set_size(&mut self, size: (u16, u16)) {
         if self.size != size {
             self.size = size;
@@ -704,6 +712,28 @@ mod tests {
         previewer.select(Some(&argv("settled")));
         wait_for(&mut previewer, &text("settled"));
         assert_eq!(*calls.lock().unwrap(), vec![argv("settled")]);
+    }
+
+    #[test]
+    fn scrolling_is_bounded_and_refresh_keeps_position_while_selection_resets_it() {
+        let mut background = Background::start().unwrap();
+        let run: Run = Arc::new(|_, _| Box::pin(std::future::pending()));
+        let mut preview = Previewer::spawn(&mut background, run, None);
+        preview.set_size((80, 4));
+        preview.select(Some(&["fixture".into()]));
+        preview.shown = Some(Content::Text(
+            (0..10).map(|line| Line::raw(line.to_string())).collect(),
+        ));
+        preview.scroll(100, crate::spec::PreviewAnchor::Start);
+        assert_eq!(preview.offset, Some(6));
+        preview.scroll(-3, crate::spec::PreviewAnchor::Start);
+        assert_eq!(preview.offset, Some(3));
+        preview.refresh();
+        assert_eq!(preview.offset, Some(3));
+        preview.select(Some(&["another".into()]));
+        assert_eq!(preview.offset, None);
+        drop(preview);
+        background.shutdown().unwrap();
     }
 
     #[test]

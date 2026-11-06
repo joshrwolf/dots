@@ -1,11 +1,12 @@
 //! Agent-facing command parsing and presentation over shared domain operations.
 mod agent;
 mod attention;
+mod attention_view;
 mod command;
 mod github_reviews;
 mod goal_brief;
 mod goal_graph;
-mod human_view;
+mod goals_view;
 mod json;
 mod memory;
 mod outputs;
@@ -15,6 +16,7 @@ mod review;
 mod skills;
 mod stream;
 mod tasks;
+mod terminal_text;
 mod watch;
 mod xdg;
 

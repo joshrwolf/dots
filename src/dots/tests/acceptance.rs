@@ -683,27 +683,30 @@ mod attention_view {
         let at = screen.until(at, "unsent");
         send(&mut keyboard, "\x1b");
 
-        // Mouse: the footer's Goals button, then Close in the drawer.
+        // The Goals picker shares this popup and returns without losing Attention's draft.
         click(&mut keyboard, 6, 169);
-        let at = screen.until(at, "Browse");
-        let at = screen.until(at, "refactor");
-        let at = screen.until(at, "Dropped");
-        send(&mut keyboard, "/zzzzno-match");
-        let at = screen.until(at, "match");
-        send(&mut keyboard, "\x1b");
-        let at = screen.until(at, "Browse");
+        let at = screen.until(at, "Goals");
+        let at = screen.until(at, "Graph");
+        send(&mut keyboard, "zzzzno-match");
+        send(&mut keyboard, "\x15");
+        send(&mut keyboard, "\rbrief");
+        let at = screen.until(at, "Inspect");
+        let at = screen.until(at, "Neutral");
+        send(&mut keyboard, "\r");
         resize(&slave, 45, 24, &viewer);
-        let at = screen.until(at, "Browse");
+        let at = screen.until(at, "Neutral");
         resize(&slave, 340, 260, &viewer);
-        let at = screen.until(at, "Browse");
-        send(&mut keyboard, "b");
-        let at = screen.until(at, "continues");
-        let at = screen.until(at, "201;");
-        let at = screen.until(at, "local");
+        let at = screen.until(at, "loading");
+        let at = screen.until(at, "Neutral");
+        send(&mut keyboard, "\x1b[6;2~");
+        let at = screen.until(at, "201:");
+        send(&mut keyboard, "\r\r\x1b");
         let at = screen.until(at, "brief");
-        let at = screen.until(at, "file");
-        screen.until(at, "briefs/goal.md");
-        click(&mut keyboard, 30, 259);
+        send(&mut keyboard, "\x1b");
+        let at = screen.until(at, "Goals");
+        send(&mut keyboard, "\x1b");
+        screen.until(at, "Attention");
+        send(&mut keyboard, "\x1b\x1b\x1b");
 
         let deadline = Instant::now() + WATCHDOG;
         let status = loop {

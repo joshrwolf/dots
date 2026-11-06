@@ -34,7 +34,7 @@ pub(crate) fn run(invocation: Invocation<'_>) -> Result<String> {
                 invocation.project.is_none(),
                 "view reads the --scope it is given; --project does not apply"
             );
-            return crate::human_view::run(scope.scope()?, dismiss, invocation.json);
+            return crate::attention_view::run(scope.scope()?, dismiss, invocation.json);
         }
         command => command,
     };

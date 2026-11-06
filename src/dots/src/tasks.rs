@@ -40,7 +40,7 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
             request.project.is_none(),
             "goal view browses registered projects; use --select PROJECT:GOAL"
         );
-        return crate::human_view::goals(
+        return crate::goals_view::run(
             select
                 .as_deref()
                 .map(dots_tasks::attention::GoalRef::parse)
@@ -106,6 +106,16 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
     }
     let project =
         crate::project::resolve(&mut store, request.directory, request.project.as_deref())?;
+    if let TaskCommand::Goal {
+        command: GoalCommand::Preview { id, page, task },
+    } = request.command
+    {
+        anyhow::ensure!(
+            !request.json,
+            "goal preview emits text; use goal show --json for structured data"
+        );
+        return crate::goals_view::preview(&mut store, &project, &id, page, task.as_deref());
+    }
     if let TaskCommand::Query(TaskQuery::Events {
         since,
         under,
@@ -573,8 +583,8 @@ fn execute_goal(
     actor: Actor<'_>,
 ) -> Result<Outcome> {
     match command {
-        GoalCommand::View { .. } => {
-            unreachable!("interactive goal view is dispatched before project resolution")
+        GoalCommand::View { .. } | GoalCommand::Preview { .. } => {
+            unreachable!("goal views and previews are dispatched before execution")
         }
         GoalCommand::Create { title, brief } => {
             let brief = goal_brief::existing(project, &brief)?;

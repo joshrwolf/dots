@@ -51,7 +51,7 @@ pub(crate) enum Row {
 /// `bases` ties them together: for each searchable cell, where its text starts
 /// in the haystack. All three come out of one pass, which is what stops a
 /// highlight from landing one position off the text it belongs to.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct Prepared {
     group: usize,
     id: Option<String>,
@@ -201,16 +201,26 @@ impl<T: Entry> Model<T> {
 
     /// Replaces every entry with `items`, as one atomic batch. Every entry
     /// needs an identity; the selection stays on the entry with the selected
-    /// identity wherever it moved, including into another group.
-    pub fn replace_all(&mut self, items: Vec<T>) -> Result<(), Error> {
+    /// identity wherever it moved, including into another group. Returns whether
+    /// presentation or preview commands changed; entry payloads always update.
+    pub fn replace_all(&mut self, items: Vec<T>) -> Result<bool, Error> {
         let mut identities = HashSet::with_capacity(items.len());
         let mut replacement = Vec::with_capacity(items.len());
         for item in items {
             let index = self.group_index(item.group())?;
             replacement.push(self.prepare_entry(index, item, &mut identities)?);
         }
+        let changed = self
+            .prepared
+            .iter()
+            .ne(replacement.iter().map(|(_, prepared)| prepared))
+            || self
+                .items
+                .iter()
+                .map(Entry::preview)
+                .ne(replacement.iter().map(|(entry, _)| entry.preview()));
         self.rebuild(replacement);
-        Ok(())
+        Ok(changed)
     }
 
     /// Checks one replacement entry and lays out its cells.

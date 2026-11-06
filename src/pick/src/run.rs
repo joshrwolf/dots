@@ -165,7 +165,7 @@ impl<T: Entry + Send + 'static> Page<T> {
                 Some(previous) => *self = previous,
                 None => return Ok(false),
             },
-            Action::Close => return Ok(false),
+            Action::Close | Action::Stay => return Ok(false),
         }
         Ok(true)
     }
@@ -231,8 +231,14 @@ fn drive<T: Entry + Send + 'static, A>(
         let mut navigation = None;
         match status.settle() {
             Settled::Unchanged => {}
-            Settled::Done => return Ok(Exit::Done),
-            Settled::Failed => dirty = true,
+            Settled::Done => {
+                discard_input()?;
+                return Ok(Exit::Done);
+            }
+            Settled::Failed => {
+                discard_input()?;
+                dirty = true;
+            }
             Settled::Navigate => navigation = status.navigation.take(),
         }
         if let Some(action) = navigation {
@@ -243,7 +249,10 @@ fn drive<T: Entry + Send + 'static, A>(
                     (previewer, feed) = current.start(background);
                 }
                 Ok(false) => {}
-                Err(error) => status.alert = Some(error.to_string()),
+                Err(error) => {
+                    discard_input()?;
+                    status.alert = Some(error.to_string());
+                }
             }
             dirty = true;
         }
@@ -252,7 +261,7 @@ fn drive<T: Entry + Send + 'static, A>(
             if feed.take_replaced()
                 && let Some(previewer) = previewer.as_mut()
             {
-                previewer.invalidate();
+                previewer.refresh();
             }
         }
         if let Some(previewer) = previewer.as_mut() {
@@ -280,6 +289,10 @@ fn drive<T: Entry + Send + 'static, A>(
                 page_size = draw(frame, &mut current.model, &chrome, preview.as_ref());
             })?;
             dirty = false;
+        }
+        if status.running.is_some() {
+            std::thread::sleep(Duration::from_millis(25));
+            continue;
         }
         if !event::poll(Duration::from_millis(25))? {
             continue;
@@ -319,6 +332,16 @@ fn drive<T: Entry + Send + 'static, A>(
             _ => {}
         }
     }
+}
+
+fn discard_input() -> io::Result<()> {
+    for _ in 0..4096 {
+        if !event::poll(Duration::ZERO)? {
+            break;
+        }
+        event::read()?;
+    }
+    Ok(())
 }
 
 fn scroll_preview(
@@ -1069,6 +1092,9 @@ mod tests {
         assert_eq!(current.prompt, "Tasks > ");
         assert_eq!(current.model.query(), "");
         assert_eq!(parents.len(), 1);
+        assert!(!current.navigate(&mut parents, Action::Stay).unwrap());
+        assert_eq!(parents.len(), 1);
+        assert_eq!(current.prompt, "Tasks > ");
         let invalid = Picker::new(vec![Item]);
         assert!(
             current

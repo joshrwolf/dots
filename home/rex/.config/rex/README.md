@@ -47,16 +47,15 @@ sessions stay explicit. A saved reply does not prove pickup, and an
 incorporated decision does not prove work resumed. Drafts last for the open popup;
 send or clear them before jumping to a conversation. Closing answers nothing.
 
-Goals browses registered projects independently of Attention requests. **A** includes
-completed goals; Pi's goal cue opens this same browser at its exact goal. The task
-list uses the shared dependency graph; **O** switches to the group outline and
-**C** toggles closed tasks. **Left/Right** select the goal or task column, **Up/Down**
-move selection, **Enter** opens task details, and **Space** folds outline groups.
-**B**, **D** and **H** inspect the brief, decisions and history; **R** opens the
-complete goal record and **T** returns to tasks.
-Click a task to select it, again for details. **Esc** backs out, then closes.
-Inspection never follows, claims or starts work. Text and controls remain bounded
-on wide screens; missing records stay explicit.
+Goals uses the same fuzzy picker as Go. Type a project or goal title; its
+preview below shows the dependency graph, task states and progress. **Enter**
+opens tasks and inspection pages, including briefs, decisions and history;
+entering a task group shows its children. **Esc** goes back with the previous
+search and selection intact, then closes. **Tab** changes scope; **=** searches
+completed work. Click a row to select it. Scroll the preview with **Shift+Up/Down**,
+**Shift+PageUp/PageDown** or the wheel over its pane.
+Pi's goal cue opens the exact goal, including completed goals. Inspection never
+follows, claims or starts work, and unavailable records stay explicit.
 
 In Go, each row is one piece of work: an agent that needs you (blocked,
 failed, or done), or a tab showing the status of the agent at work in it. A

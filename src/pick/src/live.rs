@@ -117,8 +117,8 @@ impl<T: Entry + Send + 'static> Feed<T> {
         if let Some(rows) = rows {
             changed = true;
             match model.replace_all(rows) {
-                Ok(()) => {
-                    self.replaced = true;
+                Ok(replaced) => {
+                    self.replaced |= replaced;
                     if matches!(self.notice, Some(Notice::Stale(_))) {
                         self.notice = None;
                     }

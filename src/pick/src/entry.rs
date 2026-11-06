@@ -45,7 +45,7 @@ pub trait Entry {
 /// Terminal titles and Unix paths are untrusted display text, so a cell keeps
 /// to one line: a tab becomes a space and any other control character a
 /// replacement character.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
     pub(crate) text: String,
     pub(crate) fg: Color,
