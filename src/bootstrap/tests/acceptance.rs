@@ -274,6 +274,9 @@ impl AssetServer {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream
+                            .set_nonblocking(false)
+                            .expect("set fixture stream blocking");
+                        stream
                             .set_read_timeout(Some(Duration::from_secs(2)))
                             .expect("set fixture read timeout");
                         stream
@@ -316,6 +319,33 @@ impl Drop for AssetServer {
             );
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn asset_server_waits_for_delayed_request_bytes() -> Result {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpStream;
+
+    let server = AssetServer::new(b"fixture asset\n".to_vec())?;
+    let address = server
+        .url
+        .strip_prefix("http://")
+        .and_then(|url| url.strip_suffix("/fixture.zip"))
+        .expect("fixture URL has its fixed scheme and path");
+    let mut client = TcpStream::connect(address)?;
+    client.set_read_timeout(Some(Duration::from_secs(2)))?;
+    client.set_write_timeout(Some(Duration::from_secs(2)))?;
+    // Let the server accept before the client sends its request.
+    std::thread::sleep(Duration::from_millis(200));
+    client.write_all(b"GET /fixture.zip HTTP/1.1\r\nHost: localhost\r\n\r\n")?;
+    let mut response = String::new();
+    client.read_to_string(&mut response)?;
+    let (_, body) = response
+        .split_once("\r\n\r\n")
+        .expect("fixture response has HTTP headers");
+    assert_eq!(body, "fixture asset\n");
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
