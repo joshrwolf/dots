@@ -71,7 +71,7 @@ test('inspection shell preview composes the shipping Panel and SelectList', () =
     assert.notEqual(plain(h.view.render(80)), first);
     h.view.handleInput('\x00'); // Ctrl+Space: preserves the picker's ordinary keys.
     assert.equal(h.view.state.phase, 1);
-    assert.match(plain(h.view.render(120)), /No retained workers/);
+    assert.match(plain(h.view.render(120)), /No workers listed/);
     h.view.handleInput('\x00');
     assert.equal(h.view.state.phase, 2);
     assert.match(plain(h.view.render(120)), /long heading/);

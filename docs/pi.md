@@ -74,17 +74,20 @@ worker and X offers stop confirmation. Descendants are read-only. A transcript
 uses Pi's own message and tool rendering, follows the worker's saved session and
 shows the owned worker's response while it streams. Inside Rex, R opens it in a
 floating view instead: a minimal Pi with only the companion's read-only viewer,
-which shows saved records and cannot submit prompts. Completion
-means a result is ready, not that its process exited or its work was accepted.
+which shows saved records and cannot submit prompts. `/workers` and
+`worker_status` list live and paused workers and those finished within the last
+hour; `/workers all` and `worker_status { all: true }` list every worker.
+Completion means a result is ready, not that its work was accepted.
 Worker costs are shown separately from the parent's session cost. A `~` marks a
 catalog estimate; an unmarked total is provider-billed for every response.
 
 Workers belong to a session, not a conversation branch. `/tree` preserves them;
-`/fork` and `/clone` copy only read-only history. Reload/exit stops owned workers;
-`message` can resume their saved sessions. A root session's startup removes worker
+`/fork` and `/clone` copy only read-only history. A finished worker's process
+exits on its own, after its own workers settle, so it holds no worktree open;
+`message` continues it in its saved session. Reload/exit stops owned workers,
+which `message` can resume the same way. A root session's startup removes worker
 sessions under `~/.pi/agent/dots/workers/` untouched for 30 days, unless a running
-process still owns them. Stop retained worker processes before removing their
-worktrees.
+process still owns them.
 
 Agents use `worker_spawn` for bounded work, `message` to steer or resume it, and
 completion events rather than polling. Blocking waits (`worker_wait` and

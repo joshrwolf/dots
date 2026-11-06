@@ -271,6 +271,7 @@ if (flow === 'package') {
     sessionFile: join(agentDir, 'fixture-worker.jsonl'),
     startedAt: Date.now() - 1000,
     updatedAt: Date.now(),
+    finishedAt: Date.now(),
     calls: 1,
     tokens: 7,
     settlements: 1,
@@ -855,7 +856,7 @@ async function workbenchFlow() {
       await wait(() => shows('review-2'), 'native picker selection');
       send('\x00');
       await wait(
-        () => state('inspection-shell', 1) && shows('No retained workers'),
+        () => state('inspection-shell', 1) && shows('No workers listed'),
         'picker fixture phase shortcut',
       );
       send('\x00');

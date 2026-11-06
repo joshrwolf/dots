@@ -486,24 +486,6 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       /Context: ~60k context · compaction unknown · 200k capacity · Cost: ~\$0\.13 \(estimate\)/,
     );
 
-    // a settle we did not ask for is an update and keeps the real result
-    const chatty = await h.call('worker_spawn', {
-      label: 'chatty',
-      task: 'spontaneous:go',
-    });
-    await until(
-      () =>
-        h.messages.filter(m => m.message.details.id === chatty.id).length === 2,
-    );
-    const chattyEvents = h.messages
-      .filter(m => m.message.details.id === chatty.id)
-      .map(m => m.message.details.kind);
-    assert.deepEqual(chattyEvents, ['completed', 'update']);
-    assert.match(
-      (await h.call('worker_status', {id: chatty.id})).result,
-      /first answer/,
-    );
-
     // message adapts: steer a running worker; continue a finished one; wait for the reply
     const slow = await h.call('worker_spawn', {
       label: 'slow',
@@ -1122,8 +1104,7 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       assert.equal(recovered.error, undefined);
     }
 
-    // Two continuations of a paused child serialize and share one resumed run.
-    await third.call('worker_stop', {id: provider.id});
+    // Two continuations of a closed child serialize and share one resumed run.
     await Promise.all([
       third.run('message', {to: provider.id, text: 'delayed-ack'}),
       third.run('message', {to: provider.id, text: 'second'}),
@@ -1155,36 +1136,27 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       'stopped',
     );
 
+    // Settled workers closed their own processes; stop all finds nothing to close.
     const idleCleanup = await third.run('worker_stop', {all: true});
     assert.equal(
       idleCleanup.details.stopped.length,
       0,
       'there was no active work',
     );
-    assert.ok(
-      idleCleanup.details.closed.includes(questions.id),
-      'retained idle processes were still closed',
-    );
-    assert.match(idleCleanup.content[0].text, /Closed \d+ owned processes/);
+    assert.deepEqual(idleCleanup.details.closed, []);
     assert.match(
       idleCleanup.content[0].text,
-      /Finished results and saved sessions are retained/,
+      /No owned processes needed closing[\s\S]*Finished results and saved sessions are retained/,
     );
-    assert.equal(
-      (await third.call('worker_status', {id: questions.id})).state,
-      'completed',
-    );
-    assert.equal(
-      (await third.call('worker_status', {id: questions.id})).processState,
-      'closed',
-    );
-    assert.match(
+    const settledQuestions = await third.call('worker_status', {
+      id: questions.id,
+    });
+    assert.equal(settledQuestions.state, 'completed');
+    assert.equal(settledQuestions.processState, 'closed');
+    assert.doesNotMatch(
       (await third.run('worker_status', {id: questions.id})).content[0].text,
-      /process closed/,
-    );
-    assert.match(
-      (await third.run('worker_stop', {all: true})).content[0].text,
-      /No owned processes needed closing/,
+      /process/,
+      'a closed process is the settled default, not noise',
     );
 
     // Completed owners/intermediates stay visible while descendants are live.
@@ -1249,6 +1221,15 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
         1,
         'descendants keep the observation tick alive',
       );
+      assert.equal(
+        (await third.call('worker_status', {id: owner.id})).processState,
+        'alive',
+        'closing the owner would end its live descendants',
+      );
+      assert.match(
+        (await third.run('worker_status', {id: owner.id})).content[0].text,
+        /process kept for running descendants/,
+      );
       assert.match(
         (await third.run('worker_status', {id: 'w-leaf'})).content[0].text,
         /Which option/,
@@ -1262,7 +1243,7 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       assert.equal(
         (await third.call('worker_status', {id: owner.id})).state,
         'completed',
-        'closing retained owners preserves completed results',
+        'closing a held owner preserves its completed result',
       );
       registry.upsert(row('w-leaf', 'w-middle', 'paused'));
       // Nothing live remains; recently finished workers age out of the widget, then the ticker stops.
@@ -1388,10 +1369,288 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       ),
     );
     for (const id of ids)
-      rmSync(path.join(tmpdir(), `dots-fake-pi-args-${id}`), {force: true});
+      for (const kind of ['args', 'env', 'pid'])
+        rmSync(path.join(tmpdir(), `dots-fake-pi-${kind}-${id}`), {
+          force: true,
+        });
     for (const key of Object.keys(process.env))
       if (!(key in saved)) delete process.env[key];
     Object.assign(process.env, saved);
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+const pidFile = id => path.join(tmpdir(), `dots-fake-pi-pid-${id}`);
+const pidOf = id => Number(readFileSync(pidFile(id), 'utf8'));
+const alive = pid => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
+  }
+};
+
+test(
+  'settled workers close their processes; running work and running descendants keep theirs',
+  {timeout: 60_000},
+  async t => {
+    const intervals = new Map();
+    t.mock.method(globalThis, 'setInterval', fn => {
+      const handle = {};
+      intervals.set(handle, fn);
+      return handle;
+    });
+    t.mock.method(globalThis, 'clearInterval', handle =>
+      intervals.delete(handle),
+    );
+    const tick = () => {
+      for (const fn of [...intervals.values()]) fn();
+    };
+    const root = mkdtempSync(path.join(tmpdir(), 'dots-workers-close-'));
+    const saved = {...process.env};
+    process.env.PI_CODING_AGENT_DIR = path.join(root, 'agent');
+    delete process.env.DOTS_WORKER_ID;
+    delete process.env.DOTS_WORKER_DEPTH;
+    const h = harness(root);
+    const ids = [];
+    let registry;
+    try {
+      await h.handlers.session_start({reason: 'startup'}, h.ctx);
+      const done = await h.call('worker_spawn', {label: 'done', task: 'quick'});
+      const busy = await h.call('worker_spawn', {
+        label: 'busy',
+        task: 'hold:work',
+      });
+      ids.push(done.id, busy.id);
+      await until(() => h.messages.some(m => m.message.details.id === done.id));
+      const first = pidOf(done.id);
+      await until(() => !alive(first));
+      const settled = await h.call('worker_status', {id: done.id});
+      assert.equal(settled.state, 'completed');
+      assert.equal(settled.result, 'done: quick');
+      assert.equal(settled.processState, 'closed');
+      const noop = await h.run('worker_stop', {id: done.id});
+      assert.match(
+        noop.content[0].text,
+        /already completed and has no process; nothing to stop/,
+      );
+      assert.equal(noop.details.state, 'completed');
+      assert.equal(noop.details.result, 'done: quick');
+
+      assert.ok(alive(pidOf(busy.id)), 'a running worker keeps its process');
+      assert.equal(
+        (await h.call('worker_status', {id: busy.id})).processState,
+        'alive',
+      );
+
+      const continued = await h.run('message', {
+        to: done.id,
+        text: 'again',
+        wait: true,
+        timeoutMs: SETTLE_MS,
+      });
+      assert.match(continued.content[0].text, /completed[\s\S]*done: again/);
+      const second = pidOf(done.id);
+      assert.notEqual(second, first, 'message relaunched the worker');
+      const args = JSON.parse(
+        readFileSync(
+          path.join(tmpdir(), `dots-fake-pi-args-${done.id}`),
+          'utf8',
+        ),
+      );
+      assert.equal(args[args.indexOf('--session') + 1], settled.session);
+      await until(() => !alive(second));
+      assert.equal(
+        (await h.call('worker_status', {id: done.id})).result,
+        'done: again',
+      );
+
+      // Closing a settled worker would end its own live workers: it waits.
+      registry = openRegistry(path.join(root, 'agent/dots/workers.db'), m =>
+        assert.fail(m),
+      );
+      const tree = await h.call('worker_spawn', {
+        label: 'tree',
+        task: 'hold:tree',
+      });
+      ids.push(tree.id);
+      const grandchild = state => ({
+        id: 'w-grandchild',
+        parent: tree.id,
+        root: tree.id,
+        owner_session: null,
+        label: 'grandchild',
+        state,
+        cwd: root,
+        task_project: null,
+        task_id: null,
+        model: null,
+        thinking: null,
+        activity: null,
+        failed: null,
+        question: null,
+        calls: 0,
+        tokens: 0,
+        started_at: Date.now(),
+        last_event_at: Date.now(),
+        updated_at: Date.now(),
+        session_file: null,
+        pid: process.pid,
+      });
+      registry.upsert(grandchild('running'));
+      await h.run('message', {to: tree.id, text: 'spontaneous:go'});
+      await until(
+        () =>
+          h.messages.filter(m => m.message.details.id === tree.id).length === 2,
+      );
+      assert.deepEqual(
+        h.messages
+          .filter(m => m.message.details.id === tree.id)
+          .map(m => m.message.details.kind),
+        ['completed', 'update'],
+        'the held process still delivers the turn its descendant starts',
+      );
+      const held = await h.call('worker_status', {id: tree.id});
+      assert.equal(held.state, 'completed');
+      assert.match(held.result, /first answer/);
+      assert.equal(held.processState, 'alive');
+      const treePid = pidOf(tree.id);
+      assert.ok(alive(treePid));
+      assert.equal(intervals.size, 1, 'a held process keeps the tick');
+      tick();
+      assert.ok(alive(treePid), 'live descendants keep the process');
+
+      registry.upsert(grandchild('completed'));
+      tick(); // the first quiet tick lets a descendant-started turn begin
+      assert.ok(alive(treePid));
+      tick();
+      await until(() => !alive(treePid));
+      const released = await h.call('worker_status', {id: tree.id});
+      assert.equal(released.state, 'completed');
+      assert.match(released.result, /first answer/);
+      assert.equal(released.processState, 'closed');
+      assert.equal(intervals.size, 0, 'nothing is held, so the tick stops');
+
+      assert.ok(alive(pidOf(busy.id)), 'the running worker was untouched');
+      await h.run('worker_stop', {id: busy.id});
+      assert.equal(
+        (await h.call('worker_status', {id: busy.id})).state,
+        'stopped',
+      );
+    } finally {
+      await h.handlers.session_shutdown({}, h.ctx);
+      registry?.close();
+      for (const id of ids)
+        for (const kind of ['args', 'env', 'pid'])
+          rmSync(path.join(tmpdir(), `dots-fake-pi-${kind}-${id}`), {
+            force: true,
+          });
+      process.env = saved;
+      rmSync(root, {recursive: true, force: true});
+    }
+  },
+);
+
+test('worker listings show live and recent workers; all and lookup reach older ones', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'dots-workers-list-'));
+  const saved = {...process.env};
+  process.env.PI_CODING_AGENT_DIR = path.join(root, 'agent');
+  delete process.env.DOTS_WORKER_ID;
+  const h = harness(root);
+  try {
+    const now = Date.now();
+    const record = (id, state, finishedAt) => ({
+      version: 1,
+      owner: 'session-owner',
+      id,
+      label: id.slice(2),
+      cwd: root,
+      sessionDir: path.join(root, id),
+      state,
+      startedAt: now - 7_200_000,
+      updatedAt: finishedAt ?? now,
+      calls: 0,
+      tokens: 0,
+      settlements: 1,
+      ...(finishedAt === undefined ? {} : {finishedAt}),
+    });
+    h.entries.push(
+      ...[
+        record('w-old-done', 'completed', now - 7_200_000),
+        record('w-old-failed', 'failed', now - 3_700_000),
+        record('w-recent', 'completed', now - 60_000),
+        // A worker live at the previous runtime's end restores paused.
+        record('w-interrupted', 'running'),
+      ].map(data => ({type: 'custom', customType: 'dots.worker', data})),
+    );
+    await h.handlers.session_start({reason: 'startup'}, h.ctx);
+
+    const recent = await h.run('worker_status', {});
+    assert.deepEqual(
+      recent.details.map(w => w.id),
+      ['w-recent', 'w-interrupted'],
+    );
+    const lines = recent.content[0].text.split('\n');
+    assert.equal(
+      lines.at(-1),
+      '2 older workers; worker_status { all: true } or /workers all',
+    );
+    assert.doesNotMatch(recent.content[0].text, /w-old/);
+
+    const every = await h.run('worker_status', {all: true});
+    assert.deepEqual(every.details.map(w => w.id).sort(), [
+      'w-interrupted',
+      'w-old-done',
+      'w-old-failed',
+      'w-recent',
+    ]);
+    assert.doesNotMatch(every.content[0].text, /older worker/);
+
+    assert.equal(
+      (await h.call('worker_status', {id: 'w-old-done'})).state,
+      'completed',
+    );
+    assert.equal(
+      (await h.call('worker_status', {id: 'old-failed'})).id,
+      'w-old-failed',
+      'labels find hidden workers too',
+    );
+
+    let shown;
+    h.ctx.mode = 'tui';
+    h.ctx.hasUI = true;
+    h.ctx.ui = {
+      setStatus() {},
+      setWidget() {},
+      notify() {},
+      async custom(factory) {
+        const view = factory(
+          {requestRender() {}, terminal: {rows: 32}},
+          {fg: (_tone, text) => text, bold: text => text},
+          {matches: () => false},
+          () => {},
+        );
+        shown = {
+          items: view.items.map(item => item.id),
+          notice: view.listNotice,
+          detail: view.snapshot?.detail,
+        };
+      },
+    };
+    const workers = h.commands.get('workers');
+    await workers.handler('', h.ctx);
+    assert.deepEqual(shown.items, ['w-recent', 'w-interrupted']);
+    assert.match(shown.notice, /2 older workers; .*\/workers all/);
+    await workers.handler('all', h.ctx);
+    assert.equal(shown.items.length, 4);
+    assert.doesNotMatch(shown.notice, /older/);
+    await workers.handler('w-old-done', h.ctx);
+    assert.match(shown.detail, /w-old-done · completed/);
+  } finally {
+    await h.handlers.session_shutdown({}, h.ctx);
+    process.env = saved;
     rmSync(root, {recursive: true, force: true});
   }
 });

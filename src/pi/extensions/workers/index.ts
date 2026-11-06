@@ -109,7 +109,8 @@ import {
 // and is not directional: any session sends to any address it can see
 // (`parent`, or a worker it owns, or a sibling by id via the owner). Delivery adapts to the target's state: answered if it is blocked
 // waiting, steered if running, continued in its own session if finished.
-// Return is the event: a worker's settle, question, or message arrives as a
+// A settled worker's process exits once its own workers have settled; the next
+// message relaunches it on its saved session. Return is the event: a worker's settle, question, or message arrives as a
 // custom message that starts the owner's next turn.
 //
 // Workers are resources of the session that spawned them, not of a branch:
@@ -201,6 +202,10 @@ interface Worker {
 const TICK_MS = 5_000;
 /** How long a finished worker stays in the widget. */
 const RECENT_MS = 120_000;
+/** How long a finished worker stays in default listings; `all` lists every one. */
+const LISTED_MS = 3_600_000;
+/** A finished worker's process closes like a stop: grace, then escalation. */
+const CLOSE_GRACE_MS = 2000;
 /** Full result kept on the worker and in its session file. */
 const MAX_RESULT = 12_000;
 /** What an event carries into the owner's context; the rest is one status call away. */
@@ -624,6 +629,66 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
   const subtree = (worker: Worker) =>
     withRegistry(r => r.subtree(worker.id, Date.now(), STALL_MS));
 
+  // A settled worker's process closes once nothing depends on it. Closing ends
+  // the child's own workers through its shutdown, so a worker whose
+  // descendants still run keeps its process until they settle. Without the
+  // registry, descendants are unobservable and the process closes.
+  /** Settled workers whose processes wait for their descendants. */
+  const held = new Set<Worker>();
+  /** Held workers whose descendants were all settled at the previous tick. */
+  const drained = new Set<Worker>();
+  /** Processes closing after their worker settled. */
+  const retiring = new WeakMap<Worker, Promise<void>>();
+  const unhold = (worker: Worker) => {
+    held.delete(worker);
+    drained.delete(worker);
+  };
+  /**
+   * Closes a settled worker's process, keeping its state and result. Runs as
+   * its own transition, so a delivery queued first continues the live process
+   * and one queued later relaunches the saved session.
+   */
+  const release = (worker: Worker): void => {
+    const child = worker.process;
+    if (!child || live(worker) || !owned(worker) || shuttingDown) return;
+    inOrder(worker, async () => {
+      if (worker.process !== child || live(worker)) return;
+      if ((subtree(worker)?.live ?? 0) > 0) {
+        held.add(worker);
+        syncTicker();
+        return;
+      }
+      unhold(worker);
+      syncTicker();
+      worker.process = undefined; // an expected exit; onExit ignores it
+      const closing = child.close(CLOSE_GRACE_MS);
+      retiring.set(worker, closing);
+      try {
+        await closing;
+      } finally {
+        if (retiring.get(worker) === closing) retiring.delete(worker);
+      }
+    }).catch(() => {
+      // Cancelled by stop or shutdown, which close the process themselves.
+    });
+  };
+  const reapHeld = () => {
+    for (const worker of [...held]) {
+      if (!worker.process || live(worker)) {
+        unhold(worker);
+        continue;
+      }
+      if ((subtree(worker)?.live ?? 0) > 0) {
+        drained.delete(worker);
+        continue;
+      }
+      // A descendant's settle reaches the registry just before the turn it
+      // starts in its owner; one quiet tick lets that turn begin first.
+      if (drained.has(worker)) release(worker);
+      else drained.add(worker);
+    }
+  };
+
   const save = (worker: Worker) => {
     if (shuttingDown || !owned(worker)) return;
     worker.updatedAt = Date.now();
@@ -758,11 +823,18 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     });
   };
 
-  // Elapsed and quiet times move without child events; tick while anything is live.
+  // Elapsed and quiet times move without child events; tick while anything is
+  // shown, or a held process waits on descendants in other processes.
   let ticker: ReturnType<typeof setInterval> | undefined;
-  const tick = (active: boolean) => {
+  let rowsShown = false;
+  const syncTicker = () => {
+    const active = !shuttingDown && (rowsShown || held.size > 0);
     // Descendants change in other processes; the tick refreshes their rows too.
-    if (active && !ticker) ticker = setInterval(widget, TICK_MS);
+    if (active && !ticker)
+      ticker = setInterval(() => {
+        reapHeld();
+        widget();
+      }, TICK_MS);
     if (!active && ticker) {
       clearInterval(ticker);
       ticker = undefined;
@@ -821,10 +893,13 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     publishActivity(pi.events, 'workers', items);
     if (shuttingDown || context?.mode !== 'tui') {
       animate(false);
+      rowsShown = false;
+      syncTicker();
       return;
     }
     const rows = liveRows();
-    tick(rows.length > 0);
+    rowsShown = rows.length > 0;
+    syncTicker();
     widgetRows = rows;
     publishWorkerActivity();
     animate(
@@ -1147,6 +1222,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
           worker.error = `settle failed: ${asError(error).message}`;
           save(worker);
           notify(worker, 'failed', worker.error);
+          release(worker);
         });
         return;
       }
@@ -1320,6 +1396,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       spontaneous && outcome.state === 'completed' ? 'update' : outcome.state,
       body,
     );
+    release(worker);
   };
 
   /** Starts a worker's Pi: headless, over stdio. */
@@ -1615,8 +1692,8 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
   const stopAll = async (): Promise<{stopped: Worker[]; closed: string[]}> => {
     const mine = [...workers.values()].filter(owned);
     const active = mine.filter(w => live(w) || (subtree(w)?.live ?? 0) > 0);
-    // Idle retained owners may have descendants, or wake again later. Close
-    // every owned process, preserving completed/failed results and states.
+    // Close every owned process, including settled owners held for their
+    // descendants, preserving finished results and states.
     const closing = mine.filter(
       w => w.process || stopping.has(w) || active.includes(w),
     );
@@ -1650,6 +1727,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     if (existing) return existing;
     epochs.set(worker, (epochs.get(worker) ?? 0) + 1);
     worker.generation++;
+    unhold(worker);
     if (!preserveState) worker.state = 'stopped';
     worker.phase = undefined;
     worker.headline = undefined;
@@ -1695,9 +1773,11 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     ...(owned(worker) ? {} : {ownerSession: worker.owner}),
     processState: stopping.has(worker)
       ? 'stopping'
-      : worker.process?.alive
-        ? 'alive'
-        : 'closed',
+      : retiring.has(worker)
+        ? 'closing'
+        : worker.process?.alive
+          ? 'alive'
+          : 'closed',
     elapsed: elapsed(worker.startedAt),
     tokens: worker.tokens,
     calls: worker.calls,
@@ -1832,8 +1912,10 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     widgetMounted = false;
     for (const cancel of [...cancelWaiters]) cancel();
     const closing: Promise<unknown>[] = [];
+    held.clear();
+    drained.clear();
     for (const worker of workers.values()) {
-      const pending = stopping.get(worker);
+      const pending = stopping.get(worker) ?? retiring.get(worker);
       if (pending) closing.push(pending);
     }
     for (const worker of workers.values()) {
@@ -2342,14 +2424,12 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       parts.push(
         `asking (${duration(since)} ago): ${label(w.question?.text ?? '', 200)}`,
       );
-    if (!live(w) && owned(w))
-      parts.push(
-        stopping.has(w)
-          ? 'process stopping'
-          : w.process?.alive
-            ? 'process idle'
-            : 'process closed',
-      );
+    // A settled worker's process is closed unless it is still exiting or held.
+    if (!live(w) && owned(w)) {
+      if (stopping.has(w)) parts.push('process stopping');
+      else if (retiring.has(w)) parts.push('process closing');
+      else if (w.process) parts.push('process kept for running descendants');
+    }
     if (w.assignment)
       parts.push(
         `task ${w.assignment.id} in ${label(w.assignment.project, 256)}`,
@@ -2463,13 +2543,44 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       .join('\n');
   };
 
+  /**
+   * Default listings: live and paused workers, workers with a process, and
+   * those finished within LISTED_MS. Lookup by id or label finds every worker.
+   */
+  const listed = (worker: Worker, now: number) =>
+    live(worker) ||
+    worker.state === 'paused' ||
+    !!worker.process ||
+    stopping.has(worker) ||
+    retiring.has(worker) ||
+    (worker.finishedAt !== undefined && now - worker.finishedAt < LISTED_MS);
+  const listing = (all: boolean) => {
+    const now = Date.now();
+    const every = [...workers.values()];
+    const shown = all ? every : every.filter(w => listed(w, now));
+    const older = every.length - shown.length;
+    return {
+      shown,
+      older:
+        older > 0
+          ? `${older} older worker${older === 1 ? '' : 's'}; worker_status { all: true } or /workers all`
+          : undefined,
+    };
+  };
+
   pi.registerTool({
     name: 'worker_status',
     label: 'Worker status',
     description:
-      "List this session's workers and their live descendants (what each is doing right now, how long since its last event, QUIET when stalled, last failed call, pending question), or inspect one by id: its activity trail, transcript tail, and full result. A descendant's id shows read-only registry activity and transcript tail; its final result belongs to its owner. Message its owner to steer it. Completions arrive as events; use this to look inside, not to wait.",
+      "List this session's workers and their live descendants (what each is doing right now, how long since its last event, QUIET when stalled, last failed call, pending question), or inspect one by id: its activity trail, transcript tail, and full result. The list shows live and paused workers and those finished within the last hour; all: true lists every worker, and id finds any of them. A descendant's id shows read-only registry activity and transcript tail; its final result belongs to its owner. Message its owner to steer it. Completions arrive as events; use this to look inside, not to wait.",
     parameters: Type.Object({
       id: Type.Optional(Type.String()),
+      all: Type.Optional(
+        Type.Boolean({
+          description:
+            'List every worker this session has had, not only live and recent ones',
+        }),
+      ),
       tail: Type.Optional(
         Type.Integer({
           minimum: 0,
@@ -2508,12 +2619,13 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
           details: summary(own),
         };
       }
-      const rows = [...workers.values()];
-      const text =
-        rows.length === 0
-          ? 'No workers in this session.'
-          : rows.map(w => describe(w, now, false, 0)).join('\n');
-      return {content: [{type: 'text', text}], details: rows.map(summary)};
+      const {shown, older} = listing(params.all ?? false);
+      const lines = shown.map(w => describe(w, now, false, 0));
+      if (older) lines.push(older);
+      const text = lines.length
+        ? lines.join('\n')
+        : 'No workers in this session.';
+      return {content: [{type: 'text', text}], details: shown.map(summary)};
     },
   });
 
@@ -2521,7 +2633,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     name: 'worker_stop',
     label: 'Stop worker',
     description:
-      'Abort a worker and end its process (and, through its own shutdown, its descendants). Its session file stays; message can continue it later. all: true closes every owned process, including idle owners and their descendants, while preserving finished results.',
+      "Abort a running or asking worker and end its process (and, through its own shutdown, its descendants). A finished worker's process exits on its own once its descendants settle; stopping one that still waits on descendants ends them and keeps its result. Its session file stays; message can continue it later. all: true closes every owned process and stops all active work, preserving finished results.",
     parameters: Type.Object({
       id: Type.Optional(Type.String()),
       all: Type.Optional(Type.Boolean()),
@@ -2540,12 +2652,26 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       }
       if (!params.id) throw new Error('worker_stop needs id or all: true');
       const worker = findOwned(params.id);
-      await stop(worker);
+      const resumable = worker.sessionFile
+        ? `Saved session retained at ${worker.sessionFile}; message can continue it.`
+        : 'No saved session is available to resume.';
+      if (!canStop(worker))
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `${worker.id} is already ${worker.state} and has no process; nothing to stop. ${resumable}`,
+            },
+          ],
+          details: summary(worker),
+        };
+      const active = live(worker);
+      await stop(worker, !active);
       return {
         content: [
           {
             type: 'text',
-            text: `${worker.id} stopped. ${worker.sessionFile ? `Saved session retained at ${worker.sessionFile}; message can continue it.` : 'No saved session is available to resume.'}`,
+            text: `${worker.id} ${active ? 'stopped' : `process closed; it stays ${worker.state}`}. ${resumable}`,
           },
         ],
         details: summary(worker),
@@ -2563,48 +2689,57 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     ...(owned(worker) ? {} : {owner: `session ${worker.owner}`}),
   });
 
-  const inspectionSource: WorkerInspectionSource = {
-    notice: () =>
-      registry ? undefined : 'Descendant observations unavailable',
-    list: () => {
-      const seen = new Set<string>();
-      const rows: WorkerListItem[] = [];
-      const own = [...workers.values()];
-      const descendants = (
-        parent: string,
-        level: number,
-        limit: number,
-      ): void => {
-        for (const child of withRegistry(r => r.children(parent)) ?? []) {
-          if (rows.length >= limit) return;
-          if (seen.has(child.id)) continue;
-          seen.add(child.id);
-          rows.push({
-            id: child.id,
-            label: child.label,
-            state: child.state,
-            depth: level,
-            owner: child.parent ?? parent,
-            canMessage: false,
-            canStop: false,
-          });
-          descendants(child.id, level + 1, limit);
-        }
-      };
-      for (const [index, worker] of own.entries()) {
-        if (rows.length >= 201) break;
-        seen.add(worker.id);
-        rows.push(listItem(worker));
-        // Reserve room for remaining direct owners before filling their trees.
-        if (owned(worker))
-          descendants(
-            worker.id,
-            1,
-            Math.max(rows.length, 201 - (own.length - index - 1)),
-          );
+  /** Listed workers, each followed by its descendants from the registry. */
+  const inspectionList = (all: boolean): WorkerListItem[] => {
+    const seen = new Set<string>();
+    const rows: WorkerListItem[] = [];
+    const own = listing(all).shown;
+    const descendants = (
+      parent: string,
+      level: number,
+      limit: number,
+    ): void => {
+      for (const child of withRegistry(r => r.children(parent)) ?? []) {
+        if (rows.length >= limit) return;
+        if (seen.has(child.id)) continue;
+        seen.add(child.id);
+        rows.push({
+          id: child.id,
+          label: child.label,
+          state: child.state,
+          depth: level,
+          owner: child.parent ?? parent,
+          canMessage: false,
+          canStop: false,
+        });
+        descendants(child.id, level + 1, limit);
       }
-      return rows;
-    },
+    };
+    for (const [index, worker] of own.entries()) {
+      if (rows.length >= 201) break;
+      seen.add(worker.id);
+      rows.push(listItem(worker));
+      // Reserve room for remaining direct owners before filling their trees.
+      if (owned(worker))
+        descendants(
+          worker.id,
+          1,
+          Math.max(rows.length, 201 - (own.length - index - 1)),
+        );
+    }
+    return rows;
+  };
+  const inspectionNotice = (all: boolean): string | undefined =>
+    [
+      registry ? undefined : 'Descendant observations unavailable',
+      listing(all).older,
+    ]
+      .filter(Boolean)
+      .join(' · ') || undefined;
+
+  const inspectionSource: WorkerInspectionSource = {
+    notice: () => inspectionNotice(false),
+    list: () => inspectionList(false),
     read: id => {
       const own = workers.get(id);
       if (own) {
@@ -2678,7 +2813,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         throw worker && !owned(worker)
           ? inherited(worker)
           : new Error('Worker is not owned or active here');
-      await stop(worker);
+      await stop(worker, !live(worker));
       if (!shuttingDown)
         pi.sendMessage(
           {
@@ -2698,7 +2833,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
 
   pi.registerCommand('workers', {
     description:
-      "Inspect this session's workers and descendants; `/workers <id>` opens one directly; `/workers stop` stops all",
+      "Inspect this session's live and recent workers and their descendants; `/workers all` lists every worker; `/workers <id>` opens one directly; `/workers stop` stops all",
     handler: async (args, ctx) => {
       if (!ctx.hasUI || shuttingDown) return;
       const wanted = args.trim();
@@ -2710,19 +2845,27 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       track(ctx);
       ensureRegistry();
       if (shuttingDown) return;
-      const id = wanted
-        ? (() => {
-            try {
-              return find(wanted).id;
-            } catch (error) {
-              if (inspectionSource.read(wanted)) return wanted;
-              throw error;
-            }
-          })()
-        : undefined;
+      const all = wanted === 'all';
+      const id =
+        wanted && !all
+          ? (() => {
+              try {
+                return find(wanted).id;
+              } catch (error) {
+                if (inspectionSource.read(wanted)) return wanted;
+                throw error;
+              }
+            })()
+          : undefined;
       await inspection.open(
         ctx,
-        inspectionSource,
+        all
+          ? {
+              ...inspectionSource,
+              list: () => inspectionList(true),
+              notice: () => inspectionNotice(true),
+            }
+          : inspectionSource,
         transcriptOptions(pi.getSettings()),
         id,
       );

@@ -418,11 +418,15 @@ test(
         ),
       );
       await refused('outstanding request', /is held by request/);
-      // Stopping your own worker never needs coordination.
-      await parent.call('worker_stop', {id: second.id});
+      // Stopping your own worker never needs coordination; a settled one has
+      // already closed its process.
+      assert.match(
+        (await parent.call('worker_stop', {id: second.id})).content[0].text,
+        /nothing to stop/,
+      );
       assert.equal(
         (await parent.call('worker_status', {id: second.id})).details.state,
-        'stopped',
+        'completed',
       );
       execFileSync(
         'dots',

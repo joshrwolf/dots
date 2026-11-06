@@ -385,15 +385,14 @@ export const scenarios: readonly Scenario[] = [
                 ],
                 end: [
                   {
-                    text: '32 retained',
+                    text: '32 listed',
                     tone: 'muted',
                     priority: 10,
                     shrink: 'omit',
                   },
                 ],
               },
-              body:
-                phase === 1 ? new Text('No retained workers.', 0, 0) : picker,
+              body: phase === 1 ? new Text('No workers listed.', 0, 0) : picker,
               footer: {
                 start: [
                   {

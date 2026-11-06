@@ -351,7 +351,7 @@ export class WorkerInspector extends VStack implements Focusable {
             ],
             end: [
               {
-                text: `${this.items.length} retained`,
+                text: `${this.items.length} listed`,
                 tone: 'muted',
                 priority: 10,
                 shrink: 'omit',
@@ -361,7 +361,7 @@ export class WorkerInspector extends VStack implements Focusable {
           body:
             this.items.length && this.picker
               ? this.picker
-              : new Text('No retained workers.', 0, 0),
+              : new Text('No workers listed.', 0, 0),
           footer: this.footer(hint),
         },
         this.theme,

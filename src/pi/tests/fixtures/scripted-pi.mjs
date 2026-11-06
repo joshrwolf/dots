@@ -31,6 +31,14 @@ writeFileSync(
     dots: process.env.DOTS_REX_SESSION ?? null,
   }),
 );
+// Each launch records its pid, so tests observe the process exit itself.
+writeFileSync(
+  path.join(
+    tmpdir(),
+    'dots-fake-pi-pid-' + (process.env.DOTS_WORKER_ID || 'root'),
+  ),
+  String(process.pid),
+);
 const sessionFile = args.includes('--session')
   ? args[args.indexOf('--session') + 1]
   : args[args.indexOf('--session-dir') + 1] + '/session.jsonl';
@@ -53,6 +61,15 @@ const settle = (text, final = true) => {
       },
     });
   out({type: 'agent_settled', aborted: false});
+};
+// Settles, then starts a turn of its own, as a child woken by its own worker does.
+const chatter = () => {
+  settle('first answer');
+  setTimeout(() => {
+    active = true;
+    out({type: 'agent_start'});
+    setTimeout(() => settle('later chatter'), 80);
+  }, 120);
 };
 let buffer = '';
 process.stdin.setEncoding('utf8');
@@ -91,7 +108,13 @@ process.stdin.on('data', chunk => {
       if (active && cmd.streamingBehavior === 'steer') {
         ok({disposition: 'queued'});
         clearTimeout(pendingSettle);
-        pendingSettle = setTimeout(() => settle('steered: ' + cmd.message), 50);
+        pendingSettle = setTimeout(
+          () =>
+            cmd.message.startsWith('spontaneous:')
+              ? chatter()
+              : settle('steered: ' + cmd.message),
+          50,
+        );
         continue;
       }
       active = true;
@@ -240,12 +263,7 @@ process.stdin.on('data', chunk => {
         return;
       }
       if (m.startsWith('spontaneous:')) {
-        settle('first answer');
-        setTimeout(() => {
-          active = true;
-          out({type: 'agent_start'});
-          setTimeout(() => settle('later chatter'), 80);
-        }, 120);
+        chatter();
         return;
       }
       if (m.startsWith('headline:')) {
