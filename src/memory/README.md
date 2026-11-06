@@ -14,7 +14,12 @@ edits to one document need explicit reconciliation even when text could merge.
 Enrolled peers and this tool's exports are trusted producers. Integrity, lineage,
 schema and practical resource bounds do not make Git a hostile-file sandbox.
 Fetch cursors track retained history; delivery cursors record acknowledged accepted
-snapshots, not an unfetched newer remote tip.
+snapshots, not an unfetched newer remote tip. Exactly one active authority
+integrates a dataset; retire it before using an authority restored for recovery.
+
+[History](src/history.rs) and [transfer](src/incoming.rs) budgets bound exchange.
+Oversized history fails explicitly rather than triggering pruning or rewriting;
+this is bounded knowledge storage, not an unlimited archive.
 
 Installed Git runs through `dots-process` with isolated configuration, bounded I/O
 and explicit durability settings. There is no working tree, automatic pruning,
