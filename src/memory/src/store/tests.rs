@@ -16,6 +16,53 @@ fn put(scope: Scope, path: &str, content: &str) -> Change {
 }
 
 #[test]
+fn native_git_rejects_reserved_paths_before_publication() -> TestResult {
+    let fixture = Fixture::new()?;
+    let base = fixture.store.snapshot()?;
+    for path in [
+        "GIT~1/x.md",
+        "git~1/note.md",
+        "a\u{200c}/\u{200c}.git/note.md",
+    ] {
+        assert!(
+            fixture
+                .store
+                .publish(&base, &[put(Scope::Global, path, "neutral")])
+                .is_err(),
+            "{path}"
+        );
+        assert_eq!(
+            fixture.store.snapshot()?,
+            base,
+            "{path}: rejected write advanced history"
+        );
+    }
+    let publication = fixture
+        .store
+        .publish(&base, &[put(Scope::Global, "plain/note.md", "valid")])?;
+    let bundle = fixture.parent.join("after-rejections.bundle");
+    let receipt = fixture
+        .store
+        .export_bundle(&publication.snapshot, &bundle)?;
+    let restored = Store::restore(
+        &fixture.parent.join("restored"),
+        "restored",
+        Role::Replica,
+        &bundle,
+        &receipt,
+    )?;
+    assert_eq!(restored.snapshot()?, publication.snapshot);
+    assert_eq!(
+        restored
+            .latest()?
+            .content(&Scope::Global, Path::new("plain/note.md"))?
+            .as_deref(),
+        Some("valid")
+    );
+    Ok(())
+}
+
+#[test]
 fn serialized_changes_require_an_explicit_action() {
     for value in [
         r#"{"scope":{"kind":"global"},"path":"note.md"}"#,

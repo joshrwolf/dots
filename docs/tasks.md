@@ -32,8 +32,9 @@ explicitly rebind a moved checkout; display names do not establish identity.
 
 The catalog lives at `$XDG_DATA_HOME/dots/workspace.sqlite3`, defaulting to
 `~/.local/share/dots/workspace.sqlite3`. Task commands never initialize storage.
-Memory uses the same project bindings and keeps current Markdown under
-`dots/workspaces/<project-id>/knowledge/`; global knowledge uses `global`.
+Memory has a separate [Git knowledge store](../src/memory/README.md). Explicit
+associations connect local catalog projects to shared knowledge identities;
+tasks and briefs remain machine-local.
 
 Goal briefs are ordinary Markdown under the project's `briefs/` directory.
 Create the file there, then pass `--brief briefs/<name>.md` to `task goal create`

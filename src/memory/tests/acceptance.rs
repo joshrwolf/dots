@@ -66,6 +66,84 @@ fn put(path: &str, content: &str) -> Change {
 }
 
 #[test]
+fn an_accepted_long_history_exports_within_the_control_request_deadline() -> TestResult {
+    use dots_memory::{PeerRequest, PeerResponse};
+    use dots_process::Runner;
+    use std::fmt::Write as _;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    let lab = Lab::new()?;
+    let base = lab.replica.snapshot()?;
+    let mut history = String::new();
+    for index in 0..4000 {
+        let message = format!("Neutral history checkpoint {index}");
+        write!(
+            history,
+            "commit refs/heads/knowledge\ncommitter neutral <memory@localhost> {} +0000\ndata {}\n{message}\n",
+            index + 1,
+            message.len()
+        )?;
+        if index == 0 {
+            writeln!(history, "from {base}")?;
+        }
+        history.push('\n');
+    }
+    history.push_str("done\n");
+    let mut command = Command::new("git");
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").expect("test PATH"))
+        .env("HOME", &lab.parent)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .arg("--git-dir")
+        .arg(lab.replica.root().join("repo.git"))
+        .args(["fast-import", "--quiet", "--done"]);
+    let output = Runner::new(Duration::from_secs(30), 1024 * 1024)
+        .stdin(history.into_bytes(), 2 * 1024 * 1024)
+        .output(command)?;
+    assert!(
+        output.status.success(),
+        "create history: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let snapshot = lab.replica.snapshot()?;
+    let request = PeerRequest::Export {
+        root: lab.replica.root().to_owned(),
+        recipient: lab.replica.identity(),
+        snapshot: snapshot.clone(),
+    };
+    let mut command = Command::new(env!("CARGO_BIN_EXE_dots-memory-fixture"));
+    command
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").expect("test PATH"))
+        .env("HOME", &lab.parent)
+        .env("TERM", "dumb")
+        .args(["ssh", "replica.tail.invalid", "fixture memory serve"]);
+    let started = Instant::now();
+    let output = Runner::new(Duration::from_secs(120), 1024 * 1024)
+        .stdin(serde_json::to_vec(&request)?, 1024 * 1024)
+        .output(command)?;
+    assert!(
+        output.status.success(),
+        "export control: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: PeerResponse = serde_json::from_slice(&output.stdout)?;
+    let PeerResponse::Export { export } = response else {
+        panic!("expected export response")
+    };
+    assert_eq!(export.snapshot, snapshot);
+    assert_eq!(export.source, lab.replica.identity());
+    eprintln!(
+        "export control for 4001 accepted commits: {:?}",
+        started.elapsed()
+    );
+    Ok(())
+}
+
+#[test]
 fn native_peer_fetch_and_return_use_quarantine_and_receiver_acceptance() -> TestResult {
     let lab = Lab::new()?;
     let base = lab.authority.snapshot()?;

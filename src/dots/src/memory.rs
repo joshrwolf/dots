@@ -238,6 +238,14 @@ pub(crate) fn run(
                 &json!({"state": if receipt.observed == snapshot { "delivered" } else { "delivered_peer_advanced" }, "snapshot": snapshot, "receipt": receipt}),
             )
         }
+        MemoryCommand::Plan {
+            expected_snapshot,
+            candidate_file,
+        } => {
+            let candidate: Candidate =
+                required_json(&input_path(directory, &candidate_file), MAX_CONTROL_BYTES)?;
+            encode(&Coordinator::new(&store)?.plan(&expected_snapshot, &candidate)?)
+        }
         MemoryCommand::Reconcile { input_file } => {
             let input: Reconciliation =
                 required_json(&input_path(directory, &input_file), MAX_JSON_BYTES)?;

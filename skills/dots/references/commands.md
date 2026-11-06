@@ -2484,6 +2484,7 @@ Commands:
   project    Manage shared identities and their separate machine-local catalog bindings
   peer       Explicitly bind one enrolled replica and its native transport
   sync       Fetch, reconcile disjoint changes and return an accepted snapshot; conflicts require judgment
+  plan       Inspect a retained candidate's conflict paths and base without publishing or networking
   reconcile  Resolve JSON recipient/local/incoming/resolutions into a local publication; sync separately
   inspect    Read an explicitly labeled unpublished candidate; cannot change ordinary memory
   export     Export a pinned full snapshot; stdout is the receipt required by import/restore
@@ -2924,6 +2925,33 @@ Options:
 
       --project <ID>
           Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory plan
+
+```text
+Inspect a retained candidate's conflict paths and base without publishing or networking
+
+Usage: dots memory plan [OPTIONS] --expected-snapshot <EXPECTED_SNAPSHOT> --candidate-file <CANDIDATE_FILE>
+
+Options:
+      --expected-snapshot <EXPECTED_SNAPSHOT>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --candidate-file <CANDIDATE_FILE>
+
 
       --directory <PATH>
           Working directory for commands that use checkout context

@@ -60,6 +60,131 @@ fn resource(path: &str) -> Resource {
 }
 
 #[test]
+fn layout_collisions_require_explicit_choices_for_every_document() -> TestResult {
+    for (ours, theirs) in [
+        ("topic.md", "topic.md/child.md"),
+        ("Topic.md", "topic.md"),
+        ("Wiki/a.md", "wiki/b.md"),
+        ("Topic.md", "topic.md/child.md"),
+    ] {
+        let pair = Pair::new()?;
+        let authority = &pair.home.store;
+        let base = authority.snapshot()?;
+        let local = authority.publish(&base, &[put(ours, "ours")])?.snapshot;
+        let remote = pair
+            .replica
+            .publish(&base, &[put(theirs, "theirs")])?
+            .snapshot;
+        let candidate = pair.transfer(&pair.replica, authority)?;
+        let coordinator = Coordinator::new(authority)?;
+        let plan = coordinator.plan(&local, &candidate)?;
+        assert_eq!(plan.conflicts.len(), 2, "{ours} vs {theirs}");
+        assert!(plan.conflicts.iter().any(|c| c.resource == resource(ours)));
+        assert!(
+            plan.conflicts
+                .iter()
+                .any(|c| c.resource == resource(theirs))
+        );
+        assert!(coordinator.accept(&plan, &[]).is_err());
+        let keep_both = [
+            Resolution {
+                resource: resource(ours),
+                choice: Choice::Local {},
+            },
+            Resolution {
+                resource: resource(theirs),
+                choice: Choice::Incoming {},
+            },
+        ];
+        assert!(coordinator.accept(&plan, &keep_both).is_err());
+        assert_eq!(authority.snapshot()?, local);
+        let choices = [
+            Resolution {
+                resource: resource(ours),
+                choice: Choice::Remove {},
+            },
+            Resolution {
+                resource: resource(theirs),
+                choice: Choice::Incoming {},
+            },
+        ];
+        let merged = coordinator.accept(&plan, &choices)?;
+        assert!(authority.git().is_ancestor(&local, &merged)?);
+        assert!(authority.git().is_ancestor(&remote, &merged)?);
+        assert!(
+            authority
+                .latest()?
+                .content(&Scope::Global, Path::new(ours))?
+                .is_none()
+        );
+        assert_eq!(
+            authority
+                .latest()?
+                .content(&Scope::Global, Path::new(theirs))?
+                .as_deref(),
+            Some("theirs")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unselected_document_conflict_still_exposes_possible_layout_collisions() -> TestResult {
+    let pair = Pair::new()?;
+    let authority = &pair.home.store;
+    let base = authority.snapshot()?;
+    let before = authority
+        .publish(&base, &[put("topic.md", "base")])?
+        .snapshot;
+    let seed = pair.transfer(authority, &pair.replica)?;
+    pair.replica.accept_return(&Delivery {
+        recipient: pair.replica.identity(),
+        expected: base,
+        candidate: seed,
+    })?;
+    let local = authority
+        .publish(
+            &before,
+            &[
+                Change {
+                    scope: Scope::Global,
+                    path: "topic.md".into(),
+                    action: Action::Remove {},
+                },
+                put("topic.md/child.md", "child"),
+            ],
+        )?
+        .snapshot;
+    pair.replica
+        .publish(&before, &[put("topic.md", "changed")])?;
+    let incoming = pair.transfer(&pair.replica, authority)?;
+    let coordinator = Coordinator::new(authority)?;
+    let plan = coordinator.plan(&local, &incoming)?;
+    assert_eq!(plan.conflicts.len(), 2);
+    let merged = coordinator.accept(
+        &plan,
+        &[
+            Resolution {
+                resource: resource("topic.md"),
+                choice: Choice::Incoming {},
+            },
+            Resolution {
+                resource: resource("topic.md/child.md"),
+                choice: Choice::Remove {},
+            },
+        ],
+    )?;
+    assert_eq!(
+        authority
+            .view(&merged)?
+            .content(&Scope::Global, Path::new("topic.md"))?
+            .as_deref(),
+        Some("changed")
+    );
+    Ok(())
+}
+
+#[test]
 fn disjoint_contributions_merge_both_histories_and_return_append_only() -> TestResult {
     let pair = Pair::new()?;
     let authority = &pair.home.store;

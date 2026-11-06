@@ -106,9 +106,13 @@ Local publication is not delivery. `memory status` reports local snapshots,
 retained peer progress, acknowledged deliveries and pending integration without
 networking. Authorized `memory sync` explicitly contacts a bound enrolled peer.
 Only the authority integrates divergent history. Same-document divergence needs
-a deliberate choice even when text could merge. Inspect the labeled incoming
-candidate and the published local/base resources; use `memory reconcile` for
-explicit resolutions, then sync separately. A stale plan/return needs fresh
+a deliberate choice even when text could merge. For an imported bundle, save the
+returned candidate JSON privately and run `memory plan --expected-snapshot SNAPSHOT
+--candidate-file INPUT` to obtain the base and all conflicting resources without
+network access. File/directory and case collisions also require explicit choices
+for every implicated document. Inspect the labeled incoming candidate and the
+published local/base resources; use `memory reconcile` for explicit resolutions,
+then sync separately. A stale plan/return needs fresh
 observation, never a forced rewrite. Imports remain unreadable as ordinary memory
 until accepted.
 

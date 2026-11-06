@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use super::{Action, Change, Role, Scope, Store};
 use crate::fixture::Fixture;
-use crate::git::{Entry, Git};
+use crate::git::Git;
 use crate::{BundleReceipt, MAX_FILE_BYTES, MAX_METADATA_BYTES, Snapshot};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -212,46 +212,28 @@ fn a_clean_tip_cannot_hide_invalid_ancestor_files_modes_or_content() -> TestResu
         let input =
             format!("100644 blob {manifest}\tknowledge.json\0{mode} {kind} {oid}\t{path}\0")
                 .into_bytes();
-        let tree = if path.contains('/') {
-            let mut entries = original.clone();
-            entries.insert(
-                path.into(),
-                Entry {
-                    oid: oid.into(),
-                    size: if index == 3 { MAX_FILE_BYTES + 1 } else { 1 },
-                },
-            );
-            if mode == "100644" {
-                fixture.store.git.tree(&entries)?
-            } else {
+        let tree: String =
+            if path.contains('/') {
+                let (directory, name) = path.rsplit_once('/').expect("fixture directory");
                 let inner = fixture.store.git.text(
                     &["mktree", "-z"],
-                    Some(format!("{mode} {kind} {oid}\tlink.md\0").into_bytes()),
+                    Some(format!("{mode} {kind} {oid}\t{name}\0").into_bytes()),
                 )?;
+                fixture.store.git.text(
+                &["mktree", "-z"],
+                Some(format!(
+                    "100644 blob {manifest}\tknowledge.json\0040000 tree {}\t{directory}\0",
+                    inner.trim()
+                ).into_bytes()),
+            )?.trim().into()
+            } else {
                 fixture
                     .store
                     .git
-                    .text(
-                        &["mktree", "-z"],
-                        Some(
-                            format!(
-                                "100644 blob {manifest}\tknowledge.json\0040000 tree {}\tglobal\0",
-                                inner.trim()
-                            )
-                            .into_bytes(),
-                        ),
-                    )?
+                    .text(&["mktree", "-z"], Some(input))?
                     .trim()
                     .into()
-            }
-        } else {
-            fixture
-                .store
-                .git
-                .text(&["mktree", "-z"], Some(input))?
-                .trim()
-                .into()
-        };
+            };
         let bad = fixture
             .store
             .git

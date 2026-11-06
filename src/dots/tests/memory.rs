@@ -100,6 +100,26 @@ mod tests {
             );
             self.ok(&["project", "init", "neutral", "--fresh"])
         }
+        fn replica(&self) -> Self {
+            let replica = Self::new();
+            let bundle = self.root.join("seed.bundle");
+            let bundle = bundle.to_str().unwrap();
+            let receipt = self.ok(&["memory", "export", "--output", bundle]);
+            let receipt_file = self.input("seed-receipt.json", &receipt);
+            replica.ok(&[
+                "memory",
+                "restore",
+                "--actor",
+                "replica",
+                "--role",
+                "replica",
+                "--bundle",
+                bundle,
+                "--receipt-file",
+                &receipt_file,
+            ]);
+            replica
+        }
         fn store(&self) -> PathBuf {
             self.root.join("data/dots/knowledge")
         }
@@ -280,54 +300,35 @@ mod tests {
     #[test]
     fn restore_import_inspection_and_explicit_reconciliation_preserve_ownership() {
         let authority = Fixture::new();
-        let replica = Fixture::new();
         let seed = authority.init();
-        let bundle = authority
-            .root
-            .join("seed.bundle")
-            .to_str()
-            .unwrap()
-            .to_owned();
-        let receipt = authority.ok(&["memory", "export", "--output", &bundle]);
-        let receipt_file = authority.input("receipt.json", &receipt);
-        let restored = replica.ok(&[
-            "memory",
-            "restore",
-            "--actor",
-            "replica",
-            "--role",
-            "replica",
-            "--bundle",
-            &bundle,
-            "--receipt-file",
-            &receipt_file,
-        ]);
+        let replica = authority.replica();
+        let restored = replica.ok(&["memory", "status"]);
         assert_eq!(restored["identity"]["store"], seed["identity"]["store"]);
         assert_ne!(restored["identity"]["node"], seed["identity"]["node"]);
         let remote = replica.publish(
             snapshot(&restored),
             &json!([write(&json!({"kind":"global"}), "MEMORY.md", "remote fact")]),
         );
-        let remote_bundle = replica
-            .root
-            .join("remote.bundle")
-            .to_str()
-            .unwrap()
-            .to_owned();
-        let remote_receipt = replica.ok(&["memory", "export", "--output", &remote_bundle]);
+        let local = authority.publish(
+            snapshot(&seed),
+            &json!([write(&json!({"kind":"global"}), "MEMORY.md", "local fact")]),
+        );
+        let remote_bundle = replica.root.join("remote.bundle");
+        let remote_bundle = remote_bundle.to_str().unwrap();
+        let remote_receipt = replica.ok(&["memory", "export", "--output", remote_bundle]);
         let remote_receipt_file = replica.input("remote-receipt.json", &remote_receipt);
         let candidate = authority.ok(&[
             "memory",
             "import",
             "--bundle",
-            &remote_bundle,
+            remote_bundle,
             "--receipt-file",
             &remote_receipt_file,
         ]);
         assert_eq!(candidate["snapshot"], remote["snapshot"]);
         assert_eq!(
             authority.ok(&["memory", "status"])["snapshot"],
-            seed["snapshot"]
+            local["snapshot"]
         );
         authority.fail(&[
             "memory",
@@ -350,15 +351,40 @@ mod tests {
         ]);
         assert_eq!(inspected["document"]["content"], "remote fact\n");
         assert!(inspected.get("candidate").is_some());
-        let wrong = authority.input("wrong-node.json", &json!({"recipient":restored["identity"],"local":seed["snapshot"],"incoming":candidate,"resolutions":[]}));
+        let plan = authority.ok(&[
+            "memory",
+            "plan",
+            "--expected-snapshot",
+            snapshot(&local),
+            "--candidate-file",
+            &candidate_file,
+        ]);
+        assert_eq!(plan["base"], seed["snapshot"]);
+        assert_eq!(plan["local"], local["snapshot"]);
+        assert_eq!(plan["recipient"], seed["identity"]);
+        assert_eq!(plan["conflicts"].as_array().unwrap().len(), 1);
+        assert_eq!(plan["conflicts"][0]["resource"]["path"], "MEMORY.md");
+        assert_eq!(
+            authority.ok(&["memory", "status"])["snapshot"],
+            local["snapshot"]
+        );
+        let wrong = authority.input("wrong-node.json", &json!({"recipient":restored["identity"],"local":local["snapshot"],"incoming":candidate,"resolutions":[]}));
         authority.fail(&["memory", "reconcile", "--input-file", &wrong]);
         assert_eq!(
             authority.ok(&["memory", "status"])["snapshot"],
-            seed["snapshot"]
+            local["snapshot"]
         );
-        let input = authority.input("reconcile.json", &json!({"recipient":seed["identity"],"local":seed["snapshot"],"incoming":candidate,"resolutions":[]}));
+        let input = authority.input("reconcile.json", &json!({"recipient":plan["recipient"],"local":plan["local"],"incoming":plan["incoming"],"resolutions":[{"resource":plan["conflicts"][0]["resource"],"choice":{"kind":"incoming"}}]}));
         let accepted = authority.ok(&["memory", "reconcile", "--input-file", &input]);
-        assert_eq!(accepted["snapshot"], remote["snapshot"]);
+        assert_ne!(accepted["snapshot"], remote["snapshot"]);
+        authority.fail(&[
+            "memory",
+            "plan",
+            "--expected-snapshot",
+            snapshot(&local),
+            "--candidate-file",
+            &candidate_file,
+        ]);
         assert_eq!(
             authority.ok(&["memory", "read", "MEMORY.md", "--scope", "global"])["document"]["content"],
             "remote fact\n"

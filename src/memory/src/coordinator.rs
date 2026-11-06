@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use dots_documents::mutation_lock::MutationLock;
 use serde::{Deserialize, Serialize};
 
-use crate::git::Entry;
+use crate::git::{Entry, Git};
 use crate::store;
 use crate::{Candidate, Identity, Manifest, Resource, Result, Role, Snapshot, Store};
 
@@ -133,31 +133,7 @@ impl<'store> Coordinator<'store> {
         let incoming = candidate.view(self.store)?;
         let local = self.store.view(expected)?;
         let git = self.store.git();
-        let (kind, base) = if git.is_ancestor(&candidate.snapshot, expected)? {
-            (IntegrationKind::UpToDate, candidate.snapshot.clone())
-        } else if git.is_ancestor(expected, &candidate.snapshot)? {
-            (IntegrationKind::FastForward, expected.clone())
-        } else {
-            let bases = git.text(
-                &[
-                    "merge-base",
-                    "--all",
-                    expected.as_str(),
-                    candidate.snapshot.as_str(),
-                ],
-                None,
-            )?;
-            let bases: Vec<_> = bases
-                .lines()
-                .map(str::parse::<Snapshot>)
-                .collect::<Result<_>>()?;
-            let [base] = bases.as_slice() else {
-                return Err(crate::invalid(
-                    "integration requires one unambiguous common snapshot",
-                ));
-            };
-            (IntegrationKind::Merge, base.clone())
-        };
+        let (kind, base) = integration_base(git, expected, &candidate.snapshot)?;
         let ancestor = crate::View::load(git, &base, self.store.id())?;
         let mut manifest = local.manifest().clone();
         for (id, name) in &incoming.manifest().projects {
@@ -206,6 +182,31 @@ impl<'store> Coordinator<'store> {
             if let Some(selected) = selected {
                 entries.insert(path.clone(), selected.clone());
             }
+        }
+        let possible_paths: BTreeSet<_> = entries
+            .keys()
+            .cloned()
+            .chain(
+                conflicts
+                    .iter()
+                    .map(|conflict| conflict.resource.full_path(&manifest))
+                    .collect::<Result<Vec<_>>>()?,
+            )
+            .collect();
+        for path in store::colliding_paths(possible_paths.iter().map(String::as_str)) {
+            let resource = Resource::from_path(path, &manifest)?;
+            if conflicts
+                .iter()
+                .any(|conflict| conflict.resource == resource)
+            {
+                continue;
+            }
+            conflicts.push(Conflict {
+                resource,
+                base_blob: oid(ancestor.entries.get(path)).map(str::to_owned),
+                local_blob: oid(local.entries.get(path)).map(str::to_owned),
+                incoming_blob: oid(incoming.entries.get(path)).map(str::to_owned),
+            });
         }
         Ok(Integration {
             recipient: self.store.identity(),
@@ -347,6 +348,34 @@ pub(crate) fn accept_return(store: &Store, delivery: &Delivery) -> Result<Delive
 
 #[cfg(test)]
 mod tests;
+
+/// Select the native Git topology before reconciling document contents.
+fn integration_base(
+    git: &Git,
+    local: &Snapshot,
+    incoming: &Snapshot,
+) -> Result<(IntegrationKind, Snapshot)> {
+    if git.is_ancestor(incoming, local)? {
+        return Ok((IntegrationKind::UpToDate, incoming.clone()));
+    }
+    if git.is_ancestor(local, incoming)? {
+        return Ok((IntegrationKind::FastForward, local.clone()));
+    }
+    let bases = git.text(
+        &["merge-base", "--all", local.as_str(), incoming.as_str()],
+        None,
+    )?;
+    let bases: Vec<_> = bases
+        .lines()
+        .map(str::parse::<Snapshot>)
+        .collect::<Result<_>>()?;
+    let [base] = bases.as_slice() else {
+        return Err(crate::invalid(
+            "integration requires one unambiguous common snapshot",
+        ));
+    };
+    Ok((IntegrationKind::Merge, base.clone()))
+}
 
 fn oid(entry: Option<&Entry>) -> Option<&str> {
     entry.map(|entry| entry.oid.as_str())

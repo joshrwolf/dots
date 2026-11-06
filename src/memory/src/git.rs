@@ -467,59 +467,56 @@ impl Git {
     }
 
     pub(crate) fn tree(&self, entries: &BTreeMap<String, Entry>) -> Result<String> {
-        let mut directories: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-        directories.entry(String::new()).or_default();
+        let stage = dots_documents::staged_directory::StagedDirectory::create(&self.root)?;
+        let index = stage.path().join("index");
+        let mut input = Vec::new();
         for (path, entry) in entries {
-            let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
-            directories
-                .entry(directory.into())
-                .or_default()
-                .extend_from_slice(format!("100644 blob {}\t{name}\0", entry.oid).as_bytes());
+            input.extend_from_slice(format!("100644 {}\t{path}\0", entry.oid).as_bytes());
         }
-        let depth = |path: &str| {
-            if path.is_empty() {
-                0
-            } else {
-                path.split('/').count()
-            }
-        };
-        loop {
-            let deepest = directories
-                .keys()
-                .map(|path| depth(path))
-                .max()
-                .expect("root remains until it is written");
-            let names: Vec<_> = directories
-                .keys()
-                .filter(|path| depth(path) == deepest)
-                .cloned()
-                .collect();
-            let mut input = Vec::new();
-            for name in &names {
-                input.extend(directories.remove(name).expect("selected directory exists"));
-                input.push(0);
-            }
-            let output = self.text(&["mktree", "--batch", "-z"], Some(input))?;
-            let objects: Vec<_> = output
-                .lines()
-                .map(str::parse::<Snapshot>)
-                .collect::<Result<_>>()?;
-            if objects.len() != names.len() {
-                return Err(invalid(
-                    "Git tree batch returned an unexpected object count",
-                ));
-            }
-            for (directory, oid) in names.into_iter().zip(objects) {
-                if directory.is_empty() {
-                    return Ok(oid.to_string());
-                }
-                let (parent, name) = directory.rsplit_once('/').unwrap_or(("", &directory));
-                directories
-                    .entry(parent.into())
-                    .or_default()
-                    .extend_from_slice(format!("040000 tree {oid}\t{name}\0").as_bytes());
-            }
+        let mut command = self.command(&[
+            "-c",
+            "core.protectHFS=true",
+            "-c",
+            "core.protectNTFS=true",
+            "update-index",
+            "-z",
+            "--index-info",
+        ])?;
+        command.env("GIT_INDEX_FILE", &index);
+        let runner =
+            dots_process::Runner::new(DEADLINE, MAX_METADATA_BYTES).stdin(input, INPUT_LIMIT);
+        Self::checked(
+            Self::execute(command, "stage knowledge index", runner)?,
+            "stage knowledge index",
+        )?;
+        let mut command = self.command(&["write-tree"])?;
+        command.env("GIT_INDEX_FILE", &index);
+        let bytes = Self::checked(
+            Self::execute(
+                command,
+                "stage knowledge tree",
+                dots_process::Runner::new(DEADLINE, MAX_METADATA_BYTES),
+            )?,
+            "stage knowledge tree",
+        )?;
+        let tree: Snapshot = std::str::from_utf8(&bytes)
+            .map_err(|_| invalid("non-UTF-8 Git tree identity"))?
+            .trim()
+            .parse()?;
+        // update-index can ignore reserved paths while returning success.
+        let actual = self.entries(&tree)?;
+        if actual.len() != entries.len()
+            || entries.iter().any(|(path, entry)| {
+                actual
+                    .get(path)
+                    .is_none_or(|value| value.oid != entry.oid || value.size != entry.size)
+            })
+        {
+            return Err(invalid(
+                "Git rejected a knowledge path or changed the proposed tree",
+            ));
         }
+        Ok(tree.to_string())
     }
 
     pub(crate) fn commit(

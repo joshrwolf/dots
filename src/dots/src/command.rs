@@ -280,6 +280,13 @@ pub(crate) enum MemoryCommand {
     },
     /// Fetch, reconcile disjoint changes and return an accepted snapshot; conflicts require judgment
     Sync,
+    /// Inspect a retained candidate's conflict paths and base without publishing or networking
+    Plan {
+        #[arg(long)]
+        expected_snapshot: Snapshot,
+        #[arg(long)]
+        candidate_file: PathBuf,
+    },
     /// Resolve JSON recipient/local/incoming/resolutions into a local publication; sync separately
     Reconcile {
         #[arg(long)]

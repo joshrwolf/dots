@@ -1,7 +1,7 @@
 # Retained evidence
 
-Dots keeps exact task evidence outside checkouts. Briefs and knowledge remain
-editable Markdown; published outputs preserve the bytes used for acceptance.
+Dots keeps exact task evidence outside checkouts. Briefs remain editable
+Markdown; published outputs preserve the bytes used for acceptance.
 Publication records provenance, not truth, and does not accept work.
 
 ## Use
@@ -40,7 +40,6 @@ The catalog is `$XDG_DATA_HOME/dots/workspace.sqlite3`. Project files live in
 `dots/workspaces/<project-id>/`:
 
 - `briefs/` contains current agreements.
-- `knowledge/` contains current reusable understanding.
 - `outputs/<slug>/sha256-<hex>/<filename>` contains immutable evidence.
 - `scratch/` contains unretained drafts and probes.
 
@@ -64,7 +63,17 @@ do not open it as another catalog or blindly delete it.
 
 ## Offline backup and restore
 
-Stop all cooperating writers, including Pi parents/workers and Superfans bridges,
+Knowledge lives separately in the owned bare Git store at
+`$XDG_DATA_HOME/dots/knowledge`. Export an accepted snapshot with `dots memory
+export` and retain its receipt alongside the bundle. Use `dots memory restore`
+to verify recovery into a separate empty data root; compare document bytes,
+shared store/project identities and the selected snapshot. Restore allocates a
+new local node identity, so peer and catalog bindings need explicit enrollment.
+Retire the old authority before activating an authority recovery. The
+[knowledge store](../src/memory/README.md) describes ownership and exchange limits.
+A workspace backup alone does not contain knowledge.
+
+For the machine-local catalog, briefs and outputs, stop all cooperating writers, including Pi parents/workers and Superfans bridges,
 for the entire backup or restore. A file-by-file online copy is not a consistent
 workspace backup. Retain the source until restoration is verified.
 

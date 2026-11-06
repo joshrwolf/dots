@@ -469,7 +469,8 @@ impl Store {
     /// Pin an explicitly selected accepted snapshot for native Git transfer.
     pub fn prepare_export(&self, snapshot: &Snapshot) -> Result<crate::Export> {
         self.view(snapshot)?;
-        crate::history::validate(&self.git, &self.identity(), snapshot, &BTreeSet::new())?;
+        let known = crate::history::accepted(&self.git, snapshot)?;
+        crate::history::validate(&self.git, &self.identity(), snapshot, &known)?;
         let reference = format!("refs/dots/export/{snapshot}");
         self.git.pin(&reference, snapshot)?;
         Ok(crate::Export {
@@ -861,18 +862,12 @@ pub(crate) fn validate_layout(
         }
         let mut component = path.as_str();
         loop {
-            match folded.insert(component.to_lowercase(), component) {
-                Some(previous) if previous != component => {
-                    return Err(invalid("knowledge paths have a case ambiguity"));
-                }
-                Some(_) => {}
-                None => {
-                    metadata = metadata
-                        .checked_add(component.len() + 128)
-                        .ok_or_else(|| invalid("knowledge metadata size overflow"))?;
-                    if metadata > MAX_METADATA_BYTES {
-                        return Err(invalid("knowledge tree metadata exceeds the read budget"));
-                    }
+            if folded.insert(component.to_lowercase(), component).is_none() {
+                metadata = metadata
+                    .checked_add(component.len() + 128)
+                    .ok_or_else(|| invalid("knowledge metadata size overflow"))?;
+                if metadata > MAX_METADATA_BYTES {
+                    return Err(invalid("knowledge tree metadata exceeds the read budget"));
                 }
             }
             let Some((parent, _)) = component.rsplit_once('/') else {
@@ -884,15 +879,45 @@ pub(crate) fn validate_layout(
             continue;
         }
         Resource::from_path(path, manifest)?;
-        let mut ancestor = path.as_str();
-        while let Some((parent, _)) = ancestor.rsplit_once('/') {
-            if entries.contains_key(parent) {
-                return Err(invalid("a knowledge document also names a directory"));
-            }
-            ancestor = parent;
-        }
+    }
+    if !colliding_paths(entries.keys().map(String::as_str)).is_empty() {
+        return Err(invalid(
+            "knowledge paths have a file/directory or case ambiguity",
+        ));
     }
     Ok(())
+}
+
+/// Return every document involved in a directory, file or component-case collision.
+/// Include unresolved document paths to account for every possible resolution.
+pub(crate) fn colliding_paths<'a>(paths: impl IntoIterator<Item = &'a str>) -> BTreeSet<&'a str> {
+    let mut components: BTreeMap<String, BTreeMap<&str, BTreeSet<&str>>> = BTreeMap::new();
+    for path in paths {
+        let mut component = path;
+        loop {
+            components
+                .entry(component.to_lowercase())
+                .or_default()
+                .entry(component)
+                .or_default()
+                .insert(path);
+            let Some((parent, _)) = component.rsplit_once('/') else {
+                break;
+            };
+            component = parent;
+        }
+    }
+    let mut conflicts = BTreeSet::new();
+    for spellings in components.values() {
+        let owners: BTreeSet<_> = spellings.values().flatten().copied().collect();
+        let names_file = spellings
+            .iter()
+            .any(|(component, paths)| paths.contains(component));
+        if spellings.len() > 1 || (names_file && owners.len() > 1) {
+            conflicts.extend(owners);
+        }
+    }
+    conflicts
 }
 
 #[cfg(test)]
