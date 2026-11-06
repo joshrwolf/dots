@@ -37,6 +37,7 @@ test('selected builtins and otherwise unstyled tools share the compact shell', (
   register({
     registerMarkdownTransformer() {},
     on() {},
+    registerMessageRenderer() {},
     registerToolRenderer(fn) {
       resolve = fn;
     },

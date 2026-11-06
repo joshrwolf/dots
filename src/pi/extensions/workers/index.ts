@@ -2,6 +2,7 @@ import {randomBytes} from 'node:crypto';
 import {existsSync, mkdirSync} from 'node:fs';
 import {readdir, rm, stat} from 'node:fs/promises';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {
   getAgentDir,
   type ExtensionAPI,
@@ -44,7 +45,6 @@ import {
   describeActivity,
   describeStep,
   describeText,
-  renderEvent,
   type EventDetails,
   type WidgetRow,
 } from './present.ts';
@@ -84,7 +84,9 @@ import {
 import {WorkerInspection} from './inspection.ts';
 import {createCheckoutResolver} from './checkout.ts';
 import {type WorkerInspectionSource, type WorkerListItem} from './inspector.ts';
-import {transcriptTail, transcriptWindow} from './tail.ts';
+import {transcriptTail} from './tail.ts';
+import {transcriptOptions} from './transcript.ts';
+import {rexDo} from '../rex/index.ts';
 import {
   addCost,
   assistantResponse,
@@ -95,7 +97,6 @@ import {WorkerDelivery} from './outbox.ts';
 import {
   contextLabel,
   decodeWorkerContext,
-  pressureMessage,
   registerWorkerContext,
   workerMeter,
   observedContext,
@@ -161,6 +162,8 @@ interface Worker {
   contextWindow?: number | undefined;
   /** Child-reported native trigger; null means disabled, absent means not yet reported. */
   compactAt?: number | null | undefined;
+  /** Child-reported compactions on its active branch; absent until reported. */
+  compactions?: number | undefined;
   /** Counts settlements independently of prompt generation (including spontaneous turns). */
   settlements: number;
   result?: string | undefined;
@@ -217,6 +220,26 @@ function excerpt(text: string): {body: string; truncated: boolean} {
 }
 /** Prefix for messages a child sends upward through the extension-UI notify channel. */
 const MARK = 'dots.message:';
+
+/** The read-only transcript viewer a Rex view runs; see the Rex `workers_view` action. */
+const VIEWER = fileURLToPath(
+  new URL('../worker-view/index.ts', import.meta.url),
+);
+
+/** Opens a worker's saved transcript in a Rex view on the server that owns this terminal. */
+export async function viewInRex(
+  pi: Pick<ExtensionAPI, 'exec'>,
+  sessionFile: string,
+  label: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  await rexDo(
+    pi,
+    'workers_view',
+    {session_file: path.resolve(sessionFile), viewer: VIEWER, label},
+    env,
+  );
+}
 
 /** This session's nesting depth. We set the variable ourselves, so a malformed value is a broken invariant, not depth 0. */
 function depth(env: NodeJS.ProcessEnv = process.env): number {
@@ -410,6 +433,7 @@ function persisted(worker: Worker): WorkerRecord {
       contextTokens: worker.contextTokens,
       contextWindow: worker.contextWindow,
       compactAt: worker.compactAt,
+      compactions: worker.compactions,
       result: worker.result,
       partial: worker.partial,
       error: worker.error,
@@ -690,6 +714,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         headline: w.headline,
         phase: w.phase,
         ...workerMeter(w),
+        compactions: w.compactions,
         failed: w.failed,
         idleMs: now - w.lastEventAt,
       }))
@@ -1127,6 +1152,10 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       case 'extension_ui_request':
         onUiRequest(worker, record);
         return;
+      case 'message_start':
+      case 'tool_execution_update':
+        // Only the inspector's live transcript reads these.
+        return;
       default:
         return record satisfies never;
     }
@@ -1175,12 +1204,9 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       worker.contextTokens = usage.tokens;
       worker.contextWindow = usage.window;
       worker.compactAt = usage.compactAt;
+      worker.compactions = usage.compactions;
       withRegistry(r => r.recordContext(worker.id, usage, Date.now()));
       save(worker);
-      if (usage.pressure) {
-        log(worker, 'note', `Context pressure: ${contextLabel(worker)}`);
-        notify(worker, 'context-pressure', pressureMessage(usage));
-      }
       return;
     }
     if (!text.startsWith(MARK)) return;
@@ -1699,6 +1725,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     contextWindow: worker.contextWindow,
     contextTokens: worker.contextTokens,
     compactAt: worker.compactAt,
+    compactions: worker.compactions,
     cost: worker.cost,
     costBilled: worker.costBilled,
     result: worker.result,
@@ -1707,8 +1734,6 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
   });
 
   if (selfId()) registerWorkerContext(pi);
-
-  pi.registerMessageRenderer<EventDetails>('dots.worker.event', renderEvent);
 
   /**
    * Skills the model may select, from this runtime's latest run's prompt
@@ -2555,7 +2580,6 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
           ...(own.sessionFile === undefined
             ? {}
             : {sessionFile: own.sessionFile}),
-          ...transcriptWindow(own.sessionFile),
         };
       }
       const foreign = withRegistry(r => r.get(id));
@@ -2578,9 +2602,19 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         ...(foreign.session_file === null
           ? {}
           : {sessionFile: foreign.session_file}),
-        ...transcriptWindow(foreign.session_file ?? undefined),
       };
     },
+    ...(process.env.REX_SESSION
+      ? {
+          openInRex: async (id: string) => {
+            const snapshot = inspectionSource.read(id);
+            if (!snapshot) throw new Error('Worker is no longer available');
+            if (!snapshot.sessionFile)
+              throw new Error('Worker has no saved transcript yet');
+            await viewInRex(pi, snapshot.sessionFile, snapshot.worker.label);
+          },
+        }
+      : {}),
     message: async (id, text) => {
       const worker = workers.get(id);
       if (!worker || !canMessage(worker))
@@ -2651,7 +2685,12 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
             }
           })()
         : undefined;
-      await inspection.open(ctx, inspectionSource, id);
+      await inspection.open(
+        ctx,
+        inspectionSource,
+        transcriptOptions(pi.getSettings()),
+        id,
+      );
     },
   });
 }

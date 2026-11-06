@@ -29,13 +29,7 @@ export const StateSchema = Type.Union([
 export type State = Static<typeof StateSchema>;
 /** What a worker event reports: a state change, or a message, note, or routing failure. */
 export type EventKind =
-  | State
-  | 'update'
-  | 'message'
-  | 'note'
-  | 'undeliverable'
-  | 'relay'
-  | 'context-pressure';
+  State | 'update' | 'message' | 'note' | 'undeliverable' | 'relay';
 
 export const AssignmentSchema = Type.Object(
   {
@@ -85,6 +79,7 @@ export const WorkerRecordSchema = Type.Object(
     contextTokens: Type.Optional(Type.Union([count, Type.Null()])),
     contextWindow: Type.Optional(amount),
     compactAt: Type.Optional(Type.Union([count, Type.Null()])),
+    compactions: Type.Optional(count),
     settlements: count,
     result: Type.Optional(Type.String()),
     partial: Type.Optional(Type.String()),

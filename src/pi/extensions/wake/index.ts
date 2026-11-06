@@ -5,7 +5,7 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import {Type} from 'typebox';
 import {Check, Errors} from 'typebox/value';
-import {renderWake, type WakeDetails} from './present.ts';
+import type {WakeDetails} from './present.ts';
 import {
   createWakeWidget,
   orderWakes,
@@ -939,8 +939,6 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     ].join('\n');
     return {wake, text};
   };
-
-  pi.registerMessageRenderer<WakeDetails>('dots.wake', renderWake);
 
   pi.on('session_start', (_event, ctx) => restore(ctx));
   pi.on('session_shutdown', async () => {

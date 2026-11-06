@@ -14,7 +14,7 @@ import {
   stripTerminalSequences,
   visibleWidth,
 } from '@earendil-works/pi-tui';
-import register from '../extensions/ui/index.ts';
+import register, {messageRenderers} from '../extensions/ui/index.ts';
 import {editRenderers} from './ui-fixture.mjs';
 import {DiffView} from '../src/ui/previews/view.ts';
 import {sourceText as clean} from '@joshrwolf/pi-kit/ui';
@@ -65,13 +65,18 @@ function assertFits(lines, width) {
 
 test('registers only presentation; preserves other custom renderers', () => {
   let resolver;
+  const messages = new Map();
   register({
     registerMarkdownTransformer() {},
     on() {},
+    registerMessageRenderer(type, renderer) {
+      messages.set(type, renderer);
+    },
     registerToolRenderer(fn) {
       resolver = fn;
     },
   });
+  assert.deepEqual(messages, new Map(messageRenderers()));
   const downstream = {renderShell: 'default', renderCall() {}};
   for (const tool of ['find', 'custom_edit']) {
     assert.equal(

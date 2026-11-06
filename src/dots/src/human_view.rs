@@ -7,6 +7,7 @@
 //! and committed before the view stops showing the request as waiting.
 //! Closing the view answers nothing. Drafts live only in this process.
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::{self, IsTerminal as _};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -64,17 +65,37 @@ pub(crate) fn run(scope: Scope, dismiss: Option<String>, json: bool) -> Result<S
         io::stdin().is_terminal() && io::stdout().is_terminal(),
         "attention view needs a terminal; use dots attention list for data"
     );
-    let mut session = Session::new(scope);
-    session.reload();
-    let drawn = terminal(&mut session);
-    let dismissed = if session.navigated {
-        Ok(())
-    } else {
-        dismiss.map_or(Ok(()), |action| run_dismiss(&action))
-    };
-    drawn?;
-    dismissed?;
-    Ok(String::new())
+    Session::new(scope).run(dismiss)
+}
+
+pub(crate) fn goals(
+    select: Option<dots_tasks::attention::GoalRef>,
+    dismiss: Option<String>,
+    json: bool,
+) -> Result<String> {
+    ensure!(
+        !json && io::stdin().is_terminal() && io::stdout().is_terminal(),
+        "goal view needs an interactive terminal; use dots task goal list --json for data"
+    );
+    let mut session = Session::new(Scope::Global);
+    session.viewer.tab = Tab::Work;
+    session.viewer.goals_entry = true;
+    session.viewer.all_goals = select.is_some();
+    session.viewer.goal = select.map(|goal| (goal.project, goal.goal));
+    session.run(dismiss)
+}
+
+fn global_goals(store: &mut Store, all: bool) -> Result<AttentionList> {
+    let mut selected = Vec::new();
+    for project in store.registered_projects()? {
+        for goal in store.goals(&project.id, all, None)? {
+            selected.push(dots_tasks::attention::GoalRef {
+                project: project.id.clone(),
+                goal: goal.root.id,
+            });
+        }
+    }
+    Ok(store.attention(&Scope::Goals(selected), StateFilter::Outstanding)?)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -105,6 +126,19 @@ struct Session {
 }
 
 impl Session {
+    fn run(mut self, dismiss: Option<String>) -> Result<String> {
+        self.reload();
+        let drawn = terminal(&mut self);
+        let dismissed = if self.navigated {
+            Ok(())
+        } else {
+            dismiss.map_or(Ok(()), |action| run_dismiss(&action))
+        };
+        drawn?;
+        dismissed?;
+        Ok(String::new())
+    }
+
     fn new(scope: Scope) -> Self {
         let provenance = provenance(
             &scope,
@@ -145,9 +179,17 @@ impl Session {
             .current()
             .map(|(_, request)| (request.project.clone(), request.id.clone()));
         let scope = self.scope.clone();
+        let work = self.viewer.tab == Tab::Work;
+        let all = self.viewer.all_goals;
         let list = self
             .store()
-            .and_then(|store| Ok(store.attention(&scope, StateFilter::Outstanding)?))
+            .and_then(|store| {
+                if work {
+                    global_goals(store, all)
+                } else {
+                    Ok(store.attention(&scope, StateFilter::Outstanding)?)
+                }
+            })
             .map_err(|error| format!("{error:#}"));
         if list.is_err() {
             self.store = None;
@@ -166,8 +208,11 @@ impl Session {
                 .and_then(|store| Ok(store.request(&project, &id)?));
             self.viewer.reconciled(&id, result);
         }
+        if work && self.viewer.goal.is_none() {
+            self.viewer.select_goal(0);
+        }
         self.load_overview();
-        if !self.viewer.requests().is_empty()
+        if (!self.viewer.requests().is_empty() || (work && !self.viewer.goals().is_empty()))
             && std::env::var_os("REX_SESSION").is_some()
             && self
                 .sessions_at
@@ -191,6 +236,14 @@ impl Session {
         let Some((project, goal)) = self.viewer.wanted_overview() else {
             return;
         };
+        if self.viewer.goal_page != GoalPage::Tasks {
+            let page = self.viewer.goal_page;
+            self.viewer.document = Some(
+                self.goal_document(&project, &goal, page)
+                    .map_err(|error| format!("{error:#}")),
+            );
+            return;
+        }
         let overview = self
             .store()
             .and_then(|store| Ok(store.goal_overview(&project, &goal, true)?))
@@ -198,11 +251,116 @@ impl Session {
         self.viewer.set_overview(goal, overview);
     }
 
+    fn selected_task(&mut self, project: &Project, goal: &str) -> Result<Option<Task>> {
+        let Some(id) = self.viewer.selected_task.clone() else {
+            return Ok(None);
+        };
+        let overview = self.store()?.goal_overview(project, goal, true)?;
+        Ok(Some(
+            overview
+                .tasks
+                .into_iter()
+                .find(|task| task.id == id)
+                .context("This task is no longer under the selected goal")?,
+        ))
+    }
+
+    fn goal_document(&mut self, project: &Project, goal: &str, page: GoalPage) -> Result<String> {
+        match page {
+            GoalPage::Tasks => unreachable!("task pages load the overview"),
+            GoalPage::Task => {
+                let task = self
+                    .selected_task(project, goal)?
+                    .context("No task selected")?;
+                crate::tasks::inspect_task(self.store()?, project, &task.id)
+            }
+            GoalPage::Record => crate::tasks::inspect_task(self.store()?, project, goal),
+            GoalPage::Brief => {
+                let overview = self.store()?.goal_overview(project, goal, false)?;
+                let shown = crate::goal_brief::show(project, overview.goal)?;
+                if let Some(error) = shown.brief.diagnostic {
+                    anyhow::bail!("{error}");
+                }
+                let document = shown.brief.document.context("Brief was not read")?;
+                let mut text = document.content;
+                if let Some(line) = document.next_line {
+                    let _ = write!(
+                        text,
+                        "\nBrief continues at line {line}; use dots memory read (see --help) for the remaining lines."
+                    );
+                }
+                Ok(text)
+            }
+            GoalPage::Decisions => {
+                let list = self.store()?.decisions(
+                    &Scope::Goals(vec![dots_tasks::attention::GoalRef {
+                        project: project.clone(),
+                        goal: goal.to_owned(),
+                    }]),
+                    None,
+                )?;
+                ensure!(
+                    list.errors.is_empty(),
+                    "Cannot read decisions: {:?}",
+                    list.errors
+                );
+                let text = list
+                    .goals
+                    .iter()
+                    .flat_map(|goal| &goal.decisions)
+                    .map(crate::attention::decision_text)
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                Ok(if text.is_empty() {
+                    "No decisions recorded.".into()
+                } else {
+                    text
+                })
+            }
+            GoalPage::History => {
+                let selected = if self.viewer.tasks_focused {
+                    self.selected_task(project, goal)?.map(|task| task.id)
+                } else {
+                    None
+                };
+                let page = self.store()?.history(
+                    project,
+                    Some(selected.as_deref().unwrap_or(goal)),
+                    0,
+                    101,
+                )?;
+                let mut text = page
+                    .events
+                    .iter()
+                    .take(100)
+                    .map(|event| {
+                        format!(
+                            "#{} · {} · {}\n{}",
+                            event.seq,
+                            event.kind,
+                            event.actor.as_deref().unwrap_or("unattributed"),
+                            event
+                                .result
+                                .as_deref()
+                                .or(event.detail.as_deref())
+                                .unwrap_or("")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                if page.events.len() > 100 {
+                    text.push_str("\n\nMore history is available with dots task events --under GOAL --since LAST_SEQ.");
+                }
+                Ok(text)
+            }
+        }
+    }
+
     fn apply(&mut self, effect: Effect) -> bool {
         match effect {
             Effect::None => {}
             Effect::Close => return false,
-            Effect::Overview => self.load_overview(),
+            Effect::Overview => self.reload(),
             Effect::Open {
                 owner,
                 session,
@@ -405,6 +563,16 @@ enum Tab {
     Work,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoalPage {
+    Tasks,
+    Task,
+    Record,
+    Brief,
+    Decisions,
+    History,
+}
+
 /// Where keys go within Attention. Work has one list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
@@ -557,6 +725,8 @@ enum Target {
     Back,
     Close,
     Goal(usize),
+    Task(String),
+    Control(KeyCode),
     /// A scrollable region; scrolling moves its selection or text.
     Region(Region),
 }
@@ -594,6 +764,10 @@ struct Retired {
 
 /// The view's whole state: a pure function of inputs and store reads.
 #[derive(Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent view filters and focus controls are not mutually exclusive states."
+)]
 struct Viewer {
     palette: Palette,
     conversations: HashMap<String, Conversation>,
@@ -616,6 +790,16 @@ struct Viewer {
     goal: Option<(Project, String)>,
     overview: Option<(String, std::result::Result<GoalOverview, String>)>,
     task_scroll: usize,
+    all_goals: bool,
+    goals_entry: bool,
+    selected_task: Option<String>,
+    tasks_focused: bool,
+    task_positions: Vec<(String, usize)>,
+    folded: std::collections::HashSet<String>,
+    closed_tasks: bool,
+    outline: bool,
+    goal_page: GoalPage,
+    document: Option<std::result::Result<String, String>>,
     hits: Vec<(Rect, Target)>,
     pressed: Option<(Option<String>, Target)>,
 }
@@ -651,6 +835,16 @@ impl Viewer {
             goal: None,
             overview: None,
             task_scroll: 0,
+            all_goals: false,
+            goals_entry: false,
+            selected_task: None,
+            tasks_focused: false,
+            task_positions: Vec::new(),
+            folded: std::collections::HashSet::new(),
+            closed_tasks: true,
+            outline: false,
+            goal_page: GoalPage::Tasks,
+            document: None,
             hits: Vec::new(),
             pressed: None,
         }
@@ -1101,6 +1295,22 @@ impl Viewer {
             .insert(id, at.saturating_add_signed(delta).min(count - 1));
     }
 
+    fn move_task(&mut self, delta: isize) {
+        self.tasks_focused = true;
+        if self.task_positions.is_empty() {
+            return;
+        }
+        let at = self
+            .selected_task
+            .as_ref()
+            .and_then(|id| self.task_positions.iter().position(|(task, _)| task == id))
+            .unwrap_or(0);
+        let at = at
+            .saturating_add_signed(delta)
+            .min(self.task_positions.len() - 1);
+        self.selected_task = Some(self.task_positions[at].0.clone());
+    }
+
     fn move_goal(&mut self, delta: isize) -> Effect {
         let goals = self.goals();
         if goals.is_empty() {
@@ -1127,6 +1337,12 @@ impl Viewer {
             return Effect::None;
         }
         self.goal = Some(wanted);
+        self.selected_task = None;
+        self.task_positions.clear();
+        self.folded.clear();
+        if self.goal_page == GoalPage::Task {
+            self.goal_page = GoalPage::Tasks;
+        }
         self.task_scroll = 0;
         Effect::Overview
     }
@@ -1136,6 +1352,11 @@ impl Viewer {
         self.tab = tab;
         self.focus = Focus::Requests;
         if tab == Tab::Work && changed {
+            "All projects".clone_into(&mut self.scope_label);
+            self.selected_task = None;
+            self.task_positions.clear();
+            self.folded.clear();
+            self.goal_page = GoalPage::Tasks;
             if let Some((_, goal)) = self.current() {
                 let wanted = (goal.project.clone(), goal.goal.clone());
                 if self.goal.as_ref() != Some(&wanted) {
@@ -1151,6 +1372,16 @@ impl Viewer {
     /// Esc: one step back, closing from the request list.
     fn back(&mut self) -> Effect {
         match (self.tab, self.focus) {
+            (Tab::Work, _) if self.goal_page != GoalPage::Tasks => {
+                self.goal_page = GoalPage::Tasks;
+                self.task_scroll = 0;
+                return Effect::Overview;
+            }
+            (Tab::Work, _) if self.tasks_focused => {
+                self.tasks_focused = false;
+                return Effect::None;
+            }
+            (Tab::Work, _) if self.goals_entry => return Effect::Close,
             (Tab::Work, _) => return self.switch(Tab::Attention),
             (_, Focus::Text | Focus::Context) => self.focus = Focus::Choices,
             (_, Focus::Choices) => self.focus = Focus::Requests,
@@ -1222,6 +1453,10 @@ impl Viewer {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "One dispatcher binds keyboard and pointer controls to the same view transitions."
+    )]
     fn key(&mut self, key: KeyEvent) -> Effect {
         if key.kind == KeyEventKind::Release {
             return Effect::None;
@@ -1243,13 +1478,8 @@ impl Viewer {
         }
         match key.code {
             KeyCode::Esc => return self.back(),
-            KeyCode::Char('g') => {
-                return self.switch(if self.tab == Tab::Attention {
-                    Tab::Work
-                } else {
-                    Tab::Attention
-                });
-            }
+            KeyCode::Char('g') if self.tab == Tab::Attention => return self.switch(Tab::Work),
+            KeyCode::Char('i') if self.tab == Tab::Work => return self.switch(Tab::Attention),
             KeyCode::Char('o') if self.tab == Tab::Attention => return self.open_conversation(),
             KeyCode::Char('r') if self.tab == Tab::Attention => {
                 if let Some((_, request)) = self.current()
@@ -1302,8 +1532,65 @@ impl Viewer {
         };
         match (self.tab, self.focus) {
             (Tab::Work, _) => match key.code {
+                KeyCode::Char('a') => {
+                    self.all_goals = !self.all_goals;
+                    self.goal = None;
+                    return Effect::Overview;
+                }
+                KeyCode::Left => {
+                    self.tasks_focused = false;
+                }
+                KeyCode::Right => {
+                    self.tasks_focused = true;
+                    if self.selected_task.is_none() {
+                        self.selected_task = self.task_positions.first().map(|(id, _)| id.clone());
+                    }
+                }
+                KeyCode::Enter if self.tasks_focused && self.selected_task.is_some() => {
+                    self.goal_page = GoalPage::Task;
+                    self.task_scroll = 0;
+                    return Effect::Overview;
+                }
+                KeyCode::Char(' ') if self.outline && self.tasks_focused => {
+                    if let Some(id) = &self.selected_task
+                        && !self.folded.remove(id)
+                    {
+                        self.folded.insert(id.clone());
+                    }
+                }
+                KeyCode::Char('c') => {
+                    self.selected_task = None;
+                    self.closed_tasks = !self.closed_tasks;
+                    self.task_scroll = 0;
+                }
+                KeyCode::Char('o') => {
+                    self.outline = !self.outline;
+                    self.goal_page = GoalPage::Tasks;
+                    self.task_scroll = 0;
+                }
+                KeyCode::Char('b' | 'd' | 'h' | 't' | 'r') => {
+                    if key.code == KeyCode::Char('h') && !self.tasks_focused {
+                        self.selected_task = None;
+                    }
+                    self.goal_page = match key.code {
+                        KeyCode::Char('b') => GoalPage::Brief,
+                        KeyCode::Char('d') => GoalPage::Decisions,
+                        KeyCode::Char('h') => GoalPage::History,
+                        KeyCode::Char('r') => GoalPage::Record,
+                        _ => GoalPage::Tasks,
+                    };
+                    self.tasks_focused = true;
+                    self.task_scroll = 0;
+                    return Effect::Overview;
+                }
+                _ if step != 0 && self.tasks_focused && self.goal_page == GoalPage::Tasks => {
+                    self.move_task(step);
+                }
                 KeyCode::PageUp => self.task_scroll = self.task_scroll.saturating_sub(10),
                 KeyCode::PageDown => self.task_scroll = self.task_scroll.saturating_add(10),
+                _ if step != 0 && self.goal_page != GoalPage::Tasks => {
+                    self.task_scroll = self.task_scroll.saturating_add_signed(step);
+                }
                 _ if step != 0 => return self.move_goal(step),
                 _ => {}
             },
@@ -1385,6 +1672,7 @@ impl Viewer {
                 self.context_scroll = self.context_scroll.saturating_add_signed(step);
             }
             Some(Region::Goals) => return self.move_goal(step),
+            Some(Region::Tasks) if self.goal_page == GoalPage::Tasks => self.move_task(step),
             Some(Region::Tasks) => self.task_scroll = self.task_scroll.saturating_add_signed(step),
             None => {}
         }
@@ -1410,7 +1698,21 @@ impl Viewer {
             Target::Send => return self.send_text(),
             Target::Back => return self.back(),
             Target::Close => return Effect::Close,
-            Target::Goal(index) => return self.select_goal(index),
+            Target::Goal(index) => {
+                self.tasks_focused = false;
+                return self.select_goal(index);
+            }
+            Target::Task(id) => {
+                let repeated = self.tasks_focused && self.selected_task.as_ref() == Some(&id);
+                self.selected_task = Some(id);
+                self.tasks_focused = true;
+                if repeated {
+                    self.goal_page = GoalPage::Task;
+                    self.task_scroll = 0;
+                    return Effect::Overview;
+                }
+            }
+            Target::Control(key) => return self.key(KeyEvent::new(key, KeyModifiers::NONE)),
             Target::Region(_) => {}
         }
         Effect::None
@@ -1696,7 +1998,7 @@ impl Viewer {
         let title = if self.tab == Tab::Attention {
             format!(" Attention · {} need you ", self.waiting())
         } else {
-            " Goals ".into()
+            format!(" Goals · {} ", self.scope_label)
         };
         Block::bordered()
             .border_type(BorderType::Rounded)
@@ -1709,11 +2011,6 @@ impl Viewer {
         let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
         let footer = Rect::new(inner.x, inner.bottom() - 1, inner.width, 1);
         let mut body = Rect::new(inner.x, inner.y, inner.width, inner.height - 1);
-        if self.tab == Tab::Work {
-            self.header(buffer, Rect::new(body.x, body.y, body.width, 1));
-            body.y += 1;
-            body.height -= 1;
-        }
         if let Some(status) = self.status_line() {
             let mut rows = Rows::new(buffer, body);
             // Up to two lines: what failed must stay readable, the body must stay visible.
@@ -1734,19 +2031,6 @@ impl Viewer {
         if let Some(position) = cursor {
             frame.set_cursor_position(position);
         }
-    }
-
-    fn header(&self, buffer: &mut Buffer, area: Rect) {
-        let label = fit(
-            &format!("Goals · {}", self.scope_label),
-            usize::from(area.width),
-        );
-        buffer.set_string(
-            area.x,
-            area.y,
-            label,
-            accent(self.palette).add_modifier(Modifier::BOLD),
-        );
     }
 
     fn status_line(&self) -> Option<String> {
@@ -1783,7 +2067,9 @@ impl Viewer {
 
     fn hints(&self) -> &'static str {
         match (self.tab, self.focus) {
-            (Tab::Work, _) => "G inbox · ↑/↓ goal · PgUp/PgDn tasks · Esc back",
+            (Tab::Work, _) => {
+                "←/→ goals/tasks · ↑/↓ select · Enter details · Space fold · PgUp/PgDn scroll · I inbox"
+            }
             (_, Focus::Text) => "Enter send · Esc back · ←/→ edit answer",
             (_, Focus::Context) => "↑/↓ scroll · Enter/Esc back",
             (_, Focus::Requests) => "↑/↓ inbox · 1–8 reply · R write · O open · Esc close",
@@ -1798,6 +2084,8 @@ impl Viewer {
         }
         if self.tab == Tab::Attention {
             buttons.push(("[ G Goals ]", Target::Tab(Tab::Work)));
+        } else {
+            buttons.push(("[ I Attention ]", Target::Tab(Tab::Attention)));
         }
         buttons.push(("[ Close ]", Target::Close));
         let mut x = area.x;
@@ -2267,26 +2555,42 @@ impl Viewer {
             } else if self.list.is_none() {
                 "Nothing can be shown until the store can be read."
             } else {
-                "No goal has open requests or unfinished agreed work."
+                "No goals match this view. A includes completed goals."
             };
             rows.text(message, bold());
+            return;
+        }
+        if self.goal.is_some() && self.goal_index().is_none() {
+            Rows::new(buffer, area).text(
+                "The selected goal is unavailable. Nothing else was selected.",
+                warning(self.palette),
+            );
             return;
         }
         let at = self.goal_index().unwrap_or(0);
         let entries: Vec<(Span<'static>, String)> = goals
             .iter()
-            .map(|goal| (goal_glyph(self.palette, goal), clean_line(&goal.title)))
+            .map(|goal| {
+                (
+                    goal_glyph(self.palette, goal),
+                    format!(
+                        "{} · {}",
+                        clean_line(&goal.project_name),
+                        clean_line(&goal.title)
+                    ),
+                )
+            })
             .collect();
         let count = entries.len();
         let detail = if area.width >= WIDE {
             let list = Rect::new(area.x, area.y, GOALS_WIDTH, area.height);
             self.hits.push((list, Target::Region(Region::Goals)));
             let mut rows = Rows::new(buffer, list);
-            rows.text("Goals", accent(self.palette));
+            rows.text("Browse", accent(self.palette));
             let visible = rows.left().max(1);
             let first = at.saturating_sub(visible - 1);
             for (index, (glyph, title)) in entries.iter().enumerate().skip(first).take(visible) {
-                let (marker, style) = row_style(self.palette, index == at, true);
+                let (marker, style) = row_style(self.palette, index == at, !self.tasks_focused);
                 let title = fit(title, rows.width().saturating_sub(4));
                 if let Some(row) = rows.line(&Line::from(vec![
                     marker,
@@ -2318,6 +2622,12 @@ impl Viewer {
             }
             rows.rest()
         };
+        if area.width >= WIDE {
+            Block::new()
+                .borders(Borders::LEFT)
+                .border_style(muted(self.palette))
+                .render(Rect::new(detail.x - 1, detail.y, 1, detail.height), buffer);
+        }
         self.goal_detail(buffer, detail, at);
     }
 
@@ -2328,6 +2638,10 @@ impl Viewer {
     fn goal_detail(&mut self, buffer: &mut Buffer, area: Rect, at: usize) {
         let Some(goal) = self.goals().get(at) else {
             return;
+        };
+        let area = Rect {
+            width: area.width.min(READING_WIDTH),
+            ..area
         };
         let palette = self.palette;
         let max = usize::from(area.width);
@@ -2353,10 +2667,10 @@ impl Viewer {
             (_, status) if status.is_closed() => {
                 (format!("Goal is {}.", status.as_str()), muted(palette))
             }
-            (Some(owner), _) => (
+            (Some(_), _) => (
                 format!(
-                    "Coordinator claim: {} (a claim does not show the session is running)",
-                    clean_line(owner)
+                    "Coordinator recorded · {} (not a liveness check)",
+                    self.conversation_name(goal)
                 ),
                 muted(palette),
             ),
@@ -2406,32 +2720,154 @@ impl Viewer {
                 muted(palette),
             ));
         }
-        let lines: Vec<(String, Style)> = match &self.overview {
-            Some((id, Ok(overview))) if *id == goal.goal => {
-                task_lines(palette, &goal.goal, overview, max)
+        if let Some((id, Ok(overview))) = &self.overview
+            && *id == goal.goal
+            && let Some(result) = &overview.goal.root.result
+        {
+            head.push((
+                fit(&format!("Latest result: {}", clean_line(result)), max),
+                muted(palette),
+            ));
+        }
+        let mut positions = Vec::new();
+        let lines: Vec<(String, Style)> = if self.goal_page == GoalPage::Tasks {
+            match &self.overview {
+                Some((id, Ok(overview))) if *id == goal.goal => {
+                    let drawing = if self.outline {
+                        task_lines(
+                            palette,
+                            &goal.goal,
+                            overview,
+                            self.closed_tasks,
+                            &self.folded,
+                            max.saturating_sub(2),
+                        )
+                    } else {
+                        graph_lines(palette, overview, self.closed_tasks, max.saturating_sub(2))
+                    };
+                    positions = drawing.tasks;
+                    drawing.lines
+                }
+                Some((id, Err(error))) if *id == goal.goal => {
+                    wrap(&format!("Tasks unavailable: {error}"), max)
+                        .into_iter()
+                        .map(|line| (line, warning(palette)))
+                        .collect()
+                }
+                _ => vec![("Reading tasks…".to_owned(), muted(palette))],
             }
-            Some((id, Err(error))) if *id == goal.goal => {
-                wrap(&format!("Tasks unavailable: {error}"), max)
+        } else {
+            head.push((
+                format!("{:?} · T returns to tasks", self.goal_page),
+                accent(palette),
+            ));
+            match &self.document {
+                Some(Ok(text)) => wrap(text, max)
+                    .into_iter()
+                    .map(|line| (line, Style::new()))
+                    .collect(),
+                Some(Err(error)) => wrap(error, max)
                     .into_iter()
                     .map(|line| (line, warning(palette)))
-                    .collect()
+                    .collect(),
+                None => vec![("Reading…".into(), muted(palette))],
             }
-            _ => vec![("Reading tasks…".to_owned(), muted(palette))],
         };
         let mut rows = Rows::new(buffer, area);
         for (line, style) in &head {
             rows.text(line, *style);
         }
         rows.blank();
+        let mut x = area.x;
+        for (label, key) in [
+            (if self.outline { "O Graph" } else { "O Outline" }, 'o'),
+            (
+                if self.closed_tasks {
+                    "C Hide closed"
+                } else {
+                    "C Show closed"
+                },
+                'c',
+            ),
+            (
+                if self.all_goals {
+                    "A Unfinished"
+                } else {
+                    "A Include done"
+                },
+                'a',
+            ),
+            ("B Brief", 'b'),
+            ("D Decisions", 'd'),
+            ("H History", 'h'),
+            ("R Record", 'r'),
+            ("T Tasks", 't'),
+        ] {
+            let cells = u16::try_from(width(label)).expect("short control label");
+            if x + cells > area.right() {
+                rows.blank();
+                x = area.x;
+            }
+            if rows.left() == 0 {
+                break;
+            }
+            rows.buffer
+                .set_string(x, rows.area.y + rows.next, label, accent(palette));
+            self.hits.push((
+                Rect::new(x, rows.area.y + rows.next, cells, 1),
+                Target::Control(KeyCode::Char(key)),
+            ));
+            x += cells + 2;
+        }
+        rows.blank();
         let tasks_area = rows.rest();
         self.hits.push((tasks_area, Target::Region(Region::Tasks)));
+        self.task_positions = positions;
+        if self.tasks_focused
+            && self.goal_page == GoalPage::Tasks
+            && let Some((_, at)) = self
+                .task_positions
+                .iter()
+                .find(|(id, _)| Some(id) == self.selected_task.as_ref())
+        {
+            if *at < self.task_scroll {
+                self.task_scroll = *at;
+            }
+            if *at >= self.task_scroll + usize::from(tasks_area.height) {
+                self.task_scroll =
+                    at.saturating_sub(usize::from(tasks_area.height).saturating_sub(1));
+            }
+        }
         let scroll = self
             .task_scroll
             .min(lines.len().saturating_sub(usize::from(tasks_area.height)));
         self.task_scroll = scroll;
         let mut rows = Rows::new(buffer, tasks_area);
-        for (line, style) in lines.iter().skip(scroll) {
-            rows.text(line, *style);
+        for (index, (line, style)) in lines.iter().enumerate().skip(scroll) {
+            let task = self
+                .task_positions
+                .iter()
+                .find(|(_, at)| *at == index)
+                .map(|(id, _)| id);
+            let selected =
+                self.tasks_focused && task.is_some() && task == self.selected_task.as_ref();
+            let marker = if selected { "› " } else { "  " };
+            let text = if self.goal_page == GoalPage::Tasks {
+                format!("{marker}{line}")
+            } else {
+                line.clone()
+            };
+            if let Some(row) = rows.text(
+                &text,
+                if selected {
+                    style.add_modifier(Modifier::BOLD)
+                } else {
+                    *style
+                },
+            ) && let Some(task) = task
+            {
+                self.hits.push((row, Target::Task(task.clone())));
+            }
         }
     }
 }
@@ -2452,6 +2888,16 @@ fn heading(goal: &GoalAttention) -> GoalAttention {
 }
 
 fn goal_glyph(palette: Palette, goal: &GoalAttention) -> Span<'static> {
+    if goal.status.is_closed() {
+        return Span::styled(
+            if goal.status == Status::Done {
+                "✓ "
+            } else {
+                "− "
+            },
+            muted(palette),
+        );
+    }
     if goal
         .requests
         .iter()
@@ -2505,24 +2951,79 @@ fn task_state(palette: Palette, task: &Task) -> (&'static str, Style) {
 }
 
 /// The goal's tasks as an outline under the root, oldest first.
+struct TaskDrawing {
+    lines: Vec<(String, Style)>,
+    tasks: Vec<(String, usize)>,
+}
+
+fn graph_lines(palette: Palette, overview: &GoalOverview, closed: bool, max: usize) -> TaskDrawing {
+    let graph = crate::goal_brief::graph(&overview.tasks, !closed);
+    let tasks: HashMap<_, _> = overview
+        .tasks
+        .iter()
+        .map(|task| (task.id.as_str(), task))
+        .collect();
+    let mut drawing = TaskDrawing {
+        lines: vec![(
+            format!(
+                "{}/{} done · Graph",
+                overview.goal.progress.done, overview.goal.progress.total
+            ),
+            muted(palette),
+        )],
+        tasks: Vec::new(),
+    };
+    for row in graph.rows {
+        let task = tasks
+            .get(row.task.as_str())
+            .expect("graph references only supplied tasks");
+        let (state, style) = task_state(palette, task);
+        drawing.tasks.push((task.id.clone(), drawing.lines.len()));
+        for (at, prefix) in row.lines.iter().enumerate() {
+            let text = if at == 0 {
+                format!(
+                    "{prefix} {:<11} {}",
+                    state
+                        .split_once(' ')
+                        .expect("state has a glyph and label")
+                        .1,
+                    clean_line(&task.title)
+                )
+            } else {
+                prefix.clone()
+            };
+            drawing.lines.push((
+                fit(&text, max),
+                if at == 0 { style } else { muted(palette) },
+            ));
+        }
+    }
+    for note in graph.notes {
+        drawing.lines.extend(
+            wrap(&note, max)
+                .into_iter()
+                .map(|line| (line, warning(palette))),
+        );
+    }
+    drawing
+}
+
 fn task_lines(
     palette: Palette,
     root: &str,
     overview: &GoalOverview,
+    closed: bool,
+    folded: &std::collections::HashSet<String>,
     max: usize,
-) -> Vec<(String, Style)> {
+) -> TaskDrawing {
     let p = &overview.goal.progress;
-    let mut lines = vec![(
-        if p.total == 0 {
-            "No tasks yet.".to_owned()
-        } else {
-            format!(
-                "{}/{} done · {} open · {} claimed",
-                p.done, p.total, p.open, p.claimed
-            )
-        },
-        muted(palette),
-    )];
+    let mut drawing = TaskDrawing {
+        lines: vec![(
+            format!("{}/{} done · Outline · Space folds groups", p.done, p.total),
+            muted(palette),
+        )],
+        tasks: Vec::new(),
+    };
     let mut children: HashMap<&str, Vec<&Task>> = HashMap::new();
     for task in &overview.tasks {
         children
@@ -2534,39 +3035,50 @@ fn task_lines(
         .get(root)
         .map(|tasks| tasks.iter().rev().map(|task| (*task, 0)).collect())
         .unwrap_or_default();
-    let mut seen = 0;
+    let mut seen = std::collections::HashSet::new();
     while let Some((task, depth)) = stack.pop() {
-        seen += 1;
-        let (label, style) = task_state(palette, task);
+        if !seen.insert(task.id.as_str()) {
+            continue;
+        }
+        if !closed && task.status.is_closed() {
+            continue;
+        }
+        let (state, style) = task_state(palette, task);
         let indent = "  ".repeat(depth.min(6));
+        let group = if task.children == 0 {
+            ""
+        } else if folded.contains(&task.id) {
+            "▸ "
+        } else {
+            "▾ "
+        };
         let owner = task
             .owner
             .as_deref()
             .map(|owner| format!(" · {}", clean_line(owner)))
             .unwrap_or_default();
-        let label = format!("{indent}{label:<11} ");
-        let title = fit(
-            &format!("{}{owner}", clean_line(&task.title)),
-            max.saturating_sub(width(&label)),
-        );
-        lines.push((format!("{label}{title}"), style));
-        if let Some(below) = children.get(task.id.as_str()) {
+        let label = format!("{indent}{group}{state:<11} ");
+        drawing.tasks.push((task.id.clone(), drawing.lines.len()));
+        drawing.lines.push((
+            fit(&format!("{label}{}{owner}", clean_line(&task.title)), max),
+            style,
+        ));
+        if !folded.contains(&task.id)
+            && let Some(below) = children.get(task.id.as_str())
+        {
             stack.extend(below.iter().rev().map(|task| (*task, depth + 1)));
         }
     }
-    if seen < overview.tasks.len() {
-        lines.push((
-            format!("{} tasks outside the outline", overview.tasks.len() - seen),
-            warning(palette),
-        ));
-    }
-    if overview.hidden_closed > 0 {
-        lines.push((
-            format!("{} closed tasks hidden", overview.hidden_closed),
+    if seen.len() < overview.tasks.len() {
+        drawing.lines.push((
+            format!(
+                "{} tasks not shown: folded, filtered or outside the hierarchy",
+                overview.tasks.len() - seen.len()
+            ),
             muted(palette),
         ));
     }
-    lines
+    drawing
 }
 
 /// The part of a draft that fits `max` cells with its caret visible, and the
@@ -2883,6 +3395,8 @@ mod tests {
         assert_eq!(press(&mut view, KeyCode::Char('g')), Effect::Overview);
         assert_eq!(view.tab, Tab::Work);
         assert_eq!(press(&mut view, KeyCode::Char('g')), Effect::None);
+        assert_eq!(view.tab, Tab::Work);
+        assert_eq!(press(&mut view, KeyCode::Char('i')), Effect::None);
         assert_eq!(view.tab, Tab::Attention);
         press(&mut view, KeyCode::Enter);
         press(&mut view, KeyCode::Down);
@@ -3400,6 +3914,7 @@ mod tests {
     fn work_shows_every_task_and_who_each_hold_waits_on() {
         let mut view = viewer(list(vec![goal(Vec::new(), None)]));
         press(&mut view, KeyCode::Char('g'));
+        press(&mut view, KeyCode::Char('o'));
         let mut root = task("t-goal", "t-goal", "Refactor exports", Status::Open);
         root.parent = None;
         let mut group = task("t-group", "t-goal", "API", Status::Open);
@@ -3469,8 +3984,8 @@ mod tests {
         let mut view = viewer(list(vec![draft, stopped]));
         press(&mut view, KeyCode::Char('g'));
         let shown = screen(&mut view, 120, 20);
-        assert!(shown.contains("› ○ Someday"), "{shown}");
-        assert!(shown.contains("! Refactor exports"), "{shown}");
+        assert!(shown.contains("› ○ fixture · Someday"), "{shown}");
+        assert!(shown.contains("! fixture · Refactor exports"), "{shown}");
         assert!(shown.contains("Not started"), "{shown}");
         assert!(!shown.contains("Stopped"), "{shown}");
         press(&mut view, KeyCode::Down);
@@ -3480,6 +3995,179 @@ mod tests {
             shown.contains("Agreed: Refactor and update every consumer."),
             "{shown}"
         );
+    }
+
+    #[test]
+    fn goal_browser_lists_drafts_and_completed_goals_without_attention_or_claims() {
+        let path = std::env::temp_dir().join(format!(
+            "dots-goal-browser-{}-{}",
+            std::process::id(),
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        let mut store = Store::create(&path.join("catalog.sqlite3")).unwrap();
+        let project = store.register_project("fixture").unwrap();
+        let actor = || Actor {
+            name: Some(Owner::try_new("fixture-coordinator").unwrap()),
+            now: 1,
+        };
+        let draft = store
+            .create_goal(&project, "Draft goal", "briefs/draft.md", actor())
+            .unwrap()
+            .root
+            .id;
+        let completed = store
+            .create_goal(&project, "Completed goal", "briefs/done.md", actor())
+            .unwrap()
+            .root
+            .id;
+        store
+            .coordinate(
+                &project,
+                &completed,
+                Owner::try_new("fixture-coordinator").unwrap(),
+                false,
+                false,
+                1,
+            )
+            .unwrap();
+        store
+            .write_result(
+                &project,
+                &completed,
+                &dots_tasks::outcomes::Outcome {
+                    operation: dots_tasks::outcomes::Operation::Done,
+                    result: "Verified fixture result",
+                    evidence: &[],
+                    force: false,
+                },
+                actor(),
+            )
+            .unwrap();
+        assert!(
+            store
+                .attention(&Scope::Global, StateFilter::Outstanding)
+                .unwrap()
+                .goals
+                .is_empty()
+        );
+        let active = global_goals(&mut store, false).unwrap();
+        assert_eq!(
+            active
+                .goals
+                .iter()
+                .map(|goal| goal.goal.as_str())
+                .collect::<Vec<_>>(),
+            [draft.as_str()]
+        );
+        assert_eq!(global_goals(&mut store, true).unwrap().goals.len(), 2);
+        assert!(
+            store
+                .goal_overview(&project, &draft, true)
+                .unwrap()
+                .goal
+                .root
+                .owner
+                .is_none(),
+            "browsing must not acquire coordination"
+        );
+        drop(store);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn centralized_goals_keeps_graphs_selection_folding_and_closed_filters() {
+        let mut view = viewer(list(vec![goal(Vec::new(), None)]));
+        press(&mut view, KeyCode::Char('g'));
+        let mut root = task("t-goal", "t-goal", "Refactor exports", Status::Open);
+        root.parent = None;
+        let mut group = task("t-group", "t-goal", "Shared boundary", Status::Open);
+        group.children = 2;
+        let first = task("t-first", "t-group", "Define the boundary", Status::Open);
+        let mut second = task("t-second", "t-group", "Adapt callers", Status::Open);
+        second.prerequisites.push(dots_tasks::Prerequisite {
+            id: first.id.clone(),
+            title: first.title.clone(),
+            status: first.status,
+            parent: first.parent.clone(),
+            owner: None,
+        });
+        second.blocked_by.push(first.id.clone());
+        let done = task("t-done", "t-goal", "Earlier spike", Status::Done);
+        view.set_overview(
+            "t-goal".into(),
+            Ok(GoalOverview {
+                goal: Goal {
+                    root,
+                    brief: "briefs/goal.md".into(),
+                    progress: GoalProgress::default(),
+                    last_activity: 1,
+                },
+                tasks: vec![group, first, second, done],
+                hidden_closed: 0,
+            }),
+        );
+        let graph = screen(&mut view, 160, 40);
+        assert!(graph.contains("Graph"), "{graph}");
+        assert!(graph.contains("Define the boundary") && graph.contains("Adapt callers"));
+        assert!(
+            !graph.contains("Shared boundary"),
+            "groups are projected to graph leaves"
+        );
+        let first_at = view
+            .task_positions
+            .iter()
+            .position(|(id, _)| id == "t-first")
+            .unwrap();
+        let second_at = view
+            .task_positions
+            .iter()
+            .position(|(id, _)| id == "t-second")
+            .unwrap();
+        assert!(
+            first_at < second_at,
+            "prerequisite appears before dependent"
+        );
+        press(&mut view, KeyCode::Right);
+        assert_eq!(view.selected_task.as_deref(), Some("t-first"));
+        assert_eq!(press(&mut view, KeyCode::Enter), Effect::Overview);
+        assert_eq!(view.goal_page, GoalPage::Task);
+        assert_eq!(press(&mut view, KeyCode::Esc), Effect::Overview);
+        press(&mut view, KeyCode::Char('o'));
+        let outline = screen(&mut view, 160, 40);
+        assert!(outline.contains("Shared boundary") && outline.contains("Earlier spike"));
+        let (x, y) = locate(&outline, "Shared boundary");
+        click(&mut view, x, y);
+        press(&mut view, KeyCode::Char(' '));
+        let folded = screen(&mut view, 160, 40);
+        assert!(
+            folded.contains("▸") && !folded.contains("Adapt callers"),
+            "{folded}"
+        );
+        press(&mut view, KeyCode::Char(' '));
+        press(&mut view, KeyCode::Char('c'));
+        let open = screen(&mut view, 160, 40);
+        assert!(
+            !open.contains("Earlier spike") && open.contains("Adapt callers"),
+            "{open}"
+        );
+        let (x, y) = locate(&open, "B Brief");
+        assert_eq!(click(&mut view, x, y), Effect::Overview);
+        assert_eq!(view.goal_page, GoalPage::Brief);
+        assert_eq!(press(&mut view, KeyCode::Esc), Effect::Overview);
+        view.goals_entry = true;
+        view.tasks_focused = false;
+        assert_eq!(press(&mut view, KeyCode::Esc), Effect::Close);
+    }
+
+    #[test]
+    fn a_missing_exact_goal_never_selects_another_goal() {
+        let mut view = viewer(two());
+        view.tab = Tab::Work;
+        view.goal = Some((project(), "t-missing".into()));
+        let shown = screen(&mut view, 160, 40);
+        assert!(shown.contains("selected goal is unavailable"), "{shown}");
+        assert!(!shown.contains("Refactor exports"), "{shown}");
     }
 
     #[test]

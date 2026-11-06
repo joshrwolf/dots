@@ -27,7 +27,28 @@ pub(crate) struct Request<'request> {
     pub out: &'request mut dyn io::Write,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Global reads and project-bound commands share one actor/store dispatch boundary."
+)]
 pub(crate) fn run(request: Request<'_>) -> Result<String> {
+    if let TaskCommand::Goal {
+        command: GoalCommand::View { select, dismiss },
+    } = request.command
+    {
+        anyhow::ensure!(
+            request.project.is_none(),
+            "goal view browses registered projects; use --select PROJECT:GOAL"
+        );
+        return crate::human_view::goals(
+            select
+                .as_deref()
+                .map(dots_tasks::attention::GoalRef::parse)
+                .transpose()?,
+            dismiss,
+            request.json,
+        );
+    }
     if let TaskCommand::Query(TaskQuery::EventKinds) = request.command {
         return Ok(event_kinds(request.json));
     }
@@ -239,6 +260,17 @@ impl Shown {
             not_ready_because,
         }
     }
+}
+
+pub(crate) fn inspect_task(store: &mut Store, project: &Project, id: &str) -> Result<String> {
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+    let shown = execute(
+        store,
+        project,
+        TaskCommand::Query(TaskQuery::Show { id: id.to_owned() }),
+        Actor { name: None, now },
+    )?;
+    Ok(text(&shown, now))
 }
 
 fn execute(
@@ -541,6 +573,9 @@ fn execute_goal(
     actor: Actor<'_>,
 ) -> Result<Outcome> {
     match command {
+        GoalCommand::View { .. } => {
+            unreachable!("interactive goal view is dispatched before project resolution")
+        }
         GoalCommand::Create { title, brief } => {
             let brief = goal_brief::existing(project, &brief)?;
             let goal = store.create_goal(project, &title, &brief, actor)?;

@@ -22,6 +22,7 @@ the app.
 | Cmd+O | Back to the last tab you jumped from; again to return |
 | Cmd+Shift+R | PRs: the watch list agents keep, with review and CI status |
 | Cmd+I | Attention: session-oriented inbox across registered projects |
+| Cmd+G | Goals: dependency graphs, progress, briefs and history |
 | Cmd+Shift+A | Rex's activity panel: everything reporting status, across sessions |
 | Cmd+H / Cmd+K, Cmd+J / Cmd+L | Previous, next tab |
 | Cmd+Shift+H / Cmd+Shift+L | Move tab back, forward |
@@ -45,6 +46,17 @@ an agent; **G** opens separate goal and work inspection. Missing or ambiguous
 sessions stay explicit. A saved reply does not prove pickup, and an
 incorporated decision does not prove work resumed. Drafts last for the open popup;
 send or clear them before jumping to a conversation. Closing answers nothing.
+
+Goals browses registered projects independently of Attention requests. **A** includes
+completed goals; Pi's goal cue opens this same browser at its exact goal. The task
+list uses the shared dependency graph; **O** switches to the group outline and
+**C** toggles closed tasks. **Left/Right** select the goal or task column, **Up/Down**
+move selection, **Enter** opens task details, and **Space** folds outline groups.
+**B**, **D** and **H** inspect the brief, decisions and history; **R** opens the
+complete goal record and **T** returns to tasks.
+Click a task to select it, again for details. **Esc** backs out, then closes.
+Inspection never follows, claims or starts work. Text and controls remain bounded
+on wide screens; missing records stay explicit.
 
 In Go, each row is one piece of work: an agent that needs you (blocked,
 failed, or done), or a tab showing the status of the agent at work in it. A

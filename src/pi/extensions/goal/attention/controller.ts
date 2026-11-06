@@ -6,11 +6,9 @@ import {
   answerText,
   needsAnswer,
   type AttentionModel,
-  type ItemState,
 } from './model.ts';
 import type {Tasks, TaskEvent} from '../../../src/host/tasks.ts';
 import type {AttentionFacts} from './context.ts';
-import type {Reply} from './panel.ts';
 import {
   failure,
   type AttentionList,
@@ -105,19 +103,17 @@ function answerNotice(requests: readonly Request[]): TurnMessage {
  * goals the store says it coordinates. Coordination is the store's root
  * claims, read fresh on every refresh, so unfollowing never hides a goal this
  * session is responsible for, and pausing, releasing or handing it off removes
- * it. The popup, indicator, context and drafts show nothing else; no follows
+ * it. The indicator and context show nothing else; no follows
  * and no coordination show nothing. Reads are generation-guarded, so a late
  * reply never overwrites a newer scope.
  *
- * Saving an answer persists it before the view says so. Only the goal's
+ * The global inbox persists answers separately. Only the goal's
  * current coordinator, by a fresh read, is told an answer to continue with,
  * and never while the goal is held. Delivery notices are their own
  * branch-local receipts; a receipt only says this branch was told, never that
  * the answer was incorporated.
  */
 export class AttentionController {
-  /** Unsent answer text by request; outlives views, not the runtime. */
-  readonly drafts = new Map<string, string>();
   private readonly host: AttentionHost;
   /** Explicitly followed goals. */
   private view: readonly GoalRef[] = [];
@@ -131,14 +127,6 @@ export class AttentionController {
    * coordinating; a failed read keeps them shown but acts on none.
    */
   private duties: readonly GoalRef[] = [];
-  /**
-   * Local outcomes by request. `open` is a drafted request's last snapshot,
-   * held unshown while its goal cannot be read.
-   */
-  private readonly local = new Map<
-    string,
-    {state: ItemState; request: Request; goal: string}
-  >();
   private agent: Agent | undefined;
   private reads = 0;
   private reading: AbortController | undefined;
@@ -207,7 +195,7 @@ export class AttentionController {
   }
 
   model(): AttentionModel {
-    const model = attentionModel(this.viewed(), this.agent?.owner, this.local);
+    const model = attentionModel(this.viewed(), this.agent?.owner);
     const unavailable = [
       ...model.unavailable,
       ...(this.readFailure ? [this.readFailure] : []),
@@ -220,7 +208,7 @@ export class AttentionController {
     return {...model, unavailable};
   }
 
-  /** Replace the followed goals; requests leaving the scope leave with their local state. */
+  /** Replace the explicit follows without changing shared coordination. */
   setScope(goals: readonly GoalRef[]): Promise<void> {
     const next = unique(goals);
     const same =
@@ -228,15 +216,7 @@ export class AttentionController {
       next.every((goal, at) => refKey(goal) === refKey(this.view[at]!));
     this.view = next;
     if (same && this.list) return Promise.resolve();
-    this.prune();
     return this.refresh();
-  }
-
-  private prune(): void {
-    const kept = new Set(this.goals().map(refKey));
-    for (const [id, item] of this.local)
-      if (!kept.has(`${item.request.project}:${item.request.goal}`))
-        this.local.delete(id);
   }
 
   /** Stream exactly the goals read. */
@@ -285,7 +265,6 @@ export class AttentionController {
     this.dutyFailure = dutyFailure;
     if (dutyFailure === undefined) {
       this.duties = duties;
-      this.prune();
     }
     const goals = this.goals();
     this.stream(goals);
@@ -303,7 +282,6 @@ export class AttentionController {
     try {
       const list = await this.host.source.list(goals, controller.signal);
       if (epoch !== this.reads || this.lifetime.signal.aborted) return;
-      this.retain(this.list, list);
       this.list = list;
       this.readFailure = undefined;
     } catch (error) {
@@ -359,137 +337,6 @@ export class AttentionController {
       },
       ready,
     });
-  }
-
-  /**
-   * A drafted request that left its goal's outstanding list stays with its
-   * draft as a local outcome: replaced when the read lists its replacement,
-   * otherwise no longer outstanding. It never retargets; the person
-   * dismisses it. While its goal cannot be read, its snapshot is held, not
-   * closed, until a read decides; a failed save keeps its error meanwhile.
-   * A goal that left scope keeps nothing.
-   */
-  private retain(previous: AttentionList | undefined, next: AttentionList) {
-    const scope = new Set(this.goals().map(refKey));
-    const drafted = [
-      ...(previous?.goals ?? []).flatMap(goal =>
-        goal.requests.map(request => ({request, goal: goal.title})),
-      ),
-      ...[...this.local.values()].filter(
-        item => item.state.kind === 'open' || item.state.kind === 'error',
-      ),
-    ].filter(({request}) => this.drafts.get(request.id)?.trim());
-    for (const {request, goal} of drafted) {
-      const kept = this.local.get(request.id)?.state.kind;
-      if (kept && kept !== 'error' && kept !== 'open') continue;
-      const now = next.goals.find(
-        item => item.project === request.project && item.goal === request.goal,
-      );
-      if (!now) {
-        const key = refKey({project: request.project, id: request.goal});
-        if (!kept && scope.has(key))
-          this.local.set(request.id, {request, goal, state: {kind: 'open'}});
-        continue;
-      }
-      if (now.requests.some(item => item.id === request.id)) {
-        if (kept === 'open') this.local.delete(request.id);
-        continue;
-      }
-      const replacement = now.requests.find(
-        item => item.supersedes === request.id,
-      );
-      this.local.set(request.id, {
-        request,
-        goal,
-        state: replacement
-          ? {kind: 'stale', replacement}
-          : {kind: 'closed', message: 'No longer outstanding.'},
-      });
-    }
-  }
-
-  private find(id: string): {request: Request; goal: string} | undefined {
-    for (const goal of this.list?.goals ?? []) {
-      const request = goal.requests.find(item => item.id === id);
-      if (request) return {request, goal: goal.title};
-    }
-    const kept = this.local.get(id);
-    return kept && {request: kept.request, goal: kept.goal};
-  }
-
-  /** Persist `reply` for exactly `id`, as the popup's person, then refresh. */
-  async answer(id: string, reply: Reply): Promise<void> {
-    const found = this.find(id);
-    const agent = this.agent;
-    if (!found || !agent) return;
-    this.local.set(id, {...found, state: {kind: 'saving'}});
-    this.host.changed();
-    const content = {
-      source: 'ui' as const,
-      ...reply,
-      provenance: `pi session ${agent.session} · goal popup`,
-    };
-    try {
-      await this.host.source.answer(
-        found.request.project,
-        id,
-        content,
-        {env: agentEnv(agent)},
-        this.lifetime.signal,
-      );
-      if (this.lifetime.signal.aborted) return;
-      this.local.delete(id);
-      this.drafts.delete(id);
-    } catch (error) {
-      if (this.lifetime.signal.aborted) return;
-      const state =
-        (await this.classify(found.request.project, id).catch(
-          () => undefined,
-        )) ?? ({kind: 'error', message: failure(error)} as const);
-      this.local.set(id, {...found, state});
-    }
-    this.host.changed();
-    await this.refresh();
-  }
-
-  /**
-   * Why an answer did not land, from the request's current record: still
-   * open is an operational failure (undefined); replaced keeps the draft
-   * beside the immutable replacement; anything else changed elsewhere.
-   */
-  private async classify(
-    project: string,
-    id: string,
-  ): Promise<ItemState | undefined> {
-    const signal = this.lifetime.signal;
-    const shown = await this.host.source.show(project, id, signal);
-    if (shown.state === 'open') return undefined;
-    if (shown.superseded_by)
-      return {
-        kind: 'stale',
-        replacement: await this.host.source
-          .show(project, shown.superseded_by, signal)
-          .catch(() => undefined),
-      };
-    if (shown.state === 'answered')
-      return {
-        kind: 'closed',
-        message: `Already answered elsewhere: ${answerText(shown)}`,
-      };
-    return {
-      kind: 'closed',
-      message:
-        shown.closure?.kind === 'withdrawn'
-          ? 'The coordinator withdrew this request.'
-          : 'This request was closed.',
-    };
-  }
-
-  /** Forget a local outcome and its draft; stored records are unaffected. */
-  dismiss(id: string): void {
-    this.local.delete(id);
-    this.drafts.delete(id);
-    this.host.changed();
   }
 
   /** Goals this runtime coordinates and may continue: a fresh read, not held. */

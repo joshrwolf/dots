@@ -31,15 +31,14 @@ one/three/eight-worker fleets, compact outcomes, and long questions. Active work
 use two lines; finished workers use one. Worker model, effort, and horizontal
 context meters share the primary session’s right-aligned metadata columns.
 Space advances these cases.
-`/ui-lab attention` previews the goal popup's Attention view over in-memory
-requests; Space steps through its states and E passes keys to the popup.
 `/ui-lab inspection-shell` previews the shipping framed Panel and native picker
 at wide and narrow widths in light/dark themes. Ctrl+Space cycles its fixture
 states without taking picker keys. Esc closes; Ctrl+N/P switches scenarios.
 `/ui-lab worker-inspector` opens the interactive picker: Enter inspects, L returns
 to the list, M composes a fixture message, and X confirms a fixture stop.
-Descendants are read-only. Scroll to pause follow; **F** resumes. All actions stay
-in memory. Ctrl+N/P switches scenarios without consuming message text.
+Descendants are read-only. Scroll to pause follow; **F** resumes. Transcripts are
+neutral session files in a temporary directory; actions append to them and
+contact no process. Ctrl+N/P switches scenarios without consuming message text.
 Scenarios cover tools, nested codemode activity, job inspection, workers, thinking, and the
 application frame (the default), including its native editor. For responsive tool layout,
 open `/ui-lab bash`, `/ui-lab codemode`, and `/ui-lab edit`; advance to their long
@@ -50,14 +49,9 @@ job completions, worker replies, wakes, and an otherwise unstyled tool share one
 transcript. `/ui-lab thinking` previews summaries, structured detail, and unfinished
 streaming Markdown through Pi’s real assistant component; **E** toggles its native
 thinking disclosure. `/ui-lab goal` shows the goal summary line below the native editor.
-**E** opens the goal popup centered over the transcript and editor, at the size
-Alt+G opens it in a session. It starts with a 12-task DAG: shared prerequisites,
-parallel CLI and SDK branches, and joins at migration, packaging, and publication.
-All tasks are visible by default; **h** hides or shows closed tasks.
-In the popup, **1/2/3**, **h**, **o**, **↑**/**↓** and
-**←**/**→** work as in a session; Space remains the workbench state switch and
-cycles running, asking and quiet workers, complete and partial trees, multiple
-follows, held work, unavailable data, and brief warnings. The **frame**
+Space cycles its summary fixtures: branching task data, running, asking and quiet workers,
+complete and partial trees, multiple follows, held work, unavailable data and brief warnings.
+The **frame**
 scenario starts with a live assigned goal, asking/running workers, a job, and an update notice
 together below the native editor. Press **B** to see them. **Space** also reaches
 crowded and settled activity states, plus context warnings, unknown usage, long

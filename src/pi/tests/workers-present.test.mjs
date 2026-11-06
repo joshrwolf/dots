@@ -444,6 +444,8 @@ test('a worker row says what it is working toward, then what it is doing, and ho
     render({context: 83, contextBasis: 'compact'}),
     /⠋ review.*━━━━━━━━── 83%/,
   );
+  assert.match(render({context: 12, compactions: 2}), /3m.*⇊2.*12%/);
+  assert.doesNotMatch(render({context: 12, compactions: 0}), /⇊/);
   for (const width of [16, 30, 60, 140]) {
     const lines = createWidget(
       () => [{...row, context: 83, contextBasis: 'compact'}],

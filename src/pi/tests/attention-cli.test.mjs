@@ -150,7 +150,7 @@ test('a request moves from raise to answer, delivery, context and incorporation'
       requests: [{id: first, title: 'Choose the rollout scope'}],
     });
 
-    // A replaced request keeps the draft and never answers the replacement.
+    // A stale answer never applies to the immutable replacement.
     const second = run([
       'attention',
       'raise',
@@ -176,18 +176,38 @@ test('a request moves from raise to answer, delivery, context and incorporation'
         question: 'Atlas, Beacon or Compass?',
       }),
     ]);
-    controller.drafts.set(second, 'Atlas');
-    await controller.answer(second, {text: 'Atlas'});
-    const stale = controller
-      .model()
-      .items.find(item => item.request.id === second);
-    assert.equal(stale.state.kind, 'stale');
-    assert.equal(stale.state.replacement.question, 'Atlas, Beacon or Compass?');
-    assert.equal(controller.drafts.get(second), 'Atlas');
-    assert.equal(stale.state.replacement.answer, null);
+    await assert.rejects(
+      source.answer(
+        project,
+        second,
+        {source: 'ui', text: 'Atlas', provenance: 'fixture global inbox'},
+        {env: agentEnv(agent)},
+        new AbortController().signal,
+      ),
+    );
+    const stale = await source.show(
+      project,
+      second,
+      new AbortController().signal,
+    );
+    assert.equal(stale.state, 'closed');
+    const replacement = await source.show(
+      project,
+      stale.superseded_by,
+      new AbortController().signal,
+    );
+    assert.equal(replacement.question, 'Atlas, Beacon or Compass?');
+    assert.equal(replacement.answer, null);
 
-    // A UI answer persists through the CLI and is delivered once.
-    await controller.answer(first, {choice: 'one'});
+    // An answer saved by the shared inbox is observed and delivered once.
+    await source.answer(
+      project,
+      first,
+      {source: 'ui', choice: 'one', provenance: 'fixture global inbox'},
+      {env: agentEnv(agent)},
+      new AbortController().signal,
+    );
+    await controller.refresh();
     const stored = await source.show(
       project,
       first,
@@ -195,7 +215,7 @@ test('a request moves from raise to answer, delivery, context and incorporation'
     );
     assert.equal(stored.state, 'answered');
     assert.equal(stored.answer.source, 'ui');
-    assert.equal(stored.answer.provenance, 'pi session fixture · goal popup');
+    assert.equal(stored.answer.provenance, 'fixture global inbox');
     assert.equal(stored.answer.by, agent.owner);
     const notices = branch.filter(
       entry => entry.customType === 'dots.attention.answer',

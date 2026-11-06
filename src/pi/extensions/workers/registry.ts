@@ -89,6 +89,7 @@ create table if not exists worker_context (
   tokens integer,
   context_window integer not null,
   compact_at integer,
+  compactions integer not null,
   observed_at integer not null
 );
 create table if not exists events (
@@ -134,10 +135,11 @@ export class Registry {
         calls = excluded.calls, tokens = excluded.tokens, started_at = excluded.started_at, last_event_at = excluded.last_event_at,
         updated_at = excluded.updated_at, session_file = excluded.session_file, pid = excluded.pid`);
     this.contextWriteStmt = this.db.prepare(`
-      insert into worker_context (worker, model, tokens, context_window, compact_at, observed_at)
-      values (?, ?, ?, ?, ?, ?)
+      insert into worker_context (worker, model, tokens, context_window, compact_at, compactions, observed_at)
+      values (?, ?, ?, ?, ?, ?, ?)
       on conflict(worker) do update set model=excluded.model, tokens=excluded.tokens,
-        context_window=excluded.context_window, compact_at=excluded.compact_at, observed_at=excluded.observed_at`);
+        context_window=excluded.context_window, compact_at=excluded.compact_at,
+        compactions=excluded.compactions, observed_at=excluded.observed_at`);
     this.contextReadStmt = this.db.prepare(
       'select * from worker_context where worker = ?',
     );
@@ -199,6 +201,7 @@ export class Registry {
       snapshot.tokens,
       snapshot.window,
       snapshot.compactAt,
+      snapshot.compactions,
       now,
     );
   }
@@ -211,7 +214,7 @@ export class Registry {
       tokens: row.tokens,
       window: row.context_window,
       compactAt: row.compact_at,
-      pressure: false,
+      compactions: row.compactions,
     };
     if (
       !Check(WorkerContextSchema, snapshot) ||

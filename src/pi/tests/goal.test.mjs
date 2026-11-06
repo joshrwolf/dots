@@ -58,6 +58,11 @@ function harness(
   const userMessages = [];
   const widgets = [];
   const shortcuts = new Map();
+  const navigation = {
+    calls: [],
+    /** @type {Error | undefined} */
+    failure: undefined,
+  };
   const bus = new Map();
   const pi = {
     events: {
@@ -91,7 +96,14 @@ function harness(
       messages.push({message, options});
     },
   };
-  goal(pi, backend, undefined, {source: attention.source, tasks: undefined});
+  goal(pi, backend, undefined, {
+    source: attention.source,
+    tasks: undefined,
+    openView: async (view, target) => {
+      if (navigation.failure instanceof Error) throw navigation.failure;
+      navigation.calls.push({view, target});
+    },
+  });
   const ctx = {
     cwd: '/example/linked',
     mode,
@@ -120,6 +132,7 @@ function harness(
     userMessages,
     widgets,
     shortcuts,
+    navigation,
     bus,
     ctx,
     tool: (id, signal, project) =>
@@ -627,59 +640,29 @@ test('initial focus selection is awaited before supplying pre-run context', asyn
 });
 
 // A stand-in for Pi's overlay host: records options and closes on done().
-function overlayHost(h, theme) {
-  const host = {opened: 0, closed: 0, view: undefined};
-  h.ctx.ui.custom = (factory, options) =>
-    new Promise(resolve => {
-      host.options = options;
-      host.opened++;
-      const view = factory(
-        {requestRender() {}, terminal: {rows: 40, columns: 160}},
-        theme,
-        {
-          matches: (data, action) =>
-            data === '\x1b' && action === 'tui.select.cancel',
-        },
-        () => {
-          host.closed++;
-          host.view = undefined;
-          view.dispose?.();
-          resolve();
-        },
-      );
-      host.view = view;
-    });
-  return host;
-}
-
-test('the shortcut, /goal and Esc open and close one centered popup; shutdown closes it', async () => {
-  initTheme('dark', false);
-  const theme = getThemeByName('dark');
+test('/goal opens centralized Rex Goals with exact selection and no local popup', async () => {
   const h = harness(source(), [entry(focused())], 'tui');
   await h.event('session_start');
-  const host = overlayHost(h, theme);
-  const toggle = h.shortcuts.get('alt+g');
-  assert.ok(toggle, 'registered shortcut');
-  toggle.handler(h.ctx);
-  assert.equal(host.opened, 1);
-  assert.equal(host.options.overlay, true);
-  assert.equal(host.options.overlayOptions.anchor, 'center');
-  assert.equal(host.options.overlayOptions.nonCapturing, undefined);
-  assert.match(host.view.render(120).join('\n'), /Consistent exports/);
+  const before = await h.list();
+  assert.equal(h.shortcuts.has('alt+g'), false);
+  h.ctx.ui.custom = () => {
+    throw new Error('No Pi goal popup');
+  };
   await h.command('');
+  await settle();
   await h.command('show');
-  assert.equal(host.opened, 1, 'one popup at a time');
-  host.view.handleInput('\x1b');
-  assert.equal(host.closed, 1, 'Esc closes the popup');
-  await h.command('show');
-  assert.equal(host.opened, 2);
-  host.view.handleInput('\x1bg');
-  assert.equal(host.closed, 2, 'the shortcut closes the popup');
-  toggle.handler(h.ctx);
-  await h.event('session_shutdown');
-  assert.equal(host.closed, 3);
+  await settle();
+  assert.deepEqual(h.navigation.calls, [
+    {view: 'goals', target: {id: 't-123abc', project: '/example/project'}},
+    {view: 'goals', target: {id: 't-123abc', project: '/example/project'}},
+  ]);
+  assert.deepEqual(await h.list(), before);
   assert.equal(h.userMessages.length, 0);
-  assert.equal(h.messages.length, 0);
+  h.navigation.failure = new Error('Rex unavailable');
+  await h.command('');
+  await settle();
+  assert.ok(h.notices.some(([message]) => message.includes('Rex unavailable')));
+  await h.event('session_shutdown');
 });
 
 test('cancelled picker and failed focus preserve prior focus; malformed history can be superseded', async () => {
@@ -894,24 +877,22 @@ test('the summary line uses native press/click handling and cannot revive stale 
   ]) {
     assert.equal(widget.handleMouse({...event, ...extra}), undefined);
   }
-  const host = overlayHost(h, theme);
   assert.equal(widget.handleMouse(event).handled, true);
-  assert.equal(host.opened, 0, 'press does not open the panel');
+  assert.equal(h.navigation.calls.length, 0, 'press does not navigate');
   widget.handleMouse({...event, type: 'click'});
-  assert.equal(host.opened, 1);
-  widget.handleMouse({...event, type: 'click'});
-  assert.equal(host.opened, 1, 'one panel at a time');
+  assert.deepEqual(h.navigation.calls, [
+    {view: 'goals', target: {project: '/example/project', id: 't-123abc'}},
+  ]);
   assert.equal(
     h.entries.length,
     1,
     'inspection does not change selection or follows',
   );
   await h.event('session_tree');
-  assert.equal(host.closed, 1, 'branch changes close the panel');
   assert.equal(
     widget.handleMouse({...event, type: 'click'}),
     undefined,
-    'retired widgets cannot open panels',
+    'retired widgets cannot navigate',
   );
   const replacement = h.widgets.findLast(
     ([key, value]) => key === 'dots.goal' && value,
@@ -933,13 +914,12 @@ test('finished goal inspection shows closed slices without expanding ordinary ag
       return withHierarchy(full);
     };
     const h = harness(backend, [entry(focused())], mode);
-    const host = overlayHost(h, theme);
     await h.event('session_start');
     await h.command('show');
     if (mode === 'tui') {
-      const output = host.view.render(100).join('\n');
-      assert.match(output, /Reference slice/);
-      assert.match(output, /all tasks/);
+      assert.deepEqual(h.navigation.calls, [
+        {view: 'goals', target: {project: '/example/project', id: 't-123abc'}},
+      ]);
     } else
       assert.doesNotMatch(h.messages.at(-1).message.content, /Reference slice/);
     const context = (await h.context())[0].content;
@@ -1384,9 +1364,7 @@ test('only native interactive input attests a chat answer', async () => {
   );
 });
 
-test('the popup opens on attention, answers in place and keeps Work reachable', async () => {
-  initTheme('dark', false);
-  const theme = getThemeByName('dark');
+test('/goal remains Goals even while a quiet Attention cue is present', async () => {
   const attention = attentionStore({requests: [request({goal: 't-123abc'})]});
   const h = harness(
     source(),
@@ -1397,34 +1375,13 @@ test('the popup opens on attention, answers in place and keeps Work reachable', 
   );
   await h.event('session_start');
   await settle();
-  const indicator = h.widgets.findLast(
-    ([key]) => key === 'dots.goal.attention',
-  );
-  assert.ok(indicator?.[1], 'a quiet indicator mounts');
-  const host = overlayHost(h, theme);
-  h.shortcuts.get('alt+g').handler(h.ctx);
-  const out = host.view.render(120).join('\n');
-  assert.match(out, /Needs your attention/);
-  assert.match(out, /Should the first slice cover every project/);
-  host.view.handleInput('\r');
-  host.view.handleInput('\r');
+  assert.ok(h.widgets.findLast(([key]) => key === 'dots.goal.attention')?.[1]);
+  await h.command('');
   await settle();
-  await settle();
-  const answer = attention.state.calls.find(c => c.op === 'answer');
-  assert.deepEqual(answer.content, {
-    source: 'ui',
-    choice: 'one',
-    provenance: 'pi session fixture-session · goal popup',
-  });
-  host.view.handleInput('\x1b[C');
-  assert.match(host.view.render(120).join('\n'), /Consistent exports/);
-  host.view.handleInput('\x1bg');
-  assert.equal(host.closed, 1);
+  assert.equal(h.navigation.calls.at(-1).view, 'goals');
+  assert.equal(attention.state.requests.get(requestId(1)).state, 'open');
+  assert.equal(h.userMessages.length, 0);
   await h.event('session_shutdown');
-  assert.deepEqual(h.emitted.at(-1), {
-    channel: 'dots:attention',
-    data: {requests: []},
-  });
 });
 
 test('an unreadable coordination record is an explicit unavailable section, followed or not', async () => {

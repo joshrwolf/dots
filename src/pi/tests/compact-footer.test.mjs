@@ -205,6 +205,7 @@ test('registration only installs frame surfaces in TUI mode, not RPC/print/JSON'
   let start;
   register({
     registerMarkdownTransformer() {},
+    registerMessageRenderer() {},
     registerToolRenderer() {},
     on(event, fn) {
       if (event === 'session_start') start = fn;

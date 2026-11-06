@@ -19,6 +19,7 @@ function setup() {
   let dispose;
   register({
     registerMarkdownTransformer() {},
+    registerMessageRenderer() {},
     registerToolRenderer(value) {
       resolver = value;
     },

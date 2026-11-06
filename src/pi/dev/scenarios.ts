@@ -27,16 +27,9 @@ import {
 } from '../src/index.ts';
 import {transcript} from './transcript.ts';
 import {workerInspectorScenario} from './workers.ts';
-import {attentionScenario} from './attention.ts';
 import {thinkingComponent} from './thinking.ts';
 import {goalActivityFixture, goalFixtures} from './goals.ts';
-import {
-  GoalPanel,
-  PANEL_KEY,
-  panelHeight,
-  panelWidth,
-  summaryRow,
-} from '../extensions/goal/panel.ts';
+import {summaryRow} from '../extensions/goal/summary.ts';
 import {bashPresentation} from '../src/features/tools/bash.ts';
 import {readPresentation} from '../src/features/tools/read.ts';
 import {writePresentation} from '../src/features/tools/write.ts';
@@ -274,152 +267,34 @@ const thinkingScenario: Scenario = {
 
 /** Fixture screen: the transcript above the editor and its summary line, with
  * the popup composited at Pi's centered overlay geometry. */
-class GoalScreen extends VStack {
-  private readonly transcript: Component;
-  private readonly dock: Component;
-  private readonly rows: () => number;
-  private popup: Component | undefined;
-  constructor(transcript: Component, dock: Component, rows: () => number) {
-    super();
-    this.transcript = transcript;
-    this.dock = dock;
-    this.rows = rows;
-  }
-  show(popup: Component | undefined): void {
-    this.popup = popup;
-    this.invalidate();
-  }
-  override render(width: number): string[] {
-    if (width <= 0) return [];
-    const rows = this.rows();
-    const dock = this.dock.render(width);
-    const transcript = this.transcript.render(width);
-    const screen = [
-      ...transcript.slice(0, Math.max(0, rows - dock.length)),
-      ...Array<string>(
-        Math.max(0, rows - dock.length - transcript.length),
-      ).fill(''),
-      ...dock,
-    ];
-    if (!this.popup) return screen;
-    const columns = panelWidth(width);
-    const popup = this.popup.render(columns).slice(0, rows);
-    const top = Math.floor((rows - popup.length) / 2);
-    const left = Math.floor((width - columns) / 2);
-    return screen.map((line, i) => {
-      const own = popup[i - top];
-      if (own === undefined) return line;
-      const head = sliceByColumn(line, 0, left, true);
-      return (
-        head +
-        ' '.repeat(Math.max(0, left - visibleWidth(head))) +
-        '\x1b[0m' +
-        truncateToWidth(own, columns, '', true) +
-        '\x1b[0m' +
-        sliceByColumn(line, left + columns, width - left - columns, true)
-      );
-    });
-  }
-}
-
 function goalScenario(): Scenario {
-  const states = [
-    [14, 'branching release DAG'],
-    [11, 'assigned live worker'],
-    [12, 'worker asking'],
-    [13, 'worker quiet'],
-    [9, 'complete snapshot'],
-    [10, 'incomplete snapshot'],
-    [0, 'claimed'],
-    [1, 'held'],
-    [2, 'recorded complete'],
-    [3, 'multiple goals'],
-    [4, 'unavailable'],
-    [5, 'loading'],
-    [6, 'brief warning'],
-    [7, 'empty'],
-  ] as const;
-  // The fixture's claim owner stands in for this session.
-  const owner = 'fixture-reviewer';
+  const states = [14, 11, 12, 13, 9, 10, 0, 1, 2, 3, 4, 5, 6, 7];
   return {
     id: 'goal',
-    title: 'Goal popup',
-    phases: states.map(([, label]) => label),
+    title: 'Goal summary',
+    phases: states.map(state => `state ${state}`),
     create(context) {
-      const preview = new Inspector(
-        context.bindings,
-        context.close,
-        context.redraw,
-        context.height,
-      );
-      const screen = () => context.height?.() ?? 20;
-      const panel = new GoalPanel(
-        context.bindings,
-        {close() {}, cycle() {}},
-        context.redraw,
-        () => panelHeight(screen()),
-      );
       const summary = new PriorityRow();
-      let expanded = false;
-      const component = Object.assign(new VStack(), {
+      const component = Object.assign(new VStack([summary]), {
         handleInput(data: string) {
-          (expanded ? panel : preview).handleInput(data);
+          if (context.bindings.matches(data, 'tui.select.cancel'))
+            context.close();
         },
       });
       return {
         component,
-        update(phase, nextExpanded, theme) {
-          expanded = nextExpanded;
-          const views = goalFixtures(states[phase]![0]);
-          const activity = goalActivityFixture(
-            states[phase]![0],
-            animationFrame(),
-          );
+        update(phase, _expanded, theme) {
+          const state = states[phase]!;
+          const views = goalFixtures(state);
           summary.update(
-            summaryRow(views, views[0]!.focus.id, activity, owner),
+            summaryRow(
+              views,
+              views[0]?.focus.id,
+              goalActivityFixture(state, animationFrame()),
+              'fixture-reviewer',
+            ),
             theme,
           );
-          panel.setGoal(
-            {view: views[0]!, activity, owner, goals: views.length},
-            theme,
-          );
-          const frame = new GoalScreen(
-            new VStack([
-              new UserMessageComponent(
-                'Coordinate the export interface goal.',
-                undefined,
-                0,
-              ),
-              new Spacer(1),
-              new Text(
-                theme.fg('text', 'I’ll check the remaining slices first.'),
-                0,
-                0,
-              ),
-            ]),
-            new VStack([
-              new Spacer(1),
-              ...(context.createEditor ? [context.createEditor(theme)] : []),
-              summary,
-            ]),
-            screen,
-          );
-          frame.show(expanded ? panel : undefined);
-          component.clear();
-          preview.setContent(
-            {
-              title: 'Goal popup',
-              detail: expanded
-                ? `popup open · ${PANEL_KEY} toggles`
-                : 'summary line',
-              body: frame,
-              hint: expanded
-                ? 'Space state · E hide popup · 1/2/3 · h · o outline · ↑/↓ select · Esc close'
-                : 'Space state · E show popup · T theme · ↑/↓ scroll · Esc close',
-            },
-            theme,
-          );
-          component.addChild(preview);
         },
       };
     },
@@ -1136,5 +1011,4 @@ export const scenarios: readonly Scenario[] = [
   },
   thinkingScenario,
   goalScenario(),
-  attentionScenario,
 ];

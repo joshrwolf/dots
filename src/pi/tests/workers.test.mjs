@@ -18,8 +18,7 @@ import {
   resolveChoice,
 } from '../extensions/workers/models.ts';
 import {PiProcess} from '../extensions/workers/rpc.ts';
-import {transcriptTail, transcriptWindow} from '../extensions/workers/tail.ts';
-import {messageText} from '../extensions/workers/inspector.ts';
+import {transcriptTail} from '../extensions/workers/tail.ts';
 
 // A stand-in for `pi --mode rpc`: answers commands, emits a question and a
 // settled run, and leaves a U+2028 inside a string to prove LF-only framing.
@@ -111,7 +110,12 @@ test('protocol: correlation, LF-only framing, ui request/response, settle, order
     );
     assert.deepEqual(
       records.find(record => record.type === 'tool_execution_start'),
-      {type: 'tool_execution_start', toolName: 'bash', args: {}},
+      {
+        type: 'tool_execution_start',
+        toolCallId: 't1',
+        toolName: 'bash',
+        args: {},
+      },
       'decoded to consumed fields',
     );
     const ended = nextRecord(child, 'message_end');
@@ -121,7 +125,12 @@ test('protocol: correlation, LF-only framing, ui request/response, settle, order
     assert.deepEqual(await settled, {type: 'agent_settled', aborted: false});
     assert.deepEqual(
       records.find(record => record.type === 'tool_execution_end'),
-      {type: 'tool_execution_end', toolName: 'bash', isError: false},
+      {
+        type: 'tool_execution_end',
+        toolCallId: 't1',
+        toolName: 'bash',
+        isError: false,
+      },
     );
     assert.equal(
       records.some(record => record.type === 'fixture_ready'),
@@ -175,74 +184,99 @@ test('RPC acknowledgement deadlines clean up and close preempts pending commands
   }
 });
 
-test('transcript tails bound reads and tolerate malformed records and content', () => {
+const header = {
+  type: 'session',
+  version: 3,
+  id: 'tail',
+  timestamp: '2026-01-01T00:00:00.000Z',
+  cwd: '/fixture',
+};
+const entry = (id, parentId, value) => ({
+  id,
+  parentId,
+  timestamp: '2026-01-01T00:00:01.000Z',
+  ...value,
+});
+const assistant = (id, parentId, content) =>
+  entry(id, parentId, {
+    type: 'message',
+    message: {role: 'assistant', content, stopReason: 'stop', timestamp: 1},
+  });
+const lines = values =>
+  values.map(value => JSON.stringify(value)).join('\n') + '\n';
+
+test('transcript tails show the active branch with compaction applied, as the transcript view does', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'dots-worker-tail-'));
   const file = path.join(dir, 'session.jsonl');
   try {
-    const record = content =>
-      JSON.stringify({type: 'message', message: {role: 'assistant', content}});
     writeFileSync(
       file,
-      [
-        record('old'.repeat(500_000)),
-        'null',
-        '[]',
-        '{broken',
-        record([
-          null,
-          7,
-          {type: 'text', text: 'latest'},
-          {type: 'text', text: 42},
+      lines([
+        header,
+        assistant('1', null, [{type: 'text', text: 'summarized away'}]),
+        assistant('2', '1', [
+          {type: 'toolCall', id: 'call', name: 'read', arguments: {path: 'a'}},
         ]),
-        '',
-      ].join('\n'),
+        entry('3', '2', {
+          type: 'message',
+          message: {
+            role: 'toolResult',
+            toolCallId: 'call',
+            toolName: 'read',
+            content: [{type: 'text', text: 'file\ntext'}],
+            isError: false,
+            timestamp: 1,
+          },
+        }),
+        assistant('4', '3', [{type: 'text', text: 'abandoned branch'}]),
+        entry('5', '3', {
+          type: 'compaction',
+          summary: 'Earlier work.',
+          firstKeptEntryId: '2',
+          tokensBefore: 100,
+        }),
+        assistant('6', '5', [{type: 'text', text: 'latest\x1b[31m'}]),
+      ]) + '{"type":"message","partial',
     );
-    const tail = transcriptTail(file);
-    assert.match(tail[0], /older or oversized records omitted/);
-    assert.equal(tail.at(-1), 'latest');
+    assert.deepEqual(transcriptTail(file), [
+      '-> read {"path":"a"}',
+      '   <- file text',
+      'latest',
+    ]);
     assert.deepEqual(transcriptTail(file, 1), ['latest']);
     assert.deepEqual(transcriptTail(file, 0), []);
-    assert.match(transcriptTail(path.join(dir, 'absent'))[0], /missing/);
-    const window = transcriptWindow(file);
-    assert.match(window.notice, /older or oversized records omitted/);
-    assert.equal(window.messages.at(-1).content[2].text, 'latest');
-    assert.match(transcriptWindow(path.join(dir, 'absent')).notice, /missing/);
-    assert.match(transcriptWindow(undefined).notice, /not saved/);
+    assert.deepEqual(transcriptTail(file, 3, 10), [
+      '-> read {"',
+      '   <- file',
+      'latest',
+    ]);
+    assert.match(transcriptTail(path.join(dir, 'absent'))[0], /not saved yet/);
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
 });
 
-test('inspector projects recent recorded content without terminal escapes or unbounded text', () => {
-  assert.deepEqual(
-    messageText({
-      role: 'assistant',
-      content: [{type: 'text', text: 'hello\x1b[31m'}],
-    }),
-    {role: 'assistant', text: 'hello\x1b[31m', markdown: true},
-  ); // renderer sanitizes, projection keeps the record
-  const tool = messageText({
-    role: 'assistant',
-    content: [{type: 'toolCall', name: 'read', arguments: {path: 'fixture'}}],
-  });
-  assert.match(tool.text, /→ read/);
-  assert.equal(tool.markdown, false);
-  assert.equal(
-    messageText({
-      role: 'toolResult',
-      toolName: 'read',
-      content: [{type: 'text', text: 'result'}],
-    }).role,
-    'tool read',
-  );
-  assert.match(
-    messageText({
-      role: 'assistant',
-      content: [{type: 'text', text: 'a'.repeat(25_000)}],
-    }).text,
-    /message display limited/,
-  );
-  assert.equal(messageText({role: 'assistant', content: []}), undefined);
+test('transcript tails read only the end of a large session and say what they skipped', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'dots-worker-tail-'));
+  const file = path.join(dir, 'session.jsonl');
+  try {
+    writeFileSync(
+      file,
+      lines([
+        header,
+        assistant('1', null, [{type: 'text', text: 'old'.repeat(500_000)}]),
+      ]) +
+        'null\n{broken\n' +
+        lines([assistant('2', '1', [{type: 'text', text: 'latest'}])]),
+    );
+    const tail = transcriptTail(file);
+    assert.match(tail[0], /older records omitted; inspect the session file/);
+    assert.match(tail[0], /2 unreadable records skipped/);
+    assert.equal(tail.at(-1), 'latest');
+    assert.equal(tail.length, 2);
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
 });
 
 test('closing during spawn failure resolves and isolates throwing exit listeners', async () => {
@@ -274,6 +308,10 @@ test('worker config holds only limits and rejects unknown keys; the child contra
     });
     assert.match(CHILD_CONTRACT, /final message is your complete result/);
     assert.match(CHILD_CONTRACT, /message \{ to: "parent"/);
+    assert.match(
+      CHILD_CONTRACT,
+      /never stop, wrap up, or hand off early because of context length/,
+    );
     for (const value of [
       null,
       [],

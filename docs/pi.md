@@ -70,7 +70,11 @@ Workers are headless Pi sessions managed by their parent. An interactive Pi
 opened in a Rex pane is independent, not a managed worker.
 
 Use `/workers` to inspect progress, transcripts and results; M messages an owned
-worker and X offers stop confirmation. Descendants are read-only. Completion
+worker and X offers stop confirmation. Descendants are read-only. A transcript
+uses Pi's own message and tool rendering, follows the worker's saved session and
+shows the owned worker's response while it streams. Inside Rex, R opens it in a
+floating view instead: a minimal Pi with only the companion's read-only viewer,
+which shows saved records and cannot submit prompts. Completion
 means a result is ready, not that its process exited or its work was accepted.
 Worker costs are shown separately from the parent's session cost. A `~` marks a
 catalog estimate; an unmarked total is provider-billed for every response.
@@ -87,9 +91,11 @@ completion events rather than polling. Tool schemas supply models, thinking
 levels, skill handoff and task-assignment arguments. Task association does not
 claim, complete or accept a task.
 
-Native Pi settings own compaction. The companion displays context pressure and
-warns near supported workers' native triggers; it neither changes model capacity
-nor replaces a worker automatically. Unknown or stale context remains explicit.
+Native Pi settings own compaction. The companion shows each worker's context use
+against its native trigger and how often it has compacted (`⇊N` in the widget);
+workers are told to keep working through compaction. It neither changes model
+capacity nor replaces a worker automatically. Unknown or stale context remains
+explicit.
 
 ## Goals
 
@@ -111,40 +117,22 @@ coordination, nothing is shown or read.
 
 A session's goals show one summary line below the editor: progress, attention,
 the task this session or its workers are on, and how many other goals it has.
-**Alt+G**, `/goal`, or a click on the summary line opens the goal popup over
-the session. It fits its content up to the available screen height. Its header
-shows progress, attention, and the goal's current result. Below it, the goal's
-leaf tasks sit beside the selected task's detail: status, claim (this Pi runtime
-or a named owner), blockers, holds from requests or held ancestors, result,
-branch and references, latest
-event, and live workers on it. The list follows the dependency graph that
-`dots task goal show` draws, prerequisites above dependents, with each task's
-group after its title. The popup includes completed and dropped tasks by default;
-**h** hides or shows them. **o** switches to the group outline; **Space** folds
-a group. **1/2/3**
-switch between this overview, the brief, and the full record; the footer lists
-the remaining keys. **Esc** or **Alt+G**
-closes it and returns to the editor with its draft intact. On macOS, Alt+G needs
-a terminal that sends Option as Alt; `/goal` always works.
+Clicking it or using `/goal` opens [Rex Goals](../home/rex/.config/rex/README.md)
+preselected to the relevant project and goal. **Cmd+G** opens the same global
+browser directly. Inspection does not follow, claim or start work, and preserves
+the Pi editor draft. Outside Rex, use `dots task goal show` for text inspection.
+Headless `/goal` returns a bounded text record without starting a model turn.
 
 ### Attention
 
 A goal's coordinator asks a person through `dots attention` requests; a request
-holds the tasks it names until the coordinator incorporates the answer. While one
-of the session's goals has an open request, one line below the editor names it and counts
-the others; a click opens this Pi session's **Attention** view. Its popup opens there
-whenever requests are outstanding, otherwise on **Work**. **←/→** switch views,
-except while typing an answer, where they move the cursor. The selected
-question and its options show at once and stay visible while typing. **Enter**
-chooses an option or sends typed text; **Esc** steps back, then closes. Closing
-never answers or withdraws a request, and unsent drafts stay for the session.
-If the coordinator replaced the question meanwhile, the popup shows the new one
-beside your unsent draft and applies nothing to it.
+holds the tasks it names until the coordinator incorporates the answer. A quiet
+line below the editor names outstanding requests in this session's exact
+active/followed scope. Clicking it opens [Rex Attention](../home/rex/.config/rex/README.md),
+the same global inbox as **Cmd+I**. Opening either global view does not change
+the session's follows, coordination or context scope.
 
-[Rex’s global inbox](../home/rex/.config/rex/README.md) opens with **Cmd+I**
-across registered projects, separately from this session-local popup.
-
-An answer is saved before the popup says so. Only the runtime that currently
+An answer is saved before the inbox says so. Only the runtime that currently
 coordinates the goal, and only while the goal is not held, receives a message
 to incorporate it; other sessions show the same requests without acting, and
 only the coordinator reports them to the terminal status. A held goal stays
@@ -153,7 +141,7 @@ paused whatever arrives. Answers given in chat are recorded through the
 Pi received as interactive input, separately from the agent's interpretation.
 Pi passes other extensions' input transforms on as interactive input, so the
 quote is the text as delivered, a cooperative record rather than proof of
-keystrokes; popup answers are the person's own selection. Each goal's
+keystrokes; inbox answers are the person's own selection. Each goal's
 context carries its current mandate with the human input it rests on, recent
 decisions, saved answers not yet incorporated, and open requests, read from the
 store rather than the transcript.

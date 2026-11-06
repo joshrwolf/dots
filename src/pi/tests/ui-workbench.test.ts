@@ -116,7 +116,7 @@ test('preview palettes validate the field they consume', () => {
   assert.doesNotThrow(() => pageBackground({export: {pageBg: '#ffffff'}}));
 });
 
-test('goal starts with a branching DAG and cycles every fixture in one scenario', () => {
+test('goal summary cycles every fixture without embedding another goal browser', () => {
   assert.equal(
     scenarios.filter(scenario => scenario.id.startsWith('goal')).length,
     1,
@@ -144,29 +144,13 @@ test('goal starts with a branching DAG and cycles every fixture in one scenario'
     }
     assert.equal(h.view.state.phase, 0);
     assert.doesNotMatch(plain(h.view.render(160)), /Core interface/);
+    const summary = plain(h.view.render(160));
     h.view.handleInput('E');
-    const open = plain(h.view.render(160));
-    assert.match(open, /popup open · alt\+g toggles/);
-    assert.match(
-      open,
-      /Goal result[\s\S]*Tasks[\s\S]*Claimed by this Pi runtime/,
+    assert.equal(
+      plain(h.view.render(160)).split('\n')[1],
+      summary.split('\n')[1],
     );
-    assert.match(open, /→ ● │ +Claimed +Update exports · Core interface · you/);
-    assert.match(open, /Build CLI adapter/);
-    assert.match(open, /Build SDK adapter/);
-    assert.match(open, /├───┬─╮/);
-    assert.doesNotMatch(open, /closed hidden/);
-    assert.match(
-      open,
-      /│ Coordina/,
-      'the popup is centered over the transcript',
-    );
-    assert.match(open, /◎ ! Unif/, 'and over the editor and summary line');
-    h.view.handleInput('o');
-    // Space belongs to the workbench's states; the outline folds elsewhere.
-    h.view.handleInput('\x1b[A');
-    h.view.handleInput('\x1b[A');
-    assert.match(plain(h.view.render(160)), /→ ▾ Core interface/);
+    assert.match(summary, /⌘G/);
   } finally {
     h.dispose();
   }
@@ -534,30 +518,5 @@ test('frame presentation is deterministic, theme-owned, and shows unknown contex
         footer.render(width).every(line => visibleWidth(line) <= width),
       );
     assert.match(plain(footer.render(8)), /95%/);
-  }
-});
-
-test('attention previews the shipping popup over coordinated and followed goals', () => {
-  const h = harness('attention');
-  try {
-    for (const expected of [
-      /Attention \(2\)[\s\S]*Should the first slice cover every project/,
-      /Saving/,
-      /\? Choose the rollout scope[\s\S]*! Choose the rollout scope/,
-      /Nothing needs your answer/,
-      /store is locked/,
-    ]) {
-      assert.match(plain(h.view.render(160)), expected);
-      h.view.handleInput(' ');
-    }
-    assert.equal(h.view.state.phase, 0);
-    h.view.handleInput('E');
-    h.view.handleInput('\x1b[B');
-    assert.match(
-      plain(h.view.render(160)),
-      /Release notes[\s\S]*Publish it as written\?/,
-    );
-  } finally {
-    h.dispose();
   }
 });

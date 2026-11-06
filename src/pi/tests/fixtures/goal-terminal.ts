@@ -13,7 +13,6 @@ import {
 } from '../../extensions/goal/source.ts';
 import {goalFixtures} from '../../dev/goals.ts';
 import {attentionStore, request} from '../attention-fixture.mjs';
-import {stripTerminalSequences} from '@earendil-works/pi-tui';
 import type {AttentionSource} from '../../extensions/goal/attention/source.ts';
 
 export default function (pi: ExtensionAPI): void {
@@ -89,10 +88,11 @@ export default function (pi: ExtensionAPI): void {
       },
     },
   };
-  let lastFrame = '';
+  let current: ExtensionContext | undefined;
   type Handler = (data: unknown, ctx: ExtensionContext) => unknown;
   // Every context the extension receives records its overlay's renders and close.
   const observe = <C extends ExtensionContext>(ctx: C): C => {
+    current = ctx;
     const ui: typeof ctx.ui = {
       ...ctx.ui,
       async custom(factory, options) {
@@ -116,20 +116,7 @@ export default function (pi: ExtensionAPI): void {
                 );
               }
               mark(`inspector-surface:${theme.name}`);
-              // What one frame shows: the view, the question, the answer field.
-              const text = stripTerminalSequences(lines.join('\n'));
-              const frame = [
-                /› \[ ← Attention/.test(text)
-                  ? 'attention'
-                  : /› \[ Work/.test(text)
-                    ? 'work'
-                    : 'panel',
-                /Should the first slice/.test(text) ? 'question' : '-',
-                /This project only/.test(text) ? 'options' : '-',
-                /Answer: (\S*)/.exec(text)?.[1] ?? '-',
-                /Answer saved: (.+?) +│/.exec(text)?.[1] ?? '-',
-              ].join(':');
-              if (frame !== lastFrame) mark(`frame:${(lastFrame = frame)}`);
+
               return lines;
             };
             return view;
@@ -278,6 +265,10 @@ export default function (pi: ExtensionAPI): void {
           : {},
       ).source as AttentionSource,
       tasks: undefined,
+      async openView(view, target) {
+        mark(`navigate:${view}:${target?.id ?? 'global'}`);
+        mark(`editor:${current?.ui.getEditorText() ?? ''}`);
+      },
     },
   );
   pi.on('session_start', () => mark('start'));

@@ -1,83 +1,16 @@
-import {closeSync, fstatSync, openSync, readSync} from 'node:fs';
+import {labelText} from '@joshrwolf/pi-kit/ui';
+import {SessionFollower} from './follow.ts';
+import {projectTranscript} from './projection.ts';
 
-// A bounded observation of recorded JSONL, never a second transcript parser.
-// Skip a partial leading record; the complete history remains in the session.
-const MAX_TAIL_BYTES = 1024 * 1024;
+/** Bytes of a session a tail reads; older records stay in the session file. */
+const TAIL_BYTES = 1024 * 1024;
 const MAX_LINES = 100;
-const clean = (text: string) =>
-  text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, ' ').trim();
-const object = (value: unknown): Record<string, unknown> | undefined =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 
-export interface TranscriptWindow {
-  messages: Record<string, unknown>[];
-  notice?: string;
-}
-
-/** Recent recorded messages, bounded before parsing; not an active-branch reconstruction. */
-export function transcriptWindow(
-  sessionFile: string | undefined,
-): TranscriptWindow {
-  if (!sessionFile)
-    return {messages: [], notice: 'session transcript not saved yet'};
-  let fd: number | undefined;
-  let source: string;
-  let omitted = false;
-  try {
-    fd = openSync(sessionFile, 'r');
-    const size = fstatSync(fd).size;
-    const start = Math.max(0, size - MAX_TAIL_BYTES);
-    const bytes = Buffer.alloc(Math.min(size, MAX_TAIL_BYTES));
-    const read = readSync(fd, bytes, 0, bytes.length, start);
-    source = bytes.subarray(0, read).toString('utf8');
-    if (start > 0) {
-      omitted = true;
-      const newline = source.indexOf('\n');
-      source = newline < 0 ? '' : source.slice(newline + 1);
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-      return {messages: [], notice: 'saved session transcript is missing'};
-    return {
-      messages: [],
-      notice: `transcript unavailable: ${clean((error as Error).message).slice(0, 256)}`,
-    };
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-  const messages: Record<string, unknown>[] = [];
-  let unreadable = false;
-  for (const raw of source.split('\n')) {
-    if (!raw) continue;
-    let entry: Record<string, unknown> | undefined;
-    try {
-      entry = object(JSON.parse(raw));
-    } catch {
-      unreadable = true;
-      continue;
-    }
-    const message = object(entry?.message);
-    if (!message) continue;
-    messages.push(message);
-    if (messages.length > MAX_LINES) {
-      messages.shift();
-      omitted = true;
-    }
-  }
-  const notice = [
-    omitted ? 'older or oversized records omitted' : '',
-    unreadable ? 'an incomplete or unreadable record skipped' : '',
-  ]
-    .filter(Boolean)
-    .join('; ');
-  return {
-    messages,
-    ...(notice ? {notice: `${notice}; inspect the session file`} : {}),
-  };
-}
-
+/**
+ * The latest assistant text, tool calls and tool results on a worker's active
+ * branch, as one-line text for model-facing status. It reads through the same
+ * follower and projection as the transcript view, from the end of the file.
+ */
 export function transcriptTail(
   sessionFile: string | undefined,
   limit = 20,
@@ -90,43 +23,37 @@ export function transcriptTail(
   const columns = Number.isFinite(width)
     ? Math.min(1000, Math.max(1, Math.floor(width)))
     : 160;
-  const {messages, notice} = transcriptWindow(sessionFile);
+  const follower = new SessionFollower(sessionFile, TAIL_BYTES);
+  follower.poll();
+  const {entries, truncated, notice} = follower.session;
   const lines: string[] = [];
-  for (const message of messages) {
-    const content = Array.isArray(message.content)
-      ? message.content.map(object).filter(block => block !== undefined)
-      : typeof message.content === 'string'
-        ? [{type: 'text', text: message.content}]
-        : [];
-    if (message.role === 'assistant') {
-      for (const block of content) {
-        if (block.type === 'toolCall') {
-          const args = block.arguments ? JSON.stringify(block.arguments) : '';
-          lines.push(
-            clean(`-> ${String(block.name ?? 'tool')} ${args}`).slice(
-              0,
-              columns,
-            ),
-          );
-        } else if (
-          block.type === 'text' &&
-          typeof block.text === 'string' &&
-          block.text.trim()
-        ) {
-          lines.push(clean(block.text).slice(0, columns));
-        }
-      }
-    } else if (message.role === 'toolResult') {
-      const text = content
-        .filter(
-          block => block.type === 'text' && typeof block.text === 'string',
-        )
-        .map(block => block.text)
-        .join(' ');
-      if (text.trim()) lines.push(`   <- ${clean(text)}`.slice(0, columns));
+  const add = (prefix: string, text: string) => {
+    const line = labelText(text);
+    if (line) lines.push(`${prefix}${line}`.slice(0, columns));
+  };
+  for (const item of projectTranscript(entries)) {
+    if (item.kind === 'assistant') {
+      for (const block of item.message.content)
+        if (block.type === 'text') add('', block.text);
+    } else if (item.kind === 'tool') {
+      const args = item.call.arguments
+        ? JSON.stringify(item.call.arguments)
+        : '';
+      add('', `-> ${item.call.name} ${args}`);
+      add(
+        '   <- ',
+        (item.result?.content ?? [])
+          .map(block => (block.type === 'text' ? block.text : ''))
+          .join(' '),
+      );
     }
     if (lines.length > MAX_LINES) lines.splice(0, lines.length - MAX_LINES);
   }
-  if (notice && lines.length < count) lines.unshift(`(${notice})`);
+  const notes = [
+    truncated ? 'older records omitted; inspect the session file' : '',
+    notice ?? '',
+  ].filter(Boolean);
+  if (notes.length && lines.length < count)
+    lines.unshift(`(${notes.join('; ')})`);
   return lines.slice(-count);
 }

@@ -1,6 +1,8 @@
 import type {ExtensionContext} from '@earendil-works/pi-coding-agent';
 import {inspectorHeight, inspectorOverlay} from '../../src/ui/inspector.ts';
 import {WorkerInspector, type WorkerInspectionSource} from './inspector.ts';
+import type {WorkerEvent} from './protocol.ts';
+import type {TranscriptOptions} from './transcript.ts';
 
 /** One session-bound inspection overlay. File reads and actions belong to the source. */
 export class WorkerInspection {
@@ -13,6 +15,7 @@ export class WorkerInspection {
   async open(
     ctx: ExtensionContext,
     source: WorkerInspectionSource,
+    transcript: TranscriptOptions,
     id?: string,
   ): Promise<void> {
     if (this.closed || this.opening) return;
@@ -31,11 +34,14 @@ export class WorkerInspection {
         this.close = finish;
         const view = new WorkerInspector(
           source,
-          theme,
-          bindings,
-          finish,
-          () => tui.requestRender(),
-          () => inspectorHeight(tui.terminal.rows),
+          {
+            tui,
+            theme,
+            bindings,
+            close: finish,
+            height: () => inspectorHeight(tui.terminal.rows),
+            transcript,
+          },
           id,
         );
         this.view = view;
@@ -57,10 +63,7 @@ export class WorkerInspection {
   refresh(): void {
     this.view?.refresh();
   }
-  record(
-    id: string,
-    record: {type: string; message?: unknown; assistantMessageEvent?: unknown},
-  ): void {
+  record(id: string, record: WorkerEvent): void {
     this.view?.record(id, record);
   }
 

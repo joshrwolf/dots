@@ -7,6 +7,8 @@
 - This directory is our private companion package. List resource entrypoints
   explicitly in `package.json`; do not also install discovery symlinks. Add
   extensions under `extensions/<name>/index.ts` for actual functionality.
+  `extensions/worker-view/` stays out of `pi.extensions`: the Rex worker view
+  loads it alone with `-e`.
 - Personal workflow/UI belongs here; consume upstream public APIs.
   Prefer an upstream release for compatibility fixes, not a local fork.
 - Read the installed Pi documentation before using its extension APIs. Declare
