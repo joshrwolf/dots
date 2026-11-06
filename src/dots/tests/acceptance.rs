@@ -592,9 +592,20 @@ mod attention_view {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "One terminal session checks persistence, navigation, and restoration."
+    )]
     fn answers_persist_from_a_real_terminal_and_closing_answers_nothing() {
         let home = Home::new();
         let (project, names, signin) = fixture(&home.catalog());
+        let brief = home
+            .0
+            .join("data/dots/workspaces")
+            .join(project.as_str())
+            .join("briefs/goal.md");
+        std::fs::create_dir_all(brief.parent().unwrap()).unwrap();
+        std::fs::write(&brief, "Neutral brief line.\n".repeat(201)).unwrap();
         let size = Winsize {
             ws_row: 24,
             ws_col: 60,
@@ -674,10 +685,18 @@ mod attention_view {
 
         // Mouse: the footer's Goals button, then Close in the drawer.
         click(&mut keyboard, 6, 169);
-        let at = screen.until(at, "projects");
+        let at = screen.until(at, "Browse");
         let at = screen.until(at, "refactor");
-        screen.until(at, "Dropped");
-        click(&mut keyboard, 30, 169);
+        let at = screen.until(at, "Dropped");
+        resize(&slave, 340, 260, &viewer);
+        send(&mut keyboard, "b");
+        let at = screen.until(at, "continues");
+        let at = screen.until(at, "201;");
+        let at = screen.until(at, "local");
+        let at = screen.until(at, "brief");
+        let at = screen.until(at, "file");
+        screen.until(at, "briefs/goal.md");
+        click(&mut keyboard, 30, 259);
 
         let deadline = Instant::now() + WATCHDOG;
         let status = loop {

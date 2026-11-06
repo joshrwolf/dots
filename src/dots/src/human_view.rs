@@ -286,7 +286,8 @@ impl Session {
                 if let Some(line) = document.next_line {
                     let _ = write!(
                         text,
-                        "\nBrief continues at line {line}; use dots memory read (see --help) for the remaining lines."
+                        "\nBrief continues at line {line}; read the local brief file at {} for the remaining lines.",
+                        document.path.display()
                     );
                 }
                 Ok(text)
