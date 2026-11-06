@@ -121,6 +121,8 @@ mod task_events {
                 .env("HOME", self.root.join("home"))
                 .env("XDG_DATA_HOME", self.root.join("data"))
                 .env("XDG_STATE_HOME", self.root.join("state"))
+                .env_remove("DOTS_AGENT_OWNER")
+                .env_remove("PI_SESSION_FILE")
                 .env_remove("PI_SESSION_ID")
                 .env_remove("CLAUDE_CODE_SESSION_ID")
                 .env_remove("CODEX_SESSION_ID");

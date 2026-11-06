@@ -10,7 +10,15 @@ use crate::{Result, directories, invalid, io, paths};
 #[derive(Debug)]
 #[must_use]
 pub struct MutationLock {
-    _file: File,
+    file: File,
+}
+
+impl Drop for MutationLock {
+    fn drop(&mut self) {
+        // Forked children can share this description until exec closes it.
+        // Explicit unlock releases our ownership; closing remains the fallback.
+        let _ = self.file.unlock();
+    }
 }
 
 impl MutationLock {
@@ -41,9 +49,34 @@ impl MutationLock {
             return Err(invalid("mutation lock must be a regular file"));
         }
         match file.try_lock() {
-            Ok(()) => Ok(Self { _file: file }),
+            Ok(()) => Ok(Self { file }),
             Err(TryLockError::WouldBlock) => Err(crate::Error::Busy),
             Err(TryLockError::Error(error)) => Err(io("acquire mutation lock", path, error)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::staged_directory::StagedDirectory;
+
+    #[test]
+    fn dropping_owner_releases_lock_even_with_an_inherited_description()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let directory = StagedDirectory::create(&std::env::temp_dir())?;
+        let path = directory.path().join("mutation.lock");
+        let owner = MutationLock::acquire(&path)?;
+        let inherited = owner.file.try_clone()?;
+        drop(owner);
+        let replacement = MutationLock::acquire(&path)?;
+        drop(inherited);
+        assert!(matches!(
+            MutationLock::acquire(&path),
+            Err(crate::Error::Busy)
+        ));
+        drop(replacement);
+        let _last = MutationLock::acquire(&path)?;
+        Ok(())
     }
 }
