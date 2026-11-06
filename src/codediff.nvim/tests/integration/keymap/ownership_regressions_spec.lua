@@ -278,7 +278,12 @@ do
   local tp, repo = open_explorer({})
   local ex = (lifecycle.get_session(tp).panel or {}).view
   ex.on_file_select({ path = "one.txt", group = "unstaged", status = "M", git_root = repo.dir })
-  wait_diff(tp)
+  assert(
+    vim.wait(10000, function()
+      return require("codediff.ui.refresh").shown(tp)
+    end, 50),
+    "selected file was not shown"
+  )
   local s = lifecycle.get_session(tp)
   local mod = s.modified_bufnr
   vim.api.nvim_set_current_win(vim.fn.bufwinid(mod))
