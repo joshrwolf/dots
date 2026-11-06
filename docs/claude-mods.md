@@ -21,7 +21,4 @@ Editor types are generated only with `--plugin-dir`, not skills discovery:
 claude --plugin-dir src/claude/<name>
 ```
 
-Commit public mods and discovery links in this repository. Private mods and
-their discovery entries belong to private source and deploy through private
-groups; they do not write links into public source. Names carry no ownership
-prefix.
+See [skill setup](skills.md) for shared discovery and public/private deployment.

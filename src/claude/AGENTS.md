@@ -23,7 +23,4 @@
 - Tests fake the host with hooks beneath the plugin (`process.spawn`,
   `tool.call`) and hand-authored data. Never commit captured transcripts,
   process output, or tokens; keep credentials in the tools a mod drives.
-- Commit mods and discovery entries in their public or private owning repository;
-  private groups deploy them without links inside public source. Names have no
-  ownership prefix. Mod names share the Claude skills namespace and cannot reuse
-  a skill's name.
+- Mod names share the Claude skills namespace and cannot reuse a skill's name.
