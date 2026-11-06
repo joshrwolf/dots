@@ -89,7 +89,7 @@ Applies to Pi extensions, Claude mods, skills, and `AGENTS.md` files.
 - Language follows the artifact: Rust for executables, repository and
   installation contracts, and automation logic; TypeScript/Node only inside
   Pi-based packages and Claude
-  packages, plus JavaScript configuration required by Finicky's host;
+  packages;
   Lua for Neovim and for Rex, whose configuration, actions, and
   `rex do` scripts own Rex automation. No Python. Shell appears only as
   one-line inline mise commands; a host-required executable shim must justify

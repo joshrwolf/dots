@@ -87,9 +87,7 @@ check with `pnpm exec eslint <paths>` or `pnpm exec prettier --check <paths>`;
 use `pnpm --filter <package> run typecheck` for a package's complete program.
 Pi's MJS unit tests, acceptance tests, fixtures and dev runner receive type-aware
 safety linting; full JS typechecking is opt-in with `// @ts-check`. Tooling JS is
-typechecked. Finicky configuration receives syntax/style checks only:
-`pnpm run check:finicky` parses it without evaluating it or opening a browser.
-These checks do not validate Finicky's host API or URL behavior.
+typechecked.
 
 Rustup selects Rust from `rust-toolchain.toml`; mise pins the other SDKs in
 `mise.toml`. Install rustup with its own installer (rustup.rs), not Homebrew or
