@@ -1780,10 +1780,11 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
   };
 
   pi.on('session_start', async (_event, ctx) => {
+    // First: a worker's only channel to its parent must not depend on later setup.
+    registerMessaging(ctx.mode !== 'tui');
     track(ctx);
     sessionId = ctx.sessionManager.getSessionId();
     refreshSpawn(ctx);
-    registerMessaging(ctx.mode !== 'tui');
     try {
       maxWidgetLines = loadConfig().widgetLines;
     } catch (error) {
