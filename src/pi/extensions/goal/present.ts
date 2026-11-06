@@ -202,7 +202,7 @@ export function inspection(
     );
   if (snapshot.overview.hidden_closed > 0)
     lines.push(
-      `${snapshot.overview.hidden_closed} closed task details hidden; h in the goal popup or dots task goal show ${goal.root.id} --all shows them.`,
+      `${snapshot.overview.hidden_closed} closed task details hidden; use C in Rex Goals or dots task goal show ${goal.root.id} --all shows them.`,
     );
   if (tasks.length > taskLimit)
     lines.push(

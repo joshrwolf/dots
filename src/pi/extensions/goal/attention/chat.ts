@@ -111,7 +111,7 @@ export async function recordChat(
   const quote = params.quote.trim();
   if (!humans.attests(quote))
     throw new Error(
-      'The quote does not appear verbatim in a recent interactive message in this session. Quote their exact words, or ask them to answer in the goal popup (Alt+G).',
+      'The quote does not appear verbatim in a recent interactive message in this session. Quote their exact words, or ask them to answer in Attention (Cmd+I).',
     );
   const provenance = `pi session ${agent.session} · interactive input`;
   const actor = {env: agentEnv(agent)};

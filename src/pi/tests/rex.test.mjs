@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import register, {rexContext} from '../extensions/rex/index.ts';
+import register, {rexContext, openRexView} from '../extensions/rex/index.ts';
 
 const orientation = "You're running in a Rex terminal.\n";
 
@@ -102,4 +102,71 @@ test('by default Rex runs through the host process runner with its own bounds', 
   // Output over the cap is incomplete; it adds nothing rather than a fragment.
   await handlers.get('session_start')({type: 'session_start'}, {});
   assert.deepEqual(sections(), {});
+});
+
+test('centralized views use exact optional goal identities and native Rex actions', async () => {
+  const calls = [];
+  const pi = {
+    exec: async (file, args) => {
+      calls.push({file, args});
+      return {stdout: '', stderr: '', code: 0, killed: false};
+    },
+  };
+  const env = {
+    REX_SESSION: 'session:fixture',
+    REX_BLOCK: 'block:fixture',
+    REX_BIN_DIR: '/fixture/bin',
+  };
+  await openRexView(pi, 'goals', {project: 'p-fixture', id: 't-123abc'}, env);
+  await openRexView(pi, 'attention', undefined, env);
+  assert.deepEqual(calls, [
+    {
+      file: '/fixture/bin/rex',
+      args: [
+        '--timeout',
+        '30s',
+        'do',
+        'goals',
+        '--json',
+        '--args',
+        '{"project":"p-fixture","goal":"t-123abc"}',
+      ],
+    },
+    {
+      file: '/fixture/bin/rex',
+      args: ['--timeout', '30s', 'do', 'attention', '--json', '--args', '{}'],
+    },
+  ]);
+  await assert.rejects(
+    openRexView(pi, 'goals', undefined, {}),
+    /interactive Rex terminal/,
+  );
+  await assert.rejects(
+    openRexView(pi, 'goals', undefined, {...env, DOTS_WORKER_ID: 'w-fixture'}),
+    /interactive Rex terminal/,
+  );
+  assert.equal(calls.length, 2, 'no fallback or worker navigation');
+  const failure = new Error('Rex unavailable');
+  await assert.rejects(
+    openRexView(
+      {
+        exec: async () => {
+          throw failure;
+        },
+      },
+      'goals',
+      undefined,
+      env,
+    ),
+    error => error === failure,
+  );
+  await assert.rejects(
+    openRexView(
+      {exec: async () => ({stdout: '', stderr: 'View unavailable', code: 1})},
+      'goals',
+      undefined,
+      env,
+    ),
+    /View unavailable/,
+  );
 });

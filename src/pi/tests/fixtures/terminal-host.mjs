@@ -623,7 +623,7 @@ async function workbenchFlow() {
     ['workers', 'Worker activity'],
     ['wake', 'Scheduled follow-up'],
     ['thinking', 'Thinking blocks'],
-    ['goal', 'Goal popup'],
+    ['goal', 'Unify the export interface'],
     ['edit', 'Recorded diff'],
     ['codemode', 'Nested tool activity'],
     ['inspection-shell', 'Workers'],
@@ -746,25 +746,6 @@ async function workbenchFlow() {
         () => shows('2/12 done') && shows('now: Update exports'),
         'summary line below the editor',
       );
-      send('E');
-      await wait(
-        () =>
-          state('goal', 0, true) &&
-          shows('Build CLI adapter') &&
-          shows('Build SDK adapter') &&
-          shows('├───┬─╮'),
-        'popup over the transcript lists the graph',
-      );
-      send('o');
-      await wait(() => shows('o graph'), 'outline in workbench');
-      send('\x1b[A');
-      send('\x1b[A');
-      await wait(
-        () => shows('→ ▾ Core interface'),
-        'select parent in workbench',
-      );
-      send('E');
-      await wait(() => state('goal', 0, false), 'panel hidden');
       const labels = [
         '1 worker',
         '1 asking',
@@ -896,205 +877,78 @@ async function workbenchFlow() {
 }
 
 async function goalFlow() {
-  // alt+g closes the popup.
-  const closePanel = async label => {
-    const before = countLine('inspector-closed');
-    send('\x1bg');
-    await wait(() => countLine('inspector-closed') > before, label);
-  };
-  const renders = () =>
-    lines().filter(line => line.startsWith('inspector-render:'));
   await wait(() => events().includes('start'), 'startup');
-  await sleep(500); // Let the editor mount before sending input in either host mode.
+  await sleep(500);
   await fresh('/goal focus t-123abc');
   await wait(
-    () =>
-      shows('Unified fixture exports') &&
-      shows('0/1 done') &&
-      shows('◎ ·') &&
-      shows('alt+g'),
+    () => shows('Unified fixture exports') && shows('⌘G'),
     'one-line goal summary',
   );
   if (mode === 'fullscreen') {
-    // Use the host's painted summary position, not a fixed screen row.
     const goalRow = paintedRows('Unified fixture exports').at(-1);
-    assert.ok(goalRow, 'goal summary has a fullscreen cursor position');
-    send('DRAFT_SURVIVES_INSPECTION');
-    await wait(() => shows('DRAFT_SURVIVES_INSPECTION'), 'editor draft');
-    const draftRow = paintedRows('DRAFT_SURVIVES_INSPECTION').at(-1);
-    assert.ok(draftRow, 'editor draft has a fullscreen cursor position');
-    assert.ok(
-      draftRow < goalRow,
-      `summary stays below the editor (draft ${draftRow}, goal ${goalRow})`,
-    );
+    assert.ok(goalRow);
+    send('DRAFT_SURVIVES_NAVIGATION');
+    await wait(() => shows('DRAFT_SURVIVES_NAVIGATION'), 'editor draft');
+    const draftRow = paintedRows('DRAFT_SURVIVES_NAVIGATION').at(-1);
+    assert.ok(draftRow < goalRow, 'summary stays below the editor');
     send(`\x1b[<0;4;${goalRow}M\x1b[<0;4;${goalRow}m`);
     await wait(
-      () => shows('1 overview') && shows('Reference fixture slice'),
-      'click opens the popup',
+      () => lines().includes('navigate:goals:t-123abc'),
+      'click routes to centralized Goals',
     );
-    const size = renders().at(-1)?.split(':').slice(1).map(Number);
-    assert.ok(size, 'popup render recorded');
-    assert.ok(
-      size[0] >= terminal.columns * 0.9,
-      `popup uses most of the width (${size[0]})`,
-    );
-    assert.ok(size[1] <= terminal.rows, `popup fits the screen (${size[1]})`);
-    assert.ok(size[1] < 20, `one task has no tall blank tail (${size[1]})`);
-    const before = countLine('inspector-closed');
-    send('\x1b');
-    await wait(
-      () => countLine('inspector-closed') > before,
-      'Esc closes the popup',
-    );
-    assert.ok(
-      lines().includes('editor:DRAFT_SURVIVES_INSPECTION'),
-      'editor draft survives inspection',
-    );
+    assert.ok(lines().includes('editor:DRAFT_SURVIVES_NAVIGATION'));
     send('\x15');
   }
-  assert.ok(!shows('Reference fixture slice'), 'no task rows below the editor');
-  send('KEEPS_EDITOR_DRAFT');
-  await wait(() => shows('KEEPS_EDITOR_DRAFT'), 'editor draft');
-  send('\x1bg');
-  await wait(
-    () => shows('Reference fixture slice') && shows('1 overview'),
-    'shortcut opens the popup',
-  );
-  send('2');
-  await wait(() => shows('Fixture brief'), 'popup takes input');
-  await closePanel('shortcut closes the popup');
-  assert.ok(
-    lines().includes('editor:KEEPS_EDITOR_DRAFT'),
-    'editor draft survives the popup',
-  );
-  send('\x15');
+  const navigated = countLine('navigate:goals:t-123abc');
   await fresh('/goal');
-  await wait(() => shows('1 overview'), 'focused panel');
-  send('2');
-  await wait(() => shows('Fixture brief'), 'brief body mounted');
-  send('\x1b[F');
-  await wait(() => shows('END_OF_GOAL_BRIEF'), 'scroll to end');
+  await wait(
+    () => countLine('navigate:goals:t-123abc') > navigated,
+    '/goal routes to the same view',
+  );
+  assert.ok(
+    !shows('Reference fixture slice'),
+    'Pi does not mount a duplicate task inspector',
+  );
   for (const [rows, columns] of [
     [24, 45],
     [48, 160],
   ]) {
     terminal.capture = '';
     terminal.resize(rows, columns);
-    await wait(() => shows('Unified fixture exports'), 'resize');
+    await wait(() => shows('Unified fixture'), 'summary resizes');
   }
-  await closePanel('panel closed');
   await fresh('/goal follow t-abcdef');
-  await wait(() => shows('Nested fixture goal'), 'nested summary');
+  await wait(() => shows('Nested fixture goal'), 'nested goal summary');
   await fresh('/goal show t-abcdef');
   await wait(
-    () =>
-      shows('Claimed') &&
-      shows('Waiting') &&
-      shows('Adapt consumers') &&
-      shows('Define shared types') &&
-      shows('all tasks') &&
-      !shows('▾'),
-    'nested panel lists the dependency graph',
+    () => lines().includes('navigate:goals:t-abcdef'),
+    'exact nested goal selection',
   );
-  send('h');
-  await wait(() => shows('2 closed hidden'), 'hide closed tasks on request');
-  // A short screen still gives the list its rows before the goal result.
-  terminal.capture = '';
-  terminal.resize(14, 120);
-  await wait(
-    () =>
-      shows('Update exports') &&
-      shows('Document the interface') &&
-      shows('Detail') &&
-      !/ 0 of /.test(plain()),
-    'short popup keeps the list',
-  );
-  terminal.capture = '';
-  const beforeRestore = renders().length;
-  terminal.resize(40, 120);
-  await wait(() => {
-    const size = renders().at(-1)?.split(':').slice(1).map(Number);
-    return (
-      renders().length > beforeRestore &&
-      size?.[0] === 108 &&
-      size[1] <= 34 &&
-      shows('h show closed')
-    );
-  }, 'restored content-sized popup');
-  send('o');
-  await wait(
-    () => shows('o graph') && shows('▾') && shows('Core interface'),
-    'group outline',
-  );
-  send('\x1b[A');
-  send(' ');
-  await wait(() => shows('▸') && shows('Core interface'), 'fold parent');
-  assert.ok(!shows('Adapt consumers'), 'folded parent hides its leaves');
-  send(' ');
-  await wait(
-    () => shows('Consumer migration') && shows('Adapt consumers'),
-    'unfold parent',
-  );
-  for (let i = 0; i < 5 && !/→ ▾ Consumer migration/.test(plain()); i++) {
-    send('\x1b[B');
-    await sleep(100);
-  }
-  await wait(
-    () => /→ ▾ Consumer migration/.test(plain()),
-    'select nested group',
-  );
-  send(' ');
-  await wait(
-    () => shows('▸') && shows('Consumer migration'),
-    'fold nested group',
-  );
-  assert.ok(!shows('Adapt consumers'), 'folded nested group hides its leaves');
-  send(' ');
-  await wait(() => shows('Adapt consumers'), 'unfold nested group');
-  send('h');
-  await wait(
-    () =>
-      shows('all tasks') &&
-      shows('Define shared types') &&
-      shows('Document shared types'),
-    'closed leaves on request',
-  );
-  await closePanel('nested panel closed');
   await fresh('/goal unfollow t-abcdef');
-  await wait(() => shows('Unfollowed t-abcdef'), 'remove hierarchy fixture');
   await fresh('/goal follow t-999999');
   await wait(
     () => shows('Second fixture goal') && shows('+1 more'),
     'two followed goals',
   );
-  await fresh('/goal');
+  await fresh('/goal show t-999999');
   await wait(
-    () => shows('Second fixture goal') && shows('Tab goal'),
-    'panel for the selected goal',
+    () => lines().includes('navigate:goals:t-999999'),
+    'exact selected goal',
   );
-  send('\t');
-  await wait(
-    () => shows('Unified fixture exports'),
-    'Tab selects the next goal',
-  );
-  await closePanel('selected panel closed');
   await fresh('/reload');
   await wait(
     () =>
-      count('start') >= 2 &&
-      shows('Unified fixture exports') &&
-      shows('+1 more'),
-    'reload followed set',
+      count('start') >= 2 && shows('Second fixture goal') && shows('+1 more'),
+    'reload preserves follows and selection',
   );
   await fresh('/goal unfollow t-999999');
-  await wait(
-    () => shows('Unfollowed t-999999') && shows('Unified fixture exports'),
-    'remove one follow',
-  );
   await fresh('/goal unfocus');
-  await wait(() => shows('All follows cleared'), 'unfocus');
+  await wait(() => shows('All follows cleared'), 'clear follows');
   await fresh('/goal show');
-  await wait(() => shows('No focused goal'), 'unfocused inspection');
+  await wait(
+    () => lines().includes('navigate:goals:global'),
+    'explicit inspection opens global browser without acquiring a goal',
+  );
   await fresh('/goal evidence t-456def 9');
   await wait(
     () => shows('Recorded task evidence') && shows('fixture-report'),
@@ -1124,114 +978,56 @@ async function goalFlow() {
   assert.equal(countLine('evidence-page:1'), 2);
   assert.equal(countLine('evidence-page:201'), 1);
   assert.equal(countLine('UNEXPECTED_PROVIDER_TURN'), 0);
+
   await fresh('/goal follow t-fedcba');
   await wait(
     () => shows('Completed fixture goal') && shows('1/1 done'),
-    'finished summary',
+    'completed summary',
   );
   await fresh('/goal show t-fedcba');
   await wait(
-    () => shows('Completed fixture slice') && shows('all tasks'),
-    'finished panel includes closed leaves',
+    () => lines().includes('navigate:goals:t-fedcba'),
+    'completed goal remains inspectable',
   );
-  await closePanel('finished panel closed');
-  await fresh('/goal unfollow t-fedcba');
-  await wait(() => shows('Unfollowed t-fedcba'), 'remove finished fixture');
-  await fresh('/goal follow t-123abc');
   for (const name of ['light', 'dark']) {
     await fresh(`/goal-fixture-theme ${name}`);
-    await wait(
-      () => lines().includes(`fixture-theme:${name}`),
-      `${name} stock theme`,
-    );
-    const before = countLine(`inspector-surface:${name}`);
-    await fresh('/goal show t-123abc');
-    await wait(
-      () => countLine(`inspector-surface:${name}`) > before,
-      `${name} popup colors verified`,
-    );
-    await closePanel(`${name} popup closed`);
+    await wait(() => lines().includes(`fixture-theme:${name}`), 'stock theme');
   }
+  assert.equal(countLine('UNEXPECTED_PROVIDER_TURN'), 0);
   await fresh('/goal-fixture-exit');
 }
 
 async function attentionFlow() {
-  const frames = () => lines().filter(line => line.startsWith('frame:'));
-  const framed = pattern => frames().some(line => pattern.test(line));
   await wait(() => events().includes('start'), 'startup');
   await sleep(500);
   await fresh('/goal focus t-123abc');
   await wait(
     () => shows('Needs your attention: Choose the rollout scope'),
-    'one quiet attention line',
+    'quiet attention cue',
   );
-  send('\x1bg');
-  await wait(
-    () => framed(/^frame:attention:question:options:/),
-    'popup opens on the question and its options',
-  );
-  send('\r'); // Into the options.
-  send('\x1b[B');
-  send('\x1b[B');
-  send('\r'); // Type a different answer.
-  for (const key of ['a', 'b', 'c', '\x1b[D', 'X']) send(key);
-  await wait(
-    () => framed(/^frame:attention:question:-:abXc:/),
-    'Left moves the cursor while typing and the question stays',
-  );
-  send('\x1b'); // Leave the field.
-  send('\x1b[C');
-  await wait(() => framed(/^frame:work:/), 'Right switches to Work');
-  send('\x1b[D');
-  await wait(
-    () => frames().at(-1)?.startsWith('frame:attention:question:options'),
-    'Left returns to Attention',
-  );
-  const closed = countLine('inspector-closed');
-  send('\x1bg');
-  await wait(() => countLine('inspector-closed') > closed, 'Alt+G closes');
-  assert.ok(!lines().some(line => /Answer saved/.test(line)));
-  const opened = renders().length;
-  send('\x1bg');
-  await wait(() => renders().length > opened, 'the popup reopens');
-  send('\r');
-  send('\x1b[B');
-  send('\x1b[B');
-  send('\r'); // The unsent draft returns to the answer field.
-  await wait(
-    () => frames().at(-1) === 'frame:attention:question:-:abXc:-',
-    'the draft survives closing',
-  );
-  for (const [rows, columns] of [
-    [16, 40],
-    [40, 120],
-  ]) {
-    const before = renders().length;
-    terminal.resize(rows, columns);
-    await wait(() => {
-      const size = renders().slice(before).at(-1)?.split(':').slice(1);
-      return !!size && Number(size[0]) <= columns && Number(size[1]) <= rows;
-    }, `popup fits ${columns}x${rows}`);
-    assert.ok(
-      frames().at(-1)?.startsWith('frame:attention:question:-:abXc'),
-      `question and draft stay at ${columns}x${rows}`,
+  if (mode === 'fullscreen') {
+    const row = paintedRows('Needs your attention:').at(-1);
+    assert.ok(row);
+    send('ATTENTION_PRESERVES_DRAFT');
+    await wait(
+      () => shows('ATTENTION_PRESERVES_DRAFT'),
+      'attention editor draft',
     );
+    send(`\x1b[<0;4;${row}M\x1b[<0;4;${row}m`);
+    await wait(
+      () => lines().includes('navigate:attention:global'),
+      'attention click routes to the shared inbox',
+    );
+    assert.ok(lines().includes('editor:ATTENTION_PRESERVES_DRAFT'));
+    send('\x15');
   }
-  send('\r');
+  await fresh('/goal');
   await wait(
-    () => framed(/:abXc$/),
-    'the answer is saved before the view says so',
+    () => lines().includes('navigate:goals:t-123abc'),
+    'Goals stays separate from Attention',
   );
-  await closePanel('popup closes');
+  assert.equal(countLine('UNEXPECTED_PROVIDER_TURN'), 0);
   await fresh('/goal-fixture-exit');
-  function renders() {
-    return lines().filter(line => line.startsWith('inspector-render:'));
-  }
-  async function closePanel(label) {
-    const before = countLine('inspector-closed');
-    send('\x1bg');
-    await wait(() => countLine('inspector-closed') > before, label);
-  }
 }
 
 async function viewerFlow() {

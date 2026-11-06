@@ -14,7 +14,7 @@ import {
 } from '@earendil-works/pi-tui';
 import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
 import {PriorityRow} from '@joshrwolf/pi-kit/ui';
-import {summaryRow} from '../extensions/goal/panel.ts';
+import {summaryRow} from '../extensions/goal/summary.ts';
 import {
   JobsWidget,
   jobsStatus,
@@ -122,7 +122,7 @@ test('combined persistent sections share unboxed chrome and a bounded default fo
       assert.equal(visibleWidth(lines[0]!), 80);
     }
     assert.equal(goals.render(80).length, 1, 'goals use one line');
-    assert.match(plain(goals.render(80)), /^◎ ! Unify.* alt\+g$/);
+    assert.match(plain(goals.render(80)), /^◎ ! Unify.* ⌘G$/);
     assert.doesNotMatch(plain(workerView.render(160)), /\d+ calls?|\d+ tok/);
     assert.ok(
       plain(jobs.render(160)).indexOf('unknown') <

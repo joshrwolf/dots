@@ -281,6 +281,15 @@ pub(crate) enum TaskCommand {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum GoalCommand {
+    /// Browse goals across registered projects without claiming or starting work
+    View {
+        /// Preselect an exact goal, including a completed one
+        #[arg(long, value_name = "PROJECT:GOAL")]
+        select: Option<String>,
+        /// Action the view runs when it closes
+        #[arg(long, value_name = "ACTION")]
+        dismiss: Option<String>,
+    },
     /// Create a root task with an existing brief
     Create {
         title: String,

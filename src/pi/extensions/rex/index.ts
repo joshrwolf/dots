@@ -60,6 +60,25 @@ const hostRun =
     return result.stdout;
   };
 
+/** Open the shared human view without changing session follows or coordination. */
+export async function openRexView(
+  pi: Pick<ExtensionAPI, 'exec'>,
+  view: 'goals' | 'attention',
+  goal: {project: string; id: string} | undefined,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  if (!env.REX_SESSION || !env.REX_BLOCK || env.DOTS_WORKER_ID)
+    throw new Error(
+      'This view needs an interactive Rex terminal. Use dots task goal show or dots attention list for text inspection.',
+    );
+  await rexDo(
+    pi,
+    view,
+    goal ? {project: goal.project, goal: goal.id} : {},
+    env,
+  );
+}
+
 /** Rex's orientation for this terminal, or undefined outside Rex or on any failure. */
 export async function rexContext(
   env: NodeJS.ProcessEnv,

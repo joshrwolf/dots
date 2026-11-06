@@ -13,8 +13,8 @@ use crate::goal_graph::{self, Graph, Node};
 pub(crate) struct Brief {
     relative: String,
     path: PathBuf,
-    document: Option<Document>,
-    diagnostic: Option<String>,
+    pub(crate) document: Option<Document>,
+    pub(crate) diagnostic: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -106,7 +106,7 @@ pub(crate) fn overview(project: &Project, overview: GoalOverview) -> Result<Over
 /// leaves, and a group's own prerequisites hold for every leaf below it.
 /// Closed prerequisites outside the drawing are satisfied and drop out; any
 /// other unknown prerequisite stays, so the drawing reports it.
-fn graph(tasks: &[Task], open_only: bool) -> Graph {
+pub(crate) fn graph(tasks: &[Task], open_only: bool) -> Graph {
     let by_id: HashMap<&str, &Task> = tasks.iter().map(|task| (task.id.as_str(), task)).collect();
     let shown = |task: &Task| !open_only || !task.status.is_closed();
     let leaves: Vec<&Task> = tasks

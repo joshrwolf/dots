@@ -1149,6 +1149,7 @@ A goal is a root task with a Markdown brief in the project workspace's briefs/ d
 Usage: dots task goal [OPTIONS] <COMMAND>
 
 Commands:
+  view          Browse goals across registered projects without claiming or starting work
   create        Create a root task with an existing brief
   attach        Attach or replace a root task's brief
   list          List unfinished goals with progress, most recently active first
@@ -1172,6 +1173,36 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+```
+
+## dots task goal view
+
+```text
+Browse goals across registered projects without claiming or starting work
+
+Usage: dots task goal view [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --select <PROJECT:GOAL>
+          Preselect an exact goal, including a completed one
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --dismiss <ACTION>
+          Action the view runs when it closes
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+  -h, --help
+          Print help
 ```
 
 ## dots task goal create

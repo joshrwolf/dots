@@ -103,10 +103,11 @@ recommendations and choice details. Write short plain-English paragraphs with
 normal word spacing. Ask the decision directly and explain only the relevant
 tradeoff; do not paste compressed agent notes, task histories or machine dumps.
 
-The global viewer and Pi's active-goal view read the same records. Opening,
-closing, filtering, dismissing a notification or following a goal does not
-answer a request. Saving a response does not start a coordinator. An empty
-local goal set stays empty; it must not silently become a project/global inbox.
+Rex owns the human Goals browser (Cmd+G) and Attention inbox (Cmd+I). Pi's
+clickable cues open those same views; its exact active/followed scope still owns
+local context and delivery. Explicitly opening a global browser does not broaden
+that session scope. Opening, closing, filtering or following does not answer a
+request or acquire coordination. Saving a response does not start a coordinator.
 
 An explicit UI answer binds to its immutable question. Ordinary chat is also
 valid: preserve the relevant human input and source separately from your

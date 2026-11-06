@@ -5,7 +5,7 @@ import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
 import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
 import {PriorityRow} from '@joshrwolf/pi-kit/ui';
 import {compactSummary, inspection} from '../extensions/goal/present.ts';
-import {GoalPanel, summaryRow} from '../extensions/goal/panel.ts';
+import {summaryRow} from '../extensions/goal/summary.ts';
 import {orientation} from '../extensions/goal/context.ts';
 import {snapshot, task} from './goal-fixture.mjs';
 initTheme('dark', false);
@@ -14,16 +14,6 @@ const summary = (views, selected, theme) => {
   const row = new PriorityRow();
   row.update(summaryRow(views, selected ?? views[0].focus.id), theme);
   return row;
-};
-const panel = (view, theme, close = () => {}, bindings = () => false) => {
-  const result = new GoalPanel(
-    {matches: bindings},
-    {close, cycle() {}},
-    () => {},
-    () => 40,
-  );
-  result.setGoal({view, goals: 1}, theme);
-  return result;
 };
 
 test('orientation summarizes maximum evidence sets while explicit inspection retains exact selections', () => {
@@ -110,15 +100,8 @@ test('goal views use shared components, fit widths and sanitize terminal control
   for (const name of ['dark', 'light']) {
     const theme = getThemeByName(name);
     const widget = summary([model], undefined, theme);
-    let closes = 0;
-    const inspector = panel(
-      model,
-      theme,
-      () => closes++,
-      (key, action) => key === '\r' && action === 'tui.select.confirm',
-    );
     for (const width of [1, 2, 10, 40, 80, 160]) {
-      for (const view of [widget, inspector]) {
+      for (const view of [widget]) {
         const lines = view.render(width);
         assert.ok(
           lines.every(line => visibleWidth(line) <= width),
@@ -132,8 +115,6 @@ test('goal views use shared components, fit widths and sanitize terminal control
       /focus only|0 held|0 dropped|PR recorded/,
     );
     assert.match(plain(widget.render(160)), /0\/1/);
-    inspector.handleInput('\r');
-    assert.equal(closes, 1);
   }
 });
 
@@ -174,15 +155,6 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
   const line = () => plain(summary([model], undefined, theme).render(200));
   assert.match(line(), /1\/5 done · 1 held · partial · now: Reference/);
   assert.equal(summary([model], undefined, theme).render(160).length, 1);
-  const browser = panel(model, theme);
-  const tree = plain(browser.render(120));
-  assert.match(tree, /○ Open +Released/);
-  assert.match(tree, /→ ● Claimed +Reference · fixture/);
-  assert.match(tree, /Claimed by fixture/);
-  assert.doesNotMatch(tree, /Project:|Recorded at:|t-aa|Brief content:/);
-  assert.match(tree, /1 closed hidden/);
-  browser.handleInput('\x1b[B');
-  assert.match(plain(browser.render(120)), /Needs: Reference · open/);
   value.overview.progress.claimed = 2;
   assert.doesNotMatch(
     line(),
@@ -193,23 +165,6 @@ test('goal overview distinguishes claims, dependencies, held work and history wi
     compactSummary({...model, error: 'offline'}),
     'unavailable · /goal refresh',
   );
-  let redraws = 0;
-  const inspector = new GoalPanel(
-    {matches: () => false},
-    {close() {}, cycle() {}},
-    () => redraws++,
-    () => 20,
-  );
-  inspector.setGoal({view: model, goals: 1}, theme);
-  assert.doesNotMatch(plain(inspector.render(120)), /Accepted design|Project:/);
-  inspector.handleInput('2');
-  assert.match(plain(inspector.render(120)), /Accepted design/);
-  assert.doesNotMatch(plain(inspector.render(120)), /\*\*one\*\*/);
-  inspector.handleInput('3');
-  assert.match(plain(inspector.render(120)), /Project:/);
-  inspector.handleInput('1');
-  assert.match(plain(inspector.render(120)), /◌ Waiting +Consumer/);
-  assert.equal(redraws, 4, 'setGoal and each key request one render');
 });
 
 test('followed overview keeps selection visible and reports display omissions without hiding context', () => {
@@ -259,11 +214,6 @@ test('singleton brief warnings remain visible after another goal is removed', ()
       plain(summary([view], view.focus.id, theme).render(160)),
       /brief warning/,
     );
-    const inspector = panel(view, theme);
-    const lead = warning.split(/[;:]/)[0].toLowerCase();
-    assert.ok(plain(inspector.render(160)).includes(`${lead} · 2 brief`));
-    inspector.handleInput('2');
-    assert.ok(plain(inspector.render(160)).includes(warning));
   }
 });
 
@@ -306,9 +256,6 @@ test('review results and references remain explicit, bounded, and separate from 
   );
   assert.match(content, /1 review/);
   assert.equal(child.references.length, 10);
-  const shown = plain(panel(view, getThemeByName('dark')).render(160));
-  assert.match(shown, /◇ Review +Reference slice · reviewer/);
-  assert.doesNotMatch(shown, /Hierarchy incomplete/);
 });
 
 test('orientation limits task detail, retains the brief and reports omissions and unknowns', () => {
@@ -401,10 +348,6 @@ test('slice inspection shows only the latest recorded event, labeled as history 
     task('t-cc', 'Created only', {last_event: event('t-cc', 'created', null)}),
   ];
   assert.doesNotMatch(inspection(model), /Latest event|recent events/);
-  assert.doesNotMatch(
-    plain(panel(model, getThemeByName('dark')).render(160)),
-    /Latest event/,
-  );
 });
 
 test('bounded previews stop at grapheme boundaries', () => {

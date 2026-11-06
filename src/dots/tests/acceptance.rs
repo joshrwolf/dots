@@ -675,7 +675,7 @@ mod attention_view {
         let at = screen.until(at, "Goals");
         let at = screen.until(at, "refactor");
         screen.until(at, "Dropped");
-        click(&mut keyboard, 14, 169);
+        click(&mut keyboard, 30, 169);
 
         let deadline = Instant::now() + WATCHDOG;
         let status = loop {

@@ -31,8 +31,6 @@ one/three/eight-worker fleets, compact outcomes, and long questions. Active work
 use two lines; finished workers use one. Worker model, effort, and horizontal
 context meters share the primary session’s right-aligned metadata columns.
 Space advances these cases.
-`/ui-lab attention` previews the goal popup's Attention view over in-memory
-requests; Space steps through its states and E passes keys to the popup.
 `/ui-lab inspection-shell` previews the shipping framed Panel and native picker
 at wide and narrow widths in light/dark themes. Ctrl+Space cycles its fixture
 states without taking picker keys. Esc closes; Ctrl+N/P switches scenarios.
@@ -51,14 +49,9 @@ job completions, worker replies, wakes, and an otherwise unstyled tool share one
 transcript. `/ui-lab thinking` previews summaries, structured detail, and unfinished
 streaming Markdown through Pi’s real assistant component; **E** toggles its native
 thinking disclosure. `/ui-lab goal` shows the goal summary line below the native editor.
-**E** opens the goal popup centered over the transcript and editor, at the size
-Alt+G opens it in a session. It starts with a 12-task DAG: shared prerequisites,
-parallel CLI and SDK branches, and joins at migration, packaging, and publication.
-All tasks are visible by default; **h** hides or shows closed tasks.
-In the popup, **1/2/3**, **h**, **o**, **↑**/**↓** and
-**←**/**→** work as in a session; Space remains the workbench state switch and
-cycles running, asking and quiet workers, complete and partial trees, multiple
-follows, held work, unavailable data, and brief warnings. The **frame**
+Space cycles its summary fixtures: branching task data, running, asking and quiet workers,
+complete and partial trees, multiple follows, held work, unavailable data and brief warnings.
+The **frame**
 scenario starts with a live assigned goal, asking/running workers, a job, and an update notice
 together below the native editor. Press **B** to see them. **Space** also reaches
 crowded and settled activity states, plus context warnings, unknown usage, long

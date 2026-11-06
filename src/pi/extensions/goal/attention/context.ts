@@ -131,7 +131,7 @@ export function attentionContext(
   if (omitted) lines.push(`${omitted} more requests not shown.`);
   if (open.length)
     lines.push(
-      'A person answers in the goal popup (Alt+G) or in chat. Never bind a chat message to a request without their words; record chat answers with attention_record_chat.',
+      'A person answers in Attention (Cmd+I) or in chat. Never bind a chat message to a request without their words; record chat answers with attention_record_chat.',
     );
   lines.push(`Requests: dots attention list ${scope}`);
   return lines.join('\n');
