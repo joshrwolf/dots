@@ -688,6 +688,10 @@ mod attention_view {
         let at = screen.until(at, "Browse");
         let at = screen.until(at, "refactor");
         let at = screen.until(at, "Dropped");
+        send(&mut keyboard, "/zzzzno-match");
+        let at = screen.until(at, "match");
+        send(&mut keyboard, "\x1b");
+        let at = screen.until(at, "Browse");
         resize(&slave, 45, 24, &viewer);
         let at = screen.until(at, "Browse");
         resize(&slave, 340, 260, &viewer);

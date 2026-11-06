@@ -207,8 +207,11 @@ impl Session {
                 .and_then(|store| Ok(store.request(&project, &id)?));
             self.viewer.reconciled(&id, result);
         }
-        if work && self.viewer.goal.is_none() {
-            self.viewer.select_goal(0);
+        if work
+            && self.viewer.goal.is_none()
+            && let Some(&index) = self.viewer.goal_matches.first()
+        {
+            self.viewer.select_goal(index);
         }
         self.load_overview();
         if (!self.viewer.requests().is_empty() || (work && !self.viewer.goals().is_empty()))
@@ -360,7 +363,8 @@ impl Session {
         match effect {
             Effect::None => {}
             Effect::Close => return false,
-            Effect::Overview => self.reload(),
+            Effect::Overview => self.load_overview(),
+            Effect::Refresh => self.reload(),
             Effect::Open {
                 owner,
                 session,
@@ -587,8 +591,10 @@ enum Focus {
 enum Effect {
     None,
     Close,
-    /// The selected Work goal changed.
+    /// Read only the selected goal or document.
     Overview,
+    /// The global goal set or view scope changed.
+    Refresh,
     Open {
         owner: String,
         session: String,
@@ -725,6 +731,7 @@ enum Target {
     Back,
     Close,
     Goal(usize),
+    GoalFilter,
     Task(String),
     Control(KeyCode),
     /// A scrollable region; scrolling moves its selection or text.
@@ -788,6 +795,9 @@ struct Viewer {
     notice: Option<Notice>,
     context_scroll: usize,
     goal: Option<(Project, String)>,
+    goal_query: Draft,
+    searching_goals: bool,
+    goal_matches: Vec<usize>,
     overview: Option<(String, std::result::Result<GoalOverview, String>)>,
     task_scroll: usize,
     all_goals: bool,
@@ -833,6 +843,9 @@ impl Viewer {
             notice: None,
             context_scroll: 0,
             goal: None,
+            goal_query: Draft::default(),
+            searching_goals: false,
+            goal_matches: Vec::new(),
             overview: None,
             task_scroll: 0,
             all_goals: false,
@@ -1029,6 +1042,7 @@ impl Viewer {
                 .map(|goal| (goal.project.clone(), goal.goal.clone()));
             self.task_scroll = 0;
         }
+        self.filter_goals();
     }
 
     fn drafted(&self, id: &str) -> bool {
@@ -1311,14 +1325,67 @@ impl Viewer {
         self.selected_task = Some(self.task_positions[at].0.clone());
     }
 
-    fn move_goal(&mut self, delta: isize) -> Effect {
-        let goals = self.goals();
-        if goals.is_empty() {
+    fn search_goals(&mut self) -> Effect {
+        self.searching_goals = true;
+        self.tasks_focused = false;
+        self.goal_page = GoalPage::Tasks;
+        self.task_scroll = 0;
+        Effect::Overview
+    }
+
+    fn filter_goals(&mut self) -> Effect {
+        use nucleo::pattern::{CaseMatching, Normalization, Pattern};
+        use nucleo::{Config, Matcher, Utf32String};
+
+        let mut pattern = Pattern::default();
+        pattern.reparse(
+            &self.goal_query.text,
+            CaseMatching::Smart,
+            Normalization::Smart,
+        );
+        let mut matcher = Matcher::new(Config::DEFAULT);
+        let mut ranked = Vec::new();
+        for (index, goal) in self.goals().iter().enumerate() {
+            let text = Utf32String::from(format!("{} {}", goal.project_name, goal.title));
+            if let Some(score) = pattern.score(text.slice(..), &mut matcher) {
+                ranked.push((score, index));
+            }
+        }
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        self.goal_matches = ranked.into_iter().map(|(_, index)| index).collect();
+        if self
+            .goal_index()
+            .is_some_and(|index| self.goal_matches.contains(&index))
+        {
             return Effect::None;
         }
-        let at = self.goal_index().unwrap_or(0);
-        let next = at.saturating_add_signed(delta).min(goals.len() - 1);
-        self.select_goal(next)
+        if let Some(&index) = self.goal_matches.first() {
+            return self.select_goal(index);
+        }
+        self.goal = None;
+        self.overview = None;
+        self.document = None;
+        self.selected_task = None;
+        self.task_positions.clear();
+        Effect::None
+    }
+
+    fn move_goal(&mut self, delta: isize) -> Effect {
+        if self.goal_matches.is_empty() {
+            return Effect::None;
+        }
+        let at = self
+            .goal_index()
+            .and_then(|index| {
+                self.goal_matches
+                    .iter()
+                    .position(|matched| *matched == index)
+            })
+            .unwrap_or(0);
+        let next = at
+            .saturating_add_signed(delta)
+            .min(self.goal_matches.len() - 1);
+        self.select_goal(self.goal_matches[next])
     }
 
     fn goal_index(&self) -> Option<usize> {
@@ -1364,13 +1431,20 @@ impl Viewer {
                     self.task_scroll = 0;
                 }
             }
-            return Effect::Overview;
         }
-        Effect::None
+        if changed {
+            Effect::Refresh
+        } else {
+            Effect::None
+        }
     }
 
     /// Esc: one step back, closing from the request list.
     fn back(&mut self) -> Effect {
+        if self.tab == Tab::Work && !self.tasks_focused && !self.goal_query.text.is_empty() {
+            self.goal_query = Draft::default();
+            return self.filter_goals();
+        }
         match (self.tab, self.focus) {
             (Tab::Work, _) if self.goal_page != GoalPage::Tasks => {
                 self.goal_page = GoalPage::Tasks;
@@ -1464,6 +1538,32 @@ impl Viewer {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Effect::Close;
         }
+        if self.tab == Tab::Work && self.searching_goals {
+            match key.code {
+                KeyCode::Esc => {
+                    self.goal_query = Draft::default();
+                    self.searching_goals = false;
+                    return self.filter_goals();
+                }
+                KeyCode::Enter => {
+                    self.searching_goals = false;
+                    self.tasks_focused = true;
+                }
+                KeyCode::Up => return self.move_goal(-1),
+                KeyCode::Down => return self.move_goal(1),
+                _ => {
+                    let before = self.goal_query.text.clone();
+                    self.goal_query.edit(key);
+                    if self.goal_query.text != before {
+                        return self.filter_goals();
+                    }
+                }
+            }
+            return Effect::None;
+        }
+        if self.tab == Tab::Work && key.code == KeyCode::Char('/') {
+            return self.search_goals();
+        }
         if self.tab == Tab::Attention && self.focus == Focus::Text {
             match key.code {
                 KeyCode::Esc => self.focus = Focus::Choices,
@@ -1535,7 +1635,7 @@ impl Viewer {
                 KeyCode::Char('a') => {
                     self.all_goals = !self.all_goals;
                     self.goal = None;
-                    return Effect::Overview;
+                    return Effect::Refresh;
                 }
                 KeyCode::Left => {
                     self.tasks_focused = false;
@@ -1608,6 +1708,10 @@ impl Viewer {
     }
 
     fn paste(&mut self, text: &str) -> Effect {
+        if self.tab == Tab::Work && self.searching_goals {
+            self.goal_query.insert(text);
+            return self.filter_goals();
+        }
         if self.tab == Tab::Attention
             && self.focus == Focus::Text
             && let Some(id) = self.selected.clone()
@@ -1699,10 +1803,13 @@ impl Viewer {
             Target::Back => return self.back(),
             Target::Close => return Effect::Close,
             Target::Goal(index) => {
+                self.searching_goals = false;
                 self.tasks_focused = false;
                 return self.select_goal(index);
             }
+            Target::GoalFilter => return self.search_goals(),
             Target::Task(id) => {
+                self.searching_goals = false;
                 let repeated = self.tasks_focused && self.selected_task.as_ref() == Some(&id);
                 self.selected_task = Some(id);
                 self.tasks_focused = true;
@@ -1712,7 +1819,10 @@ impl Viewer {
                     return Effect::Overview;
                 }
             }
-            Target::Control(key) => return self.key(KeyEvent::new(key, KeyModifiers::NONE)),
+            Target::Control(key) => {
+                self.searching_goals = false;
+                return self.key(KeyEvent::new(key, KeyModifiers::NONE));
+            }
             Target::Region(_) => {}
         }
         Effect::None
@@ -2022,10 +2132,7 @@ impl Viewer {
         }
         let cursor = match self.tab {
             Tab::Attention => self.attention(buffer, body),
-            Tab::Work => {
-                self.work(buffer, body);
-                None
-            }
+            Tab::Work => self.work(buffer, body),
         };
         self.footer(buffer, footer);
         if let Some(position) = cursor {
@@ -2068,7 +2175,11 @@ impl Viewer {
     fn hints(&self) -> &'static str {
         match (self.tab, self.focus) {
             (Tab::Work, _) => {
-                "←/→ goals/tasks · ↑/↓ select · Enter details · Space fold · PgUp/PgDn scroll · I inbox"
+                if self.searching_goals {
+                    "Type to filter · ↑/↓ select · Enter explore · Esc clear"
+                } else {
+                    "/ filter · ←/→ goals/tasks · ↑/↓ select · Enter details · Space fold · PgUp/PgDn scroll · I inbox"
+                }
             }
             (_, Focus::Text) => "Enter send · Esc back · ←/→ edit answer",
             (_, Focus::Context) => "↑/↓ scroll · Enter/Esc back",
@@ -2546,32 +2657,64 @@ impl Viewer {
         }
     }
 
-    fn work(&mut self, buffer: &mut Buffer, area: Rect) {
-        let goals = self.goals();
-        if goals.is_empty() {
-            let mut rows = Rows::new(buffer, area);
-            let message = if self.nothing_selected {
-                "No goals are selected."
-            } else if self.list.is_none() {
-                "Nothing can be shown until the store can be read."
-            } else {
-                "No goals match this view. A includes completed goals."
-            };
-            rows.text(message, bold());
-            return;
+    fn goal_filter_header(
+        &mut self,
+        rows: &mut Rows<'_>,
+        count: usize,
+        total: usize,
+        at: usize,
+    ) -> Option<Position> {
+        let mut cursor = None;
+        if self.searching_goals || !self.goal_query.text.is_empty() {
+            let prefix = fit(
+                &format!("Filter {count}/{total}: "),
+                rows.width().saturating_sub(1),
+            );
+            let (query, caret) = window(
+                &self.goal_query,
+                rows.width().saturating_sub(width(&prefix)),
+            );
+            if let Some(row) = rows.line(&Line::from(Span::styled(
+                format!("{prefix}{query}"),
+                accent(self.palette),
+            ))) {
+                self.hits.push((row, Target::GoalFilter));
+                if self.searching_goals {
+                    cursor = Some(Position::new(
+                        row.x + u16::try_from(width(&prefix) + caret).unwrap_or(u16::MAX),
+                        row.y,
+                    ));
+                }
+            }
+        } else if let Some(row) = rows.line(&Line::from(Span::styled(
+            format!(
+                "Browse · {}/{count} · / Filter",
+                if count == 0 { 0 } else { at + 1 }
+            ),
+            accent(self.palette),
+        ))) {
+            self.hits.push((row, Target::GoalFilter));
         }
-        if self.goal.is_some() && self.goal_index().is_none() {
+        cursor
+    }
+
+    fn work(&mut self, buffer: &mut Buffer, area: Rect) -> Option<Position> {
+        let total = self.goals().len();
+        let selected = self.goal_index();
+        if self.goal.is_some() && selected.is_none() {
             Rows::new(buffer, area).text(
                 "The selected goal is unavailable. Nothing else was selected.",
                 warning(self.palette),
             );
-            return;
+            return None;
         }
-        let at = self.goal_index().unwrap_or(0);
-        let entries: Vec<(Span<'static>, String)> = goals
+        let entries: Vec<(usize, Span<'static>, String)> = self
+            .goal_matches
             .iter()
-            .map(|goal| {
+            .map(|&index| {
+                let goal = &self.goals()[index];
                 (
+                    index,
                     goal_glyph(self.palette, goal),
                     format!(
                         "{} · {}",
@@ -2582,28 +2725,33 @@ impl Viewer {
             })
             .collect();
         let count = entries.len();
+        let at = selected
+            .and_then(|index| {
+                self.goal_matches
+                    .iter()
+                    .position(|matched| *matched == index)
+            })
+            .unwrap_or(0);
         let list_height = (area.height / 3)
             .max(2)
-            .min(u16::try_from(count.saturating_add(1)).unwrap_or(u16::MAX))
+            .min(u16::try_from(count.max(1).saturating_add(1)).unwrap_or(u16::MAX))
             .min(area.height.saturating_sub(2));
         let list = Rect::new(area.x, area.y, area.width, list_height);
         self.hits.push((list, Target::Region(Region::Goals)));
         let mut rows = Rows::new(buffer, list);
-        rows.text(
-            &format!("Browse · {}/{count}", at + 1),
-            accent(self.palette),
-        );
+        let cursor = self.goal_filter_header(&mut rows, count, total, at);
         let visible = rows.left().max(1);
         let first = at.saturating_sub(visible - 1);
-        for (index, (glyph, title)) in entries.iter().enumerate().skip(first).take(visible) {
-            let (marker, style) = row_style(self.palette, index == at, !self.tasks_focused);
+        for (index, glyph, title) in entries.iter().skip(first).take(visible) {
+            let (marker, style) =
+                row_style(self.palette, selected == Some(*index), !self.tasks_focused);
             let title = fit(title, rows.width().saturating_sub(4));
             if let Some(row) = rows.line(&Line::from(vec![
                 marker,
                 glyph.clone(),
                 Span::styled(title, style),
             ])) {
-                self.hits.push((row, Target::Goal(index)));
+                self.hits.push((row, Target::Goal(*index)));
             }
         }
         Block::new()
@@ -2616,7 +2764,21 @@ impl Viewer {
             area.width,
             area.bottom().saturating_sub(list.bottom() + 1),
         );
-        self.goal_detail(buffer, detail, at);
+        if count == 0 {
+            let message = if !self.goal_query.text.is_empty() && count == 0 {
+                "No goals match this filter. Esc clears it."
+            } else if self.nothing_selected {
+                "No goals are selected."
+            } else if self.list.is_none() {
+                "Nothing can be shown until the store can be read."
+            } else {
+                "No goals match this view. A includes completed goals."
+            };
+            Rows::new(buffer, detail).text(message, muted(self.palette));
+        } else if let Some(index) = selected {
+            self.goal_detail(buffer, detail, index);
+        }
+        cursor
     }
 
     #[expect(
@@ -3380,11 +3542,11 @@ mod tests {
     #[test]
     fn goals_opens_with_g_and_escape_closes_without_answering() {
         let mut view = viewer(two());
-        assert_eq!(press(&mut view, KeyCode::Char('g')), Effect::Overview);
+        assert_eq!(press(&mut view, KeyCode::Char('g')), Effect::Refresh);
         assert_eq!(view.tab, Tab::Work);
         assert_eq!(press(&mut view, KeyCode::Char('g')), Effect::None);
         assert_eq!(view.tab, Tab::Work);
-        assert_eq!(press(&mut view, KeyCode::Char('i')), Effect::None);
+        assert_eq!(press(&mut view, KeyCode::Char('i')), Effect::Refresh);
         assert_eq!(view.tab, Tab::Attention);
         press(&mut view, KeyCode::Enter);
         press(&mut view, KeyCode::Down);
@@ -3811,7 +3973,7 @@ mod tests {
         let mut view = viewer(two());
         let shown = screen(&mut view, 120, 30);
         let (column, row) = locate(&shown, "[ G Goals ]");
-        assert_eq!(click(&mut view, column + 1, row), Effect::Overview);
+        assert_eq!(click(&mut view, column + 1, row), Effect::Refresh);
         assert_eq!(view.tab, Tab::Work);
         let shown = screen(&mut view, 120, 30);
         let (column, row) = locate(&shown, "[ Back ]");
@@ -4206,6 +4368,116 @@ mod tests {
             );
             assert_eq!(view.goal_index(), Some(19));
         }
+    }
+
+    #[test]
+    fn goal_search_is_fuzzy_across_project_and_title_without_filtering_attention() {
+        let mut api = goal(vec![request("r-1", "Pick exports", &[])], None);
+        api.title = "Refactor export API".into();
+        api.project_name = "tooling".into();
+        let mut notes = goal(Vec::new(), None);
+        notes.goal = "t-notes".into();
+        notes.title = "Write release notes".into();
+        notes.project_name = "journal".into();
+        let mut unicode = goal(Vec::new(), None);
+        unicode.goal = "t-unicode".into();
+        unicode.title = "Résumé 界 boundary".into();
+        let mut view = viewer(list(vec![api, notes, unicode]));
+        press(&mut view, KeyCode::Char('g'));
+        assert_eq!(press(&mut view, KeyCode::Char('/')), Effect::Overview);
+        type_text(&mut view, "tlng rfxapi");
+        assert_eq!(view.goal_matches, [0]);
+        assert_eq!(
+            view.requests().len(),
+            1,
+            "filtering never hides canonical attention"
+        );
+        let shown = screen(&mut view, 120, 24);
+        assert!(shown.contains("Filter 1/3: tlng rfxapi"), "{shown}");
+        press(&mut view, KeyCode::Char('u'));
+        assert_eq!(view.goal_matches, [0_usize; 0]);
+        let shown = screen(&mut view, 45, 16);
+        assert!(shown.contains("No goals match"), "{shown}");
+        assert!(view.goal.is_none());
+        type_text(&mut view, "gidhoab");
+        assert_eq!(view.goal_page, GoalPage::Tasks);
+        assert!(!view.all_goals);
+        assert_eq!(view.tab, Tab::Work);
+        press(&mut view, KeyCode::Esc);
+        assert_eq!(view.goal_matches, [0, 1, 2]);
+        let (x, y) = locate(&screen(&mut view, 120, 24), "/ Filter");
+        assert_eq!(click(&mut view, x, y), Effect::Overview);
+        view.paste("resume界");
+        assert_eq!(view.goal_matches, [2]);
+        assert_eq!(view.goal_index(), Some(2));
+        for (width, height) in [(45, 16), (340, 170)] {
+            let shown = screen(&mut view, width, height);
+            assert!(shown.contains("resume界"), "{shown}");
+        }
+        let shown = screen(&mut view, 120, 24);
+        let (x, y) = locate(&shown, "B Brief");
+        assert_eq!(click(&mut view, x, y), Effect::Overview);
+        assert!(!view.searching_goals);
+        assert_eq!(view.goal_page, GoalPage::Brief);
+        assert_eq!(view.goal_query.text, "resume界");
+        press(&mut view, KeyCode::Char('/'));
+        press(&mut view, KeyCode::Enter);
+        assert!(!view.searching_goals && view.tasks_focused);
+        assert_eq!(view.goal_query.text, "resume界");
+        assert_eq!(view.goal_index(), Some(2));
+    }
+
+    #[test]
+    fn selecting_a_goal_reads_its_overview_without_reloading_the_catalog() {
+        let path = std::env::temp_dir().join(format!(
+            "dots-goal-navigation-{}-{}",
+            std::process::id(),
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        let mut store = Store::create(&path.join("catalog.sqlite3")).unwrap();
+        let project = store.register_project("fixture").unwrap();
+        let actor = || Actor {
+            name: Some(Owner::try_new("fixture-coordinator").unwrap()),
+            now: 1,
+        };
+        for name in ["First goal", "Second goal"] {
+            store
+                .create_goal(&project, name, "briefs/goal.md", actor())
+                .unwrap();
+        }
+        let loaded = global_goals(&mut store, false).unwrap();
+        store
+            .create_goal(
+                &project,
+                "Added after the snapshot",
+                "briefs/goal.md",
+                actor(),
+            )
+            .unwrap();
+        let mut session = Session::new(Scope::Global);
+        session.store = Some(store);
+        session.sessions_at = Some(Instant::now() + Duration::from_secs(60));
+        session.viewer.tab = Tab::Work;
+        session.viewer.refresh(Ok(loaded));
+        let effect = session.viewer.move_goal(1);
+        assert_eq!(effect, Effect::Overview);
+        assert!(session.apply(effect));
+        assert_eq!(
+            session.viewer.goals().len(),
+            2,
+            "selection must not reload the catalog"
+        );
+        let selected = session.viewer.goal.as_ref().unwrap().1.clone();
+        let (id, overview) = session.viewer.overview.as_ref().unwrap();
+        assert_eq!(id, &selected);
+        assert_eq!(overview.as_ref().unwrap().goal.root.id, selected);
+        assert_eq!(
+            press(&mut session.viewer, KeyCode::Char('a')),
+            Effect::Refresh
+        );
+        drop(session);
+        std::fs::remove_dir_all(path).unwrap();
     }
 
     #[test]

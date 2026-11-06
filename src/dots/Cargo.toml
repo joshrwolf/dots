@@ -21,6 +21,7 @@ anyhow.workspace = true
 github-inspect.workspace = true
 github-watch.workspace = true
 nix = { workspace = true, features = ["poll"] }
+nucleo.workspace = true
 ratatui.workspace = true
 renderdag.workspace = true
 serde.workspace = true
