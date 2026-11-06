@@ -123,7 +123,8 @@ mod task_events {
                 .env("XDG_STATE_HOME", self.root.join("state"))
                 .env_remove("PI_SESSION_ID")
                 .env_remove("CLAUDE_CODE_SESSION_ID")
-                .env_remove("CODEX_SESSION_ID");
+                .env_remove("CODEX_SESSION_ID")
+                .env_remove("DOTS_AGENT_OWNER");
             command
         }
 
@@ -639,9 +640,11 @@ mod attention_view {
         );
         assert_eq!(answer.by.as_deref(), Some("human"));
 
-        // Wide enough, requests and the answer sit side by side.
+        // The inbox and answer stay side by side at ordinary and large sizes.
         resize(&slave, 120, 40, &viewer);
-        let at = screen.until(at, "Requests");
+        let at = screen.until(at, "Inbox");
+        resize(&slave, 340, 170, &viewer);
+        let at = screen.until(at, "Inbox");
 
         // The answered request stays selected; the user moves to the next one.
         // A question replaced while the user types keeps the draft with the
@@ -667,12 +670,12 @@ mod attention_view {
         let at = screen.until(at, "unsent");
         send(&mut keyboard, "\x1b");
 
-        // Mouse: the Work tab, then Close.
-        click(&mut keyboard, 27, 1);
+        // Open Goals with its shortcut, then close with a real mouse report.
+        send(&mut keyboard, "g");
         let at = screen.until(at, "Goals");
         let at = screen.until(at, "refactor");
         screen.until(at, "Dropped");
-        click(&mut keyboard, 14, 40);
+        click(&mut keyboard, 14, 169);
 
         let deadline = Instant::now() + WATCHDOG;
         let status = loop {

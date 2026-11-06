@@ -98,6 +98,11 @@ question/action, why it matters, the recommendation when useful and which work
 is blocked. Use a stable logical key; do not duplicate a pending question.
 Block only the affected work. Keep credentials out of requests and answers.
 
+All request prose is for the person reading the inbox, including context,
+recommendations and choice details. Write short plain-English paragraphs with
+normal word spacing. Ask the decision directly and explain only the relevant
+tradeoff; do not paste compressed agent notes, task histories or machine dumps.
+
 The global viewer and Pi's active-goal view read the same records. Opening,
 closing, filtering, dismissing a notification or following a goal does not
 answer a request. Saving a response does not start a coordinator. An empty
