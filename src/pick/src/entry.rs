@@ -10,7 +10,7 @@ use crate::{Palette, text};
 /// One selectable row.
 pub trait Entry {
     /// Which declared group this entry belongs to.
-    type Group: Copy + Eq + fmt::Debug;
+    type Group: Copy + Eq + fmt::Debug + Send + 'static;
 
     fn group(&self) -> Self::Group;
 

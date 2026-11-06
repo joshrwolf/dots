@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             if run == 0 {
                 Err("fixture action failed".to_owned())
             } else {
-                Ok(())
+                Ok(dots_pick::Action::Close)
             }
         })
     });

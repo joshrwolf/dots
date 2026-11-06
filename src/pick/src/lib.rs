@@ -43,4 +43,4 @@ pub use live::Fetch;
 pub use model::{Model, Outcome};
 pub use palette::{LoadError, Palette};
 pub use picker::{Closed, Picker};
-pub use shortcut::{Act, Acting, Actions, Choice, Chosen, Shortcut};
+pub use shortcut::{Act, Acting, Action, Actions, Choice, Chosen, Shortcut};

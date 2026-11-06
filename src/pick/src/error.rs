@@ -19,6 +19,9 @@ pub enum Error {
     #[error("the terminal could not be driven")]
     Terminal(#[from] io::Error),
 
+    #[error("selected picker row is absent or does not match: {id:?}")]
+    MissingSelection { id: String },
+
     #[error("no groups were declared, so no entry could ever be shown")]
     NoGroups,
 

@@ -82,7 +82,7 @@ fn run(args: &Cli) -> Result<()> {
         };
         Box::pin(async move {
             let result = runner().run(rex_do(&action, &args.to_string())).await;
-            acted(&action, result)
+            acted(&action, result).map(|()| dots_pick::Action::Close)
         })
     });
     let closed = picker.run_actions(&Actions { shortcuts, act })?;

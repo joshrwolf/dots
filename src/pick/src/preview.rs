@@ -85,6 +85,7 @@ pub(crate) struct Previewer {
     shown: Option<Content>,
     cache: VecDeque<(Argv, Content)>,
     every: Option<Duration>,
+    pub(crate) offset: Option<usize>,
 }
 
 impl Previewer {
@@ -102,6 +103,7 @@ impl Previewer {
             shown: None,
             cache: VecDeque::new(),
             every,
+            offset: None,
         }
     }
 
@@ -111,6 +113,7 @@ impl Previewer {
         self.requests.send_replace(None);
         self.requested = None;
         self.shown = None;
+        self.offset = None;
         self.cache.clear();
     }
 
@@ -126,6 +129,7 @@ impl Previewer {
         if self.requested.as_deref() == argv {
             return;
         }
+        self.offset = None;
         self.requested = argv.map(<[String]>::to_vec);
         self.shown = self.requested.clone().and_then(|argv| self.cached(&argv));
         let request = self.requested.as_ref().map(|argv| Request {
@@ -135,6 +139,28 @@ impl Previewer {
             run: self.every.is_some() || !matches!(self.shown, Some(Content::Text(_))),
         });
         self.requests.send_replace(request);
+    }
+
+    pub(crate) fn size(&self) -> (u16, u16) {
+        self.size
+    }
+
+    pub(crate) fn scroll(&mut self, delta: isize, anchor: crate::spec::PreviewAnchor) {
+        let Some(Content::Text(lines)) = &self.shown else {
+            return;
+        };
+        let max = lines.len().saturating_sub(usize::from(self.size.1));
+        let initial = if anchor == crate::spec::PreviewAnchor::End {
+            max
+        } else {
+            0
+        };
+        self.offset = Some(
+            self.offset
+                .unwrap_or(initial)
+                .saturating_add_signed(delta)
+                .min(max),
+        );
     }
 
     /// Takes finished previews. Returns whether the pane changed.

@@ -31,8 +31,15 @@ const LINE_LIMIT: usize = 4096;
 /// Wait before retrying a failed fetch that no new change has retried.
 const RETRY: Duration = Duration::from_secs(2);
 
+#[derive(Debug, Clone)]
+pub(crate) enum Trigger {
+    Command(Vec<String>),
+    Interval(Duration),
+}
+
 /// What says the rows may have changed.
 pub(crate) enum Watch {
+    Interval(Duration),
     Command(Vec<String>),
     /// Each message is a change; closing the channel ends the watch, which
     /// then takes `ending` to say how it ended.
@@ -157,6 +164,9 @@ enum Step<T> {
 
 async fn serve<T: Send + 'static>(spec: Spec<T>, events: mpsc::UnboundedSender<Event<T>>) {
     let mut watch = match spec.watch {
+        Watch::Interval(period) => Source::Interval(tokio::time::interval(
+            period.max(Duration::from_millis(100)),
+        )),
         Watch::Command(argv) => match start(&argv) {
             Ok(lines) => Source::Lines(Box::new(lines)),
             Err(message) => {
@@ -180,6 +190,7 @@ async fn serve<T: Send + 'static>(spec: Spec<T>, events: mpsc::UnboundedSender<E
             return;
         }
         let step = tokio::select! {
+            () = events.closed() => return,
             step = watch.next(), if open => step,
             fetched = settle(&mut running), if running.is_some() => Step::Fetched(fetched),
             () = sleep_until(retry), if retry.is_some() => Step::Retry,
@@ -229,6 +240,7 @@ fn start(command: &[String]) -> Result<Lines, String> {
 type Ending = Pin<Box<dyn Future<Output = String> + Send>>;
 
 enum Source {
+    Interval(tokio::time::Interval),
     Lines(Box<Lines>),
     /// Stdout closed; waiting for the command to finish. Owned here, so a
     /// fetch finishing first cannot lose it, and dropping the feed drops it,
@@ -248,6 +260,10 @@ impl Source {
     async fn next<T>(&mut self) -> Step<T> {
         loop {
             match self {
+                Self::Interval(interval) => {
+                    interval.tick().await;
+                    return Step::Changed;
+                }
                 Self::Lines(lines) => match lines.next_line().await {
                     Ok(Some(_)) => return Step::Changed,
                     Ok(None) => {

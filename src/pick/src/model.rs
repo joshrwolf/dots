@@ -314,6 +314,37 @@ impl<T: Entry> Model<T> {
         }
     }
 
+    pub(crate) fn select_line(&mut self, line: usize) {
+        let row = self.offset.saturating_add(line);
+        if let Some(cursor) = self
+            .selectable
+            .iter()
+            .position(|&candidate| candidate == row)
+        {
+            self.cursor = cursor;
+        }
+    }
+
+    /// Selects an exact identity, revealing its group if that group is scoped.
+    pub fn select_identity(&mut self, id: &str) -> Result<(), Error> {
+        let index = self
+            .prepared
+            .iter()
+            .position(|row| row.id.as_deref() == Some(id))
+            .ok_or_else(|| Error::MissingSelection { id: id.to_owned() })?;
+        if self.layouts[self.prepared[index].group].scope.is_some() {
+            self.group_filter = Some(self.prepared[index].group);
+            self.refresh();
+        }
+        let cursor = self
+            .selectable
+            .iter()
+            .position(|&row| self.rows[row] == Row::Item(index))
+            .ok_or_else(|| Error::MissingSelection { id: id.to_owned() })?;
+        self.cursor = cursor;
+        Ok(())
+    }
+
     /// The entry under the cursor.
     #[must_use]
     pub fn selected_entry(&self) -> Option<&T> {

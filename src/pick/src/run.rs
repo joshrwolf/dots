@@ -24,7 +24,7 @@ use crate::live::{self, Feed, Notice};
 use crate::model::{Model, Outcome};
 use crate::preview::{self, Content, Previewer};
 use crate::spec::{PreviewAnchor, PreviewPosition};
-use crate::{Acting, Actions, Choice, Entry, Error, Palette, Shortcut, columns, keys};
+use crate::{Acting, Action, Actions, Choice, Entry, Error, Palette, Shortcut, columns, keys};
 
 /// What Enter does, in the help and while its action runs.
 const ACCEPT_LABEL: &str = "open";
@@ -44,7 +44,7 @@ enum Exit {
 /// What keeps a running picker current: its live feed and how often the
 /// selected preview re-runs; and how the preview is shown.
 pub(crate) struct Live<T> {
-    pub(crate) feed: Option<live::Spec<T>>,
+    pub(crate) feed: Option<(live::Trigger, live::Fetch<T>)>,
     pub(crate) preview_every: Option<Duration>,
     pub(crate) preview_layout: PreviewLayout,
 }
@@ -90,36 +90,23 @@ pub(crate) enum Ended<T> {
 /// Runs the picker. Without actions, Enter on a row returns it; with them,
 /// Enter and shortcuts run them in place, and the picker ends once one succeeds.
 pub(crate) fn run<T: Entry + Send + 'static, A>(
-    mut model: Model<T>,
+    model: Model<T>,
     prompt: &str,
     actions: Option<&Actions<T, A>>,
     live: Live<T>,
 ) -> Result<Ended<T>, Error> {
-    let Live {
-        feed,
-        preview_every,
-        preview_layout,
-    } = live;
     let mut background = Background::start()?;
-    // A refresh can bring previews the first rows lacked.
-    let mut previewer = (model.has_previews() || feed.is_some())
-        .then(|| Previewer::spawn(&mut background, preview::commands(), preview_every));
-    let mut feed = feed.map(|spec| Feed::spawn(&mut background, spec));
-    let session = session(
-        &mut background,
-        &mut model,
-        prompt,
-        actions,
-        previewer.as_mut(),
-        feed.as_mut(),
-        preview_layout,
-    );
+    let mut page = Page {
+        model,
+        prompt: prompt.to_owned(),
+        live,
+    };
+    let session = session(&mut background, &mut page, actions);
     // The terminal is restored; now stop the jobs.
-    drop((previewer, feed));
     let exit = conclude(session, background.shutdown())?;
     Ok(match exit {
         Exit::List(Outcome::Accept) => Ended::Chosen(
-            model
+            page.model
                 .take_selected()
                 .expect("the model accepts only with a row selected"),
         ),
@@ -141,17 +128,63 @@ fn conclude(session: Result<Exit, Error>, jobs: thread::Result<()>) -> Result<Ex
 
 /// Takes the terminal, runs the loop, and gives the terminal back, whatever
 /// the loop returned.
+struct Page<T: Entry> {
+    model: Model<T>,
+    prompt: String,
+    live: Live<T>,
+}
+
+impl<T: Entry + Send + 'static> Page<T> {
+    fn start(&self, background: &mut Background) -> (Option<Previewer>, Option<Feed<T>>) {
+        let preview = (self.model.has_previews() || self.live.feed.is_some())
+            .then(|| Previewer::spawn(background, preview::commands(), self.live.preview_every));
+        let feed = self.live.feed.as_ref().map(|(trigger, fetch)| {
+            let watch = match trigger {
+                live::Trigger::Command(argv) => live::Watch::Command(argv.clone()),
+                live::Trigger::Interval(period) => live::Watch::Interval(*period),
+            };
+            Feed::spawn(
+                background,
+                live::Spec {
+                    watch,
+                    fetch: fetch.clone(),
+                },
+            )
+        });
+        (preview, feed)
+    }
+
+    fn navigate(&mut self, parents: &mut Vec<Self>, action: Action<T>) -> Result<bool, Error> {
+        match action {
+            Action::Push(picker) => {
+                let next = Self::from_picker(picker)?;
+                parents.push(std::mem::replace(self, next));
+            }
+            Action::Replace(picker) => *self = Self::from_picker(picker)?,
+            Action::Back => match parents.pop() {
+                Some(previous) => *self = previous,
+                None => return Ok(false),
+            },
+            Action::Close => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    fn from_picker(picker: crate::Picker<T>) -> Result<Self, Error> {
+        let (model, prompt, live) = picker.prepare()?;
+        Ok(Self {
+            model,
+            prompt,
+            live,
+        })
+    }
+}
+
 fn session<T: Entry + Send + 'static, A>(
     background: &mut Background,
-    model: &mut Model<T>,
-    prompt: &str,
+    page: &mut Page<T>,
     actions: Option<&Actions<T, A>>,
-    previewer: Option<&mut Previewer>,
-    feed: Option<&mut Feed<T>>,
-    preview_layout: PreviewLayout,
 ) -> Result<Exit, Error> {
-    // Ratatui's hook restores the terminal on a panic; an initialization
-    // error after raw mode or the alternate screen was entered must undo it.
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
         Err(error) => {
@@ -166,19 +199,7 @@ fn session<T: Entry + Send + 'static, A>(
             return Err(error.into());
         }
     };
-    let outcome = drive(
-        &mut terminal,
-        background,
-        model,
-        prompt,
-        actions,
-        previewer,
-        feed,
-        preview_layout,
-    );
-    // Restoring is unconditional and comes first: a loop that failed mid-draw
-    // has still left the terminal in raw mode on the alternate screen, and the
-    // user should get it back before background work finishes stopping.
+    let outcome = drive(&mut terminal, background, page, actions);
     let paste_restored = paste.disable();
     let restored = ratatui::try_restore();
     let outcome = outcome?;
@@ -188,64 +209,75 @@ fn session<T: Entry + Send + 'static, A>(
 }
 
 #[expect(
-    clippy::too_many_arguments,
-    reason = "the loop borrows each piece of the running picker separately"
+    clippy::too_many_lines,
+    reason = "One loop owns page navigation, input and background resource lifetimes."
 )]
 fn drive<T: Entry + Send + 'static, A>(
     terminal: &mut ratatui::DefaultTerminal,
     background: &mut Background,
-    model: &mut Model<T>,
-    prompt: &str,
+    current: &mut Page<T>,
     actions: Option<&Actions<T, A>>,
-    mut previewer: Option<&mut Previewer>,
-    mut feed: Option<&mut Feed<T>>,
-    preview_layout: PreviewLayout,
 ) -> Result<Exit, Error> {
     let shortcuts = actions.map_or(&[][..], |actions| actions.shortcuts.as_slice());
     let mut status = Status::default();
+    let mut parents = Vec::new();
+    let (mut previewer, mut feed) = current.start(background);
     let mut dirty = true;
-    let mut page = 1;
+    let mut page_size = 1;
     loop {
-        // Checked before drawing: a job's panic has already restored the
-        // terminal through Ratatui's hook.
         if background.failed() {
             return Ok(Exit::Failed);
         }
+        let mut navigation = None;
         match status.settle() {
             Settled::Unchanged => {}
             Settled::Done => return Ok(Exit::Done),
             Settled::Failed => dirty = true,
+            Settled::Navigate => navigation = status.navigation.take(),
         }
-        if let Some(feed) = feed.as_deref_mut() {
-            dirty |= feed.update(model);
+        if let Some(action) = navigation {
+            match current.navigate(&mut parents, action) {
+                Ok(true) => {
+                    drop(previewer.take());
+                    drop(feed.take());
+                    (previewer, feed) = current.start(background);
+                }
+                Ok(false) => {}
+                Err(error) => status.alert = Some(error.to_string()),
+            }
+            dirty = true;
+        }
+        if let Some(feed) = feed.as_mut() {
+            dirty |= feed.update(&mut current.model);
             if feed.take_replaced()
-                && let Some(previewer) = previewer.as_deref_mut()
+                && let Some(previewer) = previewer.as_mut()
             {
                 previewer.invalidate();
             }
         }
-        if let Some(previewer) = previewer.as_deref_mut() {
+        if let Some(previewer) = previewer.as_mut() {
             let size = terminal.size()?;
             previewer.set_size(preview_size(
                 Rect::new(0, 0, size.width, size.height),
                 !shortcuts.is_empty(),
                 status.alert.as_deref(),
-                preview_layout.position,
+                current.live.preview_layout.position,
             ));
-            previewer.select(model.selected_entry().and_then(Entry::preview));
+            previewer.select(current.model.selected_entry().and_then(Entry::preview));
             dirty |= previewer.update();
         }
         if dirty {
-            let preview = previewer.as_deref().and_then(Previewer::content);
+            let preview = previewer.as_ref().and_then(Previewer::content);
             let chrome = Chrome {
-                prompt,
+                prompt: &current.prompt,
                 shortcuts,
-                notice: feed.as_deref().and_then(Feed::notice),
+                notice: feed.as_ref().and_then(Feed::notice),
                 status: &status,
-                preview_layout,
+                preview_layout: current.live.preview_layout,
+                preview_offset: previewer.as_ref().and_then(|preview| preview.offset),
             };
             terminal.draw(|frame| {
-                page = draw(frame, model, &chrome, preview.as_ref());
+                page_size = draw(frame, &mut current.model, &chrome, preview.as_ref());
             })?;
             dirty = false;
         }
@@ -255,28 +287,116 @@ fn drive<T: Entry + Send + 'static, A>(
         dirty = true;
         match event::read()? {
             Event::Key(key) => {
-                if let Some(exit) = status.key(key, page, model, actions, background) {
+                if scroll_preview(key, previewer.as_mut(), current.live.preview_layout.anchor) {
+                    continue;
+                }
+                if key.kind != ratatui::crossterm::event::KeyEventKind::Release
+                    && key.code == ratatui::crossterm::event::KeyCode::Esc
+                    && status.running.is_none()
+                    && !parents.is_empty()
+                {
+                    status.navigation = Some(Action::Back);
+                    continue;
+                }
+                if let Some(exit) =
+                    status.key(key, page_size, &mut current.model, actions, background)
+                {
                     return Ok(exit);
                 }
             }
-            Event::Paste(text) => status.paste(&text, model),
+            Event::Paste(text) => status.paste(&text, &mut current.model),
+            Event::Mouse(mouse) if status.running.is_none() => {
+                let size = terminal.size()?;
+                pointer(
+                    mouse,
+                    Rect::new(0, 0, size.width, size.height),
+                    current,
+                    previewer.as_mut(),
+                    !shortcuts.is_empty(),
+                    status.alert.as_deref(),
+                );
+            }
             _ => {}
         }
     }
 }
 
+fn scroll_preview(
+    key: ratatui::crossterm::event::KeyEvent,
+    preview: Option<&mut Previewer>,
+    anchor: PreviewAnchor,
+) -> bool {
+    use ratatui::crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
+    if key.modifiers != KeyModifiers::SHIFT || key.kind == KeyEventKind::Release {
+        return false;
+    }
+    let Some(preview) = preview else {
+        return false;
+    };
+    let step = match key.code {
+        KeyCode::Up => -1,
+        KeyCode::Down => 1,
+        KeyCode::PageUp => -isize::try_from(preview.size().1).expect("terminal height fits isize"),
+        KeyCode::PageDown => isize::try_from(preview.size().1).expect("terminal height fits isize"),
+        _ => return false,
+    };
+    preview.scroll(step, anchor);
+    true
+}
+
+fn pointer<T: Entry>(
+    mouse: ratatui::crossterm::event::MouseEvent,
+    area: Rect,
+    current: &mut Page<T>,
+    previewer: Option<&mut Previewer>,
+    has_shortcuts: bool,
+    alert: Option<&str>,
+) {
+    use ratatui::crossterm::event::{MouseButton, MouseEventKind};
+    let body = regions(area, has_shortcuts, alert).body;
+    let split = previewer
+        .as_deref()
+        .and_then(Previewer::content)
+        .and_then(|_| split(body, current.live.preview_layout.position));
+    let list = split.as_ref().map_or(body, |split| split.list);
+    let point = ratatui::layout::Position::new(mouse.column, mouse.row);
+    let step = match mouse.kind {
+        MouseEventKind::ScrollUp => -3,
+        MouseEventKind::ScrollDown => 3,
+        _ => 0,
+    };
+    if list.contains(point) {
+        if step != 0 {
+            let command = if step < 0 {
+                crate::Command::Previous(3)
+            } else {
+                crate::Command::Next(3)
+            };
+            current.model.apply(command);
+        } else if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            current.model.select_line(usize::from(mouse.row - list.y));
+        }
+    } else if step != 0
+        && split.is_some_and(|split| split.pane.contains(point))
+        && let Some(preview) = previewer
+    {
+        preview.scroll(step, current.live.preview_layout.anchor);
+    }
+}
+
 /// A chosen action's progress: running, or why the last one failed.
-#[derive(Debug, Default)]
-struct Status {
-    running: Option<Running>,
+#[derive(Debug)]
+struct Status<T: Entry> {
+    running: Option<Running<T>>,
+    navigation: Option<Action<T>>,
     /// Shown until the query changes or another action starts.
     alert: Option<String>,
 }
 
 #[derive(Debug)]
-struct Running {
+struct Running<T: Entry> {
     label: String,
-    outcome: oneshot::Receiver<Result<(), String>>,
+    outcome: oneshot::Receiver<Result<Action<T>, String>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -284,13 +404,24 @@ enum Settled {
     Unchanged,
     Done,
     Failed,
+    Navigate,
 }
 
-impl Status {
+impl<T: Entry> Default for Status<T> {
+    fn default() -> Self {
+        Self {
+            running: None,
+            navigation: None,
+            alert: None,
+        }
+    }
+}
+
+impl<T: Entry + Send + 'static> Status<T> {
     /// Handles a key: an edit, a movement, an exit, or the start of an
     /// action. While an action runs the choice is made, so keys are ignored
     /// until it finishes.
-    fn key<T: Entry, A>(
+    fn key<A>(
         &mut self,
         key: KeyEvent,
         page: usize,
@@ -332,7 +463,7 @@ impl Status {
         }
     }
 
-    fn paste<T: Entry>(&mut self, text: &str, model: &mut Model<T>) {
+    fn paste(&mut self, text: &str, model: &mut Model<T>) {
         if self.running.is_some() {
             return;
         }
@@ -343,7 +474,7 @@ impl Status {
         }
     }
 
-    fn start(&mut self, label: &str, work: Acting, background: &mut Background) {
+    fn start(&mut self, label: &str, work: Acting<T>, background: &mut Background) {
         let (sender, outcome) = oneshot::channel();
         background.spawn(async move {
             let _ = sender.send(work.await);
@@ -358,11 +489,19 @@ impl Status {
     /// Takes the running action's outcome once it has one: success ends the
     /// picker, and a failure becomes the alert.
     fn settle(&mut self) -> Settled {
+        if self.navigation.is_some() {
+            return Settled::Navigate;
+        }
         let Some(running) = &mut self.running else {
             return Settled::Unchanged;
         };
         match running.outcome.try_recv() {
-            Ok(Ok(())) => Settled::Done,
+            Ok(Ok(Action::Close)) => Settled::Done,
+            Ok(Ok(action)) => {
+                self.running = None;
+                self.navigation = Some(action);
+                Settled::Navigate
+            }
             Ok(Err(message)) => {
                 let message = if message.trim().is_empty() {
                     format!("{} failed", running.label)
@@ -389,12 +528,20 @@ struct BracketedPaste {
 
 impl BracketedPaste {
     fn enable() -> io::Result<Self> {
-        ratatui::crossterm::execute!(io::stdout(), EnableBracketedPaste)?;
+        ratatui::crossterm::execute!(
+            io::stdout(),
+            EnableBracketedPaste,
+            ratatui::crossterm::event::EnableMouseCapture
+        )?;
         Ok(Self { enabled: true })
     }
 
     fn disable(mut self) -> io::Result<()> {
-        ratatui::crossterm::execute!(io::stdout(), DisableBracketedPaste)?;
+        ratatui::crossterm::execute!(
+            io::stdout(),
+            DisableBracketedPaste,
+            ratatui::crossterm::event::DisableMouseCapture
+        )?;
         self.enabled = false;
         Ok(())
     }
@@ -403,25 +550,30 @@ impl BracketedPaste {
 impl Drop for BracketedPaste {
     fn drop(&mut self) {
         if self.enabled {
-            let _ = ratatui::crossterm::execute!(io::stdout(), DisableBracketedPaste);
+            let _ = ratatui::crossterm::execute!(
+                io::stdout(),
+                DisableBracketedPaste,
+                ratatui::crossterm::event::DisableMouseCapture
+            );
         }
     }
 }
 
 /// Everything a frame shows besides the list and the preview.
-struct Chrome<'a, A> {
+struct Chrome<'a, A, T: Entry> {
     prompt: &'a str,
     shortcuts: &'a [Shortcut<A>],
     notice: Option<&'a Notice>,
-    status: &'a Status,
+    status: &'a Status<T>,
     preview_layout: PreviewLayout,
+    preview_offset: Option<usize>,
 }
 
 /// Returns the page size, so a page key moves by exactly what is on screen.
 fn draw<T: Entry, A>(
     frame: &mut Frame<'_>,
     model: &mut Model<T>,
-    chrome: &Chrome<'_, A>,
+    chrome: &Chrome<'_, A, T>,
     preview: Option<&Content>,
 ) -> usize {
     let palette = model.palette();
@@ -495,7 +647,13 @@ fn draw<T: Entry, A>(
     );
     if let Some((pane, content)) = pane {
         frame.render_widget(
-            preview_paragraph(content, palette, pane, chrome.preview_layout.anchor),
+            preview_paragraph(
+                content,
+                palette,
+                pane,
+                chrome.preview_layout.anchor,
+                chrome.preview_offset,
+            ),
             pane,
         );
     }
@@ -648,7 +806,8 @@ fn help_lines<A>(
     let dot = what.add_modifier(Modifier::DIM);
     let generic = [
         ("enter", ACCEPT_LABEL),
-        ("esc", "close"),
+        ("esc", "back/close"),
+        ("shift+↑/↓", "preview"),
         ("↑/↓ ctrl+j/k", "move"),
         ("tab/shift+tab", "scope"),
         ("ctrl+u", "clear"),
@@ -786,6 +945,7 @@ fn preview_paragraph(
     palette: Palette,
     pane: Rect,
     anchor: PreviewAnchor,
+    offset: Option<usize>,
 ) -> Paragraph<'static> {
     let width = usize::from(pane.width);
     let height = usize::from(pane.height);
@@ -794,10 +954,12 @@ fn preview_paragraph(
         Content::Text(lines) => (lines.clone(), palette.strong),
         Content::Failed(message) => (message.lines().map(Line::raw).collect(), palette.red),
     };
-    let start = match anchor {
-        PreviewAnchor::Start => 0,
-        PreviewAnchor::End => text.len().saturating_sub(height),
-    };
+    let start = offset
+        .unwrap_or_else(|| match anchor {
+            PreviewAnchor::Start => 0,
+            PreviewAnchor::End => text.len().saturating_sub(height),
+        })
+        .min(text.len().saturating_sub(height));
     let shown = text
         .into_iter()
         .skip(start)
@@ -894,12 +1056,41 @@ mod tests {
             .unwrap()
     }
 
+    #[test]
+    fn inspection_pages_keep_the_parent_query_and_selection_and_reject_invalid_pages() {
+        let make = || Picker::new(vec![Item]).group(Group::new((), "items", vec![Column::fill()]));
+        let mut current = Page::from_picker(make().prompt("Goals > ").query("search")).unwrap();
+        let mut parents = Vec::new();
+        assert!(
+            current
+                .navigate(&mut parents, Action::Push(make().prompt("Tasks > ")))
+                .unwrap()
+        );
+        assert_eq!(current.prompt, "Tasks > ");
+        assert_eq!(current.model.query(), "");
+        assert_eq!(parents.len(), 1);
+        let invalid = Picker::new(vec![Item]);
+        assert!(
+            current
+                .navigate(&mut parents, Action::Push(invalid))
+                .is_err()
+        );
+        assert_eq!(parents.len(), 1);
+        assert_eq!(current.prompt, "Tasks > ");
+        assert!(current.navigate(&mut parents, Action::Back).unwrap());
+        assert_eq!(current.prompt, "Goals > ");
+        assert_eq!(current.model.query(), "search");
+        assert_eq!(current.model.selected(), Some(0));
+        assert_eq!(parents.len(), 0);
+        assert!(!current.navigate(&mut parents, Action::Back).unwrap());
+    }
+
     /// One frame of `model` with the given chrome; returns the page size.
     fn render<A>(
         terminal: &mut Terminal<TestBackend>,
         model: &mut Model<Item>,
         shortcuts: &[Shortcut<A>],
-        status: &Status,
+        status: &Status<Item>,
         notice: Option<&Notice>,
         preview: Option<&Content>,
         preview_layout: PreviewLayout,
@@ -910,6 +1101,7 @@ mod tests {
             notice,
             status,
             preview_layout,
+            preview_offset: None,
         };
         let mut page = 0;
         terminal
@@ -923,7 +1115,7 @@ mod tests {
         terminal: &mut Terminal<TestBackend>,
         model: &mut Model<Item>,
         shortcuts: &[Shortcut<A>],
-        status: &Status,
+        status: &Status<Item>,
     ) {
         render(
             terminal,
@@ -962,7 +1154,7 @@ mod tests {
         let act: crate::Act<Item, ()> = Box::new(move |_choice| {
             counter.fetch_add(1, Ordering::SeqCst);
             let outcome = outcome.clone();
-            Box::pin(async move { outcome })
+            Box::pin(async move { outcome.map(|()| Action::Close) })
         });
         let actions = Actions {
             shortcuts: vec![review()],
@@ -980,7 +1172,7 @@ mod tests {
     }
 
     /// Waits for the running action's outcome.
-    fn settled(status: &mut Status) -> Settled {
+    fn settled(status: &mut Status<Item>) -> Settled {
         let start = Instant::now();
         loop {
             match status.settle() {
@@ -1123,6 +1315,7 @@ mod tests {
         let mut model = model();
         let palette = model.palette();
         let status = Status {
+            navigation: None,
             running: None,
             alert: Some(
                 "This message is long enough that it has to wrap \
@@ -1170,6 +1363,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
         let (_sender, outcome) = oneshot::channel();
         let status = Status {
+            navigation: None,
             running: Some(Running {
                 label: "review PR".to_owned(),
                 outcome,
@@ -1448,6 +1642,7 @@ mod tests {
     #[test]
     fn chrome_and_cursor_fit_resized_terminals() {
         let failed = Status {
+            navigation: None,
             running: None,
             alert: Some("a failure wide enough to wrap 一 👩‍💻".to_owned()),
         };

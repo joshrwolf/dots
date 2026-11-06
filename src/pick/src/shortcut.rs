@@ -29,19 +29,28 @@ pub struct Chosen<'a, T> {
 
 /// The work an action does. `Err` carries the message to show; the picker
 /// stays open with it.
-pub type Acting = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
+/// How a completed host action changes the current picker.
+#[derive(Debug)]
+pub enum Action<T: Entry> {
+    Close,
+    Push(crate::Picker<T>),
+    Replace(crate::Picker<T>),
+    Back,
+}
+
+pub type Acting<T> = Pin<Box<dyn Future<Output = Result<Action<T>, String>> + Send>>;
 
 /// Starts the host's action for a choice. It runs on the calling thread and
 /// returns the work, which the picker's background runtime drives.
-pub type Act<T, A> = Box<dyn Fn(Choice<'_, T, A>) -> Acting>;
+pub type Act<T, A> = Box<dyn Fn(Choice<'_, T, A>) -> Acting<T>>;
 
 /// A picker's actions: its shortcuts and what any choice does.
-pub struct Actions<T, A> {
+pub struct Actions<T: Entry, A> {
     pub shortcuts: Vec<Shortcut<A>>,
     pub act: Act<T, A>,
 }
 
-impl<T, A: std::fmt::Debug> std::fmt::Debug for Actions<T, A> {
+impl<T: Entry, A: std::fmt::Debug> std::fmt::Debug for Actions<T, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Actions")
             .field("shortcuts", &self.shortcuts)

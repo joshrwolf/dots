@@ -12,11 +12,13 @@ shortcuts send only `{ id }`, because the schema Rex builds from an action's
 `args` forbids undeclared fields. The line filters rows the same way either
 way. It never calls the Rex API itself.
 
-- Actions run in place: the picker stays drawn and ignores keys while one
-  runs, closes when it succeeds, and on failure shows Lua's message (without
-  `rex`'s `Error: ` prefix) under the prompt rule, keeping query, selection,
-  and scope. Lua owns validation; its errors are short and name the valid
-  forms. Only failures before the picker draws fall back to plain text.
+- Actions run in place while the picker stays drawn. Typed actions return
+  close, push, replace or back; the page stack preserves query, scope and
+  selection and stops hidden-page feeds/previews. Rex actions close on success.
+  Failures stay under the prompt rule without losing the current page. Lua
+  owns its argument validation and errors; only failures before drawing fall
+  back to plain text. Preview scrolling uses Shift+arrows/page keys or the
+  wheel over its pane; list clicks select rows without executing actions.
 
 - Keep the model a pure function of items, query, cursor, and width, and test
   it as tables rather than through a terminal.

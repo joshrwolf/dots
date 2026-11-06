@@ -24,6 +24,7 @@ pub struct Picker<T: Entry> {
     groups: Vec<Group<T::Group>>,
     prompt: String,
     query: String,
+    selected: Option<String>,
     palette: Palette,
     match_paths: bool,
     live: run::Live<T>,
@@ -36,6 +37,7 @@ impl<T: Entry> Picker<T> {
             groups: Vec::new(),
             prompt: "> ".to_owned(),
             query: String::new(),
+            selected: None,
             // Loading the theme adapter can fail, so callers opt in with
             // `.palette(Palette::load()?)`.
             palette: Palette::default(),
@@ -49,10 +51,13 @@ impl<T: Entry> Picker<T> {
     /// replace them. Entries need identities so the selection survives a
     /// refresh; a failed or invalid refresh keeps the rows shown and says so.
     pub fn live(mut self, watch: Vec<String>, fetch: Fetch<T>) -> Self {
-        self.live.feed = Some(live::Spec {
-            watch: live::Watch::Command(watch),
-            fetch,
-        });
+        self.live.feed = Some((live::Trigger::Command(watch), fetch));
+        self
+    }
+
+    /// Refresh rows on a timer while this page is visible.
+    pub fn refresh_every(mut self, interval: Duration, fetch: Fetch<T>) -> Self {
+        self.live.feed = Some((live::Trigger::Interval(interval), fetch));
         self
     }
 
@@ -97,6 +102,12 @@ impl<T: Entry> Picker<T> {
         self
     }
 
+    /// Preselect an exact row identity, revealing its scope rather than choosing another row.
+    pub fn selected(mut self, id: impl Into<String>) -> Self {
+        self.selected = Some(id.into());
+        self
+    }
+
     pub fn palette(mut self, palette: Palette) -> Self {
         self.palette = palette;
         self
@@ -113,7 +124,16 @@ impl<T: Entry> Picker<T> {
     pub fn build(self) -> Result<Model<T>, Error> {
         let mut model = Model::build(self.items, self.groups, self.palette, self.match_paths)?;
         model.insert_text(&self.query);
+        if let Some(id) = self.selected {
+            model.select_identity(&id)?;
+        }
         Ok(model)
+    }
+
+    pub(crate) fn prepare(mut self) -> Result<(Model<T>, String, run::Live<T>), Error> {
+        let prompt = self.prompt.clone();
+        let live = std::mem::take(&mut self.live);
+        Ok((self.build()?, prompt, live))
     }
 
     /// Draws the list and blocks until the user chooses or aborts.
@@ -141,8 +161,8 @@ impl<T: Entry> Picker<T> {
 
     /// Runs `actions` in place: Enter or a shortcut starts the host's action
     /// while the picker stays on screen, and keys are ignored until it
-    /// finishes. Success ends the picker; a failure shows its message and
-    /// keeps the query, selection, and scope. Returns once an action succeeds
+    /// finishes. Actions can close, push or replace a page, or go back; a failure shows its message and
+    /// keeps the query, selection, and scope. Back restores the parent page. Returns once an action closes
     /// or the user cancels, and says which. Shortcuts work even when a query matches nothing;
     /// normal editing keys are reserved.
     ///
@@ -170,7 +190,7 @@ mod tests {
     use ratatui::style::Color;
 
     use super::*;
-    use crate::Cell;
+    use crate::{Cell, Column};
 
     #[derive(Debug)]
     struct Item;
@@ -181,6 +201,28 @@ mod tests {
         fn cells(&self, _palette: &Palette) -> Vec<Cell> {
             vec![Cell::new("item", Color::White)]
         }
+
+        fn identity(&self) -> Option<std::borrow::Cow<'_, str>> {
+            Some(std::borrow::Cow::Borrowed("item"))
+        }
+    }
+
+    #[test]
+    fn exact_selection_reveals_a_scoped_row_and_rejects_missing_identity() {
+        let model = Picker::new(vec![Item])
+            .group(Group::new((), "completed", vec![Column::fill()]).scoped('='))
+            .selected("item")
+            .build()
+            .unwrap();
+        assert_eq!(model.selected(), Some(0));
+        assert_eq!(model.scope_label(), "completed");
+        assert!(matches!(
+            Picker::new(vec![Item])
+                .group(Group::new((), "items", vec![Column::fill()]))
+                .selected("absent")
+                .build(),
+            Err(Error::MissingSelection { .. })
+        ));
     }
 
     #[test]
