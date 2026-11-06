@@ -403,6 +403,11 @@ test('model and thinking resolve strictly against the catalog and the chosen mod
     thinking: 'medium',
   });
   assert.deepEqual(
+    resolve({model: 'beta/deep'}),
+    {ok: true, model: 'beta/deep', thinking: 'medium'},
+    'omitted thinking is default',
+  );
+  assert.deepEqual(
     resolve({model: 'alpha/plain', thinking: 'default'}),
     {ok: true, model: 'alpha/plain', thinking: 'off'},
     'default clamps to the model',

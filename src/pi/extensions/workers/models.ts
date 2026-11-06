@@ -18,10 +18,10 @@ import {
 // (`enabledModels`), validated by the shared catalog checks. Nothing here
 // names a model, so new releases and changes to `enabledModels` need no code change.
 
-/** What a spawn asks for. Both fields are required so the choice is deliberate. */
+/** What a spawn asks for. The model is required so the choice is deliberate; thinking defaults to `default`. */
 export interface ModelChoice {
   readonly model: string;
-  readonly thinking: string;
+  readonly thinking?: string | undefined;
 }
 
 export interface ParentModel {
@@ -50,8 +50,8 @@ export function buildCatalog(
 /**
  * Resolve a spawn's choice to a concrete model and thinking level, rejecting
  * anything the catalog or the chosen model does not support. `inherit` uses
- * the parent's value; thinking `default` is Pi's default level clamped to the
- * chosen model, which is what the child would start with on its own.
+ * the parent's value; thinking `default`, or no thinking, is Pi's default level
+ * clamped to the chosen model, which is what the child would start with on its own.
  */
 export function resolveChoice(
   choice: ModelChoice,
@@ -72,14 +72,15 @@ export function resolveChoice(
     if (!found.ok) return fail(found.error);
     model = found.value.model;
   }
-  if (choice.thinking === 'default')
+  const thinking = choice.thinking ?? 'default';
+  if (thinking === 'default')
     return {
       ok: true,
       model: refOf(model),
       thinking: clampThinkingLevel(model, defaultThinking),
     };
   let checked: Check<ModelThinkingLevel>;
-  if (choice.thinking === 'inherit') {
+  if (thinking === 'inherit') {
     if (!parent.thinking || !isThinkingLevel(parent.thinking))
       return fail(
         'thinking inherit: this session has no current thinking level; choose default or a level',
@@ -89,7 +90,7 @@ export function resolveChoice(
       parent.thinking,
       `inherit (${parent.thinking})`,
     );
-  } else checked = checkThinking(model, choice.thinking);
+  } else checked = checkThinking(model, thinking);
   return checked.ok
     ? {ok: true, model: refOf(model), thinking: checked.value}
     : fail(checked.error);
@@ -121,4 +122,4 @@ export function describeCatalog(
 }
 
 export const CHOICE_GUIDANCE =
-  "Choose the model and thinking level together for the worker's bounded task. Use the available catalog and observed results; price and effort labels alone don't establish capability, and effort levels aren't comparable across models. Weigh reasoning difficulty, uncertainty, and the cost of mistakes against latency and cost. Task length or labels such as review and debugging aren't sufficient reasons for higher effort. Keep the choice proportional to the work.\n\ninherit uses this session's value; thinking default is Pi's default level for the chosen model.";
+  "Choose the model for the worker's bounded task from the catalog and observed results; price alone doesn't establish capability. Leave thinking unset to use the default. Raise it only for a concrete reason, such as a failed attempt at the default or a subtle error that is costly to miss; lower it for narrow mechanical work. Effort levels aren't comparable across models.\n\ninherit uses this session's value; thinking default is Pi's default level for the chosen model.";

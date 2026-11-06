@@ -1344,7 +1344,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       label: string;
       cwd?: string;
       model: string;
-      thinking: string;
+      thinking?: string;
       tools?: string[];
       system?: string;
       assignment?: TaskAssignment;
@@ -1882,16 +1882,18 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
           [Type.Literal('inherit'), ...catalog.map(e => Type.Literal(e.ref))],
           {description: 'inherit, or a provider/id from the Models list'},
         ),
-        thinking: Type.Union(
-          [
-            Type.Literal('default'),
-            Type.Literal('inherit'),
-            ...THINKING_LEVELS.map(level => Type.Literal(level)),
-          ],
-          {
-            description:
-              'default, inherit, or a level the chosen model supports',
-          },
+        thinking: Type.Optional(
+          Type.Union(
+            [
+              Type.Literal('default'),
+              Type.Literal('inherit'),
+              ...THINKING_LEVELS.map(level => Type.Literal(level)),
+            ],
+            {
+              description:
+                'Omit for default; otherwise inherit or a level the chosen model supports',
+            },
+          ),
         ),
         cwd: Type.Optional(
           Type.String({
