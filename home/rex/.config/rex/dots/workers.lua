@@ -21,8 +21,9 @@ end
 ---`env` sets the one variable that keeps it out of program status.
 ---@param session_file string
 ---@param viewer string The viewer extension.
+---@param label string The worker's label, the view's title.
 ---@return string[]
-function M.command(session_file, viewer)
+function M.command(session_file, viewer, label)
   local env = process.which("env") or error("env is not on the command path", 0)
   local pi = process.which("pi") or error("pi is not installed on the command path", 0)
   return {
@@ -42,6 +43,8 @@ function M.command(session_file, viewer)
     "--offline",
     "--worker-session",
     session_file,
+    "--worker-label",
+    label,
   }
 end
 
@@ -52,9 +55,12 @@ function M.install()
     description = "Show a Pi worker's saved transcript in a view, for the Pi that owns it",
     args = { session_file = "string", viewer = "string", label = "string" },
     run = function(ctx, args)
-      local command =
-        M.command(absolute("session_file", args.session_file), absolute("viewer", args.viewer))
       local label = type(args.label) == "string" and args.label ~= "" and args.label or "worker"
+      local command = M.command(
+        absolute("session_file", args.session_file),
+        absolute("viewer", args.viewer),
+        label
+      )
       return views.open({ title = "worker: " .. label, command = command, at = ctx })
     end,
   })

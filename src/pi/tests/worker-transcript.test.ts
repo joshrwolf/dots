@@ -205,12 +205,36 @@ test('follower shows the active branch with compaction applied', t => {
     'after',
     'session_info',
   ]);
-  assert.equal(follower.session.name, 'Named worker');
   const items = projectTranscript(follower.session.entries);
   assert.deepEqual(
     items.map(item => item.kind),
     ['compaction', 'user', 'user'],
   );
+});
+
+test('follower starts a large file at its read window and keeps following', t => {
+  const file = path.join(scratch(t), 'session.jsonl');
+  const session = new SessionFixture(file, '/fixture');
+  for (let i = 0; i < 40; i++) session.user(`early ${i} ${'x'.repeat(200)}`);
+  session.user('inside the window');
+  const follower = new SessionFollower(file, 600);
+  assert.equal(follower.poll(), true);
+  assert.equal(follower.session.truncated, true);
+  assert.equal(follower.session.header?.cwd, '/fixture');
+  assert.equal(follower.session.notice, undefined);
+  assert.deepEqual(texts(follower).slice(-1), ['inside the window']);
+  assert.ok(texts(follower).length < 5, 'early records are not read');
+  session.user('appended');
+  assert.equal(follower.poll(), true);
+  assert.deepEqual(texts(follower).slice(-2), [
+    'inside the window',
+    'appended',
+  ]);
+  assert.equal(follower.poll(), false);
+  const small = new SessionFollower(file);
+  small.poll();
+  assert.equal(small.session.truncated, false);
+  assert.equal(texts(small).length, 42);
 });
 
 test('projection pairs tool results, marks calls of failed responses and keeps skill invocations', () => {
@@ -390,4 +414,16 @@ test('transcript bounds its rows and says where the full history is', t => {
   assert.doesNotMatch(shown, /row 29\b/);
   assert.match(shown, /row 229/);
   transcript.dispose();
+  const windowed = new WorkerTranscript(
+    {requestRender() {}} as unknown as TUI,
+    new SessionFollower(file, 4096),
+    options,
+  );
+  const tail = plain(windowed.render(100));
+  assert.match(
+    tail,
+    /Earlier rows not shown; full history:\s+\S*session\.jsonl/,
+  );
+  assert.match(tail, /row 229/);
+  windowed.dispose();
 });

@@ -62,10 +62,26 @@ return {
       "--offline",
       "--worker-session",
       "/sessions/w-1/session.jsonl",
+      "--worker-label",
+      "review",
       "--dismiss",
       "views_dismiss",
     })
     expect.equal(views.open_views.picker.title, "worker: review")
+  end,
+
+  ["a worker without a label is titled worker"] = function(t)
+    t.stub(views, "open_views", {})
+    local fake = fake_rex.install(t, world())
+    local actions = fake_rex.registered(t, workers)
+    actions.workers_view.run(
+      { session_id = "s", block_id = "pane" },
+      { session_file = args.session_file, viewer = args.viewer, label = "" }
+    )
+    local block = fake.only("session.new_layer")[1].args.layout.block
+    expect.equal(block.label, "worker: worker")
+    local command = block.options.command
+    expect.equal({ command[#command - 3], command[#command - 2] }, { "--worker-label", "worker" })
   end,
 
   ["relative or missing paths open nothing"] = function(t)

@@ -6,7 +6,6 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
-import {renderJobMessage} from './transcript.ts';
 import {CompletionDelivery, registerDeliveryHooks} from './delivery.ts';
 import {JobsRuntime, pruneRuntimes} from './runtime.ts';
 import {JobsPresentation} from './ui.ts';
@@ -236,6 +235,4 @@ export default function jobs(pi: ExtensionAPI): void {
       );
     },
   });
-  for (const type of [RECORD_TYPE, 'dots-jobs-inspection'])
-    pi.registerMessageRenderer(type, renderJobMessage);
 }

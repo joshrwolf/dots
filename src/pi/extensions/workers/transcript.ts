@@ -23,22 +23,18 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import {Spacer, type Component, type TUI} from '@earendil-works/pi-tui';
 import {OutputView} from '../../src/ui/card.ts';
-import {rendererResolver} from '../ui/index.ts';
+import {messageRenderers, rendererResolver} from '../ui/index.ts';
 import {
   hiddenThinkingLabel,
   thinkingMarkdown,
 } from '../../src/features/thinking.ts';
-import {renderJobMessage} from '../jobs/transcript.ts';
-import {RECORD_TYPE as JOB_RECORD} from '../jobs/protocol.ts';
-import {renderWake} from '../wake/present.ts';
-import {renderEvent} from './present.ts';
 import type {SessionFollower} from './follow.ts';
 import {
   projectTranscript,
   type ToolOutcome,
   type TranscriptItem,
 } from './projection.ts';
-import type {WorkerEvent} from './protocol.ts';
+import {fields, type WorkerEvent} from './protocol.ts';
 
 /** Display settings a transcript takes from the host's Pi settings. */
 export interface TranscriptOptions {
@@ -50,11 +46,10 @@ export interface TranscriptOptions {
 
 export function transcriptOptions(
   settings: ReturnType<ExtensionAPI['getSettings']>,
-  outputPad = settings.outputPad === 0 ? 0 : 1,
 ): TranscriptOptions {
   const width = settings.terminal?.imageWidthCells;
   return {
-    outputPad,
+    outputPad: settings.outputPad === 0 ? 0 : 1,
     hideThinkingBlock: settings.hideThinkingBlock ?? false,
     showImages: settings.terminal?.showImages ?? true,
     imageWidthCells:
@@ -65,7 +60,7 @@ export function transcriptOptions(
 }
 
 /** The most recent rows a transcript presents; older rows stay in the session file. */
-export const TRANSCRIPT_ROWS = 200;
+const TRANSCRIPT_ROWS = 200;
 /** Live text kept for one streaming response; the saved message replaces it. */
 const LIVE_TEXT_LIMIT = 256 * 1024;
 
@@ -77,15 +72,7 @@ type LiveBlock = AssistantMessage['content'][number];
 type CustomMessage = Parameters<MessageRenderer>[0];
 
 /** The companion's own message renderers, which the worker's Pi registered for these types. */
-const messageRenderers: ReadonlyMap<string, MessageRenderer> = new Map<
-  string,
-  MessageRenderer
->([
-  ['dots.worker.event', renderEvent as MessageRenderer],
-  ['dots.wake', renderWake as MessageRenderer],
-  [JOB_RECORD, renderJobMessage],
-  ['dots-jobs-inspection', renderJobMessage],
-]);
+const customRenderers = messageRenderers();
 
 /** ToolExecutionComponent's own definition type; renderers are typed by their tool's arguments. */
 type AnyToolDefinition = ToolDefinition<any, any, any>;
@@ -102,7 +89,7 @@ const builtInTools: Readonly<
 };
 
 /** Tool renderers as the worker's own Pi resolves them: the companion's, over Pi's built-in definitions. */
-export function workerToolRenderers(
+function workerToolRenderers(
   cwd: string,
 ): (name: string) => ToolRenderers | undefined {
   const resolve = rendererResolver();
@@ -115,22 +102,16 @@ export function workerToolRenderers(
   };
 }
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
 /** A recorded assistant message from an RPC event; undefined for anything else. */
 function assistantMessage(value: unknown): AssistantMessage | undefined {
-  const message = record(value);
+  const message = fields(value);
   return message?.role === 'assistant' && Array.isArray(message.content)
     ? (message as unknown as AssistantMessage)
     : undefined;
 }
 
 function toolOutcome(value: unknown): ToolOutcome | undefined {
-  const result = record(value);
+  const result = fields(value);
   if (!result || !Array.isArray(result.content)) return undefined;
   return {
     content: result.content as ToolOutcome['content'],
@@ -184,9 +165,6 @@ export class WorkerTranscript implements Component {
 
   get file(): string | undefined {
     return this.follower.file;
-  }
-  get name(): string | undefined {
-    return this.follower.session.name;
   }
 
   /** Reads newly saved records; true when the transcript changed. */
@@ -398,7 +376,7 @@ export class WorkerTranscript implements Component {
       case 'custom': {
         const component = new CustomMessageComponent(
           item.message as CustomMessage,
-          messageRenderers.get(item.message.customType),
+          customRenderers.get(item.message.customType),
           markdown,
           outputPad,
         );
@@ -440,10 +418,10 @@ export class WorkerTranscript implements Component {
     const children: Component[] = [];
     if (session.notice) children.push(new OutputView(`(${session.notice})`));
     const omitted = items.length - shown.length;
-    if (omitted > 0)
+    if (omitted > 0 || session.truncated)
       children.push(
         new OutputView(
-          `${omitted} earlier row${omitted === 1 ? '' : 's'} not shown; full history: ${this.follower.file ?? ''}`,
+          `${session.truncated ? 'Earlier rows' : `${omitted} earlier row${omitted === 1 ? '' : 's'}`} not shown; full history: ${this.follower.file ?? ''}`,
         ),
       );
     let persisted = false;

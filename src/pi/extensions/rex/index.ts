@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
+import {labelText} from '@joshrwolf/pi-kit/ui';
 
 /**
  * Rex's agent setup gives Claude Code and Codex a session-start hook that adds
@@ -12,6 +13,35 @@ import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
 /** The Rex CLI: Rex puts its own bin directory in each terminal's environment. */
 export function rexBinary(env: NodeJS.ProcessEnv): string {
   return env.REX_BIN_DIR ? path.join(env.REX_BIN_DIR, 'rex') : 'rex';
+}
+
+/** Runs a Rex action on the server that owns this terminal; rejects when Rex reports a failure. */
+export async function rexDo(
+  pi: Pick<ExtensionAPI, 'exec'>,
+  action: string,
+  args: Readonly<Record<string, unknown>> = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const result = await pi.exec(
+    rexBinary(env),
+    [
+      '--timeout',
+      '30s',
+      'do',
+      action,
+      '--json',
+      '--args',
+      JSON.stringify(args),
+    ],
+    {timeout: 35_000},
+  );
+  if (result.killed || result.code !== 0)
+    throw new Error(
+      labelText(result.stderr.trim() || `rex do ${action} failed`).slice(
+        0,
+        256,
+      ),
+    );
 }
 
 /** Runs a program and resolves with its stdout; the test seam for the Rex invocation. */

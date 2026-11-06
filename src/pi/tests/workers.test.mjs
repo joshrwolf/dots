@@ -184,34 +184,96 @@ test('RPC acknowledgement deadlines clean up and close preempts pending commands
   }
 });
 
-test('transcript tails bound reads and tolerate malformed records and content', () => {
+const header = {
+  type: 'session',
+  version: 3,
+  id: 'tail',
+  timestamp: '2026-01-01T00:00:00.000Z',
+  cwd: '/fixture',
+};
+const entry = (id, parentId, value) => ({
+  id,
+  parentId,
+  timestamp: '2026-01-01T00:00:01.000Z',
+  ...value,
+});
+const assistant = (id, parentId, content) =>
+  entry(id, parentId, {
+    type: 'message',
+    message: {role: 'assistant', content, stopReason: 'stop', timestamp: 1},
+  });
+const lines = values =>
+  values.map(value => JSON.stringify(value)).join('\n') + '\n';
+
+test('transcript tails show the active branch with compaction applied, as the transcript view does', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'dots-worker-tail-'));
   const file = path.join(dir, 'session.jsonl');
   try {
-    const record = content =>
-      JSON.stringify({type: 'message', message: {role: 'assistant', content}});
     writeFileSync(
       file,
-      [
-        record('old'.repeat(500_000)),
-        'null',
-        '[]',
-        '{broken',
-        record([
-          null,
-          7,
-          {type: 'text', text: 'latest'},
-          {type: 'text', text: 42},
+      lines([
+        header,
+        assistant('1', null, [{type: 'text', text: 'summarized away'}]),
+        assistant('2', '1', [
+          {type: 'toolCall', id: 'call', name: 'read', arguments: {path: 'a'}},
         ]),
-        '',
-      ].join('\n'),
+        entry('3', '2', {
+          type: 'message',
+          message: {
+            role: 'toolResult',
+            toolCallId: 'call',
+            toolName: 'read',
+            content: [{type: 'text', text: 'file\ntext'}],
+            isError: false,
+            timestamp: 1,
+          },
+        }),
+        assistant('4', '3', [{type: 'text', text: 'abandoned branch'}]),
+        entry('5', '3', {
+          type: 'compaction',
+          summary: 'Earlier work.',
+          firstKeptEntryId: '2',
+          tokensBefore: 100,
+        }),
+        assistant('6', '5', [{type: 'text', text: 'latest\x1b[31m'}]),
+      ]) + '{"type":"message","partial',
     );
-    const tail = transcriptTail(file);
-    assert.match(tail[0], /older or oversized records omitted/);
-    assert.equal(tail.at(-1), 'latest');
+    assert.deepEqual(transcriptTail(file), [
+      '-> read {"path":"a"}',
+      '   <- file text',
+      'latest',
+    ]);
     assert.deepEqual(transcriptTail(file, 1), ['latest']);
     assert.deepEqual(transcriptTail(file, 0), []);
-    assert.match(transcriptTail(path.join(dir, 'absent'))[0], /missing/);
+    assert.deepEqual(transcriptTail(file, 3, 10), [
+      '-> read {"',
+      '   <- file',
+      'latest',
+    ]);
+    assert.match(transcriptTail(path.join(dir, 'absent'))[0], /not saved yet/);
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('transcript tails read only the end of a large session and say what they skipped', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'dots-worker-tail-'));
+  const file = path.join(dir, 'session.jsonl');
+  try {
+    writeFileSync(
+      file,
+      lines([
+        header,
+        assistant('1', null, [{type: 'text', text: 'old'.repeat(500_000)}]),
+      ]) +
+        'null\n{broken\n' +
+        lines([assistant('2', '1', [{type: 'text', text: 'latest'}])]),
+    );
+    const tail = transcriptTail(file);
+    assert.match(tail[0], /older records omitted; inspect the session file/);
+    assert.match(tail[0], /2 unreadable records skipped/);
+    assert.equal(tail.at(-1), 'latest');
+    assert.equal(tail.length, 2);
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }

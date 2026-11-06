@@ -164,7 +164,10 @@ if (flow === 'workbench') {
     themes: [],
     noThemes: true,
     noTools: 'all',
-    flags: new Map([['worker-session', join(process.cwd(), 'viewed.jsonl')]]),
+    flags: new Map([
+      ['worker-session', join(process.cwd(), 'viewed.jsonl')],
+      ['worker-label', 'Fixture reviewer'],
+    ]),
   };
 } else {
   config = {
@@ -1235,7 +1238,7 @@ async function viewerFlow() {
   await wait(() => events().includes('start'), 'startup');
   await wait(
     () =>
-      shows('Worker · viewed.jsonl') &&
+      shows('Worker · Fixture reviewer') &&
       shows('Run the fixture check') &&
       shows('Runtime recorded response') &&
       shows('RUNTIME_TOOL_COMMAND') &&

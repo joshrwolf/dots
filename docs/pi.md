@@ -92,9 +92,10 @@ levels, skill handoff and task-assignment arguments. Task association does not
 claim, complete or accept a task.
 
 Native Pi settings own compaction. The companion shows each worker's context use
-against its native trigger and how often it has compacted; workers are told to
-keep working through compaction. It neither changes model capacity nor replaces
-a worker automatically. Unknown or stale context remains explicit.
+against its native trigger and how often it has compacted (`⇊N` in the widget);
+workers are told to keep working through compaction. It neither changes model
+capacity nor replaces a worker automatically. Unknown or stale context remains
+explicit.
 
 ## Goals
 

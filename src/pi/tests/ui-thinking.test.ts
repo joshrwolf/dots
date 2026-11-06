@@ -49,6 +49,7 @@ function registration() {
   } as unknown as ExtensionContext;
   register({
     registerToolRenderer() {},
+    registerMessageRenderer() {},
     registerMarkdownTransformer(transform: MarkdownTransformer) {
       transforms.push(transform);
     },

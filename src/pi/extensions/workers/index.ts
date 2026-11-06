@@ -45,7 +45,6 @@ import {
   describeActivity,
   describeStep,
   describeText,
-  renderEvent,
   type EventDetails,
   type WidgetRow,
 } from './present.ts';
@@ -87,7 +86,7 @@ import {createCheckoutResolver} from './checkout.ts';
 import {type WorkerInspectionSource, type WorkerListItem} from './inspector.ts';
 import {transcriptTail} from './tail.ts';
 import {transcriptOptions} from './transcript.ts';
-import {rexBinary} from '../rex/index.ts';
+import {rexDo} from '../rex/index.ts';
 import {
   addCost,
   assistantResponse,
@@ -222,12 +221,27 @@ function excerpt(text: string): {body: string; truncated: boolean} {
 /** Prefix for messages a child sends upward through the extension-UI notify channel. */
 const MARK = 'dots.message:';
 
-/** This session's nesting depth. We set the variable ourselves, so a malformed value is a broken invariant, not depth 0. */
 /** The read-only transcript viewer a Rex view runs; see the Rex `workers_view` action. */
 const VIEWER = fileURLToPath(
   new URL('../worker-view/index.ts', import.meta.url),
 );
 
+/** Opens a worker's saved transcript in a Rex view on the server that owns this terminal. */
+export async function viewInRex(
+  pi: Pick<ExtensionAPI, 'exec'>,
+  sessionFile: string,
+  label: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  await rexDo(
+    pi,
+    'workers_view',
+    {session_file: path.resolve(sessionFile), viewer: VIEWER, label},
+    env,
+  );
+}
+
+/** This session's nesting depth. We set the variable ourselves, so a malformed value is a broken invariant, not depth 0. */
 function depth(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.DOTS_WORKER_DEPTH;
   if (raw === undefined || raw === '') return 0;
@@ -1721,8 +1735,6 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
 
   if (selfId()) registerWorkerContext(pi);
 
-  pi.registerMessageRenderer<EventDetails>('dots.worker.event', renderEvent);
-
   /**
    * Skills the model may select, from this runtime's latest run's prompt
    * options. Every run, and so every spawn, starts with before_agent_start,
@@ -2599,29 +2611,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
             if (!snapshot) throw new Error('Worker is no longer available');
             if (!snapshot.sessionFile)
               throw new Error('Worker has no saved transcript yet');
-            const result = await pi.exec(
-              rexBinary(process.env),
-              [
-                '--timeout',
-                '30s',
-                'do',
-                'workers_view',
-                '--json',
-                '--args',
-                JSON.stringify({
-                  session_file: path.resolve(snapshot.sessionFile),
-                  viewer: VIEWER,
-                  label: snapshot.worker.label,
-                }),
-              ],
-              {timeout: 35_000},
-            );
-            if (result.killed || result.code !== 0)
-              throw new Error(
-                labelText(
-                  result.stderr.trim() || 'rex do workers_view failed',
-                ).slice(0, 256),
-              );
+            await viewInRex(pi, snapshot.sessionFile, snapshot.worker.label);
           },
         }
       : {}),

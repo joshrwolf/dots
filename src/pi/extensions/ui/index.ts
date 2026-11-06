@@ -1,9 +1,14 @@
 import type {
   ExtensionAPI,
+  MessageRenderer,
   ToolRenderers,
   ToolRendererResolver,
 } from '@earendil-works/pi-coding-agent';
 import {createToolRenderers} from '../../src/host/tools.ts';
+import {renderJobMessage} from '../jobs/transcript.ts';
+import {RECORD_TYPE as JOB_RECORD} from '../jobs/protocol.ts';
+import {renderWake} from '../wake/present.ts';
+import {renderEvent} from '../workers/present.ts';
 import {codemodePresentation} from '../../src/features/tools/codemode.ts';
 import {bashPresentation} from '../../src/features/tools/bash.ts';
 import {readPresentation} from '../../src/features/tools/read.ts';
@@ -24,6 +29,16 @@ export function toolRenderers(): ReadonlyMap<string, ToolRenderers> {
     ['read', createToolRenderers(readPresentation)],
     ['edit', createToolRenderers(editPresentation)],
     ['write', createToolRenderers(writePresentation)],
+  ]);
+}
+
+/** The companion's custom message renderers, by custom type. */
+export function messageRenderers(): ReadonlyMap<string, MessageRenderer> {
+  return new Map<string, MessageRenderer>([
+    ['dots.worker.event', renderEvent as MessageRenderer],
+    ['dots.wake', renderWake as MessageRenderer],
+    [JOB_RECORD, renderJobMessage],
+    ['dots-jobs-inspection', renderJobMessage],
   ]);
 }
 
@@ -70,6 +85,8 @@ export function rendererResolver(): ToolRendererResolver {
 
 export default function register(pi: ExtensionAPI): void {
   pi.registerToolRenderer(rendererResolver());
+  for (const [type, renderer] of messageRenderers())
+    pi.registerMessageRenderer(type, renderer);
   pi.registerMarkdownTransformer(thinkingMarkdown);
   let releaseEditor = () => {};
   pi.on('session_shutdown', () => {

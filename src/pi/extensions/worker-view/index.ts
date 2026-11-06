@@ -1,23 +1,22 @@
-import path from 'node:path';
-import type {
-  ExtensionAPI,
-  ExtensionContext,
+import {
+  keyText,
+  type ExtensionAPI,
+  type ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
 import {matchesKey, type Component} from '@earendil-works/pi-tui';
-import type {RowModel} from '@joshrwolf/pi-kit/ui';
+import {labelText, type RowModel} from '@joshrwolf/pi-kit/ui';
 import {Inspector} from '../../src/ui/inspector.ts';
-import {OutputView} from '../../src/ui/card.ts';
-import {labelText} from '../../src/index.ts';
-import {rexBinary} from '../rex/index.ts';
+import {rexDo} from '../rex/index.ts';
 import {SessionFollower} from '../workers/follow.ts';
 import {WorkerTranscript, transcriptOptions} from '../workers/transcript.ts';
 
 /**
  * A read-only view of one worker's saved transcript, for a Pi started with
- * only this extension (see the Rex `workers_view` action). It reads the file
- * the worker's own Pi appends to and never submits a prompt: the view takes
- * the editor's place, and any input that still reaches Pi is handled here.
- * It shows saved records only; the response in flight appears once saved.
+ * this extension and `--worker-session` (see the Rex `workers_view` action).
+ * It reads the file the worker's own Pi appends to and never submits a
+ * prompt: the view takes the editor's place, and any input that still
+ * reaches Pi is handled here. It shows saved records only; the response in
+ * flight appears once saved. Without `--worker-session` it does nothing.
  */
 
 /** Rows the view leaves to Pi's own chrome around the editor area. */
@@ -28,47 +27,51 @@ export default function register(pi: ExtensionAPI): void {
     description: 'Session file of the worker transcript to show, read only',
     type: 'string',
   });
+  pi.registerFlag('worker-label', {
+    description: 'Worker label the transcript view shows as its title',
+    type: 'string',
+  });
   pi.registerFlag('dismiss', {
     description: 'Rex action to run when the view closes',
     type: 'string',
   });
 
+  const text = (name: string) => {
+    const value = pi.getFlag(name);
+    return typeof value === 'string' && value ? value : undefined;
+  };
+  let viewing = false;
   let timer: ReturnType<typeof setInterval> | undefined;
-  pi.on('input', () => ({action: 'handled'}));
+  pi.on('input', () => (viewing ? {action: 'handled'} : undefined));
   pi.on('session_shutdown', () => {
     if (timer) clearInterval(timer);
     timer = undefined;
   });
   pi.on('session_start', (_event, ctx) => {
-    if (ctx.mode !== 'tui') return;
-    const flag = pi.getFlag('worker-session');
-    const file = typeof flag === 'string' && flag ? flag : undefined;
-    const dismiss = pi.getFlag('dismiss');
+    const file = text('worker-session');
+    viewing = file !== undefined;
+    if (!file || ctx.mode !== 'tui') return;
+    const title = `Worker · ${labelText(text('worker-label') ?? 'worker')}`;
+    const dismiss = text('dismiss');
     ctx.ui.setHeader(() => ({render: () => [], invalidate() {}}));
     ctx.ui.setFooter(() => ({render: () => [], invalidate() {}}));
     ctx.ui.setWorkingVisible(false);
     // Not awaited: session start completes while the view stays mounted.
     void ctx.ui
       .custom<void>((tui, theme, bindings, done) => {
-        const transcript = file
-          ? new WorkerTranscript(
-              tui,
-              new SessionFollower(file),
-              transcriptOptions(pi.getSettings()),
-            )
-          : undefined;
+        const transcript = new WorkerTranscript(
+          tui,
+          new SessionFollower(file),
+          transcriptOptions(pi.getSettings()),
+        );
         let closing = false;
         const close = () => {
           if (closing) return;
           closing = true;
           if (timer) clearInterval(timer);
           timer = undefined;
-          transcript?.dispose();
-          finish(
-            ctx,
-            typeof dismiss === 'string' ? dismiss : undefined,
-            done,
-          ).catch((error: unknown) => {
+          transcript.dispose();
+          finish(ctx, dismiss, done).catch((error: unknown) => {
             ctx.ui.notify(
               `Worker view failed to close: ${String(error)}`,
               'error',
@@ -83,15 +86,12 @@ export default function register(pi: ExtensionAPI): void {
           height,
           'end',
         );
-        const body: Component =
-          transcript ??
-          new OutputView('No worker session given (--worker-session FILE).');
         const footer = (): RowModel => ({
           layout: 'inline',
           groupSeparator: '  ',
           start: [
             {
-              text: `${inspector.isFollowingEnd ? 'Following' : 'Paused'} · ↑/↓ scroll · F follow · ${bindings.getKeys('app.tools.expand').join('/')} expand · Esc/q close`,
+              text: `${inspector.isFollowingEnd ? 'Following' : 'Paused'} · ↑/↓ scroll · F follow · ${keyText('app.tools.expand')} expand · Esc/q close`,
               tone: 'dim',
               priority: 100,
               shrink: 'clip',
@@ -111,24 +111,18 @@ export default function register(pi: ExtensionAPI): void {
           if (shownFollowing === inspector.isFollowingEnd) return;
           shownFollowing = inspector.isFollowingEnd;
           inspector.setContent(
-            {
-              title: `Worker · ${labelText(transcript?.name ?? path.basename(file ?? 'transcript'))}`,
-              detail: 'read only',
-              body,
-              footer: footer(),
-            },
+            {title, detail: 'read only', body: transcript, footer: footer()},
             theme,
           );
         };
         update();
-        if (transcript)
-          timer = setInterval(() => {
-            if (transcript.refresh()) {
-              shownFollowing = undefined;
-              update();
-              tui.requestRender();
-            }
-          }, 1000);
+        timer = setInterval(() => {
+          if (transcript.refresh()) {
+            shownFollowing = undefined;
+            update();
+            tui.requestRender();
+          }
+        }, 1000);
         return {
           render(width: number): string[] {
             update();
@@ -151,7 +145,7 @@ export default function register(pi: ExtensionAPI): void {
               return;
             }
             if (bindings.matches(data, 'app.tools.expand')) {
-              transcript?.toggleExpanded();
+              transcript.toggleExpanded();
               return;
             }
             // Enter does not close a live transcript; Esc and q do.
@@ -173,11 +167,7 @@ export default function register(pi: ExtensionAPI): void {
   ): Promise<void> {
     if (action)
       try {
-        await pi.exec(
-          rexBinary(process.env),
-          ['--timeout', '30s', 'do', action, '--json', '--args', '{}'],
-          {timeout: 35_000},
-        );
+        await rexDo(pi, action);
       } catch {
         // Closing still ends the view; Rex then focuses a pane itself.
       }
