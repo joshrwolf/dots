@@ -641,9 +641,9 @@ mod attention_view {
         );
         assert_eq!(answer.by.as_deref(), Some("human"));
 
-        // Wide enough, requests and the answer sit side by side.
+        // Wide enough, the inbox and the answer sit side by side.
         resize(&slave, 120, 40, &viewer);
-        let at = screen.until(at, "Requests");
+        let at = screen.until(at, "Inbox");
 
         // The answered request stays selected; the user moves to the next one.
         // A question replaced while the user types keeps the draft with the
@@ -669,12 +669,12 @@ mod attention_view {
         let at = screen.until(at, "unsent");
         send(&mut keyboard, "\x1b");
 
-        // Mouse: the Work tab, then Close.
-        click(&mut keyboard, 27, 1);
+        // Mouse: the footer's Goals button, then Close in the drawer.
+        click(&mut keyboard, 6, 39);
         let at = screen.until(at, "Goals");
         let at = screen.until(at, "refactor");
         screen.until(at, "Dropped");
-        click(&mut keyboard, 14, 40);
+        click(&mut keyboard, 15, 39);
 
         let deadline = Instant::now() + WATCHDOG;
         let status = loop {
