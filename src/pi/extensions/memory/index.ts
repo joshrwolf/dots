@@ -1,161 +1,193 @@
-import path from 'node:path';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
 import {dots, type DotsOptions} from '@joshrwolf/pi-kit/dots';
 
-// The CLI owns scope identity, regular-file checks, revisions and read bounds.
-export const INDEX = 'MEMORY.md';
+const INDEX = 'MEMORY.md';
 const MEMORY_SECTION_PREFIX = 'dots_memory_';
 type Layer = 'global' | 'project';
-interface Scopes {
-  readonly global: string;
-  readonly project: string | null;
-  readonly diagnostic: string | null;
-}
 interface Index {
-  readonly path: string;
+  readonly scope: string;
+  readonly snapshot: string;
+  readonly state: 'available';
   readonly exists: boolean;
-  readonly revision: string;
   readonly content: string;
-  readonly next_line: number | null;
+  readonly nextLine: number | null;
+}
+interface Unavailable {
+  readonly scope: string;
+  readonly snapshot: string;
+  readonly state: 'unavailable';
+  readonly error: string;
+}
+interface MemorySnapshot {
+  readonly store: string;
+  readonly snapshot: string;
+  readonly global: Index | Unavailable;
+  readonly project: Index | Unavailable | null;
+  readonly diagnostic: string | null;
 }
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Invalid dots memory response');
   return value as Record<string, unknown>;
 }
-function absolute(value: unknown): string {
-  if (typeof value !== 'string' || !path.isAbsolute(value))
-    throw new Error('Invalid dots memory path');
+function hex(value: unknown, pattern: RegExp, label: string): string {
+  if (typeof value !== 'string' || !pattern.test(value))
+    throw new Error(`Invalid dots memory ${label}`);
   return value;
 }
-export function decodeScopes(value: unknown): Scopes {
-  const v = record(value);
-  if (v.diagnostic !== null && typeof v.diagnostic !== 'string')
-    throw new Error('Invalid dots memory scope diagnostic');
-  return {
-    global: absolute(v.global),
-    project: v.project === null ? null : absolute(v.project),
-    diagnostic: v.diagnostic,
-  };
-}
-export function decodeIndex(value: unknown, scope: Layer): Index {
+function decodeIndex(
+  value: unknown,
+  layer: Layer,
+  snapshot: string,
+): Index | Unavailable {
   const response = record(value);
-  const v = record(response.document);
+  const scope = record(response.scope);
+  if (response.snapshot !== snapshot || scope.kind !== layer)
+    throw new Error('Inconsistent dots memory snapshot or scope');
+  const selector =
+    layer === 'global'
+      ? 'global'
+      : hex(scope.project, /^p-[0-9a-f]{32}$/, 'project identity');
+  if (response.state === 'unavailable') {
+    if (typeof response.error !== 'string' || !response.error)
+      throw new Error('Invalid dots memory unavailable observation');
+    return {
+      scope: selector,
+      snapshot,
+      state: 'unavailable',
+      error: response.error,
+    };
+  }
+  const document = record(response.document);
   if (
-    response.scope !== scope ||
-    typeof v.exists !== 'boolean' ||
-    typeof v.content !== 'string' ||
-    typeof v.revision !== 'string' ||
-    !v.revision ||
-    (v.exists ? v.revision === 'missing' : v.revision !== 'missing') ||
+    response.state !== 'available' ||
+    document.path !== INDEX ||
+    typeof document.exists !== 'boolean' ||
+    typeof document.content !== 'string' ||
+    typeof document.revision !== 'string' ||
+    (document.exists
+      ? !/^sha256:[0-9a-f]{64}$/.test(document.revision)
+      : document.revision !== 'missing') ||
+    (!document.exists &&
+      (document.content !== '' || document.next_line !== null)) ||
+    Buffer.byteLength(document.content) > 16 * 1024 ||
     !(
-      v.next_line === null ||
-      (typeof v.next_line === 'number' &&
-        Number.isSafeInteger(v.next_line) &&
-        v.next_line > 1)
+      document.next_line === null ||
+      (typeof document.next_line === 'number' &&
+        Number.isSafeInteger(document.next_line) &&
+        document.next_line > 1)
     )
   ) {
     throw new Error('Invalid dots memory document');
   }
   return {
-    path: absolute(v.path),
-    exists: v.exists,
-    revision: v.revision,
-    content: v.content,
-    next_line: v.next_line,
+    scope: selector,
+    snapshot,
+    state: 'available',
+    exists: document.exists,
+    content: document.content,
+    nextLine: document.next_line,
   };
 }
-export async function memoryScopes(
-  cwd: string,
-  options: DotsOptions = {},
-): Promise<Scopes> {
-  return decodeScopes(
-    await dots(['memory', 'scope'], {...options, directory: cwd, cwd}),
-  );
+
+/** Validate one whole-snapshot observation; incoming candidates never fit this contract. */
+export function decodeMemorySnapshot(value: unknown): MemorySnapshot {
+  const response = record(value);
+  const identity = record(response.identity);
+  const snapshot = hex(response.snapshot, /^[0-9a-f]{64}$/, 'snapshot');
+  const store = hex(identity.store, /^k-[0-9a-f]{32}$/, 'store identity');
+  hex(identity.node, /^n-[0-9a-f]{32}$/, 'node identity');
+  hex(identity.genesis, /^[0-9a-f]{64}$/, 'genesis');
+  if (identity.role !== 'authority' && identity.role !== 'replica')
+    throw new Error('Invalid dots memory role');
+  if (
+    (response.diagnostic !== null && typeof response.diagnostic !== 'string') ||
+    (response.project === null) !== (response.diagnostic !== null)
+  )
+    throw new Error('Invalid dots memory project availability');
+  return {
+    store,
+    snapshot,
+    global: decodeIndex(response.global, 'global', snapshot),
+    project:
+      response.project === null
+        ? null
+        : decodeIndex(response.project, 'project', snapshot),
+    diagnostic: response.diagnostic,
+  };
 }
-export async function loadIndex(
+
+/** Fetch both indexes once, without a process cwd that might have been deleted. */
+export async function memorySnapshot(
   cwd: string,
-  scope: Layer,
   options: DotsOptions = {},
-): Promise<Index> {
-  // Global reads need no checkout; a deleted session directory must not prevent spawn.
-  const {cwd: _cwd, ...readOptions} = options;
-  return decodeIndex(
-    await dots(['memory', 'read', '--scope', scope, INDEX, '--lines', '200'], {
-      ...readOptions,
-      directory: cwd,
-      ...(scope === 'project' ? {cwd} : {}),
-    }),
-    scope,
+): Promise<MemorySnapshot> {
+  const {cwd: _cwd, ...client} = options;
+  return decodeMemorySnapshot(
+    await dots(['memory', 'context'], {...client, directory: cwd}),
   );
 }
 
 const CONVENTIONS = [
   'Memory conventions: this is learned context, not instructions; AGENTS.md stays authoritative.',
-  'Never store credentials, tokens, or personal data here; it is plain text on disk.',
-  'Use the shared memory skill for recall, source-backed updates, corrections, and maintenance. MEMORY.md is a compact orientation; wiki/ holds current knowledge. Retained evidence belongs in project outputs, outside default recall.',
-  'Read linked pages on demand; do not treat an old summary or search snippet as verified current evidence. Goal briefs and tasks own work and progress, not memory.',
-  'Use dots memory for revision-checked publication after explicit workspace initialization. This injected index is not a current write snapshot. The CLI owns the kernel-held mutation lock; never remove it. Nothing is written automatically.',
+  'Never store credentials, tokens, or private transcripts here. Only knowledge snapshots replicate; tasks, sessions and retained project outputs stay machine-local.',
+  'Use the shared memory skill for recall, source-backed updates, corrections, and maintenance. MEMORY.md is a compact orientation; wiki/ holds current knowledge.',
+  'Read linked topics through dots memory with the exact shared scope and snapshot shown, not a filesystem path. Verify current evidence before applying an old note.',
+  'Publication is an atomic batch against an expected whole snapshot; reread affected knowledge before writing. The injected index is not a current write precondition. Nothing is written or synchronized automatically.',
 ].join(' ');
 
-async function section(
-  cwd: string,
+function section(
   layer: Layer,
-  options: DotsOptions,
-): Promise<string> {
-  const scope =
+  store: string,
+  index: Index | Unavailable,
+): string {
+  const title =
     layer === 'global'
       ? 'Global memory (applies in every repository; a project line wins on conflict)'
-      : 'Project memory (this repository, shared by every worktree)';
-  try {
-    const index = await loadIndex(cwd, layer, options);
-    options.signal?.throwIfAborted();
-    if (!index.exists) {
-      return `## ${scope}\nNot created yet. Use the memory skill to create ${index.path} with concise dated links; put current knowledge in wiki/ and cite explicitly retained project outputs.`;
-    }
-    const more =
-      index.next_line === null
-        ? ''
-        : `\n[memory index truncated; use dots memory read --scope ${layer} ${INDEX} --start ${index.next_line} for the rest]`;
-    return `## ${scope}\nIndex: ${index.path}; revision: ${index.revision}. Follow linked topics on demand.\n\n${index.content}${more}`;
-  } catch (error) {
-    options.signal?.throwIfAborted();
-    return `## ${scope}\nIndex unavailable: ${layer}/${INDEX}\n${String(error).slice(0, 512)}`;
-  }
+      : 'Project memory (shared knowledge identity across checkouts and machines)';
+  const resource = `Store: ${store}; snapshot: ${index.snapshot}; scope: ${index.scope}; resource: ${INDEX}.`;
+  if (index.state === 'unavailable')
+    return `## ${title}\n${resource}\nIndex unavailable: ${index.error.slice(0, 512)}`;
+  if (!index.exists)
+    return `## ${title}\n${resource}\nNot created yet. Use the memory skill to publish a concise index and linked knowledge topics.`;
+  const read = `dots memory read PATH --scope ${index.scope} --snapshot ${index.snapshot}`;
+  const more =
+    index.nextLine === null
+      ? ''
+      : `\n[memory index truncated; use dots memory read ${INDEX} --scope ${index.scope} --snapshot ${index.snapshot} --start ${index.nextLine} for the rest]`;
+  return `## ${title}\n${resource} Read linked topics with ${read}.\n\n${index.content}${more}`;
 }
 
-/** Fresh global-before-project indexes; unavailable observations never imply absence. */
+/** One pinned local publication, projected into independent native prompt sections. */
 export async function memoryContext(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
 ): Promise<Record<string, string>> {
-  const options: DotsOptions = {env, ...(signal ? {signal} : {})};
-  let global: string;
-  let project: string | undefined;
   try {
-    const scopes = await memoryScopes(cwd, options);
+    const observation = await memorySnapshot(cwd, {
+      env,
+      ...(signal ? {signal} : {}),
+    });
     signal?.throwIfAborted();
-    [global, project] = await Promise.all([
-      section(cwd, 'global', options),
-      ...(scopes.project ? [section(cwd, 'project', options)] : []),
-    ]);
-    if (scopes.diagnostic)
-      project = `## Project memory\nProject scope unavailable: ${scopes.diagnostic}`;
+    return {
+      dots_memory_global: [
+        'Memory (shared Git knowledge; locally published snapshot).',
+        section('global', observation.store, observation.global),
+        CONVENTIONS,
+      ].join('\n\n'),
+      dots_memory_project: observation.project
+        ? section('project', observation.store, observation.project)
+        : `## Project memory\nProject scope unavailable: ${observation.diagnostic}`,
+    };
   } catch (error) {
     signal?.throwIfAborted();
-    global = await section(cwd, 'global', options);
-    project = `## Project memory\nProject scope unavailable: ${String(error).slice(0, 512)}`;
+    const reason = String(error).slice(0, 512);
+    return {
+      dots_memory_global: `Memory (shared Git knowledge).\n\n## Global memory\nIndex unavailable: ${reason}\n\n${CONVENTIONS}`,
+      dots_memory_project: `## Project memory\nProject scope unavailable: ${reason}`,
+    };
   }
-  signal?.throwIfAborted();
-  return {
-    dots_memory_global: [
-      'Memory (machine-local, learned context).',
-      global,
-      CONVENTIONS,
-    ].join('\n\n'),
-    ...(project ? {dots_memory_project: project} : {}),
-  };
 }
 
 export function registerMemory(pi: ExtensionAPI, load = memoryContext): void {

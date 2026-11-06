@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
-  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -13,134 +11,149 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import register, {
-  decodeScopes,
-  decodeIndex,
-  loadIndex,
+  decodeMemorySnapshot,
+  memorySnapshot,
   memoryContext,
-  memoryScopes,
 } from '../extensions/memory/index.ts';
 
-function scratchRepo() {
-  const root = mkdtempSync(path.join(tmpdir(), 'dots-memory-'));
-  const checkout = path.join(root, 'checkout');
-  mkdirSync(checkout);
-  const git = (cwd, ...args) =>
-    execFileSync('git', args, {
-      cwd,
-      stdio: 'ignore',
-      env: {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: '/dev/null',
-        GIT_CONFIG_NOSYSTEM: '1',
-        GIT_AUTHOR_NAME: 't',
-        GIT_AUTHOR_EMAIL: 't@example.com',
-        GIT_COMMITTER_NAME: 't',
-        GIT_COMMITTER_EMAIL: 't@example.com',
-      },
-    });
-  git(checkout, 'init', '-q', '-b', 'main');
-  writeFileSync(path.join(checkout, 'README.md'), 'x\n');
-  git(checkout, 'add', 'README.md');
-  git(checkout, 'commit', '-q', '-m', 'init');
-  git(
-    checkout,
-    'worktree',
-    'add',
-    '-q',
-    path.join(root, 'linked'),
-    '-b',
-    'slice',
-  );
-  execFileSync(
-    'dots',
-    ['--directory', checkout, 'project', 'init', 'Fixture', '--fresh'],
-    {
-      env: environment(root),
-      stdio: 'ignore',
-    },
-  );
-  return {
-    root,
-    checkout,
-    linked: path.join(root, 'linked'),
-    sub: path.join(checkout, 'nested'),
-  };
-}
-
-async function memoryText(cwd, env, signal) {
-  return {
-    content: Object.values(await memoryContext(cwd, env, signal)).join('\n\n'),
-  };
-}
 function environment(root) {
   return {
-    ...process.env,
+    PATH: process.env.PATH,
     HOME: root,
     XDG_DATA_HOME: path.join(root, 'data'),
     XDG_STATE_HOME: path.join(root, 'state'),
   };
 }
-function indexFile(root) {
-  return path.join(root, 'data/dots/workspaces/global/knowledge/MEMORY.md');
+function cli(root, cwd, ...args) {
+  return JSON.parse(
+    execFileSync('dots', ['--json', '--directory', cwd, ...args], {
+      env: environment(root),
+      encoding: 'utf8',
+    }),
+  );
 }
-function put(file, content) {
-  mkdirSync(path.dirname(file), {recursive: true});
-  writeFileSync(file, content);
+function publish(repo, changes) {
+  const current = cli(repo.root, repo.checkout, 'memory', 'status');
+  const input = path.join(repo.root, 'changes.json');
+  writeFileSync(input, JSON.stringify(changes));
+  return cli(
+    repo.root,
+    repo.checkout,
+    'memory',
+    'publish',
+    '--expected-snapshot',
+    current.snapshot,
+    '--input-file',
+    input,
+  );
+}
+function write(scope, content, relative = 'MEMORY.md') {
+  return {scope, path: relative, action: {kind: 'write', content}};
+}
+function scratchRepo() {
+  const root = mkdtempSync(path.join(tmpdir(), 'dots-knowledge-'));
+  const checkout = path.join(root, 'checkout');
+  mkdirSync(checkout);
+  const git = (...args) =>
+    execFileSync('git', args, {
+      cwd: checkout,
+      stdio: 'ignore',
+      env: {
+        PATH: process.env.PATH,
+        HOME: root,
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_AUTHOR_NAME: 'fixture',
+        GIT_AUTHOR_EMAIL: 'fixture@example.com',
+        GIT_COMMITTER_NAME: 'fixture',
+        GIT_COMMITTER_EMAIL: 'fixture@example.com',
+      },
+    });
+  git('init', '-q', '-b', 'main');
+  git(
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '--allow-empty',
+    '-qm',
+    'fixture',
+  );
+  git('worktree', 'add', '-qb', 'slice', path.join(root, 'linked'));
+  cli(root, checkout, 'project', 'init', 'Fixture', '--fresh');
+  const initialized = cli(
+    root,
+    checkout,
+    'memory',
+    'init',
+    '--actor',
+    'fixture',
+  );
+  const registration = cli(
+    root,
+    checkout,
+    'memory',
+    'project',
+    'create',
+    'Fixture',
+    '--expected-snapshot',
+    initialized.snapshot,
+  );
+  cli(root, checkout, 'memory', 'project', 'bind', registration.project);
+  return {
+    root,
+    checkout,
+    linked: path.join(root, 'linked'),
+    project: {kind: 'project', project: registration.project},
+  };
+}
+async function memoryText(cwd, env, signal) {
+  return {
+    content: Object.values(await memoryContext(cwd, env, signal)).join('\n\n'),
+  };
 }
 
-test('real CLI resolves worktrees, subdirectories and non-Git with one authoritative scope', async () => {
+test('real CLI uses stable shared identities for worktrees, subdirectories and aliases', async () => {
   const repo = scratchRepo();
-  mkdirSync(repo.sub);
   try {
     const env = environment(repo.root);
-    const main = await memoryScopes(repo.checkout, {env});
-    assert.deepEqual(await memoryScopes(repo.linked, {env}), main);
-    assert.deepEqual(await memoryScopes(repo.sub, {env}), main);
+    const main = await memorySnapshot(repo.checkout, {env});
+    assert.deepEqual(await memorySnapshot(repo.linked, {env}), main);
+    const sub = path.join(repo.checkout, 'nested');
+    mkdirSync(sub);
+    assert.deepEqual(await memorySnapshot(sub, {env}), main);
     const alias = path.join(repo.root, 'alias');
     symlinkSync(repo.checkout, alias);
-    assert.deepEqual(await memoryScopes(alias, {env}), main);
-    assert.ok(
-      main.project.startsWith(path.join(repo.root, 'data/dots/workspaces')),
-    );
-    assert.equal((await memoryScopes(repo.root, {env})).project, null);
+    assert.deepEqual(await memorySnapshot(alias, {env}), main);
+    assert.equal(main.project.scope, repo.project.project);
+    assert.equal((await memorySnapshot(repo.root, {env})).project, null);
   } finally {
     rmSync(repo.root, {recursive: true, force: true});
   }
 });
 
-test('fresh global/project indexes retain revisions, missing pointers and independent sections', async () => {
+test('indexes share one snapshot, retain missing/empty states and replace native sections', async () => {
   const repo = scratchRepo();
   try {
     const env = environment(repo.root);
-    const scopes = await memoryScopes(repo.checkout, {env});
-    const projectFile = path.join(scopes.project, 'MEMORY.md');
     const fresh = await memoryText(repo.linked, env);
-    assert.doesNotMatch(fresh.content, /Today is|2026-10-15/);
-    assert.ok(
-      fresh.content.includes(indexFile(repo.root)) &&
-        fresh.content.includes(projectFile),
-    );
     assert.equal(fresh.content.match(/Not created yet/g).length, 2);
     assert.equal(fresh.content.match(/Memory conventions:/g).length, 1);
-    const absent = await loadIndex(repo.checkout, 'global', {env});
-    assert.equal(absent.exists, false);
-    assert.equal(absent.revision, 'missing');
-    put(indexFile(repo.root), '# Global memory\nGlobal fact\n');
-    put(projectFile, '# Project memory\nProject fact\n');
-    const first = await loadIndex(repo.checkout, 'global', {env});
-    assert.equal(first.exists, true);
-    assert.notEqual(first.revision, 'missing');
-    const loaded = await memoryText(repo.linked, env);
-    assert.match(loaded.content, /Global fact[\s\S]*Project fact/);
-    put(indexFile(repo.root), '');
-    const empty = await loadIndex(repo.checkout, 'global', {env});
-    assert.equal(empty.exists, true);
-    assert.notEqual(empty.revision, first.revision);
-    assert.doesNotMatch(
+    assert.doesNotMatch(fresh.content, /workspaces\/|Index: \//);
+    const publication = publish(repo, [
+      write({kind: 'global'}, 'Global fact'),
+      write(repo.project, 'Project fact'),
+    ]);
+    const loaded = await memorySnapshot(repo.linked, {env});
+    assert.equal(loaded.global.snapshot, publication.snapshot);
+    assert.equal(loaded.project.snapshot, publication.snapshot);
+    assert.match(
       (await memoryText(repo.linked, env)).content,
-      /Global fact|Not created yet/,
+      /Global fact[\s\S]*Project fact/,
     );
-
+    publish(repo, [write({kind: 'global'}, '')]);
+    const empty = await memorySnapshot(repo.checkout, {env});
+    assert.equal(empty.global.exists, true);
+    assert.equal(empty.global.content, '');
     const handlers = {};
     register(
       {
@@ -151,23 +164,22 @@ test('fresh global/project indexes retain revisions, missing pointers and indepe
       },
       (cwd, _env, signal) => memoryContext(cwd, env, signal),
     );
-    const sections = {};
+    const sections = {other_source: 'unrelated'};
     for (let n = 0; n < 2; n++)
       await handlers.before_agent_start(
         {systemPromptOptions: {sections}},
         {cwd: repo.linked},
       );
-    assert.equal(Object.keys(sections).length, 2);
-    const before = {...sections};
-    put(projectFile, 'Corrected fact');
+    assert.equal(Object.keys(sections).length, 3);
+    const changed = publish(repo, [write(repo.project, 'Corrected fact')]);
     await handlers.before_agent_start(
       {systemPromptOptions: {sections}},
       {cwd: repo.linked},
     );
-    assert.equal(Object.keys(sections).length, 2);
-    assert.equal(sections.dots_memory_global, before.dots_memory_global);
     assert.match(sections.dots_memory_project, /Corrected fact/);
     assert.doesNotMatch(sections.dots_memory_project, /Project fact/);
+    assert.ok(sections.dots_memory_global.includes(changed.snapshot));
+    assert.equal(sections.other_source, 'unrelated');
     await handlers.before_agent_start(
       {systemPromptOptions: {sections}},
       {cwd: repo.root},
@@ -179,137 +191,106 @@ test('fresh global/project indexes retain revisions, missing pointers and indepe
   }
 });
 
-test('reads only indexes and accepts Rust page limits without cutting UTF-8', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'dots-memory-page-'));
+test('pages carry pinned retrieval commands, bounded Unicode and no unrelated topics', async () => {
+  const repo = scratchRepo();
   try {
-    const env = environment(root);
-    const file = indexFile(root);
-    put(file, Array.from({length: 300}, (_, i) => `- line ${i}`).join('\n'));
-    put(path.join(path.dirname(file), 'wiki/topic.md'), 'DETAIL_ONLY');
-    put(
-      path.join(
-        root,
-        'data/dots/workspaces/p-00000000000000000000000000000002/knowledge/MEMORY.md',
+    const env = environment(repo.root);
+    publish(repo, [
+      write(
+        {kind: 'global'},
+        Array.from({length: 300}, (_, i) => `- line ${i}`).join('\n'),
       ),
-      'OTHER_PROJECT_ONLY',
-    );
-    const page = await loadIndex(root, 'global', {env});
-    assert.equal(page.next_line, 201);
-    assert.match(page.content, /line 199/);
-    assert.doesNotMatch(page.content, /line 200/);
-    assert.match(
-      (await memoryText(root, env)).content,
-      /truncated; use dots memory read/,
-    );
-    put(file, Array(40).fill('界'.repeat(300)).join('\n'));
-    const unicode = await loadIndex(root, 'global', {env});
-    assert.ok(Buffer.byteLength(unicode.content) <= 16 * 1024);
-    assert.doesNotMatch(unicode.content, /\ufffd/);
-    assert.ok(unicode.next_line > 1);
-    assert.doesNotMatch(
-      (await memoryText(root, env)).content,
-      /DETAIL_ONLY|OTHER_PROJECT_ONLY/,
-    );
+      write({kind: 'global'}, 'DETAIL_ONLY', 'wiki/topic.md'),
+    ]);
+    const page = await memorySnapshot(repo.checkout, {env});
+    assert.equal(page.global.nextLine, 201);
+    assert.match(page.global.content, /line 199/);
+    assert.doesNotMatch(page.global.content, /line 200/);
+    const text = (await memoryText(repo.checkout, env)).content;
+    assert.match(text, /truncated; use dots memory read/);
+    assert.ok(text.includes(`--snapshot ${page.snapshot} --start 201`));
+    assert.doesNotMatch(text, /DETAIL_ONLY/);
+    publish(repo, [
+      write({kind: 'global'}, Array(40).fill('界'.repeat(300)).join('\n')),
+    ]);
+    const unicode = await memorySnapshot(repo.checkout, {env});
+    assert.ok(Buffer.byteLength(unicode.global.content) <= 16 * 1024);
+    assert.doesNotMatch(unicode.global.content, /\ufffd/);
+    assert.ok(unicode.global.nextLine > 1);
   } finally {
-    rmSync(root, {recursive: true, force: true});
+    rmSync(repo.root, {recursive: true, force: true});
   }
 });
 
-test('oversized input, long lines, directories, FIFOs and symlinks are unavailable, never missing', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'dots-memory-unavailable-'));
+test('unavailable index pages preserve the other scope without claiming absence', async () => {
+  const repo = scratchRepo();
   try {
-    const env = environment(root);
-    const file = indexFile(root);
-    for (const content of [
-      'x'.repeat(256 * 1024 + 1),
-      'x'.repeat(16 * 1024 + 1),
-    ]) {
-      put(file, content);
-      const block = await memoryText(root, env);
-      assert.match(block.content, /Index unavailable/);
-      assert.doesNotMatch(block.content, /Not created yet/);
-    }
-    if (process.getuid?.() !== 0 && process.platform !== 'win32') {
-      put(file, 'Unreadable index');
-      chmodSync(file, 0);
-      try {
-        assert.match(
-          (await memoryText(root, env)).content,
-          /Index unavailable/,
-        );
-      } finally {
-        chmodSync(file, 0o600);
-      }
-    }
-    rmSync(file);
-    mkdirSync(file);
-    assert.match((await memoryText(root, env)).content, /not a regular file/);
-    rmSync(file, {recursive: true});
-    if (process.platform !== 'win32') {
-      execFileSync('mkfifo', [file]);
-      assert.match((await memoryText(root, env)).content, /not a regular file/);
-      rmSync(file);
-    }
-    symlinkSync(path.join(root, 'missing'), file);
-    assert.match((await memoryText(root, env)).content, /symlink/);
+    const env = environment(repo.root);
+    publish(repo, [
+      write({kind: 'global'}, 'x'.repeat(16 * 1024 + 1)),
+      write(repo.project, 'PROJECT_FACT'),
+    ]);
+    const text = (await memoryText(repo.checkout, env)).content;
+    assert.match(
+      text,
+      /Global memory[\s\S]*Index unavailable[\s\S]*PROJECT_FACT/,
+    );
+    assert.doesNotMatch(text, /Not created yet/);
+    publish(repo, [
+      write({kind: 'global'}, 'GLOBAL_FACT'),
+      write(repo.project, 'x'.repeat(16 * 1024 + 1)),
+    ]);
+    assert.match(
+      (await memoryText(repo.checkout, env)).content,
+      /GLOBAL_FACT[\s\S]*Project memory[\s\S]*Index unavailable/,
+    );
   } finally {
-    rmSync(root, {recursive: true, force: true});
+    rmSync(repo.root, {recursive: true, force: true});
   }
 });
 
-test('failed project discovery preserves global memory without claiming to be outside Git', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'dots-memory-git-'));
+test('project lookup failure and deleted cwd preserve globally published knowledge', async () => {
+  const repo = scratchRepo();
   try {
-    execFileSync('git', ['init', '--quiet', root]);
-    execFileSync(
-      'dots',
-      ['--directory', root, 'project', 'init', 'Fixture', '--fresh'],
-      {env: environment(root), stdio: 'ignore'},
+    const env = environment(repo.root);
+    publish(repo, [write({kind: 'global'}, 'GLOBAL_FACT')]);
+    const gone = path.join(repo.root, 'gone');
+    mkdirSync(gone);
+    rmSync(gone, {recursive: true});
+    const missing = (await memoryText(gone, env)).content;
+    assert.match(missing, /GLOBAL_FACT[\s\S]*Project scope unavailable/);
+    assert.doesNotMatch(missing, /Not created yet/);
+    rmSync(path.join(repo.checkout, '.git'), {recursive: true});
+    writeFileSync(
+      path.join(repo.checkout, '.git'),
+      'gitdir: /missing-neutral-checkout',
     );
-    put(indexFile(root), 'GLOBAL_FACT survives project discovery failure');
-    const bin = path.join(root, 'bin');
-    mkdirSync(bin);
-    symlinkSync(
-      realpathSync(execFileSync('which', ['dots'], {encoding: 'utf8'}).trim()),
-      path.join(bin, 'dots'),
-    );
-    const block = await memoryText(root, {...environment(root), PATH: bin});
     assert.match(
-      block.content,
-      /GLOBAL_FACT[\s\S]*Project memory[\s\S]*scope unavailable/,
+      (await memoryText(repo.checkout, env)).content,
+      /GLOBAL_FACT[\s\S]*Project scope unavailable/,
     );
-    assert.doesNotMatch(
-      block.content,
-      /Not inside a Git repository|Not created yet/,
-    );
-    rmSync(path.join(root, '.git'), {recursive: true});
-    put(path.join(root, '.git'), 'gitdir: /missing-fixture-checkout');
-    const broken = await memoryText(root, environment(root));
-    assert.match(
-      broken.content,
-      /GLOBAL_FACT[\s\S]*Project memory[\s\S]*scope unavailable/,
-    );
-    assert.doesNotMatch(broken.content, /Not inside a Git repository/);
   } finally {
-    rmSync(root, {recursive: true, force: true});
+    rmSync(repo.root, {recursive: true, force: true});
   }
 });
 
-test('a deleted session directory does not suppress global memory', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'dots-memory-deleted-'));
+test('uninitialized or corrupt knowledge never falls back to filesystem indexes', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'dots-unavailable-'));
   try {
-    const cwd = path.join(root, 'session');
-    mkdirSync(cwd);
-    put(indexFile(root), 'GLOBAL_FACT survives a deleted session directory');
-    rmSync(cwd, {recursive: true});
-    const block = await memoryText(cwd, environment(root));
-    assert.match(
-      block.content,
-      /GLOBAL_FACT[\s\S]*Project memory[\s\S]*scope unavailable/,
+    const loose = path.join(root, 'loose-documents');
+    mkdirSync(loose, {recursive: true});
+    writeFileSync(path.join(loose, 'MEMORY.md'), 'UNACCEPTED_FILESYSTEM_FACT');
+    const text = (await memoryText(root, environment(root))).content;
+    assert.match(text, /Index unavailable/);
+    assert.doesNotMatch(text, /Not created yet|UNACCEPTED_FILESYSTEM_FACT/);
+    cli(root, root, 'memory', 'init', '--actor', 'fixture');
+    writeFileSync(
+      path.join(root, 'data/dots/knowledge/store.json'),
+      '{invalid',
     );
-    assert.doesNotMatch(
-      block.content,
-      /Not inside a Git repository|Not created yet/,
+    assert.match(
+      (await memoryText(root, environment(root))).content,
+      /Index unavailable/,
     );
   } finally {
     rmSync(root, {recursive: true, force: true});
@@ -370,37 +351,61 @@ test('session shutdown and replacement cannot inject or notify stale context', a
   );
 });
 
-test('memory decoders reject malformed external fields', () => {
-  for (const value of [
-    null,
-    {},
-    {global: 'relative', project: null},
-    {global: '/global'},
-  ])
-    assert.throws(() => decodeScopes(value));
-  const valid = {
-    scope: 'global',
-    document: {
-      path: '/global/MEMORY.md',
-      exists: false,
-      revision: 'missing',
-      content: '',
-      next_line: null,
+test('memory snapshot decoder rejects cross-snapshot, wrong-scope and filesystem resource responses', () => {
+  const snapshot = 'a'.repeat(64);
+  const value = {
+    identity: {
+      store: 'k-' + '0'.repeat(32),
+      node: 'n-' + '1'.repeat(32),
+      genesis: snapshot,
+      role: 'authority',
+    },
+    snapshot,
+    project: null,
+    diagnostic: 'unbound',
+    global: {
+      state: 'available',
+      snapshot,
+      scope: {kind: 'global'},
+      document: {
+        path: 'MEMORY.md',
+        exists: false,
+        content: '',
+        revision: 'missing',
+        next_line: null,
+      },
     },
   };
-  assert.equal(decodeIndex(valid, 'global').exists, false);
-  for (const fields of [
-    {exists: 'false'},
-    {revision: 'hash'},
-    {next_line: 0},
-    {content: null},
+  assert.equal(decodeMemorySnapshot(value).global.exists, false);
+  for (const malformed of [
+    null,
+    {},
+    {...value, snapshot: 'short'},
+    {...value, global: {...value.global, snapshot: 'b'.repeat(64)}},
+    {
+      ...value,
+      global: {
+        ...value.global,
+        scope: {kind: 'project', project: 'p-' + '2'.repeat(32)},
+      },
+    },
+    {
+      ...value,
+      global: {
+        ...value.global,
+        document: {...value.global.document, path: '/fake/MEMORY.md'},
+      },
+    },
+    {
+      ...value,
+      global: {
+        ...value.global,
+        document: {...value.global.document, content: 'not absent'},
+      },
+    },
+    {...value, global: {...value.global, state: 'incoming'}},
+    {...value, diagnostic: null},
   ]) {
-    assert.throws(() =>
-      decodeIndex(
-        {...valid, document: {...valid.document, ...fields}},
-        'global',
-      ),
-    );
+    assert.throws(() => decodeMemorySnapshot(malformed));
   }
-  assert.throws(() => decodeIndex(valid, 'project'));
 });

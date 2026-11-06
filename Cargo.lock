@@ -499,6 +499,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dots-documents",
+ "dots-memory",
  "dots-process",
  "dots-review",
  "dots-tasks",

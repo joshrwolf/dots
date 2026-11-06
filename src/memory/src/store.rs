@@ -166,7 +166,23 @@ pub struct DocumentRead {
 pub struct Search {
     pub snapshot: Snapshot,
     pub scope: Scope,
-    pub result: dots_documents::Search,
+    pub result: SearchResult,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Hit {
+    pub path: PathBuf,
+    pub line: usize,
+    pub excerpt: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchResult {
+    pub backend: &'static str,
+    pub hits: Vec<Hit>,
+    pub has_more: bool,
+    pub next_offset: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -510,6 +526,11 @@ impl Store {
     pub fn snapshot(&self) -> Result<Snapshot> {
         self.git.head()
     }
+    /// Test whether a retained snapshot belongs to the current published ancestry.
+    pub fn is_published(&self, snapshot: &Snapshot) -> Result<bool> {
+        self.git.is_ancestor(snapshot, &self.snapshot()?)
+    }
+
     pub fn latest(&self) -> Result<View<'_>> {
         self.view(&self.snapshot()?)
     }
@@ -741,9 +762,7 @@ impl<'git> View<'git> {
         let selected: Vec<_> = self
             .entries
             .iter()
-            .filter(|(path, _)| {
-                path.starts_with(&prefix) && path.rsplit('/').next() != Some("log.md")
-            })
+            .filter(|(path, _)| path.starts_with(&prefix))
             .collect();
         let ids: BTreeSet<_> = selected
             .iter()
@@ -778,7 +797,7 @@ impl<'git> View<'git> {
                 }
                 let excerpt = dots_documents::text::excerpt(text, 600);
                 let truncated = excerpt.len() < text.len();
-                hits.push(dots_documents::Hit {
+                hits.push(Hit {
                     path: PathBuf::from(&path[prefix.len()..]),
                     line: line + 1,
                     excerpt,
@@ -789,7 +808,7 @@ impl<'git> View<'git> {
         Ok(Search {
             snapshot: self.snapshot.clone(),
             scope: scope.clone(),
-            result: dots_documents::Search {
+            result: SearchResult {
                 backend: "literal",
                 hits,
                 has_more,

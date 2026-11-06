@@ -2,6 +2,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
+use dots_memory::{NodeId, ProjectId, Scope as MemoryScope, Snapshot};
 use github_inspect::{Repository, SnapshotRef};
 
 #[derive(Debug, Parser)]
@@ -72,9 +73,9 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: AttentionCommand,
     },
-    /// Read, publish, and search scoped Markdown memory without a service
+    /// Publish atomic knowledge snapshots and exchange them with enrolled Tailscale peers
     #[command(
-        long_about = "Portable Markdown memory outside the checkout. Reads never initialize storage. Writes require an explicit scope and expected revision, briefly lock that scope, and atomically replace one file. No automatic ingestion, installation, indexing, or network access. See the shared memory skill for evidence and maintenance policy."
+        long_about = "Private native Git knowledge outside development checkouts. One snapshot pins all global/project documents and the shared project registry. Publication atomically changes a batch against an expected snapshot. Ordinary reads never initialize storage or access the network. Imports stay unpublished until explicit reconciliation. Enrolled peers and tool-owned exports are trusted producers, not hostile-pack inputs. Tasks, outputs, credentials and checkout bindings remain machine-local."
     )]
     Memory {
         /// Registered project ID instead of resolving the current checkout
@@ -206,61 +207,164 @@ pub(crate) enum ProjectCommand {
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub(crate) enum MemoryScope {
-    Global,
-    Project,
+pub(crate) enum MemoryRole {
+    Authority,
+    Replica,
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum MemoryCommand {
-    /// Resolve global and current-project locations; creates nothing
-    Scope,
-    /// Read a bounded page and its full-file revision; absent files have revision "missing"
+    /// Initialize a new private authority store; never adopt existing storage
+    Init {
+        #[arg(long)]
+        actor: String,
+    },
+    /// Restore a full export into a new local node with explicit ownership
+    Restore {
+        #[arg(long)]
+        actor: String,
+        #[arg(long, value_enum)]
+        role: MemoryRole,
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        receipt_file: PathBuf,
+    },
+    /// Read both MEMORY.md indexes at one snapshot; unavailable project bindings remain explicit
+    Context,
+    /// Inspect local publication, retained progress and acknowledged delivery without networking
+    Status,
+    /// Read a published page; scope is global or an exact shared project ID
     Read {
         path: PathBuf,
-        #[arg(long, value_enum)]
+        #[arg(long, value_parser=memory_scope, value_name="GLOBAL_OR_SHARED_ID")]
         scope: MemoryScope,
-        #[arg(long, default_value_t = 1, value_parser = positive)]
+        #[arg(long)]
+        snapshot: Option<Snapshot>,
+        #[arg(long, default_value_t=1, value_parser=positive)]
         start: usize,
-        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=200))]
+        #[arg(long, default_value_t=100, value_parser=clap::value_parser!(u16).range(1..=200))]
         lines: u16,
     },
-    /// Publish one Markdown file from UTF-8 input; rejects stale revisions and symlink paths
+    /// Atomically publish a JSON array of changes against one expected snapshot
     #[command(
-        long_about = "Publish one file using --expected from memory read (or 'missing' for a new file). Reads at most 256 KiB from --content-file. Creates scope/topic directories on first write. A kernel-held dots/mutation.lock covers revision checking and atomic replacement across scopes; contention returns busy without waiting; conflicts change no file contents. Multi-file updates are NOT transactions: write topics before the index, and handle interrupted updates explicitly. No shell commands or model calls run under the lock."
+        long_about = "Publish a JSON array from --input-file. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. Stale snapshots change nothing. Empty files and removals are distinct. Batches can cover multiple scopes; no implicit rebase, shell command or model call runs under the lock."
     )]
-    Write {
-        path: PathBuf,
-        #[arg(long, value_enum)]
-        scope: MemoryScope,
+    Publish {
         #[arg(long)]
-        expected: String,
+        expected_snapshot: Snapshot,
         #[arg(long)]
-        content_file: PathBuf,
+        input_file: PathBuf,
     },
-    /// Remove one file with revision checking; does not erase backups or external indexes
-    Remove {
-        path: PathBuf,
-        #[arg(long, value_enum)]
-        scope: MemoryScope,
-        #[arg(long)]
-        expected: String,
-    },
-    /// Case-insensitive literal search of current knowledge; defaults to global plus this project
-    #[command(
-        long_about = "Search live Markdown files, not a cached index. Default scope is global plus the current project, never unrelated projects. The knowledge change log is excluded. Retained outputs and scratch are outside the searched knowledge roots. Results are deterministic path/line matches, not semantic ranking; read the source before applying a snippet. Output reports backend, scope, and pagination. QMD is not installed or invoked."
-    )]
+    /// Literal search at one published snapshot; default is global plus this bound project
     Search {
         query: String,
-        #[arg(long, value_enum)]
+        #[arg(long, value_parser=memory_scope, value_name="GLOBAL_OR_SHARED_ID")]
         scope: Option<MemoryScope>,
-        /// Skip this many matches in each selected scope
-        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=100000))]
+        #[arg(long)]
+        snapshot: Option<Snapshot>,
+        #[arg(long, default_value_t=0, value_parser=clap::value_parser!(u32).range(0..=100000))]
         offset: u32,
-        /// Maximum matches per scope
-        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..=20))]
+        #[arg(long, default_value_t=5, value_parser=clap::value_parser!(u16).range(1..=20))]
         limit: u16,
     },
+    /// Manage shared identities and their separate machine-local catalog bindings
+    Project {
+        #[command(subcommand)]
+        command: MemoryProjectCommand,
+    },
+    /// Explicitly bind one enrolled replica and its native transport
+    Peer {
+        #[command(subcommand)]
+        command: MemoryPeerCommand,
+    },
+    /// Fetch, reconcile disjoint changes and return an accepted snapshot; conflicts require judgment
+    Sync,
+    /// Resolve JSON recipient/local/incoming/resolutions into a local publication; sync separately
+    Reconcile {
+        #[arg(long)]
+        input_file: PathBuf,
+    },
+    /// Read an explicitly labeled unpublished candidate; cannot change ordinary memory
+    Inspect {
+        #[arg(long)]
+        candidate_file: PathBuf,
+        path: PathBuf,
+        #[arg(long, value_parser=memory_scope, value_name="GLOBAL_OR_SHARED_ID")]
+        scope: MemoryScope,
+        #[arg(long, default_value_t=1, value_parser=positive)]
+        start: usize,
+        #[arg(long, default_value_t=100, value_parser=clap::value_parser!(u16).range(1..=200))]
+        lines: u16,
+    },
+    /// Export a pinned full snapshot; stdout is the receipt required by import/restore
+    Export {
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        snapshot: Option<Snapshot>,
+    },
+    /// Validate an export in quarantine and retain an unpublished candidate
+    Import {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        receipt_file: PathBuf,
+    },
+    /// One bounded JSON control request on stdin; native SSH owns authentication
+    #[command(hide = true)]
+    Serve,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum MemoryProjectCommand {
+    /// Register a shared identity in the atomic knowledge snapshot
+    Create {
+        name: String,
+        #[arg(long)]
+        expected_snapshot: Snapshot,
+    },
+    /// List shared identities; names never select identities
+    List,
+    /// Associate this local catalog project with a shared identity; refuse conflicting ownership
+    Bind { id: ProjectId },
+    /// Remove an exact local association without deleting shared knowledge
+    Unbind {
+        #[arg(long)]
+        expected: ProjectId,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum MemoryPeerCommand {
+    /// Discover and bind an explicit replica; refuse changing an existing binding
+    Bind {
+        host: String,
+        #[arg(long)]
+        root: PathBuf,
+        #[arg(long)]
+        executable: PathBuf,
+        #[arg(long)]
+        tailscale: PathBuf,
+    },
+    /// Remove an exact transport binding; retain knowledge and progress refs
+    Unbind {
+        #[arg(long)]
+        expected_node: NodeId,
+    },
+}
+
+fn memory_scope(value: &str) -> std::result::Result<MemoryScope, String> {
+    if value == "global" {
+        return Ok(MemoryScope::Global);
+    }
+    value
+        .parse::<ProjectId>()
+        .map(MemoryScope::Project)
+        .map_err(|_| {
+            "scope must be global or an exact shared project ID (p- plus 32 lowercase hex digits)"
+                .into()
+        })
 }
 
 #[derive(Debug, Subcommand)]

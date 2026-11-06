@@ -20,8 +20,8 @@ mod store;
 
 pub use identity::{NodeId, ProjectId, Snapshot, StoreId};
 pub use store::{
-    Action, Change, DocumentRead, Identity, Manifest, Publication, Registration, Resource, Role,
-    Scope, Search, Store, View,
+    Action, Change, DocumentRead, Hit, Identity, Manifest, Publication, Registration, Resource,
+    Role, Scope, Search, SearchResult, Store, View,
 };
 
 use std::path::PathBuf;

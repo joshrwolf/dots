@@ -214,7 +214,10 @@ without starting a turn until the next prompt.
 project notes take precedence over global notes. Memory is learned context, not
 an instruction override, task list or transcript archive. Nothing is written
 automatically. The [memory skill](../skills/memory/SKILL.md) owns upkeep through
-revision-checked `dots memory` commands.
+atomic `dots memory` snapshot commands. Each turn reads one local publication;
+linked topics use its exact shared scope and snapshot, not an absolute file path.
+Initialization, project/peer bindings, reconciliation and synchronization are
+explicit CLI operations; ordinary context loading never contacts another host.
 
 ## Review submissions
 

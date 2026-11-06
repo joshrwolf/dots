@@ -38,6 +38,21 @@ impl StagedFile {
         Ok(())
     }
 
+    /// Sync and atomically replace one owned file. The caller holds its mutation lock.
+    pub fn publish_replace(self, destination: &Path) -> Result<()> {
+        self.file
+            .sync_all()
+            .map_err(|error| io("sync staged document", &self.path, error))?;
+        fs::rename(&self.path, destination)
+            .map_err(|error| io("replace document", destination, error))?;
+        directories::sync(
+            destination
+                .parent()
+                .ok_or_else(|| invalid("destination has no parent"))?,
+        )?;
+        Ok(())
+    }
+
     /// Allocate a private file in an existing directory using exclusive creation.
     pub fn create(parent: &Path) -> Result<Self> {
         for _ in 0..128 {

@@ -1,11 +1,13 @@
-//! Real CLI memory behavior with neutral fixtures and isolated homes.
+//! Native snapshot CLI contracts with neutral disposable homes.
 #[cfg(test)]
 mod tests {
-    use serde_json::Value;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::process::{Command, Output};
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    use serde_json::{Value, json};
 
     struct Fixture {
         root: PathBuf,
@@ -14,94 +16,92 @@ mod tests {
         fn new() -> Self {
             static NEXT: AtomicU64 = AtomicU64::new(0);
             let root = std::env::temp_dir().join(format!(
-                "dots-memory-cli-{}-{}",
+                "dots-knowledge-cli-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir_all(root.join("checkout")).unwrap();
-            let fixture = Self { root };
-            fs::create_dir_all(fixture.root.join("catalog")).unwrap();
-            fixture.git("catalog", &["init", "-q"]);
-            fixture.init_project("catalog");
-            fixture
+            fs::create_dir_all(root.join("home")).unwrap();
+            Self { root }
         }
-        fn init_project(&self, directory: &str) {
-            let output = Command::new(env!("CARGO_BIN_EXE_dots"))
-                .args(["--json", "project", "init", "fixture", "--fresh"])
-                .current_dir(self.root.join(directory))
-                .env("XDG_DATA_HOME", self.root.join("data"))
-                .env("XDG_STATE_HOME", self.root.join("state"))
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        fn run(&self, directory: &str, args: &[&str]) -> Output {
-            Command::new(env!("CARGO_BIN_EXE_dots"))
-                .args(["--json", "memory"])
-                .args(args)
-                .current_dir(self.root.join(directory))
+        fn command(&self, args: &[&str]) -> Command {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_dots"));
+            command
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").expect("test PATH"))
                 .env("HOME", self.root.join("home"))
                 .env("XDG_DATA_HOME", self.root.join("data"))
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .output()
+                .env("XDG_STATE_HOME", self.root.join("state"))
+                .current_dir(self.root.join("checkout"))
+                .args(["--json"])
+                .args(args);
+            command
+        }
+        fn run(&self, args: &[&str]) -> Output {
+            dots_process::Runner::new(Duration::from_secs(20), 4 * 1024 * 1024)
+                .output(self.command(args))
                 .unwrap()
         }
         fn ok(&self, args: &[&str]) -> Value {
-            self.ok_in("checkout", args)
-        }
-        fn ok_in(&self, directory: &str, args: &[&str]) -> Value {
-            let output = self.run(directory, args);
+            let output = self.run(args);
             assert!(
                 output.status.success(),
-                "{}",
+                "{args:?}: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
             serde_json::from_slice(&output.stdout).unwrap()
         }
-        fn fail(&self, args: &[&str]) -> String {
-            let output = self.run("checkout", args);
-            assert!(
-                !output.status.success(),
-                "unexpected success: {:?}",
-                output.stdout
-            );
-            String::from_utf8_lossy(&output.stderr).into_owned()
+        fn fail(&self, args: &[&str]) {
+            let output = self.run(args);
+            assert!(!output.status.success(), "{args:?}: unexpectedly succeeded");
+            if !output.stdout.is_empty() {
+                let failure: Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert!(
+                    failure["error"].is_string(),
+                    "failed command wrote success data: {failure}"
+                );
+                assert!(failure.get("snapshot").is_none());
+            }
         }
-        fn write(&self, path: &str, scope: &str, expected: &str, content: &str) -> Value {
-            let input = self.root.join("input.md");
-            fs::write(&input, content).unwrap();
+        fn init(&self) -> Value {
+            self.ok(&["memory", "init", "--actor", "neutral"])
+        }
+        fn input(&self, name: &str, value: &Value) -> String {
+            let path = self.root.join(name);
+            fs::write(&path, serde_json::to_vec(value).unwrap()).unwrap();
+            path.to_str().unwrap().to_owned()
+        }
+        fn publish(&self, expected: &str, changes: &Value) -> Value {
+            let path = self.input("changes.json", changes);
             self.ok(&[
-                "write",
-                path,
-                "--scope",
-                scope,
-                "--expected",
+                "memory",
+                "publish",
+                "--expected-snapshot",
                 expected,
-                "--content-file",
-                input.to_str().unwrap(),
+                "--input-file",
+                &path,
             ])
         }
-        fn global(&self) -> PathBuf {
-            self.root.join("data/dots/workspaces/global/knowledge")
-        }
-        fn git(&self, directory: &str, args: &[&str]) {
-            let output = Command::new("git")
-                .args(args)
-                .current_dir(self.root.join(directory))
+        fn catalog(&self) -> Value {
+            let mut command = Command::new("git");
+            command
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").expect("test PATH"))
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .env("GIT_CONFIG_NOSYSTEM", "1")
-                .output()
-                .unwrap();
+                .args(["init", "-q"])
+                .arg(self.root.join("checkout"));
             assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
+                dots_process::Runner::new(Duration::from_secs(10), 64 * 1024)
+                    .output(command)
+                    .unwrap()
+                    .status
+                    .success()
             );
+            self.ok(&["project", "init", "neutral", "--fresh"])
+        }
+        fn store(&self) -> PathBuf {
+            self.root.join("data/dots/knowledge")
         }
     }
     impl Drop for Fixture {
@@ -109,317 +109,293 @@ mod tests {
             let _ = fs::remove_dir_all(&self.root);
         }
     }
-
-    #[test]
-    fn lazy_read_first_write_conflict_and_removal() {
-        let f = Fixture::new();
-        assert!(f.ok(&["scope"]).get("project").unwrap().is_null());
-        let initial = f.ok(&["read", "wiki/preferences.md", "--scope", "global"]);
-        assert_eq!(initial.pointer("/document/revision").unwrap(), "missing");
-        assert_eq!(initial.pointer("/document/exists").unwrap(), false);
-        assert!(!f.global().exists());
-        let published = f.write(
-            "wiki/preferences.md",
-            "global",
-            "missing",
-            "# Preferences\nPrefer small changes.\n",
-        );
-        let revision = published
-            .pointer("/published/revision")
-            .unwrap()
-            .as_str()
-            .unwrap();
-        assert!(revision.starts_with("sha256:"));
-        assert!(f.root.join("data/dots/mutation.lock").is_file());
-        fs::write(f.root.join("input.md"), "stale update").unwrap();
-        assert!(
-            f.fail(&[
-                "write",
-                "wiki/preferences.md",
-                "--scope",
-                "global",
-                "--expected",
-                "missing",
-                "--content-file",
-                "../input.md"
-            ])
-            .contains("conflict")
-        );
-        let read = f.ok(&["read", "wiki/preferences.md", "--scope", "global"]);
-        assert_eq!(read.pointer("/document/revision").unwrap(), revision);
-        assert_eq!(
-            read.pointer("/document/content").unwrap(),
-            "# Preferences\nPrefer small changes.\n"
-        );
-        f.ok(&[
-            "remove",
-            "wiki/preferences.md",
-            "--scope",
-            "global",
-            "--expected",
-            revision,
-        ]);
-        assert!(!f.global().join("wiki/preferences.md").exists());
-        assert!(
-            f.fail(&["read", "MEMORY.md", "--scope", "project"])
-                .contains("outside Git")
-        );
+    fn write(scope: &Value, path: &str, content: &str) -> Value {
+        json!({"scope": scope, "path": path, "action": {"kind": "write", "content": content}})
+    }
+    fn snapshot(value: &Value) -> &str {
+        value["snapshot"].as_str().unwrap()
     }
 
     #[test]
-    fn bounded_unicode_search_excludes_outputs_and_log_and_paginates() {
+    fn explicit_initialization_pinned_reads_atomic_batches_and_missing_empty_removed() {
         let f = Fixture::new();
-        f.write("wiki/retries.md", "global", "missing", "# Retries\nCurrent: at most three attempts.\nRetries include the first attempt.\nCafe\u{301} 👨\u{200d}👩\u{200d}👧 — preferred spelling.\n");
-        let outputs = f
-            .root
-            .join("data/dots/workspaces/p-00000000000000000000000000000002/outputs");
-        fs::create_dir_all(&outputs).unwrap();
-        fs::write(
-            outputs.join("report.md"),
-            "Historical retries proposal: ten attempts.\n",
-        )
-        .unwrap();
-        f.write("log.md", "global", "missing", "Retries changed.\n");
-        let first = f.ok(&["search", "RETRIES", "--limit", "1"]);
-        assert_eq!(
-            first.pointer("/searches/0/result/backend").unwrap(),
-            "literal"
+        f.fail(&["memory", "context"]);
+        assert!(!f.store().exists());
+        let genesis = f.init();
+        f.fail(&["memory", "init", "--actor", "neutral"]);
+        let before = f.ok(&["memory", "read", "MEMORY.md", "--scope", "global"]);
+        assert_eq!(before["document"]["exists"], false);
+        let first = f.publish(
+            snapshot(&genesis),
+            &json!([
+                write(&json!({"kind":"global"}), "MEMORY.md", "Read topic.\n"),
+                write(&json!({"kind":"global"}), "wiki/topic.md", "durable fact\n"),
+                write(&json!({"kind":"global"}), "empty.md", "")
+            ]),
         );
-        assert_eq!(first.pointer("/searches/0/result/has_more").unwrap(), true);
-        let second = f.ok(&["search", "retries", "--limit", "1", "--offset", "1"]);
-        assert_eq!(second.pointer("/searches/0/result/hits/0/line").unwrap(), 3);
-        assert_eq!(
-            second.pointer("/searches/0/result/has_more").unwrap(),
-            false
+        let context = f.ok(&["memory", "context"]);
+        assert_eq!(context["global"]["snapshot"], first["snapshot"]);
+        assert_eq!(context["global"]["document"]["path"], "MEMORY.md");
+        assert!(context["project"].is_null());
+        assert!(context["diagnostic"].is_string());
+        let empty = f.ok(&["memory", "read", "empty.md", "--scope", "global"]);
+        assert_eq!(empty["document"]["exists"], true);
+        assert_eq!(empty["document"]["content"], "");
+        let second = f.publish(
+            snapshot(&first),
+            &json!([
+                write(&json!({"kind":"global"}), "MEMORY.md", "Updated index\n"),
+                {"scope":{"kind":"global"},"path":"empty.md","action":{"kind":"remove"}}
+            ]),
         );
-        let unicode = f.ok(&["search", "👨\u{200d}👩\u{200d}👧"]);
-        assert_eq!(
-            unicode.pointer("/searches/0/result/hits/0/line").unwrap(),
-            4
-        );
-        let page = f.ok(&[
+        let old = f.ok(&[
+            "memory",
             "read",
-            "wiki/retries.md",
-            "--scope",
-            "global",
-            "--lines",
-            "1",
-        ]);
-        assert_eq!(page.pointer("/document/next_line").unwrap(), 2);
-        assert!(f.fail(&["search", " "]).contains("query"));
-        assert!(f.fail(&["search", "x", "--limit", "0"]).contains("invalid"));
-    }
-
-    #[test]
-    fn locks_and_unsafe_paths_do_not_clobber_files() {
-        let f = Fixture::new();
-        f.write("MEMORY.md", "global", "missing", "# Global memory\n");
-        let lock_path = f.root.join("data/dots/mutation.lock");
-        let lock = fs::File::open(&lock_path).unwrap();
-        lock.try_lock().unwrap();
-        assert!(
-            f.fail(&[
-                "remove",
-                "MEMORY.md",
-                "--scope",
-                "global",
-                "--expected",
-                "missing"
-            ])
-            .contains("mutation is busy")
-        );
-        assert!(lock_path.is_file());
-        drop(lock);
-        for path in [
-            "../escape.md",
-            "/tmp/escape.md",
-            ".hidden/owner.md",
-            "not-markdown.txt",
-        ] {
-            assert!(
-                !f.run("checkout", &["read", path, "--scope", "global"])
-                    .status
-                    .success()
-            );
-        }
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(f.root.join("input.md"), f.global().join("link.md"))
-                .unwrap();
-            assert!(
-                f.fail(&["read", "link.md", "--scope", "global"])
-                    .contains("symlink")
-            );
-            assert!(f.fail(&["search", "anything"]).contains("symlink"));
-        }
-    }
-
-    #[test]
-    fn worktrees_and_symlink_checkouts_share_scope_but_other_repos_do_not() {
-        let f = Fixture::new();
-        f.git("checkout", &["init", "-q", "-b", "main"]);
-        f.git(
-            "checkout",
-            &[
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.com",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "--allow-empty",
-                "-qm",
-                "init",
-            ],
-        );
-        f.git(
-            "checkout",
-            &["worktree", "add", "-qb", "slice", "../linked"],
-        );
-        f.init_project("checkout");
-        let original = f.ok(&["scope"]);
-        assert_eq!(original, f.ok_in("linked", &["scope"]));
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(f.root.join("checkout"), f.root.join("alias")).unwrap();
-            assert_eq!(original, f.ok_in("alias", &["scope"]));
-        }
-        f.write(
-            "wiki/decision.md",
-            "project",
-            "missing",
-            "A scoped decision.\n",
-        );
-        assert_eq!(
-            f.ok_in("linked", &["search", "scoped"])
-                .pointer("/searches/1/result/hits")
-                .unwrap()
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        fs::create_dir(f.root.join("other")).unwrap();
-        f.git("other", &["init", "-q"]);
-        f.init_project("other");
-        let other = f.ok_in("other", &["search", "scoped"]);
-        assert_eq!(
-            other.pointer("/searches/1/result/hits").unwrap(),
-            &serde_json::json!([])
-        );
-        assert!(Path::new(original.pointer("/project").unwrap().as_str().unwrap()).is_absolute());
-    }
-
-    #[test]
-    fn oversized_inputs_and_broken_git_fail_explicitly() {
-        let f = Fixture::new();
-        fs::write(f.root.join("input.md"), "x".repeat(256 * 1024 + 1)).unwrap();
-        assert!(
-            f.fail(&[
-                "write",
-                "MEMORY.md",
-                "--scope",
-                "global",
-                "--expected",
-                "missing",
-                "--content-file",
-                "../input.md"
-            ])
-            .contains("exceeds")
-        );
-        assert!(!f.global().exists());
-        f.write(
-            "wiki/long.md",
-            "global",
-            "missing",
-            &format!("{}👨\u{200d}👩\u{200d}👧 needle\n", "é".repeat(299)),
-        );
-        let hits = f.ok(&["search", "needle"]);
-        let hit = hits.pointer("/searches/0/result/hits/0").unwrap();
-        assert_eq!(hit.get("truncated").unwrap(), true);
-        assert_eq!(
-            hit.get("excerpt").unwrap().as_str().unwrap(),
-            "é".repeat(299)
-        );
-        fs::write(f.global().join("wiki/long.md"), "a".repeat(17000)).unwrap();
-        assert!(
-            f.fail(&["read", "wiki/long.md", "--scope", "global"])
-                .contains("line exceeds")
-        );
-        fs::write(
-            f.root.join("checkout/.git"),
-            "gitdir: /nonexistent-neutral-fixture\n",
-        )
-        .unwrap();
-        assert!(f.fail(&["scope"]).contains("cannot resolve"));
-        // A broken project must not prevent an explicitly global read.
-        assert_eq!(
-            f.ok(&["read", "MEMORY.md", "--scope", "global"])
-                .pointer("/document/exists")
-                .unwrap(),
-            false
-        );
-    }
-
-    #[test]
-    fn relative_xdg_falls_back_to_home_without_initializing_memory() {
-        let f = Fixture::new();
-        let output = Command::new(env!("CARGO_BIN_EXE_dots"))
-            .args(["--json", "memory", "scope"])
-            .current_dir(f.root.join("checkout"))
-            .env("HOME", f.root.join("home"))
-            .env("XDG_DATA_HOME", "relative-is-ignored")
-            .output()
-            .unwrap();
-        assert!(output.status.success());
-        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(
-            result.get("global").unwrap().as_str().unwrap(),
-            f.root
-                .join("home/.local/share/dots/workspaces/global/knowledge")
-                .to_str()
-                .unwrap()
-        );
-        assert!(!f.root.join("home").exists());
-    }
-
-    #[test]
-    fn concurrent_writers_cannot_both_replace_the_same_revision() {
-        let f = Fixture::new();
-        let published = f.write("MEMORY.md", "global", "missing", "before\n");
-        let revision = published
-            .pointer("/published/revision")
-            .unwrap()
-            .as_str()
-            .unwrap();
-        fs::write(f.root.join("input.md"), "after\n").unwrap();
-        let args = [
-            "write",
             "MEMORY.md",
             "--scope",
             "global",
-            "--expected",
-            revision,
-            "--content-file",
-            "../input.md",
-        ];
-        let outcomes = std::thread::scope(|scope| {
-            let first = scope.spawn(|| f.run("checkout", &args));
-            let second = scope.spawn(|| f.run("checkout", &args));
-            [first.join().unwrap(), second.join().unwrap()]
-        });
-        assert_eq!(
-            outcomes
-                .iter()
-                .filter(|output| output.status.success())
-                .count(),
-            1
+            "--snapshot",
+            snapshot(&first),
+        ]);
+        assert_eq!(old["document"]["content"], "Read topic.\n");
+        let gone = f.ok(&["memory", "read", "empty.md", "--scope", "global"]);
+        assert_eq!(gone["document"]["exists"], false);
+        let stale = f.input(
+            "stale.json",
+            &json!([write(&json!({"kind":"global"}), "MEMORY.md", "stale")]),
         );
-        assert_eq!(
-            fs::read_to_string(f.global().join("MEMORY.md")).unwrap(),
-            "after\n"
+        f.fail(&[
+            "memory",
+            "publish",
+            "--expected-snapshot",
+            snapshot(&first),
+            "--input-file",
+            &stale,
+        ]);
+        assert_eq!(f.ok(&["memory", "status"])["snapshot"], second["snapshot"]);
+        let malformed = f.input(
+            "bad.json",
+            &json!([{"scope":{"kind":"global"},"path":"MEMORY.md"}]),
         );
-        assert!(f.root.join("data/dots/mutation.lock").is_file());
+        f.fail(&[
+            "memory",
+            "publish",
+            "--expected-snapshot",
+            snapshot(&second),
+            "--input-file",
+            &malformed,
+        ]);
+        assert_eq!(f.ok(&["memory", "status"])["snapshot"], second["snapshot"]);
+    }
+
+    #[test]
+    fn shared_scope_selectors_and_local_bindings_do_not_leak_or_retarget() {
+        let f = Fixture::new();
+        let local = f.catalog();
+        let genesis = f.init();
+        let a = f.ok(&[
+            "memory",
+            "project",
+            "create",
+            "same-name",
+            "--expected-snapshot",
+            snapshot(&genesis),
+        ]);
+        let b = f.ok(&[
+            "memory",
+            "project",
+            "create",
+            "same-name",
+            "--expected-snapshot",
+            snapshot(&a),
+        ]);
+        let aid = a["project"].as_str().unwrap();
+        let bid = b["project"].as_str().unwrap();
+        assert_ne!(aid, bid);
+        assert_ne!(a["project"], local["project"]);
+        f.ok(&["memory", "project", "bind", aid]);
+        let next = f.publish(
+            snapshot(&b),
+            &json!([
+                write(&json!({"kind":"global"}), "MEMORY.md", "global needle"),
+                write(
+                    &json!({"kind":"project","project":aid}),
+                    "MEMORY.md",
+                    "chosen needle"
+                ),
+                write(
+                    &json!({"kind":"project","project":bid}),
+                    "MEMORY.md",
+                    "other needle"
+                )
+            ]),
+        );
+        let context = f.ok(&["memory", "context"]);
+        assert_eq!(context["project"]["scope"]["project"], aid);
+        assert_eq!(
+            context["global"]["snapshot"],
+            context["project"]["snapshot"]
+        );
+        assert!(context["diagnostic"].is_null());
+        let hits = f.ok(&["memory", "search", "needle", "--snapshot", snapshot(&next)]);
+        assert_eq!(hits["results"].as_array().unwrap().len(), 2);
+        assert!(!hits.to_string().contains("other needle"));
+        f.fail(&["memory", "project", "bind", bid]);
+        f.fail(&["memory", "project", "unbind", "--expected", bid]);
+        f.ok(&["memory", "project", "unbind", "--expected", aid]);
+        f.ok(&["memory", "project", "bind", bid]);
+        // A context resource's exact shared selector remains valid after a local rebind.
+        let pinned = f.ok(&[
+            "memory",
+            "read",
+            "MEMORY.md",
+            "--scope",
+            aid,
+            "--snapshot",
+            snapshot(&next),
+        ]);
+        assert_eq!(pinned["document"]["content"], "chosen needle\n");
+        f.fail(&["memory", "read", "MEMORY.md", "--scope", "project"]);
+        f.fail(&[
+            "memory",
+            "read",
+            "MEMORY.md",
+            "--scope",
+            "global",
+            "--project",
+            aid,
+        ]);
+        fs::write(f.store().join("bindings.json"), b"{invalid").unwrap();
+        let degraded = f.ok(&["memory", "context"]);
+        assert_eq!(degraded["global"]["document"]["content"], "global needle\n");
+        assert!(degraded["project"].is_null());
+        assert!(
+            degraded["diagnostic"]
+                .as_str()
+                .unwrap()
+                .contains("unavailable")
+        );
+    }
+
+    #[test]
+    fn restore_import_inspection_and_explicit_reconciliation_preserve_ownership() {
+        let authority = Fixture::new();
+        let replica = Fixture::new();
+        let seed = authority.init();
+        let bundle = authority
+            .root
+            .join("seed.bundle")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let receipt = authority.ok(&["memory", "export", "--output", &bundle]);
+        let receipt_file = authority.input("receipt.json", &receipt);
+        let restored = replica.ok(&[
+            "memory",
+            "restore",
+            "--actor",
+            "replica",
+            "--role",
+            "replica",
+            "--bundle",
+            &bundle,
+            "--receipt-file",
+            &receipt_file,
+        ]);
+        assert_eq!(restored["identity"]["store"], seed["identity"]["store"]);
+        assert_ne!(restored["identity"]["node"], seed["identity"]["node"]);
+        let remote = replica.publish(
+            snapshot(&restored),
+            &json!([write(&json!({"kind":"global"}), "MEMORY.md", "remote fact")]),
+        );
+        let remote_bundle = replica
+            .root
+            .join("remote.bundle")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let remote_receipt = replica.ok(&["memory", "export", "--output", &remote_bundle]);
+        let remote_receipt_file = replica.input("remote-receipt.json", &remote_receipt);
+        let candidate = authority.ok(&[
+            "memory",
+            "import",
+            "--bundle",
+            &remote_bundle,
+            "--receipt-file",
+            &remote_receipt_file,
+        ]);
+        assert_eq!(candidate["snapshot"], remote["snapshot"]);
+        assert_eq!(
+            authority.ok(&["memory", "status"])["snapshot"],
+            seed["snapshot"]
+        );
+        authority.fail(&[
+            "memory",
+            "read",
+            "MEMORY.md",
+            "--scope",
+            "global",
+            "--snapshot",
+            snapshot(&remote),
+        ]);
+        let candidate_file = authority.input("candidate.json", &candidate);
+        let inspected = authority.ok(&[
+            "memory",
+            "inspect",
+            "--candidate-file",
+            &candidate_file,
+            "MEMORY.md",
+            "--scope",
+            "global",
+        ]);
+        assert_eq!(inspected["document"]["content"], "remote fact\n");
+        assert!(inspected.get("candidate").is_some());
+        let wrong = authority.input("wrong-node.json", &json!({"recipient":restored["identity"],"local":seed["snapshot"],"incoming":candidate,"resolutions":[]}));
+        authority.fail(&["memory", "reconcile", "--input-file", &wrong]);
+        assert_eq!(
+            authority.ok(&["memory", "status"])["snapshot"],
+            seed["snapshot"]
+        );
+        let input = authority.input("reconcile.json", &json!({"recipient":seed["identity"],"local":seed["snapshot"],"incoming":candidate,"resolutions":[]}));
+        let accepted = authority.ok(&["memory", "reconcile", "--input-file", &input]);
+        assert_eq!(accepted["snapshot"], remote["snapshot"]);
+        assert_eq!(
+            authority.ok(&["memory", "read", "MEMORY.md", "--scope", "global"])["document"]["content"],
+            "remote fact\n"
+        );
+        replica.fail(&[
+            "memory",
+            "project",
+            "create",
+            "not-authority",
+            "--expected-snapshot",
+            snapshot(&remote),
+        ]);
+    }
+
+    #[test]
+    fn one_shot_control_protocol_checks_real_cli_input_and_location() {
+        let f = Fixture::new();
+        let initialized = f.init();
+        let request = serde_json::to_vec(&json!({"kind":"status", "root":f.store()})).unwrap();
+        let output = dots_process::Runner::new(Duration::from_secs(10), 1024 * 1024)
+            .stdin(request, 1024 * 1024)
+            .output(f.command(&["memory", "serve"]))
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["status"]["identity"], initialized["identity"]);
+        assert_eq!(response["status"]["snapshot"], initialized["snapshot"]);
+        let output = dots_process::Runner::new(Duration::from_secs(10), 1024 * 1024)
+            .stdin(b"{bad".to_vec(), 1024)
+            .output(f.command(&["memory", "serve"]))
+            .unwrap();
+        assert!(!output.status.success());
+        let failure: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(failure["error"].is_string());
     }
 }

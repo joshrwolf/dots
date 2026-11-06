@@ -14,6 +14,7 @@ dots-tasks.workspace = true
 dots-process.workspace = true
 dots-review.workspace = true
 dots-documents.workspace = true
+dots-memory.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 github-inspect.workspace = true

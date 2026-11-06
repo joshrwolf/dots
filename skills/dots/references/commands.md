@@ -19,7 +19,7 @@ Commands:
   github     Inspect GitHub CI evidence and PR review threads, and keep a PR watch list
   task       Track shared, claimable work for a project across concurrent sessions
   attention  Ask the user durable questions about goal work and record goal decisions
-  memory     Read, publish, and search scoped Markdown memory without a service
+  memory     Publish atomic knowledge snapshots and exchange them with enrolled Tailscale peers
   review     Review a repository's changes in threads anchored to exact revisions, across its worktrees
   skills     Export agent discovery documentation from this command tree
 
@@ -2469,16 +2469,25 @@ Options:
 ## dots memory
 
 ```text
-Portable Markdown memory outside the checkout. Reads never initialize storage. Writes require an explicit scope and expected revision, briefly lock that scope, and atomically replace one file. No automatic ingestion, installation, indexing, or network access. See the shared memory skill for evidence and maintenance policy.
+Private native Git knowledge outside development checkouts. One snapshot pins all global/project documents and the shared project registry. Publication atomically changes a batch against an expected snapshot. Ordinary reads never initialize storage or access the network. Imports stay unpublished until explicit reconciliation. Enrolled peers and tool-owned exports are trusted producers, not hostile-pack inputs. Tasks, outputs, credentials and checkout bindings remain machine-local.
 
 Usage: dots memory [OPTIONS] <COMMAND>
 
 Commands:
-  scope   Resolve global and current-project locations; creates nothing
-  read    Read a bounded page and its full-file revision; absent files have revision "missing"
-  write   Publish one Markdown file from UTF-8 input; rejects stale revisions and symlink paths
-  remove  Remove one file with revision checking; does not erase backups or external indexes
-  search  Case-insensitive literal search of current knowledge; defaults to global plus this project
+  init       Initialize a new private authority store; never adopt existing storage
+  restore    Restore a full export into a new local node with explicit ownership
+  context    Read both MEMORY.md indexes at one snapshot; unavailable project bindings remain explicit
+  status     Inspect local publication, retained progress and acknowledged delivery without networking
+  read       Read a published page; scope is global or an exact shared project ID
+  publish    Atomically publish a JSON array of changes against one expected snapshot
+  search     Literal search at one published snapshot; default is global plus this bound project
+  project    Manage shared identities and their separate machine-local catalog bindings
+  peer       Explicitly bind one enrolled replica and its native transport
+  sync       Fetch, reconcile disjoint changes and return an accepted snapshot; conflicts require judgment
+  reconcile  Resolve JSON recipient/local/incoming/resolutions into a local publication; sync separately
+  inspect    Read an explicitly labeled unpublished candidate; cannot change ordinary memory
+  export     Export a pinned full snapshot; stdout is the receipt required by import/restore
+  import     Validate an export in quarantine and retain an unpublished candidate
 
 Options:
       --json
@@ -2494,12 +2503,90 @@ Options:
           Print help (see a summary with '-h')
 ```
 
-## dots memory scope
+## dots memory init
 
 ```text
-Resolve global and current-project locations; creates nothing
+Initialize a new private authority store; never adopt existing storage
 
-Usage: dots memory scope [OPTIONS]
+Usage: dots memory init [OPTIONS] --actor <ACTOR>
+
+Options:
+      --actor <ACTOR>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory restore
+
+```text
+Restore a full export into a new local node with explicit ownership
+
+Usage: dots memory restore [OPTIONS] --actor <ACTOR> --role <ROLE> --bundle <BUNDLE> --receipt-file <RECEIPT_FILE>
+
+Options:
+      --actor <ACTOR>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --role <ROLE>
+          [possible values: authority, replica]
+
+      --bundle <BUNDLE>
+
+
+      --receipt-file <RECEIPT_FILE>
+
+
+  -h, --help
+          Print help
+```
+
+## dots memory context
+
+```text
+Read both MEMORY.md indexes at one snapshot; unavailable project bindings remain explicit
+
+Usage: dots memory context [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory status
+
+```text
+Inspect local publication, retained progress and acknowledged delivery without networking
+
+Usage: dots memory status [OPTIONS]
 
 Options:
       --json
@@ -2518,9 +2605,9 @@ Options:
 ## dots memory read
 
 ```text
-Read a bounded page and its full-file revision; absent files have revision "missing"
+Read a published page; scope is global or an exact shared project ID
 
-Usage: dots memory read [OPTIONS] --scope <SCOPE> <PATH>
+Usage: dots memory read [OPTIONS] --scope <GLOBAL_OR_SHARED_ID> <PATH>
 
 Arguments:
   <PATH>
@@ -2533,11 +2620,14 @@ Options:
       --project <ID>
           Registered project ID instead of resolving the current checkout
 
-      --scope <SCOPE>
-          [possible values: global, project]
+      --scope <GLOBAL_OR_SHARED_ID>
+
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --snapshot <SNAPSHOT>
+
 
       --start <START>
           [default: 1]
@@ -2549,75 +2639,37 @@ Options:
           Print help
 ```
 
-## dots memory write
+## dots memory publish
 
 ```text
-Publish one file using --expected from memory read (or 'missing' for a new file). Reads at most 256 KiB from --content-file. Creates scope/topic directories on first write. A kernel-held dots/mutation.lock covers revision checking and atomic replacement across scopes; contention returns busy without waiting; conflicts change no file contents. Multi-file updates are NOT transactions: write topics before the index, and handle interrupted updates explicitly. No shell commands or model calls run under the lock.
+Publish a JSON array from --input-file. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. Stale snapshots change nothing. Empty files and removals are distinct. Batches can cover multiple scopes; no implicit rebase, shell command or model call runs under the lock.
 
-Usage: dots memory write [OPTIONS] --scope <SCOPE> --expected <EXPECTED> --content-file <CONTENT_FILE> <PATH>
-
-Arguments:
-  <PATH>
-
+Usage: dots memory publish [OPTIONS] --expected-snapshot <EXPECTED_SNAPSHOT> --input-file <INPUT_FILE>
 
 Options:
+      --expected-snapshot <EXPECTED_SNAPSHOT>
+
+
       --json
           Return JSON instead of readable output
 
       --project <ID>
           Registered project ID instead of resolving the current checkout
 
-      --scope <SCOPE>
-          [possible values: global, project]
-
       --directory <PATH>
           Working directory for commands that use checkout context
 
-      --expected <EXPECTED>
-
-
-      --content-file <CONTENT_FILE>
+      --input-file <INPUT_FILE>
 
 
   -h, --help
           Print help (see a summary with '-h')
 ```
 
-## dots memory remove
-
-```text
-Remove one file with revision checking; does not erase backups or external indexes
-
-Usage: dots memory remove [OPTIONS] --scope <SCOPE> --expected <EXPECTED> <PATH>
-
-Arguments:
-  <PATH>
-
-
-Options:
-      --json
-          Return JSON instead of readable output
-
-      --project <ID>
-          Registered project ID instead of resolving the current checkout
-
-      --scope <SCOPE>
-          [possible values: global, project]
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
-
-      --expected <EXPECTED>
-
-
-  -h, --help
-          Print help
-```
-
 ## dots memory search
 
 ```text
-Search live Markdown files, not a cached index. Default scope is global plus the current project, never unrelated projects. The knowledge change log is excluded. Retained outputs and scratch are outside the searched knowledge roots. Results are deterministic path/line matches, not semantic ranking; read the source before applying a snippet. Output reports backend, scope, and pagination. QMD is not installed or invoked.
+Literal search at one published snapshot; default is global plus this bound project
 
 Usage: dots memory search [OPTIONS] <QUERY>
 
@@ -2632,24 +2684,367 @@ Options:
       --project <ID>
           Registered project ID instead of resolving the current checkout
 
-      --scope <SCOPE>
-          [possible values: global, project]
+      --scope <GLOBAL_OR_SHARED_ID>
+
 
       --directory <PATH>
           Working directory for commands that use checkout context
 
-      --offset <OFFSET>
-          Skip this many matches in each selected scope
+      --snapshot <SNAPSHOT>
 
+
+      --offset <OFFSET>
           [default: 0]
 
       --limit <LIMIT>
-          Maximum matches per scope
-
           [default: 5]
 
   -h, --help
-          Print help (see a summary with '-h')
+          Print help
+```
+
+## dots memory project
+
+```text
+Manage shared identities and their separate machine-local catalog bindings
+
+Usage: dots memory project [OPTIONS] <COMMAND>
+
+Commands:
+  create  Register a shared identity in the atomic knowledge snapshot
+  list    List shared identities; names never select identities
+  bind    Associate this local catalog project with a shared identity; refuse conflicting ownership
+  unbind  Remove an exact local association without deleting shared knowledge
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory project create
+
+```text
+Register a shared identity in the atomic knowledge snapshot
+
+Usage: dots memory project create [OPTIONS] --expected-snapshot <EXPECTED_SNAPSHOT> <NAME>
+
+Arguments:
+  <NAME>
+
+
+Options:
+      --expected-snapshot <EXPECTED_SNAPSHOT>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory project list
+
+```text
+List shared identities; names never select identities
+
+Usage: dots memory project list [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory project bind
+
+```text
+Associate this local catalog project with a shared identity; refuse conflicting ownership
+
+Usage: dots memory project bind [OPTIONS] <ID>
+
+Arguments:
+  <ID>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory project unbind
+
+```text
+Remove an exact local association without deleting shared knowledge
+
+Usage: dots memory project unbind [OPTIONS] --expected <EXPECTED>
+
+Options:
+      --expected <EXPECTED>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory peer
+
+```text
+Explicitly bind one enrolled replica and its native transport
+
+Usage: dots memory peer [OPTIONS] <COMMAND>
+
+Commands:
+  bind    Discover and bind an explicit replica; refuse changing an existing binding
+  unbind  Remove an exact transport binding; retain knowledge and progress refs
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory peer bind
+
+```text
+Discover and bind an explicit replica; refuse changing an existing binding
+
+Usage: dots memory peer bind [OPTIONS] --root <ROOT> --executable <EXECUTABLE> --tailscale <TAILSCALE> <HOST>
+
+Arguments:
+  <HOST>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --root <ROOT>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --executable <EXECUTABLE>
+
+
+      --tailscale <TAILSCALE>
+
+
+  -h, --help
+          Print help
+```
+
+## dots memory peer unbind
+
+```text
+Remove an exact transport binding; retain knowledge and progress refs
+
+Usage: dots memory peer unbind [OPTIONS] --expected-node <EXPECTED_NODE>
+
+Options:
+      --expected-node <EXPECTED_NODE>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory sync
+
+```text
+Fetch, reconcile disjoint changes and return an accepted snapshot; conflicts require judgment
+
+Usage: dots memory sync [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory reconcile
+
+```text
+Resolve JSON recipient/local/incoming/resolutions into a local publication; sync separately
+
+Usage: dots memory reconcile [OPTIONS] --input-file <INPUT_FILE>
+
+Options:
+      --input-file <INPUT_FILE>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots memory inspect
+
+```text
+Read an explicitly labeled unpublished candidate; cannot change ordinary memory
+
+Usage: dots memory inspect [OPTIONS] --candidate-file <CANDIDATE_FILE> --scope <GLOBAL_OR_SHARED_ID> <PATH>
+
+Arguments:
+  <PATH>
+
+
+Options:
+      --candidate-file <CANDIDATE_FILE>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --scope <GLOBAL_OR_SHARED_ID>
+
+
+      --start <START>
+          [default: 1]
+
+      --lines <LINES>
+          [default: 100]
+
+  -h, --help
+          Print help
+```
+
+## dots memory export
+
+```text
+Export a pinned full snapshot; stdout is the receipt required by import/restore
+
+Usage: dots memory export [OPTIONS] --output <OUTPUT>
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --output <OUTPUT>
+
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --snapshot <SNAPSHOT>
+
+
+  -h, --help
+          Print help
+```
+
+## dots memory import
+
+```text
+Validate an export in quarantine and retain an unpublished candidate
+
+Usage: dots memory import [OPTIONS] --bundle <BUNDLE> --receipt-file <RECEIPT_FILE>
+
+Options:
+      --bundle <BUNDLE>
+
+
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --receipt-file <RECEIPT_FILE>
+
+
+  -h, --help
+          Print help
 ```
 
 ## dots review

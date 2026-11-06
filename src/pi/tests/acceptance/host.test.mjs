@@ -37,6 +37,44 @@ test('Pi loads the checkout package, runs a native child, reloads, and shuts dow
     hostPins['@earendil-works/pi-coding-agent'],
     'installed host must match the pinned Pi release',
   );
+  const fixtureEnv = {
+    ...process.env,
+    HOME: work,
+    XDG_DATA_HOME: join(work, 'data'),
+  };
+  const knowledgeInit = spawnSync(
+    'dots',
+    ['--json', 'memory', 'init', '--actor', 'fixture'],
+    {cwd: work, env: fixtureEnv, encoding: 'utf8', timeout: 15_000},
+  );
+  assert.equal(knowledgeInit.status, 0, knowledgeInit.stderr);
+  const initial = JSON.parse(knowledgeInit.stdout);
+  const changes = join(work, 'knowledge.json');
+  writeFileSync(
+    changes,
+    JSON.stringify([
+      {
+        scope: {kind: 'global'},
+        path: 'MEMORY.md',
+        action: {kind: 'write', content: 'NATIVE_KNOWLEDGE_FACT'},
+      },
+    ]),
+  );
+  const knowledgePublish = spawnSync(
+    'dots',
+    [
+      '--json',
+      'memory',
+      'publish',
+      '--expected-snapshot',
+      initial.snapshot,
+      '--input-file',
+      changes,
+    ],
+    {cwd: work, env: fixtureEnv, encoding: 'utf8', timeout: 15_000},
+  );
+  assert.equal(knowledgePublish.status, 0, knowledgePublish.stderr);
+  const published = JSON.parse(knowledgePublish.stdout);
   const marker = join(work, 'markers.jsonl');
   const results = [];
   class Client {
@@ -49,7 +87,7 @@ test('Pi loads the checkout package, runs a native child, reloads, and shuts dow
       this.next = 0;
       this.buffer = '';
       const env = {
-        ...process.env,
+        ...fixtureEnv,
         PI_CODING_AGENT_DIR: agent,
         PI_OFFLINE: '1',
         PI_TRIAL_MARKER: marker,
@@ -217,6 +255,22 @@ test('Pi loads the checkout package, runs a native child, reloads, and shuts dow
         'manifest resource missing: ' + name,
       );
     await normal.call('prompt', {message: '/jobs'});
+    await normal.call('prompt', {message: '/memory'});
+    const memoryNotice = normal.events.find(
+      event =>
+        event.type === 'extension_ui_request' &&
+        event.method === 'notify' &&
+        event.message?.includes('NATIVE_KNOWLEDGE_FACT'),
+    );
+    assert.ok(
+      memoryNotice,
+      'native /memory reads the initialized disposable Git store',
+    );
+    assert.ok(
+      memoryNotice.message.includes(published.snapshot),
+      'native memory reports its pinned snapshot',
+    );
+    assert.doesNotMatch(memoryNotice.message, /Index: \//);
     normal.verify();
     results.push({gate: 'real-package-manifest-loading', passed: true});
   } finally {

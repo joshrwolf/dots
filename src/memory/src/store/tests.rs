@@ -310,7 +310,7 @@ fn literal_search_is_scoped_bounded_and_uses_relative_resources() -> TestResult 
         &project.snapshot,
         &[
             put(Scope::Global, "a.md", "First Needle\nSecond needle\n"),
-            put(Scope::Global, "log.md", "needle excluded\n"),
+            put(Scope::Global, "log.md", "needle in named topic\n"),
             put(
                 Scope::Project(project.project.clone()),
                 "a.md",
@@ -327,7 +327,10 @@ fn literal_search_is_scoped_bounded_and_uses_relative_resources() -> TestResult 
     assert_eq!(first.result.next_offset, Some(1));
     let last = view.search(&Scope::Global, "needle", 1, 1)?;
     assert_eq!(last.result.hits[0].line, 2);
-    assert!(!last.result.has_more);
+    assert!(last.result.has_more);
+    let final_page = view.search(&Scope::Global, "needle", 2, 1)?;
+    assert_eq!(final_page.result.hits[0].path, Path::new("log.md"));
+    assert!(!final_page.result.has_more);
     let scoped = view.search(&Scope::Project(project.project), "needle", 0, 20)?;
     assert_eq!(scoped.result.hits.len(), 1);
     assert_eq!(scoped.result.hits[0].excerpt, "needle private to project");

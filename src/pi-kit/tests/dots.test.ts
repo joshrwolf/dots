@@ -86,7 +86,7 @@ test('missing executable and pre-aborted calls do not reach another store', asyn
   const {dir, env} = isolated(t);
   const unavailable = {...env, PATH: dir};
   await assert.rejects(
-    dots(['memory', 'scope'], {env: unavailable, cwd: dir}),
+    dots(['memory', 'context'], {env: unavailable, cwd: dir}),
     (error: unknown) =>
       error instanceof DotsError &&
       error.cause instanceof Error &&
@@ -95,7 +95,7 @@ test('missing executable and pre-aborted calls do not reach another store', asyn
   );
   const cause = new Error('cancelled before spawn');
   await assert.rejects(
-    dots(['memory', 'scope'], {
+    dots(['memory', 'context'], {
       env: unavailable,
       cwd: dir,
       signal: AbortSignal.abort(cause),
@@ -107,7 +107,7 @@ test('missing executable and pre-aborted calls do not reach another store', asyn
 test('DotsError retains caller-supplied native cause', () => {
   const cause = new SyntaxError('bad JSON');
   const error = new DotsError(
-    ['memory', 'scope'],
+    ['memory', 'context'],
     'invalid-json',
     '',
     'unavailable',

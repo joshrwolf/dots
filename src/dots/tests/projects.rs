@@ -94,8 +94,7 @@ fn reads_do_not_create_a_catalog_and_old_data_requires_an_explicit_choice() {
     for args in [vec!["project", "list"], vec!["task", "list"]] {
         assert!(!f.run("repo", &args).status.success());
     }
-    let scope = f.ok("repo", &["memory", "scope"]);
-    assert!(scope["project"].is_null());
+    assert!(!f.run("repo", &["memory", "context"]).status.success());
     assert!(!f.0.join("data").exists());
     fs::create_dir_all(f.0.join("data/dots/memory")).unwrap();
     fs::write(f.0.join("data/dots/memory/source.md"), "retained source").unwrap();
@@ -132,12 +131,26 @@ fn worktrees_share_ids_while_clones_bare_repositories_and_submodules_do_not() {
     assert_eq!(id(&first), id(&f.ok("linked", &["project", "resolve"])));
     let task = f.ok("linked", &["task", "add", "work"]);
     assert_eq!(task["project"], id(&first));
-    let scope = f.ok("repo", &["memory", "scope"]);
-    assert!(scope["project"].as_str().unwrap().contains(id(&first)));
-    assert_eq!(scope, f.ok("linked", &["memory", "scope"]));
+    let knowledge = f.ok("repo", &["memory", "init", "--actor", "neutral"]);
+    let shared = f.ok(
+        "repo",
+        &[
+            "memory",
+            "project",
+            "create",
+            "neutral",
+            "--expected-snapshot",
+            knowledge["snapshot"].as_str().unwrap(),
+        ],
+    );
+    let shared_id = shared["project"].as_str().unwrap();
+    f.ok("repo", &["memory", "project", "bind", shared_id]);
+    let context = f.ok("repo", &["memory", "context"]);
+    assert_eq!(context["project"]["scope"]["project"], shared_id);
+    assert_eq!(context, f.ok("linked", &["memory", "context"]));
     f.git("repo", &["clone", "-q", ".", "../clone"]);
     assert!(!f.run("clone", &["task", "list"]).status.success());
-    let unbound = f.ok("clone", &["memory", "scope"]);
+    let unbound = f.ok("clone", &["memory", "context"]);
     assert!(unbound["project"].is_null());
     assert!(unbound["diagnostic"].as_str().unwrap().contains("unbound"));
     let clone = f.ok("clone", &["project", "init", "same-name"]);
