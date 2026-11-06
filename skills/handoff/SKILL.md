@@ -45,10 +45,18 @@ assume source-only files or machine-local task IDs exist at the destination.
 After worktree selection, launch Pi directly in a new named Rex session or tab
 with the context as one initial-message argument after `--`. Rex's command argv
 preserves literal text; keep arbitrary context out of Worktrunk's execute
-argument templating. A short initial message avoids a separate file-transfer
-layer; use native Pi `@file` only when the file already exists at the destination
-or its transport is explicitly arranged. Do not resume or fork an unrelated Pi
-session.
+argument templating. Short messages avoid file transport; large messages can
+exceed OS argv limits, and argument contents may appear in process inspection
+or command logs. Use native Pi `@file` when a file is needed, with transport
+explicitly arranged if it is not already on the destination.
+
+Create or transfer handoff files only into private temporary locations on their
+respective hosts, with owner-only access. Never put them in checkouts, persistent
+home paths or shared storage. Leave original source documents in place; make a
+temporary handoff copy rather than moving them. Remove temporary copies after
+verified Pi ingestion, or when abandoning the handoff after its processes stop.
+A temporary file does not prevent Pi from retaining its contents in normal
+session history. Do not resume or fork an unrelated Pi session.
 
 Save the returned server/session/window/block identities. Tell the receiver to
 verify its machine, working directory and Git revision before doing any work,
