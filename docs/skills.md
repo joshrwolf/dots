@@ -18,9 +18,15 @@ Native groups leave unrelated installed content alone; pruning is deliberate.
 
 Create `skills/example/SKILL.md` with `name` and `description` frontmatter,
 add its supporting files to Git, then check and apply the selected source.
-Machine-local skills and mod links use `local-<name>`; never force-add private
-workflows or machine captures to public Git. Generated host-owned skills, such
-as Rex's guide, belong to that host's native setup.
+Commit each skill or mod in its public or private source repository; names do
+not encode ownership. Private groups deploy directly into the shared namespace,
+without links in public source. Keep credentials and machine captures outside
+both repositories. Generated host-owned skills, such as Rex's guide, belong to
+that host's native setup.
+
+The public `ship-it` skill owns publication and optional monitored readiness.
+An optional private `shipping-context` skill supplies environment and company
+policy; public-only use does not require it.
 
 Personal Go defaults live in standing instructions and apply without loading a
 skill. The `golang` reference and focused `golang-*` skills are adapted from

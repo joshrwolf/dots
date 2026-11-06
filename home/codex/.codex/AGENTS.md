@@ -8,7 +8,7 @@
 - For workflows supported by `dots`, use its generated `dots` skill and
   `dots --help` to discover the installed commands before assembling equivalent
   shell/API calls. Native tools remain available for unsupported cases.
-- Load the `local-ship-it` skill when I say "ship it" and before creating or updating
+- Load the `ship-it` skill when I say "ship it" and before creating or updating
   any PR on my behalf, even when I did not name the skill. "Ship it" authorizes the
   necessary commits, push, and PR creation or update without another confirmation;
   it does not authorize merging a PR or monitoring CI.

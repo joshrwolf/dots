@@ -58,8 +58,9 @@ Applies to Pi extensions, Claude mods, skills, and `AGENTS.md` files.
   at `~/.local/share/dots/skills`; add no per-agent per-skill links. Native
   groups deploy tracked public/private skills without cross-source writes. Keep
   other files there to what every tool ignores. See [skill setup](docs/skills.md).
-- Reserve `local-*` for ignored machine-local skills and links; never commit them.
-  The ignored `rex` skill belongs to `rex skill setup`; do not edit it.
+- Skills and mods are public or private: commit each in its owning repository.
+  Private content never uses links inside public source. Names carry no ownership
+  prefix. The ignored `rex` skill belongs to `rex skill setup`; do not edit it.
 - Keep shared guidance portable. A symlink does not make tool-specific hooks,
   commands, metadata, or permissions portable.
 - Keep upstream licenses for adapted skills, such as
