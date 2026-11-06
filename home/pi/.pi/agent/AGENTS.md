@@ -24,7 +24,7 @@
   shell/API calls. Native tools remain available for unsupported cases.
 - Only send messages or replies to other people (on GitHub or elsewhere) when I
   explicitly ask. Prefix AI-generated text in those messages with `:robot:`.
-- Load the `local-ship-it` skill when I say "ship it" and before creating or updating
+- Load the `ship-it` skill when I say "ship it" and before creating or updating
   any PR on my behalf. "Ship it" authorizes the necessary commits, push, and PR
   creation or update; it does not authorize merging a PR or monitoring CI.
 - "Ship it and rip it" additionally authorizes monitoring, relevant fixes and

@@ -132,7 +132,7 @@ a terminal that sends Option as Alt; `/goal` always works.
 A goal's coordinator asks a person through `dots attention` requests; a request
 holds the tasks it names until the coordinator incorporates the answer. While one
 of the session's goals has an open request, one line below the editor names it and counts
-the others; a click opens the popup's **Attention** view. The popup opens there
+the others; a click opens this Pi session's **Attention** view. Its popup opens there
 whenever requests are outstanding, otherwise on **Work**. **←/→** switch views,
 except while typing an answer, where they move the cursor. The selected
 question and its options show at once and stay visible while typing. **Enter**
@@ -140,6 +140,9 @@ chooses an option or sends typed text; **Esc** steps back, then closes. Closing
 never answers or withdraws a request, and unsent drafts stay for the session.
 If the coordinator replaced the question meanwhile, the popup shows the new one
 beside your unsent draft and applies nothing to it.
+
+[Rex’s global inbox](../home/rex/.config/rex/README.md) opens with **Cmd+I**
+across registered projects, separately from this session-local popup.
 
 An answer is saved before the popup says so. Only the runtime that currently
 coordinates the goal, and only while the goal is not held, receives a message

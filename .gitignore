@@ -8,9 +8,6 @@
 # Optional independent private source checkout; never add it to public history.
 /private/
 
-# Private skills and Claude mod links stay machine-local.
-/skills/local-*
-
 # `rex skill setup` installs and updates its own skill stub.
 /skills/rex/
 
@@ -25,6 +22,5 @@ src/pi/**/.pi/
 # Shared Rust workspace build output.
 /target/
 
-# Engine-written editor types and machine-local Claude mods.
+# Engine-written editor types.
 src/claude/*/.claude-plugin/types/
-/src/claude/local-*

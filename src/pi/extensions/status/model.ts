@@ -1,6 +1,7 @@
+import type {Agent} from '../../src/host/agent.ts';
 import type {ActivityItem} from '../../src/host/activity.ts';
 
-/** One OSC 7501 record; no `id` addresses the root record. */
+/** One OSC 7501 record. Named root records identify the live Pi runtime. */
 export interface StatusRecord {
   readonly state: 'idle' | 'working' | 'done' | 'blocked' | 'error';
   readonly id?: string;
@@ -114,11 +115,16 @@ function text(value: string | undefined, max: number): string | undefined {
   return Buffer.from(clean.slice(0, end), 'utf8').toString('base64');
 }
 
+/** A live runtime's native status identity; segments fit OSC 7501's limits. */
+export function agentStatusId(agent: Agent): string {
+  return `pi/${agent.session.replaceAll('-', '')}/${agent.owner.slice(-16)}`;
+}
+
 /** The OSC 7501 report for a record, within the protocol's limits. */
 export function formatRecord(record: StatusRecord): string {
   const pairs = [`state=${record.state}`];
   if (record.id) pairs.push(`id=${record.id}`);
-  if (!record.id) pairs.push('app=pi');
+  pairs.push('app=pi');
   if (record.state === 'blocked' && record.kind)
     pairs.push(`kind=${record.kind}`);
   const title = text(record.title, 192);

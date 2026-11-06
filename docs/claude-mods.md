@@ -21,4 +21,4 @@ Editor types are generated only with `--plugin-dir`, not skills discovery:
 claude --plugin-dir src/claude/<name>
 ```
 
-Machine-local `local-*` mods and their links remain ignored.
+See [skill setup](skills.md) for shared discovery and public/private deployment.

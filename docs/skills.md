@@ -1,9 +1,9 @@
 # Skills in dots
 
-Public skills live flat in `skills/<name>/`, each with a `SKILL.md` and
-relative supporting files. Private skills stay canonical in their private
-repository. Native mise groups deploy tracked files into the shared installed
-namespace at `~/.local/share/dots/skills`.
+Skills live flat in their public or private source repository; names do not
+encode ownership. Each has a `SKILL.md` and relative supporting files. Native
+mise groups deploy tracked files into `~/.local/share/dots/skills` without
+writing private links into public source.
 
 Two directory links expose that namespace: `~/.agents/skills` for Codex/Pi and
 `~/.claude/skills` for Claude. Configuration never creates per-agent per-skill
@@ -18,9 +18,8 @@ Native groups leave unrelated installed content alone; pruning is deliberate.
 
 Create `skills/example/SKILL.md` with `name` and `description` frontmatter,
 add its supporting files to Git, then check and apply the selected source.
-Machine-local skills and mod links use `local-<name>`; never force-add private
-workflows or machine captures to public Git. Generated host-owned skills, such
-as Rex's guide, belong to that host's native setup.
+Keep credentials and machine captures outside both repositories. Generated
+host-owned skills, such as Rex's guide, belong to that host's native setup.
 
 Personal Go defaults live in standing instructions and apply without loading a
 skill. The `golang` reference and focused `golang-*` skills are adapted from
@@ -33,4 +32,5 @@ To measure whether guidance helps, use
 ## Generated CLI skill
 
 `mise run //src/dots:skills` generates the CLI skill/reference.
-`dots skills check` validates them; see [the CLI](../src/dots/README.md).
+`dots skills check --output skills/dots` validates them from the repository
+root; see [the CLI](../src/dots/README.md).

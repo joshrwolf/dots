@@ -76,7 +76,7 @@ impl Fixture {
             &f.source.join("skills/public-example/SKILL.md"),
             "---\nname: public-example\ndescription: Neutral public skill\n---\nPublic skill.\n",
         )?;
-        f.write(&f.source.join(".gitignore"), "/private/\n/skills/local-*\n")?;
+        f.write(&f.source.join(".gitignore"), "/private/\n")?;
         f.write(
             &f.source.join("mise.toml"),
             "[env]\nPARENT_DEVELOPMENT_CONFIG = \"must-not-load\"\n",

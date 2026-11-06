@@ -217,16 +217,13 @@ function M.go_to(ctx, args)
   if not target then
     error("go_to cannot read row id " .. args.id, 0)
   end
+  if target.kind == "block" then
+    return jumps.open_block(ctx, target.session, target.block)
+  end
   local from = jumps.here(ctx)
   if target.kind == "tab" then
     app.show(target.session, target.window, ctx.session_id, ctx.client_id)
     jumps.record(from, { session_id = target.session, window_id = target.window })
-  elseif target.kind == "block" then
-    must("focusing the terminal", sessions.focus(target.session, target.block))
-    -- Name the window, so the app shows the one the server just made active.
-    local window = sessions.window_of(target.session, target.block)
-    app.show(target.session, window, ctx.session_id, ctx.client_id)
-    jumps.record(from, { session_id = target.session, window_id = window })
   else
     local path = target.path --[[@as string]]
     -- The picker that chose the row is still open; its directory is not a place.

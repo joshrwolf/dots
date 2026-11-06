@@ -500,6 +500,7 @@ dependencies = [
  "clap",
  "dots-documents",
  "dots-memory",
+ "dots-pick",
  "dots-process",
  "dots-review",
  "dots-tasks",

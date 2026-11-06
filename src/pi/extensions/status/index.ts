@@ -5,6 +5,7 @@ import {
   type ActivitySnapshot,
 } from '../../src/host/activity.ts';
 import {
+  agentStatusId,
   childRecords,
   formatClear,
   formatRecord,
@@ -13,6 +14,7 @@ import {
   type StatusInputs,
   type StatusRecord,
 } from './model.ts';
+import {currentAgent} from '../../src/host/agent.ts';
 import {summaryLine} from '../../src/host/summary.ts';
 import {ATTENTION_EVENT, isAttentionSignal} from '../../src/host/attention.ts';
 
@@ -85,6 +87,7 @@ export default function status(
   env.PI_PROGRAM_STATUS = '0';
 
   let enabled = false;
+  let sessionId: string | undefined;
   let running = false;
   let compacting = false;
   let rest: Rest = {state: 'idle'};
@@ -100,6 +103,10 @@ export default function status(
     pending?.cancel();
     pending = undefined;
     if (JSON.stringify(root) === JSON.stringify(lastRoot)) return;
+    if (lastRoot && lastRoot.id !== root.id) {
+      write(formatClear());
+      lastChildren.clear();
+    }
     lastRoot = root;
     write(formatRecord(root));
   };
@@ -120,7 +127,13 @@ export default function status(
       ...(sessionName === undefined ? {} : {sessionName}),
       ...(prompt === undefined ? {} : {prompt}),
     };
-    const root = rootRecord(inputs);
+    const agent = currentAgent();
+    const root: StatusRecord = {
+      ...rootRecord(inputs),
+      ...(agent && agent.session === sessionId
+        ? {id: agentStatusId(agent)}
+        : {}),
+    };
     const settling =
       (root.state === 'done' ||
         root.state === 'error' ||
@@ -153,21 +166,22 @@ export default function status(
 
   pi.on('session_start', (_event, ctx) => {
     enabled = ctx.mode === 'tui' && isTty() && !env.DOTS_WORKER_ID;
+    sessionId = ctx.sessionManager.getSessionId();
     prompt = latestPrompt(ctx.sessionManager.getBranch());
-    // Replace whatever an earlier instance left.
+    // Withdraw shell status and any earlier runtime's records.
+    if (enabled) write(formatClear());
     lastRoot = undefined;
     report();
   });
-  pi.on('session_shutdown', event => {
+  pi.on('session_shutdown', () => {
     running = false;
     compacting = false;
     dialog = undefined;
     attention = [];
     pending?.cancel();
     pending = undefined;
-    // Quitting removes every record. A reload or session switch reports
-    // nothing; the next instance reports the current state when it starts.
-    if (enabled && event.reason === 'quit') write(formatClear());
+    // Withdraw the old runtime before reload, session change or exit.
+    if (enabled) write(formatClear());
     enabled = false;
   });
   pi.on('before_agent_start', event => {

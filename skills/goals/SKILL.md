@@ -79,7 +79,7 @@ inspect retained bytes when accepting a result.
 Compose the owning skills rather than copying them:
 
 - `review` independently checks the current changes and verifies findings.
-- `local-ship-it` owns authorized publication and its ordinary or monitored
+- `ship-it` owns authorized publication and its ordinary or monitored
   finish line, with effective review/check policy read from the repository.
 - `worktrees` owns isolation, integration and cleanup.
 - `memory` keeps reusable learning, not progress or execution authority.

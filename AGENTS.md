@@ -51,14 +51,12 @@ Applies to Pi extensions, Claude mods, skills, and `AGENTS.md` files.
 
 - Use native `AGENTS.md` discovery; do not add `CLAUDE.md` compatibility links.
   Claude personal instructions use its native user rules directory.
-- Skills are ours and flat: one directory per skill at `skills/<name>/`, with
-  `name` and `description` frontmatter in `SKILL.md` and relative supporting
-  paths. Tools discover `skills/` itself through two directory links,
-  `~/.agents/skills` and `~/.claude/skills`, targeting the installed namespace
-  at `~/.local/share/dots/skills`; add no per-agent per-skill links. Native
-  groups deploy tracked public/private skills without cross-source writes. Keep
-  other files there to what every tool ignores. See [skill setup](docs/skills.md).
-- Reserve `local-*` for ignored machine-local skills and links; never commit them.
+- Keep skills flat at `skills/<name>/`, with `name` and `description` frontmatter
+  in `SKILL.md` and relative supporting paths. Commit skills and mods in their
+  public or private owning repository; names carry no ownership prefix.
+- Native groups own deployment and shared agent discovery; add no per-agent
+  per-skill links or private links in public source. Keep other files in the
+  namespace to what every host ignores. See [skill setup](docs/skills.md).
   The ignored `rex` skill belongs to `rex skill setup`; do not edit it.
 - Keep shared guidance portable. A symlink does not make tool-specific hooks,
   commands, metadata, or permissions portable.
