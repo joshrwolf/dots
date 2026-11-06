@@ -596,7 +596,7 @@ mod attention_view {
         let (project, names, signin) = fixture(&home.catalog());
         let size = Winsize {
             ws_row: 24,
-            ws_col: 80,
+            ws_col: 60,
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
@@ -671,7 +671,7 @@ mod attention_view {
 
         // Mouse: the footer's Goals button, then Close in the drawer.
         click(&mut keyboard, 6, 39);
-        let at = screen.until(at, "Goals");
+        let at = screen.until(at, "projects");
         let at = screen.until(at, "refactor");
         screen.until(at, "Dropped");
         click(&mut keyboard, 15, 39);
