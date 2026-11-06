@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result, ensure};
 use dots_documents::{mutation_lock::MutationLock, staged_file::StagedFile, text};
 use dots_memory::{
-    BundleReceipt, Candidate, Change, Coordinator, DocumentRead, Endpoint, Identity, Peer,
+    Action, BundleReceipt, Candidate, Change, Coordinator, DocumentRead, Endpoint, Identity, Peer,
     PeerRequest, PeerResponse, ProjectId, Resolution, Resource, Role, Scope, Snapshot, Store,
     StoreId, Tailscale, View,
 };
@@ -67,14 +67,7 @@ pub(crate) fn run(
         "--project selects a local catalog binding only for context, default search and project bind/unbind; document scopes use exact shared IDs"
     );
     if matches!(&command, MemoryCommand::Serve) {
-        let mut input = Vec::new();
-        std::io::stdin()
-            .take((MAX_CONTROL_BYTES + 1) as u64)
-            .read_to_end(&mut input)?;
-        ensure!(
-            input.len() <= MAX_CONTROL_BYTES,
-            "peer request exceeds input budget"
-        );
+        let input = bounded_stdin(MAX_CONTROL_BYTES)?;
         let request: PeerRequest = serde_json::from_slice(&input).context("decode peer request")?;
         let response = match dots_memory::serve_peer(request) {
             Ok(response) => response,
@@ -175,12 +168,42 @@ pub(crate) fn run(
                 Ok(render_document(&read))
             }
         }
+        MemoryCommand::Write {
+            path,
+            scope,
+            expected_snapshot,
+            content_file,
+        } => {
+            let bytes = read_input(directory, &content_file, dots_memory::MAX_FILE_BYTES)?;
+            let content = String::from_utf8(bytes).context("decode knowledge input as UTF-8")?;
+            encode(&store.publish(
+                &expected_snapshot,
+                &[Change {
+                    scope,
+                    path,
+                    action: Action::Write { content },
+                }],
+            )?)
+        }
+        MemoryCommand::Remove {
+            path,
+            scope,
+            expected_snapshot,
+        } => encode(&store.publish(
+            &expected_snapshot,
+            &[Change {
+                scope,
+                path,
+                action: Action::Remove {},
+            }],
+        )?),
         MemoryCommand::Publish {
             expected_snapshot,
             input_file,
         } => {
+            let input = read_input(directory, &input_file, MAX_JSON_BYTES)?;
             let changes: Vec<Change> =
-                required_json(&input_path(directory, &input_file), MAX_JSON_BYTES)?;
+                serde_json::from_slice(&input).context("decode knowledge changes")?;
             encode(&store.publish(&expected_snapshot, &changes)?)
         }
         MemoryCommand::Search {
@@ -472,6 +495,28 @@ fn peer_command(store: &Store, directory: &Path, command: MemoryPeerCommand) -> 
             dots_documents::directories::sync(store.root())?;
             encode(&json!({"unbound_node": expected_node}))
         }
+    }
+}
+
+fn bounded_stdin(limit: usize) -> Result<Vec<u8>> {
+    let mut input = Vec::new();
+    std::io::stdin()
+        .take((limit + 1) as u64)
+        .read_to_end(&mut input)?;
+    ensure!(
+        input.len() <= limit,
+        "stdin exceeds input budget ({limit} bytes)"
+    );
+    Ok(input)
+}
+
+fn read_input(directory: &Path, path: &Path, limit: usize) -> Result<Vec<u8>> {
+    if path.as_os_str() == "-" {
+        bounded_stdin(limit)
+    } else {
+        let path = input_path(directory, path);
+        text::read_bytes(&path, limit)?
+            .with_context(|| format!("input file is absent: {}", path.display()))
     }
 }
 

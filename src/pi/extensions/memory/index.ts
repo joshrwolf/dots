@@ -133,7 +133,7 @@ const CONVENTIONS = [
   'Never store credentials, tokens, or private transcripts here. Only knowledge snapshots replicate; tasks, sessions and retained project outputs stay machine-local.',
   'Use the shared memory skill for recall, source-backed updates, corrections, and maintenance. MEMORY.md is a compact orientation; wiki/ holds current knowledge.',
   'Read linked topics through dots memory with the exact shared scope and snapshot shown, not a filesystem path. Verify current evidence before applying an old note.',
-  'Publication is an atomic batch against an expected whole snapshot; reread affected knowledge before writing. The injected index is not a current write precondition. Nothing is written or synchronized automatically.',
+  'Publication is an atomic batch against an expected whole snapshot; reread affected knowledge before writing. The injected index is not a current write precondition. Maintain high-signal notes during ordinary work; reads never publish or synchronize knowledge.',
 ].join(' ');
 
 function section(

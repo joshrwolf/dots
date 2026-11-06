@@ -47,8 +47,10 @@ Buffering the entire export exceeded the agreed memory budget in the large-data
 check. Streaming stayed within that budget. Preview responses remain bounded
 and do not need the additional lifecycle handling.
 
-- [Export checkpoint](../../outputs/export-check/sha256-<digest>/report.md): the observed check
-  and the user's accepted decision.
+Local evidence: retained output `export-check@sha256:<digest>` records the check
+and accepted decision on the originating machine. It does not replicate with
+knowledge; the conclusion, preview exception and verification limit above stand
+without that artifact.
 
 ## Supersession
 
@@ -60,7 +62,7 @@ recommendation was based on small inputs and did not establish large-input safet
 Client disconnect cleanup has not been verified; do not describe it as solved.
 ```
 
-## Retained output: outputs/export-check/sha256-<digest>/report.md
+## Machine-local retained output: export-check@sha256:<digest>
 
 `<digest>` stands for the actual published revision hash, not a valid selector.
 

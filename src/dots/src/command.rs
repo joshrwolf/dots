@@ -246,13 +246,33 @@ pub(crate) enum MemoryCommand {
         #[arg(long, default_value_t=100, value_parser=clap::value_parser!(u16).range(1..=200))]
         lines: u16,
     },
+    /// Publish one UTF-8 page against an expected snapshot; empty content is not removal
+    Write {
+        path: PathBuf,
+        #[arg(long, value_parser=memory_scope, value_name="GLOBAL_OR_SHARED_ID")]
+        scope: MemoryScope,
+        #[arg(long)]
+        expected_snapshot: Snapshot,
+        /// UTF-8 file, or - to read bounded content from stdin
+        #[arg(long)]
+        content_file: PathBuf,
+    },
+    /// Remove one page against an expected snapshot; retain its published history
+    Remove {
+        path: PathBuf,
+        #[arg(long, value_parser=memory_scope, value_name="GLOBAL_OR_SHARED_ID")]
+        scope: MemoryScope,
+        #[arg(long)]
+        expected_snapshot: Snapshot,
+    },
     /// Atomically publish a JSON array of changes against one expected snapshot
     #[command(
-        long_about = "Publish a JSON array from --input-file. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. Stale snapshots change nothing. Empty files and removals are distinct. Batches can cover multiple scopes; no implicit rebase, shell command or model call runs under the lock."
+        long_about = "Publish a JSON array from --input-file (use - for bounded stdin). For one page use memory write or memory remove. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. Stale snapshots change nothing. Empty files and removals are distinct. Batches can cover multiple scopes; no implicit rebase, shell command or model call runs under the lock."
     )]
     Publish {
         #[arg(long)]
         expected_snapshot: Snapshot,
+        /// JSON file, or - to read bounded changes from stdin
         #[arg(long)]
         input_file: PathBuf,
     },

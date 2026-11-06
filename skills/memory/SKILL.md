@@ -46,8 +46,9 @@ that limitation; do not read internal repository files or invent a file backend.
 Manage low-risk local upkeep proactively. Save durable preferences, explicit
 corrections, accepted decisions with useful rationale, verified pitfalls and
 costly reusable synthesis. Preserve qualifications such as "usually"; an
-unsuccessful experiment is not a verified lesson. Skip transient progress and
-facts cheaply reread from current code. Writing nothing is correct when nothing
+unsuccessful experiment is not a verified lesson. A task-local implementation
+correction is not automatically a durable preference. Skip transient progress
+and facts cheaply reread from current code. Writing nothing is correct when nothing
 meets this bar. Workers propose notes; the parent verifies and publishes them.
 
 Keep `MEMORY.md` compact: dated conclusions and descriptive relative links.
@@ -61,7 +62,9 @@ material. Distinguish user decisions, observed results and hypotheses. Never
 invent quotes or successful checks. Selected project evidence belongs in retained
 outputs; those outputs, task IDs, briefs and sessions remain machine-local and
 may be unavailable on another peer. Keep the reusable conclusion understandable
-without access to another machine's working material.
+without access to another machine's working material. Local source links do not
+replicate: retain the useful conclusion and enough source attribution or a short
+excerpt to support it without pretending the original file is portable.
 
 Ask about sensitive content, ambiguous contradictions, destructive forgetting or
 changes to binding instructions. Never retain credentials, private transcripts
@@ -73,25 +76,18 @@ routine recall.
 ## Publish an atomic update
 
 Read a fresh context and the affected resources at its exact snapshot. An injected
-index is not a current write precondition. Prepare a private JSON array outside
-the public checkout. Each change names its scope, path and explicit action:
+index is not a current write precondition. For one page, `dots memory write PATH
+--scope SCOPE --expected-snapshot SNAPSHOT --content-file - --json` accepts UTF-8
+content on stdin without JSON escaping or a temporary file. `memory remove`
+removes one page; empty written content remains a present document.
 
-```json
-[
-  {
-    "scope": {"kind": "global"},
-    "path": "wiki/tooling.md",
-    "action": {"kind": "write", "content": "# Tooling\n\nVerified guidance.\n"}
-  }
-]
-```
-
-Project scope is `{"kind":"project","project":"SHARED_PROJECT_ID"}`; removal is
-`{"kind":"remove"}`. Empty content is a present empty document, not removal.
-Publish related topics and their index together with `dots memory publish
---expected-snapshot SNAPSHOT --input-file INPUT --json`. All changes across
-selected scopes succeed atomically or reject a stale precondition. A content
-digest or `missing` is not a publication precondition.
+Publish related topics and their index together with `memory publish
+--expected-snapshot SNAPSHOT --input-file - --json`: stdin is a JSON array of
+explicit scoped changes, described by `memory publish --help`. All changes
+across selected scopes succeed atomically or reject a stale precondition. A
+content digest or `missing` is not a publication precondition. Prefer stdin;
+when a file is needed, use unique private scratch outside the public checkout,
+not a fixed shared temporary path, and remove it afterward.
 
 On a conflict, reread and reconsider the affected knowledge at the new snapshot;
 never blindly substitute a newer token. Contention returns busy: retry after the

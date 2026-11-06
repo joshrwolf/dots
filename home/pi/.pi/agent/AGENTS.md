@@ -131,11 +131,12 @@ any optional skill is loaded.
 
 ## Project memory
 
-- Memory is learned context, separate from these instructions: two machine-local
-  Markdown layers outside any checkout, global (every repository) and project
-  (one repository, shared by all its worktrees). Each `MEMORY.md` is loaded into
-  context automatically; a project line wins over a global one. Topic files
-  beside an index are read on demand. `/memory` shows both locations.
+- Memory is learned context, separate from these instructions. Shared Git
+  knowledge has global and project scopes; worktrees share their project's
+  identity. Pi injects both compact `MEMORY.md` indexes from one snapshot;
+  follow relevant topic resources on demand. Project knowledge takes precedence
+  over global knowledge. Resources are logical snapshots, not filesystem paths.
+  `/memory` inspects the indexes and their availability.
 - Put repeated corrections, tool quirks, and preferences in global memory; put
   decisions, patterns, and conventions for one repository in project memory.
   When a note has stabilized and should bind every session, propose promoting
@@ -146,13 +147,16 @@ any optional skill is loaded.
   preferences, corrections, accepted decisions with useful rationale, and verified
   reusable lessons during normal work. Correct stale advice and consolidate
   duplicates; skip transient progress and easily reread facts. Keep indexes compact;
-  follow knowledge and evidence links on demand. Existing topic files remain valid.
+  follow knowledge and evidence links on demand. A task-local implementation
+  correction is not automatically a durable preference.
 - Goal briefs own outcomes and working agreements; tasks own progress. Memory
   holds reusable understanding, not another task list or session transcript.
-- Use `dots memory` for scoped reads and revision-checked publication when
-  available; it manages the short write lock. Otherwise follow the shared skill's
-  cooperative locking fallback. Workers propose notes; the parent publishes.
-  Never assume an injected index is current or remove another session's lock.
+- Use `dots memory` for local scoped reads and atomic snapshot-checked
+  publication. Keep its exact scope and snapshot when following a resource;
+  refresh affected knowledge before writing. Unavailable storage or bindings are
+  not empty knowledge: report the limitation without inventing a file fallback.
+  Workers propose notes; the parent publishes. The CLI owns its short write lock;
+  never wrap it in another lock or remove its lock file.
 - Routine low-risk local upkeep needs no extra confirmation. Ask about sensitive
   content, ambiguous contradictions, destructive forgetting, or changes to binding
   instructions. Never retain credentials or private transcripts. Keep recall quiet;

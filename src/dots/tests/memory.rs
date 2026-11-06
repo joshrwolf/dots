@@ -42,6 +42,12 @@ mod tests {
                 .output(self.command(args))
                 .unwrap()
         }
+        fn run_input(&self, args: &[&str], input: &[u8]) -> Output {
+            dots_process::Runner::new(Duration::from_secs(20), 4 * 1024 * 1024)
+                .stdin(input.to_vec(), input.len() + 1)
+                .output(self.command(args))
+                .unwrap()
+        }
         fn ok(&self, args: &[&str]) -> Value {
             let output = self.run(args);
             assert!(
@@ -206,6 +212,223 @@ mod tests {
             &malformed,
         ]);
         assert_eq!(f.ok(&["memory", "status"])["snapshot"], second["snapshot"]);
+    }
+
+    #[test]
+    fn single_page_writes_accept_bounded_stdin_and_preserve_preconditions() {
+        let f = Fixture::new();
+        let genesis = f.init();
+        let args = [
+            "memory",
+            "write",
+            "wiki/topic.md",
+            "--scope",
+            "global",
+            "--expected-snapshot",
+            snapshot(&genesis),
+            "--content-file",
+            "-",
+        ];
+        let output = f.run_input(&args, "# Topic\n\nCafé.\n".as_bytes());
+        assert!(output.status.success(), "stdin write: {output:?}");
+        let first: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let read = f.ok(&["memory", "read", "wiki/topic.md", "--scope", "global"]);
+        assert_eq!(read["document"]["content"], "# Topic\n\nCafé.\n");
+        let stale = f.run_input(&args, b"stale overwrite\n");
+        assert!(!stale.status.success(), "stale stdin write succeeded");
+        assert_eq!(f.ok(&["memory", "status"])["snapshot"], first["snapshot"]);
+
+        for input in [
+            vec![0xff],
+            b"invalid\0text".to_vec(),
+            vec![b'x'; dots_memory::MAX_FILE_BYTES + 1],
+        ] {
+            let output = f.run_input(
+                &[
+                    "memory",
+                    "write",
+                    "wiki/topic.md",
+                    "--scope",
+                    "global",
+                    "--expected-snapshot",
+                    snapshot(&first),
+                    "--content-file",
+                    "-",
+                ],
+                &input,
+            );
+            assert!(!output.status.success(), "invalid stdin write succeeded");
+            assert_eq!(f.ok(&["memory", "status"])["snapshot"], first["snapshot"]);
+        }
+        f.fail(&[
+            "memory",
+            "write",
+            "wiki/topic.md",
+            "--scope",
+            "global",
+            "--expected-snapshot",
+            snapshot(&first),
+            "--content-file",
+            "absent",
+        ]);
+        let large = vec![b'\n'; dots_memory::MAX_FILE_BYTES];
+        let output = f.run_input(
+            &[
+                "memory",
+                "write",
+                "large.md",
+                "--scope",
+                "global",
+                "--expected-snapshot",
+                snapshot(&first),
+                "--content-file",
+                "-",
+            ],
+            &large,
+        );
+        assert!(output.status.success(), "exact-budget write: {output:?}");
+        let large: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(f.ok(&["memory", "status"])["snapshot"], large["snapshot"]);
+    }
+
+    #[test]
+    fn file_input_empty_pages_and_removal_keep_distinct_history() {
+        let f = Fixture::new();
+        let genesis = f.init();
+        fs::write(f.root.join("checkout/-"), "literal dash file\n").unwrap();
+        let literal = f.ok(&[
+            "memory",
+            "write",
+            "literal.md",
+            "--scope",
+            "global",
+            "--expected-snapshot",
+            snapshot(&genesis),
+            "--content-file",
+            "./-",
+        ]);
+        assert_eq!(
+            f.ok(&["memory", "read", "literal.md", "--scope", "global"])["document"]["content"],
+            "literal dash file\n"
+        );
+        let output = f.run_input(
+            &[
+                "memory",
+                "write",
+                "empty.md",
+                "--scope",
+                "global",
+                "--expected-snapshot",
+                snapshot(&literal),
+                "--content-file",
+                "-",
+            ],
+            b"",
+        );
+        assert!(output.status.success(), "empty stdin write: {output:?}");
+        let empty: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let present = f.ok(&["memory", "read", "empty.md", "--scope", "global"]);
+        assert_eq!(present["document"]["exists"], true);
+        assert_eq!(present["document"]["content"], "");
+        let removed = f.ok(&[
+            "memory",
+            "remove",
+            "empty.md",
+            "--scope",
+            "global",
+            "--expected-snapshot",
+            snapshot(&empty),
+        ]);
+        assert_eq!(
+            f.ok(&["memory", "read", "empty.md", "--scope", "global"])["document"]["exists"],
+            false
+        );
+        assert_eq!(
+            f.ok(&[
+                "memory",
+                "read",
+                "empty.md",
+                "--scope",
+                "global",
+                "--snapshot",
+                snapshot(&empty)
+            ])["document"]["exists"],
+            true
+        );
+        f.fail(&[
+            "memory",
+            "remove",
+            "literal.md",
+            "--scope",
+            "global",
+            "--expected-snapshot",
+            snapshot(&empty),
+        ]);
+        assert_eq!(f.ok(&["memory", "status"])["snapshot"], removed["snapshot"]);
+    }
+
+    #[test]
+    fn stdin_batches_are_atomic_across_scopes_and_reject_malformed_changes() {
+        let f = Fixture::new();
+        let genesis = f.init();
+        let registered = f.ok(&[
+            "memory",
+            "project",
+            "create",
+            "neutral",
+            "--expected-snapshot",
+            snapshot(&genesis),
+        ]);
+        let project = registered["project"].as_str().unwrap();
+        let changes = serde_json::to_vec(&json!([
+            write(&json!({"kind":"global"}), "MEMORY.md", "global index\n"),
+            write(
+                &json!({"kind":"project", "project": project}),
+                "MEMORY.md",
+                "project index\n"
+            )
+        ]))
+        .unwrap();
+        let args = [
+            "memory",
+            "publish",
+            "--expected-snapshot",
+            snapshot(&registered),
+            "--input-file",
+            "-",
+        ];
+        let output = f.run_input(&args, &changes);
+        assert!(output.status.success(), "stdin batch: {output:?}");
+        let published: Value = serde_json::from_slice(&output.stdout).unwrap();
+        for scope in ["global", project] {
+            let page = f.ok(&["memory", "read", "MEMORY.md", "--scope", scope]);
+            assert_eq!(page["snapshot"], published["snapshot"]);
+            assert_eq!(page["document"]["exists"], true);
+        }
+        let stale = f.run_input(&args, &changes);
+        assert!(!stale.status.success(), "stale stdin batch succeeded");
+        for input in [
+            b"{".as_slice(),
+            b"[{}]".as_slice(),
+            b"[] trailing".as_slice(),
+        ] {
+            let output = f.run_input(
+                &[
+                    "memory",
+                    "publish",
+                    "--expected-snapshot",
+                    snapshot(&published),
+                    "--input-file",
+                    "-",
+                ],
+                input,
+            );
+            assert!(!output.status.success(), "malformed stdin batch succeeded");
+            assert_eq!(
+                f.ok(&["memory", "status"])["snapshot"],
+                published["snapshot"]
+            );
+        }
     }
 
     #[test]

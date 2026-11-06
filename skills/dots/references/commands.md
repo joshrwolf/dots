@@ -2479,6 +2479,8 @@ Commands:
   context    Read both MEMORY.md indexes at one snapshot; unavailable project bindings remain explicit
   status     Inspect local publication, retained progress and acknowledged delivery without networking
   read       Read a published page; scope is global or an exact shared project ID
+  write      Publish one UTF-8 page against an expected snapshot; empty content is not removal
+  remove     Remove one page against an expected snapshot; retain its published history
   publish    Atomically publish a JSON array of changes against one expected snapshot
   search     Literal search at one published snapshot; default is global plus this bound project
   project    Manage shared identities and their separate machine-local catalog bindings
@@ -2640,10 +2642,75 @@ Options:
           Print help
 ```
 
+## dots memory write
+
+```text
+Publish one UTF-8 page against an expected snapshot; empty content is not removal
+
+Usage: dots memory write [OPTIONS] --scope <GLOBAL_OR_SHARED_ID> --expected-snapshot <EXPECTED_SNAPSHOT> --content-file <CONTENT_FILE> <PATH>
+
+Arguments:
+  <PATH>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --scope <GLOBAL_OR_SHARED_ID>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --expected-snapshot <EXPECTED_SNAPSHOT>
+
+
+      --content-file <CONTENT_FILE>
+          UTF-8 file, or - to read bounded content from stdin
+
+  -h, --help
+          Print help
+```
+
+## dots memory remove
+
+```text
+Remove one page against an expected snapshot; retain its published history
+
+Usage: dots memory remove [OPTIONS] --scope <GLOBAL_OR_SHARED_ID> --expected-snapshot <EXPECTED_SNAPSHOT> <PATH>
+
+Arguments:
+  <PATH>
+
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <ID>
+          Registered project ID instead of resolving the current checkout
+
+      --scope <GLOBAL_OR_SHARED_ID>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --expected-snapshot <EXPECTED_SNAPSHOT>
+
+
+  -h, --help
+          Print help
+```
+
 ## dots memory publish
 
 ```text
-Publish a JSON array from --input-file. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. Stale snapshots change nothing. Empty files and removals are distinct. Batches can cover multiple scopes; no implicit rebase, shell command or model call runs under the lock.
+Publish a JSON array from --input-file (use - for bounded stdin). For one page use memory write or memory remove. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. Stale snapshots change nothing. Empty files and removals are distinct. Batches can cover multiple scopes; no implicit rebase, shell command or model call runs under the lock.
 
 Usage: dots memory publish [OPTIONS] --expected-snapshot <EXPECTED_SNAPSHOT> --input-file <INPUT_FILE>
 
@@ -2661,7 +2728,7 @@ Options:
           Working directory for commands that use checkout context
 
       --input-file <INPUT_FILE>
-
+          JSON file, or - to read bounded changes from stdin
 
   -h, --help
           Print help (see a summary with '-h')

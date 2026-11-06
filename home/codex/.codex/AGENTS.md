@@ -44,10 +44,11 @@
 - Retain durable preferences, corrections, accepted decisions with useful
   rationale, and verified reusable lessons. Correct stale advice and consolidate
   duplicates as part of the work; skip transient progress and easily reread facts.
-- Use `dots memory` for scope discovery, bounded reads/search, and revision-checked
-  publication. Keep shared knowledge in that store rather than maintaining a
-  competing copy in harness-native memory. Follow the skill's fallback if the
-  CLI is unavailable. Workers propose notes; the parent publishes.
+- Use `dots memory` for local bounded reads/search and atomic snapshot-checked
+  publication. Follow resources at their exact shared scope and snapshot; they
+  are not filesystem paths. Keep knowledge in that store rather than maintaining
+  a competing harness-native copy. Report unavailable storage or bindings honestly;
+  do not invent a file fallback. Workers propose notes; the parent publishes.
 - Routine low-risk local upkeep needs no extra confirmation. Ask about sensitive
   content, ambiguous contradictions, destructive forgetting, or changes to binding
   instructions. Never retain credentials or private transcripts.

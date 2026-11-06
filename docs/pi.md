@@ -212,8 +212,9 @@ without starting a turn until the next prompt.
 
 `/memory` shows global and project indexes. Linked worktrees share project memory;
 project notes take precedence over global notes. Memory is learned context, not
-an instruction override, task list or transcript archive. Nothing is written
-automatically. The [memory skill](../skills/memory/SKILL.md) owns upkeep through
+an instruction override, task list or transcript archive. Agents maintain
+high-signal notes during ordinary work; reading context does not publish them.
+The [memory skill](../skills/memory/SKILL.md) owns upkeep through
 atomic `dots memory` snapshot commands. Each turn reads one local publication;
 linked topics use its exact shared scope and snapshot, not an absolute file path.
 Initialization, project/peer bindings, reconciliation and synchronization are
