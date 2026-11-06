@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Proactively recall and maintain durable learned knowledge across coding-agent sessions. Use at task start for relevant preferences and prior decisions, when the user supplies a durable preference or correction, and after verified reusable findings. Do not wait for "remember this". Covers shared Git knowledge snapshots, evidence, reconciliation and maintenance; not task tracking or transcript archival.
+description: Proactively recall and maintain durable, source-grounded knowledge across sessions. Use for relevant prior context, durable user preferences or corrections, accepted decisions, and authoritative evidence that supersedes an existing note. Correct known-stale learned guidance during normal work, without waiting for "remember this". Covers shared knowledge, wiki upkeep and reconciliation; not task tracking or transcript archival.
 ---
 
 # Memory
