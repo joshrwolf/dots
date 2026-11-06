@@ -108,12 +108,21 @@ test('descendant context retains observation age and hides stale meters', () => 
       tokens: 250_000,
       window: 1_000_000,
       compactAt: 300_000,
+      compactions: 0,
     },
     observedAt: 1000,
   };
   const fresh = observedContext(observation, 2000);
   assert.equal(Math.round(fresh.context), 83);
   assert.match(fresh.text, /compacts at 300k.*observed 1s ago/);
+  assert.doesNotMatch(fresh.text, /compacted/);
+  assert.equal(fresh.compactions, 0);
+  const compacted = observedContext(
+    {...observation, snapshot: {...observation.snapshot, compactions: 3}},
+    2000,
+  );
+  assert.match(compacted.text, /capacity · compacted 3× · observed 1s ago/);
+  assert.equal(compacted.compactions, 3);
   const stale = observedContext(observation, 91_000);
   assert.equal(stale.context, undefined);
   assert.match(stale.text, /observed 90s ago \(stale\)/);

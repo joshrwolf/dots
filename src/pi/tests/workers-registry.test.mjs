@@ -66,6 +66,7 @@ test('context observations persist separately from activity freshness and preser
       tokens: 250_000,
       window: 1_000_000,
       compactAt: 300_000,
+      compactions: 2,
     };
     registry.recordContext('child', snapshot, 1000);
     registry.upsert(
@@ -77,9 +78,10 @@ test('context observations persist separately from activity freshness and preser
     assert.deepEqual(registry.context('child'), {snapshot, observedAt: 1000});
     registry.recordContext(
       'child',
-      {...snapshot, tokens: null, compactAt: null},
+      {...snapshot, tokens: null, compactAt: null, compactions: 3},
       10000,
     );
+    assert.equal(registry.context('child').snapshot.compactions, 3);
     assert.equal(registry.context('child').snapshot.tokens, null);
     assert.equal(registry.context('child').snapshot.compactAt, null);
     assert.equal(registry.context('child').observedAt, 10000);

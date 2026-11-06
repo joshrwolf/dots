@@ -11,21 +11,13 @@ import {compactionMeterLimit} from '../../src/ui/context.ts';
 /** Child-reported facts: its project settings and current model may differ from its parent's. */
 export const CONTEXT_MARK = 'dots.worker.context:';
 const count = Type.Integer({minimum: 0, maximum: Number.MAX_SAFE_INTEGER});
-const budget = {
-  model: Type.String({minLength: 1, maxLength: 512}),
-  tokens: Type.Union([count, Type.Null()]),
-  window: count,
-  /** Null means native automatic compaction is disabled. */
-  compactAt: Type.Union([count, Type.Null()]),
-};
-/** The budget the fleet registry shares across sessions. */
-export const ContextBudgetSchema = Type.Object(budget, {
-  additionalProperties: false,
-});
-export type ContextBudget = Static<typeof ContextBudgetSchema>;
 export const WorkerContextSchema = Type.Object(
   {
-    ...budget,
+    model: Type.String({minLength: 1, maxLength: 512}),
+    tokens: Type.Union([count, Type.Null()]),
+    window: count,
+    /** Null means native automatic compaction is disabled. */
+    compactAt: Type.Union([count, Type.Null()]),
     /** Compactions on the child's active session branch. */
     compactions: count,
   },
@@ -93,19 +85,21 @@ export function contextLabel(worker: {
 }
 
 export function observedContext(
-  observation: {snapshot: ContextBudget; observedAt: number} | undefined,
+  observation: {snapshot: WorkerContext; observedAt: number} | undefined,
   now: number,
   ownerLost = false,
 ): {
   text: string;
   context: number | undefined;
   contextBasis: 'compact' | undefined;
+  compactions: number | undefined;
 } {
   if (!observation)
     return {
       text: 'context unavailable',
       context: undefined,
       contextBasis: undefined,
+      compactions: undefined,
     };
   const {snapshot, observedAt} = observation;
   const age = Math.max(0, now - observedAt);
@@ -115,10 +109,12 @@ export function observedContext(
     contextTokens: snapshot.tokens,
     contextWindow: snapshot.window,
     compactAt: snapshot.compactAt,
+    compactions: snapshot.compactions,
   };
   return {
     text: `${contextLabel(worker)} · observed ${Math.floor(age / 1000)}s ago${stale ? ' (stale)' : ''}`,
     ...workerMeter({...worker, contextTokens: stale ? null : snapshot.tokens}),
+    compactions: snapshot.compactions,
   };
 }
 
