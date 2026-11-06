@@ -98,7 +98,6 @@ import {WorkerDelivery} from './outbox.ts';
 import {
   contextLabel,
   decodeWorkerContext,
-  pressureMessage,
   registerWorkerContext,
   workerMeter,
   observedContext,
@@ -164,6 +163,8 @@ interface Worker {
   contextWindow?: number | undefined;
   /** Child-reported native trigger; null means disabled, absent means not yet reported. */
   compactAt?: number | null | undefined;
+  /** Child-reported compactions on its active branch; absent until reported. */
+  compactions?: number | undefined;
   /** Counts settlements independently of prompt generation (including spontaneous turns). */
   settlements: number;
   result?: string | undefined;
@@ -418,6 +419,7 @@ function persisted(worker: Worker): WorkerRecord {
       contextTokens: worker.contextTokens,
       contextWindow: worker.contextWindow,
       compactAt: worker.compactAt,
+      compactions: worker.compactions,
       result: worker.result,
       partial: worker.partial,
       error: worker.error,
@@ -698,6 +700,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         headline: w.headline,
         phase: w.phase,
         ...workerMeter(w),
+        compactions: w.compactions,
         failed: w.failed,
         idleMs: now - w.lastEventAt,
       }))
@@ -1187,12 +1190,9 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
       worker.contextTokens = usage.tokens;
       worker.contextWindow = usage.window;
       worker.compactAt = usage.compactAt;
+      worker.compactions = usage.compactions;
       withRegistry(r => r.recordContext(worker.id, usage, Date.now()));
       save(worker);
-      if (usage.pressure) {
-        log(worker, 'note', `Context pressure: ${contextLabel(worker)}`);
-        notify(worker, 'context-pressure', pressureMessage(usage));
-      }
       return;
     }
     if (!text.startsWith(MARK)) return;
@@ -1711,6 +1711,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     contextWindow: worker.contextWindow,
     contextTokens: worker.contextTokens,
     compactAt: worker.compactAt,
+    compactions: worker.compactions,
     cost: worker.cost,
     costBilled: worker.costBilled,
     result: worker.result,

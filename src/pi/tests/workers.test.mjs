@@ -246,6 +246,10 @@ test('worker config holds only limits and rejects unknown keys; the child contra
     });
     assert.match(CHILD_CONTRACT, /final message is your complete result/);
     assert.match(CHILD_CONTRACT, /message \{ to: "parent"/);
+    assert.match(
+      CHILD_CONTRACT,
+      /never stop, wrap up, or hand off early because of context length/,
+    );
     for (const value of [
       null,
       [],

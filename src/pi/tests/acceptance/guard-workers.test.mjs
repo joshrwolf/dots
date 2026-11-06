@@ -480,99 +480,6 @@ test(
 );
 
 test(
-  'real worker: pressure reaches both models once, survives resume, and rearms after compaction',
-  {timeout: 30000},
-  async t => {
-    let workRequests = 0;
-    const h = await setup(
-      t,
-      record => {
-        if (!record.payload.tools?.length) return 'ok'; // Native summary calls.
-        const n = ++workRequests;
-        record.inputTokens = n === 4 ? 310_000 : 260_000;
-        return [1, 2, 4, 5].includes(n) ? 'tool' : 'ok';
-      },
-      {
-        modelOverrides: {'anthropic/claude-opus-5-5': {reserveTokens: 700_000}},
-        keepRecentTokens: 0,
-      },
-    );
-    const w = await h.call('worker_spawn', {
-      label: 'pressure',
-      task: 'fixture',
-      model: 'inherit',
-      thinking: 'inherit',
-    });
-    // Observe settlement directly so worker_wait does not consume the pressure event.
-    await until(() =>
-      h.records().some(r => r.worker === w.id && r.type === 'settled'),
-    );
-    const status = await until(async () => {
-      const snapshot = await h.call('worker_status', {id: w.id});
-      return snapshot.state === 'running' ? undefined : snapshot;
-    });
-    assert.equal(status.compactAt, 300_000);
-    assert.equal(status.contextWindow, 1_000_000);
-    assert.ok(status.contextTokens >= 260_000);
-    await until(
-      () =>
-        h
-          .outcomes(w.id)
-          .filter(r => r.message.details.kind === 'context-pressure').length >=
-        1,
-    );
-    assert.equal(
-      h
-        .outcomes(w.id)
-        .filter(r => r.message.details.kind === 'context-pressure').length,
-      1,
-    );
-    assert.equal(
-      h.outcomes(w.id).find(r => r.message.details.kind === 'context-pressure')
-        .options.triggerTurn,
-      true,
-      'pressure is actionable for the parent, not a quiet progress note',
-    );
-    assert.match(
-      JSON.stringify(h.http.requests[1].payload.messages),
-      /checkpoint completed work/,
-    );
-    assert.equal(
-      h.http.requests.length,
-      3,
-      'final answer does not force a warning turn',
-    );
-    const view = await h.run('worker_status', {id: w.id});
-    assert.match(view.content[0].text, /compacts at 300k/);
-
-    await h.call('worker_stop', {id: w.id});
-    await h.run('message', {to: w.id, text: 'continue fixture'});
-    await until(
-      () =>
-        h.records().filter(r => r.worker === w.id && r.type === 'settled')
-          .length === 2,
-    );
-    await until(
-      () =>
-        h
-          .outcomes(w.id)
-          .filter(r => r.message.details.kind === 'context-pressure').length >=
-        2,
-    );
-    assert.equal(
-      h
-        .outcomes(w.id)
-        .filter(r => r.message.details.kind === 'context-pressure').length,
-      2,
-    );
-    assert.match(
-      JSON.stringify(h.http.requests.at(-1).payload.messages),
-      /checkpoint completed work/,
-    );
-  },
-);
-
-test(
   'real worker: native model override compacts above 300K without changing capacity',
   {timeout: 30000},
   async t => {
@@ -607,6 +514,12 @@ test(
     assert.equal(status.compactAt, 300_000);
     assert.equal(status.contextWindow, 1_000_000);
     assert.ok(status.contextTokens < 250_000);
+    assert.equal(status.compactions, 1);
+    const view = await h.run('worker_status', {id: w.id});
+    assert.match(
+      view.content[0].text,
+      /compacts at 300k · 1\.0M capacity · compacted 1×/,
+    );
     assert.ok(
       h.http.requests.length >= 3,
       'work, native summary, continuation',

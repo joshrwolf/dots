@@ -10,16 +10,24 @@ import {compactionMeterLimit} from '../../src/ui/context.ts';
 
 /** Child-reported facts: its project settings and current model may differ from its parent's. */
 export const CONTEXT_MARK = 'dots.worker.context:';
-const PRESSURE_ENTRY = 'dots.worker.context-pressure';
 const count = Type.Integer({minimum: 0, maximum: Number.MAX_SAFE_INTEGER});
+const budget = {
+  model: Type.String({minLength: 1, maxLength: 512}),
+  tokens: Type.Union([count, Type.Null()]),
+  window: count,
+  /** Null means native automatic compaction is disabled. */
+  compactAt: Type.Union([count, Type.Null()]),
+};
+/** The budget the fleet registry shares across sessions. */
+export const ContextBudgetSchema = Type.Object(budget, {
+  additionalProperties: false,
+});
+export type ContextBudget = Static<typeof ContextBudgetSchema>;
 export const WorkerContextSchema = Type.Object(
   {
-    model: Type.String({minLength: 1, maxLength: 512}),
-    tokens: Type.Union([count, Type.Null()]),
-    window: count,
-    /** Null means native automatic compaction is disabled. */
-    compactAt: Type.Union([count, Type.Null()]),
-    pressure: Type.Boolean(),
+    ...budget,
+    /** Compactions on the child's active session branch. */
+    compactions: count,
   },
   {additionalProperties: false},
 );
@@ -62,6 +70,7 @@ export function contextLabel(worker: {
   contextTokens?: number | null | undefined;
   contextWindow?: number | undefined;
   compactAt?: number | null | undefined;
+  compactions?: number | undefined;
 }): string {
   const tokens =
     typeof worker.contextTokens === 'number'
@@ -77,11 +86,14 @@ export function contextLabel(worker: {
     worker.contextWindow === undefined
       ? 'capacity unknown'
       : `${compact(worker.contextWindow)} capacity`;
-  return `${tokens} context · ${budget} · ${capacity}`;
+  const compacted = worker.compactions
+    ? ` · compacted ${worker.compactions}×`
+    : '';
+  return `${tokens} context · ${budget} · ${capacity}${compacted}`;
 }
 
 export function observedContext(
-  observation: {snapshot: WorkerContext; observedAt: number} | undefined,
+  observation: {snapshot: ContextBudget; observedAt: number} | undefined,
   now: number,
   ownerLost = false,
 ): {
@@ -110,25 +122,13 @@ export function observedContext(
   };
 }
 
-export function pressureMessage(context: WorkerContext): string {
-  return `Context pressure: approximately ${context.tokens === null ? 'unknown' : compact(context.tokens)} tokens; native compaction at ${context.compactAt === null ? 'disabled' : compact(context.compactAt)} (${compact(context.window)} capacity). Finish the current bounded step and checkpoint completed work, remaining work, decisions, files/artifacts, checks run, and unresolved risks. Keep substantial detail in an artifact and report its path. The parent chooses whether to finish, compact and continue, or stop and replace; this is advisory, not a failure or an instruction to spawn a replacement. Stop the old worker before transferring edit ownership; do not copy its full transcript into a fresh worker.`;
-}
-
-/** Runs only in managed children. Pi owns compaction; this observes it and adds advisory context. */
+/** Runs only in managed children. Pi owns compaction; this reports its budget and history. */
 export function registerWorkerContext(pi: ExtensionAPI): void {
-  let warned = false;
-  const restore = (ctx: ExtensionContext) => {
-    warned = false;
-    for (const entry of [...ctx.sessionManager.getBranch()].reverse()) {
-      if (entry.type === 'compaction') break;
-      if (
-        entry.type === 'custom_message' &&
-        entry.customType === PRESSURE_ENTRY
-      ) {
-        warned = true;
-        break;
-      }
-    }
+  let compactions = 0;
+  const recount = (ctx: ExtensionContext) => {
+    compactions = ctx.sessionManager
+      .getBranch()
+      .filter(entry => entry.type === 'compaction').length;
   };
   const snapshot = (ctx: ExtensionContext): WorkerContext | undefined => {
     const model = ctx.model;
@@ -145,59 +145,24 @@ export function registerWorkerContext(pi: ExtensionAPI): void {
       compactAt: settings.enabled
         ? Math.max(0, usage.contextWindow - settings.reserveTokens)
         : null,
-      pressure: false,
+      compactions,
     };
   };
   const report = (ctx: ExtensionContext, context: WorkerContext) => {
     ctx.ui.notify(CONTEXT_MARK + JSON.stringify(context), 'info');
   };
-  pi.on('session_start', (_event, ctx) => {
-    restore(ctx);
+  const update = (ctx: ExtensionContext) => {
     const context = snapshot(ctx);
     if (context) report(ctx, context);
-  });
-  pi.on('session_tree', (_event, ctx) => {
-    restore(ctx);
-    const context = snapshot(ctx);
-    if (context) report(ctx, context);
-  });
-  pi.on('model_select', (_event, ctx) => {
-    const context = snapshot(ctx);
-    if (context) report(ctx, context);
-  });
-  pi.on('session_compact', (_event, ctx) => {
-    warned = false;
-    const context = snapshot(ctx);
-    if (context) report(ctx, context);
-  });
-  pi.on('turn_end', (event, ctx) => {
-    const context = snapshot(ctx);
-    if (!context) return;
-    // Leave 50K for checkpointing before native compaction. Only Anthropic 1M
-    // workers opt in; disabled compaction and OpenAI retain their behavior.
-    const pressure =
-      !warned &&
-      event.outcome === 'completed' &&
-      event.context.canContinue &&
-      ctx.model?.provider === 'anthropic' &&
-      context.window >= 1_000_000 &&
-      context.compactAt !== null &&
-      context.compactAt > 50_000 &&
-      context.tokens !== null &&
-      context.tokens >= context.compactAt - 50_000;
-    report(ctx, {...context, pressure});
-    if (!pressure) return;
-    warned = true;
-    return {
-      entries: [
-        ...event.entries,
-        {
-          type: 'custom_message',
-          customType: PRESSURE_ENTRY,
-          content: pressureMessage(context),
-          display: false,
-        },
-      ],
-    };
-  });
+  };
+  // Only these change the active branch's compactions; turns reuse the count.
+  const rebranch = (_event: unknown, ctx: ExtensionContext) => {
+    recount(ctx);
+    update(ctx);
+  };
+  pi.on('session_start', rebranch);
+  pi.on('session_tree', rebranch);
+  pi.on('session_compact', rebranch);
+  pi.on('model_select', (_event, ctx) => update(ctx));
+  pi.on('turn_end', (_event, ctx) => update(ctx));
 }

@@ -62,7 +62,6 @@ const KIND_TONE: Record<EventKind, Tone> = {
   failed: 'error',
   stopped: 'warning',
   asking: 'warning',
-  'context-pressure': 'warning',
   message: 'muted',
   note: 'dim',
   update: 'dim',
@@ -360,6 +359,8 @@ export interface WidgetRow {
   /** Share of the displayed budget, with capacity as the default basis. */
   context?: number | undefined;
   contextBasis?: 'compact' | undefined;
+  /** Times the worker's context was compacted, when reported. */
+  compactions?: number | undefined;
   /** Recently finished: shown dimmed with its outcome, then dropped. */
   finished?: boolean | undefined;
   /** Set when the last tool call errored; cleared by the next successful one. */
@@ -508,6 +509,13 @@ export function createWidget(
           priority: 60,
           shrink: 'omit',
         });
+        if (row.compactions)
+          end.push({
+            text: `⇊${row.compactions}`,
+            tone: 'dim',
+            priority: 25,
+            shrink: 'omit',
+          });
         const endWidth = () =>
           end.reduce(
             (sum, segment) =>

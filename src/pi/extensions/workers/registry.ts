@@ -5,10 +5,10 @@ import {getAgentDir} from '@earendil-works/pi-coding-agent';
 import {isTimestamp} from '../../src/date.ts';
 import {fields} from './protocol.ts';
 import {Check} from 'typebox/value';
-import {WorkerContextSchema, type WorkerContext} from './context.ts';
+import {ContextBudgetSchema, type ContextBudget} from './context.ts';
 
 export interface ContextObservation {
-  readonly snapshot: WorkerContext;
+  readonly snapshot: ContextBudget;
   readonly observedAt: number;
 }
 
@@ -192,7 +192,7 @@ export class Registry {
   }
 
   /** Only child telemetry updates this timestamp; ordinary activity cannot refresh stale context. */
-  recordContext(worker: string, snapshot: WorkerContext, now: number): void {
+  recordContext(worker: string, snapshot: ContextBudget, now: number): void {
     this.contextWriteStmt.run(
       worker,
       snapshot.model,
@@ -211,10 +211,9 @@ export class Registry {
       tokens: row.tokens,
       window: row.context_window,
       compactAt: row.compact_at,
-      pressure: false,
     };
     if (
-      !Check(WorkerContextSchema, snapshot) ||
+      !Check(ContextBudgetSchema, snapshot) ||
       !isTimestamp(row.observed_at, 'milliseconds')
     )
       throw new Error(`Invalid context observation for worker ${worker}`);

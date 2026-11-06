@@ -66,7 +66,6 @@ test('context observations persist separately from activity freshness and preser
       tokens: 250_000,
       window: 1_000_000,
       compactAt: 300_000,
-      pressure: false,
     };
     registry.recordContext('child', snapshot, 1000);
     registry.upsert(
