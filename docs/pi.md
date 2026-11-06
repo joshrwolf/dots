@@ -87,8 +87,10 @@ process still owns them. Stop retained worker processes before removing their
 worktrees.
 
 Agents use `worker_spawn` for bounded work, `message` to steer or resume it, and
-completion events rather than polling. Tool schemas supply models, thinking
-levels, skill handoff and task-assignment arguments. Task association does not
+completion events rather than polling. Blocking waits (`worker_wait` and
+`message` with `wait`) exist only in headless sessions; in the interactive TUI,
+events start the next turn, so the parent never holds your input. Tool schemas
+supply models, thinking levels, skill handoff and task-assignment arguments. Task association does not
 claim, complete or accept a task.
 
 Native Pi settings own compaction. The companion shows each worker's context use

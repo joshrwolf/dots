@@ -5,6 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {
   getAgentDir,
+  type AgentToolResult,
   type ExtensionAPI,
   type ExtensionContext,
   type SessionEntry,
@@ -103,10 +104,10 @@ import {
 } from './context.ts';
 
 // Workers: headless Pi children with their own context and session. Five
-// primitives: spawn, message, wait, status, stop. `message` is the only
-// communication primitive and is not directional: any session sends to any
-// address it can see (`parent`, or a worker it owns, or a sibling by id via
-// the owner). Delivery adapts to the target's state: answered if it is blocked
+// primitives: spawn, message, wait, status, stop; blocking waits exist only
+// outside the interactive TUI. `message` is the only communication primitive
+// and is not directional: any session sends to any address it can see
+// (`parent`, or a worker it owns, or a sibling by id via the owner). Delivery adapts to the target's state: answered if it is blocked
 // waiting, steered if running, continued in its own session if finished.
 // Return is the event: a worker's settle, question, or message arrives as a
 // custom message that starts the owner's next turn.
@@ -1782,6 +1783,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     track(ctx);
     sessionId = ctx.sessionManager.getSessionId();
     refreshSpawn(ctx);
+    registerMessaging(ctx.mode !== 'tui');
     try {
       maxWidgetLines = loadConfig().widgetLines;
     } catch (error) {
@@ -1968,314 +1970,344 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     ctx.ui.notify(envelope, 'info');
   };
 
-  pi.registerTool({
-    name: 'message',
-    label: 'Message',
-    description:
-      'Send text to another session: a worker you spawned (by id or label), a sibling worker (by id; the owner relays it), or "parent" when you are a worker. To the parent without wait, it is a progress note: shown as your status and added to the parent\'s context without interrupting it. Delivery adapts to the target: it answers a worker that is blocked on a question, steers a running one between tool calls, or continues a finished, stopped, or paused one in its own session. wait: true blocks until an owned worker replies or settles, or the parent answers; sibling relays do not support waiting. Use it for questions that need an answer before you can proceed.',
-    promptSnippet:
-      'Talk to a worker or your parent; wait: true to block for the reply.',
-    parameters: Type.Object({
-      to: Type.String({description: 'Worker id or label, or "parent"'}),
-      text: Type.String(),
-      wait: Type.Optional(
-        Type.Boolean({
-          description:
-            'Block until the target replies or settles (default false)',
-        }),
-      ),
-      timeoutMs: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: MAX_WAIT_MS,
-          description: 'With wait: give up after this long (default 600000)',
-        }),
-      ),
-    }),
-    async execute(_id, params, signal, _update, ctx) {
-      track(ctx);
-      const me = selfId();
-      if (params.to === 'parent') {
-        if (!me) throw new Error('this session has no parent');
-        if (params.wait) {
-          if (parentQuestionPending)
-            throw new Error(
-              'A parent question is already awaiting an answer; combine questions or wait for it first',
-            );
-          parentQuestionPending = true;
-          try {
-            const timeout = params.timeoutMs ?? 600_000;
-            const answer = await ctx.ui.input(params.text, undefined, {
-              timeout,
-              ...(signal ? {signal} : {}),
-            });
-            return {
-              content: [
-                {
-                  type: 'text',
-                  text:
-                    answer === undefined
-                      ? 'The parent did not answer (cancelled or timed out). No decision was approved; report the blocker or ask again.'
-                      : answer,
-                },
-              ],
-              details: {answered: answer !== undefined},
-            };
-          } finally {
-            parentQuestionPending = false;
-          }
-        }
-        tellParent(
-          ctx,
-          `${MARK}${JSON.stringify({to: 'parent', text: params.text})}`,
-        );
-        return {
-          content: [{type: 'text', text: 'progress note sent to parent'}],
-          details: {to: 'parent'},
-        };
-      }
-      let worker: Worker | undefined;
-      try {
-        worker = find(params.to);
-      } catch (error) {
-        if (!me) throw error;
-        // The relay has no correlated reply channel; do not pretend to wait.
-        if (params.wait)
+  const sendMessage = async (
+    params: {to: string; text: string; wait?: boolean; timeoutMs?: number},
+    signal: AbortSignal | undefined,
+    ctx: ExtensionContext,
+  ): Promise<AgentToolResult<unknown>> => {
+    track(ctx);
+    const me = selfId();
+    if (params.to === 'parent') {
+      if (!me) throw new Error('this session has no parent');
+      if (params.wait) {
+        if (parentQuestionPending)
           throw new Error(
-            'wait: true is not supported for sibling relays; ask the parent to coordinate the reply',
+            'A parent question is already awaiting an answer; combine questions or wait for it first',
           );
-        // Not ours: a sibling. The owner routes it through its registry.
-        tellParent(
-          ctx,
-          `${MARK}${JSON.stringify({to: params.to, text: params.text})}`,
-        );
-        return {
-          content: [
-            {type: 'text', text: `sent to ${params.to} via the parent`},
-          ],
-          details: {to: params.to, relayed: true},
-        };
-      }
-      if (!owned(worker)) throw inherited(worker);
-      const target = worker;
-      const cancellation = new AbortController();
-      const waitSignal = signal
-        ? AbortSignal.any([signal, cancellation.signal])
-        : cancellation.signal;
-      const waiting: {pending?: Promise<Outcome | undefined>} = {};
-      let disposition: string;
-      try {
-        disposition = await deliver(target, params.text, () => {
-          if (params.wait)
-            waiting.pending = waitFor(
-              target,
-              params.timeoutMs ?? 600_000,
-              waitSignal,
-            );
-        });
-      } catch (error) {
-        cancellation.abort();
-        throw error;
-      }
-      if (!waiting.pending) {
-        return {
-          content: [{type: 'text', text: `${target.id}: ${disposition}`}],
-          details: summary(target),
-        };
-      }
-      const outcome = await waiting.pending;
-      if (!outcome)
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `${target.id}: ${disposition}; no reply within the wait window (still ${target.state})`,
-            },
-          ],
-          details: summary(target),
-        };
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `${target.id} ${outcome.kind}\n\n${outcome.body}`,
-          },
-        ],
-        details: summary(target),
-      };
-    },
-  });
-
-  pi.registerTool({
-    name: 'worker_wait',
-    label: 'Wait for worker',
-    description:
-      "Block until a worker settles, asks a question, or sends a message. id: that worker; no id: the first of this session's workers to do so (call again for the next); all: true: until every live worker has settled, returning each result. Use when you have nothing else to do; an interactive parent does not need this because events start its next turn.",
-    parameters: Type.Object({
-      id: Type.Optional(Type.String()),
-      all: Type.Optional(
-        Type.Boolean({
-          description:
-            'Wait for every live worker of this session; a question from any of them returns early so it can be answered',
-        }),
-      ),
-      timeoutMs: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: MAX_WAIT_MS,
-          description:
-            'Give up after this long (default 600000); the worker keeps running',
-        }),
-      ),
-    }),
-    async execute(_id, params, signal, _update, ctx) {
-      track(ctx);
-      const running = (w: Worker) => w.state === 'running';
-      const mine = () => [...workers.values()].filter(owned);
-      if (params.all) {
-        const asking = mine().find(w => w.state === 'asking');
-        if (asking)
+        parentQuestionPending = true;
+        try {
+          const timeout = params.timeoutMs ?? 600_000;
+          const answer = await ctx.ui.input(params.text, undefined, {
+            timeout,
+            ...(signal ? {signal} : {}),
+          });
           return {
             content: [
               {
                 type: 'text',
-                text: `${asking.id} asking (answer it, then wait again)\n\n${asking.question?.text ?? ''}`,
+                text:
+                  answer === undefined
+                    ? 'The parent did not answer (cancelled or timed out). No decision was approved; report the blocker or ask again.'
+                    : answer,
               },
             ],
-            details: summary(asking),
+            details: {answered: answer !== undefined},
           };
-        const deadline = Date.now() + (params.timeoutMs ?? 600_000);
-        const seen: {
-          text: string;
-          details: ReturnType<typeof summary>;
-          key: string;
-        }[] = [];
-        const include = (
-          worker: Worker,
-          kind: string,
-          body: string,
-          key: string,
-        ) => {
-          if (seen.some(item => item.key === key)) return;
-          seen.push({
-            text: `${worker.id} ${worker.label} ${kind}\n\n${body}`.trimEnd(),
-            details: summary(worker),
-            key,
-          });
-        };
-        // An already-settled result is consumed only if this tool returns it.
-        for (const worker of mine()) {
-          const key = `${worker.id}:${worker.settlements}`;
-          const queued = running(worker) ? undefined : outbox.queued(key);
-          if (!queued) continue;
-          const body = queued.content.split('\n\n').slice(1).join('\n\n');
-          include(
-            worker,
-            queued.details.kind,
-            queued.details.kind === 'completed'
-              ? (worker.result ?? body)
-              : body,
-            key,
-          );
+        } finally {
+          parentQuestionPending = false;
         }
-        const collected = () => seen.map(item => item.text);
-        const consumeSeen = () => {
-          for (const item of seen) outbox.consume(item.key);
-        };
-        while (mine().some(running)) {
-          const outcome = await waitFor(
-            undefined,
-            Math.max(1, deadline - Date.now()),
-            signal,
-          );
-          if (!outcome) break;
-          if (outcome.kind === 'asking' || outcome.kind === 'message') {
-            consumeSeen();
-            const text = [
-              ...collected(),
-              `${outcome.worker.id} ${outcome.kind} (answer it, then wait again)\n\n${outcome.body}`,
-            ].join('\n\n---\n\n');
-            return {
-              content: [{type: 'text', text}],
-              details: seen.length
-                ? [...seen.map(item => item.details), summary(outcome.worker)]
-                : summary(outcome.worker),
-            };
-          }
-          include(
-            outcome.worker,
-            outcome.kind,
-            outcome.body,
-            `${outcome.worker.id}:${outcome.worker.settlements}`,
-          );
-        }
-        const now = Date.now();
-        const still = mine().filter(running);
-        consumeSeen();
-        const text = [
-          ...collected(),
-          still.length
-            ? `Still running at the wait window:\n${still.map(w => describe(w, now, false, 0)).join('\n')}`
-            : '',
-        ]
-          .filter(Boolean)
-          .join('\n\n---\n\n');
-        return {
-          content: [{type: 'text', text: text || 'No live workers.'}],
-          details: [...seen.map(item => item.details), ...still.map(summary)],
-        };
       }
-      const target = params.id ? findOwned(params.id) : undefined;
-      const candidates = target ? [target] : mine();
-      if (candidates.length === 0)
-        return {
-          content: [{type: 'text', text: 'No workers in this session.'}],
-          details: [],
-        };
-      const already = candidates.find(w => !running(w));
-      if (already && (target || candidates.every(w => !running(w)))) {
-        outbox.consume(`${already.id}:${already.settlements}`);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `${already.id} is ${already.state}${already.result ? `\n\n${already.result}` : ''}${already.question ? `\n\nasking: ${already.question.text}` : ''}`,
-            },
-          ],
-          details: summary(already),
-        };
-      }
-      const outcome = await waitFor(
-        target,
-        params.timeoutMs ?? 600_000,
-        signal,
+      tellParent(
+        ctx,
+        `${MARK}${JSON.stringify({to: 'parent', text: params.text})}`,
       );
-      if (!outcome) {
-        const now = Date.now();
-        const rows = candidates
-          .filter(running)
-          .map(w => describe(w, now, false, 0));
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `No change within the wait window; still running:\n${rows.join('\n')}`,
-            },
-          ],
-          details: candidates.map(summary),
-        };
-      }
+      return {
+        content: [{type: 'text', text: 'progress note sent to parent'}],
+        details: {to: 'parent'},
+      };
+    }
+    let worker: Worker | undefined;
+    try {
+      worker = find(params.to);
+    } catch (error) {
+      if (!me) throw error;
+      // The relay has no correlated reply channel; do not pretend to wait.
+      if (params.wait)
+        throw new Error(
+          'wait: true is not supported for sibling relays; ask the parent to coordinate the reply',
+        );
+      // Not ours: a sibling. The owner routes it through its registry.
+      tellParent(
+        ctx,
+        `${MARK}${JSON.stringify({to: params.to, text: params.text})}`,
+      );
+      return {
+        content: [{type: 'text', text: `sent to ${params.to} via the parent`}],
+        details: {to: params.to, relayed: true},
+      };
+    }
+    if (!owned(worker)) throw inherited(worker);
+    const target = worker;
+    const cancellation = new AbortController();
+    const waitSignal = signal
+      ? AbortSignal.any([signal, cancellation.signal])
+      : cancellation.signal;
+    const waiting: {pending?: Promise<Outcome | undefined>} = {};
+    let disposition: string;
+    try {
+      disposition = await deliver(target, params.text, () => {
+        if (params.wait)
+          waiting.pending = waitFor(
+            target,
+            params.timeoutMs ?? 600_000,
+            waitSignal,
+          );
+      });
+    } catch (error) {
+      cancellation.abort();
+      throw error;
+    }
+    if (!waiting.pending) {
+      return {
+        content: [{type: 'text', text: `${target.id}: ${disposition}`}],
+        details: summary(target),
+      };
+    }
+    const outcome = await waiting.pending;
+    if (!outcome)
       return {
         content: [
           {
             type: 'text',
-            text: `${outcome.worker.id} ${outcome.kind}\n\n${outcome.body}`,
+            text: `${target.id}: ${disposition}; no reply within the wait window (still ${target.state})`,
           },
         ],
-        details: summary(outcome.worker),
+        details: summary(target),
       };
-    },
-  });
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `${target.id} ${outcome.kind}\n\n${outcome.body}`,
+        },
+      ],
+      details: summary(target),
+    };
+  };
+
+  const messageDescription = (blocking: boolean) =>
+    `Send text to another session: a worker you spawned (by id or label), a sibling worker (by id; the owner relays it), or "parent" when you are a worker. To the parent${blocking ? ' without wait' : ''}, it is a progress note: shown as your status and added to the parent's context without interrupting it. Delivery adapts to the target: it answers a worker that is blocked on a question, steers a running one between tool calls, or continues a finished, stopped, or paused one in its own session.`;
+
+  /**
+   * Blocking waits exist only outside the interactive TUI: there, worker
+   * events start the next turn, and a blocked tool call would hold the user's
+   * input until cancelled. Pi has no tool unregistration, and the mode is known
+   * only from a context, so these tools are registered at session start.
+   */
+  const registerMessaging = (blocking: boolean) => {
+    if (!blocking) {
+      pi.registerTool({
+        name: 'message',
+        label: 'Message',
+        description: messageDescription(false),
+        promptSnippet: 'Talk to a worker or your parent.',
+        parameters: Type.Object({
+          to: Type.String({description: 'Worker id or label, or "parent"'}),
+          text: Type.String(),
+        }),
+        execute: (_id, params, signal, _update, ctx) =>
+          sendMessage(params, signal, ctx),
+      });
+      return;
+    }
+    pi.registerTool({
+      name: 'message',
+      label: 'Message',
+      description: `${messageDescription(true)} wait: true blocks until an owned worker replies or settles, or the parent answers; sibling relays do not support waiting. Use it for questions that need an answer before you can proceed.`,
+      promptSnippet:
+        'Talk to a worker or your parent; wait: true to block for the reply.',
+      parameters: Type.Object({
+        to: Type.String({description: 'Worker id or label, or "parent"'}),
+        text: Type.String(),
+        wait: Type.Optional(
+          Type.Boolean({
+            description:
+              'Block until the target replies or settles (default false)',
+          }),
+        ),
+        timeoutMs: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: MAX_WAIT_MS,
+            description: 'With wait: give up after this long (default 600000)',
+          }),
+        ),
+      }),
+      execute: (_id, params, signal, _update, ctx) =>
+        sendMessage(params, signal, ctx),
+    });
+
+    pi.registerTool({
+      name: 'worker_wait',
+      label: 'Wait for worker',
+      description:
+        "Block until a worker settles, asks a question, or sends a message. id: that worker; no id: the first of this session's workers to do so (call again for the next); all: true: until every live worker has settled, returning each result. Use when you have nothing else to do.",
+      parameters: Type.Object({
+        id: Type.Optional(Type.String()),
+        all: Type.Optional(
+          Type.Boolean({
+            description:
+              'Wait for every live worker of this session; a question from any of them returns early so it can be answered',
+          }),
+        ),
+        timeoutMs: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: MAX_WAIT_MS,
+            description:
+              'Give up after this long (default 600000); the worker keeps running',
+          }),
+        ),
+      }),
+      async execute(_id, params, signal, _update, ctx) {
+        track(ctx);
+        const running = (w: Worker) => w.state === 'running';
+        const mine = () => [...workers.values()].filter(owned);
+        if (params.all) {
+          const asking = mine().find(w => w.state === 'asking');
+          if (asking)
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: `${asking.id} asking (answer it, then wait again)\n\n${asking.question?.text ?? ''}`,
+                },
+              ],
+              details: summary(asking),
+            };
+          const deadline = Date.now() + (params.timeoutMs ?? 600_000);
+          const seen: {
+            text: string;
+            details: ReturnType<typeof summary>;
+            key: string;
+          }[] = [];
+          const include = (
+            worker: Worker,
+            kind: string,
+            body: string,
+            key: string,
+          ) => {
+            if (seen.some(item => item.key === key)) return;
+            seen.push({
+              text: `${worker.id} ${worker.label} ${kind}\n\n${body}`.trimEnd(),
+              details: summary(worker),
+              key,
+            });
+          };
+          // An already-settled result is consumed only if this tool returns it.
+          for (const worker of mine()) {
+            const key = `${worker.id}:${worker.settlements}`;
+            const queued = running(worker) ? undefined : outbox.queued(key);
+            if (!queued) continue;
+            const body = queued.content.split('\n\n').slice(1).join('\n\n');
+            include(
+              worker,
+              queued.details.kind,
+              queued.details.kind === 'completed'
+                ? (worker.result ?? body)
+                : body,
+              key,
+            );
+          }
+          const collected = () => seen.map(item => item.text);
+          const consumeSeen = () => {
+            for (const item of seen) outbox.consume(item.key);
+          };
+          while (mine().some(running)) {
+            const outcome = await waitFor(
+              undefined,
+              Math.max(1, deadline - Date.now()),
+              signal,
+            );
+            if (!outcome) break;
+            if (outcome.kind === 'asking' || outcome.kind === 'message') {
+              consumeSeen();
+              const text = [
+                ...collected(),
+                `${outcome.worker.id} ${outcome.kind} (answer it, then wait again)\n\n${outcome.body}`,
+              ].join('\n\n---\n\n');
+              return {
+                content: [{type: 'text', text}],
+                details: seen.length
+                  ? [...seen.map(item => item.details), summary(outcome.worker)]
+                  : summary(outcome.worker),
+              };
+            }
+            include(
+              outcome.worker,
+              outcome.kind,
+              outcome.body,
+              `${outcome.worker.id}:${outcome.worker.settlements}`,
+            );
+          }
+          const now = Date.now();
+          const still = mine().filter(running);
+          consumeSeen();
+          const text = [
+            ...collected(),
+            still.length
+              ? `Still running at the wait window:\n${still.map(w => describe(w, now, false, 0)).join('\n')}`
+              : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n---\n\n');
+          return {
+            content: [{type: 'text', text: text || 'No live workers.'}],
+            details: [...seen.map(item => item.details), ...still.map(summary)],
+          };
+        }
+        const target = params.id ? findOwned(params.id) : undefined;
+        const candidates = target ? [target] : mine();
+        if (candidates.length === 0)
+          return {
+            content: [{type: 'text', text: 'No workers in this session.'}],
+            details: [],
+          };
+        const already = candidates.find(w => !running(w));
+        if (already && (target || candidates.every(w => !running(w)))) {
+          outbox.consume(`${already.id}:${already.settlements}`);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `${already.id} is ${already.state}${already.result ? `\n\n${already.result}` : ''}${already.question ? `\n\nasking: ${already.question.text}` : ''}`,
+              },
+            ],
+            details: summary(already),
+          };
+        }
+        const outcome = await waitFor(
+          target,
+          params.timeoutMs ?? 600_000,
+          signal,
+        );
+        if (!outcome) {
+          const now = Date.now();
+          const rows = candidates
+            .filter(running)
+            .map(w => describe(w, now, false, 0));
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `No change within the wait window; still running:\n${rows.join('\n')}`,
+              },
+            ],
+            details: candidates.map(summary),
+          };
+        }
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `${outcome.worker.id} ${outcome.kind}\n\n${outcome.body}`,
+            },
+          ],
+          details: summary(outcome.worker),
+        };
+      },
+    });
+  };
 
   /**
    * The model-facing line for a worker: what it is, how long, and what it is

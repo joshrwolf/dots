@@ -10,6 +10,7 @@ import {
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import register from '../extensions/workers/index.ts';
 import {activityRows} from '../src/ui/policy.ts';
 import {CHILD_CONTRACT, loadConfig} from '../extensions/workers/config.ts';
 import {
@@ -480,6 +481,79 @@ test('pruning removes worker sessions past retention unless kept', async () => {
       [],
     );
   } finally {
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('blocking waits are offered only outside the interactive TUI', async () => {
+  const saved = {...process.env};
+  const root = mkdtempSync(path.join(tmpdir(), 'dots-workers-modes-'));
+  process.env.PI_CODING_AGENT_DIR = path.join(root, 'agent');
+  delete process.env.DOTS_WORKER_ID;
+  const start = async mode => {
+    const handlers = {};
+    const tools = new Map();
+    const pi = {
+      on: (name, fn) => {
+        const prior = handlers[name];
+        handlers[name] = prior
+          ? async (...args) => {
+              await prior(...args);
+              return fn(...args);
+            }
+          : fn;
+      },
+      registerTool: tool => tools.set(tool.name, tool),
+      registerCommand() {},
+      registerMessageRenderer() {},
+      events: {on() {}, emit() {}},
+      sendMessage() {},
+      appendEntry() {},
+      getSettings: () => ({}),
+    };
+    register(pi);
+    const ctx = {
+      cwd: root,
+      mode,
+      hasUI: mode === 'tui',
+      ui: {setStatus() {}, setWidget() {}, notify() {}},
+      sessionManager: {
+        getBranch: () => [],
+        getEntries: () => [],
+        getSessionId: () => `session-${mode}`,
+        getSessionFile: () => path.join(root, `session-${mode}.jsonl`),
+      },
+      getContextUsage: () => undefined,
+      scopedModels: [],
+    };
+    await handlers.session_start({reason: 'startup'}, ctx);
+    await handlers.session_shutdown({}, ctx);
+    return tools;
+  };
+  try {
+    const tui = await start('tui');
+    assert.equal(tui.has('worker_wait'), false);
+    const message = tui.get('message');
+    assert.deepEqual(Object.keys(message.parameters.properties).sort(), [
+      'text',
+      'to',
+    ]);
+    assert.doesNotMatch(
+      `${message.description}\n${message.promptSnippet}`,
+      /\bwait\b/,
+    );
+    for (const mode of ['rpc', 'print', 'json']) {
+      const headless = await start(mode);
+      assert.ok(headless.has('worker_wait'), mode);
+      assert.deepEqual(
+        Object.keys(headless.get('message').parameters.properties).sort(),
+        ['text', 'timeoutMs', 'to', 'wait'],
+        mode,
+      );
+      assert.match(headless.get('message').promptSnippet, /wait: true/, mode);
+    }
+  } finally {
+    process.env = saved;
     rmSync(root, {recursive: true, force: true});
   }
 });

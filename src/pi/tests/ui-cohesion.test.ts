@@ -82,7 +82,11 @@ test('live registration covers every owned background tool and preserves custom 
         match => match[1],
       );
     });
-    assert.deepEqual([...backgroundToolNames].sort(), owned.sort());
+    // A tool registered in several shapes (message, by session mode) counts once.
+    assert.deepEqual(
+      [...backgroundToolNames].sort(),
+      [...new Set(owned)].sort(),
+    );
     for (const name of [
       ...backgroundToolNames,
       'grep',

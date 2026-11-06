@@ -86,6 +86,7 @@ function harness(root, session = 'session-owner') {
   register(pi, {command: [process.execPath, scriptedPi]});
   const ctx = {
     cwd: root,
+    mode: 'rpc',
     hasUI: false,
     sessionManager: {
       getBranch: () => entries,
@@ -130,10 +131,13 @@ function harness(root, session = 'session-owner') {
 }
 
 test('parent questions forward deadlines and sibling relays never pretend to wait', async () => {
-  const previous = process.env.DOTS_WORKER_ID;
+  const saved = {...process.env};
+  const root = mkdtempSync(path.join(tmpdir(), 'dots-workers-ask-'));
+  process.env.PI_CODING_AGENT_DIR = path.join(root, 'agent');
   process.env.DOTS_WORKER_ID = 'w-test';
   try {
-    const h = harness(tmpdir());
+    const h = harness(root);
+    await h.handlers.session_start({reason: 'startup'}, h.ctx);
     h.ctx.ui = {
       async input(_text, _placeholder, options) {
         assert.equal(options.timeout, 1234);
@@ -170,9 +174,10 @@ test('parent questions forward deadlines and sibling relays never pretend to wai
     );
     answer('yes');
     await first;
+    await h.handlers.session_shutdown({}, h.ctx);
   } finally {
-    if (previous === undefined) delete process.env.DOTS_WORKER_ID;
-    else process.env.DOTS_WORKER_ID = previous;
+    process.env = saved;
+    rmSync(root, {recursive: true, force: true});
   }
 });
 
@@ -198,7 +203,6 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
     let renders = 0;
     const warnings = [];
     h.ctx.hasUI = true;
-    h.ctx.mode = 'tui';
     Object.defineProperty(h.ctx, 'ui', {
       get() {
         assert.equal(stale, false, 'must not access the old UI after reload');
@@ -224,6 +228,9 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       },
     });
     h.handlers.session_start({reason: 'startup'}, h.ctx);
+    // worker_wait exists only in headless sessions; this flow exercises it and
+    // then the TUI widget, so the session starts headless and switches modes.
+    h.ctx.mode = 'tui';
     assert.deepEqual([...h.tools.keys()].sort(), [
       'message',
       'worker_spawn',
@@ -1288,7 +1295,6 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
     const preview = harness(root);
     harnesses.push(preview);
     preview.ctx.hasUI = true;
-    preview.ctx.mode = 'tui';
     let widgetFactory;
     preview.ctx.ui = {
       setStatus() {},
@@ -1298,6 +1304,8 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       notify() {},
     };
     await preview.handlers.session_start({}, preview.ctx);
+    // Headless start registers worker_wait; the widget needs the TUI.
+    preview.ctx.mode = 'tui';
     const partialWidget = await preview.call('worker_spawn', {
       label: 'partial-widget',
       task: 'aborted:partial',
