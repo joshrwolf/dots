@@ -583,6 +583,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dots-substrate"
+version = "0.1.0"
+dependencies = [
+ "dots-documents",
+ "dots-process",
+ "getrandom 0.4.3",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "dots-tasks"
 version = "0.1.0"
 dependencies = [
