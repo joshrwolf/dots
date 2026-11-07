@@ -297,7 +297,9 @@ impl Store {
     /// unpublished candidate fails.
     pub fn view(&self, head: &Head, snapshot: Option<&Snapshot>) -> Result<View<'_>> {
         let snapshot = *snapshot.unwrap_or(&head.snapshot);
-        if !self.ancestors(&head.snapshot)?.contains(&snapshot) {
+        // The head is published by definition; walking history is needed only
+        // for an older snapshot.
+        if snapshot != head.snapshot && !self.ancestors(&head.snapshot)?.contains(&snapshot) {
             return Err(invalid(format!(
                 "snapshot {snapshot} is not published knowledge"
             )));
