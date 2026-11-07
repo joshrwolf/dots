@@ -34,9 +34,9 @@ yq = "latest"
 zoxide = "latest"
 
 [tools."http:rex"]
-version = "0.1.0-preview.12"
+version = "0.1.0-preview.13"
 os = ["linux"]
 
 [tools."http:rex".platforms]
-linux-x64 = { url = "https://blob.superlogical.com/download/rex/preview/e6592f74969959db77f1f84261901ef599a025cf/rex-linux-amd64.tar.gz", checksum = "sha256:01044e9e21c0e664d47dd5c52ff715f79ae767859eaaa351c5b273ad5e11e82f" }
-linux-arm64 = { url = "https://blob.superlogical.com/download/rex/preview/e6592f74969959db77f1f84261901ef599a025cf/rex-linux-arm64.tar.gz", checksum = "sha256:2a7342f895761c21d6019238f4b60c0c7ebb9e4c15596ec609a1a40b492d9ed3" }
+linux-x64 = { url = "https://blob.superlogical.com/download/rex/preview/1b6654811346488b696ded8f3c7e6701c57242f1/rex-linux-amd64.tar.gz", checksum = "sha256:b7ee40e9f8ce199ad9992a7601536cd03f5d25166f63c06e6dc1cf866b773a5a" }
+linux-arm64 = { url = "https://blob.superlogical.com/download/rex/preview/1b6654811346488b696ded8f3c7e6701c57242f1/rex-linux-arm64.tar.gz", checksum = "sha256:250e05847fedd78d6ca850a222f0db74038070150e3b502c165b111b3f286284" }
