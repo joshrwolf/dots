@@ -144,6 +144,27 @@ impl<T: Entry + Send + 'static> Page<T> {
         &self.model
     }
 
+    /// Renders a frame without starting work or taking over the terminal.
+    pub fn draw<P: Pane<T>>(&mut self, frame: &mut Frame<'_>, pane: &mut P) {
+        pane.selected(self.model.selected_entry());
+        let status = Status::<T>::default();
+        let chrome = Chrome::<std::convert::Infallible, T> {
+            prompt: &self.prompt,
+            shortcuts: &[],
+            notice: None,
+            status: &status,
+            preview_layout: self.live.preview_layout,
+            preview_offset: None,
+            interactive: Some(pane.layout()),
+            input_active: !pane.focused(),
+            work: None,
+        };
+        draw(frame, &mut self.model, &chrome, None);
+        let body = regions(frame.area(), false, None).body;
+        let (_, area) = pane.layout().areas(body);
+        pane.draw(frame, area, self.model.palette());
+    }
+
     /// Runs a host-owned interactive detail pane on the shared terminal driver.
     /// Pending pane work is cancelled when this run ends.
     pub fn run_pane<P: Pane<T>>(&mut self, pane: &mut P) -> Result<crate::Closed, Error> {
@@ -158,8 +179,12 @@ impl<T: Entry + Send + 'static> Page<T> {
         })
     }
 
-    fn start(&self, background: &mut Background) -> (Option<Previewer>, Option<Feed<T>>) {
-        let preview = (self.model.has_previews() || self.live.feed.is_some())
+    fn start(
+        &self,
+        background: &mut Background,
+        command_preview: bool,
+    ) -> (Option<Previewer>, Option<Feed<T>>) {
+        let preview = (command_preview && (self.model.has_previews() || self.live.feed.is_some()))
             .then(|| Previewer::spawn(background, preview::commands(), self.live.preview_every));
         let feed = self.live.feed.as_ref().map(|(trigger, fetch)| {
             let watch = match trigger {
@@ -246,7 +271,7 @@ fn drive<T: Entry + Send + 'static, A, P: Pane<T>>(
     let shortcuts = actions.map_or(&[][..], |actions| actions.shortcuts.as_slice());
     let mut status = Status::default();
     let mut parents = Vec::new();
-    let (mut previewer, mut feed) = current.start(background);
+    let (mut previewer, mut feed) = current.start(background, pane.is_none());
     let mut dirty = true;
     let mut page_size = 1;
     let mut tasks = Tasks::<P::Message>::new();
@@ -289,7 +314,7 @@ fn drive<T: Entry + Send + 'static, A, P: Pane<T>>(
                 Ok(true) => {
                     drop(previewer.take());
                     drop(feed.take());
-                    (previewer, feed) = current.start(background);
+                    (previewer, feed) = current.start(background, pane.is_none());
                 }
                 Ok(false) => {}
                 Err(error) => {
@@ -458,10 +483,11 @@ fn pointer<T: Entry>(
     };
     if let Some(list) = list.filter(|list| list.contains(point)) {
         if step != 0 {
+            let amount = current.model.page_size(3);
             let command = if step < 0 {
-                crate::Command::Previous(3)
+                crate::Command::Previous(amount)
             } else {
-                crate::Command::Next(3)
+                crate::Command::Next(amount)
             };
             current.model.apply(command);
         } else if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
@@ -708,7 +734,12 @@ fn draw<T: Entry, A>(
             .style(muted),
             rule,
         );
-        let lines = help_lines(chrome.shortcuts, &model.scope_help(), palette);
+        let lines = help_lines(
+            chrome.shortcuts,
+            &model.scope_help(),
+            palette,
+            chrome.interactive.is_none(),
+        );
         frame.render_widget(Paragraph::new(lines).style(muted), help);
     }
     if let Some(text) = alert_text {
@@ -887,6 +918,7 @@ fn help_lines<A>(
     shortcuts: &[Shortcut<A>],
     scopes: &[(String, String)],
     palette: Palette,
+    command_preview: bool,
 ) -> Vec<Line<'static>> {
     let mut help = Vec::with_capacity(2);
     if !shortcuts.is_empty() {
@@ -926,6 +958,8 @@ fn help_lines<A>(
         ("tab/shift+tab", "scope"),
         ("ctrl+u", "clear"),
     ]
+    .into_iter()
+    .filter(|(keys, _)| command_preview || *keys != "shift+↑/↓")
     .map(|(keys, what)| (keys.to_owned(), what.to_owned(), key));
     let sigils = scopes
         .iter()

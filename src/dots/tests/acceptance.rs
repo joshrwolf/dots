@@ -583,14 +583,6 @@ mod attention_view {
         kill(pid, Signal::SIGWINCH).unwrap();
     }
 
-    /// An SGR left click, 1-based.
-    fn click(keyboard: &mut File, column: u16, row: u16) {
-        send(
-            keyboard,
-            &format!("\x1b[<0;{column};{row}M\x1b[<0;{column};{row}m"),
-        );
-    }
-
     #[test]
     #[allow(
         clippy::too_many_lines,
@@ -658,9 +650,9 @@ mod attention_view {
 
         // The narrow view becomes side by side at ordinary and large sizes.
         resize(&slave, 120, 40, &viewer);
-        let at = screen.until(at, "Inbox");
+        let at = screen.until(at, "Needs");
         resize(&slave, 340, 170, &viewer);
-        let at = screen.until(at, "Inbox");
+        let at = screen.until(at, "Needs");
 
         // The answered request stays selected; the user moves to the next one.
         // A question replaced while the user types keeps the draft with the
@@ -687,7 +679,7 @@ mod attention_view {
         send(&mut keyboard, "\x1b");
 
         // The Goals picker shares this popup and returns without losing Attention's draft.
-        click(&mut keyboard, 6, 169);
+        send(&mut keyboard, "\x07");
         let at = screen.until(at, "Goals");
         let styled = screen.until(at, "38;2;17;137;53");
         let at = screen.until(styled, "Graph");

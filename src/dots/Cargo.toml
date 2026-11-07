@@ -25,6 +25,7 @@ ratatui.workspace = true
 renderdag.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 time.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true

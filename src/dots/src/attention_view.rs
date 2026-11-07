@@ -22,13 +22,11 @@ use dots_tasks::{Actor, Owner, Project, RequestState, Store};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::{Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Widget as _};
 use serde::Deserialize;
 use unicode_segmentation::UnicodeSegmentation as _;
 use unicode_width::UnicodeWidthStr as _;
@@ -46,7 +44,6 @@ const PROVENANCE_LIMIT: usize = 512;
 const WIDE: u16 = 72;
 const LIST_WIDTH: u16 = 34;
 const READING_WIDTH: u16 = 96;
-const GAP: u16 = 2;
 /// Below this the view asks for more room instead of drawing a broken layout.
 const MIN_WIDTH: u16 = 24;
 const MIN_HEIGHT: u16 = 6;
@@ -84,153 +81,202 @@ struct Conversations {
     owners: HashMap<String, Conversation>,
 }
 
-/// The store and what the view last read from it.
+#[derive(Debug, Clone, Copy)]
+enum Destination {
+    Goals,
+    Conversation,
+}
+
+/// The host-owned request state and work scheduled on the picker's runtime.
 struct Session {
     scope: Scope,
-    store: Option<Store>,
     viewer: Viewer,
     provenance: String,
+    refreshed_at: Option<Instant>,
     sessions_at: Option<Instant>,
-    navigated: bool,
-    goals_requested: bool,
+    refreshing: bool,
+    conversations_loading: bool,
+    generation: u64,
+    answering: Option<String>,
+    queued: Vec<dots_pick::Task<Message>>,
+    destination: Option<Destination>,
+    pane_area: Rect,
+}
+
+#[derive(Debug, Clone)]
+struct InboxRow {
+    id: String,
+    name: String,
+    project: String,
+    subject: String,
+    reported: bool,
+    state: RequestState,
+}
+
+impl dots_pick::Entry for InboxRow {
+    type Group = RequestState;
+    fn group(&self) -> RequestState {
+        self.state
+    }
+    fn cells(&self, palette: &Palette) -> Vec<dots_pick::Cell> {
+        let (icon, color) = match self.state {
+            RequestState::Open => ("●", palette.yellow),
+            RequestState::Answered => ("✓", palette.green),
+            RequestState::Closed => ("○", palette.muted),
+        };
+        vec![
+            dots_pick::Cell::tag(icon, color),
+            dots_pick::Cell::new(&self.name, palette.strong),
+        ]
+    }
+    fn details(&self, palette: &Palette) -> Vec<dots_pick::Cell> {
+        vec![
+            dots_pick::Cell::new(&self.project, palette.muted),
+            if self.reported {
+                dots_pick::Cell::new(&self.subject, palette.muted)
+            } else {
+                dots_pick::Cell::tag(&self.subject, palette.muted)
+            },
+        ]
+    }
+    fn identity(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(std::borrow::Cow::Borrowed(&self.id))
+    }
+}
+
+enum Message {
+    Snapshot {
+        generation: u64,
+        result: std::result::Result<AttentionList, String>,
+    },
+    Conversations(std::result::Result<Conversations, String>),
+    Reconciled {
+        generation: u64,
+        id: String,
+        result: Result<Request>,
+    },
+    Answered {
+        id: String,
+        result: Result<Request>,
+    },
+    Navigated(Result<()>),
+}
+
+/// SQLite is synchronous; keep its bounded operations off both UI and async-I/O threads.
+async fn database<T: Send + 'static>(
+    read: impl FnOnce(&mut Store) -> Result<T> + Send + 'static,
+) -> Result<T> {
+    match tokio::task::spawn_blocking(move || read(&mut crate::project::open()?)).await {
+        Ok(result) => result,
+        Err(error) => std::panic::resume_unwind(error.into_panic()),
+    }
+}
+
+fn picker(rows: Vec<InboxRow>, palette: Palette) -> dots_pick::Picker<InboxRow> {
+    let columns = || vec![dots_pick::Column::new(3), dots_pick::Column::fill()];
+    dots_pick::Picker::new(rows)
+        .group(dots_pick::Group::new(
+            RequestState::Open,
+            "Needs you",
+            columns(),
+        ))
+        .group(dots_pick::Group::new(
+            RequestState::Answered,
+            "Saved replies",
+            columns(),
+        ))
+        .group(dots_pick::Group::new(
+            RequestState::Closed,
+            "Earlier",
+            columns(),
+        ))
+        .prompt("Attention > ")
+        .palette(palette)
 }
 
 impl Session {
-    fn run(mut self, dismiss: Option<String>) -> Result<String> {
-        loop {
-            self.reload();
-            let drawn = terminal(&mut self);
-            if self.goals_requested {
-                drawn?;
-                self.goals_requested = false;
-                crate::goals_view::run(None, None, false)?;
-                continue;
-            }
-            let dismissed = if self.navigated {
-                Ok(())
-            } else {
-                dismiss.map_or(Ok(()), |action| run_dismiss(&action))
-            };
-            drawn?;
-            dismissed?;
-            return Ok(String::new());
-        }
-    }
-
     fn new(scope: Scope) -> Self {
         let provenance = provenance(
             &scope,
             std::env::var("REX_SESSION").ok().as_deref(),
             std::env::var("REX_BLOCK").ok().as_deref(),
         );
-        let viewer = Viewer::new(&scope);
         Self {
+            viewer: Viewer::new(&scope),
             scope,
-            store: None,
-            viewer,
             provenance,
+            refreshed_at: None,
             sessions_at: None,
-            navigated: false,
-            goals_requested: false,
+            refreshing: false,
+            conversations_loading: false,
+            generation: 0,
+            answering: None,
+            queued: Vec::new(),
+            destination: None,
+            pane_area: Rect::default(),
         }
     }
 
-    /// Opens the catalog if needed, so a missing one stays an honest error
-    /// on screen and a later refresh can find it.
-    fn store(&mut self) -> Result<&mut Store> {
-        if self.store.is_none() {
-            self.store = Some(crate::project::open()?);
-        }
-        self.store.as_mut().context("catalog was just opened")
-    }
-
-    fn reload(&mut self) {
-        match Palette::load() {
-            Ok(palette) => self.viewer.palette = palette,
-            Err(error) => {
-                self.viewer
-                    .refresh(Err(format!("Cannot read the picker theme: {error:#}")));
-                return;
-            }
-        }
-        let selected = self
-            .viewer
-            .current()
-            .map(|(_, request)| (request.project.clone(), request.id.clone()));
-        let scope = self.scope.clone();
-        let list = self
-            .store()
-            .and_then(|store| Ok(store.attention(&scope, StateFilter::Outstanding)?))
-            .map_err(|error| format!("{error:#}"));
-        if list.is_err() {
-            self.store = None;
-        }
-        self.viewer.refresh(list);
-        if self.viewer.unavailable.is_none()
-            && let Some((project, id)) = selected
-            && self
-                .viewer
-                .retired
-                .iter()
-                .any(|retired| retired.request.id == id && retired.unreadable.is_none())
-        {
-            let result = self
-                .store()
-                .and_then(|store| Ok(store.request(&project, &id)?));
-            self.viewer.reconciled(&id, result);
-        }
-        if !self.viewer.requests().is_empty()
-            && std::env::var_os("REX_SESSION").is_some()
-            && self
-                .sessions_at
-                .is_none_or(|at| at.elapsed() >= SESSION_REFRESH)
-        {
-            self.sessions_at = Some(Instant::now());
-            match rex_action("attention_sessions", &serde_json::json!({}), 5).and_then(|bytes| {
-                serde_json::from_slice::<Conversations>(&bytes)
-                    .context("reading Rex conversation identities")
-            }) {
-                Ok(snapshot) => {
-                    self.viewer.conversations = snapshot.owners;
-                    self.viewer.session_error = None;
+    fn run(mut self, dismiss: Option<String>) -> Result<String> {
+        let mut view = picker(Vec::new(), Palette::load()?).into_view()?;
+        loop {
+            // Work belongs to a terminal run; drafts and the compiled picker do not.
+            self.refreshing = false;
+            self.conversations_loading = false;
+            self.refreshed_at = None;
+            self.sessions_at = None;
+            self.queued.clear();
+            self.generation += 1;
+            view.run_pane(&mut self)?;
+            match self.destination.take() {
+                Some(Destination::Goals) => {
+                    crate::goals_view::run(None, None, false)?;
+                    continue;
                 }
-                Err(error) => self.viewer.session_error = Some(format!("{error:#}")),
+                Some(Destination::Conversation) => {}
+                None => {
+                    if let Some(action) = dismiss {
+                        run_dismiss(&action)?;
+                    }
+                }
             }
+            return Ok(String::new());
         }
     }
 
-    fn apply(&mut self, effect: Effect) -> bool {
+    fn rebuild(&self, model: &mut dots_pick::Model<InboxRow>) {
+        model
+            .replace_all(self.viewer.rows())
+            .expect("canonical inbox rows have unique declared identities");
+    }
+
+    fn effect(&mut self, effect: Effect) -> dots_pick::Response {
         match effect {
             Effect::None => {}
-            Effect::Close => return false,
+            Effect::Close => return dots_pick::Response::Close,
             Effect::Goals => {
-                self.goals_requested = true;
-                return false;
+                self.destination = Some(Destination::Goals);
+                return dots_pick::Response::Close;
             }
             Effect::Open {
                 owner,
                 session,
                 block,
             } => {
-                let result = rex_action(
-                    "attention_open",
-                    &serde_json::json!({"owner":owner,"session":session,"block":block}),
-                    30,
-                )
-                .map(|_| ());
-                match result {
-                    Ok(()) => {
-                        self.navigated = true;
-                        return false;
-                    }
-                    Err(error) => {
-                        self.viewer.notice = Some(Notice {
-                            request: self.viewer.selected.clone(),
-                            text: format!("Conversation not opened: {error:#}"),
-                            tone: Tone::Error,
-                        });
-                    }
-                }
+                self.queued.push(dots_pick::Task::action(
+                    "Opening conversation…",
+                    async move {
+                        Message::Navigated(
+                            rex_action_async(
+                                "attention_open",
+                                &serde_json::json!({"owner":owner,"session":session,"block":block}),
+                                30,
+                            )
+                            .await
+                            .map(|_| ()),
+                        )
+                    },
+                ));
             }
             Effect::Answer {
                 project,
@@ -238,6 +284,11 @@ impl Session {
                 choice,
                 text,
             } => {
+                if self.answering.is_some() {
+                    return dots_pick::Response::Redraw;
+                }
+                self.answering = Some(request.clone());
+                self.generation += 1;
                 let content = AnswerContent {
                     choice,
                     text,
@@ -245,19 +296,216 @@ impl Session {
                     provenance: self.provenance.clone(),
                     interpretation: None,
                 };
-                let now = time::OffsetDateTime::now_utc().unix_timestamp();
-                let result = self.store().and_then(|store| {
-                    let actor = Actor {
-                        name: Some(Owner::try_new(HUMAN)?),
-                        now,
-                    };
-                    Ok(store.answer_request(&project, &request, &content, actor)?)
-                });
-                self.viewer.answered(&request, result);
-                self.reload();
+                self.queued
+                    .push(dots_pick::Task::action("Saving reply…", async move {
+                        let id = request.clone();
+                        let result = database(move |store| {
+                            let actor = Actor {
+                                name: Some(Owner::try_new(HUMAN)?),
+                                now: time::OffsetDateTime::now_utc().unix_timestamp(),
+                            };
+                            Ok(store.answer_request(&project, &request, &content, actor)?)
+                        })
+                        .await;
+                        Message::Answered { id, result }
+                    }));
             }
         }
-        true
+        dots_pick::Response::Redraw
+    }
+}
+
+impl dots_pick::Pane<InboxRow> for Session {
+    type Message = Message;
+    fn layout(&self) -> dots_pick::PaneLayout {
+        dots_pick::PaneLayout {
+            list_width: LIST_WIDTH,
+            collapse_below: WIDE,
+        }
+    }
+
+    fn poll(&mut self, now: Instant) -> Vec<dots_pick::Task<Message>> {
+        if self.answering.is_none()
+            && !self.refreshing
+            && self
+                .refreshed_at
+                .is_none_or(|at| now.duration_since(at) >= REFRESH)
+        {
+            self.refreshing = true;
+            self.refreshed_at = Some(now);
+            let scope = self.scope.clone();
+            let generation = self.generation;
+            self.queued.push(dots_pick::Task::background(async move {
+                let result =
+                    database(move |store| Ok(store.attention(&scope, StateFilter::Outstanding)?))
+                        .await
+                        .map_err(|error| format!("{error:#}"));
+                Message::Snapshot { generation, result }
+            }));
+        }
+        if !self.conversations_loading
+            && !self.viewer.requests().is_empty()
+            && std::env::var_os("REX_SESSION").is_some()
+            && self
+                .sessions_at
+                .is_none_or(|at| now.duration_since(at) >= SESSION_REFRESH)
+        {
+            self.conversations_loading = true;
+            self.sessions_at = Some(now);
+            self.queued.push(dots_pick::Task::background(async {
+                let result =
+                    match rex_action_async("attention_sessions", &serde_json::json!({}), 5).await {
+                        Ok(bytes) => serde_json::from_slice::<Conversations>(&bytes)
+                            .context("reading Rex conversation identities"),
+                        Err(error) => Err(error),
+                    };
+                Message::Conversations(result.map_err(|error| format!("{error:#}")))
+            }));
+        }
+        std::mem::take(&mut self.queued)
+    }
+
+    fn update(
+        &mut self,
+        message: Message,
+        model: &mut dots_pick::Model<InboxRow>,
+    ) -> dots_pick::Response {
+        match message {
+            Message::Snapshot { generation, result } => {
+                self.refreshing = false;
+                if generation != self.generation {
+                    self.refreshed_at = None;
+                    return dots_pick::Response::Ignored;
+                }
+                self.viewer.refresh(result);
+                if let Some(retired) = self.viewer.retired.iter().find(|retired| {
+                    retired.unreadable.is_none()
+                        && self.viewer.selected.as_deref() == Some(&retired.request.id)
+                }) {
+                    let project = retired.request.project.clone();
+                    let id = retired.request.id.clone();
+                    self.queued.push(dots_pick::Task::background(async move {
+                        let query = id.clone();
+                        let result =
+                            database(move |store| Ok(store.request(&project, &query)?)).await;
+                        Message::Reconciled {
+                            generation,
+                            id,
+                            result,
+                        }
+                    }));
+                }
+            }
+            Message::Conversations(result) => {
+                self.conversations_loading = false;
+                match result {
+                    Ok(snapshot) => {
+                        self.viewer.conversations = snapshot.owners;
+                        self.viewer.session_error = None;
+                    }
+                    Err(error) => self.viewer.session_error = Some(error),
+                }
+            }
+            Message::Reconciled {
+                generation,
+                id,
+                result,
+            } => {
+                if generation != self.generation {
+                    return dots_pick::Response::Ignored;
+                }
+                self.viewer.reconciled(&id, result);
+            }
+            Message::Answered { id, result } => {
+                self.answering = None;
+                self.generation += 1;
+                self.refreshed_at = None;
+                self.viewer.answered(&id, result);
+            }
+            Message::Navigated(result) => match result {
+                Ok(()) => {
+                    self.destination = Some(Destination::Conversation);
+                    return dots_pick::Response::Close;
+                }
+                Err(error) => {
+                    self.viewer.notice = Some(Notice {
+                        request: self.viewer.selected.clone(),
+                        text: format!("Conversation not opened: {error:#}"),
+                        tone: Tone::Error,
+                    });
+                }
+            },
+        }
+        self.rebuild(model);
+        dots_pick::Response::Redraw
+    }
+
+    fn selected(&mut self, entry: Option<&InboxRow>) {
+        // A refresh or filter must not retarget an active editor. Explicit list
+        // clicks first return input to the list, keeping the old draft by ID.
+        if self.viewer.focus != Focus::Requests {
+            return;
+        }
+        match entry {
+            Some(entry) => self.viewer.select_request(entry.id.clone()),
+            None => self.viewer.selected = None,
+        }
+    }
+
+    fn event(&mut self, event: &Event) -> dots_pick::Response {
+        let effect = match event {
+            Event::Key(key) if key.kind == KeyEventKind::Release => {
+                return dots_pick::Response::Ignored;
+            }
+            Event::Key(key)
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.code == KeyCode::Char('g') =>
+            {
+                Effect::Goals
+            }
+            Event::Key(key)
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.code == KeyCode::Char('o') =>
+            {
+                self.viewer.open_conversation()
+            }
+            Event::Key(key) if self.viewer.focus == Focus::Requests => match key.code {
+                KeyCode::Enter => {
+                    self.viewer.open_choices();
+                    Effect::None
+                }
+                KeyCode::Esc => Effect::Close,
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Effect::Close
+                }
+                _ => return dots_pick::Response::Ignored,
+            },
+            Event::Key(key) => self.viewer.key(*key),
+            Event::Paste(text) if self.viewer.focus == Focus::Text => self.viewer.paste(text),
+            Event::Mouse(mouse) => {
+                let point = Position::new(mouse.column, mouse.row);
+                if !self.pane_area.contains(point) {
+                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                        self.viewer.focus = Focus::Requests;
+                        self.viewer.pressed = None;
+                    }
+                    return dots_pick::Response::Ignored;
+                }
+                self.viewer.mouse(*mouse)
+            }
+            _ => return dots_pick::Response::Ignored,
+        };
+        self.effect(effect)
+    }
+
+    fn focused(&self) -> bool {
+        self.viewer.focus != Focus::Requests
+    }
+
+    fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, palette: Palette) {
+        self.pane_area = area;
+        self.viewer.palette = palette;
+        self.viewer.draw_pane(frame, area);
     }
 }
 
@@ -296,7 +544,7 @@ pub(crate) fn run_dismiss(action: &str) -> Result<()> {
     rex_action(action, &serde_json::json!({}), 30).map(|_| ())
 }
 
-fn rex_action(action: &str, args: &serde_json::Value, timeout: u64) -> Result<Vec<u8>> {
+fn rex_command(action: &str, args: &serde_json::Value, timeout: u64) -> Result<Command> {
     let mut command = Command::new("rex");
     command.args([
         "--timeout",
@@ -307,8 +555,25 @@ fn rex_action(action: &str, args: &serde_json::Value, timeout: u64) -> Result<Ve
         "--args",
         &serde_json::to_string(args)?,
     ]);
+    Ok(command)
+}
+
+async fn rex_action_async(action: &str, args: &serde_json::Value, timeout: u64) -> Result<Vec<u8>> {
+    let output = dots_process::Runner::new(Duration::from_secs(timeout + 5), 256 * 1024)
+        .run(rex_command(action, args, timeout)?)
+        .await
+        .with_context(|| format!("running rex do {action}"))?;
+    rex_result(action, output)
+}
+
+fn rex_action(action: &str, args: &serde_json::Value, timeout: u64) -> Result<Vec<u8>> {
+    let command = rex_command(action, args, timeout)?;
     let output = dots_process::output(command, Duration::from_secs(timeout + 5), 256 * 1024)
         .with_context(|| format!("running rex do {action}"))?;
+    rex_result(action, output)
+}
+
+fn rex_result(action: &str, output: std::process::Output) -> Result<Vec<u8>> {
     ensure!(
         output.status.success(),
         "rex do {action} failed ({}): {}",
@@ -316,91 +581,6 @@ fn rex_action(action: &str, args: &serde_json::Value, timeout: u64) -> Result<Ve
         String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(output.stdout)
-}
-
-/// Takes the terminal, runs the loop, and gives the terminal back whatever the
-/// loop returned. Ratatui's hook restores it on a panic.
-fn terminal(session: &mut Session) -> Result<()> {
-    let mut terminal = match ratatui::try_init() {
-        Ok(terminal) => terminal,
-        Err(error) => {
-            let _ = ratatui::try_restore();
-            return Err(error.into());
-        }
-    };
-    let modes = match Modes::enable() {
-        Ok(modes) => modes,
-        Err(error) => {
-            let _ = ratatui::try_restore();
-            return Err(error.into());
-        }
-    };
-    let outcome = drive(&mut terminal, session);
-    let modes_restored = modes.disable();
-    let restored = ratatui::try_restore();
-    outcome?;
-    modes_restored?;
-    restored?;
-    Ok(())
-}
-
-fn drive(terminal: &mut ratatui::DefaultTerminal, session: &mut Session) -> Result<()> {
-    let mut refreshed = Instant::now();
-    let mut dirty = true;
-    loop {
-        if dirty {
-            terminal.draw(|frame| session.viewer.draw(frame))?;
-            dirty = false;
-        }
-        let left = REFRESH.saturating_sub(refreshed.elapsed());
-        if !event::poll(left.min(Duration::from_millis(250)))? {
-            if refreshed.elapsed() >= REFRESH {
-                session.reload();
-                refreshed = Instant::now();
-                dirty = true;
-            }
-            continue;
-        }
-        dirty = true;
-        let effect = match event::read()? {
-            Event::Key(key) => session.viewer.key(key),
-            Event::Paste(text) => session.viewer.paste(&text),
-            Event::Mouse(mouse) => session.viewer.mouse(mouse),
-            _ => Effect::None,
-        };
-        if !session.apply(effect) {
-            return Ok(());
-        }
-    }
-}
-
-/// Bracketed paste and mouse reporting, which Ratatui does not manage itself.
-struct Modes {
-    enabled: bool,
-}
-
-impl Modes {
-    fn enable() -> io::Result<Self> {
-        ratatui::crossterm::execute!(io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
-        Ok(Self { enabled: true })
-    }
-
-    fn disable(mut self) -> io::Result<()> {
-        self.enabled = false;
-        ratatui::crossterm::execute!(io::stdout(), DisableMouseCapture, DisableBracketedPaste)
-    }
-}
-
-impl Drop for Modes {
-    fn drop(&mut self) {
-        if self.enabled {
-            let _ = ratatui::crossterm::execute!(
-                io::stdout(),
-                DisableMouseCapture,
-                DisableBracketedPaste
-            );
-        }
-    }
 }
 
 /// Where keys go within Attention.
@@ -543,11 +723,10 @@ enum Item {
 }
 
 /// What a click or scroll lands on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Target {
     Goals,
     Open,
-    Request(String),
     Item(usize),
     Input,
     Send,
@@ -559,17 +738,8 @@ enum Target {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Region {
-    Requests,
     Items,
     Context,
-}
-
-struct InboxEntry {
-    id: String,
-    name: String,
-    project: String,
-    subject: String,
-    glyph: Span<'static>,
 }
 
 /// A request the latest snapshot does not list: a closed copy of one that
@@ -610,6 +780,38 @@ struct Viewer {
 }
 
 impl Viewer {
+    fn rows(&self) -> Vec<InboxRow> {
+        self.requests()
+            .into_iter()
+            .map(|(goal, request)| {
+                let reported = self.session_error.is_none()
+                    && goal
+                        .coordinator
+                        .as_ref()
+                        .and_then(|owner| self.conversations.get(owner))
+                        .is_some_and(|conversation| {
+                            matches!(conversation, Conversation::Reported { .. })
+                        });
+                InboxRow {
+                    id: request.id.clone(),
+                    name: if reported {
+                        self.conversation_name(goal)
+                    } else {
+                        clean_line(&request.title)
+                    },
+                    project: clean_line(&goal.project_name),
+                    subject: if reported {
+                        clean_line(&request.title)
+                    } else {
+                        self.conversation_name(goal)
+                    },
+                    reported,
+                    state: request.state,
+                }
+            })
+            .collect()
+    }
+
     fn new(scope: &Scope) -> Self {
         let nothing_selected = matches!(scope, Scope::Goals(goals) if goals.is_empty());
         Self {
@@ -702,13 +904,6 @@ impl Viewer {
             (rank, request.created_at)
         });
         requests
-    }
-
-    fn waiting(&self) -> usize {
-        self.requests()
-            .iter()
-            .filter(|(_, request)| request.state == RequestState::Open)
-            .count()
     }
 
     fn current(&self) -> Option<(&GoalAttention, &Request)> {
@@ -1031,21 +1226,6 @@ impl Viewer {
         self.selected = Some(id);
     }
 
-    fn move_request(&mut self, delta: isize) {
-        let requests = self.requests();
-        if requests.is_empty() {
-            return;
-        }
-        let at = self
-            .selected
-            .as_deref()
-            .and_then(|id| requests.iter().position(|(_, request)| request.id == id))
-            .unwrap_or(0);
-        let next = at.saturating_add_signed(delta).min(requests.len() - 1);
-        let id = requests[next].1.id.clone();
-        self.select_request(id);
-    }
-
     fn move_item(&mut self, delta: isize) {
         let Some((_, request)) = self.current() else {
             return;
@@ -1180,16 +1360,6 @@ impl Viewer {
                 }
                 return Effect::None;
             }
-            KeyCode::Left => {
-                self.move_request(-1);
-                self.focus = Focus::Requests;
-                return Effect::None;
-            }
-            KeyCode::Right => {
-                self.move_request(1);
-                self.focus = Focus::Requests;
-                return Effect::None;
-            }
             _ => {}
         }
         let step = match key.code {
@@ -1207,10 +1377,9 @@ impl Viewer {
                 _ => self.context_scroll = self.context_scroll.saturating_add_signed(step),
             },
             Focus::Requests if key.code == KeyCode::Enter => self.open_choices(),
-            Focus::Requests => self.move_request(step),
             Focus::Choices if key.code == KeyCode::Enter => return self.activate(),
             Focus::Choices => self.move_item(step),
-            Focus::Text => {}
+            Focus::Requests | Focus::Text => {}
         }
         Effect::None
     }
@@ -1250,16 +1419,14 @@ impl Viewer {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.pressed = self
                     .hit(mouse.column, mouse.row)
-                    .cloned()
+                    .copied()
                     .map(|target| (self.selected.clone(), target));
                 Effect::None
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 let pressed = self.pressed.take();
-                match self.hit(mouse.column, mouse.row).cloned() {
-                    Some(target)
-                        if pressed.as_ref() == Some(&(self.selected.clone(), target.clone())) =>
-                    {
+                match self.hit(mouse.column, mouse.row).copied() {
+                    Some(target) if pressed.as_ref() == Some(&(self.selected.clone(), target)) => {
                         self.click(target)
                     }
                     _ => Effect::None,
@@ -1273,7 +1440,6 @@ impl Viewer {
 
     fn scroll(&mut self, column: u16, row: u16, step: isize) -> Effect {
         match self.region(column, row) {
-            Some(Region::Requests) => self.move_request(step),
             Some(Region::Items) => self.move_item(step),
             Some(Region::Context) => {
                 self.context_scroll = self.context_scroll.saturating_add_signed(step);
@@ -1287,10 +1453,6 @@ impl Viewer {
         match target {
             Target::Goals => return Effect::Goals,
             Target::Open => return self.open_conversation(),
-            Target::Request(id) => {
-                self.select_request(id);
-                self.focus = Focus::Requests;
-            }
             Target::Item(index) => {
                 if let Some(id) = self.selected.clone() {
                     self.items.insert(id, index);
@@ -1398,15 +1560,6 @@ impl<'a> Rows<'a> {
     }
 }
 
-/// The selection marker and styles of one list row.
-fn state_glyph(palette: Palette, request: &Request) -> Span<'static> {
-    match request.state {
-        RequestState::Open => Span::styled("● ", warning(palette)),
-        RequestState::Answered => Span::styled("✓ ", Style::new().fg(palette.green)),
-        RequestState::Closed => Span::styled("○ ", muted(palette)),
-    }
-}
-
 fn other_label(request: &Request) -> &'static str {
     if !request.choices.is_empty() {
         "Type a different answer…"
@@ -1480,8 +1633,7 @@ fn rationale(palette: Palette, request: &Request, max: usize) -> Vec<(String, St
 }
 
 impl Viewer {
-    fn draw(&mut self, frame: &mut Frame<'_>) {
-        let area = frame.area();
+    fn draw_pane(&mut self, frame: &mut Frame<'_>, area: Rect) {
         self.hits.clear();
         let buffer = frame.buffer_mut();
         buffer.set_style(
@@ -1496,28 +1648,50 @@ impl Viewer {
             rows.text("Esc closes.", muted(self.palette));
             return;
         }
-        let title = format!(" Attention · {} need you ", self.waiting());
-        Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(muted(self.palette))
-            .title(Line::from(Span::styled(
-                title,
-                accent(self.palette).add_modifier(Modifier::BOLD),
-            )))
-            .render(area, buffer);
-        let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
-        let footer = Rect::new(inner.x, inner.bottom() - 1, inner.width, 1);
-        let mut body = Rect::new(inner.x, inner.y, inner.width, inner.height - 1);
+        let footer = Rect::new(area.x, area.bottom() - 1, area.width, 1);
+        let mut body = Rect {
+            height: area.height - 1,
+            ..area
+        };
         if let Some(status) = self.status_line() {
             let mut rows = Rows::new(buffer, body);
-            // Up to two lines: what failed must stay readable, the body must stay visible.
-            let max = rows.width();
-            for line in wrap(&status, max).iter().take(2) {
+            for line in wrap(&status, rows.width()).iter().take(2) {
                 rows.text(line, warning(self.palette));
             }
             body = rows.rest();
         }
-        let cursor = self.attention(buffer, body);
+        let cursor = if self.current().is_none() {
+            let mut rows = Rows::new(buffer, body);
+            let message = if self.list.is_none() && self.unavailable.is_none() {
+                "Loading Attention…"
+            } else if self.list.is_none() {
+                "Attention could not be read. Nothing was changed."
+            } else if self.nothing_selected {
+                "No goals are selected."
+            } else if !self.requests().is_empty() {
+                "No requests match this filter."
+            } else if self
+                .list
+                .as_ref()
+                .is_some_and(|list| !list.errors.is_empty())
+            {
+                "Nothing needs you in the parts of the scope that could be read."
+            } else {
+                "Nothing needs you."
+            };
+            rows.text(message, bold());
+            if let Some(notice) = &self.notice {
+                for line in wrap(&notice.text, rows.width()) {
+                    rows.text(&line, tone(self.palette, notice.tone));
+                }
+            }
+            None
+        } else if self.focus == Focus::Context {
+            self.context(buffer, body);
+            None
+        } else {
+            self.detail(buffer, body)
+        };
         self.footer(buffer, footer);
         if let Some(position) = cursor {
             frame.set_cursor_position(position);
@@ -1560,7 +1734,7 @@ impl Viewer {
         match self.focus {
             Focus::Text => "Enter send · Esc back · ←/→ edit answer",
             Focus::Context => "↑/↓ scroll · Enter/Esc back",
-            Focus::Requests => "↑/↓ inbox · 1–8 reply · R write · O open · Esc close",
+            Focus::Requests => "Type to filter · Enter reply · Ctrl+O open · Esc close",
             Focus::Choices => "↑/↓ choice · Enter reply · R write · O open · Esc back",
         }
     }
@@ -1570,7 +1744,7 @@ impl Viewer {
         if self.focus != Focus::Requests {
             buttons.push(("[ Back ]", Target::Back));
         }
-        buttons.push(("[ G Goals ]", Target::Goals));
+        buttons.push(("[ ^G Goals ]", Target::Goals));
         buttons.push(("[ Close ]", Target::Close));
         let mut x = area.x;
         for (label, target) in buttons {
@@ -1584,140 +1758,6 @@ impl Viewer {
         }
         let hints = fit(self.hints(), usize::from(area.right().saturating_sub(x)));
         buffer.set_string(x, area.y, hints, muted(self.palette));
-    }
-
-    fn attention(&mut self, buffer: &mut Buffer, area: Rect) -> Option<Position> {
-        let requests = self.requests();
-        if requests.is_empty() {
-            let mut rows = Rows::new(buffer, area);
-            let message = if self.list.is_none() {
-                "Attention could not be read. Nothing was changed."
-            } else if self.nothing_selected {
-                "No goals are selected."
-            } else if self
-                .list
-                .as_ref()
-                .is_some_and(|list| !list.errors.is_empty())
-            {
-                "Nothing needs you in the parts of the scope that could be read."
-            } else {
-                "Nothing needs you."
-            };
-            rows.text(message, bold());
-            if !self.goals().is_empty() {
-                rows.text("G  Inspect goals and unfinished work", muted(self.palette));
-            }
-            return None;
-        }
-        if self.focus == Focus::Context {
-            self.context(buffer, area);
-            return None;
-        }
-        let selected = self.selected.clone();
-        if area.width >= WIDE {
-            let list_width = (area.width / 3).clamp(22, LIST_WIDTH);
-            let list = Rect::new(area.x, area.y, list_width, area.height);
-            let detail = Rect::new(
-                area.x + list_width + GAP,
-                area.y,
-                area.width - list_width - GAP,
-                area.height,
-            );
-            let entries: Vec<InboxEntry> = requests
-                .iter()
-                .map(|(goal, request)| {
-                    let reported = self.session_error.is_none()
-                        && goal
-                            .coordinator
-                            .as_ref()
-                            .and_then(|owner| self.conversations.get(owner))
-                            .is_some_and(|conversation| {
-                                matches!(conversation, Conversation::Reported { .. })
-                            });
-                    InboxEntry {
-                        id: request.id.clone(),
-                        name: if reported {
-                            self.conversation_name(goal)
-                        } else {
-                            clean_line(&request.title)
-                        },
-                        project: clean_line(&goal.project_name),
-                        subject: format!(
-                            "{} · {}",
-                            match request.state {
-                                RequestState::Open => "Needs you",
-                                RequestState::Answered => "Reply saved",
-                                RequestState::Closed => "Closed",
-                            },
-                            if reported {
-                                clean_line(&request.title)
-                            } else {
-                                "No session link".to_owned()
-                            }
-                        ),
-                        glyph: state_glyph(self.palette, request),
-                    }
-                })
-                .collect();
-            drop(requests);
-            self.request_list(buffer, list, &entries, selected.as_deref());
-            Block::new()
-                .borders(Borders::LEFT)
-                .border_style(muted(self.palette))
-                .render(Rect::new(detail.x - 1, area.y, 1, area.height), buffer);
-            self.detail(buffer, detail)
-        } else {
-            drop(requests);
-            self.detail(buffer, area)
-        }
-    }
-
-    fn request_list(
-        &mut self,
-        buffer: &mut Buffer,
-        area: Rect,
-        entries: &[InboxEntry],
-        selected: Option<&str>,
-    ) {
-        self.hits.push((area, Target::Region(Region::Requests)));
-        let mut rows = Rows::new(buffer, area);
-        rows.text("≡ Inbox", accent(self.palette).add_modifier(Modifier::BOLD));
-        rows.blank();
-        let visible = (rows.left() / 4).max(1);
-        let at = entries
-            .iter()
-            .position(|row| Some(row.id.as_str()) == selected)
-            .unwrap_or(0);
-        let first = at.saturating_sub(visible - 1);
-        for entry in entries.iter().skip(first).take(visible) {
-            if rows.left() < 3 {
-                break;
-            }
-            let is_selected = Some(entry.id.as_str()) == selected;
-            let row_area = Rect::new(area.x, rows.area.y + rows.next, area.width, 3);
-            if is_selected {
-                rows.buffer
-                    .set_style(row_area, Style::new().bg(self.palette.selection_bg));
-            }
-            let name = fit(&entry.name, rows.width().saturating_sub(2));
-            rows.text(
-                &format!("{} {name}", if is_selected { "›" } else { " " }),
-                if is_selected {
-                    accent(self.palette).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::new()
-                },
-            );
-            rows.text(&format!("  {}", entry.project), muted(self.palette));
-            let subject = fit(&entry.subject, rows.width().saturating_sub(2));
-            rows.line(&Line::from(vec![
-                entry.glyph.clone(),
-                Span::styled(subject, muted(self.palette)),
-            ]));
-            self.hits
-                .push((row_area, Target::Request(entry.id.clone())));
-            rows.blank();
-        }
     }
 
     /// The selected request: its question first, then what the user can do,
@@ -1848,7 +1888,7 @@ impl Viewer {
             ) {
                 self.hits.push((row, Target::Item(0)));
             }
-            if let Some(row) = rows.text("O  Open conversation ↗", accent(self.palette)) {
+            if let Some(row) = rows.text("Ctrl+O  Open conversation ↗", accent(self.palette)) {
                 self.hits.push((row, Target::Open));
             }
             return None;
@@ -1867,7 +1907,7 @@ impl Viewer {
                 text,
             ]));
             let send = rows.text("[ Send answer ]", accent(self.palette));
-            if let Some(row) = rows.text("O  Open conversation ↗", accent(self.palette)) {
+            if let Some(row) = rows.text("Ctrl+O  Open conversation ↗", accent(self.palette)) {
                 self.hits.push((row, Target::Open));
             }
             if let Some(row) = row {
@@ -1918,7 +1958,7 @@ impl Viewer {
                 self.hits.push((row, Target::Item(index)));
             }
         }
-        if let Some(row) = rows.text("O  Open conversation ↗", accent(self.palette)) {
+        if let Some(row) = rows.text("Ctrl+O  Open conversation ↗", accent(self.palette)) {
             self.hits.push((row, Target::Open));
         }
         None
@@ -2158,9 +2198,214 @@ mod tests {
         viewer
     }
 
+    struct ReplyPane<'a>(&'a mut Viewer);
+    impl dots_pick::Pane<InboxRow> for ReplyPane<'_> {
+        type Message = std::convert::Infallible;
+        fn layout(&self) -> dots_pick::PaneLayout {
+            dots_pick::PaneLayout {
+                list_width: LIST_WIDTH,
+                collapse_below: WIDE,
+            }
+        }
+        fn update(
+            &mut self,
+            message: Self::Message,
+            _: &mut dots_pick::Model<InboxRow>,
+        ) -> dots_pick::Response {
+            match message {}
+        }
+        fn event(&mut self, _: &Event) -> dots_pick::Response {
+            dots_pick::Response::Ignored
+        }
+        fn focused(&self) -> bool {
+            self.0.focus != Focus::Requests
+        }
+        fn draw(&mut self, frame: &mut Frame<'_>, area: Rect, _: Palette) {
+            self.0.draw_pane(frame, area);
+        }
+    }
+
+    fn paint(viewer: &mut Viewer, frame: &mut Frame<'_>) {
+        let mut view = picker(viewer.rows(), viewer.palette);
+        if let Some(selected) = &viewer.selected {
+            view = view.selected(selected);
+        }
+        view.into_view()
+            .unwrap()
+            .draw(frame, &mut ReplyPane(viewer));
+    }
+
+    #[test]
+    fn an_old_snapshot_cannot_undo_a_saved_answer() {
+        use dots_pick::Pane as _;
+        let mut app = Session::new(Scope::Global);
+        app.viewer = viewer(two());
+        let mut model = picker(app.viewer.rows(), Palette::default())
+            .build()
+            .unwrap();
+        model.apply(dots_pick::Command::NextScope);
+        assert_eq!(model.scope_label(), "Needs you");
+        let generation = app.generation;
+        app.effect(Effect::Answer {
+            project: two().goals[0].project.clone(),
+            request: "r-1".into(),
+            choice: Some("update".into()),
+            text: None,
+        });
+        let mut premature = two();
+        premature.goals[0].requests[0] = answered_first();
+        assert_eq!(
+            app.update(
+                Message::Snapshot {
+                    generation,
+                    result: Ok(premature)
+                },
+                &mut model
+            ),
+            dots_pick::Response::Ignored
+        );
+        assert_eq!(app.viewer.current().unwrap().1.state, RequestState::Open);
+        assert_eq!(app.answering.as_deref(), Some("r-1"));
+        app.update(
+            Message::Answered {
+                id: "r-1".into(),
+                result: Ok(answered_first()),
+            },
+            &mut model,
+        );
+        assert_eq!(
+            app.viewer.current().unwrap().1.state,
+            RequestState::Answered
+        );
+        assert_eq!(model.selected_entry().unwrap().id, "r-1");
+        assert_eq!(model.scope_label(), "Saved replies");
+        assert_eq!(
+            app.update(
+                Message::Snapshot {
+                    generation,
+                    result: Ok(two())
+                },
+                &mut model
+            ),
+            dots_pick::Response::Ignored
+        );
+        assert_eq!(
+            app.viewer.current().unwrap().1.state,
+            RequestState::Answered
+        );
+        assert_eq!(
+            app.update(
+                Message::Reconciled {
+                    generation,
+                    id: "r-1".into(),
+                    result: Ok(two().goals[0].requests[0].clone())
+                },
+                &mut model
+            ),
+            dots_pick::Response::Ignored
+        );
+        assert_eq!(
+            app.viewer.current().unwrap().1.state,
+            RequestState::Answered
+        );
+    }
+
+    #[test]
+    fn filtering_and_session_refresh_cannot_retarget_an_active_draft() {
+        use dots_pick::Pane as _;
+        let mut app = Session::new(Scope::Global);
+        app.viewer = viewer(two());
+        app.viewer.conversations.insert(
+            "pi-coordinator".into(),
+            Conversation::Reported {
+                label: "old-session".into(),
+                session: "session:fixture".into(),
+                block: "block:fixture".into(),
+            },
+        );
+        let mut model = picker(app.viewer.rows(), Palette::default())
+            .query("old-session")
+            .build()
+            .unwrap();
+        app.selected(model.selected_entry());
+        app.viewer.focus = Focus::Text;
+        app.viewer
+            .drafts
+            .entry("r-1".into())
+            .or_default()
+            .insert("original");
+        app.update(
+            Message::Conversations(Ok(Conversations {
+                owners: HashMap::from([(
+                    "pi-coordinator".into(),
+                    Conversation::Reported {
+                        label: "new-session".into(),
+                        session: "session:fixture".into(),
+                        block: "block:fixture".into(),
+                    },
+                )]),
+            })),
+            &mut model,
+        );
+        assert_eq!(model.matched(), 0);
+        app.selected(model.selected_entry());
+        app.event(&Event::Paste(" text".into()));
+        assert_eq!(app.viewer.selected.as_deref(), Some("r-1"));
+        assert_eq!(app.viewer.drafts["r-1"].text, "original text");
+        assert_eq!(model.query(), "old-session");
+        app.event(&Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        app.event(&Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        app.selected(model.selected_entry());
+        assert_eq!(app.viewer.selected, None);
+        assert_eq!(app.viewer.drafts["r-1"].text, "original text");
+    }
+
+    #[test]
+    fn root_typing_filters_instead_of_triggering_reply_or_navigation_shortcuts() {
+        use dots_pick::Pane as _;
+        let mut app = Session::new(Scope::Global);
+        app.viewer = viewer(two());
+        for key in ['g', 'o', 'r', '1'] {
+            assert_eq!(
+                app.event(&Event::Key(KeyEvent::new(
+                    KeyCode::Char(key),
+                    KeyModifiers::NONE
+                ))),
+                dots_pick::Response::Ignored
+            );
+        }
+        assert!(app.queued.is_empty());
+        let model = picker(app.viewer.rows(), Palette::default())
+            .query("reported")
+            .build()
+            .unwrap();
+        assert_eq!(
+            model.matched(),
+            0,
+            "connection notices are not search terms"
+        );
+        assert_eq!(app.viewer.focus, Focus::Requests);
+        assert_eq!(
+            app.event(&Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE
+            ))),
+            dots_pick::Response::Redraw
+        );
+        assert_eq!(app.viewer.focus, Focus::Choices);
+        assert_eq!(
+            app.event(&Event::Key(KeyEvent::new(
+                KeyCode::Char('g'),
+                KeyModifiers::CONTROL
+            ))),
+            dots_pick::Response::Close
+        );
+        assert!(matches!(app.destination, Some(Destination::Goals)));
+    }
+
     fn screen(viewer: &mut Viewer, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| viewer.draw(frame)).unwrap();
+        terminal.draw(|frame| paint(viewer, frame)).unwrap();
         let buffer = terminal.backend().buffer();
         (0..height)
             .map(|y| {
@@ -2213,9 +2458,12 @@ mod tests {
         assert!(narrow.contains("Public export names"), "{narrow}");
         assert!(narrow.contains("which way"), "{narrow}");
         assert!(narrow.contains("Update consumers together"), "{narrow}");
-        assert!(narrow.contains("Attention · 2 need you"), "{narrow}");
+        assert!(
+            narrow.contains("Attention >") && narrow.contains("2/2"),
+            "{narrow}"
+        );
         let wide = screen(&mut view, 120, 40);
-        assert!(wide.contains("≡ Inbox"), "{wide}");
+        assert!(wide.contains("Needs you (2)"), "{wide}");
         assert!(wide.contains("CLI output format"), "{wide}");
         assert!(
             wide.contains("Recommendation: Update consumers together."),
@@ -2336,7 +2584,7 @@ mod tests {
     #[test]
     fn a_choice_answers_the_request_it_belongs_to() {
         let mut view = viewer(two());
-        press(&mut view, KeyCode::Down);
+        view.select_request("r-2".into());
         press(&mut view, KeyCode::Enter);
         match press(&mut view, KeyCode::Enter) {
             Effect::Answer {
@@ -2402,15 +2650,15 @@ mod tests {
         assert!(shown.contains("question changed"), "{shown}");
         assert!(shown.contains("Public export names: which way"), "{shown}");
         assert!(shown.contains("Your unsent draft: half typed"), "{shown}");
-        assert!(shown.contains("○ Closed · No session link"), "{shown}");
-        assert!(shown.contains("● Needs you · No session link"), "{shown}");
+        assert!(shown.contains("Earlier (1)"), "{shown}");
+        assert!(shown.contains("Needs you (2)"), "{shown}");
         assert_eq!(enters(&mut view), []);
 
         // A later refresh keeps the original; the replacement needs a deliberate choice.
         view.refresh(Ok(replaced()));
         assert_eq!(view.selected.as_deref(), Some("r-1"));
         press(&mut view, KeyCode::Esc);
-        press(&mut view, KeyCode::Up);
+        view.select_request("r-3".into());
         assert_eq!(view.selected.as_deref(), Some("r-3"));
         press(&mut view, KeyCode::Enter);
         match press(&mut view, KeyCode::Enter) {
@@ -2453,7 +2701,7 @@ mod tests {
         assert!(!view.drafts.contains_key("r-3"));
         let shown = screen(&mut view, 120, 30);
         assert!(shown.contains("Replaced by a newer question"), "{shown}");
-        assert!(shown.contains("Attention · 2 need you"), "{shown}");
+        assert!(shown.contains("Needs you (2)"), "{shown}");
     }
 
     #[test]
@@ -2546,7 +2794,7 @@ mod tests {
         let Effect::Answer { request, .. } = press(&mut view, KeyCode::Enter) else {
             panic!("the first choice answers");
         };
-        // Session::apply: the committed answer, then the reload.
+        // The committed reply replaces its snapshot before the next refresh.
         view.answered(&request, Ok(answered_first()));
         view.refresh(Ok(two_answered()));
         let notice = view.notice.clone().unwrap();
@@ -2587,7 +2835,13 @@ mod tests {
             let (_, now) = view.current().unwrap();
             assert_eq!((now.id.as_str(), now.state), ("r-1", RequestState::Open));
             assert_eq!(view.focus, Focus::Text, "typing goes on");
-            assert_eq!(view.waiting(), 2);
+            assert_eq!(
+                view.requests()
+                    .iter()
+                    .filter(|(_, request)| request.state == RequestState::Open)
+                    .count(),
+                2
+            );
             assert_eq!(view.drafts["r-1"].text, "mine");
             let shown = screen(&mut view, 120, 30);
             assert!(shown.contains("Cannot read this goal now"), "{shown}");
@@ -2640,7 +2894,13 @@ mod tests {
             let shown = screen(&mut view, 120, 30);
             assert!(shown.contains("No longer waits for you"), "{shown}");
             assert!(!shown.contains("Cannot read this goal"), "{shown}");
-            assert_eq!(view.waiting(), 1);
+            assert_eq!(
+                view.requests()
+                    .iter()
+                    .filter(|(_, request)| request.state == RequestState::Open)
+                    .count(),
+                1
+            );
         }
     }
 
@@ -2732,7 +2992,7 @@ mod tests {
         let shown = screen(&mut view, 80, 20);
         assert!(shown.contains("Answer saved: Update"), "{shown}");
         assert!(shown.contains("No coordinator owns this goal"), "{shown}");
-        assert!(shown.contains("Attention · 0 need you"), "{shown}");
+        assert!(shown.contains("Saved replies (1)"), "{shown}");
         let mut view = viewer(list(vec![goal(vec![answered], Some("pi-x"))]));
         let shown = screen(&mut view, 80, 20);
         assert!(shown.contains("Pickup has not been confirmed"), "{shown}");
@@ -2775,14 +3035,15 @@ mod tests {
     }
 
     #[test]
-    fn mouse_clicks_select_views_and_answer_while_the_wheel_moves_lists() {
+    fn mouse_buttons_navigate_and_answer_while_the_wheel_moves_reply_choices() {
         let mut view = viewer(two());
         let shown = screen(&mut view, 120, 30);
-        let (column, row) = locate(&shown, "[ G Goals ]");
+        let (column, row) = locate(&shown, "[ ^G Goals ]");
         assert_eq!(click(&mut view, column + 1, row), Effect::Goals);
 
+        view.select_request("r-2".into());
         let shown = screen(&mut view, 120, 30);
-        let (column, row) = locate(&shown, "● Needs you");
+        let (column, row) = locate(&shown, "Readable text");
         view.mouse(MouseEvent {
             kind: MouseEventKind::ScrollDown,
             column,
@@ -2790,6 +3051,7 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(view.selected.as_deref(), Some("r-2"));
+        assert_eq!(view.items["r-2"], 1);
         let shown = screen(&mut view, 120, 30);
         let (column, row) = locate(&shown, "Readable text");
         match click(&mut view, column, row) {
@@ -3035,20 +3297,18 @@ mod tests {
         view.palette.background = Color::Rgb(250, 248, 246);
         view.palette.selection_bg = Color::Rgb(220, 230, 240);
         let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        terminal.draw(|frame| view.draw(frame)).unwrap();
-        let rect = view
-            .hits
-            .iter()
-            .find(|(_, target)| *target == Target::Request("r-1".into()))
-            .unwrap()
-            .0;
+        terminal.draw(|frame| paint(&mut view, frame)).unwrap();
         assert_eq!(
             terminal.backend().buffer()[(0, 0)].bg,
             view.palette.background
         );
-        assert_eq!(
-            terminal.backend().buffer()[(rect.x, rect.y)].bg,
-            view.palette.selection_bg
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .any(|cell| cell.symbol() == "▎" && cell.bg == view.palette.selection_bg)
         );
     }
 

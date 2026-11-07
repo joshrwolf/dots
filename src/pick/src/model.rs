@@ -287,6 +287,12 @@ impl<T: Entry> Model<T> {
             self.buckets[prepared.group].push(item);
         }
         self.grid = Grid::measure(&self.layouts, &self.prepared);
+        if let Some(item) = preserved {
+            let group = self.prepared[item].group;
+            if self.group_filter.is_some() || self.layouts[group].scope.is_some() {
+                self.group_filter = Some(group);
+            }
+        }
         self.refresh();
         self.cursor = preserved
             .and_then(|item| {
@@ -363,8 +369,9 @@ impl<T: Entry> Model<T> {
             .iter()
             .position(|row| row.id.as_deref() == Some(id))
             .ok_or_else(|| Error::MissingSelection { id: id.to_owned() })?;
-        if self.layouts[self.prepared[index].group].scope.is_some() {
-            self.group_filter = Some(self.prepared[index].group);
+        let group = self.prepared[index].group;
+        if self.group_filter.is_some() || self.layouts[group].scope.is_some() {
+            self.group_filter = Some(group);
             self.refresh();
         }
         let cursor = self
@@ -1642,6 +1649,53 @@ mod tests {
                 drawn_width(&model.render_row(Row::Item(0), true, width)),
                 width
             );
+        }
+    }
+
+    #[test]
+    fn identity_selection_reveals_a_new_group_after_refresh_or_explicit_selection() {
+        #[derive(Debug)]
+        struct Identified(Thing);
+        impl Entry for Identified {
+            type Group = Kind;
+            fn group(&self) -> Kind {
+                self.0.kind
+            }
+            fn cells(&self, palette: &Palette) -> Vec<Cell> {
+                self.0.cells(palette)
+            }
+            fn identity(&self) -> Option<Cow<'_, str>> {
+                Some(Cow::Borrowed(self.0.name))
+            }
+        }
+        for scoped in [false, true] {
+            let item = |kind| {
+                Identified(Thing {
+                    kind,
+                    name: "selected",
+                    note: "",
+                })
+            };
+            let other = || Identified(Thing::fruit("other", ""));
+            let columns = || vec![Column::fill(), Column::fill(), Column::fill()];
+            let mut veg = Group::new(Kind::Veg, "veg", columns());
+            if scoped {
+                veg = veg.scoped('=');
+            }
+            let mut model = Picker::new(vec![item(Kind::Fruit), other()])
+                .group(Group::new(Kind::Fruit, "fruit", columns()))
+                .group(veg)
+                .build()
+                .unwrap();
+            if !scoped {
+                model.apply(Command::NextScope);
+            }
+            model.replace_all(vec![item(Kind::Veg), other()]).unwrap();
+            assert_eq!(model.selected_entry().unwrap().0.name, "selected");
+            assert_eq!(model.scope_label(), "veg");
+            model.select_identity("other").unwrap();
+            assert_eq!(model.selected_entry().unwrap().0.name, "other");
+            assert_eq!(model.scope_label(), "fruit");
         }
     }
 

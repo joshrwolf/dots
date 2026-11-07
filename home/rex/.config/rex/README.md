@@ -38,12 +38,13 @@ action. A tab shows one view at a time: a view's key closes it, and another
 view's key replaces it. Esc closes a view and returns focus to the pane you
 were in, zoomed again if it was.
 
-Attention shows its inbox on the left and a bounded reading column on the right,
-with reply actions directly below the question and recommendation. **Read in full** opens the
-complete context and choices. Requests without a session link use their question
-titles in the inbox. **O** opens the exact reporting conversation without starting
-an agent; **G** opens separate goal and work inspection. Missing or ambiguous
-sessions stay explicit. A saved reply does not prove pickup, and an
+Attention uses the same fuzzy picker as Go and Goals, with its inbox on the left
+and a bounded reply pane on the right. Type to filter; **Enter** moves to the
+selected question's choices. Reply actions stay below the question and
+recommendation; **Read in full** shows complete context and choices. Requests
+without a session link use their question titles. **Ctrl+O** opens the exact
+reporting conversation without starting an agent; **Ctrl+G** opens Goals and
+returns with the search and drafts intact. Missing or ambiguous sessions stay explicit. A saved reply does not prove pickup, and an
 incorporated decision does not prove work resumed. Drafts last for the open popup;
 send or clear them before jumping to a conversation. Closing answers nothing.
 
