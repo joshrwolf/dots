@@ -367,3 +367,55 @@ test('forgetting a pruned worker removes its rows; owner liveness reads its row'
     rmSync(dir, {recursive: true, force: true});
   }
 });
+
+test('an unversioned registry migrates: worker rows survive, context is rebuilt, newer schemas are refused', async () => {
+  const {DatabaseSync} = await import('node:sqlite');
+  const dir = mkdtempSync(path.join(tmpdir(), 'dots-registry-migrate-'));
+  const file = path.join(dir, 'workers.db');
+  try {
+    const legacy = new DatabaseSync(file);
+    legacy.exec(`
+      create table workers (id text primary key, parent text, root text not null, owner_session text,
+        label text not null, state text not null, cwd text not null, model text, activity text, failed text,
+        question text, calls integer not null default 0, tokens integer not null default 0,
+        started_at integer not null, last_event_at integer not null, updated_at integer not null,
+        session_file text, pid integer not null);
+      create table worker_context (worker text primary key, model text not null, tokens integer,
+        context_window integer not null, compact_at integer, observed_at integer not null);
+      insert into workers (id, root, label, state, cwd, started_at, last_event_at, updated_at, session_file, pid)
+        values ('old', 'old', 'old', 'done', '/w', 1, 1, 1, '/s/old.jsonl', 1);
+      insert into worker_context values ('old', 'm', 1, 100, null, 1);`);
+    legacy.close();
+
+    const registry = openRegistry(file, m => assert.fail(m));
+    try {
+      const old = registry.get('old');
+      assert.equal(old?.session_file, '/s/old.jsonl');
+      assert.equal(old?.thinking, null);
+      assert.equal(registry.context('old'), undefined);
+      registry.recordContext(
+        'old',
+        {model: 'm', tokens: 5, window: 100, compactAt: null, compactions: 2},
+        2000,
+      );
+      assert.equal(registry.context('old')?.snapshot.compactions, 2);
+    } finally {
+      registry.close();
+    }
+    const reopened = openRegistry(file, m => assert.fail(m));
+    assert.equal(reopened.context('old')?.snapshot.compactions, 2);
+    reopened.close();
+
+    const newer = new DatabaseSync(file);
+    newer.exec('pragma user_version = 99');
+    newer.close();
+    const warnings = [];
+    assert.equal(
+      openRegistry(file, m => warnings.push(m)),
+      undefined,
+    );
+    assert.match(warnings[0], /newer/);
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+});

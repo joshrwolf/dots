@@ -102,6 +102,53 @@ create table if not exists events (
 create index if not exists events_worker on events(worker, seq);
 `;
 
+/** `pragma user_version` of the schema above; migrate() brings older files to it. */
+const SCHEMA_VERSION = 1;
+
+/**
+ * Brings an existing registry to SCHEMA_VERSION in one transaction. Unversioned
+ * files predate versioning and may lack later columns: worker rows keep their
+ * session pointers and gain missing nullable columns, while context telemetry
+ * is re-observed, so that table is rebuilt. A newer file is refused.
+ */
+function migrate(db: DatabaseSync): void {
+  const version = (): number =>
+    (db.prepare('pragma user_version').get() as {user_version: number})
+      .user_version;
+  const check = (found: number): boolean => {
+    if (found > SCHEMA_VERSION)
+      throw new Error(
+        `registry schema ${found} is newer than this extension's ${SCHEMA_VERSION}`,
+      );
+    return found === SCHEMA_VERSION;
+  };
+  if (check(version())) return;
+  db.exec('begin immediate');
+  try {
+    // Another process may have migrated while this one waited for the lock.
+    if (check(version())) {
+      db.exec('commit');
+      return;
+    }
+    const workers = db.prepare('pragma table_info(workers)').all() as {
+      name: string;
+    }[];
+    if (workers.length) {
+      const present = new Set(workers.map(column => column.name));
+      for (const column of ['task_project', 'task_id', 'thinking'])
+        if (!present.has(column))
+          db.exec(`alter table workers add column ${column} text`);
+    }
+    db.exec('drop table if exists worker_context');
+    db.exec(SCHEMA);
+    db.exec(`pragma user_version = ${SCHEMA_VERSION}`);
+    db.exec('commit');
+  } catch (error) {
+    db.exec('rollback');
+    throw error;
+  }
+}
+
 export class Registry {
   private readonly db: DatabaseSync;
   private readonly upsertStmt;
@@ -125,7 +172,7 @@ export class Registry {
     this.db.exec(
       'pragma busy_timeout = 2000; pragma journal_mode = wal; pragma synchronous = normal;',
     );
-    this.db.exec(SCHEMA);
+    migrate(this.db);
     this.upsertStmt = this.db.prepare(`
       insert into workers (id, parent, root, owner_session, label, state, cwd, task_project, task_id, model, thinking, activity, failed, question, calls, tokens, started_at, last_event_at, updated_at, session_file, pid)
       values (@id, @parent, @root, @owner_session, @label, @state, @cwd, @task_project, @task_id, @model, @thinking, @activity, @failed, @question, @calls, @tokens, @started_at, @last_event_at, @updated_at, @session_file, @pid)
