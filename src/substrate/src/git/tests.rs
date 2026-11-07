@@ -183,9 +183,11 @@ fn porcelain_lines_map_to_refs() {
         0123456789abcdef0123456789abcdef01234567 but expected \
         89abcdef0123456789abcdef0123456789abcdef)\n\
         !\tcccc:refs/dots/stale\t[rejected] (stale info)\n\
+        !\tdddd:refs/dots/moved\t[remote rejected] (incorrect old value provided)\n\
         Done\n";
     let report = parse_porcelain(stdout);
-    assert_eq!(report.len(), 3);
+    assert_eq!(report.len(), 4);
+    assert!(is_lease_failure(&report["refs/dots/moved"].summary));
     assert_eq!(report["refs/dots/same"].flag, '=');
     let race = &report["refs/dots/race"].summary;
     assert!(is_lease_failure(race));
@@ -199,4 +201,114 @@ fn porcelain_lines_map_to_refs() {
     assert!(!is_lease_failure(
         "[remote rejected] (deny updating a hidden ref)"
     ));
+}
+
+/// Push `count` successive values of `name` and return each version.
+fn push_chain(backend: &GitBackend, name: &RefName, count: usize) -> Result<Vec<Version>> {
+    let mut versions: Vec<Version> = Vec::new();
+    for index in 0..count {
+        let blob = Blob::new(format!("value {index}").into_bytes())?;
+        let outcome = backend.update(&[Update {
+            name: name.clone(),
+            expected: versions.last().cloned(),
+            root: blob.hash(),
+            new_blobs: vec![blob],
+        }])?;
+        let [Outcome::Applied(version)] = outcome.as_slice() else {
+            return Err(Error::Backend(format!("{outcome:?}")));
+        };
+        versions.push(version.clone());
+    }
+    Ok(versions)
+}
+
+fn cache_git(backend: &GitBackend, args: &[&str]) -> Result<String> {
+    backend.text("inspect cache", args, None)
+}
+
+#[test]
+fn pushed_history_stays_reachable_through_garbage_collection() -> TestResult {
+    let remote = LocalRemote::new()?;
+    let backend = GitBackend::open(&remote.scratch.path().join("writer"), remote.url())?;
+    let name: RefName = "memory".parse()?;
+    let versions = push_chain(&backend, &name, 3)?;
+    let local = cache_git(&backend, &["rev-parse", "refs/dots/memory"])?;
+    assert_eq!(local.trim(), versions[2].as_str());
+
+    cache_git(&backend, &["gc", "--quiet", "--prune=now"])?;
+    for version in &versions {
+        assert!(
+            backend.has_commit(version.as_str())?,
+            "{version} was pruned"
+        );
+    }
+    // The next proposal builds on the cached parent without fetching it.
+    let more = push_chain_from(&backend, &name, &versions[2])?;
+    assert_eq!(
+        remote
+            .git(&["--git-dir", "remote.git", "rev-parse", "refs/dots/memory^"])?
+            .trim(),
+        versions[2].as_str()
+    );
+    assert_eq!(
+        cache_git(&backend, &["rev-parse", "refs/dots/memory"])?.trim(),
+        more.as_str()
+    );
+    Ok(())
+}
+
+fn push_chain_from(backend: &GitBackend, name: &RefName, base: &Version) -> Result<Version> {
+    let blob = Blob::new(b"after gc".to_vec())?;
+    match backend
+        .update(&[Update {
+            name: name.clone(),
+            expected: Some(base.clone()),
+            root: blob.hash(),
+            new_blobs: vec![blob],
+        }])?
+        .as_slice()
+    {
+        [Outcome::Applied(version)] => Ok(version.clone()),
+        other => Err(Error::Backend(format!("{other:?}"))),
+    }
+}
+
+#[test]
+fn maintenance_packs_the_cache_past_its_loose_object_limit() -> TestResult {
+    let remote = LocalRemote::new()?;
+    let root = remote.scratch.path().join("writer");
+    let unused = GitBackend::open(&root.join("unused"), remote.url())?;
+    assert_eq!(unused.maintain()?, Maintenance::Skipped);
+
+    let backend = GitBackend::open(&root, remote.url())?.loose_object_limit(20);
+    let name: RefName = "memory".parse()?;
+    let versions = push_chain(&backend, &name, 2)?;
+    assert_eq!(backend.maintain()?, Maintenance::Skipped);
+    push_chain_from(&backend, &name, &versions[1])?;
+    let loose = |backend: &GitBackend| -> Result<u64> {
+        let counts = cache_git(backend, &["count-objects", "-v"])?;
+        Ok(counts
+            .lines()
+            .find_map(|line| line.strip_prefix("count: "))
+            .and_then(|count| count.parse().ok())
+            .unwrap_or(u64::MAX))
+    };
+    for _ in 0..4 {
+        let blob = Blob::new(getrandom::u64()?.to_string().into_bytes())?;
+        let tip = Version::new(cache_git(&backend, &["rev-parse", "refs/dots/memory"])?.trim())?;
+        backend.update(&[Update {
+            name: name.clone(),
+            expected: Some(tip),
+            root: blob.hash(),
+            new_blobs: vec![blob],
+        }])?;
+    }
+    assert!(loose(&backend)? >= 20);
+    assert!(matches!(backend.maintain()?, Maintenance::Ran(_)));
+    assert_eq!(loose(&backend)?, 0);
+    for version in &versions {
+        assert!(backend.has_commit(version.as_str())?);
+    }
+    assert_eq!(backend.maintain()?, Maintenance::Skipped);
+    Ok(())
 }

@@ -1,10 +1,13 @@
 //! Local content-addressed blob cache; every read verifies content.
-use std::fs::{self, File};
+//!
+//! Writes are atomic (a private file renamed into place) but not synced: a
+//! blob is checked against its hash on every read and can be fetched again,
+//! so a write lost or torn by a crash is detected, removed and refetched
+//! rather than served.
+use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read as _, Write as _};
-use std::os::unix::fs::DirBuilderExt as _;
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::PathBuf;
-
-use dots_documents::staged_file::StagedFile;
 
 use crate::{Blob, Error, Hash, MAX_BLOB_BYTES, Result, io};
 
@@ -27,6 +30,8 @@ impl Cache {
         self.path(hash).is_file()
     }
 
+    /// A verified blob. A blob whose content does not match is removed, so the
+    /// next fetch of a ref carrying it brings it back.
     pub(crate) fn get(&self, hash: &Hash) -> Result<Blob> {
         let path = self.path(hash);
         let file = match File::open(&path) {
@@ -40,7 +45,16 @@ impl Cache {
         file.take(MAX_BLOB_BYTES as u64 + 1)
             .read_to_end(&mut content)
             .map_err(|source| io("read cached blob", &path, source))?;
-        Blob::verified(*hash, content)
+        let verified = Blob::verified(*hash, content);
+        if let Err(Error::Integrity { .. } | Error::TooLarge { .. }) = &verified {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(source) => return Err(io("remove damaged cached blob", &path, source)),
+            }
+            return Err(Error::Integrity { expected: *hash });
+        }
+        verified
     }
 
     pub(crate) fn put(&self, blob: &Blob) -> Result<()> {
@@ -56,13 +70,19 @@ impl Cache {
             .mode(0o700)
             .create(directory)
             .map_err(|source| io("create blob cache directory", directory, source))?;
-        let staged = StagedFile::create(directory)?;
-        staged
-            .file()
-            .write_all(blob.content())
-            .map_err(|source| io("write cached blob", staged.path(), source))?;
-        // Concurrent writers of one hash publish identical bytes.
-        staged.publish_replace(&path)?;
+        let staged = directory.join(format!(".{}-{:016x}", blob.hash().hex(), getrandom::u64()?));
+        let written = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&staged)
+            .and_then(|mut file| file.write_all(blob.content()))
+            // Concurrent writers of one hash rename identical bytes.
+            .and_then(|()| fs::rename(&staged, &path));
+        if let Err(source) = written {
+            let _ = fs::remove_file(&staged);
+            return Err(io("write cached blob", &staged, source));
+        }
         Ok(())
     }
 }

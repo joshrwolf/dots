@@ -2,9 +2,10 @@
 //! over pluggable backends.
 //!
 //! Backends store refs and the blobs each ref carries. [`Substrate`] adds the
-//! per-machine pieces every domain shares: a verified blob cache, a freshness
-//! record shared by all processes, an outbox of deferred updates under a push
-//! budget, and the machine identity.
+//! per-machine pieces every domain shares: a verified blob cache, a sync
+//! record shared by all processes in SQLite, an outbox of deferred updates
+//! under a push budget, and the machine identity. Reads use only the local
+//! copy; a sync pass refreshes it.
 mod backend;
 mod cache;
 #[cfg(any(test, feature = "testing"))]
@@ -16,11 +17,14 @@ mod name;
 mod state;
 mod substrate;
 
-pub use backend::{Backend, Fetched, Outcome, Update, Watch};
+pub use backend::{Backend, Fetched, Maintenance, Outcome, Update, Watch};
 pub use hash::{Blob, Hash, MAX_BLOB_BYTES};
 pub use name::{MachineId, RefName, Version};
-pub use state::{FlushAttempt, Pending, Stranded};
-pub use substrate::{Budget, Config, Flush, FlushReport, Freshness, Status, Substrate, Value};
+pub use state::{Counters, FlushAttempt, Pending, SCHEMA, Stranded};
+pub use substrate::{
+    Backoff, Budget, Config, Failing, Flush, FlushReport, Health, Pass, PassReport, Schedule,
+    Status, Substrate, Trigger, Value,
+};
 
 use std::path::{Path, PathBuf};
 
@@ -42,6 +46,22 @@ pub enum Error {
     Backend(String),
     #[error("substrate state {path}: {reason}")]
     State { path: PathBuf, reason: String },
+    #[error("{operation}: {path}")]
+    Database {
+        operation: &'static str,
+        path: PathBuf,
+        #[source]
+        source: rusqlite::Error,
+    },
+    /// The state was written by a binary with a different schema.
+    #[error("substrate state has schema {found}; this binary supports {supported}")]
+    Schema { found: i64, supported: i64 },
+    /// This machine has never synced, so it has no local copy to read.
+    #[error("this machine has not synced yet; run dots sync once")]
+    Unsynced,
+    /// The ref is listed but its value has not been fetched yet.
+    #[error("{0} is listed but not yet fetched; run dots sync once")]
+    NotCached(RefName),
     #[error("{operation}: {path}")]
     Io {
         operation: &'static str,

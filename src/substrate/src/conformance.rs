@@ -13,8 +13,8 @@ use dots_documents::staged_directory::StagedDirectory;
 
 use crate::memory::{Fault, fake_watch};
 use crate::{
-    Backend, Blob, Budget, Config, Error, Fetched, Flush, Freshness, Hash, Outcome, RefName,
-    Result, Substrate, Update, Version,
+    Backend, Backoff, Blob, Budget, Config, Error, Fetched, Flush, Hash, Outcome, Pass, PassReport,
+    RefName, Result, Schedule, Substrate, Trigger, Update, Value, Version,
 };
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -36,9 +36,11 @@ const CASES: &[(&str, Case)] = &[
     ("CAS race has one winner", cas_race_one_winner),
     ("unknown outcome resolution", unknown_outcome_resolution),
     ("blob verification failure", blob_verification_failure),
-    ("freshness shared across instances", freshness_shared),
+    ("reads use the shared local copy", local_reads),
+    ("passes are idempotent", idempotent_passes),
+    ("one pass at a time", one_pass_at_a_time),
     ("offline reads", offline_reads),
-    ("offline listing retried per max age", offline_retry),
+    ("offline passes back off", offline_backoff),
     ("coalescing and budget", coalescing_and_budget),
     ("stranded conflict", stranded_conflict),
     ("flush with unknown outcomes", flush_unknown_outcomes),
@@ -320,11 +322,14 @@ fn blob_verification_failure(lab: &Lab) -> TestResult {
 
     probe.set(Mode::Corrupt);
     assert!(matches!(
-        substrate.read(&name, at(0)),
+        substrate.sync(Trigger::Explicit, at(0)),
         Err(Error::Integrity { .. })
     ));
+    assert!(substrate.health()?.failing.is_some());
+    assert!(matches!(substrate.read(&name), Err(Error::NotCached(_))));
     probe.set(Mode::Normal);
-    let value = substrate.read(&name, at(1))?.ok_or("absent")?;
+    done(substrate.sync(Trigger::Explicit, at(1))?)?;
+    let value = substrate.read(&name)?.ok_or("absent")?;
     assert_eq!(substrate.blob(&value.root)?, root);
 
     let hex = root.hash().hex();
@@ -334,96 +339,184 @@ fn blob_verification_failure(lab: &Lab) -> TestResult {
         substrate.blob(&root.hash()),
         Err(Error::Integrity { .. })
     ));
+    assert!(matches!(
+        substrate.blob(&root.hash()),
+        Err(Error::MissingBlob(_))
+    ));
+    let repaired = done(substrate.sync(Trigger::Explicit, at(2))?)?;
+    assert_eq!(repaired.fetched, vec![name]);
+    assert_eq!(substrate.blob(&root.hash())?, root);
     Ok(())
 }
 
-fn freshness_shared(lab: &Lab) -> TestResult {
+fn local_reads(lab: &Lab) -> TestResult {
     let (first_probe, first) = lab.probed("a1")?;
     let (second_probe, second) = lab.probed("a2")?;
-    let mut first = lab.substrate("shared", first)?;
-    let mut second = lab.substrate("shared", second)?;
+    let first = lab.substrate("shared", first)?;
+    let second = lab.substrate("shared", second)?;
     assert_eq!(first.machine(), second.machine());
     let name = lab.name("x")?;
-    applied(one(&*lab.client("b")?, create(&name, &blob("value")?))?)?;
+    assert!(matches!(first.read(&name), Err(Error::Unsynced)));
+    let version = applied(one(&*lab.client("b")?, create(&name, &blob("value")?))?)?;
 
+    let pass = done(first.sync(Trigger::Explicit, at(0))?)?;
+    assert_eq!(pass.fetched, vec![name.clone()]);
     assert_eq!(
-        first.ensure_fresh(Duration::ZERO, at(0))?,
-        Freshness::Current { as_of: at(0) }
-    );
-    assert_eq!(
-        second.ensure_fresh(Duration::from_secs(30), at(10))?,
-        Freshness::Current { as_of: at(0) }
+        second.read(&name)?,
+        Some(Value {
+            version,
+            root: blob("value")?.hash(),
+            as_of: at(0),
+        })
     );
     assert_eq!(second_probe.counts().lists, 0);
-    assert!(first.read(&name, at(11))?.is_some());
-    assert!(second.read(&name, at(12))?.is_some());
     assert_eq!(second_probe.counts().fetches, 0);
+    assert_eq!(second.read(&lab.name("absent")?)?, None);
+    let counts = first_probe.counts();
+    assert_eq!((counts.lists, counts.fetches), (1, 1));
+    assert_eq!(second.status()?.counters.lists, 1);
+    Ok(())
+}
 
-    second.ensure_fresh(Duration::from_secs(30), at(31))?;
-    assert_eq!(second_probe.counts().lists, 1);
-    assert_eq!(first_probe.counts().lists, 1);
+fn idempotent_passes(lab: &Lab) -> TestResult {
+    let (probe, backend) = lab.probed("a")?;
+    let substrate = lab.substrate("a", backend)?;
+    let other = lab.client("b")?;
+    let (x, y) = (lab.name("x")?, lab.name("y")?);
+    let vx = applied(one(&*other, create(&x, &blob("x")?))?)?;
+    applied(one(&*other, create(&y, &blob("y")?))?)?;
+    assert_eq!(
+        done(substrate.sync(Trigger::Explicit, at(0))?)?
+            .fetched
+            .len(),
+        2
+    );
+    for second in 1..3 {
+        let pass = done(substrate.sync(Trigger::Explicit, at(second))?)?;
+        assert_eq!((pass.fetched, pass.flush), (Vec::new(), Flush::Idle));
+    }
+    assert_eq!(probe.counts().fetches, 2);
+    assert_eq!(substrate.read(&x)?.ok_or("absent")?.as_of, at(2));
+    applied(one(&*other, change(&x, Some(&vx), &blob("x2")?))?)?;
+    assert_eq!(
+        done(substrate.sync(Trigger::Explicit, at(3))?)?.fetched,
+        vec![x.clone()]
+    );
+    assert_eq!(probe.counts().fetches, 3);
+    assert_eq!(
+        substrate.read(&x)?.ok_or("absent")?.root,
+        blob("x2")?.hash()
+    );
+    Ok(())
+}
+
+fn one_pass_at_a_time(lab: &Lab) -> TestResult {
+    let (probe, backend) = lab.probed("a")?;
+    let holder = lab.substrate("shared", backend)?;
+    let waiter = lab.substrate("shared", lab.client("a2")?)?;
+    probe.set(Mode::Hold);
+    thread::scope(|scope| -> TestResult {
+        let held = scope.spawn(|| holder.sync(Trigger::Explicit, at(0)));
+        while probe.counts().lists == 0 {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(waiter.sync(Trigger::Scheduled, at(1))?, Pass::Busy);
+        let explicit = scope.spawn(|| waiter.sync(Trigger::Explicit, at(2)));
+        thread::sleep(Duration::from_millis(50));
+        assert!(
+            !explicit.is_finished(),
+            "an explicit pass waits for the running one"
+        );
+        probe.set(Mode::Normal);
+        done(held.join().map_err(|_| "holder panicked")??)?;
+        done(explicit.join().map_err(|_| "waiter panicked")??)?;
+        Ok(())
+    })?;
+    assert_eq!(waiter.status()?.counters.passes, 2);
     Ok(())
 }
 
 fn offline_reads(lab: &Lab) -> TestResult {
     let (probe, backend) = lab.probed("a")?;
-    let mut substrate = lab.substrate("a", backend)?;
+    let substrate = lab.substrate("a", backend)?;
     let other = lab.client("b")?;
-    let (cached, uncached) = (lab.name("cached")?, lab.name("uncached")?);
+    let cached = lab.name("cached")?;
     let version = applied(one(&*other, create(&cached, &blob("cached")?))?)?;
-    applied(one(&*other, create(&uncached, &blob("uncached")?))?)?;
-    substrate.ensure_fresh(Duration::ZERO, at(0))?;
-    assert!(substrate.read(&cached, at(1))?.is_some());
+    done(substrate.sync(Trigger::Explicit, at(0))?)?;
 
     probe.set(Mode::Offline);
-    assert!(matches!(
-        substrate.ensure_fresh(Duration::ZERO, at(10))?,
-        Freshness::Stale { since: Some(since), .. } if since == at(0)
-    ));
-    let value = substrate.read(&cached, at(11))?.ok_or("absent")?;
-    assert_eq!(value.version, version);
-    assert_eq!(value.stale_since, Some(at(1)));
-    assert!(matches!(
-        substrate.read(&uncached, at(12)),
-        Err(Error::Unavailable(_))
-    ));
+    applied(one(&*other, create(&lab.name("later")?, &blob("later")?))?)?;
+    let pass = done(substrate.sync(Trigger::Explicit, at(10))?)?;
+    assert!(pass.offline.is_some());
+    assert_eq!(pass.flush, Flush::Skipped);
+    let value = substrate.read(&cached)?.ok_or("absent")?;
+    assert_eq!((value.version, value.as_of), (version, at(0)));
+    assert_eq!(substrate.read(&lab.name("later")?)?, None);
+    let failing = substrate.health()?.failing.ok_or("not failing")?;
+    assert_eq!((failing.since, failing.failures), (at(10), 1));
+    assert_eq!(substrate.health()?.listed_at, Some(at(0)));
 
     probe.set(Mode::Normal);
-    substrate.ensure_fresh(Duration::ZERO, at(20))?;
-    assert_eq!(
-        substrate
-            .read(&cached, at(21))?
-            .ok_or("absent")?
-            .stale_since,
-        None
-    );
+    done(substrate.sync(Trigger::Explicit, at(20))?)?;
+    assert_eq!(substrate.read(&cached)?.ok_or("absent")?.as_of, at(20));
+    assert!(substrate.read(&lab.name("later")?)?.is_some());
+    assert_eq!(substrate.health()?.failing, None);
     Ok(())
 }
 
-fn offline_retry(lab: &Lab) -> TestResult {
+fn offline_backoff(lab: &Lab) -> TestResult {
     let (probe, backend) = lab.probed("a")?;
-    let mut substrate = lab.substrate("a", backend)?;
-    let max_age = Duration::from_secs(30);
-    substrate.ensure_fresh(Duration::ZERO, at(0))?;
+    let config = Config {
+        backoff: Backoff {
+            base: Duration::from_secs(10),
+            cap: Duration::from_secs(40),
+        },
+        ..Config::default()
+    };
+    let substrate = Substrate::open(&lab.state("a"), backend, config)?;
+    done(substrate.sync(Trigger::Scheduled, at(0))?)?;
     probe.set(Mode::Offline);
-    let stale = |freshness: Freshness| matches!(freshness, Freshness::Stale { since: Some(since), .. } if since == at(0));
-
-    assert!(stale(substrate.ensure_fresh(max_age, at(40))?));
-    assert_eq!(probe.counts().lists, 2);
-    assert!(stale(substrate.ensure_fresh(max_age, at(70))?));
-    assert_eq!(probe.counts().lists, 2, "a recent failure is not retried");
-    assert!(stale(substrate.ensure_fresh(Duration::ZERO, at(71))?));
-    assert_eq!(probe.counts().lists, 3, "zero tolerance always retries");
-    assert!(stale(substrate.ensure_fresh(max_age, at(102))?));
-    assert_eq!(probe.counts().lists, 4);
-    assert_eq!(substrate.status()?.offline_since, Some(at(40)));
+    let mut retry = at(100);
+    for (attempt, limit) in [(1, 10), (2, 20), (3, 40), (4, 40)] {
+        assert!(
+            done(substrate.sync(Trigger::Scheduled, retry)?)?
+                .offline
+                .is_some()
+        );
+        let failing = substrate.health()?.failing.ok_or("not failing")?;
+        assert_eq!((failing.since, failing.failures), (at(100), attempt));
+        let retry_at = failing.retry_at.ok_or("no retry time")?;
+        let delay = retry_at.duration_since(retry)?;
+        assert!(
+            delay >= Duration::from_secs(limit / 2) && delay <= Duration::from_secs(limit),
+            "attempt {attempt}: {delay:?}"
+        );
+        let lists = probe.counts().lists;
+        assert_eq!(
+            substrate.sync(Trigger::Scheduled, retry + delay / 2)?,
+            Pass::Backoff { retry_at }
+        );
+        assert_eq!(probe.counts().lists, lists, "backing off lists nothing");
+        retry = retry_at;
+    }
+    let lists = probe.counts().lists;
+    assert!(
+        done(substrate.sync(Trigger::Explicit, retry)?)?
+            .offline
+            .is_some()
+    );
+    assert_eq!(
+        probe.counts().lists,
+        lists + 1,
+        "explicit passes ignore backoff"
+    );
 
     probe.set(Mode::Normal);
-    assert_eq!(
-        substrate.ensure_fresh(max_age, at(140))?,
-        Freshness::Current { as_of: at(140) }
-    );
-    assert_eq!(substrate.status()?.offline_since, None);
+    let pass = done(substrate.sync(Trigger::Explicit, retry)?)?;
+    assert_eq!(pass.offline, None);
+    assert_eq!(substrate.health()?.failing, None);
+    let counters = substrate.status()?.counters;
+    assert_eq!((counters.passes, counters.failed_passes), (7, 5));
     Ok(())
 }
 
@@ -431,6 +524,7 @@ fn coalescing_and_budget(lab: &Lab) -> TestResult {
     let (probe, backend) = lab.probed("a")?;
     let config = Config {
         budget: Budget::new(1, Duration::from_secs(60))?,
+        ..Config::default()
     };
     let substrate = Substrate::open(&lab.state("a"), backend, config)?;
     let (x, y) = (lab.name("x")?, lab.name("y")?);
@@ -440,7 +534,7 @@ fn coalescing_and_budget(lab: &Lab) -> TestResult {
     substrate.defer(create(&y, &blob("y1")?), at(0))?;
     assert_eq!(substrate.status()?.pending.len(), 2);
 
-    let Flush::Sent(report) = substrate.flush(at(1))? else {
+    let Flush::Sent(report) = done(substrate.sync(Trigger::Explicit, at(1))?)?.flush else {
         return Err("first flush did not send".into());
     };
     assert_eq!(report.applied.len(), 2, "{report:?}");
@@ -450,6 +544,10 @@ fn coalescing_and_budget(lab: &Lab) -> TestResult {
     assert_eq!(fetched.root, blob("x3")?.hash());
     assert_eq!(fetched.blobs.len(), 3);
     assert_eq!(substrate.status()?.pending, []);
+    assert_eq!(
+        substrate.read(&x)?.ok_or("absent")?.root,
+        blob("x3")?.hash()
+    );
 
     let version = report
         .applied
@@ -458,13 +556,19 @@ fn coalescing_and_budget(lab: &Lab) -> TestResult {
         .map(|(_, version)| version.clone());
     substrate.defer(change(&x, version.as_ref(), &blob("x4")?), at(2))?;
     assert_eq!(
-        substrate.flush(at(2))?,
+        done(substrate.sync(Trigger::Explicit, at(2))?)?.flush,
         Flush::Throttled { retry_at: at(61) }
     );
     assert_eq!(substrate.status()?.pending.len(), 1);
-    assert!(matches!(substrate.flush(at(61))?, Flush::Sent(r) if r.applied.len() == 1));
+    assert_eq!(substrate.status()?.counters.throttled, 1);
+    assert!(
+        matches!(done(substrate.sync(Trigger::Explicit, at(61))?)?.flush, Flush::Sent(r) if r.applied.len() == 1)
+    );
     assert_eq!(probe.counts().batches, vec![2, 1]);
-    assert_eq!(substrate.flush(at(62))?, Flush::Idle);
+    assert_eq!(
+        done(substrate.sync(Trigger::Explicit, at(62))?)?.flush,
+        Flush::Idle
+    );
     Ok(())
 }
 
@@ -476,7 +580,7 @@ fn stranded_conflict(lab: &Lab) -> TestResult {
     substrate.defer(create(&name, &mine), at(0))?;
     let taken = applied(other.update(&create(&name, &theirs), at(1))?)?;
 
-    let Flush::Sent(report) = substrate.flush(at(2))? else {
+    let Flush::Sent(report) = done(substrate.sync(Trigger::Explicit, at(2))?)?.flush else {
         return Err("flush did not send".into());
     };
     assert_eq!(report.stranded, vec![name.clone()]);
@@ -490,7 +594,7 @@ fn stranded_conflict(lab: &Lab) -> TestResult {
         (&name, mine.hash(), &Some(taken.clone()))
     );
     assert_eq!(substrate.blob(&mine.hash())?, mine);
-    let value = substrate.read(&name, at(3))?.ok_or("absent")?;
+    let value = substrate.read(&name)?.ok_or("absent")?;
     assert_eq!((value.version, value.root), (taken, theirs.hash()));
     Ok(())
 }
@@ -499,20 +603,28 @@ fn flush_unknown_outcomes(lab: &Lab) -> TestResult {
     let (probe, backend) = lab.probed("a")?;
     let config = Config {
         budget: Budget::new(10, Duration::from_secs(1))?,
+        ..Config::default()
     };
     let substrate = Substrate::open(&lab.state("a"), backend, config)?;
     let name = lab.name("x")?;
     substrate.defer(create(&name, &blob("one")?), at(0))?;
 
     probe.set(Mode::LoseRequest);
-    let Flush::Sent(report) = substrate.flush(at(1))? else {
+    let Flush::Sent(report) = done(substrate.sync(Trigger::Explicit, at(1))?)?.flush else {
         return Err("flush did not send".into());
     };
     assert_eq!(report.retained, vec![name.clone()]);
     assert_eq!(substrate.status()?.pending.len(), 1);
+    assert!(
+        substrate
+            .status()?
+            .last_flush
+            .and_then(|flush| flush.error)
+            .is_some()
+    );
 
     probe.set(Mode::LoseReply);
-    let Flush::Sent(report) = substrate.flush(at(2))? else {
+    let Flush::Sent(report) = done(substrate.sync(Trigger::Explicit, at(2))?)?.flush else {
         return Err("flush did not send".into());
     };
     assert_eq!(report.applied.len(), 1, "{report:?}");
@@ -524,96 +636,106 @@ fn flush_unknown_outcomes(lab: &Lab) -> TestResult {
         change(&name, Some(&report.applied[0].1), &blob("two")?),
         at(3),
     )?;
-    let Flush::Sent(report) = substrate.flush(at(4))? else {
-        return Err("flush did not send".into());
-    };
-    assert!(report.error.is_some());
-    let status = substrate.status()?;
-    assert_eq!(status.pending.len(), 1);
-    assert!(status.last_flush.and_then(|flush| flush.error).is_some());
+    let pass = done(substrate.sync(Trigger::Explicit, at(4))?)?;
+    assert!(pass.offline.is_some());
+    assert_eq!(pass.flush, Flush::Skipped);
+    assert_eq!(substrate.status()?.pending.len(), 1);
     Ok(())
 }
 
 fn watch_hint_faults(lab: &Lab) -> TestResult {
     let (probe, backend) = lab.probed("a")?;
-    let mut substrate = lab.substrate("a", backend)?;
+    let substrate = lab.substrate("a", backend)?;
     let other = lab.substrate("b", lab.client("b")?)?;
     let name = lab.name("x")?;
-    let max_age = Duration::from_secs(30);
+    let schedule = Schedule {
+        interval: Duration::from_secs(30),
+        resync: Duration::from_secs(300),
+    };
     let mut version = None;
     let mut write = |text: &str, now| -> std::result::Result<Version, Box<dyn std::error::Error>> {
         let written = applied(other.update(&change(&name, version.as_ref(), &blob(text)?), now)?)?;
         version = Some(written.clone());
         Ok(written)
     };
-    let lists = || probe.counts().lists;
+    // Run a pass when one is due, as the sync agent does each tick.
+    let tick = |now| -> std::result::Result<bool, Box<dyn std::error::Error>> {
+        if !substrate.due(schedule, now)? {
+            return Ok(false);
+        }
+        done(substrate.sync(Trigger::Scheduled, now)?)?;
+        Ok(true)
+    };
+    let current = |expected: &Version| -> TestResult {
+        assert_eq!(&substrate.read(&name)?.ok_or("absent")?.version, expected);
+        Ok(())
+    };
+
+    // Without a watch, the interval governs.
+    assert!(tick(at(0))?);
+    assert!(!tick(at(29))?);
+    assert!(tick(at(30))?);
 
     let (link, watch) = fake_watch();
     substrate.attach_watch(Box::new(watch));
-    substrate.ensure_fresh(max_age, at(0))?;
     link.heartbeat(at(40));
-    assert_eq!(
-        substrate.ensure_fresh(max_age, at(50))?,
-        Freshness::Current { as_of: at(40) }
+    assert!(
+        !tick(at(45))?,
+        "unlisted since the watch attached, the interval still governs"
     );
-    assert_eq!(lists(), 1);
+    assert!(tick(at(60))?);
+    link.heartbeat(at(80));
+    assert!(!tick(at(100))?, "a healthy watch lengthens the period");
 
-    let written = write("hinted", at(52))?;
+    let written = write("hinted", at(101))?;
     link.changed(&name);
-    substrate.ensure_fresh(max_age, at(56))?;
-    assert_eq!(lists(), 2);
-    assert_eq!(
-        substrate.read(&name, at(57))?.ok_or("absent")?.version,
-        written
-    );
+    assert!(tick(at(102))?);
+    current(&written)?;
 
     link.fault_next(Fault::Duplicate);
-    let written = write("duplicated", at(58))?;
+    let written = write("duplicated", at(110))?;
     link.changed(&name);
-    link.heartbeat(at(60));
-    substrate.ensure_fresh(max_age, at(61))?;
-    link.heartbeat(at(95));
-    substrate.ensure_fresh(max_age, at(100))?;
-    assert_eq!(lists(), 3);
-    assert_eq!(
-        substrate.read(&name, at(101))?.ok_or("absent")?.version,
-        written
-    );
+    link.heartbeat(at(111));
+    assert!(tick(at(112))?);
+    assert!(!tick(at(113))?, "a duplicate hint runs no second pass");
+    current(&written)?;
 
     link.fault_next(Fault::Drop);
-    let written = write("dropped", at(110))?;
+    let written = write("dropped", at(120))?;
     link.changed(&name);
-    link.heartbeat(at(120));
-    substrate.ensure_fresh(max_age, at(130))?;
-    assert_eq!(lists(), 4);
-    assert_eq!(
-        substrate.read(&name, at(131))?.ok_or("absent")?.version,
-        written
-    );
+    link.heartbeat(at(121));
+    assert!(!tick(at(122))?);
+    assert!(tick(at(152))?, "the gap stops the watch vouching");
+    current(&written)?;
 
+    // A dropped hint leaves a permanent gap, so start a fresh watch.
     let (link, watch) = fake_watch();
     substrate.attach_watch(Box::new(watch));
-    substrate.ensure_fresh(max_age, at(200))?;
     link.fault_next(Fault::Delay);
-    let written = write("delayed", at(230))?;
+    let written = write("delayed", at(160))?;
     link.changed(&name);
-    link.heartbeat(at(240));
-    substrate.ensure_fresh(max_age, at(250))?;
-    assert_eq!(lists(), 6);
-    assert_eq!(
-        substrate.read(&name, at(251))?.ok_or("absent")?.version,
-        written
-    );
+    link.heartbeat(at(161));
+    assert!(tick(at(182))?);
+    current(&written)?;
     link.release();
-    substrate.ensure_fresh(max_age, at(252))?;
-    assert_eq!(lists(), 7);
-    link.heartbeat(at(260));
-    assert_eq!(
-        substrate.ensure_fresh(max_age, at(285))?,
-        Freshness::Current { as_of: at(260) }
+    assert!(tick(at(183))?, "a late hint runs one more pass");
+    link.heartbeat(at(184));
+    link.heartbeat(at(290));
+    assert!(!tick(at(300))?);
+    link.heartbeat(at(400));
+    assert!(
+        tick(at(483))?,
+        "the full resync runs despite a healthy watch"
     );
-    assert_eq!(lists(), 7);
+    assert_eq!(probe.counts().lists, 9);
     Ok(())
+}
+
+fn done(pass: Pass) -> std::result::Result<PassReport, Box<dyn std::error::Error>> {
+    match pass {
+        Pass::Done(report) => Ok(report),
+        other => Err(format!("expected a completed pass, got {other:?}").into()),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -628,6 +750,8 @@ enum Mode {
     LoseRequest,
     /// Fetched blob bytes are altered.
     Corrupt,
+    /// Listing waits until the mode changes.
+    Hold,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -676,6 +800,12 @@ impl Backend for Probed {
     fn list(&self) -> Result<std::collections::BTreeMap<RefName, Version>> {
         match self.probe.record(|counts| counts.lists += 1) {
             Mode::Offline => Err(offline()),
+            Mode::Hold => {
+                while self.probe.record(|_| {}) == Mode::Hold {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                self.inner.list()
+            }
             _ => self.inner.list(),
         }
     }
@@ -704,7 +834,7 @@ impl Backend for Probed {
                 self.inner.update(updates)?;
                 Ok(vec![Outcome::Unknown; updates.len()])
             }
-            Mode::Normal | Mode::Corrupt => self.inner.update(updates),
+            Mode::Normal | Mode::Corrupt | Mode::Hold => self.inner.update(updates),
         }
     }
 }

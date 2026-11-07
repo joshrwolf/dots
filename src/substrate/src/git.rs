@@ -6,6 +6,10 @@
 //! as parent. Commits use fixed identities and dates, so re-sending a proposal
 //! produces the same commit and the remote reports it up to date.
 //!
+//! The cache repository keeps a local ref for every ref value it fetched or
+//! pushed, so its history stays reachable through garbage collection, and
+//! [`Backend::maintain`] packs it once loose objects pile up.
+//!
 //! The installed `git` runs through dots-process with no user or system
 //! configuration. Credentials come only from configuration the caller supplies
 //! with [`GitBackend::config`] and [`GitBackend::env`].
@@ -23,8 +27,8 @@ use std::time::Duration;
 use dots_documents::staged_directory::StagedDirectory;
 
 use crate::{
-    Backend, Error, Fetched, Hash, MAX_BLOB_BYTES, Outcome, RefName, Result, Update, Version,
-    invalid, io,
+    Backend, Error, Fetched, Hash, MAX_BLOB_BYTES, Maintenance, Outcome, RefName, Result, Update,
+    Version, invalid, io,
 };
 
 const NAMESPACE: &str = "refs/dots/";
@@ -34,6 +38,11 @@ const NETWORK_DEADLINE: Duration = Duration::from_secs(60);
 /// unavailable well before interactive callers, such as Pi's 10 s context
 /// client, give up and lose even the stale value.
 const LIST_DEADLINE: Duration = Duration::from_secs(5);
+/// Packing a cache with tens of thousands of loose objects takes seconds.
+const MAINTENANCE_DEADLINE: Duration = Duration::from_secs(600);
+/// Each publication leaves about eight loose objects; past a few thousand,
+/// reading trees and packing pushes slow measurably.
+const LOOSE_OBJECT_LIMIT: u64 = 3000;
 const OUTPUT_LIMIT: usize = 256 * 1024 * 1024;
 const ISOLATION: &[&str] = &[
     "core.hooksPath=/dev/null",
@@ -54,6 +63,7 @@ pub struct GitBackend {
     config: Vec<(String, String)>,
     env: Vec<(OsString, OsString)>,
     deadline: Duration,
+    loose_object_limit: u64,
     /// Set once this process has initialized the cache repository.
     initialized: OnceLock<()>,
 }
@@ -77,6 +87,7 @@ impl GitBackend {
             config: Vec::new(),
             env: Vec::new(),
             deadline: NETWORK_DEADLINE,
+            loose_object_limit: LOOSE_OBJECT_LIMIT,
             initialized: OnceLock::new(),
         })
     }
@@ -118,6 +129,13 @@ impl GitBackend {
     #[must_use]
     pub fn deadline(mut self, deadline: Duration) -> Self {
         self.deadline = deadline;
+        self
+    }
+
+    /// Pack the cache repository once it holds at least `limit` loose objects.
+    #[must_use]
+    pub fn loose_object_limit(mut self, limit: u64) -> Self {
+        self.loose_object_limit = limit;
         self
     }
 
@@ -438,7 +456,7 @@ impl GitBackend {
         }
         let report = parse_porcelain(&String::from_utf8_lossy(&output.stdout));
         let mut listed = None;
-        proposals
+        let outcomes = proposals
             .iter()
             .map(|(update, commit)| {
                 let reference = format!("{NAMESPACE}{}", update.name);
@@ -470,7 +488,22 @@ impl GitBackend {
                     ))),
                 }
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        let mut landed = String::new();
+        for ((update, commit), outcome) in proposals.iter().zip(&outcomes) {
+            if matches!(outcome, Outcome::Applied(_)) {
+                let _ = writeln!(landed, "update {NAMESPACE}{} {commit}", update.name);
+            }
+        }
+        if !landed.is_empty() {
+            // Keep what landed reachable in the cache, as a fetch would.
+            self.text(
+                "record pushed refs",
+                &["update-ref", "--stdin"],
+                Some(landed.into_bytes()),
+            )?;
+        }
+        Ok(outcomes)
     }
 }
 
@@ -559,6 +592,31 @@ impl Backend for GitBackend {
                     .ok_or_else(|| Error::Backend("push returned too few outcomes".into()))
             })
             .collect()
+    }
+
+    fn maintain(&self) -> Result<Maintenance> {
+        if !self.repository().exists() {
+            return Ok(Maintenance::Skipped);
+        }
+        let counts = self.text("count cache objects", &["count-objects", "-v"], None)?;
+        let loose = counts
+            .lines()
+            .find_map(|line| line.strip_prefix("count: "))
+            .and_then(|count| count.parse::<u64>().ok())
+            .ok_or_else(|| Error::Backend(format!("unexpected count-objects output {counts:?}")))?;
+        if loose < self.loose_object_limit {
+            return Ok(Maintenance::Skipped);
+        }
+        // Every ref value is reachable from a local ref, so the history
+        // survives; unreachable rejected proposals expire on Git's schedule.
+        let output = dots_process::Runner::new(MAINTENANCE_DEADLINE, OUTPUT_LIMIT)
+            .output(self.command(&["gc", "--quiet"])?)
+            .map_err(|source| Error::Process {
+                operation: "pack cache repository",
+                source,
+            })?;
+        checked(output, "pack cache repository")?;
+        Ok(Maintenance::Ran(format!("packed {loose} loose objects")))
     }
 }
 
@@ -656,6 +714,8 @@ fn parse_porcelain(stdout: &str) -> BTreeMap<String, PorcelainLine> {
 /// Rejections that mean the ref did not hold the expected value.
 fn is_lease_failure(summary: &str) -> bool {
     summary.contains("(stale info)")
+        // Git 2.50+ names an old-value mismatch found under the ref lock.
+        || summary.contains("(incorrect old value provided)")
         || summary.contains("reference already exists")
         || (summary.contains("cannot lock ref") && summary.contains("but expected"))
 }

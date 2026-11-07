@@ -58,11 +58,25 @@ pub trait Backend: Send + Sync {
     /// Returns one outcome per update, in order. Names must be distinct.
     /// Re-sending an applied proposal reports it applied at the same version.
     fn update(&self, updates: &[Update]) -> Result<Vec<Outcome>>;
+
+    /// Local upkeep, such as compacting a cache, when the backend needs it.
+    /// Never contacts the backend's remote and never changes results.
+    fn maintain(&self) -> Result<Maintenance> {
+        Ok(Maintenance::Skipped)
+    }
+}
+
+/// Whether [`Backend::maintain`] did any work.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Maintenance {
+    Skipped,
+    /// Upkeep ran; the text says what it did.
+    Ran(String),
 }
 
 /// Optional change notification. Hints only reduce listing; a watch that is
 /// unsure of its coverage reports no confirmation.
-pub trait Watch {
+pub trait Watch: Send {
     /// Refs reported changed since the previous call. May repeat names and
     /// never blocks.
     fn hints(&mut self) -> Vec<RefName>;
