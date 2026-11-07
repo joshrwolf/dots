@@ -153,12 +153,13 @@ pub(crate) fn graph(tasks: &[Task], open_only: bool) -> Graph {
     goal_graph::render(&nodes)
 }
 
-fn glyph(task: &Task) -> &'static str {
+pub(crate) fn glyph(task: &Task) -> &'static str {
     match task.status {
         Status::Done => "✓",
         Status::Dropped => "−",
         Status::Held => "!",
         Status::Review => "◇",
+        Status::Open if !task.holds.is_empty() => "!",
         Status::Open if task.owner.is_some() => "●",
         Status::Open if !task.blocked_by.is_empty() => "◌",
         Status::Open => "○",

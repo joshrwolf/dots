@@ -606,6 +606,9 @@ mod attention_view {
             .join("briefs/goal.md");
         std::fs::create_dir_all(brief.parent().unwrap()).unwrap();
         std::fs::write(&brief, "Neutral brief line.\n".repeat(201)).unwrap();
+        let theme = home.0.join(".config/theme/current");
+        std::fs::create_dir_all(&theme).unwrap();
+        std::fs::write(theme.join("pick.toml"), "green = \"#118935\"\n").unwrap();
         let size = Winsize {
             ws_row: 24,
             ws_col: 60,
@@ -686,7 +689,8 @@ mod attention_view {
         // The Goals picker shares this popup and returns without losing Attention's draft.
         click(&mut keyboard, 6, 169);
         let at = screen.until(at, "Goals");
-        let at = screen.until(at, "Graph");
+        let styled = screen.until(at, "38;2;17;137;53");
+        let at = screen.until(styled, "Graph");
         send(&mut keyboard, "zzzzno-match");
         send(&mut keyboard, "\x15");
         send(&mut keyboard, "\rbrief");

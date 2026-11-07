@@ -11,6 +11,9 @@ use dots_pick::spec::{PreviewAnchor, PreviewPosition};
 use dots_pick::{Action, Actions, Cell, Choice, Column, Entry, Group, Palette, Picker};
 use dots_tasks::attention::{GoalRef, Scope};
 use dots_tasks::{Project, Status, Store, Task};
+use ratatui::backend::IntoCrossterm as _;
+use ratatui::crossterm::style::{StyledContent, Stylize as _, style};
+use ratatui::style::Color;
 
 use crate::command::GoalPreview;
 
@@ -55,15 +58,7 @@ impl Entry for Row {
     }
     fn cells(&self, palette: &Palette) -> Vec<Cell> {
         vec![
-            Cell::tag(
-                &self.glyph,
-                match self.glyph.as_str() {
-                    "!" => palette.red,
-                    "✓" => palette.green,
-                    "◇" => palette.accent,
-                    _ => palette.muted,
-                },
-            ),
+            Cell::tag(&self.glyph, icon_color(&self.glyph, palette)),
             Cell::new(&self.context, palette.muted),
             Cell::tag(&self.progress, palette.muted),
             Cell::new(&self.title, palette.strong),
@@ -119,11 +114,11 @@ fn command(bin: &str, key: &GoalKey, page: GoalPreview) -> Vec<String> {
 
 fn task_state(task: &Task) -> &'static str {
     if task.status == Status::Open {
-        if task.owner.is_some() {
-            return "claimed";
-        }
         if !task.holds.is_empty() {
             return "held";
+        }
+        if task.owner.is_some() {
+            return "claimed";
         }
         if !task.blocked_by.is_empty() {
             return "waiting";
@@ -229,7 +224,7 @@ fn task_rows(store: &mut Store, bin: &str, key: &GoalKey, parent: &str) -> Resul
             } else {
                 Section::Active
             },
-            glyph: glyph(task.status).into(),
+            glyph: crate::goal_brief::glyph(&task).into(),
             context: state.into(),
             progress: task.owner.clone().unwrap_or_default(),
             title: task.title,
@@ -326,18 +321,54 @@ pub(crate) fn run(select: Option<GoalRef>, dismiss: Option<String>, json: bool) 
     Ok(String::new())
 }
 
-fn graph_preview(overview: &dots_tasks::GoalOverview, project_name: &str) -> String {
+fn icon_color(icon: &str, palette: &Palette) -> Color {
+    match icon {
+        "✓" => palette.green,
+        "!" => palette.red,
+        "◇" => palette.accent,
+        "●" => palette.blue,
+        "○" => palette.strong,
+        _ => palette.muted,
+    }
+}
+
+fn ink(text: &str, color: Color) -> StyledContent<&str> {
+    style(text).with(color.into_crossterm())
+}
+
+fn graph_preview(
+    overview: &dots_tasks::GoalOverview,
+    project_name: &str,
+    palette: &Palette,
+) -> String {
+    use crate::terminal_text::clean_line;
     let mut out = format!(
-        "{}\n{} · {} · {}/{} done · Graph\n\n",
-        overview.goal.root.title,
-        project_name,
-        overview.goal.root.status.as_str(),
-        overview.goal.progress.done,
-        overview.goal.progress.total
+        "{} {}\n{} {} {} {} {}\n",
+        ink("◈", palette.accent),
+        ink(&clean_line(&overview.goal.root.title), palette.strong).bold(),
+        ink(&clean_line(project_name), palette.blue),
+        ink("·", palette.muted),
+        ink(overview.goal.root.status.as_str(), palette.muted),
+        ink(
+            &format!(
+                "· {}/{} done",
+                overview.goal.progress.done, overview.goal.progress.total
+            ),
+            palette.green
+        ),
+        ink("· Graph", palette.muted),
     );
     if overview.goal.root.owner.is_some() {
-        out.push_str("Coordinator recorded (not a liveness check).\n\n");
+        let _ = writeln!(
+            out,
+            "{}",
+            ink(
+                "Coordinator recorded (not a liveness check).",
+                palette.muted
+            )
+        );
     }
+    out.push('\n');
     let tasks: HashMap<_, _> = overview
         .tasks
         .iter()
@@ -348,19 +379,49 @@ fn graph_preview(overview: &dots_tasks::GoalOverview, project_name: &str) -> Str
         let task = tasks
             .get(row.task.as_str())
             .expect("graph references supplied tasks");
+        let icon = crate::goal_brief::glyph(task);
+        let color = icon_color(icon, palette);
         for (index, line) in row.lines.iter().enumerate() {
             if index == 0 {
-                let _ = writeln!(out, "{line} {:<11} {}", task_state(task), task.title);
+                let (before, after) = line
+                    .split_once(icon)
+                    .expect("node row includes its supplied icon");
+                let state = format!("{:<11}", task_state(task));
+                let title = clean_line(&task.title);
+                let emphasized = matches!(icon, "!" | "◇" | "●");
+                let label = ink(&state, color);
+                let title = ink(
+                    &title,
+                    if task.status.is_closed() {
+                        palette.muted
+                    } else {
+                        palette.strong
+                    },
+                );
+                let _ = writeln!(
+                    out,
+                    "{}{}{} {} {}",
+                    ink(before, palette.muted),
+                    ink(icon, color).bold(),
+                    ink(after, palette.muted),
+                    if emphasized { label.bold() } else { label },
+                    if emphasized { title.bold() } else { title }
+                );
             } else {
-                let _ = writeln!(out, "{line}");
+                let _ = writeln!(out, "{}", ink(line, palette.muted));
             }
         }
     }
     for note in graph.notes {
-        let _ = writeln!(out, "{note}");
+        let _ = writeln!(
+            out,
+            "{} {}",
+            ink("!", palette.yellow).bold(),
+            ink(&clean_line(&note), palette.yellow)
+        );
     }
     if overview.tasks.is_empty() {
-        out.push_str("No tasks.\n");
+        let _ = writeln!(out, "{}", ink("No tasks.", palette.muted));
     }
     out
 }
@@ -397,7 +458,7 @@ pub(crate) fn preview(
                 .find(|registered| registered.id == *project)
                 .context("Project is no longer registered")?
                 .name;
-            Ok(graph_preview(&overview, &project_name))
+            Ok(graph_preview(&overview, &project_name, &Palette::load()?))
         }
         GoalPreview::Brief => {
             let shown = crate::goal_brief::show(project, overview.goal)?;
@@ -558,6 +619,140 @@ mod tests {
                 actor(),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn graph_styles_are_semantic_in_light_and_dark_palettes() {
+        let home = Home::new();
+        let mut store = Store::create(&home.0.join("catalog.sqlite3")).unwrap();
+        let project = store.register_project("fixture").unwrap();
+        let goal = store
+            .create_goal(&project, "Fixture goal", "briefs/goal.md", actor())
+            .unwrap();
+        store
+            .coordinate(
+                &project,
+                &goal.root.id,
+                actor().name.unwrap(),
+                false,
+                false,
+                1,
+            )
+            .unwrap();
+        for title in [
+            "Ready task",
+            "Claimed task",
+            "Waiting task",
+            "Review task",
+            "Held task",
+            "Done task",
+            "Dropped task",
+        ] {
+            add(&mut store, &project, title, &goal.root.id, vec![]);
+        }
+        let mut overview = store.goal_overview(&project, &goal.root.id, true).unwrap();
+        for task in &mut overview.tasks {
+            task.status = match task.title.as_str() {
+                "Review task" => Status::Review,
+                "Held task" => Status::Held,
+                "Done task" => Status::Done,
+                "Dropped task" => Status::Dropped,
+                _ => Status::Open,
+            };
+            if task.title == "Claimed task" {
+                task.owner = Some("fixture-worker".into());
+            }
+            if task.title == "Waiting task" {
+                task.blocked_by = vec!["missing-prerequisite".into()];
+            }
+        }
+        for strong in [Color::Rgb(31, 35, 40), Color::Rgb(230, 237, 243)] {
+            let palette = Palette {
+                strong,
+                muted: Color::Rgb(101, 109, 118),
+                blue: Color::Rgb(47, 129, 247),
+                green: Color::Rgb(35, 134, 54),
+                red: Color::Rgb(248, 81, 73),
+                accent: Color::Rgb(163, 113, 247),
+                ..Palette::default()
+            };
+            let graph = graph_preview(&overview, "Fixture", &palette);
+            assert!(
+                graph.contains("\x1b[1m"),
+                "heading and active states use bold: {graph:?}"
+            );
+            assert!(
+                !graph.contains("\x1b[48;"),
+                "no extra background fills: {graph:?}"
+            );
+            for (title, icon, color) in [
+                ("Ready task", "○", strong),
+                ("Claimed task", "●", palette.blue),
+                ("Waiting task", "◌", palette.muted),
+                ("Review task", "◇", palette.accent),
+                ("Held task", "!", palette.red),
+                ("Done task", "✓", palette.green),
+                ("Dropped task", "−", palette.muted),
+            ] {
+                let line = graph.lines().find(|line| line.contains(title)).unwrap();
+                assert!(
+                    line.contains(&ink(icon, color).bold().to_string()),
+                    "{title}: {line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn held_claims_stand_out_and_stored_titles_cannot_inject_style() {
+        let home = Home::new();
+        let mut store = Store::create(&home.0.join("catalog.sqlite3")).unwrap();
+        let project = store.register_project("fixture").unwrap();
+        let goal = store
+            .create_goal(&project, "Fixture", "briefs/goal.md", actor())
+            .unwrap();
+        store
+            .coordinate(
+                &project,
+                &goal.root.id,
+                actor().name.unwrap(),
+                false,
+                false,
+                1,
+            )
+            .unwrap();
+        add(&mut store, &project, "Claimed task", &goal.root.id, vec![]);
+        let mut held = store.goal_overview(&project, &goal.root.id, true).unwrap();
+        held.goal.root.status = Status::Held;
+        held.goal.root.owner = None;
+        let claimed = &mut held.tasks[0];
+        claimed.owner = Some("fixture-worker".into());
+        claimed
+            .holds
+            .push(dots_tasks::Hold::HeldAncestor { task: goal.root.id });
+        claimed.title = "Untrusted\x1b[31m title\nsecond line".into();
+        let palette = Palette::default();
+        let graph = graph_preview(&held, "Fixture", &palette);
+        let line = graph
+            .lines()
+            .find(|line| line.contains("Untrusted"))
+            .unwrap();
+        assert!(
+            line.contains(&ink("!", palette.red).bold().to_string()),
+            "{line:?}"
+        );
+        assert!(
+            line.contains("held"),
+            "holds take precedence over claims: {line:?}"
+        );
+        assert!(
+            !line.contains("\x1b[31m"),
+            "stored text cannot inject styles: {line:?}"
+        );
+        assert!(
+            line.contains("second line"),
+            "stored titles stay on one line: {line:?}"
+        );
     }
 
     #[test]
