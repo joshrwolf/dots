@@ -3,6 +3,7 @@ import {execFileSync} from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -14,6 +15,7 @@ import register, {
   decodeMemorySnapshot,
   memorySnapshot,
   memoryContext,
+  watchedMemoryContext,
 } from '../extensions/memory/index.ts';
 
 function environment(root) {
@@ -364,8 +366,15 @@ test('memory snapshot decoder rejects cross-snapshot, wrong-scope and filesystem
   const value = {
     store: 'k-' + '0'.repeat(32),
     snapshot,
-    freshness: {state: 'current'},
+    freshness: {
+      as_of: 100,
+      age_seconds: 0,
+      stale: false,
+      stale_after_seconds: 120,
+      failing: null,
+    },
     pending: 0,
+    changes: '/fixture/substrate/changes',
     project: null,
     diagnostic: 'unbound',
     global: {
@@ -382,17 +391,28 @@ test('memory snapshot decoder rejects cross-snapshot, wrong-scope and filesystem
     },
   };
   assert.equal(decodeMemorySnapshot(value).global.exists, false);
-  const stale = decodeMemorySnapshot({
+  const failing = decodeMemorySnapshot({
     ...value,
-    freshness: {state: 'stale', since: 1, reason: 'unreachable'},
+    freshness: {
+      ...value.freshness,
+      stale: true,
+      failing: {since: 90, failures: 2, last_error: 'unreachable'},
+    },
   });
-  assert.deepEqual(stale.freshness, {state: 'stale', reason: 'unreachable'});
+  assert.deepEqual(failing.freshness, {
+    asOf: 100,
+    staleAfter: 120,
+    failing: {since: 90, lastError: 'unreachable'},
+  });
   for (const malformed of [
     null,
     {},
     {...value, snapshot: 'short'},
     {...value, snapshot: 'a'.repeat(64)},
     {...value, freshness: {state: 'stale'}},
+    {...value, freshness: {...value.freshness, as_of: -1}},
+    {...value, freshness: {...value.freshness, failing: {since: 1}}},
+    {...value, changes: 'relative/changes'},
     {...value, pending: -1},
     {
       ...value,
@@ -423,5 +443,133 @@ test('memory snapshot decoder rejects cross-snapshot, wrong-scope and filesystem
     {...value, diagnostic: null},
   ]) {
     assert.throws(() => decodeMemorySnapshot(malformed));
+  }
+});
+
+/** A local copy synced at 1000, as a fixture observation. */
+function observation(overrides = {}) {
+  const snapshot = 'sha256:' + 'c'.repeat(64);
+  return decodeMemorySnapshot({
+    store: 'k-' + '0'.repeat(32),
+    snapshot,
+    freshness: {
+      as_of: 1000,
+      age_seconds: 0,
+      stale: false,
+      stale_after_seconds: 120,
+      failing: null,
+    },
+    pending: 0,
+    changes: overrides.changes ?? '/nonexistent-dots-fixture/changes',
+    project: null,
+    diagnostic: 'unbound',
+    global: {
+      state: 'available',
+      snapshot,
+      scope: {kind: 'global'},
+      document: {
+        path: 'MEMORY.md',
+        exists: true,
+        content: 'FACT',
+        revision: 'sha256:' + 'd'.repeat(64),
+        next_line: null,
+      },
+    },
+    ...overrides.raw,
+  });
+}
+
+test('context labels an old or failing copy with its coarse age', async () => {
+  let now = 1060;
+  const fresh = observation();
+  const load = watchedMemoryContext(
+    async () => fresh,
+    () => now,
+  ).load;
+  assert.doesNotMatch((await load('/fixture', {})).dots_memory_global, /Stale/);
+  now = 1000 + 7 * 60;
+  assert.match(
+    (await load('/fixture', {})).dots_memory_global,
+    /Stale: this machine's copy was last synced 7 min ago; the sync agent may not be running/,
+  );
+  now = 1000 + 5 * 3600;
+  assert.match(
+    (await load('/fixture', {})).dots_memory_global,
+    /last synced 5 h ago/,
+  );
+  const failing = observation({
+    raw: {
+      freshness: {
+        as_of: 1000,
+        age_seconds: 0,
+        stale: true,
+        stale_after_seconds: 120,
+        failing: {since: 1010, failures: 3, last_error: 'remote offline'},
+      },
+    },
+  });
+  now = 1030;
+  const text = (
+    await watchedMemoryContext(
+      async () => failing,
+      () => now,
+    ).load('/fixture', {})
+  ).dots_memory_global;
+  assert.match(
+    text,
+    /last synced 1 min ago; sync is failing \(remote offline\)/,
+  );
+  assert.match(text, /FACT/);
+});
+
+test('context is reused until the changes marker moves', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'dots-marker-'));
+  const watched = watchedMemoryContext(
+    async () => {
+      reads += 1;
+      return observation({changes: path.join(root, 'changes')});
+    },
+    () => 1000,
+  );
+  let reads = 0;
+  try {
+    // The first read starts the watch and cannot trust what it read before.
+    await watched.load('/fixture', {});
+    await watched.load('/fixture', {});
+    assert.equal(reads, 2);
+    for (let turn = 0; turn < 3; turn += 1) await watched.load('/fixture', {});
+    assert.equal(reads, 2);
+    await watched.load('/elsewhere', {});
+    assert.equal(reads, 3);
+    writeFileSync(path.join(root, 'changes'), 'moved\n');
+    const deadline = Date.now() + 5000;
+    while (reads === 3 && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      await watched.load('/elsewhere', {});
+    }
+    assert.equal(reads, 4);
+  } finally {
+    watched.close();
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('real CLI context reads the local copy without contacting the remote', async () => {
+  const repo = scratchRepo();
+  try {
+    const env = environment(repo.root);
+    publish(repo, [write({kind: 'global'}, 'LOCAL_FACT')]);
+    const before = cli(repo.root, repo.root, 'substrate', 'status').counters;
+    renameSync(
+      path.join(repo.root, 'remote.git'),
+      path.join(repo.root, 'gone.git'),
+    );
+    const text = (await memoryText(repo.checkout, env)).content;
+    assert.match(text, /LOCAL_FACT/);
+    assert.doesNotMatch(text, /Stale|unavailable/);
+    const after = cli(repo.root, repo.root, 'substrate', 'status').counters;
+    assert.deepEqual(after, before);
+  } finally {
+    rmSync(repo.root, {recursive: true, force: true});
   }
 });

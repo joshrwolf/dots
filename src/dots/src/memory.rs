@@ -53,6 +53,7 @@ fn freshness(head: &Head, now: SystemTime) -> serde_json::Value {
         "as_of": unix(*as_of),
         "age_seconds": age.as_secs(),
         "stale": age > STALE_AFTER || failing.is_some(),
+        "stale_after_seconds": STALE_AFTER.as_secs(),
         "failing": failing.as_ref().map(|failing| json!({
             "since": unix(failing.since),
             "failures": failing.failures,
@@ -124,6 +125,8 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
                 "snapshot": head.snapshot,
                 "freshness": freshness(&head, now),
                 "pending": store.pending()?.len(),
+                // Touched whenever this machine's copy or local knowledge state changes.
+                "changes": store.substrate().changes(),
                 "global": global,
                 "project": project,
                 "diagnostic": diagnostic,
@@ -271,6 +274,7 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
                             projects: conversion.bindings.clone(),
                         },
                     )?;
+                    store.substrate().notify()?;
                 }
                 absent
             };
@@ -379,6 +383,7 @@ fn project_command(
                 .projects
                 .insert(local.as_str().to_owned(), id.clone());
             replace_json(&store.local().join(BINDINGS), &bindings)?;
+            store.substrate().notify()?;
             encode(&json!({"local_project": local, "shared_project": id}))
         }
         MemoryProjectCommand::Unbind { expected } => {
@@ -393,6 +398,7 @@ fn project_command(
             );
             bindings.projects.remove(local.as_str());
             replace_json(&store.local().join(BINDINGS), &bindings)?;
+            store.substrate().notify()?;
             encode(&json!({"local_project": local, "unbound_shared_project": expected}))
         }
     }
