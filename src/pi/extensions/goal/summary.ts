@@ -143,6 +143,14 @@ export function summaryRow(
       shrink: 'clip',
     },
   ];
+  if (snapshot?.overview.goal.root.foreign)
+    segments.push({
+      text: 'read-only',
+      tone: 'muted',
+      priority: 85,
+      shrink: 'omit',
+      separatorBefore: ' · ',
+    });
   if (p)
     segments.push({
       text: p.total ? `${p.done}/${p.total} done` : 'no slices',

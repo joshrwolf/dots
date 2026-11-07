@@ -29,6 +29,7 @@ import {bindAgent, endAgent, type Agent} from '../../src/host/agent.ts';
 import {ATTENTION_EVENT} from '../../src/host/attention.ts';
 import {TurnMessages} from '../../src/host/delivery.ts';
 import {Tasks} from '../../src/host/tasks.ts';
+import {watchChanges} from '../../src/host/changes.ts';
 import {AttentionController} from './attention/controller.ts';
 import {attentionContext} from './attention/context.ts';
 import {indicator} from './attention/model.ts';
@@ -47,6 +48,7 @@ import {
 import {
   dotsSource,
   dotsEvidenceSource,
+  shareChanges,
   type EvidenceSource,
   type GoalSource,
   type GoalList,
@@ -117,6 +119,14 @@ export interface GoalOptions {
   readonly source?: AttentionSource;
   /** Undefined reads attention only on runs, opens and explicit refreshes. */
   readonly tasks?: Pick<Tasks, 'follow' | 'head'> | undefined;
+  /**
+   * The changes marker to watch for other machines' task trees, or undefined
+   * when this machine does not share them.
+   */
+  readonly changes?: (
+    cwd: string,
+    signal: AbortSignal,
+  ) => Promise<string | undefined>;
   readonly openView?: (
     view: 'goals' | 'attention',
     goal: {project: string; id: string} | undefined,
@@ -130,6 +140,9 @@ export default function goalExtension(
   attentionOptions: GoalOptions = {},
 ): void {
   const attentionSource = attentionOptions.source ?? dotsAttention();
+  const changesMarker = attentionOptions.changes ?? shareChanges;
+  /** Stops watching imports for the current session. */
+  let stopImports: (() => void) | undefined;
   const attentionTasks =
     'tasks' in attentionOptions ? attentionOptions.tasks : new Tasks();
   const delivery = new TurnMessages(pi);
@@ -608,6 +621,35 @@ export default function goalExtension(
     return undefined;
   };
 
+  /**
+   * Imported trees change only when the sync agent imports another machine's
+   * writes; it then touches the substrate's changes marker. Reread the goals
+   * in view and attention when it does, as runs and explicit reads would.
+   */
+  const watchImports = (ctx: ExtensionContext) => {
+    const lifetime = new AbortController();
+    let watcher: {readonly close: () => void} | undefined;
+    changesMarker(ctx.cwd, lifetime.signal).then(
+      marker => {
+        if (!marker || lifetime.signal.aborted) return;
+        watcher = watchChanges(marker, () => {
+          if (!active || lifetime.signal.aborted) return;
+          background(a => a.refresh());
+          if (views.size)
+            refresh(ctx).catch((error: unknown) =>
+              notify(ctx, String(error), 'error'),
+            );
+        });
+      },
+      // Without sharing status, goals refresh on runs and explicit reads.
+      () => {},
+    );
+    return () => {
+      lifetime.abort();
+      watcher?.close();
+    };
+  };
+
   const restore = async (ctx: ExtensionContext) => {
     invalidate(ctx);
     workerActivity = undefined;
@@ -674,6 +716,8 @@ export default function goalExtension(
       },
       signal: signal => pi.events.emit(ATTENTION_EVENT, signal),
     });
+    stopImports?.();
+    stopImports = watchImports(ctx);
     stopWorkerActivity?.();
     workerActivity = undefined;
     stopWorkerActivity = pi.events.on(WORKER_ACTIVITY_EVENT, data => {
@@ -702,6 +746,8 @@ export default function goalExtension(
       ctx.ui.setWidget(OFFERS_WIDGET, undefined);
     if (ctx.hasUI) ctx.ui.setStatus(OFFERS_WIDGET, undefined);
     active = false;
+    stopImports?.();
+    stopImports = undefined;
     attention?.close();
     attention = undefined;
     delivery.close();

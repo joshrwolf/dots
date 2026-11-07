@@ -364,3 +364,20 @@ test('latest task events decode strictly and tolerate absent or null records', (
     assert.throws(() => decodeSnapshot(value));
   }
 });
+
+test('tasks homed on another machine decode as read-only and reject malformed homes', () => {
+  const value = snapshot();
+  const home = {
+    root: value.overview.goal.root.id,
+    home: 'm-' + '1'.repeat(32),
+    written_at: 90,
+    imported_at: 95,
+  };
+  value.overview.goal.root.foreign = home;
+  assert.deepEqual(decodeSnapshot(value).overview.goal.root.foreign, home);
+  for (const bad of [undefined, 'm-1', {...home, written_at: -1}, {root: 1}]) {
+    const broken = snapshot();
+    broken.overview.goal.root.foreign = bad;
+    assert.throws(() => decodeSnapshot(broken));
+  }
+});

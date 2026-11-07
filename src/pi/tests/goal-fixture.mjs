@@ -16,6 +16,7 @@ export const task = (id, title, extra = {}) => ({
   goal: null,
   holds: [],
   last_event: null,
+  foreign: null,
   ...extra,
 });
 export const snapshot = (id = 't-123abc', title = 'Consistent exports') => ({

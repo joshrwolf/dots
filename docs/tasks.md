@@ -92,7 +92,8 @@ moved on, it imports the new version, reports what changed and refuses until
 rerun. Coordinate the goal afterwards; claims never move. An answer given on a
 machine that is not the home travels to the home, whose coordinator
 incorporates it; the closure then replicates back. Disabling keeps imported
-trees read-only as last seen.
+trees read-only as last seen. Pi marks imported goals read-only in their views
+and context, and rereads them when the sync agent imports a change.
 
 Events keep a stable `uid` across machines, while `seq` stays each machine's
 own cursor; follow and history read local positions.

@@ -197,3 +197,21 @@ test("the goal's own result is its bounded running handoff", () => {
   );
   assert.ok(bounded.length < 4000);
 });
+
+test('an imported goal says it is read-only here and names the takeover', () => {
+  const view = fixture();
+  const before = taskContext(view);
+  assert.doesNotMatch(before, /Read-only/);
+  view.snapshot.overview.goal.root.foreign = {
+    root: 't-123abc',
+    home: 'm-' + '2'.repeat(32),
+    written_at: 90,
+    imported_at: 95,
+  };
+  const after = taskContext(view);
+  assert.match(after, /Read-only on this machine/);
+  assert.match(after, /dots task share take t-123abc/);
+  // Import times are not context: a re-import of the same state changes nothing.
+  view.snapshot.overview.goal.root.foreign.imported_at = 99;
+  assert.equal(taskContext(view), after);
+});

@@ -30,6 +30,17 @@ export interface GoalTask {
   readonly holds: readonly Hold[];
   /** Latest recorded event only; a later claim or update can supersede a useful note. */
   readonly last_event: TaskEvent | null;
+  /** Set when another machine homes this task's tree; it is read-only here. */
+  readonly foreign: Foreign | null;
+}
+/** A tree imported from the machine that alone changes it. */
+export interface Foreign {
+  readonly root: string;
+  readonly home: string;
+  /** Unix seconds when the home wrote the imported version. */
+  readonly written_at: number | null;
+  /** Unix seconds when this machine imported it. */
+  readonly imported_at: number | null;
 }
 export type Hold =
   /** An ancestor is held; its whole subtree waits. */
@@ -196,6 +207,17 @@ function hold(value: unknown): Hold {
     };
   throw new Error('Invalid dots task hold');
 }
+function foreign(value: unknown): Foreign | null {
+  if (value === null) return null;
+  const v = record(value);
+  const time = (field: unknown) => (field === null ? null : timestamp(field));
+  return {
+    root: string(v.root),
+    home: string(v.home),
+    written_at: time(v.written_at),
+    imported_at: time(v.imported_at),
+  };
+}
 function task(value: unknown): GoalTask {
   const v = record(value);
   if (!['open', 'review', 'held', 'done', 'dropped'].includes(string(v.status)))
@@ -217,6 +239,7 @@ function task(value: unknown): GoalTask {
     goal: nullableString(v.goal),
     holds: array(v.holds).map(hold),
     last_event: event(v.last_event),
+    foreign: foreign(v.foreign),
   };
 }
 function goal(value: unknown): Goal {
@@ -649,3 +672,25 @@ export const dotsSource: GoalSource = {
     });
   },
 };
+
+/**
+ * The substrate's changes marker when this machine shares task trees, so
+ * imports from other machines can refresh the goals in view; otherwise
+ * undefined, and goals refresh on runs and explicit reads only.
+ */
+export async function shareChanges(
+  cwd: string,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  const v = record(
+    await dots(['task', 'share', 'status'], {directory: cwd, cwd, signal}),
+  );
+  if (v.sharing === null) return undefined;
+  const sharing = record(v.sharing);
+  if (typeof sharing.enabled !== 'boolean')
+    throw new Error('Invalid dots share status');
+  if (!sharing.enabled || v.changes === null) return undefined;
+  const changes = string(v.changes);
+  if (!path.isAbsolute(changes)) throw new Error('Invalid dots share status');
+  return changes;
+}

@@ -240,6 +240,10 @@ mod tests {
         let request = str_at(&raised, "/request/id").to_owned();
         let pending = a.ok(&["task", "share", "status"]);
         assert_eq!(pending["pending"].as_array().unwrap().len(), 1, "{pending}");
+        assert!(
+            std::path::Path::new(str_at(&pending, "/changes")).is_absolute(),
+            "{pending}"
+        );
         a.sync();
 
         // B imports with --fresh and refuses changes with the takeover hint.

@@ -102,18 +102,21 @@ pub(crate) fn run(command: ShareCommand, json: bool) -> Result<String> {
 /// `share status`: the switch, trees and pending replication.
 fn status(store: &mut Store, json: bool) -> Result<String> {
     let status = store.share_status()?;
-    let pending = match parts()? {
-        Some((substrate, _)) => substrate
-            .status()?
-            .pending
-            .iter()
-            .filter(|pending| {
-                let name = pending.name.as_str();
-                name.starts_with("tasks/") || name.starts_with("answers/")
-            })
-            .map(|pending| pending.name.to_string())
-            .collect(),
-        None => Vec::new(),
+    let (pending, changes) = match parts()? {
+        Some((substrate, _)) => (
+            substrate
+                .status()?
+                .pending
+                .iter()
+                .filter(|pending| {
+                    let name = pending.name.as_str();
+                    name.starts_with("tasks/") || name.starts_with("answers/")
+                })
+                .map(|pending| pending.name.to_string())
+                .collect(),
+            Some(substrate.changes()),
+        ),
+        None => (Vec::new(), None),
     };
     if json {
         return Ok(crate::json::render(json!({
@@ -123,6 +126,7 @@ fn status(store: &mut Store, json: bool) -> Result<String> {
             "dirty": status.dirty,
             "sent_answers": status.sent_answers,
             "pending": pending,
+            "changes": changes,
             "bindings": bindings()?.iter().map(|b| json!({"local": b.local, "shared": b.shared})).collect::<Vec<_>>(),
         })));
     }

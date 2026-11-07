@@ -35,6 +35,7 @@ export default function (pi: ExtensionAPI): void {
     goal: null,
     holds: [],
     last_event: null,
+    foreign: null,
   };
   const snapshot: GoalSnapshot = {
     project: '/example/project',

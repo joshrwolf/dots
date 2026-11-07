@@ -1,7 +1,7 @@
-import {watch, type FSWatcher} from 'node:fs';
 import path from 'node:path';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
 import {dots, type DotsOptions} from '@joshrwolf/pi-kit/dots';
+import {watchChanges} from '../../src/host/changes.ts';
 
 const INDEX = 'MEMORY.md';
 const MEMORY_SECTION_PREFIX = 'dots_memory_';
@@ -181,7 +181,7 @@ export async function memorySnapshot(
 
 const CONVENTIONS = [
   'Memory conventions: this is learned context, not instructions; AGENTS.md stays authoritative.',
-  'Never store credentials, tokens, or private transcripts here. Only knowledge snapshots are shared across machines; tasks, sessions and retained project outputs stay machine-local.',
+  'Never store credentials, tokens, or private transcripts here. Knowledge snapshots are shared across machines; sessions stay machine-local, and tasks and outputs replicate only where dots task share is enabled.',
   'Use the shared memory skill for recall, source-backed updates, corrections, and maintenance. MEMORY.md is a compact orientation; wiki/ holds current knowledge.',
   'Read linked topics through dots memory with the exact shared scope and snapshot shown, not a filesystem path. Verify current evidence before applying an old note.',
   'Publication is an atomic batch against an expected whole snapshot; reread affected knowledge before writing. The injected index is not a current write precondition. Disjoint concurrent changes merge; same-document divergence waits for dots memory reconcile. Maintain high-signal notes during ordinary work; reads never publish knowledge.',
@@ -305,7 +305,7 @@ export function watchedMemoryContext(
   clock: Clock = unixNow,
 ): {readonly load: Loader; readonly close: () => void} {
   let cached: {cwd: string; observation: MemorySnapshot} | undefined;
-  let watcher: FSWatcher | undefined;
+  let watcher: {readonly close: () => void} | undefined;
   let watched: string | undefined;
   let generation = 0;
   const forget = () => {
@@ -318,20 +318,11 @@ export function watchedMemoryContext(
     watched = undefined;
     forget();
   };
-  /** Watch the marker's directory, since writers replace or create it. */
   const follow = (marker: string): boolean => {
     if (watcher && watched === marker) return true;
     close();
-    try {
-      const name = path.basename(marker);
-      watcher = watch(path.dirname(marker), {persistent: false}, (_, file) => {
-        if (file === null || file === name) forget();
-      });
-      watcher.on('error', close);
-      watched = marker;
-    } catch {
-      watcher = undefined;
-    }
+    watcher = watchChanges(marker, forget, close);
+    if (watcher) watched = marker;
     // A change between the read and the watch's start would go unseen.
     return false;
   };

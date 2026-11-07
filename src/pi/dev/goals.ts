@@ -29,6 +29,7 @@ const task = (
   goal: null,
   holds: [],
   last_event: null,
+  foreign: null,
   ...fields,
 });
 // Drawn by dots task goal show for the same tasks and edges.

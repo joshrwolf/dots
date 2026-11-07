@@ -159,6 +159,11 @@ export function inspection(
   const {goal, tasks} = snapshot.overview;
   lines.push(
     goal.root.title,
+    ...(goal.root.foreign
+      ? [
+          `Read-only here: homed on ${goal.root.foreign.home}; take over with dots task share take ${goal.root.foreign.root}`,
+        ]
+      : []),
     `Root status: ${goal.root.status}`,
     `Recorded at: ${new Date(snapshot.now * 1000).toISOString()}`,
     summary(view),

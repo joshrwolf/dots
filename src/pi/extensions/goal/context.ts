@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {sliceByColumn} from '@earendil-works/pi-tui';
 import {labelText, sourceText} from '@joshrwolf/pi-kit/ui';
 import {holdText, type GoalView} from './present.ts';
-import type {GoalTask} from './source.ts';
+import type {Foreign, GoalTask} from './source.ts';
 
 export const GOAL_SECTION_PREFIX = 'dots_goal_';
 const TASK_CHARS = 8192;
@@ -65,6 +65,7 @@ export function taskContext(view: GoalView): string {
     .join(' · ');
   const lines = [
     `${identity} · ${text(goal.root.title)} [${goal.root.status}]${goal.root.owner ? ` · claimed by ${text(goal.root.owner, 64)}` : ''}${goal.root.result_event !== null ? ` · result event ${goal.root.result_event}` : ''}`,
+    ...(goal.root.foreign ? [readOnly(goal.root.foreign)] : []),
     `Tasks: ${progress || 'none yet'}`,
   ];
   if (goal.root.result !== null) {
@@ -118,6 +119,11 @@ export function taskContext(view: GoalView): string {
     `Results and history: ${command} show TASK_ID; every task: ${command} goal show ${view.focus.id} --all`,
   );
   return lines.join('\n');
+}
+
+/** An imported goal reads like any other but changes only on its home. */
+export function readOnly(foreign: Foreign): string {
+  return `Read-only on this machine: machine ${text(foreign.home, 64)} homes this goal and alone changes it; answers to its requests travel there. Take it over with dots task share take ${foreign.root}, then coordinate it here.`;
 }
 
 /** Also used by goal_focus: run-start hooks have not run again after that tool call. */
