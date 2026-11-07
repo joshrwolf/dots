@@ -380,6 +380,17 @@ impl Substrate {
         })
     }
 
+    /// Names under `prefix` in the last listing, in name order. Never contacts
+    /// the backend; [`Error::Unsynced`] before this machine ever listed.
+    pub fn names(&self, prefix: &str) -> Result<Vec<RefName>> {
+        self.read_state(|state| {
+            if state.sync()?.listed_at.is_none() {
+                return Err(Error::Unsynced);
+            }
+            state.listed_names(prefix)
+        })
+    }
+
     /// A cached blob, verified against its hash. A damaged blob is removed
     /// and the next pass refetches every ref.
     pub fn blob(&self, hash: &Hash) -> Result<Blob> {
@@ -645,9 +656,11 @@ impl Substrate {
     }
 
     /// Record an update for the next flush and touch the changes marker. A
-    /// pending update of the same ref absorbs it: the new root replaces the
-    /// old one, blobs accumulate and the original expectation stays, since a
-    /// single writer's base cannot move.
+    /// pending update of the same ref is replaced: the new root and blobs
+    /// supersede the old ones and the original expectation stays, since a
+    /// single writer's base cannot move. The update therefore lists every
+    /// blob its root needs that the ref lacks at that expectation, so a
+    /// superseded intermediate value is never uploaded.
     pub fn defer(&self, update: Update, now: SystemTime) -> Result<()> {
         self.store(&update.new_blobs)?;
         let blobs = update.new_blobs.iter().map(Blob::hash);
@@ -655,7 +668,7 @@ impl Substrate {
             let pending = match state.pending(&update.name)? {
                 Some(mut pending) => {
                     pending.root = update.root;
-                    pending.blobs.extend(blobs);
+                    pending.blobs = blobs.collect();
                     pending.revision += 1;
                     pending
                 }

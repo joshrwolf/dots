@@ -357,6 +357,7 @@ fn local_reads(lab: &Lab) -> TestResult {
     assert_eq!(first.machine(), second.machine());
     let name = lab.name("x")?;
     assert!(matches!(first.read(&name), Err(Error::Unsynced)));
+    assert!(matches!(first.names(&lab.prefix), Err(Error::Unsynced)));
     let version = applied(one(&*lab.client("b")?, create(&name, &blob("value")?))?)?;
 
     let pass = done(first.sync(Trigger::Explicit, at(0))?)?;
@@ -372,6 +373,11 @@ fn local_reads(lab: &Lab) -> TestResult {
     assert_eq!(second_probe.counts().lists, 0);
     assert_eq!(second_probe.counts().fetches, 0);
     assert_eq!(second.read(&lab.name("absent")?)?, None);
+    assert_eq!(
+        second.names(&format!("{}/", lab.prefix))?,
+        vec![name.clone()]
+    );
+    assert_eq!(second.names("elsewhere/")?, Vec::<RefName>::new());
     let counts = first_probe.counts();
     assert_eq!((counts.lists, counts.fetches), (1, 1));
     assert_eq!(second.status()?.counters.lists, 1);
@@ -542,7 +548,11 @@ fn coalescing_and_budget(lab: &Lab) -> TestResult {
     let other = lab.client("b")?;
     let fetched = other.fetch(&x, &|_| false)?.ok_or("absent")?;
     assert_eq!(fetched.root, blob("x3")?.hash());
-    assert_eq!(fetched.blobs.len(), 3);
+    assert_eq!(
+        fetched.blobs.len(),
+        1,
+        "a coalesced proposal replaces the superseded blobs"
+    );
     assert_eq!(substrate.status()?.pending, []);
     assert_eq!(
         substrate.read(&x)?.ok_or("absent")?.root,

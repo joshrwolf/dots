@@ -90,7 +90,7 @@ pub struct Pending {
     pub name: RefName,
     pub expected: Option<Version>,
     pub root: Hash,
-    /// Blobs to upload with the update, including those of coalesced proposals.
+    /// Blobs to upload with the update; a coalesced proposal replaces them.
     pub blobs: BTreeSet<Hash>,
     pub since: SystemTime,
     /// Advances whenever a proposal coalesces into this entry.
@@ -405,6 +405,21 @@ impl State<'_> {
         change(&mut sync);
         self.set_sync(&sync)?;
         Ok(sync)
+    }
+
+    /// Listed refs whose names start with `prefix`, in name order.
+    pub(crate) fn listed_names(&self, prefix: &str) -> Result<Vec<RefName>> {
+        let fail = self.fail("read listed names");
+        let mut statement = self
+            .transaction
+            .prepare("SELECT name FROM listed WHERE substr(name, 1, length(?1)) = ?1 ORDER BY name")
+            .map_err(&fail)?;
+        let names = statement
+            .query_map([prefix], |row| name(row, 0))
+            .map_err(&fail)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(&fail)?;
+        Ok(names)
     }
 
     pub(crate) fn listed_version(&self, ref_name: &RefName) -> Result<Option<Version>> {
