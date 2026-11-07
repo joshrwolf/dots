@@ -17,6 +17,7 @@ use std::fs;
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use dots_documents::staged_directory::StagedDirectory;
@@ -49,10 +50,13 @@ pub struct GitBackend {
     config: Vec<(String, String)>,
     env: Vec<(OsString, OsString)>,
     deadline: Duration,
+    /// Set once this process has initialized the cache repository.
+    initialized: OnceLock<()>,
 }
 
 impl GitBackend {
-    /// Use `url` with a cache repository under `root`, created if absent.
+    /// Use `url` with a cache repository under `root`, created before the
+    /// first Git command so that opening costs no process.
     pub fn open(root: &Path, url: impl Into<String>) -> Result<Self> {
         let url = url.into();
         if url.is_empty() || url.starts_with('-') || url.contains(char::is_whitespace) {
@@ -63,27 +67,32 @@ impl GitBackend {
             .mode(0o700)
             .create(root)
             .map_err(|source| io("create Git cache directory", root, source))?;
-        let backend = Self {
+        Ok(Self {
             url,
             root: root.into(),
             config: Vec::new(),
             env: Vec::new(),
             deadline: NETWORK_DEADLINE,
-        };
-        let output = backend.run(
-            "initialize cache repository",
-            &[
-                "init",
-                "--bare",
-                "--quiet",
-                "--object-format=sha1",
-                "--template=",
-            ],
-            None,
-            false,
-        )?;
+            initialized: OnceLock::new(),
+        })
+    }
+
+    /// Create or reinitialize the cache repository once per process.
+    fn initialize(&self) -> Result<()> {
+        if self.initialized.get().is_some() {
+            return Ok(());
+        }
+        let command = self.command(&[
+            "init",
+            "--bare",
+            "--quiet",
+            "--object-format=sha1",
+            "--template=",
+        ])?;
+        let output = self.execute("initialize cache repository", command, None, false)?;
         checked(output, "initialize cache repository")?;
-        Ok(backend)
+        let _ = self.initialized.set(());
+        Ok(())
     }
 
     /// Pass `key=value` to every Git command, for example a credential helper.
@@ -160,6 +169,17 @@ impl GitBackend {
     }
 
     fn run_with(
+        &self,
+        operation: &'static str,
+        command: Command,
+        input: Option<Vec<u8>>,
+        network: bool,
+    ) -> Result<Output> {
+        self.initialize()?;
+        self.execute(operation, command, input, network)
+    }
+
+    fn execute(
         &self,
         operation: &'static str,
         command: Command,
