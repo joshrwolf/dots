@@ -121,6 +121,10 @@ pub struct Status {
     pub pending: Vec<Pending>,
     pub stranded: Vec<Stranded>,
     pub last_flush: Option<FlushAttempt>,
+    /// When ref versions were last listed.
+    pub listed_at: Option<SystemTime>,
+    /// Since when listing has failed, if it does.
+    pub offline_since: Option<SystemTime>,
 }
 
 /// One machine's view of a backend: blob cache, shared freshness record,
@@ -461,7 +465,15 @@ impl Substrate {
             pending: state.outbox.values().cloned().collect(),
             stranded: state.stranded.clone(),
             last_flush: state.last_flush.clone(),
+            listed_at: state.listed_at,
+            offline_since: state.offline_since,
         })
+    }
+
+    /// Cache a blob no update carries yet, such as a domain's local candidate.
+    /// It stays local until an update that carries it.
+    pub fn put(&self, blob: &Blob) -> Result<()> {
+        self.cache.put(blob)
     }
 
     fn store(&self, blobs: &[Blob]) -> Result<()> {

@@ -44,7 +44,7 @@
 - Retain durable preferences, corrections, accepted decisions with useful
   rationale, and verified reusable lessons. Correct stale advice and consolidate
   duplicates as part of the work; skip transient progress and easily reread facts.
-- Use `dots memory` for local bounded reads/search and atomic snapshot-checked
+- Use `dots memory` for bounded reads/search and atomic snapshot-checked
   publication. Follow resources at their exact shared scope and snapshot; they
   are not filesystem paths. Keep knowledge in that store rather than maintaining
   a competing harness-native copy. Report unavailable storage or bindings honestly;

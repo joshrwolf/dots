@@ -1,28 +1,91 @@
-//! Native snapshot CLI contracts with neutral disposable homes.
+//! Shared knowledge CLI contracts with neutral disposable homes and a `file://` remote.
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
     use serde_json::{Value, json};
 
+    fn scratch(kind: &str) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "dots-knowledge-cli-{kind}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn git(directory: &Path, args: &[&str]) {
+        let mut command = Command::new("git");
+        command
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").expect("test PATH"))
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .current_dir(directory)
+            .args(args);
+        assert!(
+            dots_process::Runner::new(Duration::from_secs(10), 64 * 1024)
+                .output(command)
+                .unwrap()
+                .status
+                .success(),
+            "git {args:?}"
+        );
+    }
+
+    /// A bare repository reached over `file://`, shared by every machine.
+    struct Remote {
+        root: PathBuf,
+    }
+    impl Remote {
+        fn new() -> Self {
+            let root = scratch("remote");
+            git(&root, &["init", "--bare", "-q", "remote.git"]);
+            Self { root }
+        }
+        fn url(&self) -> String {
+            format!("file://{}", self.root.join("remote.git").display())
+        }
+        /// Make the remote unreachable until `restore`.
+        fn disconnect(&self) {
+            fs::rename(self.root.join("remote.git"), self.root.join("aside.git")).unwrap();
+        }
+        fn restore(&self) {
+            fs::rename(self.root.join("aside.git"), self.root.join("remote.git")).unwrap();
+        }
+    }
+    impl Drop for Remote {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// One machine: its own home and data directory, configured for `remote`.
     struct Fixture {
         root: PathBuf,
+        remote: std::rc::Rc<Remote>,
     }
     impl Fixture {
         fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "dots-knowledge-cli-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
+            Self::on(std::rc::Rc::new(Remote::new()))
+        }
+        fn on(remote: std::rc::Rc<Remote>) -> Self {
+            let root = scratch("machine");
             fs::create_dir_all(root.join("checkout")).unwrap();
             fs::create_dir_all(root.join("home")).unwrap();
-            Self { root }
+            let fixture = Self { root, remote };
+            fixture.ok(&["substrate", "init", "--remote", &fixture.remote.url()]);
+            fixture
+        }
+        /// Another machine on the same remote.
+        fn machine(&self) -> Self {
+            Self::on(self.remote.clone())
         }
         fn command(&self, args: &[&str]) -> Command {
             let mut command = Command::new(env!("CARGO_BIN_EXE_dots"));
@@ -57,7 +120,7 @@ mod tests {
             );
             serde_json::from_slice(&output.stdout).unwrap()
         }
-        fn fail(&self, args: &[&str]) {
+        fn fail(&self, args: &[&str]) -> String {
             let output = self.run(args);
             assert!(!output.status.success(), "{args:?}: unexpectedly succeeded");
             if !output.stdout.is_empty() {
@@ -68,9 +131,14 @@ mod tests {
                 );
                 assert!(failure.get("snapshot").is_none());
             }
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
         }
         fn init(&self) -> Value {
-            self.ok(&["memory", "init", "--actor", "neutral"])
+            self.ok(&["memory", "init"])
         }
         fn input(&self, name: &str, value: &Value) -> String {
             let path = self.root.join(name);
@@ -89,45 +157,11 @@ mod tests {
             ])
         }
         fn catalog(&self) -> Value {
-            let mut command = Command::new("git");
-            command
-                .env_clear()
-                .env("PATH", std::env::var_os("PATH").expect("test PATH"))
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .args(["init", "-q"])
-                .arg(self.root.join("checkout"));
-            assert!(
-                dots_process::Runner::new(Duration::from_secs(10), 64 * 1024)
-                    .output(command)
-                    .unwrap()
-                    .status
-                    .success()
-            );
+            git(&self.root, &["init", "-q", "checkout"]);
             self.ok(&["project", "init", "neutral", "--fresh"])
         }
-        fn replica(&self) -> Self {
-            let replica = Self::new();
-            let bundle = self.root.join("seed.bundle");
-            let bundle = bundle.to_str().unwrap();
-            let receipt = self.ok(&["memory", "export", "--output", bundle]);
-            let receipt_file = self.input("seed-receipt.json", &receipt);
-            replica.ok(&[
-                "memory",
-                "restore",
-                "--actor",
-                "replica",
-                "--role",
-                "replica",
-                "--bundle",
-                bundle,
-                "--receipt-file",
-                &receipt_file,
-            ]);
-            replica
-        }
-        fn store(&self) -> PathBuf {
-            self.root.join("data/dots/knowledge")
+        fn local(&self) -> PathBuf {
+            self.root.join("data/dots/memory")
         }
     }
     impl Drop for Fixture {
@@ -145,10 +179,10 @@ mod tests {
     #[test]
     fn explicit_initialization_pinned_reads_atomic_batches_and_missing_empty_removed() {
         let f = Fixture::new();
-        f.fail(&["memory", "context"]);
-        assert!(!f.store().exists());
+        assert!(f.fail(&["memory", "context"]).contains("memory init"));
         let genesis = f.init();
-        f.fail(&["memory", "init", "--actor", "neutral"]);
+        assert!(snapshot(&genesis).starts_with("sha256:"));
+        f.fail(&["memory", "init"]);
         let before = f.ok(&["memory", "read", "MEMORY.md", "--scope", "global"]);
         assert_eq!(before["document"]["exists"], false);
         let first = f.publish(
@@ -355,7 +389,8 @@ mod tests {
             ])["document"]["exists"],
             true
         );
-        f.fail(&[
+        // A removal built on an older snapshot merges with the disjoint removal since.
+        let merged = f.ok(&[
             "memory",
             "remove",
             "literal.md",
@@ -364,7 +399,11 @@ mod tests {
             "--expected-snapshot",
             snapshot(&empty),
         ]);
-        assert_eq!(f.ok(&["memory", "status"])["snapshot"], removed["snapshot"]);
+        assert_ne!(merged["snapshot"], removed["snapshot"]);
+        for path in ["literal.md", "empty.md"] {
+            let read = f.ok(&["memory", "read", path, "--scope", "global"]);
+            assert_eq!(read["document"]["exists"], false, "{path}");
+        }
     }
 
     #[test]
@@ -405,8 +444,17 @@ mod tests {
             assert_eq!(page["snapshot"], published["snapshot"]);
             assert_eq!(page["document"]["exists"], true);
         }
-        let stale = f.run_input(&args, &changes);
-        assert!(!stale.status.success(), "stale stdin batch succeeded");
+        let diverging = serde_json::to_vec(&json!([
+            write(&json!({"kind":"global"}), "MEMORY.md", "diverging\n"),
+            write(&json!({"kind":"global"}), "unrelated.md", "unrelated\n")
+        ]))
+        .unwrap();
+        let stale = f.run_input(&args, &diverging);
+        assert!(!stale.status.success(), "diverging stdin batch succeeded");
+        assert_eq!(
+            f.ok(&["memory", "read", "unrelated.md", "--scope", "global"])["document"]["exists"],
+            false
+        );
         for input in [
             b"{".as_slice(),
             b"[{}]".as_slice(),
@@ -508,7 +556,7 @@ mod tests {
             "--project",
             aid,
         ]);
-        fs::write(f.store().join("bindings.json"), b"{invalid").unwrap();
+        fs::write(f.local().join("bindings.json"), b"{invalid").unwrap();
         let degraded = f.ok(&["memory", "context"]);
         assert_eq!(degraded["global"]["document"]["content"], "global needle\n");
         assert!(degraded["project"].is_null());
@@ -521,130 +569,204 @@ mod tests {
     }
 
     #[test]
-    fn restore_import_inspection_and_explicit_reconciliation_preserve_ownership() {
-        let authority = Fixture::new();
-        let seed = authority.init();
-        let replica = authority.replica();
-        let restored = replica.ok(&["memory", "status"]);
-        assert_eq!(restored["identity"]["store"], seed["identity"]["store"]);
-        assert_ne!(restored["identity"]["node"], seed["identity"]["node"]);
-        let remote = replica.publish(
-            snapshot(&restored),
-            &json!([write(&json!({"kind":"global"}), "MEMORY.md", "remote fact")]),
+    fn machines_share_one_remote_merge_disjoint_work_and_reconcile_divergence() {
+        let a = Fixture::new();
+        let b = a.machine();
+        let genesis = a.init();
+        b.fail(&["memory", "init"]);
+        assert_eq!(b.ok(&["memory", "status"])["snapshot"], genesis["snapshot"]);
+        let global = json!({"kind":"global"});
+        let base = a.publish(
+            snapshot(&genesis),
+            &json!([write(&global, "MEMORY.md", "base\n")]),
         );
-        let local = authority.publish(
-            snapshot(&seed),
-            &json!([write(&json!({"kind":"global"}), "MEMORY.md", "local fact")]),
-        );
-        let remote_bundle = replica.root.join("remote.bundle");
-        let remote_bundle = remote_bundle.to_str().unwrap();
-        let remote_receipt = replica.ok(&["memory", "export", "--output", remote_bundle]);
-        let remote_receipt_file = replica.input("remote-receipt.json", &remote_receipt);
-        let candidate = authority.ok(&[
-            "memory",
-            "import",
-            "--bundle",
-            remote_bundle,
-            "--receipt-file",
-            &remote_receipt_file,
-        ]);
-        assert_eq!(candidate["snapshot"], remote["snapshot"]);
+        // Explicit reads always check the remote.
         assert_eq!(
-            authority.ok(&["memory", "status"])["snapshot"],
-            local["snapshot"]
+            b.ok(&["memory", "read", "MEMORY.md", "--scope", "global"])["document"]["content"],
+            "base\n"
         );
-        authority.fail(&[
+        let first = a.publish(
+            snapshot(&base),
+            &json!([write(&global, "a.md", "from a\n")]),
+        );
+        let merged = b.publish(
+            snapshot(&base),
+            &json!([write(&global, "b.md", "from b\n")]),
+        );
+        assert_eq!(merged["state"], "published");
+        assert_ne!(merged["snapshot"], first["snapshot"]);
+        for path in ["a.md", "b.md"] {
+            let read = a.ok(&["memory", "read", path, "--scope", "global"]);
+            assert_eq!(read["snapshot"], merged["snapshot"]);
+            assert_eq!(read["document"]["exists"], true, "{path}");
+        }
+
+        let theirs = a.publish(
+            snapshot(&merged),
+            &json!([write(&global, "MEMORY.md", "a's line\n")]),
+        );
+        fs::write(b.root.join("checkout/mine.md"), "b's line\n").unwrap();
+        let failure = b.fail(&[
             "memory",
-            "read",
+            "write",
             "MEMORY.md",
             "--scope",
             "global",
-            "--snapshot",
-            snapshot(&remote),
+            "--expected-snapshot",
+            snapshot(&merged),
+            "--content-file",
+            "mine.md",
         ]);
-        let candidate_file = authority.input("candidate.json", &candidate);
-        let inspected = authority.ok(&[
+        assert!(failure.contains("reconcile"), "{failure}");
+        let status = b.ok(&["memory", "status"]);
+        assert_eq!(status["snapshot"], theirs["snapshot"]);
+        let plan = &status["pending"][0]["plan"];
+        assert_eq!(plan["kind"], "merge");
+        assert_eq!(plan["base"], merged["snapshot"]);
+        assert_eq!(plan["incoming"], theirs["snapshot"]);
+        assert_eq!(plan["conflicts"][0]["resource"]["path"], "MEMORY.md");
+        let candidate = plan["local"].as_str().unwrap();
+        let inspected = b.ok(&[
             "memory",
             "inspect",
-            "--candidate-file",
-            &candidate_file,
+            "--candidate",
+            candidate,
             "MEMORY.md",
             "--scope",
             "global",
         ]);
-        assert_eq!(inspected["document"]["content"], "remote fact\n");
-        assert!(inspected.get("candidate").is_some());
-        let plan = authority.ok(&[
-            "memory",
-            "plan",
-            "--expected-snapshot",
-            snapshot(&local),
-            "--candidate-file",
-            &candidate_file,
-        ]);
-        assert_eq!(plan["base"], seed["snapshot"]);
-        assert_eq!(plan["local"], local["snapshot"]);
-        assert_eq!(plan["recipient"], seed["identity"]);
-        assert_eq!(plan["conflicts"].as_array().unwrap().len(), 1);
-        assert_eq!(plan["conflicts"][0]["resource"]["path"], "MEMORY.md");
-        assert_eq!(
-            authority.ok(&["memory", "status"])["snapshot"],
-            local["snapshot"]
+        assert_eq!(inspected["document"]["content"], "b's line\n");
+        let resolution = b.input(
+            "reconcile.json",
+            &json!({
+                "local": candidate,
+                "incoming": plan["incoming"],
+                "resolutions": [{
+                    "resource": plan["conflicts"][0]["resource"],
+                    "choice": {"kind": "write", "content": "both lines\n"}
+                }]
+            }),
         );
-        let wrong = authority.input("wrong-node.json", &json!({"recipient":restored["identity"],"local":local["snapshot"],"incoming":candidate,"resolutions":[]}));
-        authority.fail(&["memory", "reconcile", "--input-file", &wrong]);
-        assert_eq!(
-            authority.ok(&["memory", "status"])["snapshot"],
-            local["snapshot"]
-        );
-        let input = authority.input("reconcile.json", &json!({"recipient":plan["recipient"],"local":plan["local"],"incoming":plan["incoming"],"resolutions":[{"resource":plan["conflicts"][0]["resource"],"choice":{"kind":"incoming"}}]}));
-        let accepted = authority.ok(&["memory", "reconcile", "--input-file", &input]);
-        assert_ne!(accepted["snapshot"], remote["snapshot"]);
-        authority.fail(&[
-            "memory",
-            "plan",
-            "--expected-snapshot",
-            snapshot(&local),
-            "--candidate-file",
-            &candidate_file,
-        ]);
-        assert_eq!(
-            authority.ok(&["memory", "read", "MEMORY.md", "--scope", "global"])["document"]["content"],
-            "remote fact\n"
-        );
-        replica.fail(&[
-            "memory",
-            "project",
-            "create",
-            "not-authority",
-            "--expected-snapshot",
-            snapshot(&remote),
-        ]);
+        let reconciled = b.ok(&["memory", "reconcile", "--input-file", &resolution]);
+        assert_eq!(reconciled["pending"], json!([]));
+        b.fail(&["memory", "reconcile", "--input-file", &resolution]);
+        let read = a.ok(&["memory", "read", "MEMORY.md", "--scope", "global"]);
+        assert_eq!(read["snapshot"], reconciled["snapshot"]);
+        assert_eq!(read["document"]["content"], "both lines\n");
     }
 
     #[test]
-    fn one_shot_control_protocol_checks_real_cli_input_and_location() {
-        let f = Fixture::new();
-        let initialized = f.init();
-        let request = serde_json::to_vec(&json!({"kind":"status", "root":f.store()})).unwrap();
-        let output = dots_process::Runner::new(Duration::from_secs(10), 1024 * 1024)
-            .stdin(request, 1024 * 1024)
-            .output(f.command(&["memory", "serve"]))
+    fn offline_reads_are_labeled_stale_and_offline_publications_wait() {
+        let a = Fixture::new();
+        let b = a.machine();
+        let genesis = a.init();
+        let global = json!({"kind":"global"});
+        let first = a.publish(
+            snapshot(&genesis),
+            &json!([write(&global, "MEMORY.md", "index\n")]),
+        );
+        assert_eq!(b.ok(&["memory", "status"])["freshness"]["state"], "current");
+        a.remote.disconnect();
+        let context = b.ok(&["memory", "context"]);
+        assert_eq!(context["snapshot"], first["snapshot"]);
+        let read = b.ok(&["memory", "read", "MEMORY.md", "--scope", "global"]);
+        assert_eq!(read["freshness"]["state"], "stale");
+        assert_eq!(read["document"]["content"], "index\n");
+        let plain = dots_process::Runner::new(Duration::from_secs(20), 1024 * 1024)
+            .output({
+                let mut command = Command::new(env!("CARGO_BIN_EXE_dots"));
+                command
+                    .env_clear()
+                    .env("PATH", std::env::var_os("PATH").expect("test PATH"))
+                    .env("HOME", b.root.join("home"))
+                    .env("XDG_DATA_HOME", b.root.join("data"))
+                    .current_dir(b.root.join("checkout"))
+                    .args(["memory", "read", "MEMORY.md", "--scope", "global"]);
+                command
+            })
             .unwrap();
+        assert!(plain.status.success());
+        assert!(String::from_utf8(plain.stdout).unwrap().contains("Stale:"));
+
+        let offline = b.publish(
+            snapshot(&first),
+            &json!([write(&global, "offline.md", "offline\n")]),
+        );
+        assert_eq!(offline["state"], "pending");
+        let candidate = offline["candidate"].clone();
+        let status = b.ok(&["memory", "status"]);
+        assert_eq!(status["freshness"]["state"], "stale");
+        assert_eq!(status["pending"][0]["candidate"], candidate);
+        let substrate = b.ok(&["substrate", "status"]);
+        assert!(substrate["offline_since"].is_u64());
+        a.remote.restore();
+
+        let second = a.publish(
+            snapshot(&first),
+            &json!([write(&global, "second.md", "second\n")]),
+        );
+        let online = b.publish(
+            snapshot(&second),
+            &json!([write(&global, "online.md", "online\n")]),
+        );
+        assert_eq!(online["state"], "published");
+        assert_eq!(online["integrated"], json!([candidate]));
+        assert_eq!(online["pending"], json!([]));
+        for path in ["offline.md", "second.md", "online.md"] {
+            let read = a.ok(&["memory", "read", path, "--scope", "global"]);
+            assert_eq!(read["document"]["exists"], true, "{path}");
+        }
+        assert_eq!(b.ok(&["memory", "status"])["pending"], json!([]));
+    }
+
+    #[test]
+    fn substrate_configuration_is_explicit_and_unchanging() {
+        let f = Fixture::new();
+        let url = f.remote.url();
+        let config = f.root.join("data/dots/substrate/config.json");
+        let written = fs::read(&config).unwrap();
+        f.ok(&["substrate", "init", "--remote", &url]);
+        assert_eq!(fs::read(&config).unwrap(), written);
+        f.fail(&["substrate", "init", "--remote", "file:///elsewhere.git"]);
+        f.fail(&[
+            "substrate",
+            "init",
+            "--remote",
+            &url,
+            "--credential-helper",
+            "!true",
+        ]);
+        let status = f.ok(&["substrate", "status"]);
+        assert_eq!(status["remote"], url.as_str());
+        assert_eq!(status["pending"], json!([]));
+        assert!(status["listed_at"].is_null());
+        f.init();
+        let status = f.ok(&["substrate", "status"]);
+        assert!(status["listed_at"].is_u64());
+        assert!(status["machine"].is_string());
+        assert_eq!(status["stranded"], json!([]));
+
+        let unconfigured = scratch("unconfigured");
+        let output = dots_process::Runner::new(Duration::from_secs(20), 1024 * 1024)
+            .output({
+                let mut command = Command::new(env!("CARGO_BIN_EXE_dots"));
+                command
+                    .env_clear()
+                    .env("PATH", std::env::var_os("PATH").expect("test PATH"))
+                    .env("HOME", unconfigured.join("home"))
+                    .env("XDG_DATA_HOME", unconfigured.join("data"))
+                    .current_dir(&unconfigured)
+                    .args(["memory", "status"]);
+                command
+            })
+            .unwrap();
+        assert!(!output.status.success());
         assert!(
-            output.status.success(),
+            String::from_utf8_lossy(&output.stderr).contains("dots substrate init"),
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(response["status"]["identity"], initialized["identity"]);
-        assert_eq!(response["status"]["snapshot"], initialized["snapshot"]);
-        let output = dots_process::Runner::new(Duration::from_secs(10), 1024 * 1024)
-            .stdin(b"{bad".to_vec(), 1024)
-            .output(f.command(&["memory", "serve"]))
-            .unwrap();
-        assert!(!output.status.success());
-        let failure: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert!(failure["error"].is_string());
+        assert!(!unconfigured.join("data").exists());
+        let _ = fs::remove_dir_all(&unconfigured);
     }
 }

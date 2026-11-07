@@ -32,7 +32,7 @@ explicitly rebind a moved checkout; display names do not establish identity.
 
 The catalog lives at `$XDG_DATA_HOME/dots/workspace.sqlite3`, defaulting to
 `~/.local/share/dots/workspace.sqlite3`. Task commands never initialize storage.
-Memory has a separate [Git knowledge store](../src/memory/README.md). Explicit
+Memory has a separate [shared knowledge store](../src/memory/README.md). Explicit
 associations connect local catalog projects to shared knowledge identities;
 tasks and briefs remain machine-local.
 

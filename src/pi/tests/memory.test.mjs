@@ -50,6 +50,19 @@ function publish(repo, changes) {
 function write(scope, content, relative = 'MEMORY.md') {
   return {scope, path: relative, action: {kind: 'write', content}};
 }
+/** Configure the substrate on a bare file:// remote inside root. */
+function substrate(root) {
+  const remote = path.join(root, 'remote.git');
+  execFileSync('git', ['init', '--bare', '-q', remote], {
+    stdio: 'ignore',
+    env: {
+      PATH: process.env.PATH,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+    },
+  });
+  cli(root, root, 'substrate', 'init', '--remote', `file://${remote}`);
+}
 function scratchRepo() {
   const root = mkdtempSync(path.join(tmpdir(), 'dots-knowledge-'));
   const checkout = path.join(root, 'checkout');
@@ -80,14 +93,8 @@ function scratchRepo() {
   );
   git('worktree', 'add', '-qb', 'slice', path.join(root, 'linked'));
   cli(root, checkout, 'project', 'init', 'Fixture', '--fresh');
-  const initialized = cli(
-    root,
-    checkout,
-    'memory',
-    'init',
-    '--actor',
-    'fixture',
-  );
+  substrate(root);
+  const initialized = cli(root, checkout, 'memory', 'init');
   const registration = cli(
     root,
     checkout,
@@ -283,9 +290,10 @@ test('uninitialized or corrupt knowledge never falls back to filesystem indexes'
     const text = (await memoryText(root, environment(root))).content;
     assert.match(text, /Index unavailable/);
     assert.doesNotMatch(text, /Not created yet|UNACCEPTED_FILESYSTEM_FACT/);
-    cli(root, root, 'memory', 'init', '--actor', 'fixture');
+    substrate(root);
+    cli(root, root, 'memory', 'init');
     writeFileSync(
-      path.join(root, 'data/dots/knowledge/store.json'),
+      path.join(root, 'data/dots/substrate/config.json'),
       '{invalid',
     );
     assert.match(
@@ -352,15 +360,12 @@ test('session shutdown and replacement cannot inject or notify stale context', a
 });
 
 test('memory snapshot decoder rejects cross-snapshot, wrong-scope and filesystem resource responses', () => {
-  const snapshot = 'a'.repeat(64);
+  const snapshot = 'sha256:' + 'a'.repeat(64);
   const value = {
-    identity: {
-      store: 'k-' + '0'.repeat(32),
-      node: 'n-' + '1'.repeat(32),
-      genesis: snapshot,
-      role: 'authority',
-    },
+    store: 'k-' + '0'.repeat(32),
     snapshot,
+    freshness: {state: 'current'},
+    pending: 0,
     project: null,
     diagnostic: 'unbound',
     global: {
@@ -377,11 +382,22 @@ test('memory snapshot decoder rejects cross-snapshot, wrong-scope and filesystem
     },
   };
   assert.equal(decodeMemorySnapshot(value).global.exists, false);
+  const stale = decodeMemorySnapshot({
+    ...value,
+    freshness: {state: 'stale', since: 1, reason: 'unreachable'},
+  });
+  assert.deepEqual(stale.freshness, {state: 'stale', reason: 'unreachable'});
   for (const malformed of [
     null,
     {},
     {...value, snapshot: 'short'},
-    {...value, global: {...value.global, snapshot: 'b'.repeat(64)}},
+    {...value, snapshot: 'a'.repeat(64)},
+    {...value, freshness: {state: 'stale'}},
+    {...value, pending: -1},
+    {
+      ...value,
+      global: {...value.global, snapshot: 'sha256:' + 'b'.repeat(64)},
+    },
     {
       ...value,
       global: {

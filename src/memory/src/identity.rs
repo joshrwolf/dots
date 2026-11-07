@@ -1,7 +1,8 @@
-//! Stable shared identities and exact SHA-256 Git snapshot identifiers.
+//! Stable shared identities and content-addressed snapshot identifiers.
 use std::fmt;
 use std::str::FromStr;
 
+use dots_substrate::Hash;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{Result, invalid};
@@ -59,38 +60,6 @@ impl<'de> Deserialize<'de> for StoreId {
     }
 }
 
-/// A local store instance, independent of the shared dataset and its host address.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(transparent)]
-pub struct NodeId(String);
-
-impl NodeId {
-    pub(crate) fn allocate() -> Result<Self> {
-        Ok(Self(allocate("n-")?))
-    }
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-impl FromStr for NodeId {
-    type Err = crate::Error;
-    fn from_str(value: &str) -> Result<Self> {
-        Ok(Self(validate(value, "n-", 32)?))
-    }
-}
-impl fmt::Display for NodeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-impl<'de> Deserialize<'de> for NodeId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct ProjectId(String);
@@ -122,31 +91,37 @@ impl<'de> Deserialize<'de> for ProjectId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+/// A published or candidate knowledge snapshot: the hash of its manifest blob,
+/// written `sha256:<hex>`.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct Snapshot(String);
+pub struct Snapshot(Hash);
 
 impl Snapshot {
-    pub fn as_str(&self) -> &str {
-        &self.0
+    pub(crate) fn new(hash: Hash) -> Self {
+        Self(hash)
+    }
+    pub fn hash(&self) -> Hash {
+        self.0
     }
 }
 impl FromStr for Snapshot {
     type Err = crate::Error;
     fn from_str(value: &str) -> Result<Self> {
-        Ok(Self(validate(value, "", 64)?))
+        value
+            .parse()
+            .map(Self)
+            .map_err(|_| invalid("snapshot must be sha256: and 64 lowercase hexadecimal digits"))
     }
 }
 impl fmt::Display for Snapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        fmt::Display::fmt(&self.0, f)
     }
 }
-impl<'de> Deserialize<'de> for Snapshot {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)
+impl fmt::Debug for Snapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
     }
 }
 
@@ -161,10 +136,15 @@ mod tests {
         assert_eq!(store.as_str().len(), 34);
         assert_eq!(project.as_str().len(), 34);
         assert!(project.as_str().parse::<StoreId>().is_err());
-        assert!("a".repeat(40).parse::<Snapshot>().is_err());
-        assert!("A".repeat(64).parse::<Snapshot>().is_err());
+        assert!("a".repeat(64).parse::<Snapshot>().is_err());
+        assert!(
+            format!("sha256:{}", "A".repeat(64))
+                .parse::<Snapshot>()
+                .is_err()
+        );
         assert!(serde_json::from_str::<StoreId>("\"k-not-an-id\"").is_err());
         assert!(serde_json::from_str::<Snapshot>("\"HEAD\"").is_err());
-        assert!("a".repeat(64).parse::<Snapshot>().is_ok());
+        let snapshot: Snapshot = format!("sha256:{}", "a".repeat(64)).parse().expect("parse");
+        assert_eq!(snapshot.to_string(), format!("sha256:{}", "a".repeat(64)));
     }
 }

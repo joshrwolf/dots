@@ -15,6 +15,7 @@ mod render;
 mod review;
 mod skills;
 mod stream;
+mod substrate;
 mod tasks;
 mod terminal_text;
 mod watch;
@@ -150,6 +151,7 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
                 .context("resolve working directory")?;
             memory::run(command, &directory, project.as_deref(), cli.json)
         }
+        Command::Substrate { command } => substrate::run(command),
         Command::Task {
             project,
             owner,

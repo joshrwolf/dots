@@ -34,12 +34,14 @@ catalog project using `memory project bind`. Names, checkout paths and remotes
 never establish shared identity. Keep the exact shared selector from a resource
 when following it; a later local rebind must not redirect that read.
 
-Missing documents, unavailable storage, absent bindings and unpublished incoming
+Missing documents, unavailable storage, absent bindings and unpublished retained
 candidates are different states. Never report an unavailable project as empty or
 silently use global knowledge in its place. Global recall can remain available
-when project lookup or an individual index page fails. Ordinary reads neither
-initialize storage nor access the network. If Git or dots is unavailable, report
-that limitation; do not read internal repository files or invent a file backend.
+when project lookup or an individual index page fails. Reads check the shared
+remote; when it is unreachable they return the last snapshot this machine saw,
+labeled stale. Say so when relying on stale knowledge. If dots or the substrate
+is unavailable, report that limitation; do not read internal cache files or
+invent a file backend.
 
 ## Retain useful knowledge
 
@@ -61,7 +63,7 @@ Prefer canonical sources (commit/path, document or public URL) over copied
 material. Distinguish user decisions, observed results and hypotheses. Never
 invent quotes or successful checks. Selected project evidence belongs in retained
 outputs; those outputs, task IDs, briefs and sessions remain machine-local and
-may be unavailable on another peer. Keep the reusable conclusion understandable
+may be unavailable on another machine. Keep the reusable conclusion understandable
 without access to another machine's working material. Local source links do not
 replicate: retain the useful conclusion and enough source attribution or a short
 excerpt to support it without pretending the original file is portable.
@@ -84,43 +86,42 @@ removes one page; empty written content remains a present document.
 Publish related topics and their index together with `memory publish
 --expected-snapshot SNAPSHOT --input-file - --json`: stdin is a JSON array of
 explicit scoped changes, described by `memory publish --help`. All changes
-across selected scopes succeed atomically or reject a stale precondition. A
-content digest or `missing` is not a publication precondition. Prefer stdin;
+across selected scopes land in one snapshot. If knowledge moved on since the
+expected snapshot, changes to other documents merge automatically; a document
+that also changed elsewhere fails the publication. A content digest or
+`missing` is not a publication precondition. Prefer stdin;
 when a file is needed, use unique private scratch outside the public checkout,
 not a fixed shared temporary path, and remove it afterward.
 
-On a conflict, reread and reconsider the affected knowledge at the new snapshot;
+On a divergence, reread and reconsider the affected knowledge at the new snapshot;
 never blindly substitute a newer token. Contention returns busy: retry after the
 writer finishes, without spinning. The CLI owns its short kernel-held lock; do
 not wrap it in another lock or unlink its stable file. Reasoning and drafting
 happen outside the lock. Verify the returned snapshot and reread changed
-resources at that exact revision before claiming a save.
+resources at that exact revision before claiming a save. State `pending` means
+retained on this machine, not shared.
 
 ## Reconcile and maintain
 
-Local publication is not delivery. `memory status` reports local snapshots,
-retained peer progress, acknowledged deliveries and pending integration without
-networking. Authorized `memory sync` explicitly contacts a bound enrolled peer.
-Only the authority integrates divergent history. Same-document divergence needs
-a deliberate choice even when text could merge. For an imported bundle, save the
-returned candidate JSON privately and run `memory plan --expected-snapshot SNAPSHOT
---candidate-file INPUT` to obtain the base and all conflicting resources without
-network access. File/directory and case collisions also require explicit choices
-for every implicated document. Inspect the labeled incoming candidate and the
-published local/base resources; use `memory reconcile` for explicit resolutions,
-then sync separately. A stale plan/return needs fresh
-observation, never a forced rewrite. Imports remain unreadable as ordinary memory
-until accepted.
+A failed divergent publication, and any publication made while the remote is
+unreachable, stays retained on this machine as a candidate. `memory status`
+lists retained candidates with their integration plans: base, incoming snapshot
+and every conflicting resource, including file/directory and case collisions.
+Read the labeled candidate with `memory inspect` and the published incoming and
+base resources with `memory read`; then run `memory reconcile` with an explicit
+choice for every conflict, even when text could merge. A candidate without
+conflicts (an offline publication) reconciles with no choices, and the next
+online publication also publishes it. If knowledge moved past the plan's incoming
+snapshot, re-plan from fresh status, never force a rewrite. Retained candidates
+are unreadable as ordinary memory until published.
 
-Trusted enrolled peers and tool-owned exports still require identity, integrity,
-history and schema checks. They are not arbitrary hostile-file inputs. Initialize,
-restore, bind peers, exchange bundles or schedule synchronization only within
-the user's deployment mandate. No automatic transcript ingestion or background
+Configure the substrate, initialize knowledge or convert a store only within the
+user's deployment mandate. No automatic transcript ingestion or background
 publication is part of upkeep.
 
 Correct the current explanation in place, fix links and remove stale index
 advice. Keep genuine uncertainty explicit; consolidate related pages without
 rewriting unrelated material for style. Promote stable binding rules to
 instructions only with user agreement. Removing a document changes published
-knowledge but preserves Git history and does not erase replicas, bundles, outputs
-or backups. Explain that limit; never claim complete erasure.
+knowledge but earlier snapshots keep it, and it does not erase remote history,
+machine caches, outputs or backups. Explain that limit; never claim complete erasure.

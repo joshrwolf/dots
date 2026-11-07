@@ -503,6 +503,7 @@ dependencies = [
  "dots-pick",
  "dots-process",
  "dots-review",
+ "dots-substrate",
  "dots-tasks",
  "github-inspect",
  "github-watch",
@@ -536,9 +537,9 @@ version = "0.1.0"
 dependencies = [
  "dots-documents",
  "dots-process",
+ "dots-substrate",
  "getrandom 0.4.3",
  "hex",
- "nix 0.31.3",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

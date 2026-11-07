@@ -1,9 +1,123 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use dots_documents::staged_directory::StagedDirectory;
+use dots_substrate::memory::MemoryBackend;
+use dots_substrate::{Backend, Config, Fetched, Hash};
+
 use super::*;
-use std::fs::Permissions;
+use crate::{Choice, MAX_FILE_BYTES, Resolution, Resource};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
-use crate::fixture::Fixture;
+/// A shared in-memory remote that tests can take offline per machine.
+#[derive(Clone, Debug)]
+struct Link {
+    remote: MemoryBackend,
+    offline: Arc<AtomicBool>,
+}
+
+impl Backend for Link {
+    fn list(&self) -> dots_substrate::Result<BTreeMap<RefName, Version>> {
+        self.check()?;
+        self.remote.list()
+    }
+    fn fetch(
+        &self,
+        name: &RefName,
+        cached: &dyn Fn(&Hash) -> bool,
+    ) -> dots_substrate::Result<Option<Fetched>> {
+        self.check()?;
+        self.remote.fetch(name, cached)
+    }
+    fn update(&self, updates: &[Update]) -> dots_substrate::Result<Vec<Outcome>> {
+        self.check()?;
+        self.remote.update(updates)
+    }
+}
+
+impl Link {
+    fn check(&self) -> dots_substrate::Result<()> {
+        if self.offline.load(Ordering::SeqCst) {
+            return Err(dots_substrate::Error::Unavailable("neutral outage".into()));
+        }
+        Ok(())
+    }
+}
+
+struct Machine {
+    _scratch: StagedDirectory,
+    store: Store,
+    offline: Arc<AtomicBool>,
+    tick: u64,
+}
+
+impl Machine {
+    fn new(remote: &MemoryBackend) -> Result<Self> {
+        let scratch = StagedDirectory::create(&std::env::temp_dir())?;
+        let offline = Arc::new(AtomicBool::new(false));
+        let link = Link {
+            remote: remote.clone(),
+            offline: Arc::clone(&offline),
+        };
+        let substrate = Substrate::open(
+            &scratch.path().join("substrate"),
+            Box::new(link),
+            Config::default(),
+        )?;
+        let store = Store::open(substrate, &scratch.path().join("memory"))?;
+        Ok(Self {
+            _scratch: scratch,
+            store,
+            offline,
+            tick: 0,
+        })
+    }
+
+    /// Each operation happens one second after the previous one.
+    fn now(&mut self) -> SystemTime {
+        self.tick += 1;
+        UNIX_EPOCH + Duration::from_secs(1_900_000_000 + self.tick)
+    }
+
+    fn head(&mut self) -> Result<Head> {
+        let now = self.now();
+        self.store.head(Duration::ZERO, now)
+    }
+
+    fn snapshot(&mut self) -> Result<Snapshot> {
+        Ok(self.head()?.snapshot)
+    }
+
+    fn publish(&mut self, expected: &Snapshot, changes: &[Change]) -> Result<Publication> {
+        let now = self.now();
+        self.store.publish(expected, changes, now)
+    }
+
+    fn published(&mut self, expected: &Snapshot, changes: &[Change]) -> Result<Snapshot> {
+        match self.publish(expected, changes)?.landing {
+            Landing::Published { snapshot } => Ok(snapshot),
+            Landing::Pending { reason, .. } => Err(Error::Unavailable(reason)),
+        }
+    }
+
+    fn content(&mut self, snapshot: Option<&Snapshot>, path: &str) -> Result<Option<String>> {
+        let head = self.head()?;
+        self.store
+            .view(&head, snapshot)?
+            .content(&Scope::Global, Path::new(path))
+    }
+}
+
+fn pair() -> Result<(Machine, Machine, Snapshot)> {
+    let remote = MemoryBackend::new();
+    let mut a = Machine::new(&remote)?;
+    let now = a.now();
+    let genesis = a.store.initialize(now)?;
+    let b = Machine::new(&remote)?;
+    Ok((a, b, genesis))
+}
 
 fn put(scope: Scope, path: &str, content: &str) -> Change {
     Change {
@@ -15,51 +129,23 @@ fn put(scope: Scope, path: &str, content: &str) -> Change {
     }
 }
 
-#[test]
-fn native_git_rejects_reserved_paths_before_publication() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    for path in [
-        "GIT~1/x.md",
-        "git~1/note.md",
-        "a\u{200c}/\u{200c}.git/note.md",
-    ] {
-        assert!(
-            fixture
-                .store
-                .publish(&base, &[put(Scope::Global, path, "neutral")])
-                .is_err(),
-            "{path}"
-        );
-        assert_eq!(
-            fixture.store.snapshot()?,
-            base,
-            "{path}: rejected write advanced history"
-        );
+fn global(path: &str, content: &str) -> Change {
+    put(Scope::Global, path, content)
+}
+
+fn remove(path: &str) -> Change {
+    Change {
+        scope: Scope::Global,
+        path: path.into(),
+        action: Action::Remove {},
     }
-    let publication = fixture
-        .store
-        .publish(&base, &[put(Scope::Global, "plain/note.md", "valid")])?;
-    let bundle = fixture.parent.join("after-rejections.bundle");
-    let receipt = fixture
-        .store
-        .export_bundle(&publication.snapshot, &bundle)?;
-    let restored = Store::restore(
-        &fixture.parent.join("restored"),
-        "restored",
-        Role::Replica,
-        &bundle,
-        &receipt,
-    )?;
-    assert_eq!(restored.snapshot()?, publication.snapshot);
-    assert_eq!(
-        restored
-            .latest()?
-            .content(&Scope::Global, Path::new("plain/note.md"))?
-            .as_deref(),
-        Some("valid")
-    );
-    Ok(())
+}
+
+fn resource(path: &str) -> Resource {
+    Resource {
+        scope: Scope::Global,
+        path: path.into(),
+    }
 }
 
 #[test]
@@ -68,7 +154,6 @@ fn serialized_changes_require_an_explicit_action() {
         r#"{"scope":{"kind":"global"},"path":"note.md"}"#,
         r#"{"scope":{"kind":"global"},"path":"note.md","action":null}"#,
         r#"{"scope":{"kind":"global"},"path":"note.md","action":{"kind":"write"}}"#,
-        r#"{"scope":{"kind":"global"},"path":"note.md","action":{"kind":"write","content":null}}"#,
         r#"{"scope":{"kind":"global"},"path":"note.md","action":{"kind":"remove","content":"unexpected"}}"#,
     ] {
         assert!(serde_json::from_str::<Change>(value).is_err(), "{value}");
@@ -79,238 +164,121 @@ fn serialized_changes_require_an_explicit_action() {
     ] {
         assert!(serde_json::from_str::<Scope>(value).is_err(), "{value}");
     }
-    let remove = serde_json::from_str::<Change>(
-        r#"{"scope":{"kind":"global"},"path":"note.md","action":{"kind":"remove"}}"#,
-    )
-    .expect("explicit removal");
-    assert!(matches!(remove.action, Action::Remove {}));
 }
 
 #[test]
-fn initialized_store_is_private_and_reads_do_not_create_a_lock() -> TestResult {
-    let fixture = Fixture::new()?;
-    let root = fixture.store.root();
-    assert_eq!(fs::metadata(root)?.permissions().mode() & 0o777, 0o700);
-    assert_eq!(
-        fs::metadata(root.join(LOCAL))?.permissions().mode() & 0o777,
-        0o600
-    );
-    assert_eq!(fixture.store.role(), Role::Authority);
-    let opened = Store::open(root)?;
-    assert_eq!(opened.id(), fixture.store.id());
-    assert_eq!(opened.node_id(), fixture.store.node_id());
-    let view = opened.latest()?;
-    let absent = view.read(&Scope::Global, Path::new("MEMORY.md"), 1, 200)?;
+fn initialization_is_create_only_and_reads_need_published_knowledge() -> TestResult {
+    let remote = MemoryBackend::new();
+    let mut a = Machine::new(&remote)?;
+    assert!(matches!(a.head(), Err(Error::Uninitialized)));
+    let now = a.now();
+    let genesis = a.store.initialize(now)?;
+    let mut b = Machine::new(&remote)?;
+    let now = b.now();
+    assert!(matches!(b.store.initialize(now), Err(Error::AlreadyInitialized(s)) if s == genesis));
+    let head = b.head()?;
+    assert_eq!(head.snapshot, genesis);
+    assert_eq!(head.freshness, Freshness::Current);
+    let absent = b
+        .store
+        .view(&head, None)?
+        .read(&Scope::Global, Path::new("MEMORY.md"), 1, 200)?;
     assert!(!absent.document.exists);
     assert_eq!(absent.document.revision, "missing");
-    assert_eq!(absent.document.path, Path::new("MEMORY.md"));
-    assert!(!root.join("mutation.lock").exists());
-    assert!(!root.join("repo.git/index").exists());
     Ok(())
 }
 
 #[test]
 fn publication_is_atomic_and_pinned_reads_remain_at_their_snapshot() -> TestResult {
-    let fixture = Fixture::new()?;
-    let store = &fixture.store;
-    let base = store.snapshot()?;
-    let published = store.publish(
-        &base,
+    let (mut a, _, genesis) = pair()?;
+    let first = a.published(
+        &genesis,
         &[
-            put(Scope::Global, "MEMORY.md", "# Memory\nSee wiki/topic.md\n"),
-            put(Scope::Global, "wiki/topic.md", "Complete topic\n"),
+            global("MEMORY.md", "# Memory\n"),
+            global("wiki/topic.md", "topic\n"),
+            global("empty.md", ""),
         ],
     )?;
-    assert_eq!(published.changed, 2);
-    assert!(
-        !store
-            .view(&base)?
-            .read(&Scope::Global, Path::new("MEMORY.md"), 1, 200)?
-            .document
-            .exists
-    );
-    let view = store.view(&published.snapshot)?;
+    let second = a.published(
+        &first,
+        &[global("MEMORY.md", "# Updated\n"), remove("empty.md")],
+    )?;
     assert_eq!(
-        view.read(&Scope::Global, Path::new("wiki/topic.md"), 1, 200)?
-            .document
-            .content,
-        "Complete topic\n"
+        a.content(Some(&first), "MEMORY.md")?.as_deref(),
+        Some("# Memory\n")
     );
+    assert_eq!(a.content(Some(&first), "empty.md")?.as_deref(), Some(""));
     assert_eq!(
-        view.read(&Scope::Global, Path::new("MEMORY.md"), 1, 200)?
-            .snapshot,
-        published.snapshot
+        a.content(None, "MEMORY.md")?.as_deref(),
+        Some("# Updated\n")
     );
-    let no_op = store.publish(
-        &published.snapshot,
-        &[put(Scope::Global, "wiki/topic.md", "Complete topic\n")],
-    )?;
-    assert_eq!(no_op.changed, 0);
-    assert_eq!(no_op.snapshot, published.snapshot);
-    Ok(())
-}
-
-#[test]
-fn full_snapshot_conflicts_do_not_overwrite_an_unrelated_change() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let published = fixture
-        .store
-        .publish(&base, &[put(Scope::Global, "one.md", "one")])?;
-    let result = fixture
-        .store
-        .publish(&base, &[put(Scope::Global, "two.md", "two")]);
-    assert!(
-        matches!(result, Err(Error::Conflict { expected, actual }) if expected == base && actual == published.snapshot)
-    );
-    assert_eq!(fixture.store.snapshot()?, published.snapshot);
-    assert!(
-        !fixture
-            .store
-            .latest()?
-            .read(&Scope::Global, Path::new("two.md"), 1, 200)?
-            .document
-            .exists
-    );
-    Ok(())
-}
-
-#[test]
-fn racing_batches_publish_one_complete_snapshot() -> TestResult {
-    use std::sync::Barrier;
-    use std::thread;
-    let fixture = Fixture::new()?;
-    let store = &fixture.store;
-    let base = store.snapshot()?;
-    let gate = Barrier::new(2);
-    let results = thread::scope(|scope| {
-        let first = scope.spawn(|| {
-            gate.wait();
-            store.publish(
-                &base,
-                &[
-                    put(Scope::Global, "one.md", "first"),
-                    put(Scope::Global, "two.md", "first"),
-                ],
-            )
-        });
-        let second = scope.spawn(|| {
-            gate.wait();
-            store.publish(
-                &base,
-                &[
-                    put(Scope::Global, "one.md", "second"),
-                    put(Scope::Global, "two.md", "second"),
-                ],
-            )
-        });
-        [
-            first.join().expect("first writer did not panic"),
-            second.join().expect("second writer did not panic"),
-        ]
-    });
-    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
-    let rejected = results
-        .iter()
-        .find(|result| result.is_err())
-        .expect("one writer is rejected");
-    assert!(matches!(
-        rejected,
-        Err(Error::Conflict { .. } | Error::Documents(dots_documents::Error::Busy))
-    ));
-    let view = store.latest()?;
-    let first = view.read(&Scope::Global, Path::new("one.md"), 1, 20)?;
-    let second = view.read(&Scope::Global, Path::new("two.md"), 1, 20)?;
-    assert_eq!(first.document.content, second.document.content);
-    assert!(matches!(
-        first.document.content.as_str(),
-        "first\n" | "second\n"
-    ));
-    Ok(())
-}
-
-#[test]
-fn empty_and_missing_documents_and_delete_have_distinct_contracts() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let written = fixture
-        .store
-        .publish(&base, &[put(Scope::Global, "empty.md", "")])?;
-    let read = fixture.store.view(&written.snapshot)?.read(
-        &Scope::Global,
-        Path::new("empty.md"),
-        1,
-        20,
-    )?;
-    assert!(read.document.exists);
-    assert_ne!(read.document.revision, "missing");
-    assert_eq!(read.document.content, "");
-    let removed = fixture.store.publish(
-        &written.snapshot,
-        &[Change {
-            scope: Scope::Global,
-            path: "empty.md".into(),
-            action: Action::Remove {},
-        }],
-    )?;
-    assert!(
-        !fixture
-            .store
-            .view(&removed.snapshot)?
-            .read(&Scope::Global, Path::new("empty.md"), 1, 20)?
-            .document
-            .exists
-    );
-    assert!(
-        fixture
-            .store
-            .view(&written.snapshot)?
-            .read(&Scope::Global, Path::new("empty.md"), 1, 20)?
-            .document
-            .exists
-    );
-    Ok(())
-}
-
-#[test]
-fn exact_content_keeps_unicode_line_endings_and_unterminated_lines() -> TestResult {
-    let fixture = Fixture::new()?;
+    assert_eq!(a.content(None, "empty.md")?, None);
+    assert_eq!(a.store.parents(&second)?, vec![first]);
     let content = "café\r\nlast line";
-    let base = fixture.store.snapshot()?;
-    let publication = fixture
-        .store
-        .publish(&base, &[put(Scope::Global, "wiki/café.md", content)])?;
-    let view = fixture.store.view(&publication.snapshot)?;
+    let third = a.published(&second, &[global("wiki/café.md", content)])?;
     assert_eq!(
-        view.content(&Scope::Global, Path::new("wiki/café.md"))?
-            .as_deref(),
+        a.content(Some(&third), "wiki/café.md")?.as_deref(),
         Some(content)
     );
-    assert_eq!(
-        view.read(&Scope::Global, Path::new("wiki/café.md"), 1, 20)?
-            .document
-            .revision,
-        dots_documents::text::revision(Some(content))
-    );
-    assert_eq!(view.content(&Scope::Global, Path::new("absent.md"))?, None);
+    // Repeating content already published changes nothing.
+    let again = a.publish(&third, &[global("wiki/café.md", content)])?;
+    assert_eq!(again.changed, 0);
+    assert!(matches!(again.landing, Landing::Published { snapshot } if snapshot == third));
+    Ok(())
+}
+
+#[test]
+fn invalid_batches_and_unpublished_snapshots_change_nothing() -> TestResult {
+    let (mut a, _, genesis) = pair()?;
+    let huge = "x".repeat(MAX_FILE_BYTES + 1);
+    for changes in [
+        vec![global("valid.md", "valid"), global("../escape.md", "bad")],
+        vec![global("valid.md", "valid"), global("large.md", &huge)],
+        vec![global("same.md", "one"), global("same.md", "two")],
+        vec![global("Case.md", "one"), global("case.md", "two")],
+        vec![global("Wiki/one.md", "one"), global("wiki/two.md", "two")],
+        vec![global("binary.md", "nul\0byte")],
+        vec![global("file.md", "one"), global("file.md/child.md", "two")],
+        vec![global("plain.txt", "not markdown")],
+    ] {
+        assert!(a.publish(&genesis, &changes).is_err());
+        assert_eq!(a.snapshot()?, genesis);
+    }
+    let content = "x".repeat(MAX_FILE_BYTES);
+    let changes: Vec<_> = (0..=(crate::MAX_CORPUS_BYTES / MAX_FILE_BYTES))
+        .map(|index| global(&format!("document-{index}.md"), &content))
+        .collect();
+    assert!(a.publish(&genesis, &changes).is_err());
+    let unknown: Snapshot = format!("sha256:{}", "0".repeat(64)).parse()?;
+    assert!(a.publish(&unknown, &[global("a.md", "a")]).is_err());
+    let head = a.head()?;
+    assert!(a.store.view(&head, Some(&unknown)).is_err());
+    assert_eq!(a.store.pending()?, Vec::new());
+    assert_eq!(head.snapshot, genesis);
     Ok(())
 }
 
 #[test]
 fn project_identity_is_explicit_and_display_names_do_not_select_it() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let registration = fixture.store.register_project(&base, "sample-project")?;
-    let other = fixture
-        .store
-        .register_project(&registration.snapshot, "sample-project")?;
-    assert_ne!(registration.project, other.project);
-    let scope = Scope::Project(registration.project.clone());
-    let written = fixture.store.publish(
-        &other.snapshot,
+    let (mut a, _, genesis) = pair()?;
+    let now = a.now();
+    let first = a.store.register_project(&genesis, "sample-project", now)?;
+    let Landing::Published { snapshot } = first.publication.landing else {
+        panic!("registration stayed pending");
+    };
+    let now = a.now();
+    let other = a.store.register_project(&snapshot, "sample-project", now)?;
+    assert_ne!(first.project, other.project);
+    let Landing::Published { snapshot } = other.publication.landing else {
+        panic!("registration stayed pending");
+    };
+    let scope = Scope::Project(first.project.clone());
+    let written = a.published(
+        &snapshot,
         &[put(scope.clone(), "MEMORY.md", "project note\n")],
     )?;
-    let view = fixture.store.view(&written.snapshot)?;
+    let head = a.head()?;
+    let view = a.store.view(&head, Some(&written))?;
     assert_eq!(
         view.read(&scope, Path::new("MEMORY.md"), 1, 20)?
             .document
@@ -328,20 +296,14 @@ fn project_identity_is_explicit_and_display_names_do_not_select_it() -> TestResu
             .document
             .exists
     );
-    assert!(
-        !view
-            .read(&Scope::Global, Path::new("MEMORY.md"), 1, 20)?
-            .document
-            .exists
-    );
     let unknown = ProjectId::allocate()?;
-    assert!(
-        matches!(view.read(&Scope::Project(unknown.clone()), Path::new("MEMORY.md"), 1, 20), Err(Error::UnknownProject(id)) if id == unknown)
-    );
     assert!(matches!(
-        fixture
-            .store
-            .view(&base)?
+        view.read(&Scope::Project(unknown.clone()), Path::new("MEMORY.md"), 1, 20),
+        Err(Error::UnknownProject(id)) if id == unknown
+    ));
+    assert!(matches!(
+        a.store
+            .view(&head, Some(&genesis))?
             .read(&scope, Path::new("MEMORY.md"), 1, 20),
         Err(Error::UnknownProject(_))
     ));
@@ -350,14 +312,15 @@ fn project_identity_is_explicit_and_display_names_do_not_select_it() -> TestResu
 
 #[test]
 fn literal_search_is_scoped_bounded_and_uses_relative_resources() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let project = fixture.store.register_project(&base, "sample")?;
-    let published = fixture.store.publish(
-        &project.snapshot,
+    let (mut a, _, genesis) = pair()?;
+    let now = a.now();
+    let project = a.store.register_project(&genesis, "sample", now)?;
+    let base = a.snapshot()?;
+    let published = a.published(
+        &base,
         &[
-            put(Scope::Global, "a.md", "First Needle\nSecond needle\n"),
-            put(Scope::Global, "log.md", "needle in named topic\n"),
+            global("a.md", "First Needle\nSecond needle\n"),
+            global("log.md", "needle in named topic\n"),
             put(
                 Scope::Project(project.project.clone()),
                 "a.md",
@@ -365,19 +328,15 @@ fn literal_search_is_scoped_bounded_and_uses_relative_resources() -> TestResult 
             ),
         ],
     )?;
-    let view = fixture.store.view(&published.snapshot)?;
+    let head = a.head()?;
+    let view = a.store.view(&head, Some(&published))?;
     let first = view.search(&Scope::Global, "NEEDLE", 0, 1)?;
-    assert_eq!(first.snapshot, published.snapshot);
-    assert_eq!(first.result.hits.len(), 1);
+    assert_eq!(first.snapshot, published);
     assert_eq!(first.result.hits[0].path, Path::new("a.md"));
-    assert_eq!(first.result.hits[0].line, 1);
     assert_eq!(first.result.next_offset, Some(1));
-    let last = view.search(&Scope::Global, "needle", 1, 1)?;
-    assert_eq!(last.result.hits[0].line, 2);
-    assert!(last.result.has_more);
-    let final_page = view.search(&Scope::Global, "needle", 2, 1)?;
-    assert_eq!(final_page.result.hits[0].path, Path::new("log.md"));
-    assert!(!final_page.result.has_more);
+    let last = view.search(&Scope::Global, "needle", 2, 1)?;
+    assert_eq!(last.result.hits[0].path, Path::new("log.md"));
+    assert!(!last.result.has_more);
     let scoped = view.search(&Scope::Project(project.project), "needle", 0, 20)?;
     assert_eq!(scoped.result.hits.len(), 1);
     assert_eq!(scoped.result.hits[0].excerpt, "needle private to project");
@@ -385,265 +344,218 @@ fn literal_search_is_scoped_bounded_and_uses_relative_resources() -> TestResult 
 }
 
 #[test]
-fn invalid_batch_cannot_advance_the_published_reference() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let huge = "x".repeat(MAX_FILE_BYTES + 1);
-    let objects = fixture.store.git.text(&["count-objects", "-v"], None)?;
-    for changes in [
-        vec![
-            put(Scope::Global, "valid.md", "valid"),
-            put(Scope::Global, "../escape.md", "bad"),
-        ],
-        vec![
-            put(Scope::Global, "valid.md", "valid"),
-            put(Scope::Global, "large.md", &huge),
-        ],
-        vec![
-            put(Scope::Global, "same.md", "one"),
-            put(Scope::Global, "same.md", "two"),
-        ],
-        vec![
-            put(Scope::Global, "Case.md", "one"),
-            put(Scope::Global, "case.md", "two"),
-        ],
-        vec![
-            put(Scope::Global, "Wiki/one.md", "one"),
-            put(Scope::Global, "wiki/two.md", "two"),
-        ],
-        vec![put(Scope::Global, "binary.md", "nul\0byte")],
-        vec![
-            put(Scope::Global, "file.md", "one"),
-            put(Scope::Global, "file.md/child.md", "two"),
-        ],
+fn layout_collisions_require_explicit_choices_for_every_document() -> TestResult {
+    for (ours, theirs) in [
+        ("topic.md", "topic.md/child.md"),
+        ("Topic.md", "topic.md"),
+        ("Wiki/a.md", "wiki/b.md"),
     ] {
-        assert!(fixture.store.publish(&base, &changes).is_err());
-        assert_eq!(fixture.store.snapshot()?, base);
-        assert_eq!(
-            fixture.store.git.text(&["count-objects", "-v"], None)?,
-            objects
+        let (mut a, mut b, genesis) = pair()?;
+        let remote = b.published(&genesis, &[global(theirs, "theirs")])?;
+        let Err(Error::Diverged {
+            candidate, actual, ..
+        }) = a.publish(&genesis, &[global(ours, "ours")])
+        else {
+            panic!("{ours} vs {theirs} did not diverge");
+        };
+        assert_eq!(actual, remote);
+        let plan = a.store.plan(&candidate, &remote)?;
+        assert_eq!(plan.conflicts.len(), 2, "{ours} vs {theirs}");
+        let now = a.now();
+        assert!(a.store.reconcile(&candidate, &remote, &[], now).is_err());
+        let keep_both = [
+            Resolution {
+                resource: resource(ours),
+                choice: Choice::Local {},
+            },
+            Resolution {
+                resource: resource(theirs),
+                choice: Choice::Incoming {},
+            },
+        ];
+        let now = a.now();
+        assert!(
+            a.store
+                .reconcile(&candidate, &remote, &keep_both, now)
+                .is_err()
         );
+        let choices = [
+            Resolution {
+                resource: resource(ours),
+                choice: Choice::Remove {},
+            },
+            Resolution {
+                resource: resource(theirs),
+                choice: Choice::Incoming {},
+            },
+        ];
+        let now = a.now();
+        let merged = a.store.reconcile(&candidate, &remote, &choices, now)?;
+        // Keeping only the incoming side publishes nothing new.
+        assert_eq!(merged, remote);
+        assert_eq!(a.content(None, ours)?, None);
+        assert_eq!(a.content(None, theirs)?.as_deref(), Some("theirs"));
+        assert_eq!(a.store.pending()?, Vec::new());
     }
     Ok(())
 }
 
 #[test]
-fn corpus_and_metadata_budgets_fail_before_writing_objects() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let objects = fixture.store.git.text(&["count-objects", "-v"], None)?;
-    let content = "x".repeat(MAX_FILE_BYTES);
-    let changes: Vec<_> = (0..=(MAX_CORPUS_BYTES / MAX_FILE_BYTES))
-        .map(|index| put(Scope::Global, &format!("document-{index}.md"), &content))
-        .collect();
-    assert!(fixture.store.publish(&base, &changes).is_err());
-    assert_eq!(fixture.store.snapshot()?, base);
+fn deletion_conflicts_and_bad_resolutions_keep_everything_else() -> TestResult {
+    let (mut a, mut b, genesis) = pair()?;
+    let base = a.published(&genesis, &[global("MEMORY.md", "base")])?;
+    let remote = b.published(&base, &[remove("MEMORY.md")])?;
+    let Err(Error::Diverged { candidate, .. }) = a.publish(
+        &base,
+        &[global("MEMORY.md", "changed"), global("keep.md", "keep")],
+    ) else {
+        panic!("edit against removal did not diverge");
+    };
+    let plan = a.store.plan(&candidate, &remote)?;
+    assert_eq!(plan.conflicts.len(), 1);
+    assert!(plan.conflicts[0].incoming_blob.is_none());
+    for resolutions in [
+        vec![Resolution {
+            resource: resource("keep.md"),
+            choice: Choice::Remove {},
+        }],
+        vec![Resolution {
+            resource: resource("MEMORY.md"),
+            choice: Choice::Write {
+                content: "bad\0text".into(),
+            },
+        }],
+        vec![
+            Resolution {
+                resource: resource("MEMORY.md"),
+                choice: Choice::Local {},
+            },
+            Resolution {
+                resource: resource("MEMORY.md"),
+                choice: Choice::Incoming {},
+            },
+        ],
+    ] {
+        let now = a.now();
+        assert!(
+            a.store
+                .reconcile(&candidate, &remote, &resolutions, now)
+                .is_err()
+        );
+        assert_eq!(a.snapshot()?, remote);
+    }
+    let now = a.now();
+    let read = a
+        .store
+        .inspect(&candidate, &Scope::Global, Path::new("MEMORY.md"), 1, 20)?;
+    assert_eq!(read.document.content, "changed\n");
+    let resolution = [Resolution {
+        resource: resource("MEMORY.md"),
+        choice: Choice::Write {
+            content: "written during reconcile".into(),
+        },
+    }];
+    let merged = a.store.reconcile(&candidate, &remote, &resolution, now)?;
+    assert_eq!(a.snapshot()?, merged);
     assert_eq!(
-        fixture.store.git.text(&["count-objects", "-v"], None)?,
-        objects
+        a.content(None, "MEMORY.md")?.as_deref(),
+        Some("written during reconcile")
     );
-    let prefix = format!("{}/", "a".repeat(240)).repeat(7);
-    let changes: Vec<_> = (0..MAX_DOCUMENTS - 1)
-        .map(|index| put(Scope::Global, &format!("{prefix}document-{index}.md"), ""))
-        .collect();
-    assert!(fixture.store.publish(&base, &changes).is_err());
-    assert_eq!(fixture.store.snapshot()?, base);
-    assert_eq!(
-        fixture.store.git.text(&["count-objects", "-v"], None)?,
-        objects
-    );
-    Ok(())
-}
-
-#[test]
-fn unpublished_candidate_cannot_be_read_as_accepted_knowledge() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let entries = fixture.store.latest()?.entries.clone();
-    let tree = fixture.store.git.tree(&entries)?;
-    let candidate = fixture
-        .store
-        .git
-        .commit(&tree, &[&base], "Unpublished fixture")?;
-    assert!(fixture.store.view(&candidate).is_err());
-    assert_eq!(fixture.store.snapshot()?, base);
-    Ok(())
-}
-
-#[test]
-fn unexpected_git_configuration_and_public_root_permissions_are_refused() -> TestResult {
-    let fixture = Fixture::new()?;
-    fixture.store.git.text(
-        &["config", "url.https://example.invalid/.insteadOf", "/"],
-        None,
-    )?;
-    assert!(Store::open(fixture.store.root()).is_err());
-    let other = Fixture::new()?;
-    fs::set_permissions(other.store.root(), Permissions::from_mode(0o755))?;
-    assert!(Store::open(other.store.root()).is_err());
-    fs::set_permissions(other.store.root(), Permissions::from_mode(0o700))?;
-    assert!(Store::open(other.store.root()).is_ok());
-    Ok(())
-}
-
-#[test]
-fn relocation_preserves_identity_but_cannot_move_knowledge_into_a_checkout() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let destination = fixture.parent.join("relocated");
-    fs::rename(fixture.store.root(), &destination)?;
-    let opened = Store::open(&destination)?;
-    assert_eq!(opened.id(), fixture.store.id());
-    assert_eq!(opened.node_id(), fixture.store.node_id());
-    assert_eq!(opened.snapshot()?, base);
-    let checkout = fixture.parent.join("checkout");
-    fs::create_dir(&checkout)?;
-    fs::write(checkout.join(".git"), "gitdir: neutral-fixture")?;
-    let invalid = checkout.join("knowledge");
-    fs::rename(&destination, &invalid)?;
-    assert!(Store::open(&invalid).is_err());
-    Ok(())
-}
-
-#[test]
-fn initialization_refuses_existing_or_checkout_destinations_without_adoption() -> TestResult {
-    use std::os::unix::fs::DirBuilderExt as _;
-    let fixture = Fixture::new()?;
-    let existing = fixture.parent.join("existing");
-    fs::DirBuilder::new().mode(0o700).create(&existing)?;
-    fs::write(existing.join("keep"), "unchanged")?;
-    assert!(Store::initialize(&existing, "other").is_err());
-    assert_eq!(fs::read_to_string(existing.join("keep"))?, "unchanged");
-    let checkout = fixture.parent.join("checkout");
-    fs::create_dir(&checkout)?;
-    fs::write(checkout.join(".git"), "gitdir: neutral-fixture")?;
-    assert!(Store::initialize(&checkout.join("knowledge"), "other").is_err());
-    assert!(!checkout.join("knowledge").exists());
-    Ok(())
-}
-
-#[test]
-fn native_push_cannot_bypass_owned_reference_validation() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let tree = fixture.store.git.tree(&fixture.store.latest()?.entries)?;
-    let candidate = fixture
-        .store
-        .git
-        .commit(&tree, &[&base], "Transport fixture")?;
-    let remote = fixture.store.root().join("repo.git");
-    let remote = remote.to_str().expect("neutral fixture path is Unicode");
-    let staged = format!("{candidate}:refs/dots/incoming/test");
-    let output =
-        fixture
-            .store
-            .git
-            .run(&["push", "--", remote, &staged], None, MAX_METADATA_BYTES)?;
+    assert_eq!(a.content(None, "keep.md")?.as_deref(), Some("keep"));
     assert!(
-        !output.status.success(),
-        "raw push must not create candidate-cache references: {}",
-        String::from_utf8_lossy(&output.stderr)
+        a.store
+            .inspect(&candidate, &Scope::Global, Path::new("MEMORY.md"), 1, 20)
+            .is_err()
     );
-    let published = format!("{candidate}:{}", crate::git::HEAD);
-    let output = fixture.store.git.run(
-        &["push", "--", remote, &published],
-        None,
-        MAX_METADATA_BYTES,
-    )?;
-    assert!(
-        !output.status.success(),
-        "raw push must not update the published branch"
-    );
-    assert_eq!(fixture.store.snapshot()?, base);
-    fixture
-        .store
-        .git
-        .text(&["config", "--unset", "receive.hiderefs"], None)?;
-    assert!(Store::open(fixture.store.root()).is_err());
-    let output = fixture.store.git.run(
-        &["push", "--", remote, &published],
-        None,
-        MAX_METADATA_BYTES,
-    )?;
-    assert!(
-        output.status.success(),
-        "unprotected positive control: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    fixture
-        .store
-        .git
-        .text(&["config", "receive.hiderefs", "refs/"], None)?;
-    assert_eq!(Store::open(fixture.store.root())?.snapshot()?, candidate);
     Ok(())
 }
 
 #[test]
-fn symbolic_publication_refs_and_broken_storage_indirections_are_rejected() -> TestResult {
-    use std::os::unix::fs::symlink;
-    let fixture = Fixture::new()?;
-    let head = fixture.store.snapshot()?;
-    fixture
-        .store
-        .git
-        .text(&["update-ref", "refs/heads/other", head.as_str()], None)?;
-    fixture.store.git.text(
-        &["symbolic-ref", crate::git::HEAD, "refs/heads/other"],
-        None,
-    )?;
-    assert!(Store::open(fixture.store.root()).is_err());
-    let other = Fixture::new()?;
-    symlink(
-        "missing",
-        other.store.root().join("repo.git/objects/info/alternates"),
-    )?;
-    assert!(Store::open(other.store.root()).is_err());
-    let third = Fixture::new()?;
-    let config = third.store.root().join("repo.git/config");
-    fs::rename(&config, config.with_extension("saved"))?;
-    symlink("config.saved", &config)?;
-    assert!(Store::open(third.store.root()).is_err());
+fn a_stale_plan_is_refused_and_identical_edits_need_no_merge() -> TestResult {
+    let (mut a, mut b, genesis) = pair()?;
+    let remote = b.published(&genesis, &[global("MEMORY.md", "theirs")])?;
+    let Err(Error::Diverged { candidate, .. }) =
+        a.publish(&genesis, &[global("MEMORY.md", "ours")])
+    else {
+        panic!("did not diverge");
+    };
+    let later = b.published(&remote, &[global("later.md", "later")])?;
+    let choice = [Resolution {
+        resource: resource("MEMORY.md"),
+        choice: Choice::Local {},
+    }];
+    let now = a.now();
+    assert!(matches!(
+        a.store.reconcile(&candidate, &remote, &choice, now),
+        Err(Error::Conflict { expected, actual }) if expected == remote && actual == later
+    ));
+    assert_eq!(a.store.pending_candidates()?, vec![candidate]);
+    let same = a.published(&genesis, &[global("later.md", "later")])?;
+    assert_eq!(same, later);
     Ok(())
 }
 
 #[test]
-fn canonical_parent_checks_prevent_aliases_into_another_repository() -> TestResult {
-    use std::os::unix::fs::symlink;
-    let fixture = Fixture::new()?;
-    let checkout = fixture.parent.join("checkout");
-    fs::create_dir(&checkout)?;
-    fs::create_dir(checkout.join("subdir"))?;
-    fs::write(checkout.join(".git"), "gitdir: neutral-fixture")?;
-    let alias = fixture.parent.join("alias");
-    symlink(checkout.join("subdir"), &alias)?;
-    assert!(Store::initialize(&alias.join("knowledge"), "other").is_err());
-    assert!(!checkout.join("subdir/knowledge").exists());
-    assert!(Store::initialize(&fixture.store.root().join("repo.git/nested"), "other").is_err());
-    Ok(())
-}
-
-#[test]
-fn malformed_published_manifest_fails_instead_of_falling_back() -> TestResult {
-    let fixture = Fixture::new()?;
-    let base = fixture.store.snapshot()?;
-    let mut entries = fixture.store.latest()?.entries;
-    let content = format!("{{\"store\":\"{}\",\"projects\":{{}}}}", fixture.store.id());
-    let oid = fixture.store.git.write_blob(content.as_bytes())?;
-    entries.insert(
-        MANIFEST.into(),
+fn manifests_are_canonical_and_validated_on_decode() -> TestResult {
+    let (mut a, _, genesis) = pair()?;
+    let blob = a.store.substrate().blob(&genesis.hash())?;
+    let manifest = Manifest::decode(&blob)?;
+    assert_eq!(manifest.parents, Vec::new());
+    let text = std::str::from_utf8(blob.content())?;
+    assert!(text.starts_with(r#"{"parents":[],"store":"k-"#));
+    let pretty = serde_json::to_vec_pretty(&manifest)?;
+    assert!(Manifest::decode(&Blob::new(pretty)?).is_err());
+    let mut outside = manifest.clone();
+    outside.entries.insert(
+        "elsewhere/MEMORY.md".into(),
         Entry {
-            oid,
-            size: content.len(),
+            hash: Hash::of(b""),
+            size: 0,
         },
     );
-    let tree = fixture.store.git.tree(&entries)?;
-    let invalid = fixture
-        .store
-        .git
-        .commit(&tree, &[&base], "Noncanonical fixture")?;
-    fixture.store.git.publish(Some(&base), &invalid)?;
-    assert!(fixture.store.latest().is_err());
-    assert!(Store::open(fixture.store.root()).is_err());
-    assert_eq!(fixture.store.view(&base)?.snapshot(), &base);
+    assert!(outside.encode().is_err());
+    let mut parents = manifest;
+    parents.parents = vec![genesis, genesis];
+    assert!(parents.encode().is_err());
+    let _ = a.now();
+    Ok(())
+}
+
+#[test]
+fn offline_publications_stay_pending_until_the_next_online_publication() -> TestResult {
+    let (mut a, mut b, genesis) = pair()?;
+    let first = a.published(&genesis, &[global("first.md", "first")])?;
+    assert_eq!(b.snapshot()?, first);
+    b.offline.store(true, Ordering::SeqCst);
+    let stale = b.head()?;
+    assert_eq!(stale.snapshot, first);
+    assert!(matches!(
+        stale.freshness,
+        Freshness::Stale { since: Some(_), .. }
+    ));
+    let offline = b.publish(&first, &[global("offline.md", "offline")])?;
+    let Landing::Pending { candidate, .. } = offline.landing else {
+        panic!("offline publication was not retained");
+    };
+    assert_eq!(offline.pending, vec![candidate]);
+    assert_eq!(b.content(None, "offline.md")?, None);
+    let second = a.published(&first, &[global("second.md", "second")])?;
+    b.offline.store(false, Ordering::SeqCst);
+    let head = b.head()?;
+    assert_eq!(head.snapshot, second);
+    let plans = b.store.pending_plans(&head)?;
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0].plan.kind, IntegrationKind::Merge);
+    assert!(plans[0].plan.conflicts.is_empty());
+    let online = b.publish(&second, &[global("online.md", "online")])?;
+    assert_eq!(online.integrated, vec![candidate]);
+    assert_eq!(online.pending, Vec::new());
+    let Landing::Published { snapshot } = online.landing else {
+        panic!("online publication stayed pending");
+    };
+    for path in ["first.md", "second.md", "offline.md", "online.md"] {
+        assert!(a.content(Some(&snapshot), path)?.is_some(), "{path}");
+    }
+    assert!(a.store.ancestors(&snapshot)?.contains(&candidate));
     Ok(())
 }

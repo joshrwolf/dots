@@ -63,14 +63,11 @@ do not open it as another catalog or blindly delete it.
 
 ## Offline backup and restore
 
-Knowledge lives separately in the owned bare Git store at
-`$XDG_DATA_HOME/dots/knowledge`. Export an accepted snapshot with `dots memory
-export` and retain its receipt alongside the bundle. Use `dots memory restore`
-to verify recovery into a separate empty data root; compare document bytes,
-shared store/project identities and the selected snapshot. Restore allocates a
-new local node identity, so peer and catalog bindings need explicit enrollment.
-Retire the old authority before activating an authority recovery. The
-[knowledge store](../src/memory/README.md) describes ownership and exchange limits.
+Knowledge lives on the shared substrate remote, not in the workspace; the
+[knowledge store](../src/memory/README.md) describes its format and limits. Back
+up the remote repository itself. A new machine recovers knowledge with
+`dots substrate init` against that remote; local project bindings and retained
+unpublished candidates under `$XDG_DATA_HOME/dots/memory` stay machine-local.
 A workspace backup alone does not contain knowledge.
 
 For the machine-local catalog, briefs and outputs, stop all cooperating writers, including Pi parents/workers and Superfans bridges,

@@ -2,7 +2,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use dots_memory::{NodeId, ProjectId, Scope as MemoryScope, Snapshot};
+use dots_memory::{ProjectId, Scope as MemoryScope, Snapshot};
 use github_inspect::{Repository, SnapshotRef};
 
 #[derive(Debug, Parser)]
@@ -73,9 +73,9 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: AttentionCommand,
     },
-    /// Publish atomic knowledge snapshots and exchange them with enrolled Tailscale peers
+    /// Read and publish shared knowledge snapshots across machines
     #[command(
-        long_about = "Private native Git knowledge outside development checkouts. One snapshot pins all global/project documents and the shared project registry. Publication atomically changes a batch against an expected snapshot. Ordinary reads never initialize storage or access the network. Imports stay unpublished until explicit reconciliation. Enrolled peers and tool-owned exports are trusted producers, not hostile-pack inputs. Tasks, outputs, credentials and checkout bindings remain machine-local."
+        long_about = "Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads check the remote first (context reuses a listing up to 30 seconds old) and fall back to the last known snapshot, labeled stale, when it is unreachable. Publication changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline publications stay pending on this machine. Tasks, outputs, credentials and checkout bindings remain machine-local."
     )]
     Memory {
         /// Registered project ID instead of resolving the current checkout
@@ -83,6 +83,14 @@ pub(crate) enum Command {
         project: Option<String>,
         #[command(subcommand)]
         command: MemoryCommand,
+    },
+    /// Configure and inspect this machine's connection to the shared cross-machine remote
+    #[command(
+        long_about = "The substrate stores content-addressed blobs and compare-and-swap refs in one shared Git remote, with a verified local cache, freshness record and machine identity under $XDG_DATA_HOME/dots/substrate (default ~/.local/share/dots/substrate). Domains such as memory use it; this group configures the remote and reports local state."
+    )]
+    Substrate {
+        #[command(subcommand)]
+        command: SubstrateCommand,
     },
     /// Review a repository's changes in threads anchored to exact revisions, across its worktrees
     #[command(
@@ -206,33 +214,29 @@ pub(crate) enum ProjectCommand {
     },
 }
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-pub(crate) enum MemoryRole {
-    Authority,
-    Replica,
+#[derive(Debug, Subcommand)]
+pub(crate) enum SubstrateCommand {
+    /// Point this machine at its shared remote; refuses to change an existing configuration
+    #[command(
+        long_about = "Write this machine's substrate configuration: the Git remote URL (a private repository such as https://github.com/OWNER/REPO.git, or file:// for tests) and an optional Git credential helper command, such as '!gh auth git-credential'. Credentials come only from that helper; dots never reads or stores tokens. An identical rerun succeeds; changing an existing configuration is refused."
+    )]
+    Init {
+        #[arg(long, value_name = "URL")]
+        remote: String,
+        #[arg(long, value_name = "CMD")]
+        credential_helper: Option<String>,
+    },
+    /// Show the remote, machine identity, unflushed and stranded updates, last flush and freshness without networking
+    Status,
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum MemoryCommand {
-    /// Initialize a new private authority store; never adopt existing storage
-    Init {
-        #[arg(long)]
-        actor: String,
-    },
-    /// Restore a full export into a new local node with explicit ownership
-    Restore {
-        #[arg(long)]
-        actor: String,
-        #[arg(long, value_enum)]
-        role: MemoryRole,
-        #[arg(long)]
-        bundle: PathBuf,
-        #[arg(long)]
-        receipt_file: PathBuf,
-    },
-    /// Read both MEMORY.md indexes at one snapshot; unavailable project bindings remain explicit
+    /// Publish the first, empty snapshot to the substrate; refuses if knowledge exists
+    Init,
+    /// Read both MEMORY.md indexes at one snapshot, at most 30 seconds old when online
     Context,
-    /// Inspect local publication, retained progress and acknowledged delivery without networking
+    /// Show the current snapshot, freshness and retained candidates with their integration plans
     Status,
     /// Read a published page; scope is global or an exact shared project ID
     Read {
@@ -267,7 +271,7 @@ pub(crate) enum MemoryCommand {
     },
     /// Atomically publish a JSON array of changes against one expected snapshot
     #[command(
-        long_about = "Publish a JSON array from --input-file (use - for bounded stdin). For one page use memory write or memory remove. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. Stale snapshots change nothing. Empty files and removals are distinct. Batches can cover multiple scopes; no implicit rebase, shell command or model call runs under the lock."
+        long_about = "Publish a JSON array from --input-file (use - for bounded stdin). For one page use memory write or memory remove. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. If knowledge moved on since that snapshot, changes to other documents merge automatically into a two-parent snapshot; a document that also changed elsewhere fails the publication and retains it as a candidate for memory reconcile. Offline, the publication is retained as a pending candidate (state pending) and published by the next online publication or reconcile. Empty files and removals are distinct."
     )]
     Publish {
         #[arg(long)]
@@ -293,29 +297,18 @@ pub(crate) enum MemoryCommand {
         #[command(subcommand)]
         command: MemoryProjectCommand,
     },
-    /// Explicitly bind one enrolled replica and its native transport
-    Peer {
-        #[command(subcommand)]
-        command: MemoryPeerCommand,
-    },
-    /// Fetch, reconcile disjoint changes and return an accepted snapshot; conflicts require judgment
-    Sync,
-    /// Inspect a retained candidate's conflict paths and base without publishing or networking
-    Plan {
-        #[arg(long)]
-        expected_snapshot: Snapshot,
-        #[arg(long)]
-        candidate_file: PathBuf,
-    },
-    /// Resolve JSON recipient/local/incoming/resolutions into a local publication; sync separately
+    /// Publish a retained candidate against the head its plan names, with explicit choices
+    #[command(
+        long_about = "Read JSON {local, incoming, resolutions} from --input-file (use - for bounded stdin): local is a retained candidate and incoming the published snapshot from its plan in memory status. Each resolution names one conflicting resource and a choice: {kind:local}, {kind:incoming}, {kind:write,content:TEXT} or {kind:remove}. Every conflict needs exactly one choice; a candidate without conflicts takes an empty list. If knowledge moved past incoming, nothing changes; re-plan from memory status."
+    )]
     Reconcile {
         #[arg(long)]
         input_file: PathBuf,
     },
-    /// Read an explicitly labeled unpublished candidate; cannot change ordinary memory
+    /// Read a page of a retained, unpublished candidate, labeled as such
     Inspect {
         #[arg(long)]
-        candidate_file: PathBuf,
+        candidate: Snapshot,
         path: PathBuf,
         #[arg(long, value_parser=memory_scope, value_name="GLOBAL_OR_SHARED_ID")]
         scope: MemoryScope,
@@ -324,23 +317,14 @@ pub(crate) enum MemoryCommand {
         #[arg(long, default_value_t=100, value_parser=clap::value_parser!(u16).range(1..=200))]
         lines: u16,
     },
-    /// Export a pinned full snapshot; stdout is the receipt required by import/restore
-    Export {
+    /// Convert a native Git knowledge store into the substrate's first snapshots (one-time)
+    #[command(
+        long_about = "Read the store directory (repo.git, store.json, bindings.json) with read-only Git plumbing, convert every snapshot into a manifest that keeps its parents and byte-identical documents, publish the history as the substrate's first memory value and verify every document. Refuses if knowledge is already published. Installs the source's local project bindings when this machine has none."
+    )]
+    Convert {
         #[arg(long)]
-        output: PathBuf,
-        #[arg(long)]
-        snapshot: Option<Snapshot>,
+        source: PathBuf,
     },
-    /// Validate an export in quarantine and retain an unpublished candidate
-    Import {
-        #[arg(long)]
-        bundle: PathBuf,
-        #[arg(long)]
-        receipt_file: PathBuf,
-    },
-    /// One bounded JSON control request on stdin; native SSH owns authentication
-    #[command(hide = true)]
-    Serve,
 }
 
 #[derive(Debug, Subcommand)]
@@ -359,25 +343,6 @@ pub(crate) enum MemoryProjectCommand {
     Unbind {
         #[arg(long)]
         expected: ProjectId,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-pub(crate) enum MemoryPeerCommand {
-    /// Discover and bind an explicit replica; refuse changing an existing binding
-    Bind {
-        host: String,
-        #[arg(long)]
-        root: PathBuf,
-        #[arg(long)]
-        executable: PathBuf,
-        #[arg(long)]
-        tailscale: PathBuf,
-    },
-    /// Remove an exact transport binding; retain knowledge and progress refs
-    Unbind {
-        #[arg(long)]
-        expected_node: NodeId,
     },
 }
 

@@ -211,10 +211,11 @@ project notes take precedence over global notes. Memory is learned context, not
 an instruction override, task list or transcript archive. Agents maintain
 high-signal notes during ordinary work; reading context does not publish them.
 The [memory skill](../skills/memory/SKILL.md) owns upkeep through
-atomic `dots memory` snapshot commands. Each turn reads one local publication;
-linked topics use its exact shared scope and snapshot, not an absolute file path.
-Initialization, project/peer bindings, reconciliation and synchronization are
-explicit CLI operations; ordinary context loading never contacts another host.
+atomic `dots memory` snapshot commands. Each turn reads one shared snapshot,
+reusing a remote listing up to 30 seconds old, and labels it stale when the
+remote is unreachable. Linked topics use its exact shared scope and snapshot,
+not an absolute file path. Substrate configuration, initialization, project
+bindings and reconciliation are explicit CLI operations.
 
 ## Review submissions
 

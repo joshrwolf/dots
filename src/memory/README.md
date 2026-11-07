@@ -1,27 +1,38 @@
 # Knowledge storage
 
-`dots-memory` owns a private bare Git repository, shared project identities and
-immutable knowledge snapshots. A publication changes global and project documents
-against one expected snapshot. Ordinary reads select published ancestry, never an
-incoming candidate or partial batch.
+`dots-memory` stores shared project identities and immutable knowledge snapshots
+on the [cross-machine substrate](../substrate/README.md). It keeps no Git
+repository of its own.
 
-The authority initiates native Git exchange over an explicitly selected Tailscale
-SSH client. Pulls and full-bundle imports validate in private quarantine. Authority
-returns stage under a separate Git-ref namespace; the replica validates history
-and fences publication against its node identity and expected head. Divergent
-edits to one document need explicit reconciliation even when text could merge.
+A snapshot is a manifest blob: canonical compact JSON with its parent snapshots,
+the store identity, the shared project registry, and every document's path,
+SHA-256 hash and size. The snapshot ID is the manifest's hash (`sha256:<hex>`).
+Documents are blobs; the substrate ref `memory` names the latest manifest.
 
-Enrolled peers and this tool's exports are trusted producers. Integrity, lineage,
-schema and practical resource bounds do not make Git a hostile-file sandbox.
-Fetch cursors track retained history; delivery cursors record acknowledged accepted
-snapshots, not an unfetched newer remote tip. Exactly one active authority
-integrates a dataset; retire it before using an authority restored for recovery.
+Reads check the remote first. `context` reuses a listing up to 30 seconds old;
+explicit reads and searches always list. When the remote is unreachable, reads
+use the last snapshot this machine saw and label it stale. A machine that never
+listed has nothing to read.
 
-[History](src/history.rs) and [transfer](src/incoming.rs) budgets bound exchange.
-Oversized history fails explicitly rather than triggering pruning or rewriting;
-this is bounded knowledge storage, not an unlimited archive.
+A publication changes global and project documents against one expected
+snapshot and lands with a synchronous compare-and-swap. When the ref moved on,
+the store merges three ways against the unique merge base found by walking
+manifest parents. Changes to different documents produce a two-parent snapshot
+(incoming first, local second). Divergent edits to one document, file/directory
+collisions and case collisions are retained as a local candidate with an
+integration plan; `memory reconcile` publishes it with an explicit choice for
+every conflict, even when text could merge. A publication made while the remote
+is unreachable, or whose outcome is unknown, is retained the same way and
+published by the next online publication or reconcile.
 
-Installed Git runs through `dots-process` with isolated configuration, bounded I/O
-and explicit durability settings. There is no working tree, automatic pruning,
-network activity during ordinary reads, or replicated task/session data.
-Filesystem document utilities belong to `dots-documents`.
+Retained candidates and their blobs live on this machine only, under
+`$XDG_DATA_HOME/dots/memory`, beside the local project bindings. Snapshots stay
+bounded: at most 4096 documents and 64 MiB per snapshot; oversized publications
+fail rather than prune. Removing a document changes the next snapshot; earlier
+snapshots keep it.
+
+`convert` turns a store in the earlier native Git layout (`repo.git`,
+`store.json`, `bindings.json`) into manifests with the same parents and
+byte-identical documents. It reads the source with isolated read-only Git
+plumbing, publishes only when no `memory` value exists, and verifies every
+document after publishing.

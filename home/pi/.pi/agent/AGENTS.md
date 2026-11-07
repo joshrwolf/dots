@@ -131,7 +131,7 @@ any optional skill is loaded.
 
 ## Project memory
 
-- Memory is learned context, separate from these instructions. Shared Git
+- Memory is learned context, separate from these instructions. Shared
   knowledge has global and project scopes; worktrees share their project's
   identity. Pi injects both compact `MEMORY.md` indexes from one snapshot;
   follow relevant topic resources on demand. Project knowledge takes precedence
@@ -151,10 +151,10 @@ any optional skill is loaded.
   correction is not automatically a durable preference.
 - Goal briefs own outcomes and working agreements; tasks own progress. Memory
   holds reusable understanding, not another task list or session transcript.
-- Use `dots memory` for local scoped reads and atomic snapshot-checked
-  publication. Keep its exact scope and snapshot when following a resource;
+- Use `dots memory` for scoped reads and atomic snapshot-checked publication. Keep its exact scope and snapshot when following a resource;
   refresh affected knowledge before writing. Unavailable storage or bindings are
-  not empty knowledge: report the limitation without inventing a file fallback.
+  not empty knowledge: report the limitation without inventing a file fallback,
+  and say when knowledge is labeled stale.
   Workers propose notes; the parent publishes. The CLI owns its short write lock;
   never wrap it in another lock or remove its lock file.
 - Routine low-risk local upkeep needs no extra confirmation. Ask about sensitive

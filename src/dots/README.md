@@ -20,6 +20,9 @@ namespace deployed by [machine setup](../../bootstrap/README.md).
 - [Read review threads](../../docs/github-reviews.md).
 - [Watch PRs](../../docs/github-watch.md) with cached status.
 - [Track shared project tasks](../../docs/tasks.md).
+- [Share knowledge](../memory/README.md) across machines through one private Git
+  remote, configured once per machine with `dots substrate init --remote URL
+  [--credential-helper CMD]`.
 
 Agents should request `--json`; structured follow-ups preserve that mode.
 Commands describe their own effects—there is no blanket read-only guarantee.

@@ -131,7 +131,18 @@ fn worktrees_share_ids_while_clones_bare_repositories_and_submodules_do_not() {
     assert_eq!(id(&first), id(&f.ok("linked", &["project", "resolve"])));
     let task = f.ok("linked", &["task", "add", "work"]);
     assert_eq!(task["project"], id(&first));
-    let knowledge = f.ok("repo", &["memory", "init", "--actor", "neutral"]);
+    let remote = f.0.join("remote.git");
+    f.git("repo", &["init", "--bare", "-q", remote.to_str().unwrap()]);
+    f.ok(
+        "repo",
+        &[
+            "substrate",
+            "init",
+            "--remote",
+            &format!("file://{}", remote.display()),
+        ],
+    );
+    let knowledge = f.ok("repo", &["memory", "init"]);
     let shared = f.ok(
         "repo",
         &[

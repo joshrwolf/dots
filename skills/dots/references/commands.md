@@ -19,7 +19,8 @@ Commands:
   github     Inspect GitHub CI evidence and PR review threads, and keep a PR watch list
   task       Track shared, claimable work for a project across concurrent sessions
   attention  Ask the user durable questions about goal work and record goal decisions
-  memory     Publish atomic knowledge snapshots and exchange them with enrolled Tailscale peers
+  memory     Read and publish shared knowledge snapshots across machines
+  substrate  Configure and inspect this machine's connection to the shared cross-machine remote
   review     Review a repository's changes in threads anchored to exact revisions, across its worktrees
   skills     Export agent discovery documentation from this command tree
 
@@ -2536,28 +2537,23 @@ Options:
 ## dots memory
 
 ```text
-Private native Git knowledge outside development checkouts. One snapshot pins all global/project documents and the shared project registry. Publication atomically changes a batch against an expected snapshot. Ordinary reads never initialize storage or access the network. Imports stay unpublished until explicit reconciliation. Enrolled peers and tool-owned exports are trusted producers, not hostile-pack inputs. Tasks, outputs, credentials and checkout bindings remain machine-local.
+Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads check the remote first (context reuses a listing up to 30 seconds old) and fall back to the last known snapshot, labeled stale, when it is unreachable. Publication changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline publications stay pending on this machine. Tasks, outputs, credentials and checkout bindings remain machine-local.
 
 Usage: dots memory [OPTIONS] <COMMAND>
 
 Commands:
-  init       Initialize a new private authority store; never adopt existing storage
-  restore    Restore a full export into a new local node with explicit ownership
-  context    Read both MEMORY.md indexes at one snapshot; unavailable project bindings remain explicit
-  status     Inspect local publication, retained progress and acknowledged delivery without networking
+  init       Publish the first, empty snapshot to the substrate; refuses if knowledge exists
+  context    Read both MEMORY.md indexes at one snapshot, at most 30 seconds old when online
+  status     Show the current snapshot, freshness and retained candidates with their integration plans
   read       Read a published page; scope is global or an exact shared project ID
   write      Publish one UTF-8 page against an expected snapshot; empty content is not removal
   remove     Remove one page against an expected snapshot; retain its published history
   publish    Atomically publish a JSON array of changes against one expected snapshot
   search     Literal search at one published snapshot; default is global plus this bound project
   project    Manage shared identities and their separate machine-local catalog bindings
-  peer       Explicitly bind one enrolled replica and its native transport
-  sync       Fetch, reconcile disjoint changes and return an accepted snapshot; conflicts require judgment
-  plan       Inspect a retained candidate's conflict paths and base without publishing or networking
-  reconcile  Resolve JSON recipient/local/incoming/resolutions into a local publication; sync separately
-  inspect    Read an explicitly labeled unpublished candidate; cannot change ordinary memory
-  export     Export a pinned full snapshot; stdout is the receipt required by import/restore
-  import     Validate an export in quarantine and retain an unpublished candidate
+  reconcile  Publish a retained candidate against the head its plan names, with explicit choices
+  inspect    Read a page of a retained, unpublished candidate, labeled as such
+  convert    Convert a native Git knowledge store into the substrate's first snapshots (one-time)
 
 Options:
       --json
@@ -2576,14 +2572,11 @@ Options:
 ## dots memory init
 
 ```text
-Initialize a new private authority store; never adopt existing storage
+Publish the first, empty snapshot to the substrate; refuses if knowledge exists
 
-Usage: dots memory init [OPTIONS] --actor <ACTOR>
+Usage: dots memory init [OPTIONS]
 
 Options:
-      --actor <ACTOR>
-
-
       --json
           Return JSON instead of readable output
 
@@ -2592,39 +2585,6 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
-
-  -h, --help
-          Print help
-```
-
-## dots memory restore
-
-```text
-Restore a full export into a new local node with explicit ownership
-
-Usage: dots memory restore [OPTIONS] --actor <ACTOR> --role <ROLE> --bundle <BUNDLE> --receipt-file <RECEIPT_FILE>
-
-Options:
-      --actor <ACTOR>
-
-
-      --json
-          Return JSON instead of readable output
-
-      --project <ID>
-          Registered project ID instead of resolving the current checkout
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
-
-      --role <ROLE>
-          [possible values: authority, replica]
-
-      --bundle <BUNDLE>
-
-
-      --receipt-file <RECEIPT_FILE>
-
 
   -h, --help
           Print help
@@ -2633,7 +2593,7 @@ Options:
 ## dots memory context
 
 ```text
-Read both MEMORY.md indexes at one snapshot; unavailable project bindings remain explicit
+Read both MEMORY.md indexes at one snapshot, at most 30 seconds old when online
 
 Usage: dots memory context [OPTIONS]
 
@@ -2654,7 +2614,7 @@ Options:
 ## dots memory status
 
 ```text
-Inspect local publication, retained progress and acknowledged delivery without networking
+Show the current snapshot, freshness and retained candidates with their integration plans
 
 Usage: dots memory status [OPTIONS]
 
@@ -2777,7 +2737,7 @@ Options:
 ## dots memory publish
 
 ```text
-Publish a JSON array from --input-file (use - for bounded stdin). For one page use memory write or memory remove. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. Stale snapshots change nothing. Empty files and removals are distinct. Batches can cover multiple scopes; no implicit rebase, shell command or model call runs under the lock.
+Publish a JSON array from --input-file (use - for bounded stdin). For one page use memory write or memory remove. Each change has scope ({kind:global} or {kind:project,project:SHARED_ID}), path, and action ({kind:write,content:TEXT} or {kind:remove}); JSON keys and string values need quotes. All changes share --expected-snapshot from context/read. If knowledge moved on since that snapshot, changes to other documents merge automatically into a two-parent snapshot; a document that also changed elsewhere fails the publication and retains it as a candidate for memory reconcile. Offline, the publication is retained as a pending candidate (state pending) and published by the next online publication or reconcile. Empty files and removals are distinct.
 
 Usage: dots memory publish [OPTIONS] --expected-snapshot <EXPECTED_SNAPSHOT> --input-file <INPUT_FILE>
 
@@ -2963,141 +2923,10 @@ Options:
           Print help
 ```
 
-## dots memory peer
-
-```text
-Explicitly bind one enrolled replica and its native transport
-
-Usage: dots memory peer [OPTIONS] <COMMAND>
-
-Commands:
-  bind    Discover and bind an explicit replica; refuse changing an existing binding
-  unbind  Remove an exact transport binding; retain knowledge and progress refs
-
-Options:
-      --json
-          Return JSON instead of readable output
-
-      --project <ID>
-          Registered project ID instead of resolving the current checkout
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
-
-  -h, --help
-          Print help
-```
-
-## dots memory peer bind
-
-```text
-Discover and bind an explicit replica; refuse changing an existing binding
-
-Usage: dots memory peer bind [OPTIONS] --root <ROOT> --executable <EXECUTABLE> --tailscale <TAILSCALE> <HOST>
-
-Arguments:
-  <HOST>
-
-
-Options:
-      --json
-          Return JSON instead of readable output
-
-      --project <ID>
-          Registered project ID instead of resolving the current checkout
-
-      --root <ROOT>
-
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
-
-      --executable <EXECUTABLE>
-
-
-      --tailscale <TAILSCALE>
-
-
-  -h, --help
-          Print help
-```
-
-## dots memory peer unbind
-
-```text
-Remove an exact transport binding; retain knowledge and progress refs
-
-Usage: dots memory peer unbind [OPTIONS] --expected-node <EXPECTED_NODE>
-
-Options:
-      --expected-node <EXPECTED_NODE>
-
-
-      --json
-          Return JSON instead of readable output
-
-      --project <ID>
-          Registered project ID instead of resolving the current checkout
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
-
-  -h, --help
-          Print help
-```
-
-## dots memory sync
-
-```text
-Fetch, reconcile disjoint changes and return an accepted snapshot; conflicts require judgment
-
-Usage: dots memory sync [OPTIONS]
-
-Options:
-      --json
-          Return JSON instead of readable output
-
-      --project <ID>
-          Registered project ID instead of resolving the current checkout
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
-
-  -h, --help
-          Print help
-```
-
-## dots memory plan
-
-```text
-Inspect a retained candidate's conflict paths and base without publishing or networking
-
-Usage: dots memory plan [OPTIONS] --expected-snapshot <EXPECTED_SNAPSHOT> --candidate-file <CANDIDATE_FILE>
-
-Options:
-      --expected-snapshot <EXPECTED_SNAPSHOT>
-
-
-      --json
-          Return JSON instead of readable output
-
-      --project <ID>
-          Registered project ID instead of resolving the current checkout
-
-      --candidate-file <CANDIDATE_FILE>
-
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
-
-  -h, --help
-          Print help
-```
-
 ## dots memory reconcile
 
 ```text
-Resolve JSON recipient/local/incoming/resolutions into a local publication; sync separately
+Read JSON {local, incoming, resolutions} from --input-file (use - for bounded stdin): local is a retained candidate and incoming the published snapshot from its plan in memory status. Each resolution names one conflicting resource and a choice: {kind:local}, {kind:incoming}, {kind:write,content:TEXT} or {kind:remove}. Every conflict needs exactly one choice; a candidate without conflicts takes an empty list. If knowledge moved past incoming, nothing changes; re-plan from memory status.
 
 Usage: dots memory reconcile [OPTIONS] --input-file <INPUT_FILE>
 
@@ -3115,22 +2944,22 @@ Options:
           Working directory for commands that use checkout context
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 ```
 
 ## dots memory inspect
 
 ```text
-Read an explicitly labeled unpublished candidate; cannot change ordinary memory
+Read a page of a retained, unpublished candidate, labeled as such
 
-Usage: dots memory inspect [OPTIONS] --candidate-file <CANDIDATE_FILE> --scope <GLOBAL_OR_SHARED_ID> <PATH>
+Usage: dots memory inspect [OPTIONS] --candidate <CANDIDATE> --scope <GLOBAL_OR_SHARED_ID> <PATH>
 
 Arguments:
   <PATH>
 
 
 Options:
-      --candidate-file <CANDIDATE_FILE>
+      --candidate <CANDIDATE>
 
 
       --json
@@ -3155,55 +2984,89 @@ Options:
           Print help
 ```
 
-## dots memory export
+## dots memory convert
 
 ```text
-Export a pinned full snapshot; stdout is the receipt required by import/restore
+Read the store directory (repo.git, store.json, bindings.json) with read-only Git plumbing, convert every snapshot into a manifest that keeps its parents and byte-identical documents, publish the history as the substrate's first memory value and verify every document. Refuses if knowledge is already published. Installs the source's local project bindings when this machine has none.
 
-Usage: dots memory export [OPTIONS] --output <OUTPUT>
+Usage: dots memory convert [OPTIONS] --source <SOURCE>
 
 Options:
       --json
           Return JSON instead of readable output
 
-      --output <OUTPUT>
-
-
       --project <ID>
           Registered project ID instead of resolving the current checkout
 
+      --source <SOURCE>
+
+
       --directory <PATH>
           Working directory for commands that use checkout context
-
-      --snapshot <SNAPSHOT>
-
 
   -h, --help
-          Print help
+          Print help (see a summary with '-h')
 ```
 
-## dots memory import
+## dots substrate
 
 ```text
-Validate an export in quarantine and retain an unpublished candidate
+The substrate stores content-addressed blobs and compare-and-swap refs in one shared Git remote, with a verified local cache, freshness record and machine identity under $XDG_DATA_HOME/dots/substrate (default ~/.local/share/dots/substrate). Domains such as memory use it; this group configures the remote and reports local state.
 
-Usage: dots memory import [OPTIONS] --bundle <BUNDLE> --receipt-file <RECEIPT_FILE>
+Usage: dots substrate [OPTIONS] <COMMAND>
+
+Commands:
+  init    Point this machine at its shared remote; refuses to change an existing configuration
+  status  Show the remote, machine identity, unflushed and stranded updates, last flush and freshness without networking
 
 Options:
-      --bundle <BUNDLE>
-
-
       --json
           Return JSON instead of readable output
-
-      --project <ID>
-          Registered project ID instead of resolving the current checkout
 
       --directory <PATH>
           Working directory for commands that use checkout context
 
-      --receipt-file <RECEIPT_FILE>
+  -h, --help
+          Print help (see a summary with '-h')
+```
 
+## dots substrate init
+
+```text
+Write this machine's substrate configuration: the Git remote URL (a private repository such as https://github.com/OWNER/REPO.git, or file:// for tests) and an optional Git credential helper command, such as '!gh auth git-credential'. Credentials come only from that helper; dots never reads or stores tokens. An identical rerun succeeds; changing an existing configuration is refused.
+
+Usage: dots substrate init [OPTIONS] --remote <URL>
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --remote <URL>
+
+
+      --credential-helper <CMD>
+
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots substrate status
+
+```text
+Show the remote, machine identity, unflushed and stranded updates, last flush and freshness without networking
+
+Usage: dots substrate status [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
 
   -h, --help
           Print help
