@@ -16,6 +16,8 @@ type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 struct Link {
     remote: MemoryBackend,
     offline: Arc<AtomicBool>,
+    /// Report every update pre-empted, as if another machine always won.
+    rejecting: Arc<AtomicBool>,
 }
 
 impl Backend for Link {
@@ -33,6 +35,15 @@ impl Backend for Link {
     }
     fn update(&self, updates: &[Update]) -> dots_substrate::Result<Vec<Outcome>> {
         self.check()?;
+        if self.rejecting.load(Ordering::SeqCst) {
+            let listed = self.remote.list()?;
+            return Ok(updates
+                .iter()
+                .map(|update| Outcome::Conflict {
+                    actual: listed.get(&update.name).cloned(),
+                })
+                .collect());
+        }
         self.remote.update(updates)
     }
 }
@@ -50,6 +61,7 @@ struct Machine {
     _scratch: StagedDirectory,
     store: Store,
     offline: Arc<AtomicBool>,
+    rejecting: Arc<AtomicBool>,
     tick: u64,
 }
 
@@ -57,9 +69,11 @@ impl Machine {
     fn new(remote: &MemoryBackend) -> Result<Self> {
         let scratch = StagedDirectory::create(&std::env::temp_dir())?;
         let offline = Arc::new(AtomicBool::new(false));
+        let rejecting = Arc::new(AtomicBool::new(false));
         let link = Link {
             remote: remote.clone(),
             offline: Arc::clone(&offline),
+            rejecting: Arc::clone(&rejecting),
         };
         let substrate = Substrate::open(
             &scratch.path().join("substrate"),
@@ -71,6 +85,7 @@ impl Machine {
             _scratch: scratch,
             store,
             offline,
+            rejecting,
             tick: 0,
         })
     }
@@ -81,9 +96,11 @@ impl Machine {
         UNIX_EPOCH + Duration::from_secs(1_900_000_000 + self.tick)
     }
 
+    /// Sync, then read the head, as an explicit fresh read does.
     fn head(&mut self) -> Result<Head> {
         let now = self.now();
-        self.store.head(Duration::ZERO, now)
+        self.store.sync(now)?;
+        self.store.head()
     }
 
     fn snapshot(&mut self) -> Result<Snapshot> {
@@ -178,7 +195,7 @@ fn initialization_is_create_only_and_reads_need_published_knowledge() -> TestRes
     assert!(matches!(b.store.initialize(now), Err(Error::AlreadyInitialized(s)) if s == genesis));
     let head = b.head()?;
     assert_eq!(head.snapshot, genesis);
-    assert_eq!(head.freshness, Freshness::Current);
+    assert_eq!(head.freshness.failing, None);
     let absent = b
         .store
         .view(&head, None)?
@@ -529,10 +546,13 @@ fn offline_publications_stay_pending_until_the_next_online_publication() -> Test
     b.offline.store(true, Ordering::SeqCst);
     let stale = b.head()?;
     assert_eq!(stale.snapshot, first);
-    assert!(matches!(
-        stale.freshness,
-        Freshness::Stale { since: Some(_), .. }
-    ));
+    let failing = stale.freshness.failing.ok_or("an outage read as healthy")?;
+    assert!(
+        failing.reason.contains("neutral outage"),
+        "{}",
+        failing.reason
+    );
+    assert!(stale.freshness.as_of < failing.since);
     let offline = b.publish(&first, &[global("offline.md", "offline")])?;
     let Landing::Pending { candidate, .. } = offline.landing else {
         panic!("offline publication was not retained");
@@ -557,5 +577,33 @@ fn offline_publications_stay_pending_until_the_next_online_publication() -> Test
         assert!(a.content(Some(&snapshot), path)?.is_some(), "{path}");
     }
     assert!(a.store.ancestors(&snapshot)?.contains(&candidate));
+    Ok(())
+}
+
+#[test]
+fn a_publication_that_loses_every_race_stays_pending() -> TestResult {
+    let (mut a, mut b, genesis) = pair()?;
+    b.rejecting.store(true, Ordering::SeqCst);
+    let publication = b.publish(&genesis, &[global("kept.md", "kept")])?;
+    let Landing::Pending { candidate, reason } = publication.landing else {
+        panic!("a pre-empted publication landed");
+    };
+    assert!(reason.contains("kept changing"), "{reason}");
+    assert_eq!(publication.pending, vec![candidate]);
+    let now = b.now();
+    assert!(matches!(
+        b.store.reconcile(&candidate, &genesis, &[], now),
+        Err(Error::Contended { candidate: c }) if c == candidate
+    ));
+    assert_eq!(b.store.pending()?.len(), 1);
+
+    b.rejecting.store(false, Ordering::SeqCst);
+    let now = b.now();
+    let published = b.store.reconcile(&candidate, &genesis, &[], now)?;
+    assert_eq!(b.store.pending()?, Vec::new());
+    assert_eq!(
+        a.content(Some(&published), "kept.md")?.as_deref(),
+        Some("kept")
+    );
     Ok(())
 }

@@ -63,6 +63,16 @@ pub enum Error {
     /// The substrate has no `memory` ref yet.
     #[error("no knowledge is published; initialize it with memory init")]
     Uninitialized,
+    /// This machine has never completed a sync pass, so it has no local copy.
+    #[error(
+        "this machine has never synced knowledge; run dots sync once (or start the sync agent) and retry"
+    )]
+    Unsynced,
+    /// Other publications won every attempt; the candidate stays retained.
+    #[error(
+        "knowledge kept changing during publication; candidate {candidate} stays retained; retry memory reconcile later"
+    )]
+    Contended { candidate: Snapshot },
     #[error("knowledge is already published at {0}; refusing to replace it")]
     AlreadyInitialized(Snapshot),
     #[error("remote unavailable: {0}")]
@@ -91,6 +101,7 @@ impl From<dots_substrate::Error> for Error {
     fn from(error: dots_substrate::Error) -> Self {
         match error {
             dots_substrate::Error::Unavailable(reason) => Self::Unavailable(reason),
+            dots_substrate::Error::Unsynced => Self::Unsynced,
             error => Self::Substrate(error),
         }
     }

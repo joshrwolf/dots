@@ -1,11 +1,7 @@
 //! Two machines publishing knowledge through one `file://` Git remote.
 mod support;
 
-use std::time::Duration;
-
-use dots_memory::{
-    Choice, Error, Freshness, IntegrationKind, Landing, Resolution, Resource, Scope,
-};
+use dots_memory::{Choice, Error, IntegrationKind, Landing, Resolution, Resource, Scope};
 use support::{Machine, Remote, TestResult, global};
 
 fn pair(remote: &Remote) -> (Machine, Machine, dots_memory::Snapshot) {
@@ -16,25 +12,22 @@ fn pair(remote: &Remote) -> (Machine, Machine, dots_memory::Snapshot) {
 }
 
 #[test]
-fn a_publication_reaches_the_other_machine_within_the_freshness_bound() -> TestResult {
+fn a_publication_reaches_the_other_machine_on_its_next_pass() -> TestResult {
     let remote = Remote::new();
     let (mut a, mut b, genesis) = pair(&remote);
-    let window = Duration::from_secs(30);
-    let now = b.now();
-    assert_eq!(b.store.head(window, now)?.snapshot, genesis);
+    assert!(matches!(b.store.head(), Err(Error::Unsynced)));
+    assert_eq!(b.head().snapshot, genesis);
+    let synced = b.store.head()?.freshness.as_of;
     let published = a.published(&genesis, &[global("MEMORY.md", "from a\n")]);
-    // B listed moments ago, so context reads reuse that listing.
-    let now = b.now();
-    let cached = b.store.head(window, now)?;
-    assert_eq!(cached.snapshot, genesis);
-    assert_eq!(cached.freshness, Freshness::Current);
-    b.advance(30);
-    let now = b.now();
-    assert_eq!(b.store.head(window, now)?.snapshot, published);
+    // Reads serve the local copy until the next pass.
+    let local = b.store.head()?;
+    assert_eq!((local.snapshot, local.freshness.as_of), (genesis, synced));
+    assert_eq!(local.freshness.failing, None);
+    assert_eq!(b.sync(), None);
+    let head = b.store.head()?;
+    assert_eq!(head.snapshot, published);
+    assert!(head.freshness.as_of > synced);
     assert_eq!(b.content(None, "MEMORY.md").as_deref(), Some("from a\n"));
-    // Explicit reads list every time.
-    let later = a.published(&published, &[global("MEMORY.md", "again\n")]);
-    assert_eq!(b.head().snapshot, later);
     Ok(())
 }
 
@@ -42,15 +35,11 @@ fn a_publication_reaches_the_other_machine_within_the_freshness_bound() -> TestR
 fn concurrent_disjoint_publications_merge_into_two_parents() -> TestResult {
     let remote = Remote::new();
     let (mut a, mut b, genesis) = pair(&remote);
-    let listed = b.now();
-    assert_eq!(b.store.head(Duration::ZERO, listed)?.snapshot, genesis);
+    assert_eq!(b.head().snapshot, genesis);
     let first = a.published(&genesis, &[global("a.md", "from a")]);
-    // Publishing at the instant B listed reuses that listing, so B proposes a
-    // fast-forward from genesis; the remote rejects it and B merges.
-    let Landing::Published { snapshot: merged } = b
-        .store
-        .publish(&genesis, &[global("b.md", "from b")], listed)?
-        .landing
+    // B publishes against its local copy at genesis; the merge happens on B.
+    let Landing::Published { snapshot: merged } =
+        b.publish(&genesis, &[global("b.md", "from b")])?.landing
     else {
         panic!("publication stayed pending");
     };
@@ -69,6 +58,56 @@ fn concurrent_disjoint_publications_merge_into_two_parents() -> TestResult {
     );
     assert_eq!(a.content(Some(&candidate), "a.md"), None);
     Ok(())
+}
+
+#[test]
+fn contending_publishers_each_land_or_keep_a_pending_candidate() {
+    let remote = Remote::new();
+    let (mut a, _, genesis) = pair(&remote);
+    let url = remote.url();
+    let rounds = 4;
+    // Each publisher lives on its own thread, so each opens its own state.
+    let publisher = |label: &'static str| {
+        let mut machine = Machine::new(&url);
+        assert_eq!(machine.head().snapshot, genesis);
+        let mut outcomes = (0, 0);
+        for round in 0..rounds {
+            let expected = machine.store.head().expect("head").snapshot;
+            let change = global(&format!("{label}-{round}.md"), label);
+            let publication = machine.publish(&expected, &[change]).expect("publish");
+            match publication.landing {
+                Landing::Published { .. } => outcomes.0 += 1,
+                Landing::Pending { candidate, .. } => {
+                    assert!(publication.pending.contains(&candidate));
+                    outcomes.1 += 1;
+                }
+            }
+        }
+        // Later publications integrate whatever stayed pending.
+        for _ in 0..rounds {
+            if machine.store.pending().expect("pending").is_empty() {
+                return outcomes;
+            }
+            let head = machine.head();
+            machine.publish(&head.snapshot, &[]).expect("publish");
+        }
+        panic!("{label}: candidates stayed pending")
+    };
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| publisher("a"));
+        let second = scope.spawn(|| publisher("b"));
+        (first.join(), second.join())
+    });
+    let (first, second) = (first.expect("a panicked"), second.expect("b panicked"));
+    assert_eq!(first.0 + first.1, rounds);
+    assert_eq!(second.0 + second.1, rounds);
+    assert!(first.0 + second.0 > 0, "neither publisher made progress");
+    for label in ["a", "b"] {
+        for round in 0..rounds {
+            let path = format!("{label}-{round}.md");
+            assert_eq!(a.content(None, &path).as_deref(), Some(label), "{path}");
+        }
+    }
 }
 
 #[test]
@@ -130,14 +169,14 @@ fn an_offline_publication_is_retained_labeled_and_published_later() -> TestResul
     let (mut a, mut b, genesis) = pair(&remote);
     let first = a.published(&genesis, &[global("first.md", "first")]);
     assert_eq!(b.head().snapshot, first);
+    let synced = b.store.head()?.freshness.as_of;
     b.connect(&remote.unreachable());
-    let stale = b.head();
-    assert_eq!(stale.snapshot, first);
-    let Freshness::Stale { since, reason } = &stale.freshness else {
-        panic!("an unreachable remote read as current");
-    };
-    assert!(since.is_some());
+    let reason = b.sync().expect("an unreachable remote synced");
     assert!(reason.contains("ls-remote"), "{reason}");
+    let stale = b.store.head()?;
+    assert_eq!((stale.snapshot, stale.freshness.as_of), (first, synced));
+    let failing = stale.freshness.failing.expect("an outage read as healthy");
+    assert!(failing.reason.contains("ls-remote"), "{}", failing.reason);
     assert_eq!(b.content(None, "first.md").as_deref(), Some("first"));
     let offline = b.publish(&first, &[global("offline.md", "offline")])?;
     let Landing::Pending { candidate, .. } = offline.landing else {
@@ -158,18 +197,16 @@ fn an_offline_publication_is_retained_labeled_and_published_later() -> TestResul
     for path in ["first.md", "second.md", "offline.md", "online.md"] {
         assert!(a.content(None, path).is_some(), "{path}");
     }
-    assert_eq!(head.freshness, Freshness::Current);
+    assert_eq!(head.freshness.failing, None);
     Ok(())
 }
 
 #[test]
-fn a_machine_that_never_listed_cannot_read_offline() {
+fn a_machine_that_never_synced_has_no_knowledge_to_read() {
     let remote = Remote::new();
     let (_a, _b, _) = pair(&remote);
     let mut c = Machine::new(&remote.unreachable());
-    let now = c.now();
-    assert!(matches!(
-        c.store.head(Duration::ZERO, now),
-        Err(Error::Unavailable(_))
-    ));
+    assert!(matches!(c.store.head(), Err(Error::Unsynced)));
+    assert!(c.sync().is_some());
+    assert!(matches!(c.store.head(), Err(Error::Unsynced)));
 }

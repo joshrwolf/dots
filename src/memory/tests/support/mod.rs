@@ -116,9 +116,16 @@ impl Machine {
         self.tick += seconds;
     }
 
-    pub(crate) fn head(&mut self) -> Head {
+    /// Run one sync pass now; returns why the remote was unreachable, if it was.
+    pub(crate) fn sync(&mut self) -> Option<String> {
         let now = self.now();
-        self.store.head(Duration::ZERO, now).expect("read head")
+        self.store.sync(now).expect("sync")
+    }
+
+    /// Sync, then read the head, as an explicit fresh read does.
+    pub(crate) fn head(&mut self) -> Head {
+        self.sync();
+        self.store.head().expect("read head")
     }
 
     pub(crate) fn publish(

@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dots_documents::mutation_lock::MutationLock;
 use dots_documents::staged_file::StagedFile;
-use dots_substrate::{Blob, Outcome, RefName, Substrate, Update, Version};
+use dots_substrate::{Blob, Failing, Outcome, Pass, RefName, Substrate, Trigger, Update, Version};
 use serde::{Deserialize, Serialize};
 
 use crate::integration::{Integration, IntegrationKind, Resolution};
@@ -22,7 +22,10 @@ const REF: &str = "memory";
 const PENDING: &str = "pending.json";
 const LOCK: &str = "mutation.lock";
 /// Integration attempts while other machines keep publishing.
-const ATTEMPTS: usize = 5;
+const ATTEMPTS: u32 = 6;
+/// The first retry waits up to this long; each later one up to twice as long.
+/// Random waits keep a fast publisher from winning every race.
+const RETRY_BASE: Duration = Duration::from_millis(150);
 const MAX_PENDING_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -49,18 +52,16 @@ impl Action {
     }
 }
 
-/// How current a read is.
+/// How current this machine's copy of the published head is.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Freshness {
-    Current,
-    /// The remote is unreachable; the snapshot was last known current at `since`.
-    Stale {
-        since: Option<SystemTime>,
-        reason: String,
-    },
+pub struct Freshness {
+    /// When the copy was last confirmed current.
+    pub as_of: SystemTime,
+    /// Set while sync passes fail, such as when the remote is unreachable.
+    pub failing: Option<Failing>,
 }
 
-/// The latest published snapshot as this machine knows it.
+/// The latest published snapshot in this machine's local copy.
 #[derive(Clone, Debug)]
 pub struct Head {
     pub snapshot: Snapshot,
@@ -174,11 +175,25 @@ pub struct View<'store> {
 enum Attempt {
     Published(Snapshot),
     Pending(String),
-    Diverged { actual: Snapshot, conflicts: usize },
+    Diverged {
+        actual: Snapshot,
+        conflicts: usize,
+    },
+    /// Other publications won every attempt.
+    Contended,
 }
+
+const CONTENDED: &str = "knowledge kept changing during publication; the candidate is retained for the next publication or memory reconcile";
 
 fn name() -> RefName {
     REF.parse().expect("the memory ref name is valid")
+}
+
+/// A random wait before retry `attempt` (from 1): up to the base, doubling.
+fn retry_delay(attempt: u32) -> Result<Duration> {
+    let limit = RETRY_BASE.saturating_mul(1 << attempt.saturating_sub(1).min(10));
+    let millis = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX);
+    Ok(Duration::from_millis(getrandom::u64()? % (millis + 1)))
 }
 
 fn unix(time: SystemTime) -> u64 {
@@ -229,12 +244,10 @@ impl Store {
         mut blobs: Vec<Blob>,
         now: SystemTime,
     ) -> Result<Snapshot> {
-        if let dots_substrate::Freshness::Stale { reason, .. } =
-            self.substrate.ensure_fresh(Duration::ZERO, now)?
-        {
+        if let Some(reason) = self.sync(now)? {
             return Err(Error::Unavailable(reason));
         }
-        if let Some(value) = self.substrate.read(&name(), now)? {
+        if let Some(value) = self.substrate.read(&name())? {
             return Err(Error::AlreadyInitialized(Snapshot::new(value.root)));
         }
         let snapshot = Snapshot::new(root.hash());
@@ -247,41 +260,43 @@ impl Store {
         };
         match self.substrate.update(&update, now)? {
             Outcome::Applied(_) => Ok(snapshot),
-            Outcome::Conflict { .. } => match self.substrate.read(&name(), now)? {
-                Some(value) => Err(Error::AlreadyInitialized(Snapshot::new(value.root))),
-                None => Err(Error::Unavailable(
-                    "the remote reported knowledge that it no longer lists".into(),
-                )),
-            },
+            Outcome::Conflict { .. } => {
+                if let Some(reason) = self.sync(now)? {
+                    return Err(Error::Unavailable(reason));
+                }
+                match self.substrate.read(&name())? {
+                    Some(value) => Err(Error::AlreadyInitialized(Snapshot::new(value.root))),
+                    None => Err(Error::Unavailable(
+                        "the remote reported knowledge that it no longer lists".into(),
+                    )),
+                }
+            }
             Outcome::Unknown => Err(Error::Unavailable(
                 "the outcome is unknown; rerun the same command".into(),
             )),
         }
     }
 
-    /// The latest published snapshot, listing the remote unless this machine
-    /// listed it within `max_age`. Offline, the last known snapshot, marked stale.
-    pub fn head(&mut self, max_age: Duration, now: SystemTime) -> Result<Head> {
-        let freshness = self.substrate.ensure_fresh(max_age, now)?;
-        self.current(freshness, now)
+    /// Run one substrate sync pass now, waiting for any pass in progress.
+    /// Returns why the remote was unreachable, if it was.
+    pub fn sync(&self, now: SystemTime) -> Result<Option<String>> {
+        match self.substrate.sync(Trigger::Explicit, now)? {
+            Pass::Done(report) => Ok(report.offline),
+            other => Err(invalid(format!(
+                "an explicit sync pass did not run: {other:?}"
+            ))),
+        }
     }
 
-    fn current(&self, freshness: dots_substrate::Freshness, now: SystemTime) -> Result<Head> {
-        let Some(value) = self.substrate.read(&name(), now)? else {
-            return Err(match freshness {
-                dots_substrate::Freshness::Stale { reason, .. } => Error::Unavailable(reason),
-                dots_substrate::Freshness::Current { .. } => Error::Uninitialized,
-            });
+    /// The latest published snapshot in this machine's local copy, as of the
+    /// last sync pass or local publication. Never contacts the remote.
+    pub fn head(&self) -> Result<Head> {
+        let Some(value) = self.substrate.read(&name())? else {
+            return Err(Error::Uninitialized);
         };
-        let freshness = match (value.stale_since, freshness) {
-            (None, dots_substrate::Freshness::Current { .. }) => Freshness::Current,
-            (since, dots_substrate::Freshness::Stale { reason, .. }) => {
-                Freshness::Stale { since, reason }
-            }
-            (since, dots_substrate::Freshness::Current { .. }) => Freshness::Stale {
-                since,
-                reason: "the published snapshot could not be fetched".into(),
-            },
+        let freshness = Freshness {
+            as_of: value.as_of,
+            failing: self.substrate.health()?.failing,
         };
         let snapshot = Snapshot::new(value.root);
         let store = self.manifest(&snapshot)?.store.clone();
@@ -327,7 +342,8 @@ impl Store {
         if changes.len() > MAX_DOCUMENTS {
             return Err(invalid("publication contains too many document changes"));
         }
-        let head = self.head(Duration::ZERO, now)?;
+        let offline = self.sync(now)?;
+        let head = self.head()?;
         let mut manifest = (*self.view(&head, Some(expected))?.manifest).clone();
         let mut selected = BTreeSet::new();
         let mut blobs = Vec::new();
@@ -369,7 +385,13 @@ impl Store {
         for blob in blobs.iter().chain([&root]) {
             self.substrate.put(blob)?;
         }
-        self.land(head, Snapshot::new(root.hash()), *expected, modified, now)
+        self.land(
+            offline,
+            Snapshot::new(root.hash()),
+            *expected,
+            modified,
+            now,
+        )
     }
 
     /// Register a shared project identity; display names never select or
@@ -381,23 +403,26 @@ impl Store {
         now: SystemTime,
     ) -> Result<Registration> {
         manifest::validate_name(name)?;
-        let head = self.head(Duration::ZERO, now)?;
+        let offline = self.sync(now)?;
+        let head = self.head()?;
         let mut manifest = (*self.view(&head, Some(expected))?.manifest).clone();
         let project = ProjectId::allocate()?;
         manifest.projects.insert(project.clone(), name.into());
         manifest.parents = vec![*expected];
         let root = manifest.encode()?;
         self.substrate.put(&root)?;
-        let publication = self.land(head, Snapshot::new(root.hash()), *expected, 1, now)?;
+        let publication = self.land(offline, Snapshot::new(root.hash()), *expected, 1, now)?;
         Ok(Registration {
             publication,
             project,
         })
     }
 
+    /// Publish `candidate`, or retain it when `offline` names why the remote
+    /// was unreachable.
     fn land(
         &mut self,
-        head: Head,
+        offline: Option<String>,
         candidate: Snapshot,
         base: Snapshot,
         changed: usize,
@@ -408,7 +433,7 @@ impl Store {
             base,
             since: unix(now),
         };
-        if let Freshness::Stale { reason, .. } = head.freshness {
+        if let Some(reason) = offline {
             self.retain(pending)?;
             return Ok(Publication {
                 landing: Landing::Pending { candidate, reason },
@@ -423,6 +448,13 @@ impl Store {
             Attempt::Pending(reason) => {
                 self.retain(pending)?;
                 Landing::Pending { candidate, reason }
+            }
+            Attempt::Contended => {
+                self.retain(pending)?;
+                Landing::Pending {
+                    candidate,
+                    reason: CONTENDED.into(),
+                }
             }
             Attempt::Diverged { actual, conflicts } => {
                 self.retain(pending)?;
@@ -451,7 +483,7 @@ impl Store {
                     self.release(&pending.candidate)?;
                     integrated.push(pending.candidate);
                 }
-                Attempt::Pending(_) => break,
+                Attempt::Pending(_) | Attempt::Contended => break,
                 Attempt::Diverged { .. } => {}
             }
         }
@@ -460,7 +492,8 @@ impl Store {
 
     /// Bring `candidate` into the published history by compare-and-swap,
     /// merging with whatever the head has become. With `pinned`, the head must
-    /// still be that snapshot.
+    /// still be that snapshot. The caller synced just before. After a lost
+    /// race, waits a random time, syncs and tries again.
     fn integrate(
         &mut self,
         candidate: &Snapshot,
@@ -468,12 +501,14 @@ impl Store {
         pinned: Option<&Snapshot>,
         now: SystemTime,
     ) -> Result<Attempt> {
-        let mut freshness = self.substrate.ensure_fresh(Duration::MAX, now)?;
-        for _ in 0..ATTEMPTS {
-            let head = self.current(freshness, now)?;
-            if let Freshness::Stale { reason, .. } = head.freshness {
-                return Ok(Attempt::Pending(reason));
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0 {
+                std::thread::sleep(retry_delay(attempt)?);
+                if let Some(reason) = self.sync(now)? {
+                    return Ok(Attempt::Pending(reason));
+                }
             }
+            let head = self.head()?;
             if let Some(pinned) = pinned
                 && *pinned != head.snapshot
             {
@@ -517,9 +552,7 @@ impl Store {
             };
             match self.substrate.update(&update, now) {
                 Ok(Outcome::Applied(_)) => return Ok(Attempt::Published(root)),
-                Ok(Outcome::Conflict { .. }) => {
-                    freshness = dots_substrate::Freshness::Current { as_of: now };
-                }
+                Ok(Outcome::Conflict { .. }) => {}
                 Ok(Outcome::Unknown) => {
                     return Ok(Attempt::Pending(
                         "the remote did not confirm the update".into(),
@@ -531,9 +564,7 @@ impl Store {
                 Err(error) => return Err(error.into()),
             }
         }
-        Err(invalid(
-            "knowledge kept changing during publication; retry later",
-        ))
+        Ok(Attempt::Contended)
     }
 
     /// Resolve a retained candidate against the published `incoming` snapshot
@@ -550,8 +581,7 @@ impl Store {
                 "{candidate} is not a candidate retained on this machine"
             )));
         }
-        let head = self.head(Duration::ZERO, now)?;
-        if let Freshness::Stale { reason, .. } = head.freshness {
+        if let Some(reason) = self.sync(now)? {
             return Err(Error::Unavailable(reason));
         }
         match self.integrate(candidate, resolutions, Some(incoming), now)? {
@@ -560,6 +590,9 @@ impl Store {
                 Ok(snapshot)
             }
             Attempt::Pending(reason) => Err(Error::Unavailable(reason)),
+            Attempt::Contended => Err(Error::Contended {
+                candidate: *candidate,
+            }),
             Attempt::Diverged { actual, conflicts } => Err(Error::Diverged {
                 expected: *incoming,
                 actual,
@@ -647,6 +680,7 @@ impl Store {
         if list.is_empty() {
             fs::remove_file(&path)
                 .map_err(|source| io("remove retained candidates", &path, source))?;
+            self.substrate.notify()?;
             return Ok(());
         }
         let bytes = serde_json::to_vec_pretty(&list).map_err(|source| Error::Json {
@@ -659,6 +693,7 @@ impl Store {
             .write_all(&bytes)
             .map_err(|source| io("write retained candidates", staged.path(), source))?;
         staged.publish_replace(&path)?;
+        self.substrate.notify()?;
         Ok(())
     }
 
