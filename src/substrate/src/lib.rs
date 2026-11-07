@@ -9,6 +9,7 @@ mod backend;
 mod cache;
 #[cfg(any(test, feature = "testing"))]
 pub mod conformance;
+pub mod git;
 mod hash;
 pub mod memory;
 mod name;

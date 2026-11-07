@@ -19,5 +19,9 @@ thiserror.workspace = true
 # Exposes the backend conformance suite to integration tests.
 testing = []
 
+[[test]]
+name = "acceptance"
+required-features = ["testing"]
+
 [lints]
 workspace = true
