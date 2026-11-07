@@ -90,6 +90,12 @@ updater owns later app releases. Reapply preserves a self-updated app; mise's
 receipt reports the installer version, not the running build. Adopting an
 unmanaged app requires an identical bundle and explicit approval.
 
+Every machine runs the substrate sync agent, `dots sync run`, as a login
+service (`dev.mise.dots-sync`: a LaunchAgent logging to
+`~/Library/Logs/dots-sync.log`, or a systemd user unit). It idles until
+`dots substrate init`. Installing commands restarts a loaded agent onto the new
+binary; `mise run sync:restart` does so explicitly.
+
 Rex login-service updates do not restart it automatically. Activate one with
 `mise run rex:restart-login`. Agent packages and source-loaded apps have their
 own reload/start boundaries.
