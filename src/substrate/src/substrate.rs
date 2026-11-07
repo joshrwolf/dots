@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 use dots_documents::mutation_lock::MutationLock;
 
 use crate::cache::Cache;
-use crate::state::{Bucket, Directory, Known, age};
+use crate::state::{Bucket, Directory, Known, Offline, age};
 use crate::{
     Backend, Blob, Error, FlushAttempt, Hash, MachineId, Outcome, Pending, RefName, Result,
     Stranded, Update, Version, Watch, invalid,
@@ -183,17 +183,30 @@ impl Substrate {
 
     /// Make the listed versions no older than `max_age`, listing only when
     /// neither the shared record nor a healthy watch already vouches for them.
-    /// Any pending hint forces a listing.
+    /// Any pending hint forces a listing. A listing that failed within
+    /// `max_age` is not retried, so an unreachable backend costs callers that
+    /// tolerate stale versions at most one attempt per `max_age`.
     pub fn ensure_fresh(&mut self, max_age: Duration, now: SystemTime) -> Result<Freshness> {
         let hinted = self
             .watch
             .as_mut()
             .is_some_and(|watch| !watch.hints().is_empty());
         if !hinted {
-            if let Some(at) = self.directory.read(|state| state.listed_at)?
+            let (listed_at, offline) = self
+                .directory
+                .read(|state| (state.listed_at, state.offline.clone()))?;
+            if let Some(at) = listed_at
                 && age(now, at) <= max_age
             {
                 return Ok(Freshness::Current { as_of: at });
+            }
+            if let Some(offline) = offline
+                && age(now, offline.checked_at) <= max_age
+            {
+                return Ok(Freshness::Stale {
+                    since: listed_at,
+                    reason: offline.reason,
+                });
             }
             if self.watch_listed
                 && let Some(at) = self.watch.as_ref().and_then(|w| w.confirmed_as_of())
@@ -207,7 +220,7 @@ impl Substrate {
                 self.directory.modify(|state| {
                     state.listed = listed;
                     state.listed_at = Some(now);
-                    state.offline_since = None;
+                    state.offline = None;
                     Ok(())
                 })?;
                 self.watch_listed = self.watch.is_some();
@@ -215,7 +228,12 @@ impl Substrate {
             }
             Err(Error::Unavailable(reason)) => {
                 let since = self.directory.modify(|state| {
-                    state.offline_since.get_or_insert(now);
+                    let since = state.offline.as_ref().map_or(now, |offline| offline.since);
+                    state.offline = Some(Offline {
+                        since,
+                        checked_at: now,
+                        reason: reason.clone(),
+                    });
                     Ok(state.listed_at)
                 })?;
                 Ok(Freshness::Stale { since, reason })
@@ -231,7 +249,7 @@ impl Substrate {
         let (listed_at, offline, listed, known) = self.directory.read(|state| {
             (
                 state.listed_at,
-                state.offline_since.is_some(),
+                state.offline.is_some(),
                 state.listed.get(name).cloned(),
                 state.known.get(name).cloned(),
             )
@@ -466,7 +484,7 @@ impl Substrate {
             stranded: state.stranded.clone(),
             last_flush: state.last_flush.clone(),
             listed_at: state.listed_at,
-            offline_since: state.offline_since,
+            offline_since: state.offline.as_ref().map(|offline| offline.since),
         })
     }
 

@@ -30,6 +30,10 @@ use crate::{
 const NAMESPACE: &str = "refs/dots/";
 const LOCAL_DEADLINE: Duration = Duration::from_secs(30);
 const NETWORK_DEADLINE: Duration = Duration::from_secs(60);
+/// Listing transfers only ref names, so an unresponsive remote is reported
+/// unavailable well before interactive callers, such as Pi's 10 s context
+/// client, give up and lose even the stale value.
+const LIST_DEADLINE: Duration = Duration::from_secs(5);
 const OUTPUT_LIMIT: usize = 256 * 1024 * 1024;
 const ISOLATION: &[&str] = &[
     "core.hooksPath=/dev/null",
@@ -89,7 +93,7 @@ impl GitBackend {
             "--object-format=sha1",
             "--template=",
         ])?;
-        let output = self.execute("initialize cache repository", command, None, false)?;
+        let output = Self::execute("initialize cache repository", command, None, None)?;
         checked(output, "initialize cache repository")?;
         let _ = self.initialized.set(());
         Ok(())
@@ -110,6 +114,7 @@ impl GitBackend {
     }
 
     /// Bound each network operation; a timeout makes its outcome unknown.
+    /// Listing is bounded by the lesser of this and 5 s.
     #[must_use]
     pub fn deadline(mut self, deadline: Duration) -> Self {
         self.deadline = deadline;
@@ -176,30 +181,25 @@ impl GitBackend {
         network: bool,
     ) -> Result<Output> {
         self.initialize()?;
-        self.execute(operation, command, input, network)
+        Self::execute(operation, command, input, network.then_some(self.deadline))
     }
 
+    /// Run a prepared command; `network` bounds a network operation.
     fn execute(
-        &self,
         operation: &'static str,
         command: Command,
         input: Option<Vec<u8>>,
-        network: bool,
+        network: Option<Duration>,
     ) -> Result<Output> {
-        let deadline = if network {
-            self.deadline
-        } else {
-            LOCAL_DEADLINE
-        };
-        let mut runner = dots_process::Runner::new(deadline, OUTPUT_LIMIT);
+        let mut runner = dots_process::Runner::new(network.unwrap_or(LOCAL_DEADLINE), OUTPUT_LIMIT);
         if let Some(input) = input {
             runner = runner.stdin(input, OUTPUT_LIMIT);
         }
         match runner.output(command) {
             Ok(output) => Ok(output),
-            Err(dots_process::Error::Timeout(limit)) if network => Err(Error::Unavailable(
-                format!("git {operation} exceeded {limit:?}"),
-            )),
+            Err(dots_process::Error::Timeout(limit)) if network.is_some() => Err(
+                Error::Unavailable(format!("git {operation} exceeded {limit:?}")),
+            ),
             Err(source) => Err(Error::Process { operation, source }),
         }
     }
@@ -477,7 +477,13 @@ impl GitBackend {
 impl Backend for GitBackend {
     fn list(&self) -> Result<BTreeMap<RefName, Version>> {
         let pattern = format!("{NAMESPACE}*");
-        let output = self.run("list refs", &["ls-remote", &self.url, &pattern], None, true)?;
+        self.initialize()?;
+        let output = Self::execute(
+            "list refs",
+            self.command(&["ls-remote", &self.url, &pattern])?,
+            None,
+            Some(self.deadline.min(LIST_DEADLINE)),
+        )?;
         if !output.status.success() {
             return Err(Error::Unavailable(format!(
                 "git ls-remote: {}",

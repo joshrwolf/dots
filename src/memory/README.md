@@ -9,10 +9,11 @@ the store identity, the shared project registry, and every document's path,
 SHA-256 hash and size. The snapshot ID is the manifest's hash (`sha256:<hex>`).
 Documents are blobs; the substrate ref `memory` names the latest manifest.
 
-Reads check the remote first. `context` reuses a listing up to 30 seconds old;
-explicit reads and searches always list. When the remote is unreachable, reads
-use the last snapshot this machine saw and label it stale. A machine that never
-listed has nothing to read.
+Reads check the remote first. `context` reuses a listing, or a failed attempt
+to list, up to 30 seconds old; explicit reads and searches always list. A
+listing that takes over 5 seconds counts as unreachable. When the remote is
+unreachable, reads use the last snapshot this machine saw and label it stale. A
+machine that never listed has nothing to read.
 
 A publication changes global and project documents against one expected
 snapshot and lands with a synchronous compare-and-swap. When the ref moved on,

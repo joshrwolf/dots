@@ -75,7 +75,7 @@ pub(crate) enum Command {
     },
     /// Read and publish shared knowledge snapshots across machines
     #[command(
-        long_about = "Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads check the remote first (context reuses a listing up to 30 seconds old) and fall back to the last known snapshot, labeled stale, when it is unreachable. Publication changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline publications stay pending on this machine. Tasks, outputs, credentials and checkout bindings remain machine-local."
+        long_about = "Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads check the remote first (context reuses a listing, or a failed attempt to list, up to 30 seconds old) and fall back to the last known snapshot, labeled stale, when it is unreachable. Publication changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline publications stay pending on this machine. Tasks, outputs, credentials and checkout bindings remain machine-local."
     )]
     Memory {
         /// Registered project ID instead of resolving the current checkout

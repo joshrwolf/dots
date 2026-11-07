@@ -38,6 +38,7 @@ const CASES: &[(&str, Case)] = &[
     ("blob verification failure", blob_verification_failure),
     ("freshness shared across instances", freshness_shared),
     ("offline reads", offline_reads),
+    ("offline listing retried per max age", offline_retry),
     ("coalescing and budget", coalescing_and_budget),
     ("stranded conflict", stranded_conflict),
     ("flush with unknown outcomes", flush_unknown_outcomes),
@@ -396,6 +397,33 @@ fn offline_reads(lab: &Lab) -> TestResult {
             .stale_since,
         None
     );
+    Ok(())
+}
+
+fn offline_retry(lab: &Lab) -> TestResult {
+    let (probe, backend) = lab.probed("a")?;
+    let mut substrate = lab.substrate("a", backend)?;
+    let max_age = Duration::from_secs(30);
+    substrate.ensure_fresh(Duration::ZERO, at(0))?;
+    probe.set(Mode::Offline);
+    let stale = |freshness: Freshness| matches!(freshness, Freshness::Stale { since: Some(since), .. } if since == at(0));
+
+    assert!(stale(substrate.ensure_fresh(max_age, at(40))?));
+    assert_eq!(probe.counts().lists, 2);
+    assert!(stale(substrate.ensure_fresh(max_age, at(70))?));
+    assert_eq!(probe.counts().lists, 2, "a recent failure is not retried");
+    assert!(stale(substrate.ensure_fresh(Duration::ZERO, at(71))?));
+    assert_eq!(probe.counts().lists, 3, "zero tolerance always retries");
+    assert!(stale(substrate.ensure_fresh(max_age, at(102))?));
+    assert_eq!(probe.counts().lists, 4);
+    assert_eq!(substrate.status()?.offline_since, Some(at(40)));
+
+    probe.set(Mode::Normal);
+    assert_eq!(
+        substrate.ensure_fresh(max_age, at(140))?,
+        Freshness::Current { as_of: at(140) }
+    );
+    assert_eq!(substrate.status()?.offline_since, None);
     Ok(())
 }
 

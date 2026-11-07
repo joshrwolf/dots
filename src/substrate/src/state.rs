@@ -61,13 +61,23 @@ pub(crate) struct Bucket {
     pub(crate) at: SystemTime,
 }
 
+/// Listing has failed since `since`; the latest attempt failed at `checked_at`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Offline {
+    #[serde(with = "millis")]
+    pub(crate) since: SystemTime,
+    #[serde(with = "millis")]
+    pub(crate) checked_at: SystemTime,
+    pub(crate) reason: String,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct State {
     #[serde(with = "optional_millis")]
     pub(crate) listed_at: Option<SystemTime>,
-    #[serde(with = "optional_millis")]
-    pub(crate) offline_since: Option<SystemTime>,
+    pub(crate) offline: Option<Offline>,
     pub(crate) listed: BTreeMap<RefName, Version>,
     pub(crate) known: BTreeMap<RefName, Known>,
     pub(crate) outbox: BTreeMap<RefName, Pending>,
