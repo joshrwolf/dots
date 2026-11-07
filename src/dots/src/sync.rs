@@ -160,13 +160,16 @@ async fn stopping(
 /// moved data.
 fn step(substrate: &Substrate, now: SystemTime) -> Result<()> {
     let pass = crate::share::pass(substrate, Trigger::Scheduled, now);
-    if let Ok((_, Some((_, imported)))) = &pass {
+    if let Ok((_, Some((exported, imported)))) = &pass {
+        for (root, reason) in &exported.errors {
+            log(&format!("export of task tree {root} failed: {reason}"));
+        }
         for (root, reason) in &imported.errors {
             log(&format!("import of task tree {root} failed: {reason}"));
         }
         for root in &imported.lost {
             log(&format!(
-                "task tree {root} was taken over elsewhere before this machine pushed its last changes"
+                "task tree {root} was taken over elsewhere before this machine pushed its last changes; dots task share status lists what did not publish"
             ));
         }
     }

@@ -322,4 +322,63 @@ mod tests {
         assert!(refs.iter().all(|name| !name.contains(&a.project)));
         assert!(refs.iter().all(|name| !name.contains(&b.project)));
     }
+
+    #[test]
+    fn an_update_refused_after_a_takeover_is_listed_with_what_never_published() {
+        let remote = Rc::new(Remote::new());
+        let a = Machine::on(&remote);
+        let b = Machine::on(&remote);
+        let genesis = a.ok(&["memory", "init"]);
+        let shared = a.ok(&[
+            "memory",
+            "project",
+            "create",
+            "neutral",
+            "--expected-snapshot",
+            str_at(&genesis, "/snapshot"),
+        ]);
+        let shared = str_at(&shared, "/project").to_owned();
+        a.ok(&["memory", "project", "bind", &shared]);
+        b.sync();
+        b.ok(&["memory", "project", "bind", &shared]);
+        a.ok(&["task", "share", "enable"]);
+        b.ok(&["task", "share", "enable"]);
+        let root = str_at(&a.ok(&["task", "add", "Loose"]), "/task/id").to_owned();
+        a.sync();
+        b.sync();
+
+        // B takes the tree over while A, offline, keeps writing.
+        b.ok(&["task", "share", "take", &root]);
+        b.ok(&["task", "update", &root, "--title", "By B"]);
+        b.sync();
+        a.ok(&["task", "update", &root, "--title", "Offline by A"]);
+        a.sync();
+
+        let substrate = a.ok(&["substrate", "status"]);
+        let stranded = substrate["stranded"].as_array().unwrap();
+        assert_eq!(stranded.len(), 1, "{substrate}");
+        assert_eq!(
+            str_at(&stranded[0], "/ref"),
+            format!("tasks/{shared}/{root}")
+        );
+        let status = a.ok(&["task", "share", "status"]);
+        let tree = &status["stranded"][0];
+        assert_eq!(str_at(tree, "/root"), root, "{status}");
+        assert_eq!(str_at(tree, "/tasks/0/title"), "Offline by A", "{status}");
+        assert!(
+            tree["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|event| event["kind"] == "updated"),
+            "{status}"
+        );
+        let text = String::from_utf8(a.run(&["task", "share", "status"], None).stdout).unwrap();
+        assert!(text.contains("Offline by A"), "{text}");
+        let shown = a.ok(&["task", "show", &root]);
+        assert_eq!(str_at(&shown, "/task/title"), "By B");
+        assert!(shown.pointer("/task/foreign").is_some(), "{shown}");
+        let refused = a.fail(&["task", "update", &root, "--title", "Again"]);
+        assert!(refused.contains("share take"), "{refused}");
+    }
 }

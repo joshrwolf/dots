@@ -422,7 +422,7 @@ pub(crate) enum ShareCommand {
     Enable,
     /// Turn sharing off; imported trees stay read-only as last seen
     Disable,
-    /// Show this machine's switch, trees and pending replication
+    /// Show this machine's switch, trees, pending replication, withheld parts and updates refused after a takeover
     Status,
     /// Make this machine the home of a tree imported from another machine
     #[command(

@@ -195,12 +195,12 @@ pub(super) fn import(
             Ok(complete) => {
                 tx.execute(
                     "INSERT INTO shared_trees(root, project, shared_project, home, version, manifest, proposed,
-                       brief, written_at, complete, imported_at)
-                     VALUES(?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10)
+                       brief, written_at, complete, imported_at, withheld)
+                     VALUES(?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10, ?11)
                      ON CONFLICT(root) DO UPDATE SET project=excluded.project, shared_project=excluded.shared_project,
                        home=excluded.home, version=excluded.version, manifest=excluded.manifest, proposed=NULL,
                        brief=excluded.brief, written_at=excluded.written_at, complete=excluded.complete,
-                       imported_at=excluded.imported_at",
+                       imported_at=excluded.imported_at, withheld=excluded.withheld",
                     params![
                         root,
                         binding.local.as_str(),
@@ -216,6 +216,7 @@ pub(super) fn import(
                         manifest.written_at,
                         complete,
                         unix(now),
+                        super::withheld_column(&manifest.withheld)?,
                     ],
                 )?;
                 tx.commit()?;
@@ -806,7 +807,7 @@ pub(super) fn taken(
 }
 
 /// An error with its sources, for reports that outlive it.
-fn describe(error: &Error) -> String {
+pub(super) fn describe(error: &Error) -> String {
     let mut text = error.to_string();
     let mut source = std::error::Error::source(error);
     while let Some(cause) = source {

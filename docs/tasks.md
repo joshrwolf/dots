@@ -89,11 +89,24 @@ as one push. Other machines import the tree on each sync pass, or on `--fresh`,
 and show it read-only: changes refuse and name `dots task share take ROOT`.
 Taking over compares against the version this machine last saw; when the tree
 moved on, it imports the new version, reports what changed and refuses until
-rerun. Coordinate the goal afterwards; claims never move. An answer given on a
-machine that is not the home travels to the home, whose coordinator
-incorporates it; the closure then replicates back. Disabling keeps imported
-trees read-only as last seen. Pi marks imported goals read-only in their views
-and context, and rereads them when the sync agent imports a change.
+rerun. Coordinate the goal afterwards; claims never move. When the old home
+was offline and wrote meanwhile, the remote refuses its update; the substrate
+keeps it as a stranded entry, `dots task share status` lists the tasks and
+events it held that never published, and the tree turns read-only there.
+
+An answer given on a machine that is not the home travels to the home, whose
+coordinator incorporates it; the closure then replicates back. Disabling keeps
+imported trees read-only as last seen.
+
+A brief or output revision the home cannot send, because it exceeds the
+substrate's 1 MiB blob limit or its bytes are gone, stays behind while the rest
+of the tree replicates; both machines list it in `dots task share status`, and
+other machines read the revision as missing. Publication caps outputs at the
+same 1 MiB, so a published output fits. A tree that cannot be exported at all
+reports the error and stays queued without holding back other trees.
+
+Pi marks imported goals read-only in their views and context, and rereads them
+when the sync agent imports a change.
 
 Events keep a stable `uid` across machines, while `seq` stays each machine's
 own cursor; follow and history read local positions.

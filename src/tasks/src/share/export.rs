@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use dots_documents::{text, verified_text};
-use dots_substrate::{Blob, Error as SubstrateError, Hash, Update, Version};
+use dots_substrate::{Blob, Error as SubstrateError, Hash, MAX_BLOB_BYTES, Update, Version};
 use rusqlite::{OptionalExtension as _, Transaction, params};
 use serde::Serialize;
 
@@ -14,7 +14,7 @@ use super::format::{
     RevisionRecord, RevisionState, SEGMENT_TARGET, Segment, SentAnswer, TaskRecord, decode, encode,
     share,
 };
-use super::{Context, SharedProject, answers_ref, tree_ref, unix};
+use super::{Context, SharedProject, Withheld, WithheldKind, answers_ref, tree_ref, unix};
 use crate::outputs::MAX_OUTPUT_BYTES;
 use crate::store::{Error, Store};
 
@@ -25,6 +25,9 @@ pub struct Exported {
     pub trees: Vec<String>,
     /// Whether this machine's answers changed and wait in the outbox.
     pub answers: bool,
+    /// Trees that could not be exported, with the reason; their changes stay
+    /// queued and the next export retries them. Other trees still export.
+    pub errors: Vec<(String, String)>,
 }
 
 /// One tree's local state, encoded.
@@ -36,10 +39,14 @@ struct Built {
     published: Vec<i64>,
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one pass over candidate trees reads, defers and records each in turn"
-)]
+/// What exporting one tree did.
+enum TreeOutcome {
+    Deferred,
+    Unchanged,
+    /// Not exported from here: unbound, or homed elsewhere.
+    Skipped,
+}
+
 pub(super) fn export(
     store: &mut Store,
     context: Context<'_>,
@@ -49,125 +56,159 @@ pub(super) fn export(
     let document_root = store.document_root()?;
     let mut exported = Exported::default();
     for (root, project) in candidates(store, &machine)? {
-        let Some(shared) = context.shared(&project).cloned() else {
-            forget(store, &root)?;
-            continue;
-        };
-        let name = tree_ref(&shared, &root)?;
-        let mut row = super::import::shared_row(store, &root)?;
-        if row.as_ref().is_some_and(|row| row.home != machine) {
-            forget(store, &root)?;
-            continue;
-        }
-        // A flushed proposal the last import did not confirm yet.
-        if let Some(current) = row.as_mut()
-            && let Some(proposed) = current.proposed
-            && let Ok(Some(value)) = context.substrate.read(&name)
-            && value.root == proposed
-        {
-            super::import::confirm(store, &root, &value.version, proposed, true)?;
-            current.version = Some(value.version.to_string());
-            current.manifest = Some(proposed);
-            current.proposed = None;
-        }
-        let confirmed = match row.as_ref().and_then(|row| row.manifest) {
-            Some(hash) => Some(decode::<Manifest>(
-                &context.substrate.blob(&hash)?,
-                "tree manifest",
-            )?),
-            None => None,
-        };
-        let latest = match row.as_ref().and_then(|row| row.proposed) {
-            Some(hash) => Some(decode::<Manifest>(
-                &context.substrate.blob(&hash)?,
-                "tree manifest",
-            )?),
-            None => confirmed.clone(),
-        };
-        let tx = store.write()?;
-        let built = build(
-            &tx,
+        match export_tree(
+            store,
             context,
+            &machine,
             &document_root,
-            &project,
-            &shared,
             &root,
-            latest.as_ref(),
+            &project,
             now,
-        )?;
-        if latest
-            .as_ref()
-            .is_some_and(|latest| latest.same_state(&built.manifest))
-        {
-            tx.execute(
-                &format!("DELETE FROM dirty_tasks WHERE task IN ({TREE})"),
-                [&root],
-            )?;
-            tx.commit()?;
-            continue;
+        ) {
+            Ok(TreeOutcome::Deferred) => exported.trees.push(root),
+            Ok(TreeOutcome::Unchanged | TreeOutcome::Skipped) => {}
+            Err(error) => exported
+                .errors
+                .push((root, super::import::describe(&error))),
         }
-        let manifest_blob = encode(&built.manifest)?;
-        let known = confirmed
-            .as_ref()
-            .map(Manifest::references)
-            .unwrap_or_default();
-        let mut new_blobs = vec![manifest_blob.clone()];
-        for hash in built.manifest.references() {
-            if known.contains(&hash) {
-                continue;
-            }
-            let blob = match built.blobs.get(&hash) {
-                Some(blob) => blob.clone(),
-                None => context.substrate.blob(&hash)?,
-            };
-            new_blobs.push(blob);
-        }
-        let expected = row
-            .as_ref()
-            .and_then(|row| row.version.clone())
-            .map(Version::new)
-            .transpose()?;
-        context.substrate.defer(
-            Update {
-                name,
-                expected,
-                root: manifest_blob.hash(),
-                new_blobs,
-            },
-            now,
-        )?;
-        tx.execute(
-            "INSERT INTO shared_trees(root, project, shared_project, home, proposed, brief, written_at)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(root) DO UPDATE SET project=excluded.project, shared_project=excluded.shared_project,
-               home=excluded.home, proposed=excluded.proposed, brief=excluded.brief, written_at=excluded.written_at",
-            params![
-                root,
-                project,
-                shared.as_str(),
-                machine,
-                manifest_blob.hash().to_string(),
-                built
-                    .manifest
-                    .goal
-                    .as_ref()
-                    .and_then(|goal| goal.content)
-                    .map(|hash| hash.to_string()),
-                built.manifest.written_at,
-            ],
-        )?;
-        for seq in &built.published {
-            tx.execute("UPDATE events SET published=1 WHERE seq=?1", [seq])?;
-        }
-        tx.execute(
-            &format!("DELETE FROM dirty_tasks WHERE task IN ({TREE})"),
-            [&root],
-        )?;
-        tx.commit()?;
-        exported.trees.push(root);
     }
     exported.answers = export_answers(store, context, now)?;
     Ok(exported)
+}
+
+/// Defer one tree's current state when it changed. Errors leave the tree's
+/// changes queued.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one tree reads, defers and records in turn"
+)]
+fn export_tree(
+    store: &mut Store,
+    context: Context<'_>,
+    machine: &str,
+    document_root: &Path,
+    root: &str,
+    project: &str,
+    now: SystemTime,
+) -> Result<TreeOutcome, Error> {
+    let Some(shared) = context.shared(project).cloned() else {
+        forget(store, root)?;
+        return Ok(TreeOutcome::Skipped);
+    };
+    let name = tree_ref(&shared, root)?;
+    let mut row = super::import::shared_row(store, root)?;
+    if row.as_ref().is_some_and(|row| row.home != machine) {
+        forget(store, root)?;
+        return Ok(TreeOutcome::Skipped);
+    }
+    // A flushed proposal the last import did not confirm yet.
+    if let Some(current) = row.as_mut()
+        && let Some(proposed) = current.proposed
+        && let Ok(Some(value)) = context.substrate.read(&name)
+        && value.root == proposed
+    {
+        super::import::confirm(store, root, &value.version, proposed, true)?;
+        current.version = Some(value.version.to_string());
+        current.manifest = Some(proposed);
+        current.proposed = None;
+    }
+    let confirmed = match row.as_ref().and_then(|row| row.manifest) {
+        Some(hash) => Some(decode::<Manifest>(
+            &context.substrate.blob(&hash)?,
+            "tree manifest",
+        )?),
+        None => None,
+    };
+    let latest = match row.as_ref().and_then(|row| row.proposed) {
+        Some(hash) => Some(decode::<Manifest>(
+            &context.substrate.blob(&hash)?,
+            "tree manifest",
+        )?),
+        None => confirmed.clone(),
+    };
+    let tx = store.write()?;
+    let built = build(
+        &tx,
+        context,
+        document_root,
+        project,
+        &shared,
+        root,
+        latest.as_ref(),
+        now,
+    )?;
+    if latest
+        .as_ref()
+        .is_some_and(|latest| latest.same_state(&built.manifest))
+    {
+        tx.execute(
+            &format!("DELETE FROM dirty_tasks WHERE task IN ({TREE})"),
+            [root],
+        )?;
+        tx.commit()?;
+        return Ok(TreeOutcome::Unchanged);
+    }
+    let manifest_blob = encode(&built.manifest)?;
+    let known = confirmed
+        .as_ref()
+        .map(Manifest::references)
+        .unwrap_or_default();
+    let mut new_blobs = vec![manifest_blob.clone()];
+    for hash in built.manifest.references() {
+        if known.contains(&hash) {
+            continue;
+        }
+        let blob = match built.blobs.get(&hash) {
+            Some(blob) => blob.clone(),
+            None => context.substrate.blob(&hash)?,
+        };
+        new_blobs.push(blob);
+    }
+    let expected = row
+        .as_ref()
+        .and_then(|row| row.version.clone())
+        .map(Version::new)
+        .transpose()?;
+    context.substrate.defer(
+        Update {
+            name,
+            expected,
+            root: manifest_blob.hash(),
+            new_blobs,
+        },
+        now,
+    )?;
+    tx.execute(
+        "INSERT INTO shared_trees(root, project, shared_project, home, proposed, brief, written_at, withheld)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(root) DO UPDATE SET project=excluded.project, shared_project=excluded.shared_project,
+           home=excluded.home, proposed=excluded.proposed, brief=excluded.brief, written_at=excluded.written_at,
+           withheld=excluded.withheld",
+        params![
+            root,
+            project,
+            shared.as_str(),
+            machine,
+            manifest_blob.hash().to_string(),
+            built
+                .manifest
+                .goal
+                .as_ref()
+                .and_then(|goal| goal.content)
+                .map(|hash| hash.to_string()),
+            built.manifest.written_at,
+            super::withheld_column(&built.manifest.withheld)?,
+        ],
+    )?;
+    for seq in &built.published {
+        tx.execute("UPDATE events SET published=1 WHERE seq=?1", [seq])?;
+    }
+    tx.execute(
+        &format!("DELETE FROM dirty_tasks WHERE task IN ({TREE})"),
+        [root],
+    )?;
+    tx.commit()?;
+    Ok(TreeOutcome::Deferred)
 }
 
 /// Every task of the tree rooted at `?1`.
@@ -233,6 +274,7 @@ fn build(
     now: SystemTime,
 ) -> Result<Built, Error> {
     let mut blobs = BTreeMap::new();
+    let mut withheld = Vec::new();
     let mut add = |blob: Blob| {
         let hash = blob.hash();
         blobs.insert(hash, blob);
@@ -267,7 +309,28 @@ fn build(
             let path = document_root.join("workspaces").join(project).join(&brief);
             let brief_blob = match text::read_bytes(&path, dots_substrate::MAX_BLOB_BYTES) {
                 Ok(Some(bytes)) => Some(add(Blob::new(bytes)?)),
-                Ok(None) | Err(_) => None,
+                Ok(None) => {
+                    withhold(
+                        &mut withheld,
+                        WithheldKind::Brief,
+                        &brief,
+                        "missing on its home",
+                    );
+                    None
+                }
+                Err(dots_documents::Error::TooLarge { .. }) => {
+                    withhold(&mut withheld, WithheldKind::Brief, &brief, TOO_LARGE);
+                    None
+                }
+                Err(error) => {
+                    withhold(
+                        &mut withheld,
+                        WithheldKind::Brief,
+                        &brief,
+                        &format!("unreadable on its home: {error}"),
+                    );
+                    None
+                }
             };
             Some(GoalRecord {
                 brief,
@@ -317,6 +380,7 @@ fn build(
             slug,
             known_contents,
             &mut add,
+            &mut withheld,
         )?
         else {
             continue;
@@ -378,6 +442,7 @@ fn build(
         outputs,
         segments,
         contents,
+        withheld,
     };
     Ok(Built {
         manifest,
@@ -581,7 +646,33 @@ fn event_record(tx: &Transaction<'_>, seq: i64) -> Result<EventRecord, Error> {
     Ok(record)
 }
 
+/// Why a part stays behind when it exceeds the substrate's blob limit.
+const TOO_LARGE: &str = "larger than the substrate's 1 MiB blob limit";
+
+fn output_state(state: &verified_text::State) -> String {
+    match state {
+        verified_text::State::Available(_) => "available".into(),
+        verified_text::State::Missing => "missing".into(),
+        verified_text::State::Corrupt => "altered".into(),
+        verified_text::State::Unreadable(reason) => format!("unreadable ({reason})"),
+    }
+}
+
+fn withhold(withheld: &mut Vec<Withheld>, kind: WithheldKind, id: &str, reason: &str) {
+    withheld.push(Withheld {
+        kind,
+        id: id.to_owned(),
+        reason: reason.to_owned(),
+    });
+}
+
 /// The record of one output slug, adding content blobs the tree lacks.
+/// A revision whose bytes cannot travel is recorded as missing and withheld.
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "one record reads the catalog, cache and documents for each revision"
+)]
 fn output_record(
     tx: &Transaction<'_>,
     context: Context<'_>,
@@ -590,6 +681,7 @@ fn output_record(
     slug: &str,
     known: Option<&BTreeSet<Hash>>,
     add: &mut impl FnMut(Blob) -> Hash,
+    withheld: &mut Vec<Withheld>,
 ) -> Result<Option<OutputRecord>, Error> {
     type Row = (
         String,
@@ -644,6 +736,14 @@ fn output_record(
             || context.substrate.blob(&hash).is_ok()
         {
             RevisionState::Available
+        } else if usize::try_from(bytes).map_or(true, |bytes| bytes > MAX_BLOB_BYTES) {
+            withhold(
+                withheld,
+                WithheldKind::Output,
+                &format!("{slug} {digest}"),
+                TOO_LARGE,
+            );
+            RevisionState::Missing
         } else {
             match verified_text::inspect(
                 document_root,
@@ -656,7 +756,15 @@ fn output_record(
                     add(Blob::new(bytes.into_bytes())?);
                     RevisionState::Available
                 }
-                _ => RevisionState::Missing,
+                state => {
+                    withhold(
+                        withheld,
+                        WithheldKind::Output,
+                        &format!("{slug} {digest}"),
+                        &format!("{} on its home", output_state(&state)),
+                    );
+                    RevisionState::Missing
+                }
             }
         };
         revisions.push(RevisionRecord {

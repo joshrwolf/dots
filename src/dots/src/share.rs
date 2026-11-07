@@ -102,7 +102,7 @@ pub(crate) fn run(command: ShareCommand, json: bool) -> Result<String> {
 /// `share status`: the switch, trees and pending replication.
 fn status(store: &mut Store, json: bool) -> Result<String> {
     let status = store.share_status()?;
-    let (pending, changes) = match parts()? {
+    let (pending, changes, stranded) = match parts()? {
         Some((substrate, _)) => (
             substrate
                 .status()?
@@ -115,8 +115,9 @@ fn status(store: &mut Store, json: bool) -> Result<String> {
                 .map(|pending| pending.name.to_string())
                 .collect(),
             Some(substrate.changes()),
+            share::stranded(&substrate)?,
         ),
-        None => (Vec::new(), None),
+        None => (Vec::new(), None, Vec::new()),
     };
     if json {
         return Ok(crate::json::render(json!({
@@ -126,6 +127,8 @@ fn status(store: &mut Store, json: bool) -> Result<String> {
             "dirty": status.dirty,
             "sent_answers": status.sent_answers,
             "pending": pending,
+            "stranded": stranded,
+            "withheld": status.withheld,
             "changes": changes,
             "bindings": bindings()?.iter().map(|b| json!({"local": b.local, "shared": b.shared})).collect::<Vec<_>>(),
         })));
@@ -159,7 +162,58 @@ fn status(store: &mut Store, json: bool) -> Result<String> {
             if tree.complete { "" } else { " (incomplete)" }
         );
     }
+    for tree in &status.withheld {
+        let _ = writeln!(
+            out,
+            "Not replicated from {} (homed on {}):",
+            tree.root, tree.home
+        );
+        for item in &tree.withheld {
+            let _ = writeln!(out, "  {} {}: {}", item.kind.as_str(), item.id, item.reason);
+        }
+    }
+    refused(&mut out, &stranded);
     Ok(out)
+}
+
+/// The text form of updates the remote refused after a takeover.
+fn refused(out: &mut String, stranded: &[share::StrandedTree]) {
+    for tree in stranded {
+        let _ = writeln!(
+            out,
+            "Refused update of {} (taken over by {}); never published:",
+            tree.root,
+            tree.home.as_deref().unwrap_or("another machine")
+        );
+        if let Some(error) = &tree.error {
+            let _ = writeln!(out, "  (details unavailable: {error})");
+        }
+        for task in &tree.tasks {
+            let _ = writeln!(out, "  task {} [{}] {}", task.id, task.status, task.title);
+        }
+        for event in &tree.events {
+            let _ = writeln!(
+                out,
+                "  event {} {}{}",
+                event.task,
+                event.kind,
+                event
+                    .detail
+                    .as_deref()
+                    .map(|d| format!(": {d}"))
+                    .unwrap_or_default()
+            );
+        }
+        for (kind, ids) in [
+            ("request", &tree.requests),
+            ("decision", &tree.decisions),
+            ("output", &tree.outputs),
+        ] {
+            for id in ids {
+                let _ = writeln!(out, "  {kind} {id}");
+            }
+        }
+    }
 }
 
 /// After a local write: defer the trees it changed to the outbox, where the
@@ -182,7 +236,10 @@ fn try_after_write(store: &mut Store) -> Result<()> {
         substrate: &substrate,
         bindings: &bindings,
     };
-    share::export(store, context, SystemTime::now())?;
+    let exported = share::export(store, context, SystemTime::now())?;
+    for (root, reason) in exported.errors {
+        eprintln!("dots: task tree {root} not exported: {reason}");
+    }
     Ok(())
 }
 

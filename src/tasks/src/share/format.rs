@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use dots_substrate::{Blob, Hash, MachineId};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+use super::Withheld;
 use crate::store::Error;
 
 /// The format every manifest and record of this build carries.
@@ -49,6 +50,10 @@ pub(super) struct Manifest {
     pub segments: Vec<Hash>,
     /// Output contents that travel with the tree.
     pub contents: BTreeSet<Hash>,
+    /// What the home could not replicate, with the reason; every other
+    /// record of the tree still travels.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub withheld: Vec<Withheld>,
 }
 
 impl Manifest {

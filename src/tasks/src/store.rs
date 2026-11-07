@@ -77,7 +77,7 @@ const SHARING: &str = "
     CREATE TABLE shared_trees(
         root TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), shared_project TEXT NOT NULL,
         home TEXT NOT NULL, version TEXT, manifest TEXT, proposed TEXT, brief TEXT, written_at INTEGER,
-        complete INTEGER NOT NULL DEFAULT 1, imported_at INTEGER);
+        complete INTEGER NOT NULL DEFAULT 1, imported_at INTEGER, withheld TEXT);
     CREATE TABLE dirty_tasks(task TEXT PRIMARY KEY) WITHOUT ROWID;
     CREATE TRIGGER events_dirty AFTER INSERT ON events
         WHEN NEW.kind NOT IN ('claimed','released') AND EXISTS(SELECT 1 FROM sharing WHERE enabled=1)

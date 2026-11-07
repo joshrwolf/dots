@@ -586,3 +586,255 @@ fn growth_of_a_tree_with_500_events_stays_incremental() {
     // Each push carries its new events and small records, not the history.
     assert!(largest < 16 * 1024, "largest push {largest}");
 }
+
+#[test]
+fn an_offline_home_that_lost_its_tree_strands_its_update_visibly() {
+    let lab = Lab::new();
+    let (mut a, mut b) = (lab.machine("a"), lab.machine("b"));
+    a.enable();
+    b.enable();
+    let root = a.goal("brief\n");
+    let child = a.add("child", Some(&root));
+    a.sync();
+    b.sync();
+
+    // B takes the tree over and writes while A is offline.
+    b.take(&root).unwrap();
+    b.coordinate(&root);
+    b.retitle(&child, "by b").unwrap();
+    b.sync();
+
+    // Offline, A still homes the tree here and keeps writing.
+    a.retitle(&child, "offline by a").unwrap();
+    let extra = a.add("offline task", Some(&root));
+    a.export();
+    assert_eq!(a.substrate.status().unwrap().pending.len(), 1);
+
+    // Back online: the remote refuses the update, which is kept, not dropped.
+    let (_, imported) = a.sync().unwrap();
+    assert_eq!(imported.lost, vec![root.clone()]);
+    let status = a.substrate.status().unwrap();
+    assert!(status.pending.is_empty(), "{:?}", status.pending);
+    assert_eq!(status.stranded.len(), 1);
+    assert_eq!(
+        status.stranded[0].name.as_str(),
+        format!("tasks/{SHARED}/{root}")
+    );
+
+    // The stranded entry shows exactly what never published.
+    let stranded = super::stranded(&a.substrate).unwrap();
+    assert_eq!(stranded.len(), 1);
+    let tree = &stranded[0];
+    assert_eq!(tree.root, root);
+    assert_eq!(tree.error, None);
+    assert_eq!(tree.home.as_deref(), Some(b.substrate.machine().as_str()));
+    let mut titles: Vec<_> = tree
+        .tasks
+        .iter()
+        .map(|task| (task.id.as_str(), task.title.as_str()))
+        .collect();
+    titles.sort_unstable();
+    let mut want = vec![
+        (child.as_str(), "offline by a"),
+        (extra.as_str(), "offline task"),
+    ];
+    want.sort_unstable();
+    assert_eq!(titles, want);
+    let kinds: Vec<_> = tree
+        .events
+        .iter()
+        .map(|event| (event.task.as_str(), event.kind.as_str()))
+        .collect();
+    assert!(kinds.contains(&(child.as_str(), "updated")), "{kinds:?}");
+    assert!(kinds.contains(&(extra.as_str(), "created")), "{kinds:?}");
+    // Events both machines published are not reported.
+    let published: Vec<_> = b
+        .store
+        .events(&b.project, &child, 50)
+        .unwrap()
+        .into_iter()
+        .map(|event| event.uid)
+        .collect();
+    assert!(
+        tree.events
+            .iter()
+            .all(|event| !published.contains(&event.uid)),
+        "{:?}",
+        tree.events
+    );
+
+    // The tree is read-only here now, with B's state; A's local history
+    // keeps its own unpublished events.
+    let seen = a.store.get(&a.project, &child).unwrap();
+    assert_eq!(seen.title, "by b");
+    assert_eq!(
+        seen.foreign.map(|foreign| foreign.home),
+        Some(b.substrate.machine().as_str().to_owned())
+    );
+    assert!(matches!(
+        a.retitle(&child, "again"),
+        Err(Error::Foreign { .. })
+    ));
+    let local = a.store.events(&a.project, &child, 50).unwrap();
+    assert!(
+        local
+            .iter()
+            .any(|event| tree.events.iter().any(|lost| lost.uid == event.uid))
+    );
+    // Nothing further is queued for the tree, and B never sees A's update.
+    a.sync();
+    assert_eq!(a.substrate.status().unwrap().stranded.len(), 1);
+    assert_eq!(a.substrate.status().unwrap().pending.len(), 0);
+    b.sync();
+    assert_eq!(b.store.get(&b.project, &child).unwrap().title, "by b");
+}
+
+impl Machine {
+    fn publish(&mut self, slug: &str, content: &str, task: &str) -> String {
+        let draft = self.home.join(format!("{slug}.md"));
+        fs::write(&draft, content).unwrap();
+        self.store
+            .publish_output(
+                &self.project,
+                &PublishOutput {
+                    slug,
+                    filename: "out.md",
+                    media_type: "text/markdown",
+                    source: &draft,
+                    mode: PublishMode::Create,
+                    description: slug,
+                    provenance: "neutral fixture",
+                    task: Some(task),
+                },
+                actor(13),
+            )
+            .unwrap();
+        dots_documents::text::bytes_revision(content.as_bytes())
+    }
+}
+
+#[test]
+fn outputs_that_cannot_travel_are_withheld_visibly_while_the_tree_replicates() {
+    let lab = Lab::new();
+    let (mut a, mut b) = (lab.machine("a"), lab.machine("b"));
+    a.enable();
+    b.enable();
+    let root = a.goal("brief\n");
+    let child = a.add("child", Some(&root));
+    // Publication caps outputs at the blob limit, so the largest fits.
+    let largest = "x".repeat(dots_substrate::MAX_BLOB_BYTES);
+    let fits = a.publish("fits", &largest, &child);
+    // A revision recorded beyond the limit, and one whose bytes vanished
+    // on the home, cannot travel.
+    let huge = a.publish("huge", "huge\n", &child);
+    a.store
+        .connection
+        .execute(
+            "UPDATE output_revisions SET bytes=?1 WHERE slug='huge'",
+            [i64::try_from(dots_substrate::MAX_BLOB_BYTES).unwrap() + 1],
+        )
+        .unwrap();
+    let gone = a.publish("gone", "gone\n", &child);
+    let path: String = a
+        .store
+        .connection
+        .query_row(
+            "SELECT path FROM output_revisions WHERE slug='gone'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    fs::remove_file(a.home.join(path)).unwrap();
+
+    let (exported, _) = a.sync().unwrap();
+    assert!(exported.errors.is_empty(), "{:?}", exported.errors);
+    assert_eq!(exported.trees, vec![root.clone()]);
+    let withheld = |machine: &mut Machine| {
+        let status = machine.store.share_status().unwrap();
+        assert_eq!(status.withheld.len(), 1, "{:?}", status.withheld);
+        assert_eq!(status.withheld[0].root, root);
+        let mut items: Vec<_> = status.withheld[0]
+            .withheld
+            .iter()
+            .map(|item| (item.kind, item.id.clone(), item.reason.clone()))
+            .collect();
+        items.sort();
+        items
+    };
+    let home = withheld(&mut a);
+    assert_eq!(
+        home,
+        vec![
+            (
+                super::WithheldKind::Output,
+                format!("gone {gone}"),
+                "missing on its home".to_owned()
+            ),
+            (
+                super::WithheldKind::Output,
+                format!("huge {huge}"),
+                "larger than the substrate's 1 MiB blob limit".to_owned()
+            ),
+        ]
+    );
+
+    // B gets the rest of the tree; the withheld revisions read as missing.
+    let (_, imported) = b.sync().unwrap();
+    assert_eq!(imported.trees, vec![root.clone()]);
+    assert_eq!(withheld(&mut b), home);
+    let read = |machine: &mut Machine, slug: &str, digest: &str| {
+        let project = machine.project.clone();
+        machine
+            .store
+            .read_output(&project, slug, digest, 1, 1)
+            .unwrap()
+    };
+    let copy = read(&mut b, "fits", &fits);
+    assert_eq!(fs::read(&copy.path).unwrap(), largest.as_bytes());
+    for (slug, digest) in [("huge", &huge), ("gone", &gone)] {
+        assert!(matches!(
+            read(&mut b, slug, digest).content,
+            crate::outputs::OutputContent::Missing
+        ));
+    }
+    assert_eq!(b.store.get(&b.project, &child).unwrap().title, "child");
+
+    // Later writes still replicate.
+    a.retitle(&child, "renamed").unwrap();
+    a.sync();
+    b.sync();
+    assert_eq!(b.store.get(&b.project, &child).unwrap().title, "renamed");
+}
+
+#[test]
+fn a_tree_that_cannot_export_does_not_hold_back_the_others() {
+    let lab = Lab::new();
+    let (mut a, mut b) = (lab.machine("a"), lab.machine("b"));
+    a.enable();
+    b.enable();
+    let stuck = a.add("stuck", None);
+    let fine = a.add("fine", None);
+    // A body larger than the blob limit cannot be encoded as one record.
+    a.store
+        .connection
+        .execute(
+            "UPDATE tasks SET body=?1 WHERE id=?2",
+            rusqlite::params!["x".repeat(dots_substrate::MAX_BLOB_BYTES + 1), stuck],
+        )
+        .unwrap();
+    let (exported, _) = a.sync().unwrap();
+    assert_eq!(exported.trees, vec![fine.clone()]);
+    assert_eq!(exported.errors.len(), 1, "{:?}", exported.errors);
+    assert_eq!(exported.errors[0].0, stuck);
+    b.sync();
+    assert!(b.store.get(&b.project, &fine).unwrap().foreign.is_some());
+    assert!(b.store.get(&b.project, &stuck).is_err());
+    // The stuck tree stays queued and exports once it fits.
+    a.store
+        .connection
+        .execute("UPDATE tasks SET body='small' WHERE id=?1", [&stuck])
+        .unwrap();
+    let (exported, _) = a.sync().unwrap();
+    assert_eq!(exported.trees, vec![stuck.clone()]);
+    assert_eq!(exported.errors, Vec::<(String, String)>::new());
+}

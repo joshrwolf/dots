@@ -13,9 +13,15 @@
 //! Answers to requests of trees homed elsewhere go to this machine's own
 //! `answers/<machine>` ref; the home imports them as saved answers, its
 //! coordinator incorporates them, and the closure replicates back.
+//!
+//! An update the old home deferred before a takeover reached it is refused
+//! by the remote and kept as a stranded substrate entry; [`stranded`] lists
+//! what it held that never published, and the next import makes the tree
+//! read-only here.
 mod export;
 mod format;
 mod import;
+mod stranded;
 
 #[cfg(test)]
 mod tests;
@@ -29,6 +35,7 @@ use serde::Serialize;
 
 pub use export::Exported;
 pub use import::Imported;
+pub use stranded::{StrandedTree, UnpublishedEvent, UnpublishedTask, stranded};
 
 use crate::store::{Error, Project, Store};
 use format::{Manifest, decode, encode, share};
@@ -102,6 +109,8 @@ pub struct ShareStatus {
     pub dirty: usize,
     /// Answers given here to trees homed elsewhere, until their home records them.
     pub sent_answers: usize,
+    /// Trees whose last exported or imported version withheld parts.
+    pub withheld: Vec<WithheldTree>,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,6 +122,43 @@ pub struct ForeignTree {
     pub imported_at: Option<i64>,
     /// False while some of its records wait for other trees to arrive.
     pub complete: bool,
+}
+
+/// A part of a tree its home could not replicate. The tree's other records
+/// still travel; the withheld part shows as missing on other machines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Withheld {
+    pub kind: WithheldKind,
+    /// The brief's path, or an output's slug and digest.
+    pub id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WithheldKind {
+    Brief,
+    Output,
+}
+
+impl WithheldKind {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Brief => "brief",
+            Self::Output => "output",
+        }
+    }
+}
+
+/// A tree with withheld parts, on its home or as imported.
+#[derive(Debug, Serialize)]
+pub struct WithheldTree {
+    pub project: String,
+    pub root: String,
+    pub home: String,
+    pub withheld: Vec<Withheld>,
 }
 
 /// A completed takeover.
@@ -246,6 +292,34 @@ impl Store {
                 .query_row("SELECT COUNT(*) FROM sent_answers", [], |row| {
                     row.get::<_, i64>(0)
                 })?;
+        let withheld = {
+            let mut statement = self.connection.prepare(
+                "SELECT project, root, home, withheld FROM shared_trees
+                 WHERE withheld IS NOT NULL ORDER BY project, root",
+            )?;
+            statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?
+                .map(|row| {
+                    let (project, root, home, json) = row?;
+                    let withheld = serde_json::from_str(&json).map_err(|error| {
+                        share(format!("withheld parts of {root} in the catalog: {error}"))
+                    })?;
+                    Ok(WithheldTree {
+                        project,
+                        root,
+                        home,
+                        withheld,
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?
+        };
         let count = |value: i64| usize::try_from(value).expect("SQLite COUNT is nonnegative");
         Ok(ShareStatus {
             sharing,
@@ -253,6 +327,7 @@ impl Store {
             foreign,
             dirty: count(dirty),
             sent_answers: count(sent_answers),
+            withheld,
         })
     }
 
@@ -307,6 +382,16 @@ pub(crate) fn send_answer(
         params![request, goal, json, at],
     )?;
     Ok(())
+}
+
+/// The catalog form of a tree's withheld parts: NULL when nothing was withheld.
+fn withheld_column(withheld: &[Withheld]) -> Result<Option<String>, Error> {
+    if withheld.is_empty() {
+        return Ok(None);
+    }
+    serde_json::to_string(withheld)
+        .map(Some)
+        .map_err(|error| share(format!("encode withheld parts: {error}")))
 }
 
 /// The ref of a tree.

@@ -1496,7 +1496,7 @@ Usage: dots task share [OPTIONS] <COMMAND>
 Commands:
   enable   Turn sharing on for this machine and queue every bound project's trees for export
   disable  Turn sharing off; imported trees stay read-only as last seen
-  status   Show this machine's switch, trees and pending replication
+  status   Show this machine's switch, trees, pending replication, withheld parts and updates refused after a takeover
   take     Make this machine the home of a tree imported from another machine
 
 Options:
@@ -1576,7 +1576,7 @@ Options:
 ## dots task share status
 
 ```text
-Show this machine's switch, trees and pending replication
+Show this machine's switch, trees, pending replication, withheld parts and updates refused after a takeover
 
 Usage: dots task share status [OPTIONS]
 
