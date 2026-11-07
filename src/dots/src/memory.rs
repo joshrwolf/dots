@@ -404,6 +404,21 @@ fn project_command(
     }
 }
 
+/// Local projects bound to shared project identities on this machine, as
+/// (local, shared) keys.
+pub(crate) fn shared_bindings() -> Result<Vec<(String, String)>> {
+    let path = crate::project::data_root()?.join("memory").join(BINDINGS);
+    Ok(optional_json::<Bindings>(&path, MAX_CONTROL_BYTES)?
+        .map(|bindings| {
+            bindings
+                .projects
+                .into_iter()
+                .map(|(local, shared)| (local, shared.as_str().to_owned()))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 fn bindings(store: &Store, id: &StoreId) -> Result<Bindings> {
     let binding = optional_json::<Bindings>(&store.local().join(BINDINGS), MAX_CONTROL_BYTES)?
         .unwrap_or_else(|| Bindings {

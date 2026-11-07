@@ -24,6 +24,8 @@ pub(crate) struct Invocation<'request> {
     pub project: Option<String>,
     pub owner: Option<&'request str>,
     pub directory: &'request Path,
+    /// Run one sync pass with replication before the command.
+    pub fresh: bool,
     pub json: bool,
 }
 
@@ -50,6 +52,9 @@ pub(crate) fn run(invocation: Invocation<'_>) -> Result<String> {
     };
     let json = invocation.json;
     let mut store = crate::project::open()?;
+    if invocation.fresh {
+        crate::share::fresh(&mut store)?;
+    }
     let value = match command {
         AttentionCommand::List { scope, state } => {
             ensure!(
@@ -93,6 +98,7 @@ pub(crate) fn run(invocation: Invocation<'_>) -> Result<String> {
                 invocation.project.as_deref(),
             )?;
             let outcome = mutate(&mut store, &project, command, actor)?;
+            crate::share::after_write(&mut store);
             if !json {
                 return Ok(outcome.text());
             }

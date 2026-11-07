@@ -56,6 +56,9 @@ pub(crate) enum Command {
         /// Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
         #[arg(long, global = true, value_name = "NAME")]
         owner: Option<String>,
+        /// Run one sync pass first, importing other machines' current trees (when sharing is on)
+        #[arg(long, global = true)]
+        fresh: bool,
         #[command(subcommand)]
         command: TaskCommand,
     },
@@ -70,12 +73,15 @@ pub(crate) enum Command {
         /// Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
         #[arg(long, global = true, value_name = "NAME")]
         owner: Option<String>,
+        /// Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
+        #[arg(long, global = true)]
+        fresh: bool,
         #[command(subcommand)]
         command: AttentionCommand,
     },
     /// Read and publish shared knowledge snapshots across machines
     #[command(
-        long_about = "Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads never contact the remote: they serve this machine's local copy, which the sync agent (dots sync run) keeps current, and report its freshness: when it was last confirmed current (as_of, age_seconds), stale once that is over two minutes old, and the failing sync's error. --fresh runs one sync pass first. A machine that has never synced has no copy and says so. Publication syncs, then changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline or repeatedly pre-empted publications stay pending on this machine. Tasks, outputs, credentials and checkout bindings remain machine-local."
+        long_about = "Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads never contact the remote: they serve this machine's local copy, which the sync agent (dots sync run) keeps current, and report its freshness: when it was last confirmed current (as_of, age_seconds), stale once that is over two minutes old, and the failing sync's error. --fresh runs one sync pass first. A machine that has never synced has no copy and says so. Publication syncs, then changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline or repeatedly pre-empted publications stay pending on this machine. Tasks and outputs replicate only through dots task share; credentials and checkout bindings remain machine-local."
     )]
     Memory {
         /// Registered project ID instead of resolving the current checkout
@@ -396,10 +402,36 @@ pub(crate) enum TaskCommand {
         #[command(subcommand)]
         command: GoalCommand,
     },
+    /// Replicate goals and task trees of bound projects across machines
+    #[command(
+        long_about = "Off by default and switched per machine. While on, every goal or top-level task tree of a project bound to a shared identity (dots memory project bind) replicates on the substrate (dots substrate). One machine, the tree's home, changes a tree: its writes commit locally at once and the sync agent pushes them within the push budget. Other machines import the tree read-only on each sync pass (or --fresh) and refuse changes to it, naming dots task share take. Unbound projects and live claims never leave the machine. Answers to another home's attention requests travel to that home, whose coordinator incorporates them."
+    )]
+    Share {
+        #[command(subcommand)]
+        command: ShareCommand,
+    },
     #[command(flatten)]
     Query(TaskQuery),
     #[command(flatten)]
     Mutation(TaskMutation),
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ShareCommand {
+    /// Turn sharing on for this machine and queue every bound project's trees for export
+    Enable,
+    /// Turn sharing off; imported trees stay read-only as last seen
+    Disable,
+    /// Show this machine's switch, trees and pending replication
+    Status,
+    /// Make this machine the home of a tree imported from another machine
+    #[command(
+        long_about = "Compare-and-swap from the version this machine last imported. When the tree changed since, the command fetches and imports the new version, reports what changed and refuses; rerun it to take that version. Afterwards coordinate the goal here (dots task goal coordinate) before changing it; claims never move between machines."
+    )]
+    Take {
+        /// The tree's top-level task (the goal ID for a goal)
+        root: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

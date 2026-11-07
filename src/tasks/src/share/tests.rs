@@ -120,7 +120,7 @@ impl Machine {
             substrate: &self.substrate,
             bindings: &self.bindings,
         };
-        take(&mut self.store, context, &self.project, root, now)
+        take(&mut self.store, context, root, now)
     }
 
     fn export(&mut self) {

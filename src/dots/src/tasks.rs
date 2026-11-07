@@ -22,6 +22,8 @@ pub(crate) struct Request<'request> {
     pub project: Option<String>,
     pub owner: Option<&'request str>,
     pub directory: &'request Path,
+    /// Run one sync pass with replication before the command.
+    pub fresh: bool,
     pub json: bool,
     /// Where `events --follow` streams; other commands return their output.
     pub out: &'request mut dyn io::Write,
@@ -52,7 +54,17 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
     if let TaskCommand::Query(TaskQuery::EventKinds) = request.command {
         return Ok(event_kinds(request.json));
     }
+    if let TaskCommand::Share { command } = request.command {
+        anyhow::ensure!(
+            request.project.is_none(),
+            "share covers every bound project; --project does not apply"
+        );
+        return crate::share::run(command, request.json);
+    }
     let mut store = crate::project::open()?;
+    if request.fresh {
+        crate::share::fresh(&mut store)?;
+    }
     let now = OffsetDateTime::now_utc().unix_timestamp();
     let session_owner = crate::agent::owner();
     let actor = Actor {
@@ -135,6 +147,7 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
         return Ok(String::new());
     }
     let outcome = execute(&mut store, &project, request.command, actor)?;
+    crate::share::after_write(&mut store);
     let discovery_command = if let Outcome::Task { task, .. } = &outcome {
         Some(format!(
             "dots output list --task {} --project {}",
@@ -341,8 +354,8 @@ fn execute(
         }) => Ok(Outcome::Events {
             history: store.history(project, under.as_deref(), since, usize::from(limit))?,
         }),
-        TaskCommand::Query(TaskQuery::EventKinds) => {
-            anyhow::bail!("event-kinds is handled before opening the catalog")
+        TaskCommand::Query(TaskQuery::EventKinds) | TaskCommand::Share { .. } => {
+            anyhow::bail!("event-kinds and share are handled before opening the catalog")
         }
         TaskCommand::Mutation(mutation) => {
             let adds_dependency = matches!(
@@ -952,6 +965,13 @@ fn line(task: &Task, now: i64) -> String {
             out,
             "  [{}/{} children unclosed]",
             task.unclosed_children, task.children
+        );
+    }
+    if let Some(foreign) = &task.foreign {
+        let _ = write!(
+            out,
+            "  [read-only: homed on {}; dots task share take {}]",
+            foreign.home, foreign.root
         );
     }
     out.push('\n');

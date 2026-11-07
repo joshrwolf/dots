@@ -118,6 +118,7 @@ pub struct ForeignTree {
 /// A completed takeover.
 #[derive(Debug, Serialize)]
 pub struct Taken {
+    pub project: String,
     pub root: String,
     pub previous_home: String,
     /// When the previous home last wrote the tree, as a Unix timestamp.
@@ -370,7 +371,6 @@ pub fn import(store: &mut Store, context: Context<'_>, now: SystemTime) -> Resul
 pub fn take(
     store: &mut Store,
     context: Context<'_>,
-    project: &Project,
     root: &str,
     now: SystemTime,
 ) -> Result<Taken, Error> {
@@ -380,9 +380,13 @@ pub fn take(
             "sharing is off on this machine; enable it with dots task share enable",
         ));
     }
-    let row = import::shared_row(store, root)?
-        .filter(|row| row.project == project.as_str())
-        .ok_or_else(|| share(format!("{root} is not a tree imported into this project")))?;
+    let row = import::shared_row(store, root)?.ok_or_else(|| {
+        share(format!(
+            "{root} is not a tree imported from another machine"
+        ))
+    })?;
+    let project = Project::try_new(row.project.as_str())?;
+    let project = &project;
     if row.home == machine.as_str() {
         return Err(share(format!("{root} is already homed on this machine")));
     }
@@ -416,6 +420,7 @@ pub fn take(
         Outcome::Applied(version) => {
             import::taken(store, project, root, &taken, &blob, &version)?;
             Ok(Taken {
+                project: project.as_str().to_owned(),
                 root: root.to_owned(),
                 previous_home: seen.home.to_string(),
                 previous_written_at: seen.written_at,

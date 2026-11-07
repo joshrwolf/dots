@@ -1,7 +1,8 @@
 # Shared tasks
 
 `dots task` coordinates project work across sessions and linked worktrees using
-a machine-local SQLite store, without a daemon or network service.
+a local SQLite store, without a daemon. Machines that opt in replicate goals of
+shared projects through the [substrate](../src/substrate/README.md).
 
 ## Use
 
@@ -34,7 +35,7 @@ The catalog lives at `$XDG_DATA_HOME/dots/workspace.sqlite3`, defaulting to
 `~/.local/share/dots/workspace.sqlite3`. Task commands never initialize storage.
 Memory has a separate [shared knowledge store](../src/memory/README.md). Explicit
 associations connect local catalog projects to shared knowledge identities;
-tasks and briefs remain machine-local.
+those associations also select what task sharing replicates.
 
 Goal briefs are ordinary Markdown under the project's `briefs/` directory.
 Create the file there, then pass `--brief briefs/<name>.md` to `task goal create`
@@ -73,6 +74,28 @@ from any agent interpretation; provenance is cooperative bookkeeping, not
 authentication. `attention list` and `decisions` read an explicit scope: every
 registered project, or exact `PROJECT:GOAL` identities. `dots attention --help`
 has the content-file shapes.
+
+## Across machines
+
+`dots task share enable` turns replication on for one machine; it is off by
+default. While on, every goal or top-level task tree of a project bound to a
+shared identity (`dots memory project bind`) replicates; unbound projects never
+leave the machine. A tree carries its tasks, dependencies, references, brief,
+requests, decisions, history and the outputs its tasks name. Claims stay local.
+
+One machine, the tree's home, changes a tree. Its writes commit locally at once;
+the sync agent pushes them within its push budget, so a burst of writes leaves
+as one push. Other machines import the tree on each sync pass, or on `--fresh`,
+and show it read-only: changes refuse and name `dots task share take ROOT`.
+Taking over compares against the version this machine last saw; when the tree
+moved on, it imports the new version, reports what changed and refuses until
+rerun. Coordinate the goal afterwards; claims never move. An answer given on a
+machine that is not the home travels to the home, whose coordinator
+incorporates it; the closure then replicates back. Disabling keeps imported
+trees read-only as last seen.
+
+Events keep a stable `uid` across machines, while `seq` stays each machine's
+own cursor; follow and history read local positions.
 
 ## Constraints
 

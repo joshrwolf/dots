@@ -105,6 +105,7 @@ pub(crate) fn run(
             json!({"purge":store.purge_output_digest(&project,&digest,actor)?})
         }
     };
+    crate::share::after_write(&mut store);
     let mut value = value;
     value
         .as_object_mut()

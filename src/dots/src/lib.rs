@@ -13,6 +13,7 @@ mod outputs;
 mod project;
 mod render;
 mod review;
+mod share;
 mod skills;
 mod stream;
 mod substrate;
@@ -171,6 +172,7 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
         Command::Task {
             project,
             owner,
+            fresh,
             command,
         } => {
             let directory = environment.directory(cli.directory)?;
@@ -179,6 +181,7 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
                 project,
                 owner: owner.as_deref(),
                 directory: &directory,
+                fresh,
                 json: cli.json,
                 out,
             })
@@ -186,12 +189,14 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
         Command::Attention {
             project,
             owner,
+            fresh,
             command,
         } => attention::run(attention::Invocation {
             command,
             project,
             owner: owner.as_deref(),
             directory: &environment.directory(cli.directory)?,
+            fresh,
             json: cli.json,
         }),
         Command::Review { command } => {

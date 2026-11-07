@@ -1108,6 +1108,7 @@ Usage: dots task [OPTIONS] <COMMAND>
 
 Commands:
   goal          Create, list, and inspect goals: root tasks with a Markdown brief
+  share         Replicate goals and task trees of bound projects across machines
   list          List unfinished root tasks; use --parent ID to drill down or --flat for every level
   ready         Unclaimed, unblocked open tasks without children
   show          Show one task with its result, evidence, and recent events
@@ -1138,6 +1139,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1174,6 +1178,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -1209,6 +1216,9 @@ Options:
       --task <TASK>
 
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1238,6 +1248,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -1270,6 +1283,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1301,6 +1317,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1330,6 +1349,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -1362,6 +1384,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1389,6 +1414,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -1424,6 +1452,9 @@ Options:
       --resume
           Reopen a held or closed goal root before coordinating it
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -1447,6 +1478,154 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots task share
+
+```text
+Off by default and switched per machine. While on, every goal or top-level task tree of a project bound to a shared identity (dots memory project bind) replicates on the substrate (dots substrate). One machine, the tree's home, changes a tree: its writes commit locally at once and the sync agent pushes them within the push budget. Other machines import the tree read-only on each sync pass (or --fresh) and refuse changes to it, naming dots task share take. Unbound projects and live claims never leave the machine. Answers to another home's attention requests travel to that home, whose coordinator incorporates them.
+
+Usage: dots task share [OPTIONS] <COMMAND>
+
+Commands:
+  enable   Turn sharing on for this machine and queue every bound project's trees for export
+  disable  Turn sharing off; imported trees stay read-only as last seen
+  status   Show this machine's switch, trees and pending replication
+  take     Make this machine the home of a tree imported from another machine
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots task share enable
+
+```text
+Turn sharing on for this machine and queue every bound project's trees for export
+
+Usage: dots task share enable [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
+  -h, --help
+          Print help
+```
+
+## dots task share disable
+
+```text
+Turn sharing off; imported trees stay read-only as last seen
+
+Usage: dots task share disable [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
+  -h, --help
+          Print help
+```
+
+## dots task share status
+
+```text
+Show this machine's switch, trees and pending replication
+
+Usage: dots task share status [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
+  -h, --help
+          Print help
+```
+
+## dots task share take
+
+```text
+Compare-and-swap from the version this machine last imported. When the tree changed since, the command fetches and imports the new version, reports what changed and refuses; rerun it to take that version. Afterwards coordinate the goal here (dots task goal coordinate) before changing it; claims never move between machines.
+
+Usage: dots task share take [OPTIONS] <ROOT>
+
+Arguments:
+  <ROOT>
+          The tree's top-level task (the goal ID for a goal)
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --project <KEY>
+          Registered project ID instead of the current Git common-directory binding
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --owner <NAME>
+          Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1477,6 +1656,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
       --roots
           Only top-level tasks (the default unless --parent, --flat, or --claimed-by is given)
@@ -1519,6 +1701,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1546,6 +1731,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -1577,6 +1765,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -1615,6 +1806,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
       --under <ID>
           Only events on this task and its descendants
 
@@ -1644,6 +1838,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -1682,6 +1879,9 @@ Options:
       --blocked-by <ID>
           Prerequisite task IDs; repeatable
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1715,6 +1915,9 @@ Options:
 
       --parent <ID>
           With --next, only consider tasks anywhere below this one
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
       --take
           Take over another session's claim
@@ -1750,6 +1953,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1783,6 +1989,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
       --result <RESULT>
           Current result in Markdown: what changed, where it is, checks run, and what remains
@@ -1836,6 +2045,9 @@ Options:
       --force
           Ignore blockers, unfinished children, and another session's claim
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1873,6 +2085,9 @@ Options:
       --force
           Ignore blockers, unfinished children, and another session's claim
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1906,6 +2121,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -1941,6 +2159,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -1975,6 +2196,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -2002,6 +2226,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -2040,6 +2267,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -2074,6 +2304,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -2101,6 +2334,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -2133,6 +2369,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -2163,6 +2402,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees (when sharing is on)
 
   -h, --help
           Print help
@@ -2202,6 +2444,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -2236,6 +2481,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -2266,6 +2514,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2298,6 +2549,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -2328,6 +2582,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2360,6 +2617,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -2391,6 +2651,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -2418,6 +2681,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
 
   -h, --help
           Print help
@@ -2450,6 +2716,9 @@ Options:
 
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
+
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
 
       --state <STATE>
           Possible values:
@@ -2493,6 +2762,9 @@ Options:
       --owner <NAME>
           Actor for claims and events; defaults to the invoking agent's live runtime (`DOTS_AGENT_OWNER` when it names the invoking session), else its session (pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID); supply explicitly for direct CLI use
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
+
       --kind <KIND>
           [possible values: mandate, decision]
 
@@ -2531,6 +2803,9 @@ Options:
       --dismiss <ACTION>
           Action the view runs when it closes, as given by the opener
 
+      --fresh
+          Run one sync pass first, importing other machines' current trees and answers (when sharing is on)
+
   -h, --help
           Print help
 ```
@@ -2538,7 +2813,7 @@ Options:
 ## dots memory
 
 ```text
-Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads never contact the remote: they serve this machine's local copy, which the sync agent (dots sync run) keeps current, and report its freshness: when it was last confirmed current (as_of, age_seconds), stale once that is over two minutes old, and the failing sync's error. --fresh runs one sync pass first. A machine that has never synced has no copy and says so. Publication syncs, then changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline or repeatedly pre-empted publications stay pending on this machine. Tasks, outputs, credentials and checkout bindings remain machine-local.
+Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads never contact the remote: they serve this machine's local copy, which the sync agent (dots sync run) keeps current, and report its freshness: when it was last confirmed current (as_of, age_seconds), stale once that is over two minutes old, and the failing sync's error. --fresh runs one sync pass first. A machine that has never synced has no copy and says so. Publication syncs, then changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline or repeatedly pre-empted publications stay pending on this machine. Tasks and outputs replicate only through dots task share; credentials and checkout bindings remain machine-local.
 
 Usage: dots memory [OPTIONS] <COMMAND>
 

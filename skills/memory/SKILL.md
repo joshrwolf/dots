@@ -64,8 +64,8 @@ See the [examples](references/example.md).
 Prefer canonical sources (commit/path, document or public URL) over copied
 material. Distinguish user decisions, observed results and hypotheses. Never
 invent quotes or successful checks. Selected project evidence belongs in retained
-outputs; those outputs, task IDs, briefs and sessions remain machine-local and
-may be unavailable on another machine. Keep the reusable conclusion understandable
+outputs; sessions remain machine-local, and outputs, task IDs and briefs reach
+another machine only where task sharing is on, so they may be unavailable there. Keep the reusable conclusion understandable
 without access to another machine's working material. Local source links do not
 replicate: retain the useful conclusion and enough source attribution or a short
 excerpt to support it without pretending the original file is portable.

@@ -20,9 +20,10 @@ pub(crate) fn run(command: &SyncCommand) -> Result<String> {
         SyncCommand::Once => {
             let substrate = crate::substrate::open()?;
             let now = SystemTime::now();
-            let pass = substrate.sync(Trigger::Explicit, now)?;
+            let (pass, shared) = crate::share::pass(&substrate, Trigger::Explicit, now)?;
             let maintenance = substrate.maintain()?;
             let mut value = report(&pass);
+            value["tasks"] = crate::share::report(shared.as_ref());
             value["maintenance"] = match maintenance {
                 Maintenance::Skipped => json!(null),
                 Maintenance::Ran(summary) => json!(summary),
@@ -155,9 +156,22 @@ async fn stopping(
     }
 }
 
-/// One scheduled pass, then Git upkeep when the pass moved data.
+/// One scheduled pass with task replication, then Git upkeep when the pass
+/// moved data.
 fn step(substrate: &Substrate, now: SystemTime) -> Result<()> {
-    match substrate.sync(Trigger::Scheduled, now) {
+    let pass = crate::share::pass(substrate, Trigger::Scheduled, now);
+    if let Ok((_, Some((_, imported)))) = &pass {
+        for (root, reason) in &imported.errors {
+            log(&format!("import of task tree {root} failed: {reason}"));
+        }
+        for root in &imported.lost {
+            log(&format!(
+                "task tree {root} was taken over elsewhere before this machine pushed its last changes"
+            ));
+        }
+    }
+    let pass = pass.map(|(pass, _)| pass);
+    match pass {
         Ok(Pass::Done(report)) => {
             if let Some(reason) = &report.offline {
                 log(&format!("remote unavailable: {reason}"));
@@ -170,12 +184,27 @@ fn step(substrate: &Substrate, now: SystemTime) -> Result<()> {
         }
         Ok(Pass::Busy | Pass::Backoff { .. }) => Ok(()),
         // A schema change is fatal; other failures are recorded and backed off.
-        Err(error @ dots_substrate::Error::Schema { .. }) => Err(error.into()),
+        Err(error) if schema_changed(&error) => Err(error),
         Err(error) => {
-            log(&format!("pass failed: {error}"));
+            log(&format!("pass failed: {error:#}"));
             Ok(())
         }
     }
+}
+
+/// Whether a pass failed because another binary changed the substrate schema.
+fn schema_changed(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<dots_substrate::Error>(),
+            Some(dots_substrate::Error::Schema { .. })
+        ) || matches!(
+            cause.downcast_ref::<dots_tasks::Error>(),
+            Some(dots_tasks::Error::Substrate(
+                dots_substrate::Error::Schema { .. }
+            ))
+        )
+    })
 }
 
 /// Until the schedule's next pass or the end of a backoff, at least a second.

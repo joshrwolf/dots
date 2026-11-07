@@ -37,10 +37,25 @@ pub(crate) struct Overview {
 }
 
 fn documents(project: &Project) -> Result<Store> {
+    documents_at(crate::project::workspace(project)?)
+}
+
+fn documents_at(root: PathBuf) -> Result<Store> {
     Ok(Store::try_new(
-        crate::project::workspace(project)?,
+        root,
         crate::project::data_root()?.join("mutation.lock"),
     )?)
+}
+
+/// Where a goal's brief lives: the project workspace, or for a goal homed on
+/// another machine, the read-only copy its last import wrote.
+fn brief_root(project: &Project, root: &Task) -> Result<PathBuf> {
+    let workspace = crate::project::workspace(project)?;
+    Ok(if root.foreign.is_some() {
+        dots_tasks::share::imported_workspace(&workspace, &root.id)
+    } else {
+        workspace
+    })
 }
 
 /// Association requires an existing readable brief; no files are created or copied.
@@ -59,7 +74,7 @@ pub(crate) fn existing(project: &Project, relative: &Path) -> Result<String> {
 }
 
 pub(crate) fn reference(project: &Project, goal: Goal) -> Result<ShownGoal> {
-    let root = crate::project::workspace(project)?;
+    let root = brief_root(project, &goal.root)?;
     let relative = Path::new(&goal.brief);
     dots_documents::paths::validate_brief(relative)?;
     let path = root.join(relative);
@@ -77,8 +92,9 @@ pub(crate) fn reference(project: &Project, goal: Goal) -> Result<ShownGoal> {
 }
 
 pub(crate) fn show(project: &Project, goal: Goal) -> Result<ShownGoal> {
+    let base = brief_root(project, &goal.root)?;
     let mut shown = reference(project, goal)?;
-    match documents(project)?.read(Path::new(&shown.brief.relative), 1, 200) {
+    match documents_at(base)?.read(Path::new(&shown.brief.relative), 1, 200) {
         Ok(document) => {
             shown.brief.diagnostic = (!document.exists).then(|| "Brief is missing".into());
             shown.brief.document = Some(document);
