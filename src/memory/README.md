@@ -9,22 +9,24 @@ the store identity, the shared project registry, and every document's path,
 SHA-256 hash and size. The snapshot ID is the manifest's hash (`sha256:<hex>`).
 Documents are blobs; the substrate ref `memory` names the latest manifest.
 
-Reads check the remote first. `context` reuses a listing, or a failed attempt
-to list, up to 30 seconds old; explicit reads and searches always list. A
-listing that takes over 5 seconds counts as unreachable. When the remote is
-unreachable, reads use the last snapshot this machine saw and label it stale. A
-machine that never listed has nothing to read.
+Reads use this machine's substrate copy and never contact the remote. Each
+reports when the copy was last confirmed current and whether sync is failing;
+the CLI labels a copy over two minutes old stale. The sync agent keeps the copy
+current; `--fresh` runs one sync pass first. A machine that has never synced
+has nothing to read.
 
-A publication changes global and project documents against one expected
-snapshot and lands with a synchronous compare-and-swap. When the ref moved on,
+A publication runs one sync pass, then changes global and project documents
+against one expected snapshot and lands with a synchronous compare-and-swap.
+After a lost race it waits a random, doubling time, syncs and tries again. When
+the ref moved on,
 the store merges three ways against the unique merge base found by walking
 manifest parents. Changes to different documents produce a two-parent snapshot
 (incoming first, local second). Divergent edits to one document, file/directory
 collisions and case collisions are retained as a local candidate with an
 integration plan; `memory reconcile` publishes it with an explicit choice for
 every conflict, even when text could merge. A publication made while the remote
-is unreachable, or whose outcome is unknown, is retained the same way and
-published by the next online publication or reconcile.
+is unreachable, whose outcome is unknown, or that loses every race is retained
+the same way and published by the next online publication or reconcile.
 
 Retained candidates and their blobs live on this machine only, under
 `$XDG_DATA_HOME/dots/memory`, beside the local project bindings. Snapshots stay

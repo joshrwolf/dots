@@ -37,9 +37,11 @@ when following it; a later local rebind must not redirect that read.
 Missing documents, unavailable storage, absent bindings and unpublished retained
 candidates are different states. Never report an unavailable project as empty or
 silently use global knowledge in its place. Global recall can remain available
-when project lookup or an individual index page fails. Reads check the shared
-remote; when it is unreachable they return the last snapshot this machine saw,
-labeled stale. Say so when relying on stale knowledge. If dots or the substrate
+when project lookup or an individual index page fails. Reads serve this
+machine's local copy, which the sync agent keeps current, with its freshness:
+when it was last confirmed current and whether sync is failing. Pass `--fresh`
+to sync first when another machine may have just published. Say so when relying
+on stale knowledge. If dots or the substrate
 is unavailable, report that limitation; do not read internal cache files or
 invent a file backend.
 
@@ -94,8 +96,8 @@ when a file is needed, use unique private scratch outside the public checkout,
 not a fixed shared temporary path, and remove it afterward.
 
 On a divergence, reread and reconsider the affected knowledge at the new snapshot;
-never blindly substitute a newer token. Contention returns busy: retry after the
-writer finishes, without spinning. The CLI owns its short kernel-held lock; do
+never blindly substitute a newer token. A publication that keeps losing races to
+other writers is retained as `pending`, like an offline one. The CLI owns its short kernel-held lock; do
 not wrap it in another lock or unlink its stable file. Reasoning and drafting
 happen outside the lock. Verify the returned snapshot and reread changed
 resources at that exact revision before claiming a save. State `pending` means
@@ -104,7 +106,8 @@ retained on this machine, not shared.
 ## Reconcile and maintain
 
 A failed divergent publication, and any publication made while the remote is
-unreachable, stays retained on this machine as a candidate. `memory status`
+unreachable or that kept losing races, stays retained on this machine as a
+candidate. `memory status`
 lists retained candidates with their integration plans: base, incoming snapshot
 and every conflicting resource, including file/directory and case collisions.
 Read the labeled candidate with `memory inspect` and the published incoming and

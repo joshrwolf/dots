@@ -21,6 +21,7 @@ Commands:
   attention  Ask the user durable questions about goal work and record goal decisions
   memory     Read and publish shared knowledge snapshots across machines
   substrate  Configure and inspect this machine's connection to the shared cross-machine remote
+  sync       Keep this machine's substrate copy current with the shared remote
   review     Review a repository's changes in threads anchored to exact revisions, across its worktrees
   skills     Export agent discovery documentation from this command tree
 
@@ -2537,13 +2538,13 @@ Options:
 ## dots memory
 
 ```text
-Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads check the remote first (context reuses a listing up to 30 seconds old) and fall back to the last known snapshot, labeled stale, when it is unreachable. Publication changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline publications stay pending on this machine. Tasks, outputs, credentials and checkout bindings remain machine-local.
+Shared knowledge on the cross-machine substrate (see dots substrate). One snapshot pins all global/project documents and the shared project registry; its ID is the SHA-256 of its manifest. Reads never contact the remote: they serve this machine's local copy, which the sync agent (dots sync run) keeps current, and report its freshness: when it was last confirmed current (as_of, age_seconds), stale once that is over two minutes old, and the failing sync's error. --fresh runs one sync pass first. A machine that has never synced has no copy and says so. Publication syncs, then changes a batch against an expected snapshot: disjoint concurrent changes merge, same-document divergence waits for memory reconcile, and offline or repeatedly pre-empted publications stay pending on this machine. Tasks, outputs, credentials and checkout bindings remain machine-local.
 
 Usage: dots memory [OPTIONS] <COMMAND>
 
 Commands:
   init       Publish the first, empty snapshot to the substrate; refuses if knowledge exists
-  context    Read both MEMORY.md indexes at one snapshot, at most 30 seconds old when online
+  context    Read both MEMORY.md indexes at one snapshot from the local copy
   status     Show the current snapshot, freshness and retained candidates with their integration plans
   read       Read a published page; scope is global or an exact shared project ID
   write      Publish one UTF-8 page against an expected snapshot; empty content is not removal
@@ -2564,6 +2565,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2586,6 +2590,9 @@ Options:
       --directory <PATH>
           Working directory for commands that use checkout context
 
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
+
   -h, --help
           Print help
 ```
@@ -2593,7 +2600,7 @@ Options:
 ## dots memory context
 
 ```text
-Read both MEMORY.md indexes at one snapshot, at most 30 seconds old when online
+Read both MEMORY.md indexes at one snapshot from the local copy
 
 Usage: dots memory context [OPTIONS]
 
@@ -2606,6 +2613,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
 
   -h, --help
           Print help
@@ -2627,6 +2637,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
 
   -h, --help
           Print help
@@ -2655,6 +2668,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
 
       --snapshot <SNAPSHOT>
 
@@ -2696,6 +2712,9 @@ Options:
       --expected-snapshot <EXPECTED_SNAPSHOT>
 
 
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
+
       --content-file <CONTENT_FILE>
           UTF-8 file, or - to read bounded content from stdin
 
@@ -2730,6 +2749,9 @@ Options:
       --expected-snapshot <EXPECTED_SNAPSHOT>
 
 
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
+
   -h, --help
           Print help
 ```
@@ -2753,6 +2775,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
 
       --input-file <INPUT_FILE>
           JSON file, or - to read bounded changes from stdin
@@ -2784,6 +2809,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
 
       --snapshot <SNAPSHOT>
 
@@ -2821,6 +2849,9 @@ Options:
       --directory <PATH>
           Working directory for commands that use checkout context
 
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
+
   -h, --help
           Print help
 ```
@@ -2849,6 +2880,9 @@ Options:
       --directory <PATH>
           Working directory for commands that use checkout context
 
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
+
   -h, --help
           Print help
 ```
@@ -2869,6 +2903,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
 
   -h, --help
           Print help
@@ -2895,6 +2932,9 @@ Options:
       --directory <PATH>
           Working directory for commands that use checkout context
 
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
+
   -h, --help
           Print help
 ```
@@ -2919,6 +2959,9 @@ Options:
       --directory <PATH>
           Working directory for commands that use checkout context
 
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
+
   -h, --help
           Print help
 ```
@@ -2942,6 +2985,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2970,6 +3016,9 @@ Options:
 
       --directory <PATH>
           Working directory for commands that use checkout context
+
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
 
       --scope <GLOBAL_OR_SHARED_ID>
 
@@ -3004,6 +3053,9 @@ Options:
       --directory <PATH>
           Working directory for commands that use checkout context
 
+      --fresh
+          Run one sync pass before reading, instead of serving the local copy as is
+
   -h, --help
           Print help (see a summary with '-h')
 ```
@@ -3011,13 +3063,13 @@ Options:
 ## dots substrate
 
 ```text
-The substrate stores content-addressed blobs and compare-and-swap refs in one shared Git remote, with a verified local cache, freshness record and machine identity under $XDG_DATA_HOME/dots/substrate (default ~/.local/share/dots/substrate). Domains such as memory use it; this group configures the remote and reports local state.
+The substrate stores content-addressed blobs and compare-and-swap refs in one shared Git remote. Each machine keeps a verified blob cache, a Git cache repository and a SQLite state database (listing and freshness record, known values, outbox, stranded updates, push budget, sync health, counters and machine identity) under $XDG_DATA_HOME/dots/substrate (default ~/.local/share/dots/substrate). Domains such as memory read the local copy; dots sync keeps it current. This group configures the remote and reports local state.
 
 Usage: dots substrate [OPTIONS] <COMMAND>
 
 Commands:
   init    Point this machine at its shared remote; refuses to change an existing configuration
-  status  Show the remote, machine identity, unflushed and stranded updates, last flush and freshness without networking
+  status  Show the remote, machine identity, last pass and error, backoff, unflushed and stranded updates and counters without networking
 
 Options:
       --json
@@ -3057,7 +3109,7 @@ Options:
 ## dots substrate status
 
 ```text
-Show the remote, machine identity, unflushed and stranded updates, last flush and freshness without networking
+Show the remote, machine identity, last pass and error, backoff, unflushed and stranded updates and counters without networking
 
 Usage: dots substrate status [OPTIONS]
 
@@ -3070,6 +3122,70 @@ Options:
 
   -h, --help
           Print help
+```
+
+## dots sync
+
+```text
+A sync pass lists every ref in one request (5 second deadline), fetches the values that changed into the local cache, flushes deferred updates within the push budget and records the outcome. Passes are idempotent and run one at a time per machine; a failed pass backs off later scheduled passes with jittered exponential delays (5 seconds doubling to 5 minutes). Without a configured substrate there is nothing to sync.
+
+Usage: dots sync [OPTIONS] <COMMAND>
+
+Commands:
+  once  Run one sync pass now, waiting for one in progress, then pack the Git cache if needed
+  run   Run the per-machine sync agent until SIGTERM or SIGINT
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## dots sync once
+
+```text
+Run one sync pass now, waiting for one in progress, then pack the Git cache if needed
+
+Usage: dots sync once [OPTIONS]
+
+Options:
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+  -h, --help
+          Print help
+```
+
+## dots sync run
+
+```text
+The sync agent the login service runs. It runs a scheduled pass every --interval seconds (sooner when another process ran the last one), immediately when a local writer touches the state directory's changes marker with updates to flush, and on watch hints, which lengthen the period up to --resync. Failed passes back off. After passes that moved data it packs the Git cache once loose objects pass a few thousand. Until the substrate is configured it idles. It exits 0 on SIGTERM, SIGINT or SIGHUP after the pass in progress, and nonzero when the state schema is newer than this binary (as after an upgrade) or the state cannot be read, so the service manager restarts the installed binary.
+
+Usage: dots sync run [OPTIONS]
+
+Options:
+      --interval <SECONDS>
+          [default: 20]
+
+      --json
+          Return JSON instead of readable output
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --resync <SECONDS>
+          [default: 600]
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## dots review
