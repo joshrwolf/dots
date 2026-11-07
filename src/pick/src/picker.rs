@@ -136,6 +136,14 @@ impl<T: Entry> Picker<T> {
         Ok((self.build()?, prompt, live))
     }
 
+    /// Compiles a view whose query and selection survive repeated terminal runs.
+    pub fn into_view(self) -> Result<crate::View<T>, Error>
+    where
+        T: Send + 'static,
+    {
+        run::Page::from_picker(self)
+    }
+
     /// Draws the list and blocks until the user chooses or aborts.
     ///
     /// `Ok(None)` is an abort.

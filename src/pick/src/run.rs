@@ -22,6 +22,7 @@ use tokio::sync::oneshot;
 use crate::background::Background;
 use crate::live::{self, Feed, Notice};
 use crate::model::{Model, Outcome};
+use crate::pane::{NoPane, Pane, PaneLayout, Response, Tasks};
 use crate::preview::{self, Content, Previewer};
 use crate::spec::{PreviewAnchor, PreviewPosition};
 use crate::{Acting, Action, Actions, Choice, Entry, Error, Palette, Shortcut, columns, keys};
@@ -101,7 +102,7 @@ pub(crate) fn run<T: Entry + Send + 'static, A>(
         prompt: prompt.to_owned(),
         live,
     };
-    let session = session(&mut background, &mut page, actions);
+    let session = session::<T, A, NoPane>(&mut background, &mut page, actions, None);
     // The terminal is restored; now stop the jobs.
     let exit = conclude(session, background.shutdown())?;
     Ok(match exit {
@@ -128,13 +129,35 @@ fn conclude(session: Result<Exit, Error>, jobs: thread::Result<()>) -> Result<Ex
 
 /// Takes the terminal, runs the loop, and gives the terminal back, whatever
 /// the loop returned.
-struct Page<T: Entry> {
+/// Compiled picker state, retained when an interactive pane suspends the view.
+#[derive(Debug)]
+pub struct Page<T: Entry> {
     model: Model<T>,
     prompt: String,
     live: Live<T>,
 }
 
 impl<T: Entry + Send + 'static> Page<T> {
+    /// The retained query, scope and selection, including between terminal runs.
+    #[must_use]
+    pub fn model(&self) -> &Model<T> {
+        &self.model
+    }
+
+    /// Runs a host-owned interactive detail pane on the shared terminal driver.
+    /// Pending pane work is cancelled when this run ends.
+    pub fn run_pane<P: Pane<T>>(&mut self, pane: &mut P) -> Result<crate::Closed, Error> {
+        let mut background = Background::start()?;
+        let result =
+            session::<T, std::convert::Infallible, P>(&mut background, self, None, Some(pane));
+        let exit = conclude(result, background.shutdown())?;
+        Ok(match exit {
+            Exit::List(Outcome::Abort) => crate::Closed::Cancelled,
+            Exit::Done | Exit::List(Outcome::Accept) => crate::Closed::Acted,
+            Exit::Failed => unreachable!("shutdown resumes a failed job's panic"),
+        })
+    }
+
     fn start(&self, background: &mut Background) -> (Option<Previewer>, Option<Feed<T>>) {
         let preview = (self.model.has_previews() || self.live.feed.is_some())
             .then(|| Previewer::spawn(background, preview::commands(), self.live.preview_every));
@@ -170,7 +193,7 @@ impl<T: Entry + Send + 'static> Page<T> {
         Ok(true)
     }
 
-    fn from_picker(picker: crate::Picker<T>) -> Result<Self, Error> {
+    pub(crate) fn from_picker(picker: crate::Picker<T>) -> Result<Self, Error> {
         let (model, prompt, live) = picker.prepare()?;
         Ok(Self {
             model,
@@ -180,10 +203,11 @@ impl<T: Entry + Send + 'static> Page<T> {
     }
 }
 
-fn session<T: Entry + Send + 'static, A>(
+fn session<T: Entry + Send + 'static, A, P: Pane<T>>(
     background: &mut Background,
-    page: &mut Page<T>,
+    view: &mut Page<T>,
     actions: Option<&Actions<T, A>>,
+    pane: Option<&mut P>,
 ) -> Result<Exit, Error> {
     let mut terminal = match ratatui::try_init() {
         Ok(terminal) => terminal,
@@ -199,7 +223,7 @@ fn session<T: Entry + Send + 'static, A>(
             return Err(error.into());
         }
     };
-    let outcome = drive(&mut terminal, background, page, actions);
+    let outcome = drive(&mut terminal, background, view, actions, pane);
     let paste_restored = paste.disable();
     let restored = ratatui::try_restore();
     let outcome = outcome?;
@@ -212,11 +236,12 @@ fn session<T: Entry + Send + 'static, A>(
     clippy::too_many_lines,
     reason = "One loop owns page navigation, input and background resource lifetimes."
 )]
-fn drive<T: Entry + Send + 'static, A>(
+fn drive<T: Entry + Send + 'static, A, P: Pane<T>>(
     terminal: &mut ratatui::DefaultTerminal,
     background: &mut Background,
     current: &mut Page<T>,
     actions: Option<&Actions<T, A>>,
+    mut pane: Option<&mut P>,
 ) -> Result<Exit, Error> {
     let shortcuts = actions.map_or(&[][..], |actions| actions.shortcuts.as_slice());
     let mut status = Status::default();
@@ -224,9 +249,27 @@ fn drive<T: Entry + Send + 'static, A>(
     let (mut previewer, mut feed) = current.start(background);
     let mut dirty = true;
     let mut page_size = 1;
+    let mut tasks = Tasks::<P::Message>::new();
     loop {
         if background.failed() {
             return Ok(Exit::Failed);
+        }
+        if let Some(pane) = pane.as_deref_mut() {
+            for (message, action) in tasks.update() {
+                if action {
+                    discard_input()?;
+                }
+                match pane.update(message, &mut current.model) {
+                    Response::Close => return Ok(Exit::Done),
+                    Response::Redraw => dirty = true,
+                    Response::Ignored => {}
+                }
+                dirty |= action;
+            }
+            for task in pane.poll(std::time::Instant::now()) {
+                tasks.start(task, background);
+                dirty = true;
+            }
         }
         let mut navigation = None;
         match status.settle() {
@@ -275,6 +318,9 @@ fn drive<T: Entry + Send + 'static, A>(
             previewer.select(current.model.selected_entry().and_then(Entry::preview));
             dirty |= previewer.update();
         }
+        if let Some(pane) = pane.as_deref_mut() {
+            pane.selected(current.model.selected_entry());
+        }
         if dirty {
             let preview = previewer.as_ref().and_then(Previewer::content);
             let chrome = Chrome {
@@ -284,13 +330,22 @@ fn drive<T: Entry + Send + 'static, A>(
                 status: &status,
                 preview_layout: current.live.preview_layout,
                 preview_offset: previewer.as_ref().and_then(|preview| preview.offset),
+                interactive: pane.as_deref().map(Pane::layout),
+                input_active: pane.as_deref().is_none_or(|pane| !pane.focused()),
+                work: tasks.action(),
             };
             terminal.draw(|frame| {
                 page_size = draw(frame, &mut current.model, &chrome, preview.as_ref());
+                if let Some(pane) = pane.as_deref_mut() {
+                    let body =
+                        regions(frame.area(), !shortcuts.is_empty(), status.alert.as_deref()).body;
+                    let (_, area) = pane.layout().areas(body);
+                    pane.draw(frame, area, current.model.palette());
+                }
             })?;
             dirty = false;
         }
-        if status.running.is_some() {
+        if status.running.is_some() || tasks.action().is_some() {
             std::thread::sleep(Duration::from_millis(25));
             continue;
         }
@@ -298,7 +353,15 @@ fn drive<T: Entry + Send + 'static, A>(
             continue;
         }
         dirty = true;
-        match event::read()? {
+        let input = event::read()?;
+        if let Some(pane) = pane.as_deref_mut() {
+            match pane.event(&input) {
+                Response::Close => return Ok(Exit::Done),
+                Response::Redraw => continue,
+                Response::Ignored => {}
+            }
+        }
+        match input {
             Event::Key(key) => {
                 if scroll_preview(key, previewer.as_mut(), current.live.preview_layout.anchor) {
                     continue;
@@ -327,6 +390,7 @@ fn drive<T: Entry + Send + 'static, A>(
                     previewer.as_mut(),
                     !shortcuts.is_empty(),
                     status.alert.as_deref(),
+                    pane.as_deref().map(Pane::layout),
                 );
             }
             _ => {}
@@ -374,6 +438,7 @@ fn pointer<T: Entry>(
     previewer: Option<&mut Previewer>,
     has_shortcuts: bool,
     alert: Option<&str>,
+    interactive: Option<PaneLayout>,
 ) {
     use ratatui::crossterm::event::{MouseButton, MouseEventKind};
     let body = regions(area, has_shortcuts, alert).body;
@@ -381,14 +446,17 @@ fn pointer<T: Entry>(
         .as_deref()
         .and_then(Previewer::content)
         .and_then(|_| split(body, current.live.preview_layout.position));
-    let list = split.as_ref().map_or(body, |split| split.list);
+    let list = match interactive {
+        Some(layout) => layout.areas(body).0,
+        None => Some(split.as_ref().map_or(body, |split| split.list)),
+    };
     let point = ratatui::layout::Position::new(mouse.column, mouse.row);
     let step = match mouse.kind {
         MouseEventKind::ScrollUp => -3,
         MouseEventKind::ScrollDown => 3,
         _ => 0,
     };
-    if list.contains(point) {
+    if let Some(list) = list.filter(|list| list.contains(point)) {
         if step != 0 {
             let command = if step < 0 {
                 crate::Command::Previous(3)
@@ -590,9 +658,16 @@ struct Chrome<'a, A, T: Entry> {
     status: &'a Status<T>,
     preview_layout: PreviewLayout,
     preview_offset: Option<usize>,
+    interactive: Option<PaneLayout>,
+    input_active: bool,
+    work: Option<&'a str>,
 }
 
 /// Returns the page size, so a page key moves by exactly what is on screen.
+#[expect(
+    clippy::too_many_lines,
+    reason = "One frame budget owns chrome, list and detail geometry."
+)]
 fn draw<T: Entry, A>(
     frame: &mut Frame<'_>,
     model: &mut Model<T>,
@@ -619,7 +694,9 @@ fn draw<T: Entry, A>(
         let muted = Style::default().fg(palette.muted).bg(palette.background);
         // An action's error outranks the feed's notice while it is shown.
         let notice = chrome.notice.filter(|_| alert_text.is_none());
-        let running = chrome.status.running.as_ref().map(|r| r.label.as_str());
+        let running = chrome
+            .work
+            .or_else(|| chrome.status.running.as_ref().map(|r| r.label.as_str()));
         frame.render_widget(
             Paragraph::new(rule_line(
                 model.scope_label(),
@@ -661,13 +738,27 @@ fn draw<T: Entry, A>(
         _ => (body, None),
     };
 
-    let height = usize::from(list.height);
-    model.scroll_into_view(height);
-    frame.render_widget(
-        Paragraph::new(model.lines(usize::from(list.width), height))
-            .style(Style::default().bg(palette.background)),
-        list,
-    );
+    let list = match chrome.interactive {
+        Some(layout) => layout.areas(body).0,
+        None => Some(list),
+    };
+    let height = list.map_or(1, |list| usize::from(list.height));
+    if let Some(list) = list {
+        if chrome.interactive.is_some() && list.right() < body.right() {
+            let rule = Rect::new(list.right(), body.y, 1, body.height);
+            frame.render_widget(
+                Paragraph::new(vec![Line::raw("│"); usize::from(rule.height)])
+                    .style(Style::default().fg(palette.muted)),
+                rule,
+            );
+        }
+        model.scroll_into_view(height);
+        frame.render_widget(
+            Paragraph::new(model.lines(usize::from(list.width), height))
+                .style(Style::default().bg(palette.background)),
+            list,
+        );
+    }
     if let Some((pane, content)) = pane {
         frame.render_widget(
             preview_paragraph(
@@ -690,11 +781,11 @@ fn draw<T: Entry, A>(
     let caret = caret.min(input_width.saturating_sub(1));
     let caret = u16::try_from(caret).expect("the caret is clamped to the terminal width");
     let x = head.x.saturating_add(caret);
-    if head.width > 0 && head.height > 0 {
+    if chrome.input_active && head.width > 0 && head.height > 0 {
         frame.set_cursor_position((x.min(head.right().saturating_sub(1)), head.y));
     }
 
-    height
+    model.page_size(height)
 }
 
 /// Where each part of the picker goes: the prompt, a rule carrying the
@@ -1128,6 +1219,9 @@ mod tests {
             status,
             preview_layout,
             preview_offset: None,
+            interactive: None,
+            input_active: true,
+            work: None,
         };
         let mut page = 0;
         terminal

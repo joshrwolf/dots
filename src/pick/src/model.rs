@@ -43,6 +43,10 @@ pub(crate) enum Row {
     },
     Headings(usize),
     Item(usize),
+    Detail {
+        item: usize,
+        line: usize,
+    },
 }
 
 /// An entry's drawn and searchable form, computed once.
@@ -56,6 +60,7 @@ struct Prepared {
     group: usize,
     id: Option<String>,
     cells: Vec<Cell>,
+    details: Vec<Cell>,
     haystack: Utf32String,
     bases: Vec<Option<usize>>,
 }
@@ -138,12 +143,15 @@ impl<T: Entry> Model<T> {
                     drawn: cells.len(),
                 });
             }
-            let (haystack, bases) = weave(&cells, item.hidden_terms().as_deref());
+            let details = item.details(&palette);
+            let (haystack, bases) =
+                weave(cells.iter().chain(&details), item.hidden_terms().as_deref());
             buckets[group].push(index);
             prepared.push(Prepared {
                 group,
                 id: item.identity().map(Cow::into_owned),
                 cells,
+                details,
                 haystack: Utf32String::from(haystack),
                 bases,
             });
@@ -243,13 +251,18 @@ impl<T: Entry> Model<T> {
                 drawn: cells.len(),
             });
         }
-        let (haystack, bases) = weave(&cells, entry.hidden_terms().as_deref());
+        let details = entry.details(&self.palette);
+        let (haystack, bases) = weave(
+            cells.iter().chain(&details),
+            entry.hidden_terms().as_deref(),
+        );
         Ok((
             entry,
             Prepared {
                 group: index,
                 id: Some(id),
                 cells,
+                details,
                 haystack: Utf32String::from(haystack),
                 bases,
             },
@@ -318,7 +331,7 @@ impl<T: Entry> Model<T> {
         let row = *self.selectable.get(self.cursor)?;
         match self.rows[row] {
             Row::Item(index) => Some(index),
-            Row::Section { .. } | Row::Headings(_) => {
+            Row::Section { .. } | Row::Headings(_) | Row::Detail { .. } => {
                 unreachable!("only item rows are selectable")
             }
         }
@@ -326,6 +339,14 @@ impl<T: Entry> Model<T> {
 
     pub(crate) fn select_line(&mut self, line: usize) {
         let row = self.offset.saturating_add(line);
+        let row = match self.rows.get(row) {
+            Some(Row::Detail { item, .. }) => self
+                .rows
+                .iter()
+                .position(|candidate| *candidate == Row::Item(*item))
+                .expect("detail belongs to a primary row"),
+            _ => row,
+        };
         if let Some(cursor) = self
             .selectable
             .iter()
@@ -544,6 +565,12 @@ impl<T: Entry> Model<T> {
         } else if row >= self.offset.saturating_add(height) {
             self.offset = row.saturating_add(1).saturating_sub(height);
         }
+        let item = self.selected().expect("the selected row exists");
+        let last = row.saturating_add(self.prepared[item].details.len());
+        if self.prepared[item].details.len() < height && last >= self.offset.saturating_add(height)
+        {
+            self.offset = last.saturating_add(1).saturating_sub(height);
+        }
         // A group's first item says nothing about which group it is in, so pull
         // the divider that names it on screen when there is room for it.
         while self.offset > 0
@@ -551,7 +578,7 @@ impl<T: Entry> Model<T> {
                 self.rows[self.offset - 1],
                 Row::Section { .. } | Row::Headings(_)
             )
-            && row < self.offset.saturating_add(height).saturating_sub(1)
+            && last < self.offset.saturating_add(height).saturating_sub(1)
         {
             self.offset -= 1;
         }
@@ -561,6 +588,7 @@ impl<T: Entry> Model<T> {
     /// The visible window, ready to draw.
     pub fn lines(&mut self, width: usize, height: usize) -> Vec<Line<'static>> {
         let selected = self.selectable.get(self.cursor).copied();
+        let selected_item = self.selected();
         let end = self.offset.saturating_add(height).min(self.rows.len());
         // Scrolling and refreshing keep `offset` within the rows.
         let window: Vec<(usize, Row)> = self.rows[self.offset..end]
@@ -571,7 +599,11 @@ impl<T: Entry> Model<T> {
         let sizes = self.grid.sizes(&self.layouts, width);
         window
             .into_iter()
-            .map(|(index, row)| self.draw_row(row, selected == Some(index), width, &sizes))
+            .map(|(index, row)| {
+                let selected = selected == Some(index)
+                    || matches!(row, Row::Detail { item, .. } if selected_item == Some(item));
+                self.draw_row(row, selected, width, &sizes)
+            })
             .collect()
     }
 
@@ -593,6 +625,7 @@ impl<T: Entry> Model<T> {
             Row::Section { group, count } => self.section_line(group, count, width),
             Row::Headings(group) => self.heading_line(group, width, sizes),
             Row::Item(item) => self.item_line(item, selected, width, sizes),
+            Row::Detail { item, line } => self.detail_line(item, line, selected, width),
         }
     }
 
@@ -696,6 +729,54 @@ impl<T: Entry> Model<T> {
         Line::from(spans).style(Style::default().bg(background))
     }
 
+    fn detail_line(
+        &mut self,
+        item: usize,
+        line: usize,
+        selected: bool,
+        width: usize,
+    ) -> Line<'static> {
+        let prepared = &self.prepared[item];
+        let mut indices = Vec::new();
+        self.pattern
+            .indices(prepared.haystack.slice(..), &mut self.matcher, &mut indices);
+        indices.sort_unstable();
+        indices.dedup();
+        let gutter = GUTTER.min(width);
+        let mut spans = vec![Span::raw(" ".repeat(gutter))];
+        let used = paint_cell(
+            &mut spans,
+            &prepared.details[line],
+            width - gutter,
+            prepared.bases[prepared.cells.len() + line],
+            &indices,
+            &self.palette,
+        );
+        spans.push(Span::raw(" ".repeat(width.saturating_sub(gutter + used))));
+        Line::from(spans).style(Style::default().bg(if selected {
+            self.palette.selection_bg
+        } else {
+            self.palette.background
+        }))
+    }
+
+    /// Number of entries in a page when entries have secondary lines.
+    #[must_use]
+    pub fn page_size(&self, height: usize) -> usize {
+        if self.prepared.iter().all(|entry| entry.details.is_empty()) {
+            return height;
+        }
+        let Some(&row) = self.selectable.get(self.cursor) else {
+            return 1;
+        };
+        self.selectable
+            .iter()
+            .skip(self.cursor)
+            .take_while(|&&next| next < row.saturating_add(height))
+            .count()
+            .max(1)
+    }
+
     fn refresh(&mut self) {
         let previous = self.selected();
         let (scope, needle) = split_scope(&self.query, &self.layouts);
@@ -751,6 +832,9 @@ impl<T: Entry> Model<T> {
             for &(_, item) in &hits {
                 self.selectable.push(self.rows.len());
                 self.rows.push(Row::Item(item));
+                self.rows.extend(
+                    (0..self.prepared[item].details.len()).map(|line| Row::Detail { item, line }),
+                );
             }
         }
 
@@ -795,9 +879,12 @@ fn validate_groups<G: Copy + Eq + fmt::Debug>(groups: &[Group<G>]) -> Result<(),
 /// a non-ASCII haystack in: `Utf32String` collects one entry per cluster, so a
 /// codepoint count drifts by one for every combining mark or emoji sequence
 /// ahead of a match.
-fn weave(cells: &[Cell], hidden: Option<&str>) -> (String, Vec<Option<usize>>) {
+fn weave<'a>(
+    cells: impl IntoIterator<Item = &'a Cell>,
+    hidden: Option<&str>,
+) -> (String, Vec<Option<usize>>) {
     let mut haystack = String::new();
-    let mut bases = Vec::with_capacity(cells.len());
+    let mut bases = Vec::new();
     let mut at = 0;
     for cell in cells {
         if !cell.searchable {
@@ -1266,7 +1353,7 @@ mod tests {
             .iter()
             .filter_map(|row| match row {
                 Row::Item(index) => model.items.get(*index).map(|t| t.name),
-                Row::Section { .. } | Row::Headings(_) => None,
+                Row::Section { .. } | Row::Headings(_) | Row::Detail { .. } => None,
             })
             .collect()
     }
@@ -1334,7 +1421,7 @@ mod tests {
                     under = 0;
                 }
                 Row::Item(_) => under += 1,
-                Row::Headings(_) => {}
+                Row::Headings(_) | Row::Detail { .. } => {}
             }
         }
         assert_eq!(expected, [2], "apple and apricot");
@@ -1556,6 +1643,95 @@ mod tests {
                 width
             );
         }
+    }
+
+    #[derive(Debug)]
+    struct Card(&'static str, &'static str);
+
+    impl Entry for Card {
+        type Group = ();
+        fn group(&self) {}
+        fn cells(&self, palette: &Palette) -> Vec<Cell> {
+            vec![Cell::new(self.0, palette.strong)]
+        }
+        fn details(&self, palette: &Palette) -> Vec<Cell> {
+            vec![
+                Cell::new("fixture", palette.muted),
+                Cell::new(self.1, palette.strong),
+            ]
+        }
+        fn identity(&self) -> Option<Cow<'_, str>> {
+            Some(Cow::Borrowed(self.0))
+        }
+    }
+
+    #[test]
+    fn secondary_lines_match_highlight_and_select_their_primary_entry() {
+        let mut model = Model::build(
+            vec![Card("first", "選択 👩‍💻"), Card("second", "Other question")],
+            vec![Group::new((), "requests", vec![Column::fill()])],
+            Palette::default(),
+            false,
+        )
+        .unwrap();
+        model.select_line(3);
+        assert_eq!(model.selected(), Some(0));
+        model.select_line(6);
+        assert_eq!(model.selected(), Some(1));
+        model.scroll_into_view(4);
+        let lines = model.lines(40, 4);
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.style.bg == Some(model.palette.selection_bg))
+                .count(),
+            3
+        );
+        model.insert_text("選択");
+        assert_eq!(model.matched(), 1);
+        assert_eq!(model.selected(), Some(0));
+        for width in 0..50 {
+            let line = model.render_row(Row::Detail { item: 0, line: 1 }, true, width);
+            assert_eq!(drawn_width(&line), width, "secondary width {width}");
+            if width > 6 {
+                assert!(
+                    line.spans
+                        .iter()
+                        .any(|span| span.style.fg == Some(model.palette.matched)),
+                    "{line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn secondary_lines_affect_refresh_and_page_size_without_extra_selections() {
+        let mut model = Model::build(
+            vec![Card("first", "Question"), Card("second", "Another")],
+            vec![Group::new((), "requests", vec![Column::fill()])],
+            Palette::default(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(model.matched(), 2);
+        assert_eq!(model.page_size(3), 1);
+        assert_eq!(model.page_size(6), 2);
+        assert!(
+            !model
+                .replace_all(vec![Card("first", "Question"), Card("second", "Another")])
+                .unwrap()
+        );
+        assert!(
+            model
+                .replace_all(vec![
+                    Card("first", "New question"),
+                    Card("second", "Another")
+                ])
+                .unwrap()
+        );
+        model.insert_text("New question");
+        assert_eq!(model.matched(), 1);
+        assert_eq!(model.selected(), Some(0));
     }
 
     #[test]

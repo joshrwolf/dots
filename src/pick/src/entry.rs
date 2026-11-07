@@ -7,7 +7,7 @@ use ratatui::style::Color;
 
 use crate::{Palette, text};
 
-/// One selectable row.
+/// One selectable entry, optionally with secondary lines.
 pub trait Entry {
     /// Which declared group this entry belongs to.
     type Group: Copy + Eq + fmt::Debug + Send + 'static;
@@ -20,6 +20,12 @@ pub trait Entry {
     /// palette is handed in rather than captured so that a row cannot end up
     /// painted from a different palette than the chrome around it.
     fn cells(&self, palette: &Palette) -> Vec<Cell>;
+
+    /// Additional single-line cells beneath the primary row, also searchable.
+    /// They share this entry's selection and identity, not separate list items.
+    fn details(&self, _palette: &Palette) -> Vec<Cell> {
+        Vec::new()
+    }
 
     /// Search terms that are never drawn — an id, an alias, a full path whose
     /// row only shows the tail.

@@ -208,7 +208,7 @@ fn a_panicking_job_restores_the_terminal_and_fails_the_picker() {
 
 /// The action fixture on a fresh terminal, once it has drawn: the fixture,
 /// the keyboard, the screen, and the slave side to drop once it exits.
-fn act_fixture() -> (Fixture, File, Screen, OwnedFd) {
+fn act_fixture(args: &[&str]) -> (Fixture, File, Screen, OwnedFd) {
     let size = Winsize {
         ws_row: 24,
         ws_col: 80,
@@ -220,6 +220,7 @@ fn act_fixture() -> (Fixture, File, Screen, OwnedFd) {
     let stdio = || Stdio::from(slave.try_clone().expect("sharing the terminal"));
     let fixture = Fixture(
         Command::new(env!("CARGO_BIN_EXE_dots-pick-act-fixture"))
+            .args(args)
             .stdin(stdio())
             .stdout(stdio())
             .stderr(stdio())
@@ -238,7 +239,7 @@ fn act_fixture() -> (Fixture, File, Screen, OwnedFd) {
 
 #[test]
 fn a_failed_action_stays_in_the_picker_and_a_successful_one_closes_it() {
-    let (mut fixture, mut keys, mut screen, slave) = act_fixture();
+    let (mut fixture, mut keys, mut screen, slave) = act_fixture(&[]);
 
     keys.write_all(b"\r").unwrap();
     assert!(
@@ -266,8 +267,33 @@ fn a_failed_action_stays_in_the_picker_and_a_successful_one_closes_it() {
 }
 
 #[test]
+fn a_detail_composer_keeps_filter_input_separate_and_discards_repeat_submission() {
+    let (mut fixture, mut keys, mut screen, slave) = act_fixture(&["pane"]);
+    assert!(screen.until(b"Original"), "{}", screen.text());
+    keys.write_all(b"it\r\x1b[200~neutral reply\x1b[201~\r\r")
+        .unwrap();
+    assert!(screen.until(b"CONFIRMED"), "{}", screen.text());
+    keys.write_all(b"\x1b").unwrap();
+    let status = fixture.wait();
+    assert!(status.success(), "{status:?}: {}", screen.text());
+    assert!(
+        termios::tcgetattr(&slave)
+            .unwrap()
+            .local_flags
+            .contains(COOKED)
+    );
+    drop(slave);
+    assert!(screen.finish(), "{}", screen.text());
+    assert!(
+        find(&screen.seen, b"query=it draft=neutral reply saved=1").is_some(),
+        "{}",
+        screen.text()
+    );
+}
+
+#[test]
 fn escape_closes_the_picker_as_cancelled() {
-    let (mut fixture, mut keys, mut screen, slave) = act_fixture();
+    let (mut fixture, mut keys, mut screen, slave) = act_fixture(&[]);
 
     keys.write_all(b"\x1b").unwrap();
     let status = fixture.wait();

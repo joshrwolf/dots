@@ -20,6 +20,14 @@ way. It never calls the Rex API itself.
   back to plain text. Preview scrolling uses Shift+arrows/page keys or the
   wheel over its pane; list clicks select rows without executing actions.
 
+- Interactive panes use `Picker::into_view` and `View::run_pane`. The host owns
+  the composer and returns typed background work; callbacks on the terminal
+  thread do no I/O. Refresh tasks leave input usable, explicit actions hold it
+  until their result is applied, and queued input is discarded after an action.
+  Work belongs to one terminal run and is cancelled when that run ends. Keep
+  drafts outside those tasks so suspending and reopening preserves them.
+- Entry details are single-line searchable cells under their primary row;
+  matching, selection, paging and mouse hits remain one entry, not extra items.
 - Keep the model a pure function of items, query, cursor, and width, and test
   it as tables rather than through a terminal.
 - Measure widths in terminal display cells and cut, edit, and move the caret
