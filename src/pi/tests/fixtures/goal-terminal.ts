@@ -266,6 +266,7 @@ export default function (pi: ExtensionAPI): void {
           : {},
       ).source as AttentionSource,
       tasks: undefined,
+      changes: async () => undefined,
       async openView(view, target) {
         mark(`navigate:${view}:${target?.id ?? 'global'}`);
         mark(`editor:${current?.ui.getEditorText() ?? ''}`);

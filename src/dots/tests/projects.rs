@@ -156,9 +156,15 @@ fn worktrees_share_ids_while_clones_bare_repositories_and_submodules_do_not() {
     );
     let shared_id = shared["project"].as_str().unwrap();
     f.ok("repo", &["memory", "project", "bind", shared_id]);
-    let context = f.ok("repo", &["memory", "context"]);
-    assert_eq!(context["project"]["scope"]["project"], shared_id);
-    assert_eq!(context, f.ok("linked", &["memory", "context"]));
+    // Freshness reads the clock; the worktrees must agree on everything else.
+    let context = |dir| {
+        let mut context = f.ok(dir, &["memory", "context"]);
+        context.as_object_mut().unwrap().remove("freshness");
+        context
+    };
+    let primary = context("repo");
+    assert_eq!(primary["project"]["scope"]["project"], shared_id);
+    assert_eq!(primary, context("linked"));
     f.git("repo", &["clone", "-q", ".", "../clone"]);
     assert!(!f.run("clone", &["task", "list"]).status.success());
     let unbound = f.ok("clone", &["memory", "context"]);

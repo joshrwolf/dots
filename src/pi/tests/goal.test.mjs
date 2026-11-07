@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import test, {beforeEach, afterEach} from 'node:test';
 import {initTheme} from '@earendil-works/pi-coding-agent';
 import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
@@ -47,6 +50,7 @@ function harness(
   mode = 'rpc',
   session = 'fixture-session',
   attention = attentionStore(),
+  changes = async () => undefined,
 ) {
   const emitted = [];
   const handlers = new Map();
@@ -99,6 +103,7 @@ function harness(
   goal(pi, backend, undefined, {
     source: attention.source,
     tasks: undefined,
+    changes,
     openView: async (view, target) => {
       if (navigation.failure instanceof Error) throw navigation.failure;
       navigation.calls.push({view, target});
@@ -1407,4 +1412,58 @@ test('an unreadable coordination record is an explicit unavailable section, foll
   assert.doesNotMatch((await h.context())[0].content, /could not be checked/);
   await h.command('unfocus');
   assert.deepEqual(await h.context(), [], 'a successful empty read is empty');
+});
+
+test('an import touching the changes marker rereads the goals in view', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dots-goal-changes-'));
+  try {
+    const marker = join(dir, 'changes');
+    const backend = source();
+    let reads = 0;
+    const show = backend.show;
+    backend.show = async (...args) => {
+      reads++;
+      return show(...args);
+    };
+    const h = harness(
+      backend,
+      [entry(focused())],
+      'rpc',
+      'fixture-session',
+      attentionStore(),
+      async () => marker,
+    );
+    await h.event('session_start');
+    const before = reads;
+    assert.ok(before > 0);
+    // The OS may drop writes made just after a watch starts; keep touching
+    // the marker until a reread is seen, within a bounded deadline.
+    const deadline = Date.now() + 30_000;
+    while (reads === before && Date.now() < deadline) {
+      writeFileSync(marker, String(Date.now()));
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.ok(reads > before, 'no reread within 30 s');
+    await h.event('session_shutdown', {reason: 'quit'});
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('without sharing, goals reread only on runs and explicit reads', async () => {
+  let asked = 0;
+  const h = harness(
+    source(),
+    [entry(focused())],
+    'rpc',
+    'fixture-session',
+    attentionStore(),
+    async () => {
+      asked++;
+      return undefined;
+    },
+  );
+  await h.event('session_start');
+  assert.equal(asked, 1);
+  await h.event('session_shutdown', {reason: 'quit'});
 });

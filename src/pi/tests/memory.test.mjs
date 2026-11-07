@@ -523,35 +523,55 @@ test('context labels an old or failing copy with its coarse age', async () => {
 });
 
 test('context is reused until the changes marker moves', async () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'dots-marker-'));
+  const marker = '/fixture/substrate/changes';
+  // The marker watch is the host's; tests/host-changes.test.mjs covers it.
+  const watches = [];
+  const watch = (path, changed, lost) => {
+    const entry = {path, changed, lost, open: true};
+    watches.push(entry);
+    return {close: () => (entry.open = false)};
+  };
+  let reads = 0;
   const watched = watchedMemoryContext(
     async () => {
       reads += 1;
-      return observation({changes: path.join(root, 'changes')});
+      return observation({changes: marker});
     },
     () => 1000,
+    watch,
   );
-  let reads = 0;
   try {
     // The first read starts the watch and cannot trust what it read before.
     await watched.load('/fixture', {});
     await watched.load('/fixture', {});
     assert.equal(reads, 2);
+    assert.deepEqual(
+      watches.map(entry => [entry.path, entry.open]),
+      [[marker, true]],
+    );
     for (let turn = 0; turn < 3; turn += 1) await watched.load('/fixture', {});
     assert.equal(reads, 2);
     await watched.load('/elsewhere', {});
     assert.equal(reads, 3);
-    writeFileSync(path.join(root, 'changes'), 'moved\n');
-    const deadline = Date.now() + 5000;
-    while (reads === 3 && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 20));
-      await watched.load('/elsewhere', {});
-    }
+    await watched.load('/elsewhere', {});
+    assert.equal(reads, 3);
+    watches[0].changed();
+    await watched.load('/elsewhere', {});
     assert.equal(reads, 4);
+    await watched.load('/elsewhere', {});
+    assert.equal(reads, 4);
+    // A failed watch is not trusted: reads resume and a new watch starts.
+    watches[0].lost();
+    assert.equal(watches[0].open, false);
+    await watched.load('/elsewhere', {});
+    await watched.load('/elsewhere', {});
+    assert.equal(reads, 6);
+    assert.equal(watches.length, 2);
+    assert.equal(watches[1].open, true);
   } finally {
     watched.close();
-    rmSync(root, {recursive: true, force: true});
   }
+  assert.equal(watches[1].open, false);
 });
 
 test('real CLI context reads the local copy without contacting the remote', async () => {

@@ -303,6 +303,7 @@ type Loader = (
 export function watchedMemoryContext(
   fetch: typeof memorySnapshot = memorySnapshot,
   clock: Clock = unixNow,
+  watch: typeof watchChanges = watchChanges,
 ): {readonly load: Loader; readonly close: () => void} {
   let cached: {cwd: string; observation: MemorySnapshot} | undefined;
   let watcher: {readonly close: () => void} | undefined;
@@ -321,7 +322,7 @@ export function watchedMemoryContext(
   const follow = (marker: string): boolean => {
     if (watcher && watched === marker) return true;
     close();
-    watcher = watchChanges(marker, forget, close);
+    watcher = watch(marker, forget, close);
     if (watcher) watched = marker;
     // A change between the read and the watch's start would go unseen.
     return false;
