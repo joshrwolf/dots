@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context as _, Result, bail, ensure};
 use dots_documents::staged_file::StagedFile;
 use dots_substrate::git::GitBackend;
-use dots_substrate::{Config, Substrate};
+use dots_substrate::{Config, Health, Substrate};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -24,8 +24,15 @@ struct Settings {
 }
 
 /// `$XDG_DATA_HOME/dots/substrate`: configuration, Git cache and substrate state.
-fn root() -> Result<PathBuf> {
+pub(crate) fn root() -> Result<PathBuf> {
     Ok(crate::project::data_root()?.join("substrate"))
+}
+
+/// Whether this machine has a substrate configuration.
+pub(crate) fn configured() -> Result<bool> {
+    let path = root()?.join(CONFIG);
+    path.try_exists()
+        .with_context(|| format!("inspect {}", path.display()))
 }
 
 fn settings() -> Result<Settings> {
@@ -118,18 +125,42 @@ pub(crate) fn run(command: SubstrateCommand) -> Result<String> {
                 .iter()
                 .map(|s| json!({"ref": s.name, "root": s.root, "expected": s.expected, "actual": s.actual, "at": unix(s.at)}))
                 .collect();
+            let counters = status.counters;
             encode(&json!({
                 "remote": settings.remote,
                 "credential_helper": settings.credential_helper,
                 "machine": substrate.machine(),
+                "sync": health(&status.health),
                 "pending": pending,
                 "stranded": stranded,
                 "last_flush": status.last_flush.map(|f| json!({"at": unix(f.at), "error": f.error})),
-                "listed_at": status.listed_at.map(unix),
-                "offline_since": status.offline_since.map(unix),
+                "counters": {
+                    "passes": counters.passes,
+                    "failed_passes": counters.failed_passes,
+                    "lists": counters.lists,
+                    "fetches": counters.fetches,
+                    "pushes": counters.pushes,
+                    "throttled": counters.throttled,
+                    "maintenance": counters.maintenance,
+                },
             }))
         }
     }
+}
+
+/// The last sync pass and, while passes fail, the error and backoff.
+pub(crate) fn health(health: &Health) -> serde_json::Value {
+    json!({
+        "listed_at": health.listed_at.map(unix),
+        "last_pass_started_at": health.pass_started_at.map(unix),
+        "last_pass_finished_at": health.pass_finished_at.map(unix),
+        "failing": health.failing.as_ref().map(|failing| json!({
+            "since": unix(failing.since),
+            "failures": failing.failures,
+            "last_error": failing.reason,
+            "retry_at": failing.retry_at.map(unix),
+        })),
+    })
 }
 
 /// Unix seconds, as other dots timestamps.

@@ -19,8 +19,9 @@ use crate::substrate::unix;
 
 const MAX_JSON_BYTES: usize = 66 * 1024 * 1024;
 const MAX_CONTROL_BYTES: usize = 1024 * 1024;
-/// How old a listing context reads may reuse; Pi reads context every turn.
-const CONTEXT_FRESHNESS: Duration = Duration::from_secs(30);
+/// A local copy older than this is labeled stale: the agent passes every 20
+/// seconds, so it has missed several.
+const STALE_AFTER: Duration = Duration::from_secs(120);
 const BINDINGS: &str = "bindings.json";
 const LOCK: &str = "mutation.lock";
 
@@ -44,25 +45,44 @@ fn open() -> Result<Store> {
     Ok(Store::open(crate::substrate::open()?, &local)?)
 }
 
-fn freshness(head: &Head) -> serde_json::Value {
-    match &head.freshness {
-        Freshness::Current => json!({"state": "current"}),
-        Freshness::Stale { since, reason } => {
-            json!({"state": "stale", "since": since.map(unix), "reason": reason})
-        }
-    }
+/// When the local copy was last confirmed current and whether sync is failing.
+fn freshness(head: &Head, now: SystemTime) -> serde_json::Value {
+    let Freshness { as_of, failing } = &head.freshness;
+    let age = now.duration_since(*as_of).unwrap_or_default();
+    json!({
+        "as_of": unix(*as_of),
+        "age_seconds": age.as_secs(),
+        "stale": age > STALE_AFTER || failing.is_some(),
+        "failing": failing.as_ref().map(|failing| json!({
+            "since": unix(failing.since),
+            "failures": failing.failures,
+            "last_error": failing.reason,
+        })),
+    })
+}
+
+pub(crate) struct Request<'a> {
+    pub(crate) command: MemoryCommand,
+    pub(crate) directory: &'a Path,
+    /// `--project`: a registered local project instead of the checkout's.
+    pub(crate) explicit: Option<&'a str>,
+    /// `--fresh`: run one sync pass before reading.
+    pub(crate) fresh: bool,
+    pub(crate) json: bool,
 }
 
 #[expect(
     clippy::too_many_lines,
     reason = "Keep command dispatch beside its parsed arguments"
 )]
-pub(crate) fn run(
-    command: MemoryCommand,
-    directory: &Path,
-    explicit: Option<&str>,
-    as_json: bool,
-) -> Result<String> {
+pub(crate) fn run(request: Request<'_>) -> Result<String> {
+    let Request {
+        command,
+        directory,
+        explicit,
+        fresh,
+        json: as_json,
+    } = request;
     let uses_local_project = matches!(
         &command,
         MemoryCommand::Context
@@ -77,13 +97,16 @@ pub(crate) fn run(
     );
     let mut store = open()?;
     let now = SystemTime::now();
+    if fresh {
+        store.sync(now)?;
+    }
     match command {
         MemoryCommand::Init => {
             let snapshot = store.initialize(now)?;
             encode(&json!({"snapshot": snapshot}))
         }
         MemoryCommand::Context => {
-            let head = store.head(CONTEXT_FRESHNESS, now)?;
+            let head = store.head()?;
             let view = store.view(&head, None)?;
             let (project, diagnostic) =
                 match project_scope(&store, &head, &view, directory, explicit) {
@@ -99,7 +122,7 @@ pub(crate) fn run(
             encode(&json!({
                 "store": head.store,
                 "snapshot": head.snapshot,
-                "freshness": freshness(&head),
+                "freshness": freshness(&head, now),
                 "pending": store.pending()?.len(),
                 "global": global,
                 "project": project,
@@ -107,13 +130,13 @@ pub(crate) fn run(
             }))
         }
         MemoryCommand::Status => {
-            let head = store.head(Duration::ZERO, now)?;
+            let head = store.head()?;
             let pending = store.pending_plans(&head)?;
             encode(&json!({
                 "store": head.store,
                 "machine": store.substrate().machine(),
                 "snapshot": head.snapshot,
-                "freshness": freshness(&head),
+                "freshness": freshness(&head, now),
                 "pending": pending,
             }))
         }
@@ -124,7 +147,7 @@ pub(crate) fn run(
             start,
             lines,
         } => {
-            let head = store.head(Duration::ZERO, now)?;
+            let head = store.head()?;
             let read = store.view(&head, snapshot.as_ref())?.read(
                 &scope,
                 &path,
@@ -133,10 +156,10 @@ pub(crate) fn run(
             )?;
             if as_json {
                 let mut value = serde_json::to_value(&read)?;
-                value["freshness"] = freshness(&head);
+                value["freshness"] = freshness(&head, now);
                 encode(&value)
             } else {
-                Ok(render_document(&read, &head))
+                Ok(render_document(&read, &head, now))
             }
         }
         MemoryCommand::Write {
@@ -182,7 +205,7 @@ pub(crate) fn run(
             offset,
             limit,
         } => {
-            let head = store.head(Duration::ZERO, now)?;
+            let head = store.head()?;
             let view = store.view(&head, snapshot.as_ref())?;
             let mut diagnostic = None;
             let scopes = if let Some(scope) = scope {
@@ -208,7 +231,7 @@ pub(crate) fn run(
                 .collect::<dots_memory::Result<Vec<_>>>()?;
             encode(&json!({
                 "snapshot": view.snapshot(),
-                "freshness": freshness(&head),
+                "freshness": freshness(&head, now),
                 "results": results,
                 "diagnostic": diagnostic,
             }))
@@ -324,18 +347,18 @@ fn project_command(
             expected_snapshot,
         } => encode(&store.register_project(&expected_snapshot, &name, now)?),
         MemoryProjectCommand::List => {
-            let head = store.head(Duration::ZERO, now)?;
+            let head = store.head()?;
             let view = store.view(&head, None)?;
             encode(&json!({
                 "snapshot": head.snapshot,
-                "freshness": freshness(&head),
+                "freshness": freshness(&head, now),
                 "projects": view.manifest().projects,
             }))
         }
         MemoryProjectCommand::Bind { id } => {
             let mut catalog = crate::project::open()?;
             let local = crate::project::resolve(&mut catalog, directory, explicit)?;
-            let head = store.head(Duration::ZERO, now)?;
+            let head = store.head()?;
             ensure!(
                 store
                     .view(&head, None)?
@@ -361,7 +384,7 @@ fn project_command(
         MemoryProjectCommand::Unbind { expected } => {
             let mut catalog = crate::project::open()?;
             let local = crate::project::resolve(&mut catalog, directory, explicit)?;
-            let head = store.head(Duration::ZERO, now)?;
+            let head = store.head()?;
             let _lock = MutationLock::acquire(&store.local().join(LOCK))?;
             let mut bindings = bindings(store, &head.store)?;
             ensure!(
@@ -443,7 +466,7 @@ fn encode(value: &impl Serialize) -> Result<String> {
     Ok(format!("{}\n", serde_json::to_string_pretty(value)?))
 }
 
-fn render_document(read: &DocumentRead, head: &Head) -> String {
+fn render_document(read: &DocumentRead, head: &Head, now: SystemTime) -> String {
     let scope = match &read.scope {
         Scope::Global => "global",
         Scope::Project(id) => id.as_str(),
@@ -454,8 +477,21 @@ fn render_document(read: &DocumentRead, head: &Head) -> String {
         scope,
         read.document.path.display()
     );
-    if let Freshness::Stale { reason, .. } = &head.freshness {
-        let _ = writeln!(out, "Stale: the remote is unreachable ({reason}).");
+    let Freshness { as_of, failing } = &head.freshness;
+    let age = now.duration_since(*as_of).unwrap_or_default();
+    if let Some(failing) = failing {
+        let _ = writeln!(
+            out,
+            "Stale: local copy from {}s ago; sync is failing ({}).",
+            age.as_secs(),
+            failing.reason
+        );
+    } else if age > STALE_AFTER {
+        let _ = writeln!(
+            out,
+            "Stale: local copy from {}s ago; is the sync agent running?",
+            age.as_secs()
+        );
     }
     if !read.document.exists {
         out.push_str("Document is absent.\n");

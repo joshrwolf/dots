@@ -16,6 +16,7 @@ mod review;
 mod skills;
 mod stream;
 mod substrate;
+mod sync;
 mod tasks;
 mod terminal_text;
 mod watch;
@@ -125,6 +126,10 @@ fn write_output(out: &mut dyn Write, output: &str) -> Result<()> {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "One match maps every command to its owner"
+)]
 fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Result<String> {
     let Some(command) = cli.command else {
         return Ok(Cli::command().render_long_help().to_string());
@@ -144,14 +149,25 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
         Command::Project { command } => {
             project::run(command, &environment.directory(cli.directory)?)
         }
-        Command::Memory { project, command } => {
+        Command::Memory {
+            project,
+            fresh,
+            command,
+        } => {
             let directory = cli
                 .directory
                 .map_or_else(std::env::current_dir, Ok)
                 .context("resolve working directory")?;
-            memory::run(command, &directory, project.as_deref(), cli.json)
+            memory::run(memory::Request {
+                command,
+                directory: &directory,
+                explicit: project.as_deref(),
+                fresh,
+                json: cli.json,
+            })
         }
         Command::Substrate { command } => substrate::run(command),
+        Command::Sync { command } => sync::run(&command),
         Command::Task {
             project,
             owner,

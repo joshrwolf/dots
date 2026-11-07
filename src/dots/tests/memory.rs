@@ -179,7 +179,11 @@ mod tests {
     #[test]
     fn explicit_initialization_pinned_reads_atomic_batches_and_missing_empty_removed() {
         let f = Fixture::new();
-        assert!(f.fail(&["memory", "context"]).contains("memory init"));
+        assert!(f.fail(&["memory", "context"]).contains("never synced"));
+        assert!(
+            f.fail(&["memory", "--fresh", "context"])
+                .contains("memory init")
+        );
         let genesis = f.init();
         assert!(snapshot(&genesis).starts_with("sha256:"));
         f.fail(&["memory", "init"]);
@@ -569,6 +573,41 @@ mod tests {
     }
 
     #[test]
+    fn a_machine_reads_its_local_copy_until_a_pass_or_fresh_read_syncs_it() {
+        let a = Fixture::new();
+        let b = a.machine();
+        let genesis = a.init();
+        assert_eq!(b.ok(&["sync", "once"])["pass"], "done");
+        let global = json!({"kind":"global"});
+        let base = a.publish(
+            snapshot(&genesis),
+            &json!([write(&global, "MEMORY.md", "base\n")]),
+        );
+        // Reads serve B's local copy, with its age, until B syncs.
+        let local = b.ok(&["memory", "read", "MEMORY.md", "--scope", "global"]);
+        assert_eq!(local["snapshot"], genesis["snapshot"]);
+        assert!(local["freshness"]["as_of"].is_u64());
+        assert!(local["freshness"]["age_seconds"].is_u64());
+        assert_eq!(local["freshness"]["stale"], false);
+        let pass = b.ok(&["sync", "once"]);
+        assert_eq!(pass["pass"], "done");
+        assert_eq!(pass["fetched"], json!(["memory"]));
+        assert_eq!(
+            b.ok(&["memory", "read", "MEMORY.md", "--scope", "global"])["document"]["content"],
+            "base\n"
+        );
+        let next = a.publish(
+            snapshot(&base),
+            &json!([write(&global, "MEMORY.md", "next\n")]),
+        );
+        assert_eq!(b.ok(&["memory", "context"])["snapshot"], base["snapshot"]);
+        // --fresh runs the pass inline.
+        let fresh = b.ok(&["memory", "--fresh", "context"]);
+        assert_eq!(fresh["snapshot"], next["snapshot"]);
+        assert_eq!(fresh["global"]["document"]["content"], "next\n");
+    }
+
+    #[test]
     fn machines_share_one_remote_merge_disjoint_work_and_reconcile_divergence() {
         let a = Fixture::new();
         let b = a.machine();
@@ -580,9 +619,15 @@ mod tests {
             snapshot(&genesis),
             &json!([write(&global, "MEMORY.md", "base\n")]),
         );
-        // Explicit reads always check the remote.
         assert_eq!(
-            b.ok(&["memory", "read", "MEMORY.md", "--scope", "global"])["document"]["content"],
+            b.ok(&[
+                "memory",
+                "--fresh",
+                "read",
+                "MEMORY.md",
+                "--scope",
+                "global"
+            ])["document"]["content"],
             "base\n"
         );
         let first = a.publish(
@@ -596,7 +641,7 @@ mod tests {
         assert_eq!(merged["state"], "published");
         assert_ne!(merged["snapshot"], first["snapshot"]);
         for path in ["a.md", "b.md"] {
-            let read = a.ok(&["memory", "read", path, "--scope", "global"]);
+            let read = a.ok(&["memory", "--fresh", "read", path, "--scope", "global"]);
             assert_eq!(read["snapshot"], merged["snapshot"]);
             assert_eq!(read["document"]["exists"], true, "{path}");
         }
@@ -650,7 +695,14 @@ mod tests {
         let reconciled = b.ok(&["memory", "reconcile", "--input-file", &resolution]);
         assert_eq!(reconciled["pending"], json!([]));
         b.fail(&["memory", "reconcile", "--input-file", &resolution]);
-        let read = a.ok(&["memory", "read", "MEMORY.md", "--scope", "global"]);
+        let read = a.ok(&[
+            "memory",
+            "--fresh",
+            "read",
+            "MEMORY.md",
+            "--scope",
+            "global",
+        ]);
         assert_eq!(read["snapshot"], reconciled["snapshot"]);
         assert_eq!(read["document"]["content"], "both lines\n");
     }
@@ -665,12 +717,19 @@ mod tests {
             snapshot(&genesis),
             &json!([write(&global, "MEMORY.md", "index\n")]),
         );
-        assert_eq!(b.ok(&["memory", "status"])["freshness"]["state"], "current");
+        let synced = b.ok(&["memory", "--fresh", "status"]);
+        assert_eq!(synced["freshness"]["stale"], false);
+        assert!(synced["freshness"]["failing"].is_null());
         a.remote.disconnect();
+        let pass = b.ok(&["sync", "once"]);
+        assert_eq!(pass["pass"], "offline");
+        assert!(pass["sync"]["failing"]["retry_at"].is_u64());
         let context = b.ok(&["memory", "context"]);
         assert_eq!(context["snapshot"], first["snapshot"]);
         let read = b.ok(&["memory", "read", "MEMORY.md", "--scope", "global"]);
-        assert_eq!(read["freshness"]["state"], "stale");
+        assert_eq!(read["freshness"]["stale"], true);
+        assert_eq!(read["freshness"]["as_of"], synced["freshness"]["as_of"]);
+        assert!(read["freshness"]["failing"]["last_error"].is_string());
         assert_eq!(read["document"]["content"], "index\n");
         let plain = dots_process::Runner::new(Duration::from_secs(20), 1024 * 1024)
             .output({
@@ -695,10 +754,15 @@ mod tests {
         assert_eq!(offline["state"], "pending");
         let candidate = offline["candidate"].clone();
         let status = b.ok(&["memory", "status"]);
-        assert_eq!(status["freshness"]["state"], "stale");
+        assert_eq!(status["freshness"]["stale"], true);
         assert_eq!(status["pending"][0]["candidate"], candidate);
         let substrate = b.ok(&["substrate", "status"]);
-        assert!(substrate["offline_since"].is_u64());
+        let failing = &substrate["sync"]["failing"];
+        assert!(failing["since"].is_u64());
+        assert!(failing["failures"].as_u64().unwrap() >= 2);
+        assert!(failing["last_error"].is_string());
+        assert!(failing["retry_at"].is_u64());
+        assert!(substrate["counters"]["failed_passes"].as_u64().unwrap() >= 2);
         a.remote.restore();
 
         let second = a.publish(
@@ -713,7 +777,7 @@ mod tests {
         assert_eq!(online["integrated"], json!([candidate]));
         assert_eq!(online["pending"], json!([]));
         for path in ["offline.md", "second.md", "online.md"] {
-            let read = a.ok(&["memory", "read", path, "--scope", "global"]);
+            let read = a.ok(&["memory", "--fresh", "read", path, "--scope", "global"]);
             assert_eq!(read["document"]["exists"], true, "{path}");
         }
         assert_eq!(b.ok(&["memory", "status"])["pending"], json!([]));
@@ -739,10 +803,15 @@ mod tests {
         let status = f.ok(&["substrate", "status"]);
         assert_eq!(status["remote"], url.as_str());
         assert_eq!(status["pending"], json!([]));
-        assert!(status["listed_at"].is_null());
+        assert!(status["sync"]["listed_at"].is_null());
+        assert!(status["sync"]["last_pass_started_at"].is_null());
         f.init();
         let status = f.ok(&["substrate", "status"]);
-        assert!(status["listed_at"].is_u64());
+        assert!(status["sync"]["listed_at"].is_u64());
+        assert!(status["sync"]["last_pass_finished_at"].is_u64());
+        assert!(status["sync"]["failing"].is_null());
+        assert_eq!(status["counters"]["passes"], 1);
+        assert_eq!(status["counters"]["pushes"], 1);
         assert!(status["machine"].is_string());
         assert_eq!(status["stranded"], json!([]));
 

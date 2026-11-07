@@ -22,17 +22,20 @@ anyhow.workspace = true
 github-inspect.workspace = true
 github-watch.workspace = true
 nix = { workspace = true, features = ["poll"] }
+notify.workspace = true
 ratatui.workspace = true
 renderdag.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 time.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
 
 [dev-dependencies]
 nix = { workspace = true, features = ["term"] }
+rusqlite.workspace = true
 
 [lints]
 workspace = true
