@@ -36,6 +36,7 @@ pub mod output_retention;
 pub mod outputs;
 mod projects;
 mod references;
+pub mod share;
 pub use projects::{RegisteredProject, validate_project_name};
 mod store;
 
@@ -43,6 +44,6 @@ pub use follow::{FOLLOW_INTERVAL, Follower};
 pub use goals::{Coordination, Goal, GoalOverview, GoalProgress, Transfer};
 pub use references::ExternalReference;
 pub use store::{
-    Actor, Error, Event, EventKind, Filter, History, Hold, NewTask, Owner, Prerequisite, Project,
-    RequestState, STORE_PATH, Status, Store, Task, Update,
+    Actor, Error, Event, EventKind, Filter, Foreign, History, Hold, NewTask, Owner, Prerequisite,
+    Project, RequestState, STORE_PATH, Status, Store, Task, Update,
 };

@@ -166,7 +166,7 @@ fn a_long_backlog_drains_in_bounded_batches_without_gaps() {
         .connection
         .execute(
             "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?2)
-             INSERT INTO events(task,at,kind) SELECT ?1, i, 'updated' FROM n",
+             INSERT INTO events(task,at,kind,uid) SELECT ?1, i, 'updated', lower(hex(randomblob(16))) FROM n",
             rusqlite::params![id, extra],
         )
         .unwrap();

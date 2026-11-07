@@ -13,8 +13,99 @@ pub const STORE_PATH: &str = "dots/workspace.sqlite3";
 
 const ID_ATTEMPTS: usize = 16;
 
-/// The only catalog schema this build reads or writes.
-const SCHEMA: i64 = 9;
+/// The catalog schema this build writes; it migrates schema 9 on open.
+const SCHEMA: i64 = 10;
+
+/// The catalog as schema 9 created it; new catalogs start here and migrate.
+pub(super) const SCHEMA_9: &str = "
+    CREATE TABLE projects(id TEXT PRIMARY KEY, name TEXT NOT NULL);
+    CREATE TABLE project_bindings(common_directory TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id));
+    CREATE TABLE tasks(
+        id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), parent TEXT REFERENCES tasks(id),
+        title TEXT NOT NULL, body TEXT, result TEXT, status TEXT NOT NULL,
+        branch TEXT, owner TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER);
+    CREATE INDEX tasks_project ON tasks(project, status);
+    CREATE TABLE deps(task TEXT NOT NULL REFERENCES tasks(id), blocked_by TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY(task, blocked_by));
+    CREATE TABLE events(seq INTEGER PRIMARY KEY, task TEXT NOT NULL REFERENCES tasks(id), at INTEGER NOT NULL, actor TEXT, kind TEXT NOT NULL, detail TEXT, result TEXT, predecessor INTEGER, operation TEXT);
+    CREATE TABLE goals(root TEXT PRIMARY KEY REFERENCES tasks(id), brief TEXT NOT NULL);
+    CREATE TABLE task_refs(task TEXT NOT NULL REFERENCES tasks(id), url TEXT NOT NULL, label TEXT, PRIMARY KEY(task,url));
+    CREATE TABLE outputs(project TEXT NOT NULL REFERENCES projects(id), slug TEXT NOT NULL, filename TEXT NOT NULL, media_type TEXT NOT NULL, PRIMARY KEY(project,slug));
+    CREATE TABLE output_revisions(project TEXT NOT NULL, slug TEXT NOT NULL, digest TEXT NOT NULL, bytes INTEGER NOT NULL, path TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, actor TEXT, description TEXT NOT NULL, provenance TEXT NOT NULL, PRIMARY KEY(project,slug,digest), FOREIGN KEY(project,slug) REFERENCES outputs(project,slug));
+    CREATE TABLE task_outputs(task TEXT NOT NULL REFERENCES tasks(id), project TEXT NOT NULL, slug TEXT NOT NULL, PRIMARY KEY(task,project,slug), FOREIGN KEY(project,slug) REFERENCES outputs(project,slug));
+    CREATE TABLE event_evidence(event INTEGER NOT NULL REFERENCES events(seq), project TEXT NOT NULL, slug TEXT NOT NULL, digest TEXT NOT NULL, PRIMARY KEY(event,project,slug,digest), FOREIGN KEY(project,slug,digest) REFERENCES output_revisions(project,slug,digest));
+    CREATE UNIQUE INDEX result_predecessor ON events(task,COALESCE(predecessor,0)) WHERE result IS NOT NULL;
+    CREATE TABLE purged_digests(project TEXT NOT NULL REFERENCES projects(id), digest TEXT NOT NULL, at INTEGER NOT NULL, actor TEXT, PRIMARY KEY(project,digest));
+    CREATE TABLE requests(
+        id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
+        key TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, question TEXT NOT NULL, context TEXT, recommendation TEXT,
+        state TEXT NOT NULL, created_at INTEGER NOT NULL, created_by TEXT, supersedes TEXT UNIQUE REFERENCES requests(id),
+        answer_choice TEXT, answer_text TEXT, answer_source TEXT, answer_provenance TEXT, answer_interpretation TEXT,
+        answered_at INTEGER, answered_by TEXT,
+        closure TEXT, closed_at INTEGER, closed_by TEXT, close_reason TEXT);
+    CREATE UNIQUE INDEX requests_key ON requests(goal,key) WHERE closure IS NOT 'superseded';
+    CREATE INDEX requests_project ON requests(project,state);
+    CREATE TABLE request_choices(request TEXT NOT NULL REFERENCES requests(id), position INTEGER NOT NULL, id TEXT NOT NULL, label TEXT NOT NULL, detail TEXT, PRIMARY KEY(request,position), UNIQUE(request,id));
+    CREATE TABLE request_tasks(request TEXT NOT NULL REFERENCES requests(id), task TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY(request,task));
+    CREATE INDEX request_tasks_task ON request_tasks(task);
+    CREATE TABLE decisions(
+        id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
+        kind TEXT NOT NULL, decision TEXT NOT NULL, human_text TEXT, human_source TEXT, human_provenance TEXT,
+        request TEXT UNIQUE REFERENCES requests(id), at INTEGER NOT NULL, actor TEXT);
+    CREATE INDEX decisions_goal ON decisions(goal,kind);
+    PRAGMA user_version=9;
+";
+
+/// Schema 9 to 10: stable event identities and cross-machine sharing.
+///
+/// Every event gets a random `uid` that survives replication, while `seq`
+/// stays this machine's cursor; `published` marks events already placed in
+/// their tree's event segments. `sharing` holds this machine's identity and
+/// switch. `shared_trees` records each replicated tree's home, the version and
+/// manifest last confirmed on the remote, the manifest proposed since, and
+/// the brief bytes last exported. Triggers fill `dirty_tasks` while sharing
+/// is on; claims and releases stay local. `sent_answers` keeps answers given
+/// here to trees homed elsewhere until their home records them.
+const SHARING: &str = "
+    ALTER TABLE events ADD COLUMN uid TEXT;
+    ALTER TABLE events ADD COLUMN published INTEGER;
+    UPDATE events SET uid=lower(hex(randomblob(16)));
+    CREATE UNIQUE INDEX events_uid ON events(uid);
+    CREATE TABLE sharing(
+        singleton INTEGER PRIMARY KEY CHECK(singleton=0), machine TEXT NOT NULL,
+        enabled INTEGER NOT NULL, changed_at INTEGER NOT NULL, answers_dirty INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE shared_trees(
+        root TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), shared_project TEXT NOT NULL,
+        home TEXT NOT NULL, version TEXT, manifest TEXT, proposed TEXT, brief TEXT, written_at INTEGER,
+        complete INTEGER NOT NULL DEFAULT 1, imported_at INTEGER);
+    CREATE TABLE dirty_tasks(task TEXT PRIMARY KEY) WITHOUT ROWID;
+    CREATE TRIGGER events_dirty AFTER INSERT ON events
+        WHEN NEW.kind NOT IN ('claimed','released') AND EXISTS(SELECT 1 FROM sharing WHERE enabled=1)
+        BEGIN
+            INSERT INTO dirty_tasks SELECT NEW.task
+              WHERE NOT EXISTS(SELECT 1 FROM dirty_tasks WHERE task=NEW.task);
+        END;
+    CREATE TRIGGER tasks_moved AFTER UPDATE OF parent ON tasks
+        WHEN EXISTS(SELECT 1 FROM sharing WHERE enabled=1)
+        BEGIN
+            INSERT INTO dirty_tasks SELECT OLD.parent WHERE OLD.parent IS NOT NULL
+              AND NOT EXISTS(SELECT 1 FROM dirty_tasks WHERE task=OLD.parent);
+            INSERT INTO dirty_tasks SELECT NEW.id
+              WHERE NOT EXISTS(SELECT 1 FROM dirty_tasks WHERE task=NEW.id);
+        END;
+    CREATE TRIGGER digests_purged AFTER INSERT ON purged_digests
+        WHEN EXISTS(SELECT 1 FROM sharing WHERE enabled=1)
+        BEGIN
+            INSERT INTO dirty_tasks SELECT DISTINCT task_outputs.task FROM task_outputs
+              JOIN output_revisions USING(project, slug)
+              WHERE output_revisions.project=NEW.project AND output_revisions.digest=NEW.digest
+                AND NOT EXISTS(SELECT 1 FROM dirty_tasks WHERE task=task_outputs.task);
+        END;
+    CREATE TABLE sent_answers(
+        request TEXT PRIMARY KEY REFERENCES requests(id), goal TEXT NOT NULL, answer TEXT NOT NULL,
+        at INTEGER NOT NULL, exported INTEGER);
+    PRAGMA user_version=10;
+";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -22,6 +113,11 @@ pub enum Error {
     Documents(#[from] dots_documents::Error),
     #[error("open or update workspace catalog")]
     Storage(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Substrate(#[from] dots_substrate::Error),
+    /// Replication of task trees across machines failed or was refused.
+    #[error("{0}")]
+    Share(String),
     #[error(
         "unsupported workspace catalog schema {0}; initialization will not replace an existing catalog"
     )]
@@ -96,6 +192,15 @@ pub enum Error {
         "task {id} belongs to goal {goal}, which has no coordinator; run dots task goal coordinate {goal} first, with --resume if it is held or closed"
     )]
     Uncoordinated { id: String, goal: String },
+    /// The task's tree is homed on another machine and imported read-only.
+    #[error(
+        "task {id} belongs to tree {root}, homed on machine {home}, and is read-only on this machine; take the tree over with dots task share take {root}"
+    )]
+    Foreign {
+        id: String,
+        root: String,
+        home: String,
+    },
     #[error("task {0} is a goal root; coordinate it with dots task goal coordinate {0}")]
     GoalRoot(String),
     #[error("goal {goal} is {status}; pass --resume to reopen and coordinate it")]
@@ -242,6 +347,8 @@ pub struct Task {
     pub goal: Option<String>,
     /// Eligibility holds from outside the task's own prerequisites.
     pub holds: Vec<Hold>,
+    /// Set when another machine homes this task's tree: it is read-only here.
+    pub foreign: Option<Foreign>,
 }
 
 /// Why work cannot proceed although its own prerequisites may be met.
@@ -395,6 +502,12 @@ impl Task {
     /// Why this task is not selectable by `claim --next`. Review needs explicit selection.
     #[must_use]
     pub fn not_ready_because(&self) -> Option<String> {
+        if let Some(foreign) = &self.foreign {
+            return Some(format!(
+                "read-only here; its tree {} is homed on machine {}",
+                foreign.root, foreign.home
+            ));
+        }
         if self.is_goal_root() {
             return Some("goal root; dots task goal coordinate takes coordination".into());
         }
@@ -531,6 +644,9 @@ pub struct Event {
     pub result: Option<String>,
     pub predecessor: Option<i64>,
     pub operation: Option<String>,
+    /// Stable identity across machines, 32 lowercase hex digits; `seq` is
+    /// this machine's cursor.
+    pub uid: String,
 }
 
 /// A page of project history and the project's newest event `seq`.
@@ -608,7 +724,7 @@ impl Store {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version != SCHEMA {
+        if version != SCHEMA && version != 9 {
             return Err(Error::Schema(version));
         }
         Self::initialize(connection)
@@ -660,44 +776,12 @@ impl Store {
         let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
         match version {
-            0 => tx.execute_batch(
-                "CREATE TABLE projects(id TEXT PRIMARY KEY, name TEXT NOT NULL);
-                 CREATE TABLE project_bindings(common_directory TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id));
-                 CREATE TABLE tasks(
-                    id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), parent TEXT REFERENCES tasks(id),
-                    title TEXT NOT NULL, body TEXT, result TEXT, status TEXT NOT NULL,
-                    branch TEXT, owner TEXT,
-                    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER);
-                 CREATE INDEX tasks_project ON tasks(project, status);
-                 CREATE TABLE deps(task TEXT NOT NULL REFERENCES tasks(id), blocked_by TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY(task, blocked_by));
-                 CREATE TABLE events(seq INTEGER PRIMARY KEY, task TEXT NOT NULL REFERENCES tasks(id), at INTEGER NOT NULL, actor TEXT, kind TEXT NOT NULL, detail TEXT, result TEXT, predecessor INTEGER, operation TEXT);
-                 CREATE TABLE goals(root TEXT PRIMARY KEY REFERENCES tasks(id), brief TEXT NOT NULL);
-                 CREATE TABLE task_refs(task TEXT NOT NULL REFERENCES tasks(id), url TEXT NOT NULL, label TEXT, PRIMARY KEY(task,url));
-                 CREATE TABLE outputs(project TEXT NOT NULL REFERENCES projects(id), slug TEXT NOT NULL, filename TEXT NOT NULL, media_type TEXT NOT NULL, PRIMARY KEY(project,slug));
-                 CREATE TABLE output_revisions(project TEXT NOT NULL, slug TEXT NOT NULL, digest TEXT NOT NULL, bytes INTEGER NOT NULL, path TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, actor TEXT, description TEXT NOT NULL, provenance TEXT NOT NULL, PRIMARY KEY(project,slug,digest), FOREIGN KEY(project,slug) REFERENCES outputs(project,slug));
-                 CREATE TABLE task_outputs(task TEXT NOT NULL REFERENCES tasks(id), project TEXT NOT NULL, slug TEXT NOT NULL, PRIMARY KEY(task,project,slug), FOREIGN KEY(project,slug) REFERENCES outputs(project,slug));
-                 CREATE TABLE event_evidence(event INTEGER NOT NULL REFERENCES events(seq), project TEXT NOT NULL, slug TEXT NOT NULL, digest TEXT NOT NULL, PRIMARY KEY(event,project,slug,digest), FOREIGN KEY(project,slug,digest) REFERENCES output_revisions(project,slug,digest));
-                 CREATE UNIQUE INDEX result_predecessor ON events(task,COALESCE(predecessor,0)) WHERE result IS NOT NULL;
-                 CREATE TABLE purged_digests(project TEXT NOT NULL REFERENCES projects(id), digest TEXT NOT NULL, at INTEGER NOT NULL, actor TEXT, PRIMARY KEY(project,digest));
-                 CREATE TABLE requests(
-                    id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
-                    key TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, question TEXT NOT NULL, context TEXT, recommendation TEXT,
-                    state TEXT NOT NULL, created_at INTEGER NOT NULL, created_by TEXT, supersedes TEXT UNIQUE REFERENCES requests(id),
-                    answer_choice TEXT, answer_text TEXT, answer_source TEXT, answer_provenance TEXT, answer_interpretation TEXT,
-                    answered_at INTEGER, answered_by TEXT,
-                    closure TEXT, closed_at INTEGER, closed_by TEXT, close_reason TEXT);
-                 CREATE UNIQUE INDEX requests_key ON requests(goal,key) WHERE closure IS NOT 'superseded';
-                 CREATE INDEX requests_project ON requests(project,state);
-                 CREATE TABLE request_choices(request TEXT NOT NULL REFERENCES requests(id), position INTEGER NOT NULL, id TEXT NOT NULL, label TEXT NOT NULL, detail TEXT, PRIMARY KEY(request,position), UNIQUE(request,id));
-                 CREATE TABLE request_tasks(request TEXT NOT NULL REFERENCES requests(id), task TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY(request,task));
-                 CREATE INDEX request_tasks_task ON request_tasks(task);
-                 CREATE TABLE decisions(
-                    id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
-                    kind TEXT NOT NULL, decision TEXT NOT NULL, human_text TEXT, human_source TEXT, human_provenance TEXT,
-                    request TEXT UNIQUE REFERENCES requests(id), at INTEGER NOT NULL, actor TEXT);
-                 CREATE INDEX decisions_goal ON decisions(goal,kind);
-                 PRAGMA user_version=9;",
-            )?,
+            0 => {
+                // Schema 9, then the migrations an existing catalog takes.
+                tx.execute_batch(SCHEMA_9)?;
+                tx.execute_batch(SHARING)?;
+            }
+            9 => tx.execute_batch(SHARING)?,
             SCHEMA => {}
             other => return Err(Error::Schema(other)),
         }
@@ -848,6 +932,7 @@ impl Store {
     ) -> Result<Task, Error> {
         let tx = self.write()?;
         let task = load(&tx, project, id)?;
+        writable(&tx, id)?;
         if let Some(current) = task.claimed_by_other(Some(owner)) {
             return Err(Error::OwnedByAnother {
                 id: id.into(),
@@ -1167,7 +1252,7 @@ impl Store {
     ) -> Result<Vec<Event>, Error> {
         let tx = self.connection.transaction()?;
         load(&tx, project, id)?;
-        let mut statement = tx.prepare("SELECT seq,task,at,actor,kind,detail,result,predecessor,operation FROM events WHERE task=?1 ORDER BY seq DESC LIMIT ?2")?;
+        let mut statement = tx.prepare("SELECT seq,task,at,actor,kind,detail,result,predecessor,operation,uid FROM events WHERE task=?1 ORDER BY seq DESC LIMIT ?2")?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let rows = statement.query_map(params![id, limit], event_row)?;
         let mut events = rows.collect::<Result<Vec<_>, _>>()?;
@@ -1197,7 +1282,7 @@ fn query_events(
     }
     let mut statement = tx.prepare(
         "WITH RECURSIVE subtree(id) AS (SELECT ?4 UNION SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent=subtree.id)
-         SELECT events.seq,events.task,events.at,events.actor,events.kind,events.detail,events.result,events.predecessor,events.operation FROM events
+         SELECT events.seq,events.task,events.at,events.actor,events.kind,events.detail,events.result,events.predecessor,events.operation,events.uid FROM events
          JOIN tasks ON tasks.id=events.task WHERE tasks.project=?1 AND events.seq>?2 AND (?4 IS NULL OR events.task IN subtree)
          ORDER BY events.seq ASC LIMIT ?3",
     )?;
@@ -1302,7 +1387,7 @@ pub(super) fn record(
     detail: Option<&str>,
 ) -> Result<(), Error> {
     tx.execute(
-        "INSERT INTO events(task,at,actor,kind,detail) VALUES(?1,?2,?3,?4,?5)",
+        "INSERT INTO events(task,at,actor,kind,detail,uid) VALUES(?1,?2,?3,?4,?5,lower(hex(randomblob(16))))",
         params![
             id,
             actor.now,
@@ -1358,6 +1443,7 @@ pub(super) fn authorize(
     id: &str,
     actor: Option<Owner<'_>>,
 ) -> Result<(), Error> {
+    writable(tx, id)?;
     let Some((goal, coordinator)) = membership(tx, id)? else {
         return Ok(());
     };
@@ -1372,6 +1458,53 @@ pub(super) fn authorize(
             id: id.into(),
             goal,
         }),
+    }
+}
+
+/// A tree imported read-only from the machine that homes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Foreign {
+    /// The tree's top-level task.
+    pub root: String,
+    /// The machine that homes the tree and alone changes it.
+    pub home: String,
+    /// When the home wrote the imported version, as a Unix timestamp.
+    pub written_at: Option<i64>,
+    /// When this machine imported it.
+    pub imported_at: Option<i64>,
+}
+
+/// The tree of `id`, when another machine homes it.
+pub(super) fn foreign(tx: &Transaction<'_>, id: &str) -> Result<Option<Foreign>, Error> {
+    Ok(tx
+        .query_row(
+            "WITH RECURSIVE chain(id, parent) AS (SELECT id, parent FROM tasks WHERE id=?1
+                UNION SELECT tasks.id, tasks.parent FROM tasks JOIN chain ON tasks.id=chain.parent)
+             SELECT shared_trees.root, shared_trees.home, shared_trees.written_at, shared_trees.imported_at
+             FROM chain JOIN shared_trees ON shared_trees.root=chain.id JOIN sharing
+             WHERE chain.parent IS NULL AND shared_trees.home<>sharing.machine",
+            [id],
+            |row| {
+                Ok(Foreign {
+                    root: row.get(0)?,
+                    home: row.get(1)?,
+                    written_at: row.get(2)?,
+                    imported_at: row.get(3)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// Refuse to change a task whose tree another machine homes.
+pub(super) fn writable(tx: &Transaction<'_>, id: &str) -> Result<(), Error> {
+    match foreign(tx, id)? {
+        Some(Foreign { root, home, .. }) => Err(Error::Foreign {
+            id: id.into(),
+            root,
+            home,
+        }),
+        None => Ok(()),
     }
 }
 
@@ -1521,6 +1654,7 @@ fn event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Event> {
         result: row.get(6)?,
         predecessor: row.get(7)?,
         operation: row.get(8)?,
+        uid: row.get(9)?,
     })
 }
 
@@ -1591,7 +1725,7 @@ pub(super) fn load(tx: &Transaction<'_>, project: &Project, id: &str) -> Result<
         .collect();
     let last_event = tx
         .query_row(
-            "SELECT seq,task,at,actor,kind,detail,result,predecessor,operation FROM events WHERE task=?1 ORDER BY seq DESC LIMIT 1",
+            "SELECT seq,task,at,actor,kind,detail,result,predecessor,operation,uid FROM events WHERE task=?1 ORDER BY seq DESC LIMIT 1",
             params![id],
             event_row,
         )
@@ -1611,6 +1745,7 @@ pub(super) fn load(tx: &Transaction<'_>, project: &Project, id: &str) -> Result<
     };
     let goal = membership(tx, id)?.map(|(root, _)| root);
     Ok(Task {
+        foreign: foreign(tx, id)?,
         holds: holds(tx, id)?,
         goal,
         id: id.to_owned(),

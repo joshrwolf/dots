@@ -616,8 +616,10 @@ version = "0.1.0"
 dependencies = [
  "dots-documents",
  "dots-process",
+ "dots-substrate",
  "rusqlite",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 

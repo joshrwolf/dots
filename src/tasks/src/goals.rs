@@ -117,6 +117,7 @@ impl Store {
         validate_brief(brief)?;
         let tx = self.write()?;
         let root = store::load(&tx, project, id)?;
+        store::writable(&tx, id)?;
         if root.parent.is_some() {
             return Err(Error::Invalid("goal must be a root task"));
         }
@@ -155,6 +156,7 @@ impl Store {
     ) -> Result<(), Error> {
         let tx = self.write()?;
         let root = store::load(&tx, project, id)?;
+        store::writable(&tx, id)?;
         if root.is_goal_root() {
             store::authorize(&tx, id, actor.name)?;
             let history: bool = tx.query_row(
@@ -193,6 +195,7 @@ impl Store {
     ) -> Result<Coordination, Error> {
         let tx = self.write()?;
         let root = store::load(&tx, project, id)?;
+        store::writable(&tx, id)?;
         if !root.is_goal_root() {
             return Err(Error::Invalid("task has no goal association"));
         }

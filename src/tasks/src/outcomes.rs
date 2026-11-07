@@ -162,7 +162,7 @@ impl Store {
             params![id, outcome.result, actor.now],
         )?;
         tx.execute(
-            "INSERT INTO events(task,at,actor,kind,result,predecessor,operation) VALUES(?1,?2,?3,?4,?5,?6,?4)",
+            "INSERT INTO events(task,at,actor,kind,result,predecessor,operation,uid) VALUES(?1,?2,?3,?4,?5,?6,?4,lower(hex(randomblob(16))))",
             params![
                 id,
                 actor.now,

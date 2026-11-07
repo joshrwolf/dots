@@ -459,6 +459,19 @@ impl Store {
                 ),
             });
         }
+        if store::foreign(&tx, &request.goal)?.is_some() {
+            crate::share::send_answer(
+                &tx,
+                id,
+                &request.goal,
+                answer,
+                actor.now,
+                actor.name.map(Owner::as_str),
+            )?;
+            let request = load(&tx, project, id)?;
+            tx.commit()?;
+            return Ok(request);
+        }
         let changed = tx.execute(
             "UPDATE requests SET state='answered', answer_choice=?2, answer_text=?3, answer_source=?4,
                answer_provenance=?5, answer_interpretation=?6, answered_at=?7, answered_by=?8
