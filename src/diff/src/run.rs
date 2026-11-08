@@ -233,7 +233,7 @@ fn view(
     let palette = Palette::new(detected.unwrap_or_else(Detected::light));
     let mut settings = options.settings.clone();
     if options.graphics {
-        settings.header_rows = crate::graphics::HEADER_ROWS;
+        settings.headers = crate::app::Headers::Images;
     }
     let app = App::new(repo, current, palette, settings);
     let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);

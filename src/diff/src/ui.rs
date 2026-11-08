@@ -314,11 +314,11 @@ fn draw_diff(buf: &mut Buffer, app: &App, area: Rect) {
             }
         }
     }
-    if let Some(file) = app.pinned_header() {
-        for part in 0..app.settings.header_rows.min(area.height) {
-            let row = Rect::new(area.x, area.y + part, area.width, 1);
-            draw_line(buf, app, row, Line::Header { file, part });
-        }
+    if let Some(file) = app.pinned_header()
+        && area.height > 0
+    {
+        let row = Rect::new(area.x, area.y, area.width, 1);
+        draw_line(buf, app, row, Line::Header { file });
     }
     if app.focus == Focus::Diff && app.editor().is_none() && app.cursor_row < area.height {
         let y = area.y + app.cursor_row;
@@ -492,7 +492,7 @@ fn draw_line(buf: &mut Buffer, app: &App, area: Rect, line: Line) {
     let Some(stream) = &app.stream else { return };
     match line {
         Line::Spacer => fill(buf, area, Style::new().bg(p.bg)),
-        Line::Header { file, part } => draw_header(buf, app, area, file, part),
+        Line::Header { file } => draw_header(buf, app, area, file),
         Line::Cards { file, review, line } => {
             fill(buf, area, Style::new().bg(p.bg));
             let placed = if review {
@@ -576,7 +576,7 @@ fn highlights<'a>(app: &'a App, f: &FileView, id: Option<gix::ObjectId>) -> Opti
     app.cache.highlight(&(id?, lang))
 }
 
-pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, part: u16) {
+fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize) {
     let p = &app.palette;
     let Some(stream) = &app.stream else { return };
     let f = &stream.files[file];
@@ -585,9 +585,7 @@ pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, 
         for (col, x) in (area.left()..area.right()).enumerate() {
             let cell = &mut buf[(x, area.y)];
             cell.reset();
-            let symbol = u16::try_from(col)
-                .ok()
-                .and_then(|col| graphics::placeholder(part, col));
+            let symbol = u16::try_from(col).ok().and_then(graphics::placeholder);
             match symbol {
                 Some(symbol) => cell.set_symbol(&symbol).set_style(style),
                 // Past the image's last column.
@@ -597,10 +595,6 @@ pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, 
         return;
     }
     fill(buf, area, Style::new().bg(p.header_bg).fg(p.fg));
-    if part + 1 < app.settings.header_rows {
-        // Upper rows of a tall header are left for its image.
-        return;
-    }
     let bg = p.header_bg;
     let st = f.change.status;
     let mut x = area.x;

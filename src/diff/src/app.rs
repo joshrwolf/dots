@@ -106,6 +106,16 @@ impl Mode {
     }
 }
 
+/// How file headers are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Headers {
+    /// Text, with a blank line after each file.
+    Text,
+    /// Kitty images, each drawing a separator along its top edge in place
+    /// of the blank line.
+    Images,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Settings {
     pub(crate) layout: LayoutChoice,
@@ -116,8 +126,7 @@ pub(crate) struct Settings {
     pub(crate) sidebar: bool,
     /// Sidebar columns chosen with the resize keys; `None` sizes it to the screen.
     pub(crate) sidebar_width: Option<u16>,
-    /// Header height in rows; images get two.
-    pub(crate) header_rows: u16,
+    pub(crate) headers: Headers,
 }
 
 impl Default for Settings {
@@ -129,7 +138,7 @@ impl Default for Settings {
             since: false,
             sidebar: true,
             sidebar_width: None,
-            header_rows: 1,
+            headers: Headers::Text,
         }
     }
 }
@@ -237,8 +246,8 @@ impl FileView {
 
     /// The first body line of the file's block, after the cards above, the
     /// header and the file's cards.
-    pub(crate) fn body_start(&self, header: u32) -> u32 {
-        self.above + header + self.card_lines()
+    pub(crate) fn body_start(&self) -> u32 {
+        self.above + 1 + self.card_lines()
     }
 
     /// Display lines of the cards under the header, none while folded.
@@ -539,11 +548,11 @@ impl Stream {
     }
 
     /// Sums the file blocks' lines into their start lines.
-    fn measure(&mut self, header: u32) {
+    fn measure(&mut self, spacers: bool) {
         let mut at = 0;
         for (i, f) in self.files.iter().enumerate() {
             self.offsets[i] = at;
-            at += f.body_start(header) + f.body_lines() + 1;
+            at += f.body_start() + f.body_lines() + u32::from(spacers);
         }
         self.offsets[self.files.len()] = at;
     }
@@ -577,7 +586,6 @@ pub(crate) struct Summary {
 pub(crate) enum Line {
     Header {
         file: usize,
-        part: u16,
     },
     /// Line `line` of a stack of cards: the review's above the first file,
     /// or a file's under its header.
@@ -822,8 +830,7 @@ impl App {
     /// number when the top is on a line, else the display line in the file.
     fn source_anchor(&self, stream: &Stream) -> Option<(String, SourceLine)> {
         let f = stream.files.get(self.top.file)?;
-        let header = u32::from(self.settings.header_rows);
-        let at = match self.top.line.checked_sub(f.body_start(header)) {
+        let at = match self.top.line.checked_sub(f.body_start()) {
             Some(body) if f.heights.rows() > 0 => {
                 let (row, sub) = f.heights.locate(body);
                 match f.rows.get(row as usize) {
@@ -914,7 +921,6 @@ impl App {
     pub(crate) fn layout(&mut self, width: u16, rows: u16) {
         let layout = self.effective_layout(width);
         let wrap = self.settings.wrap;
-        let header = u32::from(self.settings.header_rows);
         let top = self.global_top();
         let Some(stream) = &self.stream else {
             return;
@@ -940,7 +946,7 @@ impl App {
         };
         // Keep the row under the top of the view across the relayout.
         let anchor_row = stream.files.get(self.top.file).and_then(|f| {
-            let line = self.top.line.checked_sub(f.body_start(header))?;
+            let line = self.top.line.checked_sub(f.body_start())?;
             (f.heights.rows() > 0).then(|| f.heights.locate(line).0)
         });
         let index = cards::index(&self.session, &stream.worktree);
@@ -965,9 +971,9 @@ impl App {
             let exact = (window.0..=window.1).contains(&i);
             f.lay_out(measure, exact, &self.session, mine, &self.cache);
         }
-        stream.measure(header);
+        stream.measure(self.settings.headers == Headers::Text);
         if let (Some(row), Some(f)) = (anchor_row, stream.files.get(self.top.file)) {
-            self.top.line = f.body_start(header) + f.heights.start(row);
+            self.top.line = f.body_start() + f.heights.start(row);
         }
         stream.laid_out = Some((width, layout, wrap, window));
         self.restore_anchor();
@@ -980,7 +986,6 @@ impl App {
         let Some((path, at)) = &self.pending_anchor else {
             return;
         };
-        let header = u32::from(self.settings.header_rows);
         let Some(f) = self
             .stream
             .as_ref()
@@ -1007,10 +1012,10 @@ impl App {
                 let row = u32::try_from(row).unwrap_or(0);
                 let height = f.heights.start(row + 1) - f.heights.start(row);
                 self.top.line =
-                    f.body_start(header) + f.heights.start(row) + sub.min(height.saturating_sub(1));
+                    f.body_start() + f.heights.start(row) + sub.min(height.saturating_sub(1));
             }
             (_, SourceLine::Display(line)) => {
-                self.top.line = line.min(f.body_start(header) + f.body_lines());
+                self.top.line = line.min(f.body_start() + f.body_lines());
             }
             _ => {}
         }
@@ -1091,7 +1096,6 @@ impl App {
         let file = stream.offsets.partition_point(|&o| o <= line) - 1;
         let f = &stream.files[file];
         let local = line - stream.offsets[file];
-        let header = u32::from(self.settings.header_rows);
         if local < f.above {
             return Line::Cards {
                 file,
@@ -1100,20 +1104,17 @@ impl App {
             };
         }
         let local = local - f.above;
-        if local < header {
-            return Line::Header {
-                file,
-                part: u16::try_from(local).unwrap_or(0),
-            };
+        if local == 0 {
+            return Line::Header { file };
         }
-        if local < header + f.card_lines() {
+        if local <= f.card_lines() {
             return Line::Cards {
                 file,
                 review: false,
-                line: local - header,
+                line: local - 1,
             };
         }
-        let body = local - header - f.card_lines();
+        let body = local - 1 - f.card_lines();
         if body >= f.body_lines() {
             return Line::Spacer;
         }
@@ -1172,7 +1173,6 @@ impl App {
         if n == 0 {
             return;
         }
-        let header = u32::from(self.settings.header_rows);
         let top = self.global_top();
         let order: Box<dyn Iterator<Item = usize>> = if forward {
             Box::new(self.top.file..n)
@@ -1197,7 +1197,7 @@ impl App {
                 );
                 if change && !in_change {
                     // Leave a little context above the change.
-                    let line = stream.offsets[fi] + f.body_start(header) + f.heights.start(ri);
+                    let line = stream.offsets[fi] + f.body_start() + f.heights.start(ri);
                     starts.push(line.saturating_sub(2).max(stream.offsets[fi]));
                 }
                 in_change = change;
@@ -1612,7 +1612,7 @@ mod tests {
         let s = app.stream.as_ref().expect("loaded");
         // a: header + 2 rows + spacer; b: header + 2 rows + spacer.
         assert_eq!(s.offsets, vec![0, 4, 8]);
-        assert_eq!(app.line_at(0), Line::Header { file: 0, part: 0 });
+        assert_eq!(app.line_at(0), Line::Header { file: 0 });
         assert_eq!(
             app.line_at(2),
             Line::Body {
@@ -1622,7 +1622,7 @@ mod tests {
             }
         );
         assert_eq!(app.line_at(3), Line::Spacer);
-        assert_eq!(app.line_at(4), Line::Header { file: 1, part: 0 });
+        assert_eq!(app.line_at(4), Line::Header { file: 1 });
         let labels: Vec<_> = app
             .sidebar
             .rows()
@@ -1633,6 +1633,18 @@ mod tests {
             })
             .collect();
         assert_eq!(labels, ["0", "b/", "1"]);
+    }
+
+    #[test]
+    fn image_headers_follow_the_last_line_before_them() {
+        let mut app = app_with(&[("a.rs", "x\n", "y\n"), ("b/c.rs", "", "1\n2\n")]);
+        app.settings.headers = Headers::Images;
+        app.layout(80, 40);
+        let s = app.stream.as_ref().expect("loaded");
+        // a: header + 2 rows; b: header + 2 rows.
+        assert_eq!(s.offsets, vec![0, 3, 6]);
+        assert_eq!(app.line_at(3), Line::Header { file: 1 });
+        assert_eq!(app.line_at(6), Line::Spacer, "past the end");
     }
 
     #[test]
@@ -1648,7 +1660,7 @@ mod tests {
         // a: header + spacer; b: header + 2 rows + spacer.
         assert_eq!(offsets(&app), vec![0, 2, 6]);
         assert_eq!(app.line_at(1), Line::Spacer);
-        assert_eq!(app.line_at(2), Line::Header { file: 1, part: 0 });
+        assert_eq!(app.line_at(2), Line::Header { file: 1 });
         app.toggle_fold_all();
         app.layout(80, 40);
         assert_eq!(offsets(&app), vec![0, 2, 4]);

@@ -58,7 +58,7 @@ impl Runtime {
     /// Puts the cursor on the first changed line on screen.
     pub(super) fn cursor_to_change(&mut self, rows: u16) {
         let top = self.app.global_top();
-        for r in self.app.settings.header_rows..rows {
+        for r in 1..rows {
             let Line::Body { file, row, sub: 0 } = self.app.line_at(top + u32::from(r)) else {
                 continue;
             };

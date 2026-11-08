@@ -334,10 +334,7 @@ impl Runtime {
                 self.app.focus = Focus::Diff;
                 self.app.end_visual();
                 let y = mouse.row - areas.diff.y;
-                let pinned = self
-                    .app
-                    .pinned_header()
-                    .filter(|_| y < self.app.settings.header_rows);
+                let pinned = self.app.pinned_header().filter(|_| y == 0);
                 if let Some(file) = pinned {
                     self.app.toggle_fold(file);
                     return true;

@@ -33,7 +33,8 @@ impl App {
     /// end of the stream.
     pub(crate) fn clamp_cursor(&mut self, rows: u16) {
         let total = self.stream.as_ref().map_or(0, super::Stream::total);
-        let min = self.settings.header_rows.min(rows.saturating_sub(1));
+        // Below the pinned header, when there is room.
+        let min = u16::from(rows > 1);
         let last = total.saturating_sub(1).saturating_sub(self.global_top());
         let max = u16::try_from(last)
             .unwrap_or(u16::MAX)
@@ -49,11 +50,10 @@ impl App {
         let last = i64::from(stream.total().saturating_sub(1));
         let target = (i64::from(self.cursor_line()) + delta).clamp(0, last);
         let target = u32::try_from(target).unwrap_or(0);
-        let header = u32::from(self.settings.header_rows);
         let margin = u32::from(CURSOR_MARGIN.min(rows / 4));
         let top = self.global_top();
-        if target < top + header + margin {
-            self.scroll_to(target.saturating_sub(header + margin), rows);
+        if target < top + 1 + margin {
+            self.scroll_to(target.saturating_sub(1 + margin), rows);
         } else if target + margin >= top + u32::from(rows) {
             self.scroll_to(target + margin + 1 - u32::from(rows), rows);
         }
@@ -599,18 +599,15 @@ impl App {
     /// Where a laid-out card starts in the stream.
     fn locate_card(&self, card: CardRef) -> Option<u32> {
         let stream = self.stream.as_ref()?;
-        let header = u32::from(self.settings.header_rows);
         if let Some(p) = self.review_cards.iter().find(|p| p.card == card) {
             return Some(stream.offsets[0] + p.start);
         }
         for (i, f) in stream.files.iter().enumerate() {
             if let Some(p) = f.file_cards.iter().find(|p| p.card == card) {
-                return Some(stream.offsets[i] + f.above + header + p.start);
+                return Some(stream.offsets[i] + f.above + 1 + p.start);
             }
             if let Some(p) = f.cards.iter().find(|p| p.card == card) {
-                return Some(
-                    stream.offsets[i] + f.body_start(header) + f.heights.start(p.row) + p.start,
-                );
+                return Some(stream.offsets[i] + f.body_start() + f.heights.start(p.row) + p.start);
             }
         }
         None
@@ -627,7 +624,7 @@ impl App {
         };
         self.pending_card = None;
         let top = self.global_top();
-        if line < top + u32::from(self.settings.header_rows) || line >= top + u32::from(rows) {
+        if line <= top || line >= top + u32::from(rows) {
             self.scroll_to(line.saturating_sub(u32::from(rows / 3)), rows);
         }
         self.cursor_row = u16::try_from(line.saturating_sub(self.global_top())).unwrap_or(0);

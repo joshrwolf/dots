@@ -37,14 +37,10 @@ struct Spec {
     counts: Option<(u32, u32)>,
     reviewed: bool,
     cols: u16,
-    rows: u16,
     /// Foreground, muted, green, red, amber and background.
     colors: [Rgb; 6],
     cell: (u16, u16),
 }
-
-/// Rows of a header drawn as an image.
-pub(crate) const HEADER_ROWS: u16 = 2;
 
 /// The character a placeholder cell holds.
 const PLACEHOLDER: char = '\u{10EEEE}';
@@ -355,12 +351,11 @@ const DIACRITICS: [char; 297] = [
 #[expect(clippy::cast_possible_truncation, reason = "the protocol numbers 297")]
 pub(crate) const MAX_COLS: u16 = DIACRITICS.len() as u16;
 
-/// The text of the cell at `row` and `col` of an image shown through
-/// placeholders, or `None` past the last numbered row or column.
-pub(crate) fn placeholder(row: u16, col: u16) -> Option<String> {
-    let row = DIACRITICS.get(usize::from(row))?;
+/// The text of the cell at column `col` of a one-row image shown through
+/// placeholders, or `None` past the last numbered column.
+pub(crate) fn placeholder(col: u16) -> Option<String> {
     let col = DIACRITICS.get(usize::from(col))?;
-    Some([PLACEHOLDER, *row, *col].into_iter().collect())
+    Some([PLACEHOLDER, DIACRITICS[0], *col].into_iter().collect())
 }
 
 /// The foreground colour that names image `id` in its placeholder cells:
@@ -419,7 +414,7 @@ impl Images {
         // Ids fit the 24 bits a foreground colour carries, and never 0.
         self.next_id = self.next_id % 0x00FF_FFFF + 1;
         let pixmap = draw(spec);
-        transmit(out, &pixmap, id, spec.cols, spec.rows);
+        transmit(out, &pixmap, id, spec.cols);
         let image = Image {
             id,
             bytes: pixmap.data().len(),
@@ -578,7 +573,6 @@ fn spec_for(app: &App, file: usize, cols: u16, cell: (u16, u16)) -> Spec {
         counts: f.counts(),
         reviewed: f.reviewed,
         cols,
-        rows: app.settings.header_rows,
         colors: [p.fg, p.muted, p.green, p.red, p.amber, p.header_bg],
         cell,
     }
@@ -591,10 +585,7 @@ pub(crate) fn header_picture(app: &App, cols: u16, path: &std::path::Path) -> an
         system: FontSystem::new(),
         cache: SwashCache::new(),
     };
-    let spec = Spec {
-        rows: HEADER_ROWS,
-        ..spec_for(app, app.top.file, cols, (10, 20))
-    };
+    let spec = spec_for(app, app.top.file, cols, cell_pixels());
     let pixmap = render(&mut fonts, &spec);
     pixmap.save_png(path)?;
     Ok(())
@@ -627,7 +618,7 @@ fn render(fonts: &mut Fonts, spec: &Spec) -> Pixmap {
     let scale = if spec.cell.1 < 24 { 2.0 } else { 1.0 };
     let cw = f32::from(spec.cell.0) * scale;
     let w_px = (f32::from(spec.cols) * cw).max(1.0);
-    let h_px = (f32::from(spec.cell.1 * spec.rows) * scale).max(1.0);
+    let h_px = (f32::from(spec.cell.1) * scale).max(1.0);
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -636,9 +627,11 @@ fn render(fonts: &mut Fonts, spec: &Spec) -> Pixmap {
     let mut pixmap = Pixmap::new(w_px as u32, h_px as u32).expect("header size is positive");
     let [fg, muted, green, red, amber, header_bg] = spec.colors;
     pixmap.fill(skia(header_bg));
-    // A hairline under the header separates it from code.
-    let rule = mix(header_bg, fg, 0.12);
-    if let Some(r) = tiny_skia::Rect::from_xywh(0.0, h_px - scale, w_px, scale) {
+    // A rule along the top edge separates the file from the one above,
+    // in place of the blank line text headers get.
+    let rule = mix(header_bg, fg, 0.22);
+    let rule_h = scale.max((h_px * 0.06).round());
+    if let Some(r) = tiny_skia::Rect::from_xywh(0.0, 0.0, w_px, rule_h) {
         pixmap.fill_rect(r, &paint(rule), Transform::identity(), None);
     }
     let status_rgb = match spec.status {
@@ -646,11 +639,13 @@ fn render(fonts: &mut Fonts, spec: &Spec) -> Pixmap {
         Status::Deleted => red,
         Status::Modified => amber,
     };
-    let mid = h_px / 2.0;
-    let font = h_px * 0.36;
-    let dot_r = h_px * 0.1;
+    // Sized to the cell: text as large as the terminal's own, centred in
+    // the space under the rule.
+    let mid = f32::midpoint(h_px, rule_h);
+    let font = h_px * 0.6;
+    let dot_r = h_px * 0.15;
     // A chevron: down while open, right while folded.
-    let chevron = h_px * 0.09;
+    let chevron = h_px * 0.14;
     let cx = cw;
     let mut pb = PathBuilder::new();
     if spec.folded {
@@ -683,7 +678,7 @@ fn render(fonts: &mut Fonts, spec: &Spec) -> Pixmap {
     }
     let mut right = w_px - cw;
     if spec.reviewed {
-        let size = h_px * 0.3;
+        let size = h_px * 0.42;
         right -= size;
         check(&mut pixmap, right, mid, size, scale, green);
         right -= cw;
@@ -895,8 +890,9 @@ fn draw_text(
 }
 
 /// Transmits `pixmap` as image `id` (raw RGBA, zlib-compressed) with a
-/// virtual placement `cols` by `rows` cells, for placeholders to show.
-fn transmit(out: &mut String, pixmap: &Pixmap, id: u32, cols: u16, rows: u16) {
+/// virtual placement `cols` cells wide and one tall, for placeholders to
+/// show.
+fn transmit(out: &mut String, pixmap: &Pixmap, id: u32, cols: u16) {
     use flate2::write::ZlibEncoder;
     use std::fmt::Write as _;
     let mut z = ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
@@ -910,7 +906,7 @@ fn transmit(out: &mut String, pixmap: &Pixmap, id: u32, cols: u16, rows: u16) {
         if first {
             let _ = write!(
                 out,
-                "\x1b_Ga=T,U=1,f=32,o=z,s={},v={},i={id},c={cols},r={rows},q=2,m={more};",
+                "\x1b_Ga=T,U=1,f=32,o=z,s={},v={},i={id},c={cols},r=1,q=2,m={more};",
                 pixmap.width(),
                 pixmap.height()
             );
@@ -948,7 +944,6 @@ mod tests {
             counts: Some((1, 2)),
             reviewed: false,
             cols: 40,
-            rows: 2,
             colors: [(0, 0, 0); 6],
             cell: (10, 20),
         }
@@ -959,23 +954,17 @@ mod tests {
     }
 
     #[test]
-    fn placeholders_number_their_row_and_column_with_diacritics() {
+    fn placeholders_number_row_zero_and_their_column_with_diacritics() {
+        assert_eq!(placeholder(0).as_deref(), Some("\u{10EEEE}\u{305}\u{305}"));
+        assert_eq!(placeholder(2).as_deref(), Some("\u{10EEEE}\u{305}\u{30E}"));
         assert_eq!(
-            placeholder(0, 0).as_deref(),
-            Some("\u{10EEEE}\u{305}\u{305}")
-        );
-        assert_eq!(
-            placeholder(1, 2).as_deref(),
-            Some("\u{10EEEE}\u{30D}\u{30E}")
-        );
-        assert_eq!(
-            placeholder(0, MAX_COLS - 1).as_deref(),
+            placeholder(MAX_COLS - 1).as_deref(),
             Some("\u{10EEEE}\u{305}\u{1D244}")
         );
-        assert_eq!(placeholder(0, MAX_COLS), None);
+        assert_eq!(placeholder(MAX_COLS), None);
         assert_eq!(image_color(0x0001_0203), Color::Rgb(1, 2, 3));
         // One cell wide, so ratatui lays the row out as the terminal does.
-        let cell = placeholder(1, 7).expect("placeholder");
+        let cell = placeholder(7).expect("placeholder");
         assert_eq!(unicode_width::UnicodeWidthStr::width(cell.as_str()), 1);
     }
 
@@ -991,7 +980,7 @@ mod tests {
         });
         assert!(
             out.starts_with(&format!(
-                "\x1b_Ga=T,U=1,f=32,o=z,s=4,v=2,i={a},c=40,r=2,q=2,m=0;"
+                "\x1b_Ga=T,U=1,f=32,o=z,s=4,v=2,i={a},c=40,r=1,q=2,m=0;"
             )),
             "{out:?}"
         );
@@ -1066,7 +1055,7 @@ mod tests {
         for (i, b) in big.data_mut().iter_mut().enumerate() {
             *b = u8::try_from(i.wrapping_mul(2_654_435_761) >> 24 & 0xFF).unwrap_or(0);
         }
-        transmit(&mut out, &big, 7, 40, 2);
+        transmit(&mut out, &big, 7, 40);
         let chunks: Vec<&str> = out.split_terminator("\x1b\\").collect();
         assert!(chunks.len() > 2, "{}", chunks.len());
         assert!(chunks[0].starts_with("\x1b_Ga=T,U=1,") && chunks[0].contains(",m=1;"));
@@ -1081,7 +1070,7 @@ mod tests {
     #[test]
     fn a_header_with_an_image_is_drawn_only_as_placeholders() {
         let mut app = app_with(&[("a.rs", "a\n", "b\n"), ("b.rs", "x\n", "y\n")]);
-        app.settings.header_rows = 2;
+        app.settings.headers = crate::app::Headers::Images;
         app.relayout();
         app.header_images.insert(0, 0x0001_0203);
         let mut terminal = Terminal::new(TestBackend::new(100, 12)).expect("terminal");
@@ -1090,12 +1079,9 @@ mod tests {
             .expect("draw");
         let buf = terminal.backend().buffer();
         let diff = app.areas.diff;
-        for part in 0..2 {
-            let y = diff.y + part;
-            let cell = &buf[(diff.x + 3, y)];
-            assert_eq!(Some(cell.symbol().to_owned()), placeholder(part, 3));
-            assert_eq!(cell.fg, Color::Rgb(1, 2, 3));
-        }
+        let cell = &buf[(diff.x + 3, diff.y)];
+        assert_eq!(Some(cell.symbol().to_owned()), placeholder(3));
+        assert_eq!(cell.fg, Color::Rgb(1, 2, 3));
         let text = crate::render::dump(buf, false);
         assert_eq!(
             text.matches("a.rs").count(),
