@@ -24,6 +24,7 @@ use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
 use crate::input::Input;
 use crate::keys::{self, Action};
+use crate::moves;
 use crate::picker::Batch;
 use crate::repo::{self, Changes, FileChange, GitState, Mode, Reader, Side, Stamp};
 use crate::review;
@@ -59,6 +60,12 @@ pub(crate) enum Msg {
         worktree: PathBuf,
         ids: Vec<u64>,
         result: Result<annotate::Delivered, String>,
+    },
+    /// A moved-code search finished.
+    Moves {
+        epoch: u64,
+        seq: u64,
+        moves: Arc<moves::Moves>,
     },
     Diffed {
         epoch: u64,
@@ -155,6 +162,10 @@ struct Runtime {
     summaries_started: bool,
     /// Where the current stream's contents are read from.
     source: Option<(gix::ThreadSafeRepository, PathBuf)>,
+    /// The diffs the last moved-code search was started for, by fingerprint.
+    moves_for: Option<u64>,
+    /// Numbers moved-code searches; only the latest one's result is kept.
+    moves_seq: u64,
     /// The worktree the file watch was set up around.
     watched: Option<usize>,
     /// What the control socket reports.
@@ -249,6 +260,8 @@ pub(crate) fn run(options: Options) -> Result<()> {
             quit: false,
             summaries_started: false,
             source: None,
+            moves_for: None,
+            moves_seq: 0,
             watched: None,
             ctl_status,
             pending_file: options.file.clone(),
@@ -347,6 +360,7 @@ impl Runtime {
             while let Ok(msg) = rx.try_recv() {
                 dirty |= self.handle(msg);
             }
+            self.refresh_moves();
             if self.app.review_dirty {
                 self.save_review();
             }
@@ -503,6 +517,17 @@ impl Runtime {
                     }
                     Err(e) => self.app.message = Some(e),
                 }
+                true
+            }
+            Msg::Moves { epoch, seq, moves } => {
+                if epoch != self.epoch || seq != self.moves_seq {
+                    return false;
+                }
+                if moves.skipped {
+                    self.app.message =
+                        Some("too many changed lines to look for moved code".to_owned());
+                }
+                self.app.moves = Some(moves);
                 true
             }
             Msg::Diffed {
@@ -866,6 +891,32 @@ impl Runtime {
         });
     }
 
+    /// Starts a moved-code search when moves are shown and the diffs
+    /// differ from those the last search was started for.
+    fn refresh_moves(&mut self) {
+        if !self.app.show_moves {
+            return;
+        }
+        let Some(print) = self.app.move_fingerprint() else {
+            return;
+        };
+        if self.moves_for == Some(print) {
+            return;
+        }
+        let (Some(inputs), Some((repo, root))) = (self.app.move_inputs(), self.source.clone())
+        else {
+            return;
+        };
+        self.moves_for = Some(print);
+        self.moves_seq += 1;
+        let (tx, epoch, seq) = (self.tx.clone(), self.epoch, self.moves_seq);
+        std::thread::spawn(move || {
+            let mut reader = Reader::new(repo.to_thread_local(), root);
+            let moves = Arc::new(moves::search(&mut reader, &inputs));
+            let _ = tx.send(Msg::Moves { epoch, seq, moves });
+        });
+    }
+
     /// Diffs pending files on several threads, nearest to the view first.
     fn spawn_diffs(&mut self) {
         let pending = self.app.pending();
@@ -1118,6 +1169,18 @@ impl Runtime {
             Action::OldSide => self.app.cursor_old = !self.app.cursor_old,
             Action::Send => self.send(Batch::All),
             Action::PickAgent => self.open_picker(None),
+            Action::Moves => {
+                self.app.show_moves = !self.app.show_moves;
+                self.app.message = Some(
+                    if self.app.show_moves {
+                        "showing moved code"
+                    } else {
+                        "moved code hidden"
+                    }
+                    .to_owned(),
+                );
+                self.refresh_moves();
+            }
             Action::Since => {
                 self.app.since = !self.app.since;
                 self.app.visual = None;

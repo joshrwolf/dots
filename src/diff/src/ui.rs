@@ -13,6 +13,7 @@ use crate::cards::{self, Placed};
 use crate::diff::FileDiff;
 use crate::highlight::{Lines, Role, Run};
 use crate::keys::BINDINGS;
+use crate::moves::Moved;
 use crate::plan::{Kind, Row};
 use crate::repo::Status;
 use crate::review;
@@ -1277,6 +1278,25 @@ impl RowCtx<'_> {
         }
     }
 
+    /// The changed side's line, if it is moved code being marked.
+    fn moved(&self, side: Side) -> Option<&Moved> {
+        if side.kind == Kind::Context {
+            return None;
+        }
+        self.app.moved(self.f, !side.old, side.line?)
+    }
+
+    /// Row tint, gutter tint, sign and sign colour of one side.
+    fn style(&self, side: Side) -> (Color, Color, &'static str, Color) {
+        let p = self.palette;
+        let (bg, gutter, sign, sign_fg) = kind_style(p, side.kind);
+        if self.moved(side).is_some() {
+            (p.move_bg, self.gutter(p.move_gutter), sign, p.move_fg)
+        } else {
+            (bg, self.gutter(gutter), sign, sign_fg)
+        }
+    }
+
     /// Emphasised byte ranges of line `n` of one side, relative to the line.
     fn emphasis(&self, new_side: bool, n: u32) -> Vec<Range<u32>> {
         let Some(hunk) = self.diff.hunk_of(new_side, n) else {
@@ -1353,8 +1373,19 @@ fn draw_row(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, row: Row, sub: u32) 
         }
         Row::Line { kind, old, new } => {
             let nw = ctx.number_width;
-            let (bg, gutter_bg, sign, sign_fg) = kind_style(p, kind);
-            let gutter_bg = ctx.gutter(gutter_bg);
+            let side = match kind {
+                Kind::Delete => Side {
+                    kind,
+                    old: true,
+                    line: old,
+                },
+                _ => Side {
+                    kind,
+                    old: false,
+                    line: new,
+                },
+            };
+            let (bg, gutter_bg, sign, sign_fg) = ctx.style(side);
             fill(buf, area, Style::new().bg(bg));
             let gutter = Rect::new(area.x, area.y, (nw * 2 + 2).min(area.width), 1);
             fill(buf, gutter, Style::new().bg(gutter_bg));
@@ -1389,18 +1420,6 @@ fn draw_row(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, row: Row, sub: u32) 
                 area.width.saturating_sub(nw * 2 + 4),
                 1,
             );
-            let side = match kind {
-                Kind::Delete => Side {
-                    kind,
-                    old: true,
-                    line: old,
-                },
-                _ => Side {
-                    kind,
-                    old: false,
-                    line: new,
-                },
-            };
             draw_code(buf, ctx, code, side, sub);
         }
         Row::Pair { old, new, changed } => {
@@ -1457,8 +1476,7 @@ fn draw_half(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, side: Side, sub: u3
         fill(buf, area, Style::new().bg(p.filler));
         return;
     };
-    let (bg, gutter_bg, sign, sign_fg) = kind_style(p, side.kind);
-    let gutter_bg = ctx.gutter(gutter_bg);
+    let (bg, gutter_bg, sign, sign_fg) = ctx.style(side);
     fill(buf, area, Style::new().bg(bg));
     fill(
         buf,
@@ -1505,10 +1523,11 @@ fn draw_code(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, side: Side, sub: u3
     } else {
         (&ctx.texts.new.1, ctx.new_hl)
     };
-    let emph = if side.kind == Kind::Context {
-        Vec::new()
-    } else {
-        ctx.emphasis(!side.old, n)
+    let moved = ctx.moved(side);
+    let emph = match moved {
+        Some(m) => m.emphasis.clone(),
+        None if side.kind == Kind::Context => Vec::new(),
+        None => ctx.emphasis(!side.old, n),
     };
     let line = text.line(n);
     let segment = if ctx.wrap {
@@ -1523,6 +1542,7 @@ fn draw_code(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, side: Side, sub: u3
         }
     };
     let (bg, emph_bg) = match side.kind {
+        _ if moved.is_some() => (p.move_bg, p.move_emph),
         Kind::Context => (p.bg, p.bg),
         Kind::Delete => (p.del_bg, p.del_emph),
         Kind::Insert => (p.add_bg, p.add_emph),
@@ -1540,7 +1560,7 @@ fn draw_code(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, side: Side, sub: u3
         area.y,
         limit.saturating_sub(segment.indent),
         line,
-        segment.bytes,
+        segment.bytes.clone(),
         runs,
         &emph,
         bg,
@@ -1552,6 +1572,50 @@ fn draw_code(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, side: Side, sub: u3
             .set_symbol("›")
             .set_fg(p.muted);
     }
+    // A block's first line says where the code went or came from, at the
+    // right when it fits beside the code.
+    if sub == 0
+        && !truncated
+        && let Some(Moved {
+            other: Some((path, at)),
+            ..
+        }) = moved
+    {
+        let room = usize::from(area.width).saturating_sub(width(&line[segment.bytes]) + 2);
+        if let Some(note) = move_note(side.old, path, *at, &ctx.f.change.path, room) {
+            let note_w = u16::try_from(width(&note)).unwrap_or(u16::MAX);
+            let style = Style::new()
+                .bg(bg)
+                .fg(p.move_fg)
+                .add_modifier(Modifier::ITALIC);
+            put(buf, area.right() - note_w, area.y, &note, note_w, style);
+        }
+    }
+}
+
+/// Where a moved block's code went (from its old side) or came from, in
+/// the longest form that fits in `room` columns.
+fn move_note(old: bool, path: &str, at: u32, here: &str, room: usize) -> Option<String> {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let (verb, arrow) = if old {
+        ("moved to", "→")
+    } else {
+        ("moved from", "←")
+    };
+    let line = at + 1;
+    let notes = if path == here {
+        vec![
+            format!("{verb} line {line} "),
+            format!("{arrow} line {line} "),
+        ]
+    } else {
+        vec![
+            format!("{verb} {path}:{line} "),
+            format!("{verb} {name}:{line} "),
+            format!("{arrow} {name}:{line} "),
+        ]
+    };
+    notes.into_iter().find(|note| width(note) <= room)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1626,6 +1690,16 @@ fn visual_hint(app: &App) -> Option<String> {
     Some(format!(
         "VISUAL {n} line{s}  c comment  s suggest  esc cancel  "
     ))
+}
+
+/// The status line's note on moved code, while it is marked.
+fn moves_status(app: &App) -> String {
+    match (app.show_moves, &app.moves) {
+        (false, _) => String::new(),
+        (true, None) => " · finding moves".to_owned(),
+        (true, Some(m)) if m.skipped => " · moves: too many lines".to_owned(),
+        (true, Some(m)) => format!(" · {} moved", m.blocks),
+    }
 }
 
 fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
@@ -1718,10 +1792,11 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
         crate::repo::Mode::Base => "branch",
         crate::repo::Mode::Head => "uncommitted",
     };
+    let moves = moves_status(app);
     let right = match &app.message {
         Some(m) => format!("{m} "),
         None => format!(
-            "{mode} · {layout}{} · ? ",
+            "{mode} · {layout}{}{moves} · ? ",
             if app.settings.wrap { "" } else { " · nowrap" }
         ),
     };
@@ -1784,6 +1859,19 @@ fn draw_help(buf: &mut Buffer, p: &Palette, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn move_notes_shorten_to_fit() {
+        let note = |old, room| move_note(old, "src/util.rs", 4, "src/server.rs", room);
+        assert_eq!(note(true, 80).as_deref(), Some("moved to src/util.rs:5 "));
+        assert_eq!(note(true, 20).as_deref(), Some("moved to util.rs:5 "));
+        assert_eq!(note(false, 12).as_deref(), Some("← util.rs:5 "));
+        assert_eq!(note(true, 5), None);
+        assert_eq!(
+            move_note(false, "a.rs", 9, "a.rs", 80).as_deref(),
+            Some("moved from line 10 ")
+        );
+    }
 
     #[test]
     fn folder_chains_drop_middle_folders_first() {

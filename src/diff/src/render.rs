@@ -41,6 +41,8 @@ pub(crate) struct Frame {
     pub(crate) review: Vec<String>,
     /// Focus the sidebar with its cursor on this file or folder path.
     pub(crate) select: Option<String>,
+    /// Mark moved code.
+    pub(crate) moves: bool,
 }
 
 /// Loads a worktree's changes with every diff computed.
@@ -49,6 +51,7 @@ fn loaded(
     worktree: Option<&Path>,
     theme: Detected,
     settings: Settings,
+    moves: bool,
 ) -> Result<App> {
     let repo = repo::discover(path)?;
     let current = match worktree {
@@ -80,6 +83,11 @@ fn loaded(
     for (i, (body, texts)) in bodies.into_iter().enumerate() {
         app.set_body(i, body, texts);
     }
+    if moves && let Some(inputs) = app.move_inputs() {
+        let mut reader = Reader::new(changes.repo.to_thread_local(), changes.root);
+        app.moves = Some(Arc::new(crate::moves::search(&mut reader, &inputs)));
+        app.show_moves = true;
+    }
     Ok(app)
 }
 
@@ -104,6 +112,7 @@ pub(crate) fn frame(options: &Frame) -> Result<String> {
         options.worktree.as_deref(),
         options.theme,
         options.settings.clone(),
+        options.moves,
     )?;
     let mut terminal = Terminal::new(TestBackend::new(options.width, options.height))?;
     terminal.draw(|f| ui::draw(f, &mut app))?;

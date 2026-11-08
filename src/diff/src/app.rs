@@ -544,6 +544,10 @@ pub(crate) struct App {
     pub(crate) picker: Option<crate::picker::Picker>,
     /// Show only what changed since the last send.
     pub(crate) since: bool,
+    /// Mark code moved between places.
+    pub(crate) show_moves: bool,
+    /// The last moved-code search, once one finished.
+    pub(crate) moves: Option<Arc<crate::moves::Moves>>,
     /// Who a send goes to, as the status line shows it.
     pub(crate) target: String,
     /// The review-level cards, above the first file.
@@ -620,6 +624,8 @@ impl App {
             editor: None,
             picker: None,
             since: false,
+            show_moves: false,
+            moves: None,
             target: String::new(),
             review_cards: Vec::new(),
             pending_card: None,
@@ -1577,6 +1583,56 @@ impl App {
                 + 64;
             self.emphasis.insert(key, emphasis.map(Arc::new), size);
         }
+    }
+
+    /// Line `n` of one side of `f`, if moved code is shown and it moved.
+    pub(crate) fn moved(
+        &self,
+        f: &FileView,
+        new_side: bool,
+        n: u32,
+    ) -> Option<&crate::moves::Moved> {
+        if !self.show_moves {
+            return None;
+        }
+        let Body::Text(diff) = &f.body else {
+            return None;
+        };
+        let key = (f.change.old, diff.new_id);
+        self.moves.as_ref()?.line(&f.change.path, key, new_side, n)
+    }
+
+    /// Identifies the diffs a moved-code search would read, once none is
+    /// pending.
+    pub(crate) fn move_fingerprint(&self) -> Option<u64> {
+        use std::hash::{Hash as _, Hasher as _};
+        let stream = self.stream.as_ref()?;
+        let mut h = std::hash::DefaultHasher::new();
+        stream.worktree.hash(&mut h);
+        for f in &stream.files {
+            match &f.body {
+                Body::Pending => return None,
+                Body::Text(diff) => (&f.change.path, f.change.old, diff.new_id).hash(&mut h),
+                _ => {}
+            }
+        }
+        Some(h.finish())
+    }
+
+    /// Every diffed file, once none is pending, to search for moved code.
+    pub(crate) fn move_inputs(&self) -> Option<Vec<(FileChange, Arc<FileDiff>)>> {
+        let stream = self.stream.as_ref()?;
+        let mut out = Vec::with_capacity(stream.files.len());
+        for f in &stream.files {
+            match &f.body {
+                Body::Pending => return None,
+                Body::Text(diff) if !diff.hunks.is_empty() => {
+                    out.push((f.change.clone(), Arc::clone(diff)));
+                }
+                _ => {}
+            }
+        }
+        Some(out)
     }
 
     /// The within-line emphasis of hunk `hunk` of `f`, once computed.

@@ -248,6 +248,11 @@ pub(crate) fn pair_lines(
     pairs
 }
 
+/// How alike two lines are, from 0 to 1, by their words and symbols.
+pub(crate) fn line_similarity(a: &str, b: &str) -> f32 {
+    similarity(&line_tokens(a), &line_tokens(b))
+}
+
 /// A line's words and symbols, sorted, for comparing as multisets.
 fn line_tokens(line: &str) -> Vec<&str> {
     if line.len() > INLINE_MAX_BYTES {
@@ -357,7 +362,7 @@ type Ranges = Vec<Range<u32>>;
 
 /// The changed byte ranges of two versions of a line, or `None` when they
 /// are too long, equal, or mostly rewritten.
-fn line_emphasis(a: &str, b: &str) -> Option<(Ranges, Ranges)> {
+pub(crate) fn line_emphasis(a: &str, b: &str) -> Option<(Ranges, Ranges)> {
     if a == b || a.len() > INLINE_MAX_BYTES || b.len() > INLINE_MAX_BYTES {
         return None;
     }

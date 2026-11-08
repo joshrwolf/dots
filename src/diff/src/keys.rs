@@ -37,6 +37,8 @@ pub(crate) enum Action {
     /// Folds the file at the cursor to its header, or unfolds it.
     Fold,
     FoldAll,
+    /// Marks code moved between places, or stops.
+    Moves,
     Delete,
     NextCard,
     PrevCard,
@@ -269,6 +271,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[(key('L'), Action::Layout)],
     ),
     row("z", "wrap long lines", &[(key('z'), Action::Wrap)]),
+    row("M", "mark moved code", &[(key('M'), Action::Moves)]),
     row(
         "b",
         "compare: branch (merge base) or uncommitted",

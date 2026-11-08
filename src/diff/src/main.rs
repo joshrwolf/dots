@@ -13,6 +13,7 @@ mod highlight;
 mod input;
 mod keys;
 mod lru;
+mod moves;
 mod picker;
 mod plan;
 mod render;
@@ -162,6 +163,9 @@ enum Cmd {
         /// Focus the sidebar on this file or folder
         #[arg(long, value_name = "PATH")]
         select: Option<String>,
+        /// Mark moved code
+        #[arg(long)]
+        moves: bool,
         #[command(flatten)]
         look: Look,
     },
@@ -276,6 +280,7 @@ fn run(cli: Cli) -> Result<()> {
             collapse,
             review,
             select,
+            moves,
             look,
         }) => {
             let frame = render::frame(&render::Frame {
@@ -293,6 +298,7 @@ fn run(cli: Cli) -> Result<()> {
                 collapse,
                 review,
                 select,
+                moves,
             })?;
             print!("{frame}");
             Ok(())
