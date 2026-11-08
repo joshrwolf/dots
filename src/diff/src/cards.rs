@@ -4,13 +4,20 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::app::{CardRef, Note};
 use crate::plan::{Kind, Layout, Row};
-use crate::review::{self, Comment, Place, Side, State};
+use crate::review::{self, Comment, Place, Side};
+use crate::session::{Note, Session};
 use crate::wrap;
 
 /// Code lines of a suggestion shown on its card.
 const SUGGESTION_LINES: usize = 12;
+
+/// A card in the stream: a comment, or an agent's note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum CardRef {
+    Comment(u64),
+    Note(u64),
+}
 
 /// A card placed in the stream: under row `row` from its line `start`
 /// (row cards), or from line `start` of a stack.
@@ -50,14 +57,15 @@ impl Card<'_> {
     }
 }
 
-pub(crate) fn get<'a>(state: &'a State, notes: &'a [Note], card: CardRef) -> Option<Card<'a>> {
+pub(crate) fn get(session: &Session, card: CardRef) -> Option<Card<'_>> {
     match card {
-        CardRef::Comment(id) => state
+        CardRef::Comment(id) => session
+            .state()
             .comments
             .iter()
             .find(|c| c.id == id)
             .map(Card::Comment),
-        CardRef::Note(id) => notes.iter().find(|n| n.id == id).map(Card::Note),
+        CardRef::Note(id) => session.notes().iter().find(|n| n.id == id).map(Card::Note),
     }
 }
 
@@ -189,14 +197,16 @@ pub(crate) struct Index<'a> {
     pub(crate) by_path: HashMap<&'a str, Vec<CardRef>>,
 }
 
-pub(crate) fn index<'a>(state: &'a State, notes: &'a [Note], worktree: &Path) -> Index<'a> {
+pub(crate) fn index<'a>(session: &'a Session, worktree: &Path) -> Index<'a> {
     let mut out = Index::default();
-    let all = state
+    let all = session
+        .state()
         .comments
         .iter()
         .map(|c| (&c.place, CardRef::Comment(c.id)))
         .chain(
-            notes
+            session
+                .notes()
                 .iter()
                 .filter(|n| n.worktree == worktree)
                 .map(|n| (&n.place, CardRef::Note(n.id))),
@@ -212,15 +222,14 @@ pub(crate) fn index<'a>(state: &'a State, notes: &'a [Note], worktree: &Path) ->
 
 /// Stacks cards from line 0: each placed after the one before.
 pub(crate) fn stack(
-    state: &State,
-    notes: &[Note],
+    session: &Session,
     cards: impl IntoIterator<Item = CardRef>,
     width: u16,
 ) -> (Vec<Placed>, u32) {
     let mut placed = Vec::new();
     let mut at = 0;
     for card in cards {
-        let Some(c) = get(state, notes, card) else {
+        let Some(c) = get(session, card) else {
             continue;
         };
         let height = u32::try_from(lines(&c, text_width(width), true).len()).unwrap_or(1);
@@ -277,8 +286,8 @@ mod tests {
 
     #[test]
     fn cards_wrap_text_and_list_suggested_code() {
-        let mut state = State::default();
-        let id = state.add(
+        let mut session = Session::default();
+        let id = session.edit().add(
             Place::Lines {
                 path: "a.rs".into(),
                 lines: lines_at(Side::New, 2, 3),
@@ -287,7 +296,7 @@ mod tests {
             "one two three four five\n\nsix".into(),
             Some("let x = 1;".into()),
         );
-        let card = get(&state, &[], CardRef::Comment(id)).expect("card");
+        let card = get(&session, CardRef::Comment(id)).expect("card");
         let text: Vec<String> = lines(&card, 12, true).into_iter().map(|l| l.text).collect();
         assert_eq!(
             text,

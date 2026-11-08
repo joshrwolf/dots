@@ -990,7 +990,7 @@ fn draw_card(
     in_stack: bool,
 ) {
     let p = &app.palette;
-    let Some(card) = cards::get(&app.review, &app.notes, placed.card) else {
+    let Some(card) = cards::get(&app.session, placed.card) else {
         return;
     };
     let lines = cards::lines(&card, cards::text_width(span.1), in_stack);
@@ -1105,8 +1105,8 @@ fn draw_line(buf: &mut Buffer, app: &App, area: Rect, line: Line) {
                 let half = area.width.saturating_sub(1) / 2;
                 buf[(area.x + half, area.y)].set_symbol("│").set_fg(p.rule);
             }
-            let side = cards::get(&app.review, &app.notes, at.card)
-                .and_then(|c| c.place().lines().map(|l| l.side));
+            let side =
+                cards::get(&app.session, at.card).and_then(|c| c.place().lines().map(|l| l.side));
             let span = cards::span(area.width, layout, f.number_width(), side);
             draw_card(buf, app, area, at, sub - at.start, span, false);
         }
@@ -1765,7 +1765,7 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
         if !done {
             x += put(buf, x, area.y, " …", end - x, muted.fg(p.faint));
         }
-        let drafts = app.review.drafts().count();
+        let drafts = app.session.state().drafts().count();
         if drafts > 0 {
             x += put(
                 buf,

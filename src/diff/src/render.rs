@@ -63,28 +63,19 @@ fn loaded(
     let mode = settings.mode;
     let mut app = App::new(repo, current, Palette::new(theme), settings);
     let wt = app.worktree_path().clone();
-    let changes = repo::changes(&wt, mode)?;
-    let git_dir = changes.repo.to_thread_local().git_dir().to_owned();
-    app.review = crate::review::State::load(&git_dir)?;
+    let (changes, review) = crate::run::load(&wt, mode, false);
+    let changes = changes.map_err(anyhow::Error::msg)?;
     let mut reader = Reader::new(changes.repo.to_thread_local(), changes.root.clone());
     let bodies: Vec<_> = changes
         .files
         .iter()
         .map(|c| app::compute_body(&mut reader, c))
         .collect();
-    app.load(
-        wt,
-        mode,
-        changes.base,
-        changes.target,
-        changes.files,
-        Some(reader),
-    );
+    app.message = app.install(wt, mode, changes, review);
     for (i, (body, texts)) in bodies.into_iter().enumerate() {
         app.set_body(i, body, texts);
     }
     if moves && let Some(inputs) = app.move_inputs() {
-        let mut reader = Reader::new(changes.repo.to_thread_local(), changes.root);
         app.moves = Some(Arc::new(crate::moves::search(&mut reader, &inputs)));
         app.show_moves = true;
     }
@@ -118,24 +109,13 @@ pub(crate) fn frame(options: &Frame) -> Result<String> {
     let rows = app.areas.diff.height;
     if let Some(file) = &options.file {
         let i = app
-            .stream
-            .as_ref()
-            .and_then(|s| {
-                s.files
-                    .iter()
-                    .position(|f| f.change.path == *file || f.change.path.ends_with(file.as_str()))
-            })
+            .find_file(file)
             .with_context(|| format!("{file} has no changes"))?;
         app.jump_to_file(i, rows);
     }
     app.scroll_by(i64::from(options.scroll), rows);
-    if let Some(stream) = &mut app.stream {
-        for f in &mut stream.files {
-            f.reviewed |= options
-                .review
-                .iter()
-                .any(|p| f.change.path.starts_with(p.as_str()));
-        }
+    for prefix in &options.review {
+        app.mark_reviewed(prefix);
     }
     for dir in &options.collapse {
         let path = format!("{}/", dir.trim_end_matches('/'));
@@ -309,18 +289,10 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
             settings,
         );
         let files: Vec<repo::FileChange> = changes.files.clone();
-        let mut reader = Reader::new(changes.repo.to_thread_local(), changes.root.clone());
-        app.load(
-            wt.clone(),
-            Mode::Base,
-            changes.base,
-            changes.target,
-            changes.files,
-            Some(Reader::new(
-                changes.repo.to_thread_local(),
-                changes.root.clone(),
-            )),
-        );
+        let (local, root) = (changes.repo.to_thread_local(), changes.root.clone());
+        let mut reader = Reader::new(changes.repo.to_thread_local(), root.clone());
+        let review = Err("the bench reads no review".to_owned());
+        app.install(wt.clone(), Mode::Base, changes, review);
         let mut terminal = Terminal::new(TestBackend::new(options.width, options.height))?;
         terminal.draw(|f| ui::draw(f, &mut app))?;
         let rows = app.areas.diff.height;
@@ -448,7 +420,6 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
         );
         // A file event's work once it arrives: rescan the paths, diff, lay
         // out and draw. Files are only read, never written.
-        let local = changes.repo.to_thread_local();
         let target = app.stream.as_ref().map(|s| s.target);
         let mut refresh = Vec::new();
         for f in files
@@ -494,7 +465,7 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
             );
         }
         if options.fsmonitor {
-            let root = &changes.root;
+            let root = &root;
             let time = |mode: repo::Fsmonitor| -> Result<Vec<Duration>> {
                 let mut times = Vec::new();
                 for _ in 0..5 {

@@ -289,6 +289,40 @@ fn first_colours(rx: &Receiver<Msg>, timeout: Duration) -> (Option<Detected>, Ve
     (None, early)
 }
 
+/// Lists a worktree's changes in `mode` and reads its saved review. With
+/// `since`, the changes are those since the review was last sent.
+pub(crate) fn load(
+    worktree: &Path,
+    mode: repo::Mode,
+    since: bool,
+) -> (
+    Result<Changes, String>,
+    Result<(PathBuf, review::State), String>,
+) {
+    let mut review = Err(String::new());
+    let changes = repo::changes(worktree, mode)
+        .map(|mut changes| {
+            let repo = changes.repo.to_thread_local();
+            let git_dir = repo.git_dir().to_owned();
+            review = review::State::load(&git_dir)
+                .map(|s| (git_dir, s))
+                .map_err(|e| format!("{e:#}"));
+            if let (true, Ok((_, state))) = (since, &review) {
+                let mut reader = Reader::new(repo, changes.root.clone());
+                changes.files = review::since_sent(
+                    changes.files,
+                    &state.seen,
+                    |_| true,
+                    changes.target,
+                    &mut reader,
+                );
+            }
+            changes
+        })
+        .map_err(|e| format!("{e:#}"));
+    (changes, review)
+}
+
 /// Background threads a runtime starts.
 #[derive(Debug, Clone, Copy)]
 struct Threads {
@@ -422,7 +456,7 @@ impl Runtime {
                 dirty |= self.handle(msg);
             }
             self.refresh_moves();
-            if self.app.review_dirty {
+            if self.app.session.dirty() {
                 self.save_review();
             }
             let now = Instant::now();
@@ -550,27 +584,19 @@ impl Runtime {
                 }
                 match result {
                     Ok(changes) => {
-                        self.install_review(&worktree, review);
                         self.timings.span(
                             "load changes",
                             elapsed,
                             &format!("{} files", changes.files.len()),
                         );
-                        self.app.message = None;
-                        let reader =
-                            Reader::new(changes.repo.to_thread_local(), changes.root.clone());
-                        self.state = Some(changes.state);
-                        self.source = Some((changes.repo, changes.root));
-                        self.app.load(
-                            worktree.clone(),
-                            mode,
-                            changes.base,
-                            changes.target,
-                            changes.files,
-                            Some(reader),
-                        );
-                        self.app.refresh_marks();
-                        self.app.cards_changed();
+                        if !self.app.session.shows(&worktree) {
+                            // Another worktree's review goes to its own agent.
+                            self.resolution = None;
+                            "→ …".clone_into(&mut self.app.target);
+                        }
+                        self.state = Some(changes.state.clone());
+                        self.source = Some((changes.repo.clone(), changes.root.clone()));
+                        self.app.message = self.app.install(worktree, mode, changes, review);
                         self.epoch += 1;
                         self.spawn_diffs();
                         self.spawn_resolve();
@@ -780,13 +806,7 @@ impl Runtime {
                 let rel = Path::new(&path)
                     .strip_prefix(&root)
                     .map_or(path.clone(), |p| p.to_string_lossy().into_owned());
-                let found = self.app.stream.as_ref().and_then(|s| {
-                    s.files
-                        .iter()
-                        .position(|f| f.change.path == rel)
-                        .or_else(|| s.files.iter().position(|f| f.change.path.ends_with(&rel)))
-                });
-                match found {
+                match self.app.find_file(&rel) {
                     Some(i) => {
                         let rows = self.view_rows();
                         self.app.jump_to_file(i, rows);
@@ -842,27 +862,7 @@ impl Runtime {
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
-            let mut review = Err(String::new());
-            let result = repo::changes(&worktree, mode)
-                .map(|mut changes| {
-                    let repo = changes.repo.to_thread_local();
-                    let git_dir = repo.git_dir().to_owned();
-                    review = review::State::load(&git_dir)
-                        .map(|s| (git_dir, s))
-                        .map_err(|e| format!("{e:#}"));
-                    if let (true, Ok((_, state))) = (since, &review) {
-                        let mut reader = Reader::new(repo, changes.root.clone());
-                        changes.files = review::since_sent(
-                            changes.files,
-                            &state.seen,
-                            |_| true,
-                            changes.target,
-                            &mut reader,
-                        );
-                    }
-                    changes
-                })
-                .map_err(|e| format!("{e:#}"));
+            let (result, review) = load(&worktree, mode, since);
             let _ = tx.send(Msg::Loaded {
                 generation,
                 worktree,
@@ -897,7 +897,10 @@ impl Runtime {
             .collect();
         let generation = self.generation;
         let tx = self.tx.clone();
-        let seen = self.app.since.then(|| self.app.review.seen.clone());
+        let seen = self
+            .app
+            .since
+            .then(|| self.app.session.state().seen.clone());
         self.partial_busy = true;
         std::thread::spawn(move || {
             let repo = repo.to_thread_local();
@@ -1707,7 +1710,7 @@ mod tests {
         let before = rt.resolve_seq;
         rt.app.mode = Mode::Picker(crate::picker::Picker::new(vec![agent("x", "b:2")], None));
         rt.key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(rt.app.review.agent.as_deref(), Some("x"));
+        assert_eq!(rt.app.session.state().agent.as_deref(), Some("x"));
         let bound = deliver::Resolution::Agent {
             agent: agent("bound", "b:1"),
             worker: None,
@@ -1733,18 +1736,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let (a, b) = (root.join("a"), root.join("b"));
         let (mut rt, _rx) = runtime(TWO);
-        rt.install_review(
+        rt.app.session.install(
             Path::new("/wt/a"),
             Ok((a.clone(), review::State::default())),
         );
-        let id = rt.app.review.add(
+        let id = rt.app.session.edit().add(
             review::Place::Review,
             review::Kind::Comment,
             "x".into(),
             None,
         );
-        rt.app.review_dirty = true;
-        rt.install_review(Path::new("/wt/b"), Ok((b, review::State::default())));
+        rt.app
+            .session
+            .install(Path::new("/wt/b"), Ok((b, review::State::default())));
         let seen = std::collections::BTreeMap::from([("a.rs".to_owned(), "missing".to_owned())]);
         rt.on_sent(
             Path::new("/wt/a"),
@@ -1755,7 +1759,10 @@ mod tests {
         let saved = review::State::load(&a).expect("load");
         assert_eq!(saved.drafts().count(), 0, "{saved:?}");
         assert_eq!(saved.seen, seen);
-        assert!(rt.app.review.comments.is_empty(), "b's review is untouched");
+        assert!(
+            rt.app.session.state().comments.is_empty(),
+            "b's review is untouched"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

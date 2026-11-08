@@ -20,6 +20,7 @@ mod render;
 mod repo;
 mod review;
 mod run;
+mod session;
 mod stats;
 mod switcher;
 mod terminal;

@@ -9,13 +9,14 @@ use std::sync::Arc;
 
 use ratatui::layout::Rect;
 
-use crate::cards::{self, Placed};
+use crate::cards::{self, CardRef, Placed};
 use crate::diff::{self, FileDiff, HunkEmphasis, Text};
 use crate::editor::Editor;
 use crate::highlight;
 use crate::plan::{self, Heights, Kind, Layout, Row};
-use crate::repo::{self, FileChange, Reader, Repo, Side, Target};
+use crate::repo::{self, Changes, FileChange, Reader, Repo, Side, Target};
 use crate::review;
+use crate::session::Session;
 use crate::theme::Palette;
 use crate::wrap;
 
@@ -354,6 +355,15 @@ fn row_height(row: &Row, texts: &FileTexts, widths: (u16, u16)) -> u32 {
     }
 }
 
+/// What a stream compares: a worktree, in a mode, against a base.
+#[derive(Debug)]
+struct Keys {
+    worktree: PathBuf,
+    mode: repo::Mode,
+    base: String,
+    target: Target,
+}
+
 /// The scroll position: a display line within one file's block, so the
 /// view stays put while other files load or change size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -459,19 +469,8 @@ pub(crate) struct App {
     pub(crate) message: Option<String>,
     /// Width the stream was laid out for.
     laid_out: Option<(u16, Layout, bool, (usize, usize))>,
-    /// The worktree's review, and the Git directory it is saved in; `None`
-    /// when it could not be read, so it is not overwritten.
-    pub(crate) review: review::State,
-    pub(crate) review_dir: Option<PathBuf>,
-    /// This viewer's hold on the review; without it the review is read-only.
-    pub(crate) review_lock: Option<review::Lock>,
-    /// The review changed since it was last saved.
-    pub(crate) review_dirty: bool,
-    /// The worktree `review` belongs to.
-    pub(crate) review_worktree: Option<PathBuf>,
-    /// Agent notes for this viewer's lifetime.
-    pub(crate) notes: Vec<Note>,
-    pub(crate) next_note: u64,
+    /// The review and agents' notes.
+    pub(crate) session: Session,
     /// The diff cursor, as a screen row of the diff pane.
     pub(crate) cursor_row: u16,
     /// On a split row, comment on the old side.
@@ -488,27 +487,6 @@ pub(crate) struct App {
     pub(crate) review_cards: Vec<Placed>,
     /// A card to bring into view once its file is laid out.
     pending_card: Option<CardRef>,
-}
-
-/// A card in the stream: a comment, or an agent's note.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum CardRef {
-    Comment(u64),
-    Note(u64),
-}
-
-/// A note an agent placed for the user, gone when its file changes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Note {
-    pub(crate) id: u64,
-    pub(crate) worktree: PathBuf,
-    pub(crate) place: review::Place,
-    pub(crate) text: String,
-    /// The content of its file when placed, once known.
-    pub(crate) content: Option<String>,
-    /// Shown on screen, and since scrolled out of view.
-    pub(crate) shown: bool,
-    pub(crate) seen: bool,
 }
 
 /// A source line under the cursor.
@@ -538,13 +516,7 @@ impl App {
             areas: Areas::default(),
             message: None,
             laid_out: None,
-            review: review::State::default(),
-            review_dir: None,
-            review_lock: None,
-            review_dirty: false,
-            review_worktree: None,
-            notes: Vec::new(),
-            next_note: 1,
+            session: Session::default(),
             cursor_row: 0,
             cursor_old: false,
             since: false,
@@ -560,36 +532,49 @@ impl App {
         &self.repo.worktrees[self.current].path
     }
 
-    /// Shows a freshly loaded change set. When it is the same worktree,
-    /// unchanged files keep their diffs and the view stays on the same
-    /// source line.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn load(
+    /// Shows a worktree's freshly loaded changes in `mode`, with its saved
+    /// review when it is newly shown. Returns what the user should know
+    /// about the review.
+    pub(crate) fn install(
         &mut self,
         worktree: PathBuf,
         mode: repo::Mode,
-        base: String,
-        target: Target,
-        files: Vec<FileChange>,
-        reader: Option<Reader>,
-    ) {
+        changes: Changes,
+        review: Result<(PathBuf, review::State), String>,
+    ) -> Option<String> {
+        let message = if self.session.shows(&worktree) {
+            None
+        } else {
+            self.end_visual();
+            self.session.install(&worktree, review)
+        };
+        let reader = Reader::new(changes.repo.to_thread_local(), changes.root);
+        let keys = Keys {
+            worktree,
+            mode,
+            base: changes.base,
+            target: changes.target,
+        };
+        self.load(keys, changes.files, Some(reader));
+        self.refresh_marks();
+        self.cards_changed();
+        message
+    }
+
+    /// Shows a change set. When it is the same worktree, unchanged files
+    /// keep their diffs and the view stays on the same source line.
+    fn load(&mut self, keys: Keys, files: Vec<FileChange>, reader: Option<Reader>) {
         self.cache.set_reader(reader);
         let same = self
             .stream
             .as_ref()
-            .is_some_and(|s| s.worktree == worktree && s.mode == mode);
+            .is_some_and(|s| s.worktree == keys.worktree && s.mode == keys.mode);
         if !same {
             self.stream = None;
             self.top = Anchor::default();
             self.sidebar.reset();
         }
-        self.replace_files(files);
-        if let Some(stream) = &mut self.stream {
-            stream.worktree = worktree;
-            stream.base = base;
-            stream.mode = mode;
-            stream.target = target;
-        }
+        self.replace_files(keys, files);
     }
 
     /// Replaces the changes of `paths` alone, from a path-limited scan:
@@ -605,15 +590,19 @@ impl App {
             .chain(files)
             .collect();
         merged.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-        self.replace_files(merged);
+        let keys = Keys {
+            worktree: stream.worktree.clone(),
+            mode: stream.mode,
+            base: stream.base.clone(),
+            target: stream.target,
+        };
+        self.replace_files(keys, merged);
     }
 
-    /// Swaps in a new file list for the current stream, keeping what still
+    /// Swaps in a new file list for the stream, keeping what still
     /// applies: diffs of files whose contents are unchanged, expanded
     /// regions, and the source line at the top of the view.
-    fn replace_files(&mut self, files: Vec<FileChange>) {
-        let mut previous: HashMap<String, FileView> = HashMap::new();
-        let mut anchor = None;
+    fn replace_files(&mut self, keys: Keys, files: Vec<FileChange>) {
         let old = self.stream.take();
         // A selection follows its file by path, and ends when it is gone.
         let visual = match &self.mode {
@@ -623,24 +612,12 @@ impl App {
                 .map(|f| (f.change.path.clone(), v.clone())),
             _ => None,
         };
-        let (worktree, base, mode, target) = if let Some(old) = old {
-            anchor = self.source_anchor(&old);
-            let keys = (old.worktree, old.base, old.mode, old.target);
-            previous = old
-                .files
-                .into_iter()
-                .map(|f| (f.change.path.clone(), f))
-                .collect();
-            keys
-        } else {
-            // `load` fills these in right after.
-            let null = gix::ObjectId::null(gix::hash::Kind::Sha1);
-            let target = Target {
-                base_tree: null,
-                head_tree: null,
-            };
-            (PathBuf::new(), String::new(), repo::Mode::Base, target)
-        };
+        let mut anchor = old.as_ref().and_then(|s| self.source_anchor(s));
+        let mut previous: HashMap<String, FileView> = old
+            .into_iter()
+            .flat_map(|s| s.files)
+            .map(|f| (f.change.path.clone(), f))
+            .collect();
         let files: Vec<FileView> = files
             .into_iter()
             .map(|change| match previous.remove(&change.path) {
@@ -682,10 +659,10 @@ impl App {
         self.pending_anchor = anchor;
         self.sidebar.set_files(&files);
         self.stream = Some(Stream {
-            worktree,
-            base,
-            mode,
-            target,
+            worktree: keys.worktree,
+            base: keys.base,
+            mode: keys.mode,
+            target: keys.target,
             offsets: vec![0; files.len() + 1],
             files,
         });
@@ -824,14 +801,10 @@ impl App {
             let line = self.top.line.checked_sub(f.body_start(header))?;
             (f.heights.rows() > 0).then(|| f.heights.locate(line).0)
         });
-        let index = cards::index(&self.review, &self.notes, &stream.worktree);
+        let index = cards::index(&self.session, &stream.worktree);
         let stack_width = cards::span(width, layout, 0, None).1;
-        let (review_cards, above) = cards::stack(
-            &self.review,
-            &self.notes,
-            index.review.iter().copied(),
-            stack_width,
-        );
+        let (review_cards, above) =
+            cards::stack(&self.session, index.review.iter().copied(), stack_width);
         self.review_cards = review_cards;
         for (i, f) in stream.files.iter_mut().enumerate() {
             let exact = (window.0..=window.1).contains(&i);
@@ -846,7 +819,7 @@ impl App {
                 f.key = None;
                 f.cards = Vec::new();
                 (f.file_cards, f.file_card_lines) =
-                    cards::stack(&self.review, &self.notes, mine.iter().copied(), stack_width);
+                    cards::stack(&self.session, mine.iter().copied(), stack_width);
                 continue;
             };
             // One-sided files read best full width, even in split layout.
@@ -886,7 +859,7 @@ impl App {
                     let mut stacked = Vec::new();
                     let mut under: Vec<(u32, CardRef, review::Side)> = Vec::new();
                     for &card in mine {
-                        let c = cards::get(&self.review, &self.notes, card);
+                        let c = cards::get(&self.session, card);
                         let outdated = matches!(c, Some(cards::Card::Comment(c)) if c.outdated);
                         let row = c
                             .as_ref()
@@ -900,7 +873,7 @@ impl App {
                     }
                     under.sort_by_key(|&(r, ..)| r);
                     (f.file_cards, f.file_card_lines) =
-                        cards::stack(&self.review, &self.notes, stacked, stack_width);
+                        cards::stack(&self.session, stacked, stack_width);
                     let nw = f.number_width();
                     let widths = code_widths(width, nw);
                     let texts = self.cache.texts(f);
@@ -915,7 +888,7 @@ impl App {
                             _ => code(r),
                         };
                         let w = cards::text_width(cards::span(width, layout, nw, Some(side)).1);
-                        let height = cards::get(&self.review, &self.notes, card)
+                        let height = cards::get(&self.session, card)
                             .map_or(0, |c| cards::lines(&c, w, false).len());
                         placed.push(Placed {
                             card,
@@ -944,11 +917,9 @@ impl App {
                 f.rows = Vec::new();
                 f.cards = Vec::new();
                 (f.file_cards, f.file_card_lines) = cards::stack(
-                    &self.review,
-                    &self.notes,
+                    &self.session,
                     mine.iter().copied().filter(|&c| {
-                        cards::get(&self.review, &self.notes, c)
-                            .is_some_and(|c| c.place().lines().is_none())
+                        cards::get(&self.session, c).is_some_and(|c| c.place().lines().is_none())
                     }),
                     stack_width,
                 );
@@ -1131,6 +1102,16 @@ impl App {
             row: row as usize,
             sub,
         }
+    }
+
+    /// The file at `path` within the worktree, or else the first whose
+    /// path ends with it.
+    pub(crate) fn find_file(&self, path: &str) -> Option<usize> {
+        let files = &self.stream.as_ref()?.files;
+        files
+            .iter()
+            .position(|f| f.change.path == path)
+            .or_else(|| files.iter().position(|f| f.change.path.ends_with(path)))
     }
 
     /// Jumps to the start of file `i`.
@@ -1546,6 +1527,16 @@ pub(crate) mod fixture {
         }
     }
 
+    /// The fixture worktree's stream keys.
+    pub(super) fn keys() -> Keys {
+        Keys {
+            worktree: "/r".into(),
+            mode: repo::Mode::Base,
+            base: "main".into(),
+            target: target(),
+        }
+    }
+
     pub(crate) fn app_with(files: &[(&str, &str, &str)]) -> App {
         let repo = Repo {
             worktrees: vec![crate::repo::Worktree {
@@ -1562,14 +1553,7 @@ pub(crate) mod fixture {
             Settings::default(),
         );
         let changes = files.iter().map(|(p, o, n)| change(p, o, n)).collect();
-        app.load(
-            "/r".into(),
-            repo::Mode::Base,
-            "main".into(),
-            target(),
-            changes,
-            None,
-        );
+        app.load(keys(), changes, None);
         for (i, &(_, o, n)) in files.iter().enumerate() {
             let (old, new) = (
                 Arc::new(Text::new(Arc::from(o))),
@@ -1589,7 +1573,9 @@ pub(crate) mod fixture {
 
 #[cfg(test)]
 mod tests {
-    use super::fixture::{app_with, change, target};
+    use std::path::Path;
+
+    use super::fixture::{app_with, change};
     use super::*;
 
     #[test]
@@ -1668,20 +1654,12 @@ mod tests {
         let before = app.top;
         app.layout(30, 40);
         assert_eq!(app.top.file, before.file);
-        let path = PathBuf::from("/r");
         let changes = vec![
             change("0.rs", "", "new\n"),
             change("a.rs", "", &body),
             change("b.rs", "", &body),
         ];
-        app.load(
-            path,
-            repo::Mode::Base,
-            "main".into(),
-            target(),
-            changes,
-            None,
-        );
+        app.load(super::fixture::keys(), changes, None);
         assert_eq!(app.top.file, 2, "anchored to b.rs by path");
     }
 
@@ -1712,12 +1690,12 @@ mod tests {
         let mut app = app_with(&[("a.rs", "a\n", "b\n")]);
         app.layout(80, 20);
         let first = review::Lock::take(&dir).expect("lock").expect("free");
-        app.review_dir = Some(dir.clone());
+        let message = app
+            .session
+            .install(Path::new("/r"), Ok((dir.clone(), review::State::default())));
+        assert_eq!(message.as_deref(), Some(review::READ_ONLY));
         app.toggle_reviewed();
-        assert!(
-            matches!(app.mode, Mode::Normal) && app.review.marks.is_empty(),
-            "read only"
-        );
+        assert!(app.session.state().marks.is_empty(), "read only");
         assert!(
             app.message
                 .as_deref()
@@ -1734,8 +1712,9 @@ mod tests {
         saved.save(&dir).expect("save");
         drop(first);
         app.toggle_reviewed();
-        assert_eq!(app.review.marks.len(), 1, "writable now");
-        assert_eq!(app.review.comments.len(), 1, "with the saved review");
+        let state = app.session.state();
+        assert_eq!(state.marks.len(), 1, "writable now");
+        assert_eq!(state.comments.len(), 1, "with the saved review");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

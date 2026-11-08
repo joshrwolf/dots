@@ -131,8 +131,7 @@ impl Runtime {
                 };
                 // Resolutions started before the pick do not replace it.
                 self.resolve_seq += 1;
-                self.app.review.agent = Some(agent.session_id.clone());
-                self.app.review_dirty = true;
+                self.app.session.edit().agent = Some(agent.session_id.clone());
                 self.set_resolution(Resolution::Agent {
                     agent,
                     worker: None,
@@ -169,7 +168,8 @@ impl Runtime {
         }
         let comments: Vec<&Comment> = self
             .app
-            .review
+            .session
+            .state()
             .drafts()
             .filter(|c| batch.includes(c.id))
             .collect();
@@ -206,9 +206,9 @@ impl Runtime {
         let text = review::message(&header, &comments);
         let ids: Vec<u64> = comments.iter().map(|c| c.id).collect();
         let changes: Vec<_> = stream.files.iter().map(|f| f.change.clone()).collect();
-        let seen = self.app.review.seen.clone();
+        let seen = self.app.session.state().seen.clone();
         let worktree = stream.worktree.clone();
-        let dir = self.app.review_dir.clone();
+        let dir = self.app.session.dir().map(Path::to_owned);
         let tx = self.tx.clone();
         self.sending = true;
         self.app.message = Some(format!("sending to {}…", agent.label()));
@@ -261,17 +261,15 @@ impl Runtime {
                     if n == 1 { "" } else { "s" },
                     d.to
                 );
-                if self.app.review_worktree.as_deref() == Some(worktree) {
-                    self.app.review.sent(ids, d.seen);
-                    self.app.review_dirty = true;
-                    self.app.cards_changed();
-                } else if let Some(dir) = dir
-                    && let Err(e) = review::record_sent(dir, ids, d.seen)
-                {
-                    let _ = write!(
-                        message,
-                        ", but not recorded there, so they stay drafts: {e:#}"
-                    );
+                match self.app.session.sent(worktree, dir, ids, d.seen) {
+                    Ok(true) => self.app.cards_changed(),
+                    Ok(false) => {}
+                    Err(e) => {
+                        let _ = write!(
+                            message,
+                            ", but not recorded there, so they stay drafts: {e}"
+                        );
+                    }
                 }
                 self.app.message = Some(message);
                 if self.app.since {
@@ -304,7 +302,7 @@ impl Runtime {
             .as_ref()
             .filter(|(_, i)| *i == self.app.current)
             .map(|(b, _)| b.clone());
-        let picked = self.app.review.agent.clone();
+        let picked = self.app.session.state().agent.clone();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let found = deliver::agents(&deliver::inbox_dir());
@@ -349,60 +347,8 @@ impl Runtime {
     }
 
     pub(super) fn save_review(&mut self) {
-        self.app.review_dirty = false;
-        // Without the lock, changes such as re-anchoring stay in this viewer.
-        let (Some(dir), Some(_)) = (&self.app.review_dir, &self.app.review_lock) else {
-            return;
-        };
-        if let Err(e) = self.app.review.save(dir) {
-            self.app.message = Some(format!("review not saved: {e:#}"));
-        }
-    }
-
-    /// Takes the saved review of a newly shown worktree; the one in memory
-    /// stays while the same worktree reloads.
-    pub(super) fn install_review(
-        &mut self,
-        worktree: &Path,
-        loaded: Result<(PathBuf, review::State), String>,
-    ) {
-        if self.app.review_worktree.as_deref() == Some(worktree) {
-            return;
-        }
-        if self.app.review_dirty {
-            self.save_review();
-        }
-        self.app.review_worktree = Some(worktree.to_owned());
-        self.resolution = None;
-        "→ …".clone_into(&mut self.app.target);
-        self.app.end_visual();
-        match loaded {
-            Ok((dir, state)) => {
-                self.app.review_lock = None;
-                // Saved since it was read off the event loop, or another
-                // viewer's: read it again under the lock.
-                self.app.review = match review::Lock::take_state(&dir) {
-                    Ok(Some((lock, state))) => {
-                        self.app.review_lock = Some(lock);
-                        state
-                    }
-                    Ok(None) => {
-                        self.app.message = Some(review::READ_ONLY.to_owned());
-                        state
-                    }
-                    Err(e) => {
-                        self.app.message = Some(format!("review is read-only: {e:#}"));
-                        state
-                    }
-                };
-                self.app.review_dir = Some(dir);
-            }
-            Err(e) => {
-                self.app.review = review::State::default();
-                self.app.review_dir = None;
-                self.app.review_lock = None;
-                self.app.message = Some(format!("review not loaded, so not saved: {e}"));
-            }
+        if let Err(e) = self.app.session.save() {
+            self.app.message = Some(e);
         }
     }
 

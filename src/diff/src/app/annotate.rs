@@ -3,9 +3,8 @@
 
 use std::collections::BTreeMap;
 
-use super::{App, CardRef, Line, Mode, Note, Pos};
-use crate::cards;
-use crate::diff::Text;
+use super::{App, Line, Mode, Pos};
+use crate::cards::{self, CardRef};
 use crate::editor::{Buffer, Editor};
 use crate::plan::{Kind, Row};
 use crate::review::{self, Place, Side, content_key};
@@ -23,10 +22,6 @@ pub(crate) enum Scope {
 
 /// Lines kept between the cursor and the edge of the view.
 const CURSOR_MARGIN: u16 = 3;
-
-fn text_lines(text: &Text) -> Vec<&str> {
-    (0..text.len()).map(|i| text.line(i)).collect()
-}
 
 impl App {
     /// The stream line under the diff cursor.
@@ -116,6 +111,11 @@ impl App {
 
     /// The card under the cursor.
     pub(crate) fn cursor_card(&self) -> Option<CardRef> {
+        self.card_at(self.cursor_line())
+    }
+
+    /// The card stream line `line` shows.
+    pub(crate) fn card_at(&self, line: u32) -> Option<CardRef> {
         let stream = self.stream.as_ref()?;
         let hit = |placed: &[cards::Placed], row: u32, line: u32| {
             placed
@@ -123,7 +123,7 @@ impl App {
                 .find(|p| p.row == row && (p.start..p.start + p.height).contains(&line))
                 .map(|p| p.card)
         };
-        match self.line_at(self.cursor_line()) {
+        match self.line_at(line) {
             Line::Cards {
                 review: true, line, ..
             } => hit(&self.review_cards, 0, line),
@@ -216,27 +216,16 @@ impl App {
     /// Whether this viewer may change the review. It may once it holds the
     /// review, taking it with the saved review from a viewer that is gone.
     pub(crate) fn review_writable(&mut self) -> bool {
-        let Some(dir) = &self.review_dir else {
-            // Not loaded, so never saved.
-            return true;
-        };
-        if self.review_lock.is_some() {
-            return true;
-        }
-        match review::Lock::take_state(dir) {
-            Ok(Some((lock, state))) => {
-                self.review = state;
-                self.review_lock = Some(lock);
-                self.refresh_marks();
-                self.cards_changed();
+        match self.session.hold() {
+            Ok(reloaded) => {
+                if reloaded {
+                    self.refresh_marks();
+                    self.cards_changed();
+                }
                 true
             }
-            Ok(None) => {
-                self.message = Some(review::READ_ONLY.to_owned());
-                false
-            }
             Err(e) => {
-                self.message = Some(format!("review is read-only: {e:#}"));
+                self.message = Some(e);
                 false
             }
         }
@@ -327,7 +316,7 @@ impl App {
         if !self.review_writable() {
             return;
         }
-        let Some(c) = self.review.comments.iter().find(|c| c.id == id) else {
+        let Some(c) = self.session.state().comments.iter().find(|c| c.id == id) else {
             return;
         };
         if c.sent {
@@ -351,11 +340,10 @@ impl App {
         match card {
             CardRef::Comment(id) => {
                 if self.review_writable() {
-                    self.review.comments.retain(|c| c.id != id);
-                    self.review_dirty = true;
+                    self.session.edit().comments.retain(|c| c.id != id);
                 }
             }
-            CardRef::Note(id) => self.notes.retain(|n| n.id != id),
+            CardRef::Note(id) => self.session.dismiss_note(id),
         }
         self.cards_changed();
     }
@@ -365,13 +353,15 @@ impl App {
     pub(crate) fn save_editor(&mut self, editor: Editor) -> Option<u64> {
         let text = editor.buffer.text();
         let empty = text.trim().is_empty() && !editor.suggestion;
+        let content = self.anchor_content(&editor.place);
+        let review = self.session.edit();
         let id = match editor.editing {
             Some(id) if empty => {
-                self.review.comments.retain(|c| c.id != id);
+                review.comments.retain(|c| c.id != id);
                 None
             }
             Some(id) => {
-                let c = self.review.comments.iter_mut().find(|c| c.id == id)?;
+                let c = review.comments.iter_mut().find(|c| c.id == id)?;
                 if editor.suggestion {
                     c.suggestion = Some(text);
                 } else {
@@ -382,20 +372,18 @@ impl App {
             }
             None if empty => None,
             None => {
-                let content = self.anchor_content(&editor.place);
                 let (text, suggestion) = if editor.suggestion {
                     (String::new(), Some(text))
                 } else {
                     (text.trim_end().to_owned(), None)
                 };
-                let id = self.review.add(editor.place, editor.kind, text, suggestion);
-                if let Some(c) = self.review.comments.iter_mut().find(|c| c.id == id) {
+                let id = review.add(editor.place, editor.kind, text, suggestion);
+                if let Some(c) = review.comments.iter_mut().find(|c| c.id == id) {
                     c.content = content;
                 }
                 Some(id)
             }
         };
-        self.review_dirty = true;
         self.cards_changed();
         id
     }
@@ -430,12 +418,33 @@ impl App {
     /// Drafts and sent comments per file path, for the sidebar.
     pub(crate) fn draft_counts(&self) -> BTreeMap<&str, usize> {
         let mut out = BTreeMap::new();
-        for c in self.review.drafts() {
+        for c in self.session.state().drafts() {
             if let Some(path) = c.place.path() {
                 *out.entry(path).or_default() += 1;
             }
         }
         out
+    }
+
+    /// Marks the files under the path prefix `prefix` reviewed at their
+    /// current contents.
+    pub(crate) fn mark_reviewed(&mut self, prefix: &str) {
+        let Some(stream) = &self.stream else { return };
+        for f in stream
+            .files
+            .iter()
+            .filter(|f| f.change.path.starts_with(prefix))
+        {
+            let Some(content) = f.content_key() else {
+                continue;
+            };
+            if !self.session.state().reviewed(&f.change.path, &content) {
+                self.session
+                    .edit()
+                    .toggle_reviewed(&f.change.path, &content);
+            }
+        }
+        self.refresh_marks();
     }
 
     /// Marks the cursor's file reviewed, or unmarks it.
@@ -454,8 +463,10 @@ impl App {
             self.message = Some("wait for the file's diff".to_owned());
             return;
         };
-        f.reviewed = self.review.toggle_reviewed(&f.change.path, &content);
-        self.review_dirty = true;
+        f.reviewed = self
+            .session
+            .edit()
+            .toggle_reviewed(&f.change.path, &content);
     }
 
     /// Sets every file's reviewed flag from the marks.
@@ -466,62 +477,31 @@ impl App {
         for f in &mut stream.files {
             f.reviewed = f
                 .content_key()
-                .is_some_and(|c| self.review.reviewed(&f.change.path, &c));
+                .is_some_and(|c| self.session.state().reviewed(&f.change.path, &c));
         }
     }
 
     /// After file `i`'s diff arrived: its reviewed flag, comments that
     /// follow their lines, and notes that go when the content changed.
     pub(super) fn after_body(&mut self, i: usize, texts: Option<&super::FileTexts>) {
-        let since = self.since;
         let Some(stream) = &mut self.stream else {
             return;
         };
-        let worktree = &stream.worktree;
         let Some(f) = stream.files.get_mut(i) else {
             return;
         };
         let content = f.content_key();
+        let path = f.change.path.as_str();
         f.reviewed = content
             .as_deref()
-            .is_some_and(|c| self.review.reviewed(&f.change.path, c));
-        let path = f.change.path.as_str();
+            .is_some_and(|c| self.session.state().reviewed(path, c));
         let mut changed = false;
-        if let Some(content) = content {
-            let before = self.notes.len();
-            self.notes.retain_mut(|n| {
-                if n.worktree != *worktree || n.place.path() != Some(path) {
-                    return true;
-                }
-                match &n.content {
-                    None => {
-                        n.content = Some(content.clone());
-                        true
-                    }
-                    Some(c) => *c == content,
-                }
-            });
-            changed |= self.notes.len() != before;
+        if let Some(content) = &content {
+            changed |= self.session.note_content(&stream.worktree, path, content);
         }
-        let anchored = self
-            .review
-            .comments
-            .iter()
-            .any(|c| matches!(&c.place, Place::Lines { path: p, .. } if p == path));
-        if let (true, Some(texts)) = (anchored, texts) {
-            let before = self.review.comments.clone();
-            let new_key = content_key(texts.new.0);
-            self.review
-                .file_changed(path, Side::New, &new_key, &text_lines(&texts.new.1));
-            if !since {
-                let old_key = content_key(texts.old.0);
-                self.review
-                    .file_changed(path, Side::Old, &old_key, &text_lines(&texts.old.1));
-            }
-            if self.review.comments != before {
-                self.review_dirty = true;
-                changed = true;
-            }
+        if let Some(texts) = texts {
+            // Since the last send, the old side is what was sent.
+            changed |= self.session.file_changed(path, texts, !self.since);
         }
         if changed {
             self.cards_changed();
@@ -539,50 +519,30 @@ impl App {
                 .find(|f| f.change.path == p)?
                 .content_key()
         });
-        let id = self.next_note;
-        self.next_note += 1;
-        self.notes.push(Note {
-            id,
-            worktree,
-            place,
-            text,
-            content,
-            shown: false,
-            seen: false,
-        });
+        self.session.add_note(worktree, place, text, content);
         self.cards_changed();
     }
 
     /// Clears the notes of one file, or all of them.
     pub(crate) fn clear_notes(&mut self, path: Option<&str>) {
-        self.notes
-            .retain(|n| path.is_some_and(|p| n.place.path() != Some(p)));
+        self.session.clear_notes(path);
         self.cards_changed();
     }
 
     /// Notes on screen become shown; shown ones off screen become seen, and
     /// draw dimmed.
     pub(crate) fn mark_notes_seen(&mut self, rows: u16) {
-        if self.notes.is_empty() {
+        if self.session.notes().is_empty() {
             return;
         }
         let top = self.global_top();
-        let mut visible = Vec::new();
-        for line in top..top + u32::from(rows) {
-            let saved = self.cursor_row;
-            self.cursor_row = u16::try_from(line - top).unwrap_or(0);
-            if let Some(CardRef::Note(id)) = self.cursor_card() {
-                visible.push(id);
-            }
-            self.cursor_row = saved;
-        }
-        for n in &mut self.notes {
-            if visible.contains(&n.id) {
-                n.shown = true;
-            } else if n.shown {
-                n.seen = true;
-            }
-        }
+        let visible: Vec<u64> = (top..top + u32::from(rows))
+            .filter_map(|line| match self.card_at(line) {
+                Some(CardRef::Note(id)) => Some(id),
+                _ => None,
+            })
+            .collect();
+        self.session.notes_seen(&visible);
     }
 
     /// Cards of the shown worktree in stream order: review-level, then by
@@ -591,7 +551,7 @@ impl App {
         let Some(stream) = &self.stream else {
             return Vec::new();
         };
-        let index = cards::index(&self.review, &self.notes, &stream.worktree);
+        let index = cards::index(&self.session, &stream.worktree);
         let mut out: Vec<(usize, u32, CardRef)> = index.review.iter().map(|&c| (0, 0, c)).collect();
         for (i, f) in stream.files.iter().enumerate() {
             for &card in index
@@ -600,7 +560,7 @@ impl App {
                 .into_iter()
                 .flatten()
             {
-                let line = cards::get(&self.review, &self.notes, card)
+                let line = cards::get(&self.session, card)
                     .and_then(|c| c.place().lines().map(|l| l.end + 1))
                     .unwrap_or(0);
                 out.push((i, line, card));
