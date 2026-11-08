@@ -141,6 +141,16 @@ pub(crate) enum Body {
     Text(Arc<FileDiff>),
 }
 
+/// What a stream is laid out for.
+#[derive(Debug, Clone, Copy)]
+struct Measure {
+    width: u16,
+    layout: Layout,
+    wrap: bool,
+    /// Width of stacked cards.
+    stack_width: u16,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LayoutKey {
     width: u16,
@@ -280,6 +290,105 @@ impl FileView {
         self.planned = None;
     }
 
+    /// Lays the file out with its `cards`: plans its rows, and near the
+    /// view (`exact`) keeps them, places cards under the lines they are
+    /// about and measures wrapped heights. Elsewhere it keeps a row count,
+    /// and only cards not about lines stack under the header.
+    fn lay_out(
+        &mut self,
+        m: Measure,
+        exact: bool,
+        session: &Session,
+        cards: &[CardRef],
+        cache: &Cache,
+    ) {
+        let Body::Text(diff) = &self.body else {
+            self.rows = Vec::new();
+            self.heights = Heights::default();
+            self.key = None;
+            self.cards = Vec::new();
+            (self.file_cards, self.file_card_lines) =
+                cards::stack(session, cards.iter().copied(), m.stack_width);
+            return;
+        };
+        // One-sided files read best full width, even in split layout.
+        let layout = if diff.old_len == 0 || diff.new_len == 0 {
+            Layout::Unified
+        } else {
+            m.layout
+        };
+        let key = LayoutKey {
+            width: m.width,
+            layout,
+            wrap: m.wrap,
+            exact,
+        };
+        let planned = (layout, self.expanded.len());
+        let have_rows =
+            self.rows.len() == self.heights.rows() as usize && self.planned == Some(planned);
+        if self.planned != Some(planned) || (exact && !have_rows) {
+            self.rows = plan::plan(
+                &diff.hunks,
+                diff.old_len,
+                diff.new_len,
+                &self.expanded,
+                plan::Options {
+                    layout,
+                    context: CONTEXT,
+                    cap: ROW_CAP,
+                },
+            );
+            self.planned = Some(planned);
+            self.heights = Heights::uniform(u32::try_from(self.rows.len()).unwrap_or(u32::MAX));
+            self.key = None;
+        }
+        if !exact {
+            self.rows = Vec::new();
+            self.cards = Vec::new();
+            let unlined = cards
+                .iter()
+                .copied()
+                .filter(|&c| cards::get(session, c).is_some_and(|c| c.place().lines().is_none()));
+            (self.file_cards, self.file_card_lines) = cards::stack(session, unlined, m.stack_width);
+            // A measurement at another width or layout is no estimate.
+            if self
+                .key
+                .is_none_or(|k| (k.width, k.layout, k.wrap) != (m.width, layout, m.wrap))
+            {
+                self.heights = Heights::uniform(self.heights.rows());
+                self.key = Some(key);
+            }
+            return;
+        }
+        if self.key == Some(key) {
+            return;
+        }
+        let nw = self.number_width();
+        let widths = code_widths(m.width, nw);
+        let texts = cache.texts(self);
+        let code = |r: u32| match &texts {
+            Some(texts) if m.wrap => row_height(&self.rows[r as usize], texts, widths),
+            _ => 1,
+        };
+        let (placed, stacked) = cards::place(session, cards, &self.rows, code, m.width, layout, nw);
+        (self.file_cards, self.file_card_lines) = cards::stack(session, stacked, m.stack_width);
+        self.heights = if texts.is_some() && m.wrap || !placed.is_empty() {
+            let mut next = placed.iter().peekable();
+            Heights::measured((0..self.rows.len()).map(|r| {
+                let r = u32::try_from(r).unwrap_or(u32::MAX);
+                let mut h = code(r);
+                while let Some(p) = next.next_if(|p| p.row == r) {
+                    h = p.start + p.height;
+                }
+                h
+            }))
+        } else {
+            Heights::uniform(self.heights.rows())
+        };
+        self.cards = placed;
+        self.key = Some(key);
+    }
+
     /// Whether `row` lies in a hunk changed by the last
     /// refresh, still marked at `now`.
     pub(crate) fn flashed(&self, row: &Row, now: std::time::Instant) -> bool {
@@ -381,12 +490,59 @@ pub(crate) struct Stream {
     pub(crate) target: Target,
     pub(crate) files: Vec<FileView>,
     /// Start line of each file block; one longer than `files`.
-    pub(crate) offsets: Vec<u32>,
+    offsets: Vec<u32>,
+    /// What the offsets were measured for: pane width, layout, wrapping
+    /// and the files laid out exactly. `None` once they are stale.
+    laid_out: Option<(u16, Layout, bool, Window)>,
 }
 
+/// Files laid out exactly around the view, first to last.
+type Window = (usize, usize);
+
 impl Stream {
+    fn new(keys: Keys, files: Vec<FileView>) -> Self {
+        Self {
+            worktree: keys.worktree,
+            base: keys.base,
+            mode: keys.mode,
+            target: keys.target,
+            offsets: vec![0; files.len() + 1],
+            laid_out: None,
+            files,
+        }
+    }
+
+    /// Lines in the stream, as last laid out.
     pub(crate) fn total(&self) -> u32 {
         self.offsets.last().copied().unwrap_or(0)
+    }
+
+    /// The first line of file `i`'s block.
+    pub(crate) fn offset(&self, i: usize) -> Option<u32> {
+        self.offsets.get(i).copied()
+    }
+
+    /// The file whose block holds stream line `line`, or the last file.
+    pub(crate) fn file_at(&self, line: u32) -> usize {
+        self.offsets
+            .partition_point(|&o| o <= line)
+            .saturating_sub(1)
+            .min(self.files.len().saturating_sub(1))
+    }
+
+    /// Marks the layout stale, so the next draw lays the stream out again.
+    fn relayout(&mut self) {
+        self.laid_out = None;
+    }
+
+    /// Sums the file blocks' lines into their start lines.
+    fn measure(&mut self, header: u32) {
+        let mut at = 0;
+        for (i, f) in self.files.iter().enumerate() {
+            self.offsets[i] = at;
+            at += f.body_start(header) + f.body_lines() + 1;
+        }
+        self.offsets[self.files.len()] = at;
     }
 
     pub(crate) fn counts(&self) -> (u32, u32, bool) {
@@ -467,8 +623,6 @@ pub(crate) struct App {
     pending_anchor: Option<(String, SourceLine)>,
     pub(crate) areas: Areas,
     pub(crate) message: Option<String>,
-    /// Width the stream was laid out for.
-    laid_out: Option<(u16, Layout, bool, (usize, usize))>,
     /// The review and agents' notes.
     pub(crate) session: Session,
     /// The diff cursor, as a screen row of the diff pane.
@@ -515,7 +669,6 @@ impl App {
             pending_anchor: None,
             areas: Areas::default(),
             message: None,
-            laid_out: None,
             session: Session::default(),
             cursor_row: 0,
             cursor_old: false,
@@ -658,15 +811,7 @@ impl App {
         }
         self.pending_anchor = anchor;
         self.sidebar.set_files(&files);
-        self.stream = Some(Stream {
-            worktree: keys.worktree,
-            base: keys.base,
-            mode: keys.mode,
-            target: keys.target,
-            offsets: vec![0; files.len() + 1],
-            files,
-        });
-        self.laid_out = None;
+        self.stream = Some(Stream::new(keys, files));
         self.sync_files_cursor();
     }
 
@@ -721,7 +866,7 @@ impl App {
         }
         f.body = body;
         f.invalidate();
-        self.laid_out = None;
+        stream.relayout();
         self.after_body(file, texts.as_ref());
         if near && let Some(texts) = texts {
             self.cache.keep_texts(texts);
@@ -730,7 +875,9 @@ impl App {
 
     /// Whether file `i` lies in the window laid out exactly around the view.
     fn near_view(&self, i: usize) -> bool {
-        self.laid_out
+        self.stream
+            .as_ref()
+            .and_then(|s| s.laid_out)
             .map_or(i <= self.top.file + 2, |(.., w)| (w.0..=w.1).contains(&i))
     }
 
@@ -761,7 +908,6 @@ impl App {
     /// the view; the rest keep a row count at one line per row until they
     /// come close, so huge streams lay out in time and memory proportional
     /// to what is on screen.
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn layout(&mut self, width: u16, rows: u16) {
         let layout = self.effective_layout(width);
         let wrap = self.settings.wrap;
@@ -770,24 +916,17 @@ impl App {
         let Some(stream) = &self.stream else {
             return;
         };
-        let last = stream.files.len().saturating_sub(1);
-        let near = |line: u32| {
-            stream
-                .offsets
-                .partition_point(|&o| o <= line)
-                .saturating_sub(1)
-                .min(last)
-        };
         // Before the first layout there are no offsets to look files up by.
         let window = if stream.total() == 0 {
+            let last = stream.files.len().saturating_sub(1);
             (self.top.file, (self.top.file + 2).min(last))
         } else {
             (
-                near(top.saturating_sub(u32::from(rows))),
-                near(top + 3 * u32::from(rows)),
+                stream.file_at(top.saturating_sub(u32::from(rows))),
+                stream.file_at(top + 3 * u32::from(rows)),
             )
         };
-        if self.laid_out == Some((width, layout, wrap, window)) {
+        if stream.laid_out == Some((width, layout, wrap, window)) {
             return;
         }
         for i in window.0..=window.1 {
@@ -802,146 +941,32 @@ impl App {
             (f.heights.rows() > 0).then(|| f.heights.locate(line).0)
         });
         let index = cards::index(&self.session, &stream.worktree);
-        let stack_width = cards::span(width, layout, 0, None).1;
-        let (review_cards, above) =
-            cards::stack(&self.session, index.review.iter().copied(), stack_width);
+        let measure = Measure {
+            width,
+            layout,
+            wrap,
+            stack_width: cards::span(width, layout, 0, None).1,
+        };
+        let (review_cards, above) = cards::stack(
+            &self.session,
+            index.review.iter().copied(),
+            measure.stack_width,
+        );
         self.review_cards = review_cards;
         for (i, f) in stream.files.iter_mut().enumerate() {
-            let exact = (window.0..=window.1).contains(&i);
             f.above = if i == 0 { above } else { 0 };
             let mine = index
                 .by_path
                 .get(f.change.path.as_str())
                 .map_or(&[][..], Vec::as_slice);
-            let Body::Text(diff) = &f.body else {
-                f.rows = Vec::new();
-                f.heights = Heights::default();
-                f.key = None;
-                f.cards = Vec::new();
-                (f.file_cards, f.file_card_lines) =
-                    cards::stack(&self.session, mine.iter().copied(), stack_width);
-                continue;
-            };
-            // One-sided files read best full width, even in split layout.
-            let layout = if diff.old_len == 0 || diff.new_len == 0 {
-                Layout::Unified
-            } else {
-                layout
-            };
-            let key = LayoutKey {
-                width,
-                layout,
-                wrap,
-                exact,
-            };
-            let planned = (layout, f.expanded.len());
-            let have_rows = f.rows.len() == f.heights.rows() as usize && f.planned == Some(planned);
-            if f.planned != Some(planned) || (exact && !have_rows) {
-                f.rows = plan::plan(
-                    &diff.hunks,
-                    diff.old_len,
-                    diff.new_len,
-                    &f.expanded,
-                    plan::Options {
-                        layout,
-                        context: CONTEXT,
-                        cap: ROW_CAP,
-                    },
-                );
-                f.planned = Some(planned);
-                f.heights = Heights::uniform(u32::try_from(f.rows.len()).unwrap_or(u32::MAX));
-                f.key = None;
-            }
-            if exact {
-                if f.key != Some(key) {
-                    // Cards whose lines are shown go under them; the rest
-                    // stack under the header.
-                    let mut stacked = Vec::new();
-                    let mut under: Vec<(u32, CardRef, review::Side)> = Vec::new();
-                    for &card in mine {
-                        let c = cards::get(&self.session, card);
-                        let outdated = matches!(c, Some(cards::Card::Comment(c)) if c.outdated);
-                        let row = c
-                            .as_ref()
-                            .and_then(|c| c.place().lines())
-                            .filter(|_| !outdated)
-                            .and_then(|l| cards::attach(&f.rows, l).map(|r| (r, l.side)));
-                        match row {
-                            Some((r, side)) => under.push((r, card, side)),
-                            None => stacked.push(card),
-                        }
-                    }
-                    under.sort_by_key(|&(r, ..)| r);
-                    (f.file_cards, f.file_card_lines) =
-                        cards::stack(&self.session, stacked, stack_width);
-                    let nw = f.number_width();
-                    let widths = code_widths(width, nw);
-                    let texts = self.cache.texts(f);
-                    let mut placed: Vec<Placed> = Vec::with_capacity(under.len());
-                    let code = |r: u32| match &texts {
-                        Some(texts) if wrap => row_height(&f.rows[r as usize], texts, widths),
-                        _ => 1,
-                    };
-                    for (r, card, side) in under {
-                        let start = match placed.last() {
-                            Some(p) if p.row == r => p.start + p.height,
-                            _ => code(r),
-                        };
-                        let w = cards::text_width(cards::span(width, layout, nw, Some(side)).1);
-                        let height = cards::get(&self.session, card)
-                            .map_or(0, |c| cards::lines(&c, w, false).len());
-                        placed.push(Placed {
-                            card,
-                            row: r,
-                            start,
-                            height: u32::try_from(height).unwrap_or(1),
-                        });
-                    }
-                    f.heights = if texts.is_some() && wrap || !placed.is_empty() {
-                        let mut next = placed.iter().peekable();
-                        Heights::measured((0..f.rows.len()).map(|r| {
-                            let r = u32::try_from(r).unwrap_or(u32::MAX);
-                            let mut h = code(r);
-                            while let Some(p) = next.next_if(|p| p.row == r) {
-                                h = p.start + p.height;
-                            }
-                            h
-                        }))
-                    } else {
-                        Heights::uniform(f.heights.rows())
-                    };
-                    f.cards = placed;
-                    f.key = Some(key);
-                }
-            } else {
-                f.rows = Vec::new();
-                f.cards = Vec::new();
-                (f.file_cards, f.file_card_lines) = cards::stack(
-                    &self.session,
-                    mine.iter().copied().filter(|&c| {
-                        cards::get(&self.session, c).is_some_and(|c| c.place().lines().is_none())
-                    }),
-                    stack_width,
-                );
-                // A measurement at another width or layout is no estimate.
-                if f.key
-                    .is_none_or(|k| (k.width, k.layout, k.wrap) != (width, layout, wrap))
-                {
-                    f.heights = Heights::uniform(f.heights.rows());
-                    f.key = Some(key);
-                }
-            }
+            let exact = (window.0..=window.1).contains(&i);
+            f.lay_out(measure, exact, &self.session, mine, &self.cache);
         }
-        let mut at = 0;
-        for (i, f) in stream.files.iter().enumerate() {
-            stream.offsets[i] = at;
-            at += f.body_start(header) + f.body_lines() + 1;
-        }
-        stream.offsets[stream.files.len()] = at;
+        stream.measure(header);
         if let (Some(row), Some(f)) = (anchor_row, stream.files.get(self.top.file)) {
             self.top.line = f.body_start(header) + f.heights.start(row);
         }
-        self.laid_out = Some((width, layout, wrap, window));
+        stream.laid_out = Some((width, layout, wrap, window));
         self.restore_anchor();
         self.settle_card(rows);
     }
@@ -1040,11 +1065,7 @@ impl App {
         let Some(stream) = &self.stream else { return };
         let max = stream.total().saturating_sub(u32::from(view_rows));
         let line = line.min(max);
-        let file = stream
-            .offsets
-            .partition_point(|&o| o <= line)
-            .saturating_sub(1)
-            .min(stream.files.len().saturating_sub(1));
+        let file = stream.file_at(line);
         self.top = Anchor {
             file,
             line: line - stream.offsets[file],
@@ -1215,7 +1236,7 @@ impl App {
         };
         f.expanded.insert(id);
         f.invalidate();
-        self.laid_out = None;
+        stream.relayout();
         true
     }
 
@@ -1234,20 +1255,23 @@ impl App {
             f.expanded.clear();
         }
         f.invalidate();
-        self.laid_out = None;
+        stream.relayout();
     }
 
     /// Folds file `file` to its header or unfolds it. A file folded from
     /// inside shows its header at the top.
     pub(crate) fn toggle_fold(&mut self, file: usize) {
-        let Some(f) = self.stream.as_mut().and_then(|s| s.files.get_mut(file)) else {
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
+        let Some(f) = stream.files.get_mut(file) else {
             return;
         };
         f.folded = !f.folded;
         if f.folded && self.top.file == file {
             self.top.line = self.top.line.min(f.above);
         }
-        self.laid_out = None;
+        stream.relayout();
     }
 
     /// Folds every file, or unfolds them all when all are folded.
@@ -1262,12 +1286,12 @@ impl App {
         if let Some(f) = stream.files.get(self.top.file) {
             self.top.line = self.top.line.min(f.above);
         }
-        self.laid_out = None;
+        stream.relayout();
     }
 
     pub(crate) fn relayout(&mut self) {
-        self.laid_out = None;
         if let Some(stream) = &mut self.stream {
+            stream.relayout();
             for f in &mut stream.files {
                 f.invalidate();
             }

@@ -166,6 +166,53 @@ pub(crate) fn attach(rows: &[Row], lines: &review::Lines) -> Option<u32> {
         .and_then(|i| u32::try_from(i).ok())
 }
 
+/// Places the cards about shown lines under the rows showing them: a
+/// row's cards follow its code, `code(row)` lines tall, one after another.
+/// Returns them in row order, and the rest, which stack under the header:
+/// cards not about lines, about lines not shown, or outdated.
+pub(crate) fn place(
+    session: &Session,
+    cards: &[CardRef],
+    rows: &[Row],
+    code: impl Fn(u32) -> u32,
+    pane: u16,
+    layout: Layout,
+    number_width: u16,
+) -> (Vec<Placed>, Vec<CardRef>) {
+    let mut stacked = Vec::new();
+    let mut under: Vec<(u32, CardRef, Side)> = Vec::new();
+    for &card in cards {
+        let c = get(session, card);
+        let outdated = matches!(c, Some(Card::Comment(c)) if c.outdated);
+        let row = c
+            .as_ref()
+            .and_then(|c| c.place().lines())
+            .filter(|_| !outdated)
+            .and_then(|l| attach(rows, l).map(|r| (r, l.side)));
+        match row {
+            Some((r, side)) => under.push((r, card, side)),
+            None => stacked.push(card),
+        }
+    }
+    under.sort_by_key(|&(r, ..)| r);
+    let mut placed: Vec<Placed> = Vec::with_capacity(under.len());
+    for (row, card, side) in under {
+        let start = match placed.last() {
+            Some(p) if p.row == row => p.start + p.height,
+            _ => code(row),
+        };
+        let width = text_width(span(pane, layout, number_width, Some(side)).1);
+        let height = get(session, card).map_or(0, |c| lines(&c, width, false).len());
+        placed.push(Placed {
+            card,
+            row,
+            start,
+            height: u32::try_from(height).unwrap_or(1),
+        });
+    }
+    (placed, stacked)
+}
+
 /// Where a card is drawn within a pane `pane` wide: its first column and
 /// width. Row cards line up with the code of their side; stacked cards
 /// (`side` `None`) take the width.
@@ -314,6 +361,39 @@ mod tests {
             lines(&card, 40, false)[0].text,
             "issue · suggestion · draft"
         );
+    }
+
+    #[test]
+    fn cards_follow_their_row_and_the_rest_stack() {
+        let rows = [
+            Row::Line {
+                kind: Kind::Context,
+                old: Some(0),
+                new: Some(0),
+            },
+            Row::Gap { id: 1, hidden: 9 },
+        ];
+        let mut session = Session::default();
+        let mut add = |place| {
+            let id = session
+                .edit()
+                .add(place, CommentKind::Comment, "x".into(), None);
+            CardRef::Comment(id)
+        };
+        let line = |n| Place::Lines {
+            path: "a.rs".into(),
+            lines: lines_at(Side::New, n, n),
+        };
+        let (first, second, hidden) = (add(line(0)), add(line(0)), add(line(5)));
+        let file = add(Place::File {
+            path: "a.rs".into(),
+        });
+        let cards = [file, second, hidden, first];
+        let (placed, stacked) = place(&session, &cards, &rows, |_| 2, 80, Layout::Unified, 3);
+        let at: Vec<_> = placed.iter().map(|p| (p.card, p.row, p.start)).collect();
+        // Each card is a title and one line, under the row's two lines of code.
+        assert_eq!(at, [(second, 0, 2), (first, 0, 4)]);
+        assert_eq!(stacked, [file, hidden]);
     }
 
     #[test]

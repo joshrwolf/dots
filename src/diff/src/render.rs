@@ -301,7 +301,8 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
             && app
                 .stream
                 .as_ref()
-                .is_some_and(|s| s.offsets[first] < u32::from(rows))
+                .and_then(|s| s.offset(first))
+                .is_some_and(|o| o < u32::from(rows))
         {
             let (body, texts) = app::compute_body(&mut reader, &files[first]);
             app.set_body(first, body, texts);

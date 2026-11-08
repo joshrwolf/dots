@@ -75,14 +75,7 @@ impl App {
         if stream.files.is_empty() {
             return None;
         }
-        let line = self.cursor_line();
-        Some(
-            stream
-                .offsets
-                .partition_point(|&o| o <= line)
-                .saturating_sub(1)
-                .min(stream.files.len() - 1),
-        )
+        Some(stream.file_at(self.cursor_line()))
     }
 
     /// The source line under the cursor: on a split row, the new side
@@ -407,8 +400,8 @@ impl App {
 
     /// Lays cards out again after they changed.
     pub(crate) fn cards_changed(&mut self) {
-        self.laid_out = None;
         if let Some(stream) = &mut self.stream {
+            stream.relayout();
             for f in &mut stream.files {
                 f.key = None;
             }
