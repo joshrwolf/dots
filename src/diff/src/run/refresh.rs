@@ -9,7 +9,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
-use crate::app::{self, Summary};
+use crate::app;
 use crate::moves;
 use crate::repo::{self, FileChange, GitState, Reader, Side, Stamp};
 use crate::review;
@@ -414,12 +414,15 @@ impl Runtime {
         }
         let (added, removed, done) = stream.counts();
         if done {
-            let summary = Summary {
-                added,
-                removed,
-                files: stream.files.len(),
-            };
-            self.app.summaries.insert(stream.worktree.clone(), summary);
+            // The content name and times come from the summary threads.
+            let summary = self
+                .app
+                .summaries
+                .entry(stream.worktree.clone())
+                .or_default();
+            summary.added = added;
+            summary.removed = removed;
+            summary.files = stream.files.len();
         }
     }
 }

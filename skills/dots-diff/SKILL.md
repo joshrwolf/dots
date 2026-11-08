@@ -24,6 +24,16 @@ scrolls to that file. Then tell the user in chat what to look at; the viewer
 does not explain itself. Use `show=true` always: without it the action
 toggles, and closes a viewer the user has open.
 
+## What the user sees without you
+
+The viewer reads Pi's worker registry and the interactive sessions' inbox
+registrations itself. Its worktree switcher lists worktrees waiting for review
+first, naming the worker (label and model) or session working in each and the
+worker's status; the status line names the shown worktree's. Opening a
+worktree counts as looking at it until its changes change again. A clear,
+specific worker label therefore helps the user more than opening the viewer
+for each worker.
+
 ## Steer a running viewer
 
 ```sh

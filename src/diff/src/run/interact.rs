@@ -196,7 +196,7 @@ impl Runtime {
             }
             Action::Reviewed => self.app.toggle_reviewed(),
             Action::Switcher => {
-                self.app.mode = Mode::Switcher(Switcher::new(&self.app.repo, self.app.current));
+                self.app.mode = Mode::Switcher(Switcher::new(&self.app));
             }
             Action::NextWorktree => {
                 self.switch((self.app.current + 1) % self.app.repo.worktrees.len());
@@ -260,7 +260,7 @@ impl Runtime {
 
     /// Keys while the worktree switcher is open: typing filters it.
     pub(super) fn switcher_key(&mut self, mut sw: Switcher, key: KeyEvent, ctrl: bool) {
-        let repo = &self.app.repo;
+        let app = &self.app;
         match (key.code, ctrl) {
             (KeyCode::Escape, _) | (KeyCode::Char('c' | 'g'), true) => return,
             (KeyCode::Enter, _) => {
@@ -271,13 +271,13 @@ impl Runtime {
             }
             (KeyCode::Down, _) | (KeyCode::Char('n' | 'j'), true) => sw.move_by(1),
             (KeyCode::Up, _) | (KeyCode::Char('p' | 'k'), true) => sw.move_by(-1),
-            (KeyCode::Backspace, _) => sw.pop(repo),
+            (KeyCode::Backspace, _) => sw.pop(app),
             (KeyCode::Char('u'), true) => {
                 while !sw.query.is_empty() {
-                    sw.pop(repo);
+                    sw.pop(app);
                 }
             }
-            (KeyCode::Char(c), false) => sw.push(repo, c),
+            (KeyCode::Char(c), false) => sw.push(app, c),
             _ => {}
         }
         self.app.mode = Mode::Switcher(sw);

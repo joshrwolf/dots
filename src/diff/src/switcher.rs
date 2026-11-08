@@ -1,11 +1,12 @@
-//! The worktree switcher: a fuzzy filter over branch names.
+//! The worktree switcher: the worktrees in review order, filtered fuzzily
+//! by branch name and the agents working in them.
 
 use std::time::{Duration, SystemTime};
 
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo::{Config, Matcher, Utf32Str};
 
-use crate::repo::Repo;
+use crate::app::App;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Switcher {
@@ -24,26 +25,26 @@ pub(crate) struct Match {
 }
 
 impl Switcher {
-    /// Opens on the most recently used worktree other than `current`.
-    pub(crate) fn new(repo: &Repo, current: usize) -> Self {
+    /// Opens on the first worktree in review order other than the shown one.
+    pub(crate) fn new(app: &App) -> Self {
         let mut s = Self::default();
-        s.refilter(repo);
+        s.refilter(app);
         s.cursor = s
             .matches
             .iter()
-            .position(|m| m.worktree != current)
+            .position(|m| m.worktree != app.current)
             .unwrap_or(0);
         s
     }
 
-    pub(crate) fn push(&mut self, repo: &Repo, c: char) {
+    pub(crate) fn push(&mut self, app: &App, c: char) {
         self.query.push(c);
-        self.refilter(repo);
+        self.refilter(app);
     }
 
-    pub(crate) fn pop(&mut self, repo: &Repo) {
+    pub(crate) fn pop(&mut self, app: &App) {
         self.query.pop();
-        self.refilter(repo);
+        self.refilter(app);
     }
 
     pub(crate) fn move_by(&mut self, delta: i64) {
@@ -58,19 +59,34 @@ impl Switcher {
         self.matches.get(self.cursor).map(|m| m.worktree)
     }
 
-    /// Best matches first; with no query, most recently used first.
-    fn refilter(&mut self, repo: &Repo) {
+    /// Best matches first, in review order among equals. A worktree also
+    /// matches by the names of the agents working in it.
+    fn refilter(&mut self, app: &App) {
         let mut matcher = Matcher::new(Config::DEFAULT);
         let pattern = Pattern::parse(&self.query, CaseMatching::Smart, Normalization::Smart);
         let mut buf = Vec::new();
-        let mut scored: Vec<(u32, Match)> = repo
-            .worktrees
-            .iter()
-            .enumerate()
-            .filter_map(|(i, wt)| {
-                let haystack = Utf32Str::new(&wt.branch, &mut buf);
+        let mut scored: Vec<(u32, Match)> = app
+            .review_order()
+            .into_iter()
+            .filter_map(|i| {
+                let branch = &app.repo.worktrees[i].branch;
+                let mut haystack = branch.clone();
+                for name in app
+                    .owners(i)
+                    .map(crate::agents::Owners::names)
+                    .unwrap_or_default()
+                {
+                    haystack.push_str("  ");
+                    haystack.push_str(&name);
+                }
                 let mut positions = Vec::new();
-                let score = pattern.indices(haystack, &mut matcher, &mut positions)?;
+                let score = pattern.indices(
+                    Utf32Str::new(&haystack, &mut buf),
+                    &mut matcher,
+                    &mut positions,
+                )?;
+                let in_branch = u32::try_from(branch.chars().count()).unwrap_or(u32::MAX);
+                positions.retain(|&p| p < in_branch);
                 positions.sort_unstable();
                 positions.dedup();
                 Some((
@@ -82,12 +98,8 @@ impl Switcher {
                 ))
             })
             .collect();
-        scored.sort_by(|(sa, a), (sb, b)| {
-            sb.cmp(sa).then_with(|| {
-                let touched = |m: &Match| repo.worktrees[m.worktree].touched;
-                touched(b).cmp(&touched(a))
-            })
-        });
+        // Stable, so review order holds among equal scores.
+        scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
         self.matches = scored.into_iter().map(|(_, m)| m).collect();
         self.cursor = self.cursor.min(self.matches.len().saturating_sub(1));
     }
@@ -108,41 +120,82 @@ pub(crate) fn age(then: SystemTime, now: SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo::Worktree;
+    use crate::agents::{Snapshot, Status, Worker};
+    use crate::app::Settings;
+    use crate::repo::{Repo, Worktree};
+    use crate::theme::{Detected, Palette};
 
-    fn repo() -> Repo {
+    fn app(current: usize) -> App {
         let wt = |branch: &str, mins_ago: u64| Worktree {
             path: format!("/w/{branch}").into(),
             branch: branch.into(),
             main: false,
             touched: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(10_000 - mins_ago * 60)),
         };
-        Repo {
+        let repo = Repo {
             worktrees: vec![wt("main", 50), wt("fix-parser", 5), wt("feature-wrap", 1)],
-        }
+        };
+        let mut app = App::new(
+            repo,
+            current,
+            Palette::new(Detected::light()),
+            Settings::default(),
+        );
+        app.set_agents(Snapshot {
+            agents: Vec::new(),
+            workers: vec![Worker {
+                id: "w-1".into(),
+                label: "lexer".into(),
+                status: Status::Running,
+                cwd: "/w/main".into(),
+                model: None,
+                owner_session: None,
+                session_file: None,
+                updated_at: 1,
+            }],
+            problems: Vec::new(),
+        });
+        app
     }
 
     #[test]
-    fn opens_on_the_most_recent_other_worktree() {
-        let s = Switcher::new(&repo(), 2);
+    fn opens_on_the_first_other_worktree_in_review_order() {
+        let s = Switcher::new(&app(1));
         let order: Vec<usize> = s.matches.iter().map(|m| m.worktree).collect();
-        assert_eq!(order, vec![2, 1, 0]);
-        assert_eq!(s.selected(), Some(1));
+        assert_eq!(
+            order,
+            vec![0, 2, 1],
+            "a worker's worktree first, then recency"
+        );
+        assert_eq!(s.selected(), Some(0));
+        assert_eq!(Switcher::new(&app(0)).selected(), Some(2));
     }
 
     #[test]
     fn filters_fuzzily_and_marks_matches() {
-        let repo = repo();
-        let mut s = Switcher::new(&repo, 0);
+        let app = app(0);
+        let mut s = Switcher::new(&app);
         for c in "fpar".chars() {
-            s.push(&repo, c);
+            s.push(&app, c);
         }
         assert_eq!(s.selected(), Some(1));
         assert_eq!(s.matches[0].positions, vec![0, 4, 5, 6]);
-        s.pop(&repo);
-        s.pop(&repo);
-        s.pop(&repo);
+        s.pop(&app);
+        s.pop(&app);
+        s.pop(&app);
         assert_eq!(s.matches.len(), 2, "both f… branches");
+    }
+
+    #[test]
+    fn filters_by_the_agents_working_there() {
+        let app = app(1);
+        let mut s = Switcher::new(&app);
+        for c in "lexer".chars() {
+            s.push(&app, c);
+        }
+        assert_eq!(s.matches.len(), 1);
+        assert_eq!(s.selected(), Some(0));
+        assert!(s.matches[0].positions.is_empty(), "nothing in the branch");
     }
 
     #[test]

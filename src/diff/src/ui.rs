@@ -1127,6 +1127,49 @@ fn moves_status(app: &App) -> String {
     }
 }
 
+/// The colour a worker's status is shown in.
+fn worker_color(status: &crate::agents::Status, p: &Palette) -> Color {
+    use crate::agents::Status;
+    match status {
+        Status::Running | Status::Paused => p.accent,
+        Status::Asking => p.amber,
+        Status::Done => p.green,
+        Status::Failed | Status::Lost => p.red,
+        Status::Stopped | Status::Other(_) => p.faint,
+    }
+}
+
+/// Who works in the shown worktree and how their lead worker stands, on
+/// the status line from `x`. Returns the width drawn.
+fn draw_owners(buf: &mut Buffer, app: &App, x: u16, y: u16, end: u16) -> u16 {
+    let p = &app.palette;
+    let muted = Style::new().bg(p.header_bg).fg(p.muted);
+    let Some(owners) = app.owners(app.current) else {
+        return 0;
+    };
+    let mut at = x;
+    let names = owners.names();
+    if !names.is_empty() {
+        at += put(buf, at, y, "  ", end - at, muted);
+        at += put(buf, at, y, &names.join(", "), end - at, muted.fg(p.fg));
+    }
+    if let Some(lead) = owners.lead() {
+        at += put(
+            buf,
+            at,
+            y,
+            &format!(" {}", lead.status.label()),
+            end - at,
+            muted.fg(worker_color(&lead.status, p)),
+        );
+    }
+    at - x
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the status line's parts, drawn left to right"
+)]
 fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
     let p = &app.palette;
     let bg = p.header_bg;
@@ -1205,6 +1248,7 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
             );
         }
     }
+    x += draw_owners(buf, app, x, area.y, end);
     if !app.target.is_empty() {
         x += put(buf, x, area.y, "  ", end - x, muted);
         x += put(buf, x, area.y, &app.target, end - x, muted.fg(p.fg));

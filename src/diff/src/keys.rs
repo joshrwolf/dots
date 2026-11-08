@@ -236,7 +236,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
     row("m", "mark file reviewed", &[(key('m'), Action::Reviewed)]),
     row(
         "w",
-        "switch worktree (type to filter)",
+        "switch worktree, waiting for review first (type to filter)",
         &[(key('w'), Action::Switcher)],
     ),
     row(

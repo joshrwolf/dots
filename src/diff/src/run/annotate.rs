@@ -49,7 +49,7 @@ pub(super) struct Delivery {
     /// newer one.
     pub(super) resolve_seq: u64,
     /// The live sessions.
-    pub(super) agents: Vec<deliver::Agent>,
+    pub(super) agents: Vec<crate::agents::Agent>,
     /// A review is being delivered.
     pub(super) sending: bool,
 }
@@ -124,7 +124,7 @@ impl Runtime {
         if !self.app.review_writable() {
             return;
         }
-        let found = deliver::agents(&deliver::inbox_dir());
+        let found = crate::agents::agents(&crate::agents::inbox_dir());
         if found.agents.is_empty() {
             let mut message = "no interactive Pi session is running; drafts are kept".to_owned();
             if let Some(problem) = found.problems.first() {
@@ -322,8 +322,8 @@ impl Runtime {
         let picked = self.app.session.state().agent.clone();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let found = deliver::agents(&deliver::inbox_dir());
-            let workers = deliver::workers().map_err(|e| format!("{e:#}"));
+            let found = crate::agents::agents(&crate::agents::inbox_dir());
+            let workers = crate::agents::workers().map_err(|e| format!("{e:#}"));
             let here = repo::canonical(&worktree);
             let resolution = deliver::resolve(
                 &found.agents,

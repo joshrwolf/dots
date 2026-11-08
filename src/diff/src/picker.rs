@@ -4,7 +4,7 @@
 use nucleo::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo::{Config, Matcher, Utf32Str};
 
-use crate::deliver::Agent;
+use crate::agents::Agent;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Picker {

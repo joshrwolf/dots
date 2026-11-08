@@ -143,6 +143,10 @@ pub(crate) struct State {
     /// The Pi session the user picked for this worktree, by session id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) agent: Option<String>,
+    /// The worktree's changes when the user last looked at them, named by
+    /// their content as the switcher's summary names them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) looked: Option<String>,
 }
 
 impl Default for State {
@@ -154,6 +158,7 @@ impl Default for State {
             marks: Vec::new(),
             seen: BTreeMap::new(),
             agent: None,
+            looked: None,
         }
     }
 }
@@ -659,6 +664,7 @@ mod tests {
             Some("y".into()),
         );
         state.agent = Some("s-1".into());
+        state.looked = Some("c0ffee".into());
         state.save(&dir).expect("save");
         assert_eq!(State::load(&dir).expect("load"), state);
         std::fs::write(dir.join("dots-diff/state.json"), r#"{"version":9}"#).expect("write");

@@ -62,6 +62,7 @@ fn loaded(
     };
     let mode = settings.mode;
     let mut app = App::new(repo, current, Palette::new(theme), settings);
+    let problem = app.set_agents(crate::agents::Snapshot::read());
     let wt = app.worktree_path().clone();
     let (changes, review) = crate::run::load(&wt, mode, false);
     let changes = changes.map_err(anyhow::Error::msg)?;
@@ -71,7 +72,7 @@ fn loaded(
         .iter()
         .map(|c| app::compute_body(&mut reader, c))
         .collect();
-    app.message = app.install(wt, mode, changes, review);
+    app.message = app.install(wt, mode, changes, review).or(problem);
     for (i, (body, texts)) in bodies.into_iter().enumerate() {
         app.set_body(i, body, texts);
     }
@@ -147,9 +148,9 @@ pub(crate) fn frame(options: &Frame) -> Result<String> {
                 app.summaries.insert(wt.path, s);
             }
         }
-        let mut sw = crate::switcher::Switcher::new(&app.repo, app.current);
+        let mut sw = crate::switcher::Switcher::new(&app);
         for c in query.chars() {
-            sw.push(&app.repo, c);
+            sw.push(&app, c);
         }
         app.mode = app::Mode::Switcher(sw);
     }

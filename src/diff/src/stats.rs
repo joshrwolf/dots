@@ -6,17 +6,19 @@
 //! committed totals depend only on its base and HEAD trees and are kept
 //! the same way; only its uncommitted files are counted afresh.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::SystemTime;
 
 use anyhow::Result;
 
 use crate::app::Summary;
 use crate::diff;
 use crate::repo::{self, Fsmonitor, Mode, Planned, Reader, Stamp, Target, TreeChange};
+use crate::review;
 
 /// Lines added and removed, or `None` for a binary file.
 pub(crate) type Counts = Option<(u32, u32)>;
@@ -272,17 +274,22 @@ impl Stats {
         Ok(counts)
     }
 
-    /// Counts between a blob and a working-tree file in Git's form.
+    /// Counts between a blob and a working-tree file in Git's form, with
+    /// the file's blob id (`None` once deleted) and modification time.
     fn worktree_counts(
         &self,
         reader: &mut Reader,
         root: &Path,
         path: &str,
         old: Option<gix::ObjectId>,
-    ) -> Result<Option<Counts>> {
+    ) -> Result<Option<Counted>> {
         let full = root.join(path);
         let Ok(meta) = fs::symlink_metadata(&full) else {
-            return Ok(Some(self.blob_counts(reader, old, None)?));
+            return Ok(Some(Counted {
+                counts: self.blob_counts(reader, old, None)?,
+                id: None,
+                modified: None,
+            }));
         };
         if meta.is_dir() {
             return Ok(None);
@@ -293,9 +300,13 @@ impl Stats {
         };
         let null = gix::ObjectId::null(gix::hash::Kind::Sha1);
         if let Some(id) = self.stamp(&full, stamp)
-            && let Some(c) = self.lines(old.unwrap_or(null), id)
+            && let Some(counts) = self.lines(old.unwrap_or(null), id)
         {
-            return Ok(Some(c));
+            return Ok(Some(Counted {
+                counts,
+                id: Some(id),
+                modified: stamp.modified,
+            }));
         }
         let data = reader.worktree_file(path)?;
         let id = gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::object::Kind::Blob, &data)?;
@@ -303,8 +314,19 @@ impl Stats {
         let old_data = old.map_or(Ok(Vec::new()), |id| reader.blob(id))?;
         let counts = diff::line_counts(&old_data, &data);
         self.put_lines(old.unwrap_or(null), id, counts);
-        Ok(Some(counts))
+        Ok(Some(Counted {
+            counts,
+            id: Some(id),
+            modified: stamp.modified,
+        }))
     }
+}
+
+/// A working-tree file's counts against its base.
+struct Counted {
+    counts: Counts,
+    id: Option<gix::ObjectId>,
+    modified: Option<SystemTime>,
 }
 
 fn cache_path(common_dir: &Path) -> Option<PathBuf> {
@@ -326,7 +348,9 @@ fn cache_path(common_dir: &Path) -> Option<PathBuf> {
 
 /// A worktree's changes against its default-branch merge base, counted
 /// through the caches: committed totals by tree pair, then the
-/// uncommitted files git reports.
+/// uncommitted files git reports. Also names the changes' content, so a
+/// later summary tells whether anything changed since, and reads when the
+/// user last looked at them.
 pub(crate) fn summarize(stats: &Stats, worktree: &Path) -> Result<Summary> {
     let (repo, _, target) = repo::open(worktree, Mode::Base)?;
     let entries = repo::status(&repo, worktree, Fsmonitor::Off, &[])?;
@@ -335,32 +359,23 @@ pub(crate) fn summarize(stats: &Stats, worktree: &Path) -> Result<Summary> {
         .map_or_else(|| worktree.to_owned(), Path::to_owned);
     let mut reader = Reader::new(repo.clone(), root.clone());
     let diverged = target.base_tree != target.head_tree;
-    let committed = if let Some(t) = stats.totals(target) {
-        t
+    let tree = if diverged {
+        repo::tree_changes(&repo, target.base_tree, target.head_tree)?
     } else {
-        let mut t = Totals {
-            added: 0,
-            removed: 0,
-            files: 0,
-        };
-        if diverged {
-            for change in repo::tree_changes(&repo, target.base_tree, target.head_tree)? {
-                let (a, r) = stats
-                    .blob_counts(&reader, change.old, change.new)?
-                    .unwrap_or((0, 0));
-                t.added += a;
-                t.removed += r;
-                t.files += 1;
-            }
-        }
-        stats.put_totals(target, t);
-        t
+        Vec::new()
     };
+    // Each changed path's base and new content.
+    let mut contents: BTreeMap<String, (Option<gix::ObjectId>, String)> = tree
+        .iter()
+        .map(|c| (c.path.clone(), (c.old, review::content_key(c.new))))
+        .collect();
+    let committed = committed_totals(stats, &reader, target, &tree)?;
     let (mut added, mut removed, mut files) = (
         i64::from(committed.added),
         i64::from(committed.removed),
         i64::from(committed.files),
     );
+    let mut changed = None;
     let trees = if diverged {
         Some((
             repo.find_tree(target.base_tree)?,
@@ -382,6 +397,7 @@ pub(crate) fn summarize(stats: &Stats, worktree: &Path) -> Result<Summary> {
                 added -= i64::from(a);
                 removed -= i64::from(r);
                 files -= 1;
+                contents.remove(&entry.path);
                 committed_change.push(TreeChange {
                     path: entry.path.clone(),
                     old,
@@ -392,25 +408,82 @@ pub(crate) fn summarize(stats: &Stats, worktree: &Path) -> Result<Summary> {
         }
         for repo::Assembled { path, old, new, .. } in repo::assemble(committed_change, vec![entry])
         {
-            let counts = match new {
-                Planned::Blob(id) => Some(stats.blob_counts(&reader, old, Some(id))?),
-                Planned::Missing => Some(stats.blob_counts(&reader, old, None)?),
-                Planned::Worktree => stats.worktree_counts(&mut reader, &root, &path, old)?,
+            let (counts, id) = match new {
+                Planned::Blob(id) => (stats.blob_counts(&reader, old, Some(id))?, Some(id)),
+                Planned::Missing => (stats.blob_counts(&reader, old, None)?, None),
+                Planned::Worktree => {
+                    let Some(c) = stats.worktree_counts(&mut reader, &root, &path, old)? else {
+                        continue;
+                    };
+                    changed = changed.max(c.modified);
+                    (c.counts, c.id)
+                }
             };
-            let Some(counts) = counts else { continue };
             let (a, r) = counts.unwrap_or((0, 0));
             added += i64::from(a);
             removed += i64::from(r);
             files += 1;
+            contents.insert(path, (old, review::content_key(id)));
         }
     }
     stats.flush();
+    // An unreadable review counts as never looked at; opening the worktree
+    // reports why it cannot be read.
+    let looked = review::State::load(repo.git_dir())
+        .ok()
+        .and_then(|s| s.looked);
     let clamp = |n: i64| u32::try_from(n.max(0)).unwrap_or(u32::MAX);
     Ok(Summary {
         added: clamp(added),
         removed: clamp(removed),
         files: usize::try_from(files.max(0)).unwrap_or(0),
+        content: Some(digest(&contents)?),
+        changed,
+        looked,
     })
+}
+
+/// A worktree's committed totals: base→HEAD changes `tree`, counted once
+/// per tree pair.
+fn committed_totals(
+    stats: &Stats,
+    reader: &Reader,
+    target: Target,
+    tree: &[TreeChange],
+) -> Result<Totals> {
+    if let Some(t) = stats.totals(target) {
+        return Ok(t);
+    }
+    let mut t = Totals {
+        added: 0,
+        removed: 0,
+        files: 0,
+    };
+    for change in tree {
+        let (a, r) = stats
+            .blob_counts(reader, change.old, change.new)?
+            .unwrap_or((0, 0));
+        t.added += a;
+        t.removed += r;
+        t.files += 1;
+    }
+    stats.put_totals(target, t);
+    Ok(t)
+}
+
+/// Names a set of changes by their content: equal for equal changes,
+/// stable across runs.
+fn digest(contents: &BTreeMap<String, (Option<gix::ObjectId>, String)>) -> Result<String> {
+    let mut text = Vec::new();
+    for (path, (old, new)) in contents {
+        for part in [path.as_str(), &review::content_key(*old), new] {
+            text.extend_from_slice(part.as_bytes());
+            text.push(0);
+        }
+        text.pop();
+        text.push(b'\n');
+    }
+    Ok(gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::object::Kind::Blob, &text)?.to_string())
 }
 
 #[cfg(test)]
@@ -484,5 +557,74 @@ mod tests {
         };
         stats.put_totals(target, totals);
         assert_eq!(stats.totals(target), Some(totals));
+    }
+
+    #[test]
+    fn digests_name_changes_by_content_and_stay_stable() {
+        let mut contents =
+            BTreeMap::from([("a.rs".to_owned(), (Some(id(1)), "missing".to_owned()))]);
+        let first = digest(&contents).expect("digest");
+        // Stored in review state, so the name never changes for the same
+        // changes: `printf 'a.rs\0<id>\0missing\n' | git hash-object --stdin`.
+        assert_eq!(first, "586fe90fce9dee690b9d6589be163800dc0b638b");
+        assert_eq!(digest(&contents.clone()).expect("digest"), first);
+        contents.insert("b.rs".into(), (None, review::content_key(Some(id(2)))));
+        assert_ne!(digest(&contents).expect("digest"), first);
+    }
+
+    #[test]
+    fn a_summary_names_its_content_and_reads_the_last_look() {
+        let dir = std::env::temp_dir().join(format!("dots-diff-summary-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .current_dir(&dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        git(&["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "one\n").expect("write");
+        git(&["add", "."]);
+        git(&["commit", "-qm", "base"]);
+        git(&["switch", "-qc", "feature"]);
+        std::fs::write(dir.join("a.txt"), "one\ntwo\n").expect("write");
+        let stats = Stats::default();
+        let first = summarize(&stats, &dir).expect("summary");
+        assert_eq!((first.files, first.added), (1, 1));
+        assert!(first.changed.is_some(), "an uncommitted file's time");
+        assert_eq!(first.looked, None);
+        // Committing changes nothing the user sees.
+        git(&["commit", "-qam", "two"]);
+        let committed = summarize(&stats, &dir).expect("summary");
+        assert_eq!(committed.content, first.content);
+        std::fs::write(dir.join("a.txt"), "one\nthree\n").expect("write");
+        let edited = summarize(&stats, &dir).expect("summary");
+        assert_ne!(edited.content, first.content);
+        let git_dir = dir.join(".git");
+        let mut review = review::State::default();
+        review.looked.clone_from(&edited.content);
+        review.save(&git_dir).expect("save");
+        assert_eq!(
+            summarize(&stats, &dir).expect("summary").looked,
+            edited.content
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

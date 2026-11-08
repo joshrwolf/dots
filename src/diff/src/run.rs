@@ -53,7 +53,7 @@ pub(crate) enum Msg {
         seq: u64,
         worktree: PathBuf,
         resolution: deliver::Resolution,
-        agents: Vec<deliver::Agent>,
+        agents: Vec<crate::agents::Agent>,
         /// Registrations that could not be read.
         problems: Vec<String>,
     },
@@ -100,6 +100,8 @@ pub(crate) enum Msg {
     },
     Touched(Touched),
     Watching(Result<Watch, String>),
+    /// Interactive Pi sessions and workers changed.
+    Agents(crate::agents::Snapshot),
     Ctl(Command),
 }
 
@@ -237,6 +239,8 @@ fn view(
     }
     let app = App::new(repo, current, palette, settings);
     let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);
+    let agents_tx = tx.clone();
+    crate::agents::follow(move |s| agents_tx.send(Msg::Agents(s)).is_ok());
     let mut rt = Runtime::new(app, tx, Threads::default());
     rt.ctl_status = ctl_status;
     rt.timings = timings;
@@ -505,7 +509,10 @@ impl Runtime {
             });
             if ready {
                 self.pipeline.loading_since = None;
-                if !self.summaries_started {
+                if self.summaries_started {
+                    // Its summary tells what the user is looking at.
+                    self.summaries.push(self.app.worktree_path().clone(), true);
+                } else {
                     // Rail counts wait for the first full frame so they never delay it.
                     self.summaries_started = true;
                     self.spawn_summaries();
@@ -667,10 +674,22 @@ impl Runtime {
                 true
             }
             Msg::Summary { path, summary } => {
-                if let Ok(s) = summary {
-                    self.app.summaries.insert(path, s);
+                let Ok(s) = summary else { return false };
+                // Showing a worktree is looking at it.
+                if path == *self.app.worktree_path()
+                    && self.app.session.shows(&path)
+                    && let Some(content) = &s.content
+                {
+                    self.app.look(content);
                 }
+                self.app.summaries.insert(path, s);
                 matches!(self.app.mode, Mode::Switcher(_))
+            }
+            Msg::Agents(snapshot) => {
+                if let Some(problem) = self.app.set_agents(snapshot) {
+                    self.app.message = Some(problem);
+                }
+                true
             }
             Msg::Touched(touched) => {
                 let current = self.app.current;
@@ -678,8 +697,12 @@ impl Runtime {
                 match touched {
                     Touched::Files { worktree, paths } if worktree == current => {
                         self.pipeline.burst.push(now, paths);
+                        self.stale.insert(self.app.worktree_path().clone(), now);
                     }
-                    Touched::GitState(i) if i == current => self.pipeline.burst.push_full(now),
+                    Touched::GitState(i) if i == current => {
+                        self.pipeline.burst.push_full(now);
+                        self.stale.insert(self.app.worktree_path().clone(), now);
+                    }
                     Touched::Files { worktree: i, .. } | Touched::GitState(i) => {
                         if let Some(w) = self.app.repo.worktrees.get(i) {
                             self.stale.insert(w.path.clone(), now);
@@ -748,6 +771,7 @@ impl Runtime {
                         Ok(repo) => {
                             let i = repo.index_of(&path).unwrap_or(0);
                             self.app.repo = repo;
+                            self.app.match_owners();
                             self.app.summaries.clear();
                             self.summaries.reset();
                             self.watched = None;
@@ -922,8 +946,8 @@ mod tests {
         ("b.rs", "x\n", "y\n"),
     ];
 
-    fn agent(id: &str, block: &str) -> deliver::Agent {
-        deliver::Agent {
+    fn agent(id: &str, block: &str) -> crate::agents::Agent {
+        crate::agents::Agent {
             pid: 1,
             session_id: id.into(),
             session_file: None,

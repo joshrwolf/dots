@@ -5,8 +5,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
-use super::{cells, fill, put, put_counts, truncate_left, truncate_middle};
-use crate::app::App;
+use super::{cells, fill, put, put_counts, truncate_left, truncate_middle, worker_color};
+use crate::app::{App, Standing};
 use crate::editor::Editor;
 use crate::keys::BINDINGS;
 use crate::picker::Picker;
@@ -259,8 +259,17 @@ fn border(buf: &mut Buffer, r: Rect, style: Style) {
     buf[(right, bottom)].set_symbol("╯");
 }
 
-/// The worktree switcher: a filter line over branch, counts, file count
-/// and how recently each was used. Counts fill in as they are computed.
+/// The worktree switcher: a filter line over each worktree's branch, who
+/// works there and how they stand, its counts and when it last changed.
+/// Counts fill in as they are computed.
+// Switcher columns from the right: age, files, counts, who works there
+// when there is room, their lead worker's status, and the branch in what
+// is left.
+const AGE: u16 = 4;
+const FILES: u16 = 9;
+const COUNTS: u16 = 13;
+const STATE: u16 = 9;
+
 #[expect(
     clippy::many_single_char_names,
     clippy::too_many_lines,
@@ -268,7 +277,7 @@ fn border(buf: &mut Buffer, r: Rect, style: Style) {
 )]
 pub(super) fn draw_switcher(buf: &mut Buffer, app: &App, sw: &Switcher, area: Rect) {
     let p = &app.palette;
-    let w = 76.min(area.width.saturating_sub(4));
+    let w = 140.min(area.width.saturating_sub(4));
     let n = u16::try_from(app.repo.worktrees.len()).unwrap_or(u16::MAX);
     let h = (n + 2).min(area.height.saturating_sub(4)).max(3);
     let outer = Rect::new(
@@ -305,7 +314,14 @@ pub(super) fn draw_switcher(buf: &mut Buffer, app: &App, sw: &Switcher, area: Re
             Style::new().bg(bg).fg(p.fg),
         );
     put(buf, qx, r.y, "▏", 1, Style::new().bg(bg).fg(p.accent));
-    let count = format!("{}/{}", sw.matches.len(), n);
+    let waiting = (0..app.repo.worktrees.len())
+        .filter(|&i| app.standing(i) == Standing::Waiting)
+        .count();
+    let count = if waiting > 0 {
+        format!("{waiting} to review · {}/{}", sw.matches.len(), n)
+    } else {
+        format!("{}/{}", sw.matches.len(), n)
+    };
     put(
         buf,
         r.right().saturating_sub(cells(&count) + 1),
@@ -323,6 +339,8 @@ pub(super) fn draw_switcher(buf: &mut Buffer, app: &App, sw: &Switcher, area: Re
     let rows = usize::from(h.saturating_sub(2));
     let start = sw.cursor.saturating_sub(rows.saturating_sub(1));
     let now = std::time::SystemTime::now();
+    let fixed = AGE + FILES + COUNTS + STATE + 2;
+    let who_w = iw.saturating_sub(fixed + 24).min(44);
     for (slot, (i, m)) in sw
         .matches
         .iter()
@@ -334,26 +352,29 @@ pub(super) fn draw_switcher(buf: &mut Buffer, app: &App, sw: &Switcher, area: Re
         let y = r.y + 2 + u16::try_from(slot).unwrap_or(0);
         let wt = &app.repo.worktrees[m.worktree];
         let row_bg = if i == sw.cursor { p.selection } else { bg };
-        fill(buf, Rect::new(r.x, y, w, 1), Style::new().bg(row_bg));
+        let style = Style::new().bg(row_bg);
+        fill(buf, Rect::new(r.x, y, w, 1), style);
         if m.worktree == app.current {
-            put(buf, r.x, y, "▌", 1, Style::new().bg(row_bg).fg(p.accent));
+            put(buf, r.x, y, "▌", 1, style.fg(p.accent));
         }
-        // Right columns: counts, file count, age; blank until known.
+        if app.unseen(m.worktree) {
+            put(buf, x, y, "●", 1, style.fg(p.accent));
+        }
         let end = r.right().saturating_sub(1);
-        let age = wt
-            .touched
+        let age = app
+            .changed_at(m.worktree)
             .map(|t| crate::switcher::age(t, now))
             .unwrap_or_default();
         put(
             buf,
-            end.saturating_sub(4),
+            end.saturating_sub(AGE),
             y,
             &format!("{age:>4}"),
-            4,
-            Style::new().bg(row_bg).fg(p.faint),
+            AGE,
+            style.fg(p.faint),
         );
-        let files_end = end.saturating_sub(5);
-        let mut left_end = files_end.saturating_sub(24);
+        let files_end = end.saturating_sub(AGE + 1);
+        let counts_end = files_end.saturating_sub(FILES);
         if let Some(s) = app.summaries.get(&wt.path) {
             let (files, fg) = match s.files {
                 0 => ("clean".to_owned(), p.faint),
@@ -366,25 +387,36 @@ pub(super) fn draw_switcher(buf: &mut Buffer, app: &App, sw: &Switcher, area: Re
                 y,
                 &files,
                 cells(&files),
-                Style::new().bg(row_bg).fg(fg),
+                style.fg(fg),
             );
             if s.files > 0 {
-                let cx = put_counts(
-                    buf,
-                    files_end.saturating_sub(11),
-                    y,
-                    (s.added, s.removed),
-                    row_bg,
-                    p,
-                );
-                left_end = left_end.min(cx);
+                put_counts(buf, counts_end, y, (s.added, s.removed), row_bg, p);
             }
         }
+        let owners = app.owners(m.worktree);
+        let who_x = counts_end.saturating_sub(COUNTS + who_w);
+        if who_w > 0 {
+            let who = owners.map(|o| o.names().join(", ")).unwrap_or_default();
+            put(
+                buf,
+                who_x,
+                y,
+                &truncate_middle(&who, usize::from(who_w)),
+                who_w,
+                style.fg(p.muted),
+            );
+        }
+        let state_x = who_x.saturating_sub(STATE);
+        if let Some(lead) = owners.and_then(crate::agents::Owners::lead) {
+            let fg = worker_color(&lead.status, p);
+            put(buf, state_x, y, lead.status.label(), STATE, style.fg(fg));
+        }
+        let left_end = state_x.saturating_sub(1);
         let room = usize::from(left_end.saturating_sub(x + 2));
         let branch = truncate_middle(&wt.branch, room);
-        let plain = Style::new().bg(row_bg).fg(p.fg);
+        let plain = style.fg(p.fg);
         let hit = plain.fg(p.accent).add_modifier(Modifier::BOLD);
-        let mut cx = x + 1;
+        let mut cx = x + 2;
         for (ci, ch) in branch.chars().enumerate() {
             let hit_here = branch.chars().count() == wt.branch.chars().count()
                 && m.positions.contains(&u32::try_from(ci).unwrap_or(u32::MAX));

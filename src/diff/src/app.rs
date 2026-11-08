@@ -23,10 +23,12 @@ use crate::wrap;
 mod annotate;
 mod cache;
 mod sidebar;
+mod standing;
 pub(crate) use annotate::{Scope, row_line};
 pub(crate) use cache::Cache;
 use cache::Loaded;
 pub(crate) use sidebar::{ListItem, Sidebar};
+pub(crate) use standing::Standing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LayoutChoice {
@@ -574,11 +576,18 @@ impl Stream {
 }
 
 /// Lines added and removed and files changed in a worktree, for the switcher.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Summary {
     pub(crate) added: u32,
     pub(crate) removed: u32,
     pub(crate) files: usize,
+    /// Names the changes by their content: equal summaries of equal changes
+    /// have equal names.
+    pub(crate) content: Option<String>,
+    /// When an uncommitted file last changed.
+    pub(crate) changed: Option<std::time::SystemTime>,
+    /// The content the user last looked at, from the worktree's review.
+    pub(crate) looked: Option<String>,
 }
 
 /// What a display line of the diff pane shows.
@@ -626,6 +635,10 @@ pub(crate) struct App {
     pub(crate) mode: Mode,
     pub(crate) sidebar: Sidebar,
     pub(crate) summaries: HashMap<PathBuf, Summary>,
+    /// Interactive Pi sessions and workers, as last read.
+    agents: crate::agents::Snapshot,
+    /// Who works in each worktree, in the repository's order.
+    owners: Vec<crate::agents::Owners>,
     pub(crate) cache: Cache,
     /// Set when a file's contents changed under its diff, so it needs a new one.
     pub(crate) needs_diffs: bool,
@@ -675,6 +688,8 @@ impl App {
             mode: Mode::Normal,
             sidebar: Sidebar::default(),
             summaries: HashMap::new(),
+            agents: crate::agents::Snapshot::default(),
+            owners: Vec::new(),
             cache: Cache::default(),
             needs_diffs: false,
             pending_anchor: None,
