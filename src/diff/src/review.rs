@@ -1,7 +1,8 @@
 //! A worktree's review: draft and sent comments, files marked reviewed, and
 //! the contents last sent to the agent. It lives in one small versioned
 //! file in the worktree's own Git directory, written atomically; the texts
-//! of what was sent sit beside it so "since last send" can diff them.
+//! of what was sent sit beside it so "since last send" can diff them. One
+//! viewer at a time holds a worktree's review; others show it read-only.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -155,6 +156,60 @@ impl Default for State {
             agent: None,
         }
     }
+}
+
+/// Why a viewer without the lock refuses a change to the review.
+pub(crate) const READ_ONLY: &str =
+    "another dots-diff is editing this worktree's review; this one is read-only";
+
+/// One viewer's hold on a worktree's review. Other viewers of the worktree
+/// show the review read-only until it is released, so none saves over
+/// another's changes. The system releases it when the viewer exits.
+#[derive(Debug)]
+pub(crate) struct Lock(#[allow(dead_code, reason = "held for its lock")] std::fs::File);
+
+impl Lock {
+    /// Takes the review in `git_dir`, or `None` while another viewer has it.
+    pub(crate) fn take(git_dir: &Path) -> Result<Option<Self>> {
+        let dir = dir(git_dir);
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        let path = dir.join("lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("opening {}", path.display()))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self(file))),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(e)) => {
+                Err(e).with_context(|| format!("locking {}", path.display()))
+            }
+        }
+    }
+
+    /// Takes the review in `git_dir` with its saved state, read under the
+    /// lock, or `None` while another viewer has it.
+    pub(crate) fn take_state(git_dir: &Path) -> Result<Option<(Self, State)>> {
+        let Some(lock) = Self::take(git_dir)? else {
+            return Ok(None);
+        };
+        Ok(Some((lock, State::load(git_dir)?)))
+    }
+}
+
+/// Records a send in the review saved in `git_dir`, for a worktree this
+/// viewer no longer shows.
+pub(crate) fn record_sent(
+    git_dir: &Path,
+    ids: &[u64],
+    seen: BTreeMap<String, String>,
+) -> Result<()> {
+    let (_lock, mut state) =
+        Lock::take_state(git_dir)?.context("another dots-diff is editing that review")?;
+    state.sent(ids, seen);
+    state.save(git_dir)
 }
 
 /// A content id as stored: the blob id, or `missing` for no file.
@@ -671,6 +726,17 @@ mod tests {
         // A path-limited rescan looks only at its own paths.
         let only_a = since_sent(Vec::new(), &seen, |p| p == "a.rs", target, &mut reader);
         assert_eq!(only_a.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn one_viewer_at_a_time_holds_a_review() {
+        let dir = std::env::temp_dir().join(format!("dots-diff-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let first = Lock::take(&dir).expect("lock").expect("free");
+        assert!(Lock::take(&dir).expect("lock").is_none(), "held");
+        drop(first);
+        assert!(Lock::take(&dir).expect("lock").is_some(), "released");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

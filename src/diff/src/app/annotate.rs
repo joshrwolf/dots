@@ -189,8 +189,40 @@ impl App {
         }
     }
 
+    /// Whether this viewer may change the review. It may once it holds the
+    /// review, taking it with the saved review from a viewer that is gone.
+    pub(crate) fn review_writable(&mut self) -> bool {
+        let Some(dir) = &self.review_dir else {
+            // Not loaded, so never saved.
+            return true;
+        };
+        if self.review_lock.is_some() {
+            return true;
+        }
+        match review::Lock::take_state(dir) {
+            Ok(Some((lock, state))) => {
+                self.review = state;
+                self.review_lock = Some(lock);
+                self.refresh_marks();
+                self.cards_changed();
+                true
+            }
+            Ok(None) => {
+                self.message = Some(review::READ_ONLY.to_owned());
+                false
+            }
+            Err(e) => {
+                self.message = Some(format!("review is read-only: {e:#}"));
+                false
+            }
+        }
+    }
+
     /// Opens the editor for a new comment.
     pub(crate) fn begin_comment(&mut self, scope: Scope) {
+        if !self.review_writable() {
+            return;
+        }
         match self.new_editor(scope) {
             Ok(editor) => self.editor = Some(editor),
             Err(e) => self.message = Some(e),
@@ -270,6 +302,9 @@ impl App {
             self.message = Some("notes are the agent's; d dismisses one".to_owned());
             return;
         };
+        if !self.review_writable() {
+            return;
+        }
         let Some(c) = self.review.comments.iter().find(|c| c.id == id) else {
             return;
         };
@@ -293,8 +328,10 @@ impl App {
     pub(crate) fn delete_card(&mut self, card: CardRef) {
         match card {
             CardRef::Comment(id) => {
-                self.review.comments.retain(|c| c.id != id);
-                self.review_dirty = true;
+                if self.review_writable() {
+                    self.review.comments.retain(|c| c.id != id);
+                    self.review_dirty = true;
+                }
             }
             CardRef::Note(id) => self.notes.retain(|n| n.id != id),
         }
@@ -383,6 +420,9 @@ impl App {
 
     /// Marks the cursor's file reviewed, or unmarks it.
     pub(crate) fn toggle_reviewed(&mut self) {
+        if !self.review_writable() {
+            return;
+        }
         let file = match self.focus {
             super::Focus::Files => self.list.get(self.cursor).map(super::ListItem::first_file),
             super::Focus::Diff => self.cursor_file(),

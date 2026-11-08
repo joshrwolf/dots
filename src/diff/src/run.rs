@@ -62,6 +62,8 @@ pub(crate) enum Msg {
     /// A review was delivered, or not.
     Sent {
         worktree: PathBuf,
+        /// Where the review it was sent from is saved.
+        dir: Option<PathBuf>,
         ids: Vec<u64>,
         result: Result<annotate::Delivered, String>,
     },
@@ -693,10 +695,11 @@ impl Runtime {
             }
             Msg::Sent {
                 worktree,
+                dir,
                 ids,
                 result,
             } => {
-                self.on_sent(&worktree, &ids, result);
+                self.on_sent(&worktree, dir.as_deref(), &ids, result);
                 true
             }
         }
@@ -1684,6 +1687,38 @@ mod tests {
             "{}",
             rt.app.target
         );
+    }
+
+    #[test]
+    fn a_send_finishing_after_a_switch_is_recorded_in_its_worktree() {
+        let root = std::env::temp_dir().join(format!("dots-diff-sent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (a, b) = (root.join("a"), root.join("b"));
+        let (mut rt, _rx) = runtime(TWO);
+        rt.install_review(
+            Path::new("/wt/a"),
+            Ok((a.clone(), review::State::default())),
+        );
+        let id = rt.app.review.add(
+            review::Place::Review,
+            review::Kind::Comment,
+            "x".into(),
+            None,
+        );
+        rt.app.review_dirty = true;
+        rt.install_review(Path::new("/wt/b"), Ok((b, review::State::default())));
+        let seen = std::collections::BTreeMap::from([("a.rs".to_owned(), "missing".to_owned())]);
+        rt.on_sent(
+            Path::new("/wt/a"),
+            Some(&a),
+            &[id],
+            Ok(annotate::Delivered::test(seen.clone())),
+        );
+        let saved = review::State::load(&a).expect("load");
+        assert_eq!(saved.drafts().count(), 0, "{saved:?}");
+        assert_eq!(saved.seen, seen);
+        assert!(rt.app.review.comments.is_empty(), "b's review is untouched");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

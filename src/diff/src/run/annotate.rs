@@ -3,6 +3,7 @@
 //! notes.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -23,6 +24,17 @@ pub(crate) struct Delivered {
     ack: Ack,
     seen: BTreeMap<String, String>,
     to: String,
+}
+
+#[cfg(test)]
+impl Delivered {
+    pub(crate) fn test(seen: BTreeMap<String, String>) -> Self {
+        Self {
+            ack: Ack::Started,
+            seen,
+            to: "agent".to_owned(),
+        }
+    }
 }
 
 impl Runtime {
@@ -92,6 +104,9 @@ impl Runtime {
     }
 
     pub(super) fn open_picker(&mut self, then_send: Option<Batch>) {
+        if !self.app.review_writable() {
+            return;
+        }
         let found = deliver::agents(&deliver::inbox_dir());
         if found.agents.is_empty() {
             let mut message = "no interactive Pi session is running; drafts are kept".to_owned();
@@ -148,6 +163,9 @@ impl Runtime {
             self.app.message = Some("still sending the last review".to_owned());
             return;
         }
+        if !self.app.review_writable() {
+            return;
+        }
         let comments: Vec<&Comment> = self
             .app
             .review
@@ -189,6 +207,7 @@ impl Runtime {
         let changes: Vec<_> = stream.files.iter().map(|f| f.change.clone()).collect();
         let seen = self.app.review.seen.clone();
         let worktree = stream.worktree.clone();
+        let dir = self.app.review_dir.clone();
         let tx = self.tx.clone();
         self.sending = true;
         self.app.message = Some(format!("sending to {}…", agent.label()));
@@ -212,36 +231,48 @@ impl Runtime {
                 .map_err(|e| format!("{e:#}"));
             let _ = tx.send(Msg::Sent {
                 worktree,
+                dir,
                 ids,
                 result,
             });
         });
     }
 
+    /// A send finished. `dir` holds the review it was sent from, which the
+    /// user may have switched away from since.
     pub(super) fn on_sent(
         &mut self,
         worktree: &Path,
+        dir: Option<&Path>,
         ids: &[u64],
         result: Result<Delivered, String>,
     ) {
         self.sending = false;
         match result {
             Ok(d) => {
-                if self.app.review_worktree.as_deref() == Some(worktree) {
-                    self.app.review.sent(ids, d.seen);
-                    self.app.review_dirty = true;
-                    self.app.cards_changed();
-                }
                 let n = ids.len();
                 let how = match d.ack {
                     Ack::Started => "it started on them",
                     Ack::Queued => "queued after its current turn",
                 };
-                self.app.message = Some(format!(
+                let mut message = format!(
                     "sent {n} comment{} to {}: {how}",
                     if n == 1 { "" } else { "s" },
                     d.to
-                ));
+                );
+                if self.app.review_worktree.as_deref() == Some(worktree) {
+                    self.app.review.sent(ids, d.seen);
+                    self.app.review_dirty = true;
+                    self.app.cards_changed();
+                } else if let Some(dir) = dir
+                    && let Err(e) = review::record_sent(dir, ids, d.seen)
+                {
+                    let _ = write!(
+                        message,
+                        ", but not recorded there, so they stay drafts: {e:#}"
+                    );
+                }
+                self.app.message = Some(message);
                 if self.app.since {
                     self.start_load();
                 }
@@ -318,7 +349,8 @@ impl Runtime {
 
     pub(super) fn save_review(&mut self) {
         self.app.review_dirty = false;
-        let Some(dir) = &self.app.review_dir else {
+        // Without the lock, changes such as re-anchoring stay in this viewer.
+        let (Some(dir), Some(_)) = (&self.app.review_dir, &self.app.review_lock) else {
             return;
         };
         if let Err(e) = self.app.review.save(dir) {
@@ -345,12 +377,29 @@ impl Runtime {
         self.app.visual = None;
         match loaded {
             Ok((dir, state)) => {
-                self.app.review = state;
+                self.app.review_lock = None;
+                // Saved since it was read off the event loop, or another
+                // viewer's: read it again under the lock.
+                self.app.review = match review::Lock::take_state(&dir) {
+                    Ok(Some((lock, state))) => {
+                        self.app.review_lock = Some(lock);
+                        state
+                    }
+                    Ok(None) => {
+                        self.app.message = Some(review::READ_ONLY.to_owned());
+                        state
+                    }
+                    Err(e) => {
+                        self.app.message = Some(format!("review is read-only: {e:#}"));
+                        state
+                    }
+                };
                 self.app.review_dir = Some(dir);
             }
             Err(e) => {
                 self.app.review = review::State::default();
                 self.app.review_dir = None;
+                self.app.review_lock = None;
                 self.app.message = Some(format!("review not loaded, so not saved: {e}"));
             }
         }

@@ -527,6 +527,8 @@ pub(crate) struct App {
     /// when it could not be read, so it is not overwritten.
     pub(crate) review: review::State,
     pub(crate) review_dir: Option<PathBuf>,
+    /// This viewer's hold on the review; without it the review is read-only.
+    pub(crate) review_lock: Option<review::Lock>,
     /// The review changed since it was last saved.
     pub(crate) review_dirty: bool,
     /// The worktree `review` belongs to.
@@ -614,6 +616,7 @@ impl App {
             laid_out: None,
             review: review::State::default(),
             review_dir: None,
+            review_lock: None,
             review_dirty: false,
             review_worktree: None,
             notes: Vec::new(),
@@ -2078,6 +2081,40 @@ mod tests {
         app.layout(80, 40);
         assert_eq!(app.visual, None);
         app.begin_comment(Scope::Lines);
+    }
+
+    #[test]
+    fn a_second_viewer_shows_the_review_read_only_until_the_first_is_gone() {
+        let dir = std::env::temp_dir().join(format!("dots-diff-viewers-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = app_with(&[("a.rs", "a\n", "b\n")]);
+        app.layout(80, 20);
+        let first = review::Lock::take(&dir).expect("lock").expect("free");
+        app.review_dir = Some(dir.clone());
+        app.toggle_reviewed();
+        assert!(
+            app.editor.is_none() && app.review.marks.is_empty(),
+            "read only"
+        );
+        assert!(
+            app.message
+                .as_deref()
+                .is_some_and(|m| m.contains("read-only"))
+        );
+        // The first viewer saved a draft and exited.
+        let mut saved = review::State::default();
+        saved.add(
+            review::Place::Review,
+            review::Kind::Comment,
+            "first".into(),
+            None,
+        );
+        saved.save(&dir).expect("save");
+        drop(first);
+        app.toggle_reviewed();
+        assert_eq!(app.review.marks.len(), 1, "writable now");
+        assert_eq!(app.review.comments.len(), 1, "with the saved review");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
