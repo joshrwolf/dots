@@ -637,6 +637,8 @@ impl Runtime {
         match (key.code, ctrl) {
             (KeyCode::Char('q'), _) | (KeyCode::Char('c'), true) => self.quit = true,
             (KeyCode::Char('?'), _) => self.app.help = true,
+            (KeyCode::Enter | KeyCode::Char(' '), _)
+                if self.app.focus == Focus::Files && self.app.toggle_dir(self.app.cursor) => {}
             (KeyCode::Char('d'), true) => self.scroll(half),
             (KeyCode::Char('u'), true) => self.scroll(-half),
             (KeyCode::Char('f'), true) | (KeyCode::PageDown | KeyCode::Char(' '), _) => {
@@ -653,8 +655,14 @@ impl Runtime {
                     Focus::Diff
                 };
             }
+            (KeyCode::Char('h') | KeyCode::Left, _) if self.app.focus == Focus::Files => {
+                self.tree_left();
+            }
             (KeyCode::Char('h') | KeyCode::Left, _) if self.app.areas.files.width > 0 => {
                 self.app.focus = Focus::Files;
+            }
+            (KeyCode::Char('l') | KeyCode::Right, _) if self.app.focus == Focus::Files => {
+                self.tree_right();
             }
             (KeyCode::Char('l') | KeyCode::Right, _) => self.app.focus = Focus::Diff,
             (KeyCode::Char('j') | KeyCode::Down, _) => self.move_by(1),
@@ -683,7 +691,7 @@ impl Runtime {
             }
             (KeyCode::Enter, _) => match self.app.focus {
                 Focus::Files => {
-                    self.app.jump_to_file(self.app.files_cursor, rows);
+                    self.app.select_row(self.app.cursor, rows);
                     self.app.focus = Focus::Diff;
                 }
                 Focus::Diff => {
@@ -774,8 +782,8 @@ impl Runtime {
         match self.app.focus {
             Focus::Diff => self.scroll(delta),
             Focus::Files => {
-                let n = self.app.stream.as_ref().map_or(0, |s| s.files.len());
-                self.app.files_cursor = step(self.app.files_cursor, delta, n);
+                let row = step(self.app.cursor, delta, self.app.list.len());
+                self.app.select_row(row, self.view_rows());
             }
         }
     }
@@ -807,23 +815,55 @@ impl Runtime {
             if delta != 0 {
                 self.app.focus = Focus::Files;
                 self.move_by(delta.signum());
-            } else if let Some(i) = self.file_at_row(mouse.row) {
+            } else if let Some(row) = self.row_at(mouse.row) {
                 self.app.focus = Focus::Files;
-                self.app.jump_to_file(i, rows);
+                if !self.app.toggle_dir(row) {
+                    self.app.select_row(row, rows);
+                }
             }
         }
         true
     }
 
-    /// The file listed at screen row `y`, below the sidebar's branch line.
-    fn file_at_row(&self, y: u16) -> Option<usize> {
+    /// The sidebar row at screen row `y`, below the sidebar's branch line.
+    fn row_at(&self, y: u16) -> Option<usize> {
         let area = self.app.areas.files;
         let rows = usize::from(area.height.saturating_sub(1));
         let start = self.app.list_start(rows);
         let slot = usize::from(y.checked_sub(area.y + 1)?);
-        match self.app.list.get(start + slot)? {
-            ListItem::File { index, .. } => Some(*index),
-            ListItem::Dir { .. } => None,
+        let row = start + slot;
+        (row < self.app.list.len()).then_some(row)
+    }
+
+    /// Collapses the selected directory, or moves to the one holding the
+    /// selected row.
+    fn tree_left(&mut self) {
+        let row = self.app.cursor;
+        match self.app.list.get(row) {
+            Some(ListItem::Dir { path, .. }) if !self.app.collapsed.contains(path) => {
+                let path = path.clone();
+                self.app.set_collapsed(&path, true);
+            }
+            Some(_) => {
+                if let Some(parent) = self.app.parent_row(row) {
+                    self.app.select_row(parent, self.view_rows());
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Expands the selected directory or steps into it; on a file, moves
+    /// focus to the diff.
+    fn tree_right(&mut self) {
+        let row = self.app.cursor;
+        match self.app.list.get(row) {
+            Some(ListItem::Dir { path, .. }) if self.app.collapsed.contains(path) => {
+                let path = path.clone();
+                self.app.set_collapsed(&path, false);
+            }
+            Some(ListItem::Dir { .. }) => self.app.select_row(row + 1, self.view_rows()),
+            _ => self.app.focus = Focus::Diff,
         }
     }
 }

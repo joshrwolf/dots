@@ -65,6 +65,9 @@ struct Look {
     /// Hide the file sidebar
     #[arg(long)]
     no_sidebar: bool,
+    /// Sidebar width in columns instead of a fifth of the terminal
+    #[arg(long, value_name = "COLUMNS", value_parser = clap::value_parser!(u16).range(16..=64))]
+    sidebar_width: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -94,6 +97,7 @@ impl Look {
                 repo::Mode::Base
             },
             sidebar: !self.no_sidebar,
+            sidebar_width: self.sidebar_width,
             ..app::Settings::default()
         }
     }
@@ -134,6 +138,15 @@ enum Cmd {
         /// Show the worktree switcher, filtered by QUERY
         #[arg(long, value_name = "QUERY", num_args = 0..=1, default_missing_value = "")]
         switcher: Option<String>,
+        /// Collapse this sidebar folder (repeatable)
+        #[arg(long, value_name = "DIR")]
+        collapse: Vec<String>,
+        /// Mark files under this path prefix reviewed (repeatable)
+        #[arg(long, value_name = "PREFIX")]
+        review: Vec<String>,
+        /// Focus the sidebar on this file or folder
+        #[arg(long, value_name = "PATH")]
+        select: Option<String>,
         #[command(flatten)]
         look: Look,
     },
@@ -198,6 +211,9 @@ fn run(cli: Cli) -> Result<()> {
             ansi,
             png,
             switcher,
+            collapse,
+            review,
+            select,
             look,
         }) => {
             let frame = render::frame(&render::Frame {
@@ -212,6 +228,9 @@ fn run(cli: Cli) -> Result<()> {
                 scroll,
                 png,
                 switcher,
+                collapse,
+                review,
+                select,
             })?;
             print!("{frame}");
             Ok(())

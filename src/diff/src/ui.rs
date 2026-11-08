@@ -23,6 +23,8 @@ const SIDEBAR_MAX: u16 = 32;
 const SIDEBAR_HIDE_BELOW: u16 = 80;
 /// The status mark of a file, coloured by its status.
 pub(crate) const STATUS_MARK: &str = "●";
+/// A reviewed file, or a folder whose files are all reviewed.
+pub(crate) const REVIEWED_MARK: &str = "✓";
 
 /// The sidebar's width on a screen `width` columns wide; 0 when hidden.
 pub(crate) fn sidebar_width(app: &App, width: u16) -> u16 {
@@ -112,6 +114,36 @@ fn truncate_left(text: &str, max: usize) -> String {
         .collect();
     out.push('…');
     out.chars().rev().collect()
+}
+
+/// Fits a folder chain like `docs/runbooks/billing/` into `max` cells by
+/// dropping whole middle folders (`docs/…/billing/`), keeping the first
+/// and as many trailing folders as fit; only then cutting from the left.
+fn truncate_chain(label: &str, max: usize) -> String {
+    if width(label) <= max {
+        return label.to_owned();
+    }
+    let parts: Vec<&str> = label.trim_end_matches('/').split('/').collect();
+    if let [first, .., last] = parts.as_slice() {
+        let head = format!("{first}/…/");
+        let mut best = None;
+        for k in 1..parts.len() - 1 {
+            let tail = parts[parts.len() - k..].join("/");
+            let candidate = format!("{head}{tail}/");
+            if width(&candidate) > max {
+                break;
+            }
+            best = Some(candidate);
+        }
+        if let Some(best) = best {
+            return best;
+        }
+        let short = format!("…/{last}/");
+        if width(&short) <= max {
+            return short;
+        }
+    }
+    truncate_left(label, max)
 }
 
 /// Keeps both ends of `text` within `max` cells, cutting the middle, so a
@@ -260,89 +292,140 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
     let start = app.list_start(rows);
     let visible = &app.list[start..(start + rows).min(app.list.len())];
     let end = list.right().saturating_sub(1);
-    // Names matter more than counts: the counts column shows only when
-    // every visible name fits beside it, so rows stay aligned.
-    let show_counts = visible.iter().all(|item| match item {
-        ListItem::Dir { .. } => true,
-        ListItem::File { index, depth } => {
-            let f = &stream.files[*index];
-            let name = f.change.path.rsplit('/').next().unwrap_or(&f.change.path);
-            let counts = f.counts().map_or(3, |(a, r)| {
+    let current_row = app.row_of_file(app.top.file);
+    // What each row shows: marker, name, counts and whether it is reviewed.
+    let rows: Vec<SidebarRow<'_>> = visible
+        .iter()
+        .map(|item| match item {
+            ListItem::Dir {
+                label, path, files, ..
+            } => {
+                let (a, r, reviewed) = app.dir_summary(files.clone());
+                let open = !app.collapsed.contains(path);
+                SidebarRow {
+                    mark: (if open { "▾" } else { "▸" }, p.muted),
+                    name: label.as_str(),
+                    counts: ((a, r) != (0, 0)).then_some((a, r)),
+                    binary: false,
+                    reviewed,
+                    dir: true,
+                }
+            }
+            ListItem::File { index, .. } => {
+                let f = &stream.files[*index];
+                let mark = if f.reviewed {
+                    (REVIEWED_MARK, p.faint)
+                } else {
+                    (STATUS_MARK, status_color(p, f.change.status))
+                };
+                SidebarRow {
+                    mark,
+                    name: f.change.path.rsplit('/').next().unwrap_or(&f.change.path),
+                    counts: f.counts(),
+                    binary: matches!(f.body, Body::Binary),
+                    reviewed: f.reviewed,
+                    dir: false,
+                }
+            }
+        })
+        .collect();
+    // Names matter more than counts: a row shows its right-aligned counts
+    // only when its whole name fits beside them.
+    let fits = |item: &ListItem, row: &SidebarRow<'_>| {
+        let counts = match row.counts {
+            Some((a, r)) => {
                 let (added, removed) = count_text(a, r);
                 cells(&added) + cells(&removed)
-            });
-            list.x + 3 + depth + cells(name) + 1 + counts <= end
-        }
-    });
-    for (slot, item) in visible.iter().enumerate() {
+            }
+            None if row.binary => 3,
+            None => 0,
+        };
+        let name = cells(row.name) + if row.dir && row.reviewed { 2 } else { 0 };
+        list.x + 3 + 2 * item.depth() + name + 1 + counts <= end
+    };
+    for (slot, (item, row)) in visible.iter().zip(&rows).enumerate() {
         let y = list.y + u16::try_from(slot).unwrap_or(0);
-        match item {
-            ListItem::Dir { label, depth } => {
-                let x = list.x + 1 + depth;
-                let label = truncate_left(label, usize::from(list.right().saturating_sub(x + 1)));
-                put(
-                    buf,
-                    x,
-                    y,
-                    &label,
-                    list.right().saturating_sub(x),
-                    Style::new().bg(p.panel).fg(p.muted),
-                );
+        let index = start + slot;
+        let bg = if index == app.cursor && focused {
+            p.selection
+        } else if Some(index) == current_row {
+            p.header_bg
+        } else {
+            p.panel
+        };
+        fill(
+            buf,
+            Rect::new(list.x, y, list.width, 1),
+            Style::new().bg(bg),
+        );
+        let depth = item.depth();
+        let guides = item.guides();
+        let guide = Style::new().bg(bg).fg(p.faint);
+        for k in 0..depth {
+            let symbol = if k + 1 == depth {
+                if guides.last { "╰" } else { "├" }
+            } else if guides.rail(k) {
+                "│"
+            } else {
+                continue;
+            };
+            put(buf, list.x + 1 + 2 * k, y, symbol, 1, guide);
+        }
+        let show_counts = fits(item, row);
+        let x = list.x + 1 + 2 * depth;
+        put(buf, x, y, row.mark.0, 1, Style::new().bg(bg).fg(row.mark.1));
+        let name_x = x + 2;
+        let counts_x = match row.counts.filter(|_| show_counts) {
+            Some(c) => put_counts(buf, end, y, c, bg, p),
+            None if row.binary && show_counts => {
+                let x = end.saturating_sub(3);
+                put(buf, x, y, "bin", 3, Style::new().bg(bg).fg(p.faint));
+                x
             }
-            ListItem::File { index, depth } => {
-                let f = &stream.files[*index];
-                let bg = if *index == app.files_cursor && focused {
-                    p.selection
-                } else if *index == app.top.file {
-                    p.header_bg
-                } else {
-                    p.panel
-                };
-                fill(
-                    buf,
-                    Rect::new(list.x, y, list.width, 1),
-                    Style::new().bg(bg),
-                );
-                let x = list.x + 1 + depth;
-                let st = f.change.status;
-                put(
-                    buf,
-                    x,
-                    y,
-                    STATUS_MARK,
-                    1,
-                    Style::new().bg(bg).fg(status_color(p, st)),
-                );
-                let name = f.change.path.rsplit('/').next().unwrap_or(&f.change.path);
-                let name_x = x + 2;
-                let counts = f.counts().filter(|_| show_counts);
-                let counts_x = match (counts, &f.body) {
-                    (Some(c), _) => put_counts(buf, end, y, c, bg, p),
-                    (None, Body::Binary) if show_counts => {
-                        let x = end.saturating_sub(3);
-                        put(buf, x, y, "bin", 3, Style::new().bg(bg).fg(p.faint));
-                        x
-                    }
-                    _ => end,
-                };
-                let room = usize::from(counts_x.saturating_sub(name_x + 1));
-                let name = truncate_middle(name, room);
-                let style = if f.reviewed {
-                    Style::new().bg(bg).fg(p.faint)
-                } else {
-                    Style::new().bg(bg).fg(p.fg)
-                };
-                put(
-                    buf,
-                    name_x,
-                    y,
-                    &name,
-                    counts_x.saturating_sub(name_x),
-                    style,
-                );
-            }
+            None => end,
+        };
+        let room = usize::from(counts_x.saturating_sub(name_x + 1));
+        let fg = match (row.reviewed, row.dir) {
+            (true, _) => p.faint,
+            (false, true) => p.muted,
+            (false, false) => p.fg,
+        };
+        let check = row.dir && row.reviewed && room >= 4;
+        let room = if check { room - 2 } else { room };
+        let name = if row.dir {
+            truncate_chain(row.name, room)
+        } else {
+            truncate_middle(row.name, room)
+        };
+        let w = put(
+            buf,
+            name_x,
+            y,
+            &name,
+            counts_x.saturating_sub(name_x),
+            Style::new().bg(bg).fg(fg),
+        );
+        if check {
+            put(
+                buf,
+                name_x + w + 1,
+                y,
+                REVIEWED_MARK,
+                1,
+                Style::new().bg(bg).fg(p.green_dim),
+            );
         }
     }
+}
+
+/// One sidebar row as drawn.
+struct SidebarRow<'a> {
+    mark: (&'static str, Color),
+    name: &'a str,
+    counts: Option<(u32, u32)>,
+    binary: bool,
+    reviewed: bool,
+    dir: bool,
 }
 
 /// A thin rounded frame just inside `r`.
@@ -1041,7 +1124,14 @@ const HELP: &[(&str, &str)] = &[
     ("w", "switch worktree (type to filter)"),
     ("{  }", "previous/next worktree"),
     ("tab  h l", "focus files or diff"),
-    ("enter", "open file; expand a fold"),
+    (
+        "h l  ← →",
+        "in files: fold or unfold a folder, go to parent",
+    ),
+    (
+        "enter space",
+        "in files: open file, fold folder; expand a fold",
+    ),
     ("e  E", "expand the first fold on screen; all folds in file"),
     ("v", "mark file reviewed"),
     ("s", "layout: auto, unified, split"),
@@ -1104,6 +1194,21 @@ fn draw_help(buf: &mut Buffer, p: &Palette, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_chains_drop_middle_folders_first() {
+        assert_eq!(
+            truncate_chain("docs/runbooks/billing/", 30),
+            "docs/runbooks/billing/"
+        );
+        assert_eq!(
+            truncate_chain("docs/runbooks/billing/", 15),
+            "docs/…/billing/"
+        );
+        assert_eq!(truncate_chain("a/b/c/d/e/", 9), "a/…/d/e/");
+        assert_eq!(truncate_chain("docs/runbooks/billing/", 10), "…/billing/");
+        assert_eq!(truncate_chain("verylongname/", 8), "…ngname/");
+    }
 
     #[test]
     fn names_are_cut_in_the_middle() {

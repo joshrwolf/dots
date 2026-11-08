@@ -35,6 +35,12 @@ pub(crate) struct Frame {
     pub(crate) png: Option<PathBuf>,
     /// Open the worktree switcher with this query.
     pub(crate) switcher: Option<String>,
+    /// Sidebar folders to collapse, by path.
+    pub(crate) collapse: Vec<String>,
+    /// Mark files under these path prefixes reviewed.
+    pub(crate) review: Vec<String>,
+    /// Focus the sidebar with its cursor on this file or folder path.
+    pub(crate) select: Option<String>,
 }
 
 /// Loads a worktree's changes with every diff computed.
@@ -105,6 +111,36 @@ pub(crate) fn frame(options: &Frame) -> Result<String> {
         app.jump_to_file(i, rows);
     }
     app.scroll_by(i64::from(options.scroll), rows);
+    if let Some(stream) = &mut app.stream {
+        for f in &mut stream.files {
+            f.reviewed |= options
+                .review
+                .iter()
+                .any(|p| f.change.path.starts_with(p.as_str()));
+        }
+    }
+    for dir in &options.collapse {
+        let path = format!("{}/", dir.trim_end_matches('/'));
+        app.set_collapsed(&path, true);
+    }
+    app.sync_files_cursor();
+    if let Some(select) = &options.select {
+        let row = app
+            .list
+            .iter()
+            .position(|it| match it {
+                app::ListItem::Dir { path, .. } => {
+                    path.trim_end_matches('/') == select.trim_end_matches('/')
+                }
+                app::ListItem::File { index, .. } => app
+                    .stream
+                    .as_ref()
+                    .is_some_and(|s| s.files[*index].change.path == *select),
+            })
+            .with_context(|| format!("{select} is not in the file tree"))?;
+        app.select_row(row, rows);
+        app.focus = app::Focus::Files;
+    }
     if let Some(query) = &options.switcher {
         for wt in app.repo.worktrees.clone() {
             if let Ok(s) = crate::run::summarize(&wt.path) {
