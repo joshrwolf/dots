@@ -154,14 +154,14 @@ pub(crate) struct Target {
 /// Files above this size are listed but not read.
 pub(crate) const MAX_FILE: u64 = 16 * 1024 * 1024;
 
-/// Whether `git status` may use the repository's fsmonitor.
+/// Whether `git status` may use the repository's fsmonitor. The viewer
+/// never does: without optional locks Git cannot record what the daemon
+/// reported, and the untracked cache it then trusts can miss new files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Fsmonitor {
-    /// As configured, starting the daemon if git wants to: the viewed worktree.
+    Off,
+    /// As configured, which may start a daemon: for measuring only.
     AsConfigured,
-    /// Only when a daemon already runs for the worktree: background stats
-    /// must not start daemons.
-    IfRunning,
 }
 
 /// Opens `worktree` and resolves what `mode` compares it against.
@@ -193,9 +193,9 @@ pub(crate) fn open(worktree: &Path, mode: Mode) -> Result<(gix::Repository, Stri
 
 /// Every file that differs between the base tree and the working tree,
 /// including untracked files that are not ignored.
-pub(crate) fn changes(worktree: &Path, mode: Mode, fsmonitor: Fsmonitor) -> Result<Changes> {
+pub(crate) fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
     let (repo, base, target) = open(worktree, mode)?;
-    let status = status(&repo, worktree, fsmonitor, &[])?;
+    let status = status(&repo, worktree, Fsmonitor::Off, &[])?;
     let tree = if target.base_tree == target.head_tree {
         Vec::new()
     } else {
@@ -221,7 +221,7 @@ pub(crate) fn changes_for(
     paths: &[String],
 ) -> Result<Vec<FileChange>> {
     let root = workdir(repo)?;
-    let status = status(repo, &root, Fsmonitor::AsConfigured, paths)?;
+    let status = status(repo, &root, Fsmonitor::Off, paths)?;
     let mut tree = Vec::new();
     if target.base_tree != target.head_tree {
         let base = repo.find_tree(target.base_tree)?;
@@ -487,7 +487,7 @@ pub(crate) fn status(
     paths: &[String],
 ) -> Result<Vec<StatusEntry>> {
     let mut args: Vec<&str> = Vec::new();
-    if fsmonitor == Fsmonitor::IfRunning && !fsmonitor_running(worktree) {
+    if fsmonitor == Fsmonitor::Off {
         args.extend(["-c", "core.fsmonitor=false"]);
     }
     args.extend([
@@ -516,12 +516,6 @@ pub(crate) fn status(
         );
     }
     Ok(entries)
-}
-
-/// Whether an fsmonitor daemon already serves `worktree`. Asking does not
-/// start one.
-pub(crate) fn fsmonitor_running(worktree: &Path) -> bool {
-    git(worktree, &["fsmonitor--daemon", "status"]).is_ok()
 }
 
 fn git(worktree: &Path, args: &[&str]) -> Result<Vec<u8>> {

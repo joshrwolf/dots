@@ -323,7 +323,7 @@ fn cache_path(common_dir: &Path) -> Option<PathBuf> {
 /// uncommitted files git reports.
 pub(crate) fn summarize(stats: &Stats, worktree: &Path) -> Result<Summary> {
     let (repo, _, target) = repo::open(worktree, Mode::Base)?;
-    let entries = repo::status(&repo, worktree, Fsmonitor::IfRunning, &[])?;
+    let entries = repo::status(&repo, worktree, Fsmonitor::Off, &[])?;
     let root = repo
         .workdir()
         .map_or_else(|| worktree.to_owned(), Path::to_owned);

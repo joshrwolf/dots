@@ -22,7 +22,7 @@ use crate::ctl::{self, Command};
 use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
 use crate::input::Input;
-use crate::repo::{self, Changes, FileChange, Fsmonitor, Mode, Reader, Side, Stamp};
+use crate::repo::{self, Changes, FileChange, Mode, Reader, Side, Stamp};
 use crate::stats::{self, Stats};
 use crate::switcher::Switcher;
 use crate::theme::{self, Detected, Palette};
@@ -633,9 +633,7 @@ impl Runtime {
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
-            // The viewed worktree may use, and start, the configured fsmonitor.
-            let result = repo::changes(&worktree, mode, Fsmonitor::AsConfigured)
-                .map_err(|e| format!("{e:#}"));
+            let result = repo::changes(&worktree, mode).map_err(|e| format!("{e:#}"));
             let _ = tx.send(Msg::Loaded {
                 generation,
                 worktree,

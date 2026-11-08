@@ -14,7 +14,7 @@ use ratatui::style::{Color, Modifier};
 
 use crate::app::{self, App, Body, Settings};
 use crate::highlight;
-use crate::repo::{self, Fsmonitor, Mode, Reader};
+use crate::repo::{self, Mode, Reader};
 use crate::stats::{self, Stats};
 use crate::theme::{Detected, Palette};
 use crate::ui;
@@ -60,7 +60,7 @@ fn loaded(
     let mode = settings.mode;
     let mut app = App::new(repo, current, Palette::new(theme), settings);
     let wt = app.worktree_path().clone();
-    let changes = repo::changes(&wt, mode, Fsmonitor::IfRunning)?;
+    let changes = repo::changes(&wt, mode)?;
     let mut reader = Reader::new(changes.repo.to_thread_local(), changes.root.clone());
     let bodies: Vec<_> = changes
         .files
@@ -277,7 +277,7 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
         let _ = writeln!(out, "\nworktree #{index}");
         for mode in [Mode::Head, Mode::Base] {
             let t = Instant::now();
-            let changes = repo::changes(wt, mode, Fsmonitor::IfRunning)?;
+            let changes = repo::changes(wt, mode)?;
             let _ = writeln!(
                 out,
                 "  status scan ({mode:?}): {} → {} files vs {}",
@@ -289,7 +289,7 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
         // First frame of a switch: load, diff the files on screen, draw.
         let settings = Settings::default();
         let switch = Instant::now();
-        let changes = repo::changes(wt, Mode::Base, Fsmonitor::IfRunning)?;
+        let changes = repo::changes(wt, Mode::Base)?;
         let loaded_at = switch.elapsed();
         let mut app = App::new(
             repo.clone(),
@@ -428,7 +428,8 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
         let [texts_b, colour_b, emph_b] = app.cache_bytes();
         let _ = writeln!(
             out,
-            "  memory after diffing and scrolling: resident {}, caches: texts {}, colour {}, emphasis {}",
+            "  memory after diffing and scrolling: footprint {}, resident {} (counts mapped packs), caches: texts {}, colour {}, emphasis {}",
+            footprint().unwrap_or_else(|| "?".to_owned()),
             resident().map_or_else(|| "?".to_owned(), mib),
             mib(texts_b),
             mib(colour_b),
@@ -478,7 +479,6 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
         }
         if options.fsmonitor {
             let root = &changes.root;
-            let running = repo::fsmonitor_running(root);
             let time = |mode: repo::Fsmonitor| -> Result<Vec<Duration>> {
                 let mut times = Vec::new();
                 for _ in 0..5 {
@@ -489,24 +489,13 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
                 times.sort();
                 Ok(times)
             };
-            let without = if running {
-                None
-            } else {
-                Some(time(repo::Fsmonitor::IfRunning)?)
-            };
+            let without = time(repo::Fsmonitor::Off)?;
             let with = time(repo::Fsmonitor::AsConfigured)?;
             let fmt = |t: &[Duration]| format!("p50 {}, min {}", ms(percentile(t, 0.5)), ms(t[0]));
             let _ = writeln!(
                 out,
-                "  full status, 5 runs: fsmonitor off: {}; as configured (daemon {}): {}",
-                without
-                    .as_deref()
-                    .map_or_else(|| "not measured, daemon already running".to_owned(), fmt),
-                if running {
-                    "was running"
-                } else {
-                    "started on demand"
-                },
+                "  full status, 5 runs: fsmonitor off: {}; as configured: {}",
+                fmt(&without),
                 fmt(&with),
             );
         }
@@ -672,4 +661,15 @@ fn resident() -> Option<usize> {
     let out = dots_process::output(command, Duration::from_secs(5), 4096).ok()?;
     let kib: usize = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
     Some(kib * 1024)
+}
+
+/// This process's physical footprint (dirty and compressed memory, without
+/// clean file-backed pages such as mapped packs), as `footprint` reports it.
+fn footprint() -> Option<String> {
+    let mut command = std::process::Command::new("footprint");
+    command.arg(std::process::id().to_string());
+    let out = dots_process::output(command, Duration::from_secs(20), 1 << 20).ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.lines().find(|l| l.contains("Footprint:"))?;
+    Some(line.split("Footprint:").nth(1)?.trim().to_owned())
 }
