@@ -216,7 +216,13 @@ impl App {
                     super::Focus::Diff => self.cursor_file(),
                 }
                 .ok_or("no file here")?;
-                let path = stream.files[file].change.path.clone();
+                let path = stream
+                    .files
+                    .get(file)
+                    .ok_or("no file here")?
+                    .change
+                    .path
+                    .clone();
                 Ok(editor(Place::File { path }, "", false))
             }
             Scope::Lines | Scope::Suggestion => {
@@ -226,7 +232,10 @@ impl App {
                 if self.since && start.side == Side::Old {
                     return Err("since the last send, comment on the new side".to_owned());
                 }
-                let f = &stream.files[start.file];
+                let f = stream
+                    .files
+                    .get(start.file)
+                    .ok_or("the selection is gone")?;
                 let texts = self.texts(f).ok_or("the file is still loading")?;
                 let text = if start.side == Side::Old {
                     texts.old.1

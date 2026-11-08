@@ -692,6 +692,11 @@ impl App {
         let mut previous: HashMap<String, FileView> = HashMap::new();
         let mut anchor = None;
         let old = self.stream.take();
+        // A selection follows its file by path, and ends when it is gone.
+        let visual = self.visual.take().and_then(|v| {
+            let path = old.as_ref()?.files.get(v.file)?.change.path.clone();
+            Some((path, v))
+        });
         let (worktree, base, mode, target) = if let Some(old) = old {
             anchor = self.source_anchor(&old);
             let keys = (old.worktree, old.base, old.mode, old.target);
@@ -740,6 +745,10 @@ impl App {
                 anchor = None;
             }
         }
+        self.visual = visual.and_then(|(path, v)| {
+            let file = files.iter().position(|f| f.change.path == path)?;
+            Some(Pos { file, ..v })
+        });
         self.pending_anchor = anchor;
         self.tree = list_items(&files);
         self.list = visible(&self.tree, &self.collapsed);
@@ -895,10 +904,15 @@ impl App {
                 .saturating_sub(1)
                 .min(last)
         };
-        let window = (
-            near(top.saturating_sub(u32::from(rows))),
-            near(top + 3 * u32::from(rows)),
-        );
+        // Before the first layout there are no offsets to look files up by.
+        let window = if stream.total() == 0 {
+            (self.top.file, (self.top.file + 2).min(last))
+        } else {
+            (
+                near(top.saturating_sub(u32::from(rows))),
+                near(top + 3 * u32::from(rows)),
+            )
+        };
         if self.laid_out == Some((width, layout, wrap, window)) {
             return;
         }
@@ -1772,12 +1786,14 @@ pub(crate) fn visible(tree: &[ListItem], collapsed: &HashSet<String>) -> Vec<Lis
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod fixture {
+    //! Loaded apps without Git, for tests.
+
     use super::*;
     use crate::repo::Status;
     use crate::theme::Detected;
 
-    fn change(path: &str, old: &str, new: &str) -> FileChange {
+    pub(crate) fn change(path: &str, old: &str, new: &str) -> FileChange {
         FileChange {
             path: path.to_owned(),
             status: Status::Modified,
@@ -1791,7 +1807,7 @@ mod tests {
         }
     }
 
-    fn id_of(text: &str) -> gix::ObjectId {
+    pub(crate) fn id_of(text: &str) -> gix::ObjectId {
         gix::objs::compute_hash(
             gix::hash::Kind::Sha1,
             gix::object::Kind::Blob,
@@ -1800,7 +1816,7 @@ mod tests {
         .expect("hashing")
     }
 
-    fn target() -> Target {
+    pub(crate) fn target() -> Target {
         let null = gix::ObjectId::null(gix::hash::Kind::Sha1);
         Target {
             base_tree: null,
@@ -1808,7 +1824,7 @@ mod tests {
         }
     }
 
-    fn app_with(files: &[(&str, &str, &str)]) -> App {
+    pub(crate) fn app_with(files: &[(&str, &str, &str)]) -> App {
         let repo = Repo {
             worktrees: vec![crate::repo::Worktree {
                 path: "/r".into(),
@@ -1847,6 +1863,12 @@ mod tests {
         }
         app
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fixture::{app_with, change, target};
+    use super::*;
 
     #[test]
     fn stream_stacks_header_rows_and_spacer_per_file() {
@@ -2031,6 +2053,31 @@ mod tests {
         ];
         app.load(path, Mode::Base, "main".into(), target(), changes, None);
         assert_eq!(app.top.file, 2, "anchored to b.rs by path");
+    }
+
+    #[test]
+    fn a_selection_follows_its_file_across_reloads_and_ends_with_it() {
+        let mut app = app_with(&[("a.rs", "x\n", "y\n"), ("b.rs", "x\n", "y\nz\n")]);
+        app.layout(80, 40);
+        let pos = |file| Pos {
+            file,
+            side: review::Side::New,
+            line: 0,
+        };
+        app.visual = Some(pos(1));
+        // A file sorting in ahead keeps the selection on b.rs.
+        let changes = vec![
+            change("a.rs", "x\n", "y\n"),
+            change("a0.rs", "", "n\n"),
+            change("b.rs", "x\n", "y\nz\n"),
+        ];
+        app.apply_paths(&["a0.rs".to_owned()], changes[1..2].to_vec());
+        assert_eq!(app.visual, Some(pos(2)));
+        // b.rs reverted: the selection ends, and commenting cannot panic.
+        app.apply_paths(&["b.rs".to_owned()], Vec::new());
+        app.layout(80, 40);
+        assert_eq!(app.visual, None);
+        app.begin_comment(Scope::Lines);
     }
 
     #[test]

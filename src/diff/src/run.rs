@@ -228,50 +228,15 @@ pub(crate) fn run(options: Options) -> Result<()> {
         let app = App::new(repo, current, palette, settings);
         let (tx, rx) = mpsc::channel();
         let input = Input::spawn(tx.clone(), Msg::Input);
-        let pool_tx = Mutex::new(tx.clone());
-        let pool = highlight::Pool::new(2, move |done| {
-            if let Ok(tx) = pool_tx.lock() {
-                let _ = tx.send(Msg::Highlighted(done));
-            }
-        });
         let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);
-        let tx_for_summaries = tx.clone();
-        let mut rt = Runtime {
-            app,
-            tx,
-            generation: 0,
-            diffs: None,
-            pool,
-            watcher: None,
-            summaries: SummaryQueue::new(SUMMARY_THREADS, &tx_for_summaries),
-            stale: HashMap::new(),
-            burst: Burst::default(),
-            partial_busy: false,
-            epoch: 0,
-            refreshing: None,
-            next_reconcile: Instant::now() + RECONCILE,
-            state: None,
-            wanted: Vec::new(),
-            timings,
-            loading_since: Some(started),
-            theme_fixed: options.theme.is_some(),
-            detected,
-            next_theme: Instant::now() + THEME_POLL,
-            quit: false,
-            summaries_started: false,
-            source: None,
-            moves_for: None,
-            moves_seq: 0,
-            watched: None,
-            ctl_status,
-            pending_file: options.file.clone(),
-            bound: options.bind.clone().map(|b| (b, current)),
-            resolution: None,
-            agents: Vec::new(),
-            sending: false,
-            prefix: false,
-            shot: None,
-        };
+        let mut rt = Runtime::new(app, tx, Threads::default());
+        rt.ctl_status = ctl_status;
+        rt.timings = timings;
+        rt.loading_since = Some(started);
+        rt.theme_fixed = options.theme.is_some();
+        rt.detected = detected;
+        rt.pending_file.clone_from(&options.file);
+        rt.bound = options.bind.clone().map(|b| (b, current));
         let mut graphics = options.graphics.then(Graphics::new);
         rt.start_load();
         rt.spawn_watch();
@@ -295,7 +260,72 @@ pub(crate) fn run(options: Options) -> Result<()> {
     Ok(())
 }
 
+/// Background threads a runtime starts.
+#[derive(Debug, Clone, Copy)]
+struct Threads {
+    highlight: usize,
+    summaries: usize,
+}
+
+impl Default for Threads {
+    fn default() -> Self {
+        Self {
+            highlight: 2,
+            summaries: SUMMARY_THREADS,
+        }
+    }
+}
+
 impl Runtime {
+    fn new(app: App, tx: Sender<Msg>, threads: Threads) -> Self {
+        let pool_tx = Mutex::new(tx.clone());
+        let pool = highlight::Pool::new(threads.highlight, move |done| {
+            if let Ok(tx) = pool_tx.lock() {
+                let _ = tx.send(Msg::Highlighted(done));
+            }
+        });
+        let worktree = app.worktree_path().clone();
+        Self {
+            summaries: SummaryQueue::new(threads.summaries, &tx),
+            app,
+            tx,
+            generation: 0,
+            diffs: None,
+            pool,
+            watcher: None,
+            stale: HashMap::new(),
+            burst: Burst::default(),
+            partial_busy: false,
+            epoch: 0,
+            refreshing: None,
+            next_reconcile: Instant::now() + RECONCILE,
+            state: None,
+            wanted: Vec::new(),
+            timings: Timings::new(false),
+            loading_since: None,
+            theme_fixed: false,
+            detected: None,
+            next_theme: Instant::now() + THEME_POLL,
+            quit: false,
+            summaries_started: false,
+            source: None,
+            moves_for: None,
+            moves_seq: 0,
+            watched: None,
+            ctl_status: Arc::new(Mutex::new(ctl::Status {
+                block: None,
+                worktree,
+            })),
+            pending_file: None,
+            bound: None,
+            resolution: None,
+            agents: Vec::new(),
+            sending: false,
+            prefix: false,
+            shot: None,
+        }
+    }
+
     fn view_rows(&self) -> u16 {
         self.app.areas.diff.height.max(1)
     }
@@ -1301,7 +1331,12 @@ impl Runtime {
     }
 
     fn mouse(&mut self, mouse: MouseEvent) -> bool {
-        if self.app.switcher.is_some() {
+        let modal = self.app.switcher.is_some()
+            || self.app.editor.is_some()
+            || self.app.picker.is_some()
+            || self.app.help
+            || self.prefix;
+        if modal {
             return false;
         }
         let at = Position::new(mouse.column, mouse.row);
@@ -1534,7 +1569,71 @@ const WATCH_ALL_FILES: bool = !cfg!(target_os = "linux");
 
 #[cfg(test)]
 mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
     use super::*;
+    use crate::app::fixture::app_with;
+
+    /// A runtime over a loaded app, drawn once at 100x30, with no threads.
+    fn runtime(files: &[(&str, &str, &str)]) -> (Runtime, Receiver<Msg>) {
+        let (tx, rx) = mpsc::channel();
+        let threads = Threads {
+            highlight: 0,
+            summaries: 0,
+        };
+        let mut rt = Runtime::new(app_with(files), tx, threads);
+        draw(&mut rt);
+        (rt, rx)
+    }
+
+    fn draw(rt: &mut Runtime) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal.draw(|f| ui::draw(f, &mut rt.app)).expect("draw");
+        crate::render::dump(terminal.backend().buffer(), false)
+    }
+
+    fn press(rt: &mut Runtime, keys: &str) {
+        for c in keys.chars() {
+            rt.key(KeyEvent::from(KeyCode::Char(c)));
+        }
+    }
+
+    fn mouse(rt: &mut Runtime, kind: MouseEventKind, column: u16, row: u16) {
+        rt.mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    const TWO: &[(&str, &str, &str)] = &[
+        ("a.rs", "a\nb\nc\n", "a\nB\nc\nd\n"),
+        ("b.rs", "x\n", "y\n"),
+    ];
+
+    #[test]
+    fn the_mouse_does_nothing_under_the_editor_and_overlays() {
+        let (mut rt, _rx) = runtime(TWO);
+        let x = rt.app.areas.diff.x + 10;
+        press(&mut rt, "j");
+        press(&mut rt, "c");
+        assert!(rt.app.editor.is_some(), "{:?}", rt.app.message);
+        let row = rt.app.cursor_row;
+        mouse(&mut rt, MouseEventKind::Drag(MouseButton::Left), x, 5);
+        assert_eq!((rt.app.visual.clone(), rt.app.cursor_row), (None, row));
+        rt.key(KeyEvent::from(KeyCode::Esc));
+        press(&mut rt, "?");
+        mouse(&mut rt, MouseEventKind::Down(MouseButton::Left), x, 0);
+        mouse(&mut rt, MouseEventKind::ScrollDown, x, 5);
+        let stream = rt.app.stream.as_ref().expect("loaded");
+        assert!(
+            !stream.files[0].folded,
+            "the click under help folded nothing"
+        );
+        assert_eq!(rt.app.global_top(), 0, "the view stayed under help");
+    }
 
     #[test]
     fn diffs_files_nearest_the_view_first() {
