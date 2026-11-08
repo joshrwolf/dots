@@ -2,7 +2,7 @@
 //! overlay, so every listed key has a handler and every handled key is
 //! listed.
 
-use ratatui::crossterm::event::KeyCode;
+use ratatui::termina::event::KeyCode;
 
 /// What a key does. Where it depends on focus, the handler decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,7 +180,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "select lines (j k or drag to extend); cancel",
         &[
             (key('v'), Action::Visual),
-            (named(KeyCode::Esc), Action::Cancel),
+            (named(KeyCode::Escape), Action::Cancel),
         ],
     ),
     row(

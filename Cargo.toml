@@ -40,7 +40,7 @@ getrandom = { version = "0.4", features = ["std"] }
 nucleo = "0.5"
 nix = { version = "0.31", features = ["process", "signal"] }
 notify = "8"
-ratatui = "0.30"
+ratatui = { version = "0.30", default-features = false, features = ["layout-cache", "macros"] }
 renderdag = { package = "sapling-renderdag", version = "0.2" }
 rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

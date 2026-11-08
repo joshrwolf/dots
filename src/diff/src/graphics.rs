@@ -276,9 +276,9 @@ pub(crate) fn header_picture(app: &App, cols: u16, path: &std::path::Path) -> Re
 
 /// Pixels per cell, from the terminal; a common size when it does not say.
 fn cell_pixels() -> (u16, u16) {
-    match ratatui::crossterm::terminal::window_size() {
-        Ok(s) if s.width > 0 && s.columns > 0 && s.rows > 0 => {
-            (s.width / s.columns, s.height / s.rows)
+    match rustix::termios::tcgetwinsize(rustix::stdio::stdout()) {
+        Ok(s) if s.ws_xpixel > 0 && s.ws_col > 0 && s.ws_row > 0 => {
+            (s.ws_xpixel / s.ws_col, s.ws_ypixel / s.ws_row)
         }
         _ => (10, 20),
     }

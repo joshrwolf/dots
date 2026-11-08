@@ -2069,12 +2069,7 @@ mod tests {
         };
         app.visual = Some(pos(1));
         // A file sorting in ahead keeps the selection on b.rs.
-        let changes = vec![
-            change("a.rs", "x\n", "y\n"),
-            change("a0.rs", "", "n\n"),
-            change("b.rs", "x\n", "y\nz\n"),
-        ];
-        app.apply_paths(&["a0.rs".to_owned()], changes[1..2].to_vec());
+        app.apply_paths(&["a0.rs".to_owned()], vec![change("a0.rs", "", "n\n")]);
         assert_eq!(app.visual, Some(pos(2)));
         // b.rs reverted: the selection ends, and commenting cannot panic.
         app.apply_paths(&["b.rs".to_owned()], Vec::new());

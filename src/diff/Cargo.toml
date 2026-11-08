@@ -11,7 +11,7 @@ clap.workspace = true
 dots-process.workspace = true
 notify.workspace = true
 nucleo.workspace = true
-ratatui.workspace = true
+ratatui = { workspace = true, features = ["termina"] }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -23,6 +23,7 @@ tiny-skia = "0.12"
 cosmic-text = "0.19"
 flate2 = "1"
 base64 = "0.23"
+signal-hook = "0.3"
 
 [lints]
 workspace = true

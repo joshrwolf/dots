@@ -22,6 +22,7 @@ mod review;
 mod run;
 mod stats;
 mod switcher;
+mod terminal;
 mod theme;
 mod timings;
 mod ui;

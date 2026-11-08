@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::termina::event::{KeyCode, KeyEvent, Modifiers};
 
 use super::{Msg, Runtime};
 use crate::app::Line;
@@ -67,14 +67,14 @@ impl Runtime {
     }
 
     pub(super) fn editor_key(&mut self, key: KeyEvent) {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let ctrl = key.modifiers.contains(Modifiers::CONTROL);
+        let alt = key.modifiers.contains(Modifiers::ALT);
         let Some(editor) = &mut self.app.editor else {
             return;
         };
         let b = &mut editor.buffer;
         match (key.code, ctrl) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c'), true) => {
+            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => {
                 self.app.editor = None;
             }
             (KeyCode::Enter | KeyCode::Char('s'), true) => {
@@ -124,7 +124,7 @@ impl Runtime {
             return;
         };
         match (key.code, ctrl) {
-            (KeyCode::Esc, _) | (KeyCode::Char('g'), true) => self.app.picker = None,
+            (KeyCode::Escape, _) | (KeyCode::Char('g'), true) => self.app.picker = None,
             (KeyCode::Enter, _) => {
                 let chosen = picker.selected().cloned();
                 let then_send = picker.then_send;

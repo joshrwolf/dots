@@ -10,10 +10,12 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
-use ratatui::crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
 use ratatui::layout::Position;
+use ratatui::termina::Event;
+use ratatui::termina::escape::csi::{self, Csi};
+use ratatui::termina::event::{
+    KeyCode, KeyEvent, KeyEventKind, Modifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 
 use crate::app::{
     self, App, Body, FileTexts, Focus, LayoutChoice, Line, ListItem, Scope, Settings, Summary,
@@ -22,7 +24,7 @@ use crate::ctl::{self, Command};
 use crate::deliver;
 use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
-use crate::input::Input;
+use crate::input::{self, Input};
 use crate::keys::{self, Action};
 use crate::moves;
 use crate::picker::Batch;
@@ -30,6 +32,7 @@ use crate::repo::{self, Changes, FileChange, GitState, Mode, Reader, Side, Stamp
 use crate::review;
 use crate::stats::{self, Stats};
 use crate::switcher::Switcher;
+use crate::terminal;
 use crate::theme::{self, Detected, Palette};
 use crate::timings::Timings;
 use crate::ui;
@@ -39,7 +42,7 @@ mod annotate;
 
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Msg {
-    Input(Event),
+    Input(Input),
     Loaded {
         generation: u64,
         worktree: PathBuf,
@@ -123,7 +126,7 @@ pub(crate) struct Options {
 /// How often the safety net checks for changes the watcher missed.
 const RECONCILE: Duration = Duration::from_secs(10);
 
-/// Rex reports no theme change, so the colours are asked for again.
+/// How often the colours are asked for.
 const THEME_POLL: Duration = Duration::from_secs(2);
 /// Quiet time before another worktree's switcher counts are recomputed.
 const SUMMARY_SETTLE: Duration = Duration::from_secs(3);
@@ -134,6 +137,21 @@ const PREFETCH: usize = 3;
 struct DiffJob {
     cancel: Arc<AtomicBool>,
     focus: Arc<AtomicUsize>,
+}
+
+/// Following the terminal's colours. Terminals reporting theme changes
+/// (mode 2031) report only a switch between light and dark, so the colours
+/// are also asked for now and then.
+#[derive(Debug)]
+struct Theme {
+    /// When to ask next; `None` when the colours were given on the command
+    /// line.
+    next_poll: Option<Instant>,
+    detected: Option<Detected>,
+    /// Ask for the colours at the next turn of the loop.
+    ask: bool,
+    /// The palette changed, so every cell is drawn again.
+    changed: bool,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -161,9 +179,7 @@ struct Runtime {
     timings: Timings,
     /// When the current worktree began loading, until its first full frame.
     loading_since: Option<Instant>,
-    theme_fixed: bool,
-    detected: Option<Detected>,
-    next_theme: Instant,
+    theme: Theme,
     quit: bool,
     summaries_started: bool,
     /// Where the current stream's contents are read from.
@@ -205,20 +221,16 @@ pub(crate) fn run(options: Options) -> Result<()> {
     );
     let current = repo.index_of(&options.path).unwrap_or(0);
 
-    let mut terminal = ratatui::try_init().context("starting the terminal")?;
+    let mut terminal = terminal::start().context("starting the terminal")?;
     let result = (|| {
-        ratatui::crossterm::execute!(
-            std::io::stdout(),
-            ratatui::crossterm::event::EnableMouseCapture,
-            ratatui::crossterm::event::EnableBracketedPaste,
-            // Tells Ctrl+Enter from Enter where the terminal can.
-            ratatui::crossterm::event::PushKeyboardEnhancementFlags(
-                ratatui::crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-            )
-        )?;
-        let detected = match options.theme {
-            Some(d) => Some(d),
-            None => theme::ask(Duration::from_millis(400)).ok().flatten(),
+        let (tx, rx) = mpsc::channel();
+        input::spawn(tx.clone(), Msg::Input)?;
+        // Input that arrives while the colours are awaited is handled after.
+        let (detected, early) = if let Some(d) = options.theme {
+            (Some(d), Vec::new())
+        } else {
+            terminal::send(&mut terminal, &theme::query())?;
+            first_colours(&rx, Duration::from_millis(400))
         };
         timings.note(&format!(
             "theme {}",
@@ -234,38 +246,49 @@ pub(crate) fn run(options: Options) -> Result<()> {
             settings.header_rows = 2;
         }
         let app = App::new(repo, current, palette, settings);
-        let (tx, rx) = mpsc::channel();
-        let input = Input::spawn(tx.clone(), Msg::Input);
         let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);
         let mut rt = Runtime::new(app, tx, Threads::default());
         rt.ctl_status = ctl_status;
         rt.timings = timings;
         rt.loading_since = Some(started);
-        rt.theme_fixed = options.theme.is_some();
-        rt.detected = detected;
+        if options.theme.is_some() {
+            rt.theme.next_poll = None;
+        }
+        rt.theme.detected = detected;
         rt.pending_file.clone_from(&options.file);
         rt.bound = options.bind.clone().map(|b| (b, current));
         let mut graphics = options.graphics.then(Graphics::new);
         rt.start_load();
         rt.spawn_watch();
-        let outcome = rt.event_loop(&mut terminal, &rx, &input, graphics.as_mut());
+        for msg in early {
+            rt.handle(msg);
+        }
+        let outcome = rt.event_loop(&mut terminal, &rx, graphics.as_mut());
         if let Some(g) = graphics.as_mut() {
             g.clear();
         }
         outcome.map(|()| rt.timings)
     })();
-    let _ = ratatui::crossterm::execute!(
-        std::io::stdout(),
-        ratatui::crossterm::event::PopKeyboardEnhancementFlags,
-        ratatui::crossterm::event::DisableBracketedPaste,
-        ratatui::crossterm::event::DisableMouseCapture
-    );
-    ratatui::try_restore()?;
+    terminal::stop(&mut terminal)?;
     let timings = result?;
     if let Some(dest) = options.timings {
         timings.write(started, dest.as_deref())?;
     }
     Ok(())
+}
+
+/// Waits up to `timeout` for the terminal's colours, keeping what else
+/// arrives meanwhile.
+fn first_colours(rx: &Receiver<Msg>, timeout: Duration) -> (Option<Detected>, Vec<Msg>) {
+    let deadline = Instant::now() + timeout;
+    let mut early = Vec::new();
+    while let Ok(msg) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        match msg {
+            Msg::Input(Input::Colours(d)) => return (Some(d), early),
+            msg => early.push(msg),
+        }
+    }
+    (None, early)
 }
 
 /// Background threads a runtime starts.
@@ -311,9 +334,12 @@ impl Runtime {
             wanted: Vec::new(),
             timings: Timings::new(false),
             loading_since: None,
-            theme_fixed: false,
-            detected: None,
-            next_theme: Instant::now() + THEME_POLL,
+            theme: Theme {
+                next_poll: Some(Instant::now() + THEME_POLL),
+                detected: None,
+                ask: false,
+                changed: false,
+            },
             quit: false,
             summaries_started: false,
             source: None,
@@ -342,9 +368,8 @@ impl Runtime {
     #[allow(clippy::too_many_lines)]
     fn event_loop(
         &mut self,
-        terminal: &mut ratatui::DefaultTerminal,
+        terminal: &mut terminal::Tui,
         rx: &Receiver<Msg>,
-        input: &Input,
         mut graphics: Option<&mut Graphics>,
     ) -> Result<()> {
         let mut dirty = true;
@@ -372,8 +397,8 @@ impl Runtime {
             }
             let now = Instant::now();
             let mut deadline = now + Duration::from_secs(60);
-            if !self.theme_fixed {
-                deadline = deadline.min(self.next_theme);
+            if let Some(at) = self.theme.next_poll {
+                deadline = deadline.min(at);
             }
             if let Some(at) = self.stale.values().min() {
                 deadline = deadline.min(*at + SUMMARY_SETTLE);
@@ -420,23 +445,23 @@ impl Runtime {
                 self.spawn_reconcile();
                 self.spawn_resolve();
             }
-            if !self.theme_fixed && self.next_theme <= now {
-                self.next_theme = now + THEME_POLL;
-                let paused = input.pause();
-                let asked = theme::ask(Duration::from_millis(150)).ok().flatten();
-                drop(paused);
-                if let Some(d) = asked
-                    && Some(d) != self.detected
-                {
-                    self.detected = Some(d);
-                    self.app.palette = Palette::new(d);
-                    if let Some(g) = graphics.as_deref_mut() {
-                        g.invalidate();
-                    }
-                    // Repaint everything: the buffer diff cannot know every cell changed.
-                    terminal.clear()?;
-                    dirty = true;
+            if let Some(at) = self.theme.next_poll
+                && at <= now
+            {
+                self.theme.next_poll = Some(now + THEME_POLL);
+                self.theme.ask = true;
+            }
+            if std::mem::take(&mut self.theme.ask) {
+                // The replies arrive as input.
+                terminal::send(terminal, &theme::query())?;
+            }
+            if std::mem::take(&mut self.theme.changed) {
+                if let Some(g) = graphics.as_deref_mut() {
+                    g.invalidate();
                 }
+                // Repaint everything: the buffer diff cannot know every cell changed.
+                terminal::repaint(terminal)?;
+                dirty = true;
             }
             let settled: Vec<PathBuf> = self
                 .stale
@@ -512,7 +537,9 @@ impl Runtime {
     #[allow(clippy::too_many_lines)]
     fn handle(&mut self, msg: Msg) -> bool {
         match msg {
-            Msg::Input(event) => self.input(&event),
+            Msg::Input(Input::Event(event)) => self.input(&event),
+            Msg::Input(Input::Resized) => true,
+            Msg::Input(Input::Colours(d)) => self.colours(d),
             Msg::Loaded {
                 generation,
                 worktree,
@@ -1081,6 +1108,19 @@ impl Runtime {
         }
     }
 
+    /// The terminal answered a colour query.
+    fn colours(&mut self, d: Detected) -> bool {
+        if Some(d) == self.theme.detected {
+            return false;
+        }
+        self.theme.detected = Some(d);
+        self.timings
+            .note(&format!("colours changed: background {:?}", d.bg));
+        self.app.palette = Palette::new(d);
+        self.theme.changed = true;
+        true
+    }
+
     fn input(&mut self, event: &Event) -> bool {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => {
@@ -1094,7 +1134,15 @@ impl Runtime {
                 }
                 true
             }
-            Event::Resize(..) | Event::FocusGained => true,
+            Event::Csi(Csi::Mode(csi::Mode::ReportTheme(_))) => {
+                // Light and dark switched; ask for the new colours.
+                if self.theme.next_poll.is_some() {
+                    self.timings.note("the terminal reported a theme change");
+                    self.theme.ask = true;
+                }
+                false
+            }
+            Event::WindowResized(_) | Event::FocusIn => true,
             _ => false,
         }
     }
@@ -1104,7 +1152,7 @@ impl Runtime {
         // Terminals reporting keys unambiguously send Shift+c rather than C.
         let key = match key.code {
             KeyCode::Char(c)
-                if key.modifiers.contains(KeyModifiers::SHIFT) && c.is_ascii_lowercase() =>
+                if key.modifiers.contains(Modifiers::SHIFT) && c.is_ascii_lowercase() =>
             {
                 KeyEvent {
                     code: KeyCode::Char(c.to_ascii_uppercase()),
@@ -1113,7 +1161,7 @@ impl Runtime {
             }
             _ => key,
         };
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let ctrl = key.modifiers.contains(Modifiers::CONTROL);
         self.app.message = None;
         if self.app.editor.is_some() {
             self.editor_key(key);
@@ -1327,7 +1375,7 @@ impl Runtime {
         };
         let repo = &self.app.repo;
         match (key.code, ctrl) {
-            (KeyCode::Esc, _) | (KeyCode::Char('c' | 'g'), true) => self.app.switcher = None,
+            (KeyCode::Escape, _) | (KeyCode::Char('c' | 'g'), true) => self.app.switcher = None,
             (KeyCode::Enter, _) => {
                 let chosen = sw.selected();
                 self.app.switcher = None;
@@ -1640,7 +1688,7 @@ mod tests {
             kind,
             column,
             row,
-            modifiers: KeyModifiers::NONE,
+            modifiers: Modifiers::NONE,
         });
     }
 
@@ -1731,7 +1779,7 @@ mod tests {
         let row = rt.app.cursor_row;
         mouse(&mut rt, MouseEventKind::Drag(MouseButton::Left), x, 5);
         assert_eq!((rt.app.visual.clone(), rt.app.cursor_row), (None, row));
-        rt.key(KeyEvent::from(KeyCode::Esc));
+        rt.key(KeyEvent::from(KeyCode::Escape));
         press(&mut rt, "?");
         mouse(&mut rt, MouseEventKind::Down(MouseButton::Left), x, 0);
         mouse(&mut rt, MouseEventKind::ScrollDown, x, 5);

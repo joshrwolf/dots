@@ -3,7 +3,6 @@
 //! 4) and mixes every tint from them, so it matches light and dark themes.
 
 use std::fmt::Write as _;
-use std::time::{Duration, Instant};
 
 use ratatui::style::Color;
 
@@ -237,19 +236,6 @@ pub(crate) fn query() -> String {
     q
 }
 
-/// True once `buf` holds the device attributes reply ending a [`query`].
-pub(crate) fn complete(buf: &[u8]) -> bool {
-    buf.windows(3)
-        .enumerate()
-        .filter(|(_, w)| *w == b"\x1b[?")
-        .any(|(i, _)| {
-            buf[i + 3..]
-                .iter()
-                .find(|b| !(b.is_ascii_digit() || **b == b';'))
-                .is_some_and(|&b| b == b'c')
-        })
-}
-
 /// Reads OSC colour replies terminated by BEL or ST.
 pub(crate) fn parse(reply: &[u8]) -> Detected {
     let text = String::from_utf8_lossy(reply);
@@ -293,44 +279,6 @@ fn parse_rgb(spec: &str) -> Option<Rgb> {
     parts.next().is_none().then_some(c)
 }
 
-/// Asks the terminal for its colours over the controlling terminal and
-/// waits up to `timeout` for the answer. The caller must hold raw mode and
-/// keep every other reader off standard input meanwhile.
-pub(crate) fn ask(timeout: Duration) -> std::io::Result<Option<Detected>> {
-    use std::io::Write as _;
-    let mut out = std::io::stdout();
-    out.write_all(query().as_bytes())?;
-    out.flush()?;
-    let deadline = Instant::now() + timeout;
-    let stdin = rustix::stdio::stdin();
-    let mut buf = Vec::new();
-    while !complete(&buf) {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            break;
-        }
-        let mut fds = [rustix::event::PollFd::new(
-            &stdin,
-            rustix::event::PollFlags::IN,
-        )];
-        let wait = rustix::event::Timespec::try_from(left).unwrap_or(rustix::event::Timespec {
-            tv_sec: 0,
-            tv_nsec: 50_000_000,
-        });
-        if rustix::event::poll(&mut fds, Some(&wait))? == 0 {
-            break;
-        }
-        let mut chunk = [0u8; 1024];
-        let n = rustix::io::read(stdin, &mut chunk)?;
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-    }
-    let d = parse(&buf);
-    Ok((d.bg.is_some() || d.fg.is_some()).then_some(d))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,12 +314,10 @@ mod tests {
     #[test]
     fn parses_osc_replies_in_both_terminators() {
         let reply = b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b]10;rgb:24/29/2f\x07\x1b]4;2;rgb:1a1a/7f7f/3737\x1b\\\x1b[?62;22c";
-        assert!(complete(reply));
         let d = parse(reply);
         assert_eq!(d.bg, Some((255, 255, 255)));
         assert_eq!(d.fg, Some((0x24, 0x29, 0x2f)));
         assert_eq!(d.ansi[1], Some((0x1a, 0x7f, 0x37)));
-        assert!(!complete(b"\x1b]11;rgb:0/0/0\x07"));
     }
 
     #[test]
