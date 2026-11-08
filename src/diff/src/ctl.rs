@@ -21,8 +21,6 @@ pub(crate) enum Command {
     /// absolute path in another worktree switches to it.
     File(String),
     Refresh,
-    /// Report the viewer's pane and worktree.
-    Status,
     /// Show an agent's note to the user.
     Note(NoteSpec),
     /// Clear the notes of one file, or all.
@@ -55,7 +53,6 @@ impl Command {
             ("worktree", path) if !path.is_empty() => Command::Worktree(PathBuf::from(path)),
             ("file", path) if !path.is_empty() => Command::File(path.to_owned()),
             ("refresh", "") => Command::Refresh,
-            ("status", "") => Command::Status,
             ("note", json) if !json.is_empty() => Command::Note(
                 serde_json::from_str(json).with_context(|| format!("reading note {json:?}"))?,
             ),
@@ -75,7 +72,6 @@ impl Command {
             Command::Worktree(p) => format!("worktree {}", p.display()),
             Command::File(p) => format!("file {p}"),
             Command::Refresh => "refresh".to_owned(),
-            Command::Status => "status".to_owned(),
             Command::Note(n) => format!(
                 "note {}",
                 serde_json::to_string(n).unwrap_or_else(|_| "{}".to_owned())
@@ -84,6 +80,31 @@ impl Command {
             Command::ClearNotes(Some(p)) => format!("clear-notes {p}"),
             Command::Bind(b) => format!("bind {b}"),
             Command::Shot(p) => format!("shot {}", p.display()),
+        }
+    }
+}
+
+/// A line a viewer's socket accepts: `status`, which the socket answers
+/// itself, or a command for the viewer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Request {
+    /// Report the viewer's pane and worktree.
+    Status,
+    Command(Command),
+}
+
+impl Request {
+    fn parse(line: &str) -> Result<Self> {
+        if line.trim() == "status" {
+            return Ok(Request::Status);
+        }
+        Command::parse(line).map(Request::Command)
+    }
+
+    fn line(&self) -> String {
+        match self {
+            Request::Status => "status".to_owned(),
+            Request::Command(c) => c.line(),
         }
     }
 }
@@ -157,11 +178,11 @@ pub(crate) fn serve(
             if BufReader::new(&stream).read_line(&mut line).is_err() {
                 continue;
             }
-            let reply = match Command::parse(&line) {
-                Ok(Command::Status) => status
+            let reply = match Request::parse(&line) {
+                Ok(Request::Status) => status
                     .lock()
                     .map_or_else(|_| "error: status unavailable".to_owned(), |s| s.line()),
-                Ok(command) => {
+                Ok(Request::Command(command)) => {
                     deliver(command);
                     "ok".to_owned()
                 }
@@ -183,11 +204,11 @@ impl Drop for Cleanup {
     }
 }
 
-fn request(socket: &Path, command: &Command) -> Result<String> {
+fn request(socket: &Path, request: &Request) -> Result<String> {
     let mut stream = UnixStream::connect(socket)
         .with_context(|| format!("no dots-diff is listening on {}", socket.display()))?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.write_all(format!("{}\n", command.line()).as_bytes())?;
+    stream.write_all(format!("{}\n", request.line()).as_bytes())?;
     let mut reply = String::new();
     BufReader::new(&stream).read_line(&mut reply)?;
     Ok(reply)
@@ -212,7 +233,7 @@ pub(crate) fn viewers() -> Vec<Viewer> {
         if socket.extension().is_none_or(|e| e != "sock") {
             continue;
         }
-        match request(&socket, &Command::Status) {
+        match request(&socket, &Request::Status) {
             Ok(reply) => {
                 if let Some(status) = Status::parse(&reply) {
                     found.push(Viewer { socket, status });
@@ -281,7 +302,7 @@ pub(crate) fn pick<'a>(
 
 /// Sends one command to `viewer`.
 pub(crate) fn send(viewer: &Viewer, command: &Command) -> Result<()> {
-    let reply = request(&viewer.socket, command)?;
+    let reply = request(&viewer.socket, &Request::Command(command.clone()))?;
     match reply.trim() {
         "ok" => Ok(()),
         other => bail!("{other}"),
@@ -295,7 +316,11 @@ mod tests {
     #[test]
     fn parses_commands() {
         assert_eq!(Command::parse("refresh\n").expect("ok"), Command::Refresh);
-        assert_eq!(Command::parse("status").expect("ok"), Command::Status);
+        assert_eq!(Request::parse("status\n").expect("ok"), Request::Status);
+        assert_eq!(
+            Request::parse("refresh").expect("ok"),
+            Request::Command(Command::Refresh)
+        );
         assert_eq!(
             Command::parse("file src/a b.rs").expect("ok"),
             Command::File("src/a b.rs".into())

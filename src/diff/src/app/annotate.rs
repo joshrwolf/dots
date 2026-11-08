@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{App, CardRef, Line, Note, Pos};
+use super::{App, CardRef, Line, Mode, Note, Pos};
 use crate::cards;
 use crate::diff::Text;
 use crate::editor::{Buffer, Editor};
@@ -139,7 +139,7 @@ impl App {
     /// A selection stays in its anchor's file and side: its far end is the
     /// line of that side nearest the cursor, between it and the anchor.
     pub(crate) fn selection(&self) -> Option<(Pos, u32)> {
-        let Some(v) = &self.visual else {
+        let Some(v) = self.visual() else {
             return self.cursor_pos().map(|at| {
                 let line = at.line;
                 (at, line)
@@ -178,14 +178,38 @@ impl App {
         }
     }
 
+    /// Where the visual selection started, while one is made.
+    pub(crate) fn visual(&self) -> Option<&Pos> {
+        match &self.mode {
+            Mode::Visual(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// The comment editor, while it is open.
+    pub(crate) fn editor(&self) -> Option<&Editor> {
+        match &self.mode {
+            Mode::Editor(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Ends the visual selection, if one is made.
+    pub(crate) fn end_visual(&mut self) {
+        if let Mode::Visual(_) = self.mode {
+            self.mode = Mode::Normal;
+        }
+    }
+
     /// Starts or ends a visual line selection at the cursor.
     pub(crate) fn toggle_visual(&mut self) {
-        self.visual = match self.visual {
-            Some(_) => None,
-            None => self.cursor_pos(),
-        };
-        if self.visual.is_none() && self.cursor_pos().is_none() {
-            self.message = Some("move to a code line to select".to_owned());
+        if let Mode::Visual(_) = self.mode {
+            self.mode = Mode::Normal;
+            return;
+        }
+        match self.cursor_pos() {
+            Some(at) => self.mode = Mode::Visual(at),
+            None => self.message = Some("move to a code line to select".to_owned()),
         }
     }
 
@@ -224,7 +248,7 @@ impl App {
             return;
         }
         match self.new_editor(scope) {
-            Ok(editor) => self.editor = Some(editor),
+            Ok(editor) => self.mode = Mode::Editor(editor),
             Err(e) => self.message = Some(e),
         }
     }
@@ -316,7 +340,7 @@ impl App {
             Some(code) => (code.as_str(), true),
             None => (c.text.as_str(), false),
         };
-        self.editor = Some(Editor {
+        self.mode = Mode::Editor(Editor {
             buffer: Buffer::new(text),
             kind: c.kind,
             place: c.place.clone(),
@@ -338,11 +362,9 @@ impl App {
         self.cards_changed();
     }
 
-    /// Saves the editor's comment, or drops a new one left empty. Returns
+    /// Saves a closed editor's comment, or drops a new one left empty. Returns
     /// the comment saved.
-    pub(crate) fn save_editor(&mut self) -> Option<u64> {
-        let editor = self.editor.take()?;
-        self.visual = None;
+    pub(crate) fn save_editor(&mut self, editor: Editor) -> Option<u64> {
         let text = editor.buffer.text();
         let empty = text.trim().is_empty() && !editor.suggestion;
         let id = match editor.editing {

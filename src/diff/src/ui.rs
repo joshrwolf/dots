@@ -8,15 +8,18 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::app::{App, Body, FileTexts, FileView, Focus, Line, ListItem};
+use crate::app::{App, Body, FileTexts, FileView, Focus, Line, ListItem, Mode};
 use crate::cards::{self, Placed};
 use crate::diff::FileDiff;
+use crate::editor::Editor;
 use crate::highlight::{Lines, Role, Run};
 use crate::keys::BINDINGS;
 use crate::moves::Moved;
+use crate::picker::Picker;
 use crate::plan::{Kind, Row};
 use crate::repo::Status;
 use crate::review;
+use crate::switcher::Switcher;
 use crate::theme::Palette;
 use crate::wrap::{self, Segment};
 
@@ -71,17 +74,12 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut App) {
     }
     draw_diff(buf, app, diff);
     draw_status(buf, app, status);
-    if app.switcher.is_some() {
-        draw_switcher(buf, app, full);
-    }
-    if app.editor.is_some() {
-        draw_editor(buf, app, diff);
-    }
-    if app.picker.is_some() {
-        draw_picker(buf, app, full);
-    }
-    if app.help {
-        draw_help(buf, &p, full);
+    match &app.mode {
+        Mode::Switcher(sw) => draw_switcher(buf, app, sw, full),
+        Mode::Editor(ed) => draw_editor(buf, app, ed, diff),
+        Mode::Picker(pk) => draw_picker(buf, app, pk, full),
+        Mode::Help => draw_help(buf, &p, full),
+        Mode::Normal | Mode::Visual(_) | Mode::Prefix => {}
     }
 }
 
@@ -456,8 +454,7 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
 
 /// The comment editor, over the bottom of the diff pane.
 #[allow(clippy::too_many_lines)]
-fn draw_editor(buf: &mut Buffer, app: &App, area: Rect) {
-    let Some(ed) = &app.editor else { return };
+fn draw_editor(buf: &mut Buffer, app: &App, ed: &Editor, area: Rect) {
     let p = &app.palette;
     let lines = ed.buffer.lines();
     let w = area.width.saturating_sub(4).clamp(20.min(area.width), 110);
@@ -582,8 +579,7 @@ fn skip_cells(text: &str, n: usize) -> String {
 
 /// The list of live Pi sessions to send the review to.
 #[allow(clippy::many_single_char_names)]
-fn draw_picker(buf: &mut Buffer, app: &App, area: Rect) {
-    let Some(pk) = &app.picker else { return };
+fn draw_picker(buf: &mut Buffer, app: &App, pk: &Picker, area: Rect) {
     let p = &app.palette;
     let w = 96.min(area.width.saturating_sub(4));
     let n = u16::try_from(pk.agents.len()).unwrap_or(u16::MAX);
@@ -715,8 +711,7 @@ fn border(buf: &mut Buffer, r: Rect, style: Style) {
 /// The worktree switcher: a filter line over branch, counts, file count
 /// and how recently each was used. Counts fill in as they are computed.
 #[allow(clippy::many_single_char_names, clippy::too_many_lines)]
-fn draw_switcher(buf: &mut Buffer, app: &App, area: Rect) {
-    let Some(sw) = &app.switcher else { return };
+fn draw_switcher(buf: &mut Buffer, app: &App, sw: &Switcher, area: Rect) {
     let p = &app.palette;
     let w = 76.min(area.width.saturating_sub(4));
     let n = u16::try_from(app.repo.worktrees.len()).unwrap_or(u16::MAX);
@@ -897,7 +892,7 @@ fn draw_diff(buf: &mut Buffer, app: &App, area: Rect) {
             && lines.contains(&n)
         {
             mark_numbers(buf, app, row, f, *side, p.selection);
-            if app.visual.is_some() {
+            if app.visual().is_some() {
                 buf[(area.x, row.y)].set_symbol("▎").set_fg(p.accent);
             }
         }
@@ -908,7 +903,7 @@ fn draw_diff(buf: &mut Buffer, app: &App, area: Rect) {
             draw_line(buf, app, row, Line::Header { file, part });
         }
     }
-    if app.focus == Focus::Diff && app.editor.is_none() && app.cursor_row < area.height {
+    if app.focus == Focus::Diff && app.editor().is_none() && app.cursor_row < area.height {
         let y = area.y + app.cursor_row;
         let row = Rect::new(area.x, y, area.width, 1);
         if let Line::Body { file, row: r, sub } = app.line_at(app.cursor_line())
@@ -924,11 +919,11 @@ fn draw_diff(buf: &mut Buffer, app: &App, area: Rect) {
 /// The lines to show selected: the visual selection, or those the editor
 /// comments on.
 fn selection(app: &App) -> Option<(usize, review::Side, RangeInclusive<u32>)> {
-    if app.visual.is_some() {
+    if app.visual().is_some() {
         let (start, end) = app.selection()?;
         return Some((start.file, start.side, start.line..=end));
     }
-    let review::Place::Lines { path, lines } = &app.editor.as_ref()?.place else {
+    let review::Place::Lines { path, lines } = &app.editor()?.place else {
         return None;
     };
     let file = app
@@ -1683,7 +1678,7 @@ fn paint(
 
 /// The status line's note while lines are selected.
 fn visual_hint(app: &App) -> Option<String> {
-    app.visual.as_ref()?;
+    app.visual()?;
     let (first, last) = app.selection()?;
     let n = last - first.line + 1;
     let s = if n == 1 { "" } else { "s" };

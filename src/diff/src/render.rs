@@ -171,7 +171,7 @@ pub(crate) fn frame(options: &Frame) -> Result<String> {
         for c in query.chars() {
             sw.push(&app.repo, c);
         }
-        app.switcher = Some(sw);
+        app.mode = app::Mode::Switcher(sw);
     }
     let mut hl = arborium::Highlighter::new();
     highlight_visible(&mut app, &mut hl, rows);

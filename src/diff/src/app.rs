@@ -15,7 +15,7 @@ use crate::editor::Editor;
 use crate::highlight::{self, Key, Lines};
 use crate::lru::Lru;
 use crate::plan::{self, Heights, Kind, Layout, Row};
-use crate::repo::{FileChange, Mode, Reader, Repo, Side, Target};
+use crate::repo::{self, FileChange, Reader, Repo, Side, Target};
 use crate::review;
 use crate::theme::Palette;
 use crate::wrap;
@@ -87,11 +87,34 @@ pub(crate) enum Focus {
     Diff,
 }
 
+/// What keys and the mouse act on: the views, or one overlay over them.
+#[derive(Debug, Default)]
+pub(crate) enum Mode {
+    #[default]
+    Normal,
+    /// Selecting lines from the anchor to the cursor.
+    Visual(Pos),
+    /// `;` was pressed; the next key completes the command.
+    Prefix,
+    Help,
+    Switcher(crate::switcher::Switcher),
+    Picker(crate::picker::Picker),
+    Editor(Editor),
+}
+
+impl Mode {
+    /// Whether an overlay or a pending key takes the input, so the views
+    /// ignore the mouse.
+    pub(crate) fn modal(&self) -> bool {
+        !matches!(self, Mode::Normal | Mode::Visual(_))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Settings {
     pub(crate) layout: LayoutChoice,
     pub(crate) wrap: bool,
-    pub(crate) mode: Mode,
+    pub(crate) mode: repo::Mode,
     pub(crate) sidebar: bool,
     /// Sidebar columns chosen with the resize keys; `None` sizes it to the screen.
     pub(crate) sidebar_width: Option<u16>,
@@ -104,7 +127,7 @@ impl Default for Settings {
         Self {
             layout: LayoutChoice::Auto,
             wrap: true,
-            mode: Mode::Base,
+            mode: repo::Mode::Base,
             sidebar: true,
             sidebar_width: None,
             header_rows: 1,
@@ -349,7 +372,7 @@ pub(crate) struct Anchor {
 pub(crate) struct Stream {
     pub(crate) worktree: PathBuf,
     pub(crate) base: String,
-    pub(crate) mode: Mode,
+    pub(crate) mode: repo::Mode,
     pub(crate) target: Target,
     pub(crate) files: Vec<FileView>,
     /// Start line of each file block; one longer than `files`.
@@ -497,7 +520,7 @@ pub(crate) struct App {
     pub(crate) stream: Option<Stream>,
     pub(crate) top: Anchor,
     pub(crate) focus: Focus,
-    pub(crate) switcher: Option<crate::switcher::Switcher>,
+    pub(crate) mode: Mode,
     /// The selected sidebar row, an index into `list`.
     pub(crate) cursor: usize,
     pub(crate) summaries: HashMap<PathBuf, Summary>,
@@ -513,7 +536,6 @@ pub(crate) struct App {
     /// Where to put the view once the top file's new diff is laid out.
     pending_anchor: Option<(String, SourceLine)>,
     pub(crate) areas: Areas,
-    pub(crate) help: bool,
     pub(crate) message: Option<String>,
     /// The whole file tree.
     tree: Vec<ListItem>,
@@ -540,10 +562,6 @@ pub(crate) struct App {
     pub(crate) cursor_row: u16,
     /// On a split row, comment on the old side.
     pub(crate) cursor_old: bool,
-    /// Where a visual selection started.
-    pub(crate) visual: Option<Pos>,
-    pub(crate) editor: Option<Editor>,
-    pub(crate) picker: Option<crate::picker::Picker>,
     /// Show only what changed since the last send.
     pub(crate) since: bool,
     /// Mark code moved between places.
@@ -597,7 +615,7 @@ impl App {
             stream: None,
             top: Anchor::default(),
             focus: Focus::Diff,
-            switcher: None,
+            mode: Mode::Normal,
             cursor: 0,
             summaries: HashMap::new(),
             highlights: Lru::new(HIGHLIGHT_BUDGET),
@@ -608,7 +626,6 @@ impl App {
             needs_diffs: false,
             pending_anchor: None,
             areas: Areas::default(),
-            help: false,
             message: None,
             tree: Vec::new(),
             list: Vec::new(),
@@ -623,9 +640,6 @@ impl App {
             next_note: 1,
             cursor_row: 0,
             cursor_old: false,
-            visual: None,
-            editor: None,
-            picker: None,
             since: false,
             show_moves: false,
             moves: None,
@@ -646,7 +660,7 @@ impl App {
     pub(crate) fn load(
         &mut self,
         worktree: PathBuf,
-        mode: Mode,
+        mode: repo::Mode,
         base: String,
         target: Target,
         files: Vec<FileChange>,
@@ -696,10 +710,13 @@ impl App {
         let mut anchor = None;
         let old = self.stream.take();
         // A selection follows its file by path, and ends when it is gone.
-        let visual = self.visual.take().and_then(|v| {
-            let path = old.as_ref()?.files.get(v.file)?.change.path.clone();
-            Some((path, v))
-        });
+        let visual = match &self.mode {
+            Mode::Visual(v) => old
+                .as_ref()
+                .and_then(|s| s.files.get(v.file))
+                .map(|f| (f.change.path.clone(), v.clone())),
+            _ => None,
+        };
         let (worktree, base, mode, target) = if let Some(old) = old {
             anchor = self.source_anchor(&old);
             let keys = (old.worktree, old.base, old.mode, old.target);
@@ -716,7 +733,7 @@ impl App {
                 base_tree: null,
                 head_tree: null,
             };
-            (PathBuf::new(), String::new(), Mode::Base, target)
+            (PathBuf::new(), String::new(), repo::Mode::Base, target)
         };
         let files: Vec<FileView> = files
             .into_iter()
@@ -748,10 +765,14 @@ impl App {
                 anchor = None;
             }
         }
-        self.visual = visual.and_then(|(path, v)| {
-            let file = files.iter().position(|f| f.change.path == path)?;
-            Some(Pos { file, ..v })
-        });
+        if let Mode::Visual(_) = self.mode {
+            self.mode = visual
+                .and_then(|(path, v)| {
+                    let file = files.iter().position(|f| f.change.path == path)?;
+                    Some(Mode::Visual(Pos { file, ..v }))
+                })
+                .unwrap_or_default();
+        }
         self.pending_anchor = anchor;
         self.tree = list_items(&files);
         self.list = visible(&self.tree, &self.collapsed);
@@ -1845,7 +1866,7 @@ pub(crate) mod fixture {
         let changes = files.iter().map(|(p, o, n)| change(p, o, n)).collect();
         app.load(
             "/r".into(),
-            Mode::Base,
+            repo::Mode::Base,
             "main".into(),
             target(),
             changes,
@@ -2054,7 +2075,14 @@ mod tests {
             change("a.rs", "", &body),
             change("b.rs", "", &body),
         ];
-        app.load(path, Mode::Base, "main".into(), target(), changes, None);
+        app.load(
+            path,
+            repo::Mode::Base,
+            "main".into(),
+            target(),
+            changes,
+            None,
+        );
         assert_eq!(app.top.file, 2, "anchored to b.rs by path");
     }
 
@@ -2067,14 +2095,14 @@ mod tests {
             side: review::Side::New,
             line: 0,
         };
-        app.visual = Some(pos(1));
+        app.mode = Mode::Visual(pos(1));
         // A file sorting in ahead keeps the selection on b.rs.
         app.apply_paths(&["a0.rs".to_owned()], vec![change("a0.rs", "", "n\n")]);
-        assert_eq!(app.visual, Some(pos(2)));
+        assert_eq!(app.visual(), Some(&pos(2)));
         // b.rs reverted: the selection ends, and commenting cannot panic.
         app.apply_paths(&["b.rs".to_owned()], Vec::new());
         app.layout(80, 40);
-        assert_eq!(app.visual, None);
+        assert!(matches!(app.mode, Mode::Normal), "{:?}", app.mode);
         app.begin_comment(Scope::Lines);
     }
 
@@ -2088,7 +2116,7 @@ mod tests {
         app.review_dir = Some(dir.clone());
         app.toggle_reviewed();
         assert!(
-            app.editor.is_none() && app.review.marks.is_empty(),
+            matches!(app.mode, Mode::Normal) && app.review.marks.is_empty(),
             "read only"
         );
         assert!(

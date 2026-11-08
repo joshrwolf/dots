@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 use ratatui::termina::event::{KeyCode, KeyEvent, Modifiers};
 
 use super::{Msg, Runtime};
-use crate::app::Line;
+use crate::app::{Line, Mode};
 use crate::ctl::NoteSpec;
 use crate::deliver::{self, Ack, Resolution, Why};
+use crate::editor::Editor;
 use crate::picker::{Batch, Picker};
 use crate::plan::{Kind, Row};
 use crate::repo::Reader;
@@ -66,24 +67,23 @@ impl Runtime {
         }
     }
 
-    pub(super) fn editor_key(&mut self, key: KeyEvent) {
+    /// Keys while the comment editor is open; it is closed while they
+    /// are handled.
+    pub(super) fn editor_key(&mut self, mut editor: Editor, key: KeyEvent) {
         let ctrl = key.modifiers.contains(Modifiers::CONTROL);
         let alt = key.modifiers.contains(Modifiers::ALT);
-        let Some(editor) = &mut self.app.editor else {
-            return;
-        };
         let b = &mut editor.buffer;
         match (key.code, ctrl) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => {
-                self.app.editor = None;
-            }
+            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => return,
             (KeyCode::Enter | KeyCode::Char('s'), true) => {
-                self.app.save_editor();
+                self.app.save_editor(editor);
+                return;
             }
             (KeyCode::Char('g'), true) => {
-                if let Some(id) = self.app.save_editor() {
+                if let Some(id) = self.app.save_editor(editor) {
                     self.send(Batch::One(id));
                 }
+                return;
             }
             (KeyCode::Tab, _) => editor.kind = editor.kind.next(),
             (KeyCode::Enter, false) => b.newline(),
@@ -101,6 +101,7 @@ impl Runtime {
             (KeyCode::Char(c), false) => b.insert(c.encode_utf8(&mut [0; 4])),
             _ => {}
         }
+        self.app.mode = Mode::Editor(editor);
     }
 
     pub(super) fn open_picker(&mut self, then_send: Option<Batch>) {
@@ -116,20 +117,18 @@ impl Runtime {
             self.app.message = Some(message);
             return;
         }
-        self.app.picker = Some(Picker::new(found.agents, then_send));
+        self.app.mode = Mode::Picker(Picker::new(found.agents, then_send));
     }
 
-    pub(super) fn picker_key(&mut self, key: KeyEvent, ctrl: bool) {
-        let Some(picker) = self.app.picker.as_mut() else {
-            return;
-        };
+    /// Keys while the agent picker is open; it is closed while they are
+    /// handled.
+    pub(super) fn picker_key(&mut self, mut picker: Picker, key: KeyEvent, ctrl: bool) {
         match (key.code, ctrl) {
-            (KeyCode::Escape, _) | (KeyCode::Char('g'), true) => self.app.picker = None,
+            (KeyCode::Escape, _) | (KeyCode::Char('g'), true) => return,
             (KeyCode::Enter, _) => {
-                let chosen = picker.selected().cloned();
-                let then_send = picker.then_send;
-                self.app.picker = None;
-                let Some(agent) = chosen else { return };
+                let Some(agent) = picker.selected().cloned() else {
+                    return;
+                };
                 // Resolutions started before the pick do not replace it.
                 self.resolve_seq += 1;
                 self.app.review.agent = Some(agent.session_id.clone());
@@ -139,9 +138,10 @@ impl Runtime {
                     worker: None,
                     why: Why::Picked,
                 });
-                if let Some(batch) = then_send {
+                if let Some(batch) = picker.then_send {
                     self.send(batch);
                 }
+                return;
             }
             (KeyCode::Down, _) | (KeyCode::Char('n' | 'j'), true) => picker.move_by(1),
             (KeyCode::Up, _) | (KeyCode::Char('p' | 'k'), true) => picker.move_by(-1),
@@ -154,6 +154,7 @@ impl Runtime {
             (KeyCode::Char(c), false) => picker.push(c),
             _ => {}
         }
+        self.app.mode = Mode::Picker(picker);
     }
 
     /// Sends every draft, or one comment, to the resolved session. With no
@@ -181,7 +182,7 @@ impl Runtime {
             Some(other) => {
                 let gone = *other == Resolution::PickGone;
                 self.open_picker(Some(batch));
-                if gone && self.app.picker.is_some() {
+                if gone && matches!(self.app.mode, Mode::Picker(_)) {
                     self.app.message =
                         Some("the session you picked has ended; choose another".to_owned());
                 }
@@ -374,7 +375,7 @@ impl Runtime {
         self.app.review_worktree = Some(worktree.to_owned());
         self.resolution = None;
         "→ …".clone_into(&mut self.app.target);
-        self.app.visual = None;
+        self.app.end_visual();
         match loaded {
             Ok((dir, state)) => {
                 self.app.review_lock = None;

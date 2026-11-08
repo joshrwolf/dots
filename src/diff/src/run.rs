@@ -18,7 +18,7 @@ use ratatui::termina::event::{
 };
 
 use crate::app::{
-    self, App, Body, FileTexts, Focus, LayoutChoice, Line, ListItem, Scope, Settings, Summary,
+    self, App, Body, FileTexts, Focus, LayoutChoice, Line, ListItem, Mode, Scope, Settings, Summary,
 };
 use crate::ctl::{self, Command};
 use crate::deliver;
@@ -28,7 +28,7 @@ use crate::input::{self, Input};
 use crate::keys::{self, Action};
 use crate::moves;
 use crate::picker::Batch;
-use crate::repo::{self, Changes, FileChange, GitState, Mode, Reader, Side, Stamp};
+use crate::repo::{self, Changes, FileChange, GitState, Reader, Side, Stamp};
 use crate::review;
 use crate::stats::{self, Stats};
 use crate::switcher::Switcher;
@@ -46,7 +46,7 @@ pub(crate) enum Msg {
     Loaded {
         generation: u64,
         worktree: PathBuf,
-        mode: Mode,
+        mode: repo::Mode,
         result: Result<Changes, String>,
         /// The worktree's Git directory and saved review.
         review: Result<(PathBuf, review::State), String>,
@@ -203,8 +203,6 @@ struct Runtime {
     agents: Vec<deliver::Agent>,
     /// A review is being delivered.
     sending: bool,
-    /// `;` was pressed; the next key completes the command.
-    prefix: bool,
     /// Save the next frame as a PNG here.
     shot: Option<PathBuf>,
 }
@@ -356,7 +354,6 @@ impl Runtime {
             resolve_seq: 0,
             agents: Vec::new(),
             sending: false,
-            prefix: false,
             shot: None,
         }
     }
@@ -665,7 +662,7 @@ impl Runtime {
                 if let Ok(s) = summary {
                     self.app.summaries.insert(path, s);
                 }
-                self.app.switcher.is_some()
+                matches!(self.app.mode, Mode::Switcher(_))
             }
             Msg::Touched(touched) => {
                 let current = self.app.current;
@@ -744,10 +741,9 @@ impl Runtime {
                             let i = repo.index_of(&path).unwrap_or(0);
                             self.app.repo = repo;
                             self.app.summaries.clear();
-                            self.app.current = usize::MAX;
                             self.summaries.reset();
                             self.watched = None;
-                            self.switch(i);
+                            self.show(i);
                             self.spawn_summaries();
                             self.spawn_watch();
                         }
@@ -755,7 +751,6 @@ impl Runtime {
                     }
                 }
             }
-            Command::Status => {}
             Command::Note(spec) => self.note(spec),
             Command::ClearNotes(path) => {
                 let rel = path.map(|p| self.relative(&p).1);
@@ -804,17 +799,32 @@ impl Runtime {
         }
     }
 
+    /// Shows another worktree of the repository.
     fn switch(&mut self, worktree: usize) {
-        if worktree == self.app.current || worktree >= self.app.repo.worktrees.len() {
+        if worktree != self.app.current {
+            self.show(worktree);
+        }
+    }
+
+    /// Shows worktree `worktree`, loading it from scratch.
+    fn show(&mut self, worktree: usize) {
+        if worktree >= self.app.repo.worktrees.len() {
             return;
         }
         self.app.current = worktree;
-        self.app.stream = None;
-        self.loading_since = Some(Instant::now());
-        self.start_load();
+        self.reload();
         if !WATCH_ALL_FILES {
             self.spawn_watch();
         }
+    }
+
+    /// Loads the shown worktree from scratch, dropping its stream and the
+    /// selection in it.
+    fn reload(&mut self) {
+        self.app.end_visual();
+        self.app.stream = None;
+        self.loading_since = Some(Instant::now());
+        self.start_load();
     }
 
     fn start_load(&mut self) {
@@ -1094,7 +1104,7 @@ impl Runtime {
         let Some(stream) = &self.app.stream else {
             return;
         };
-        if stream.mode != Mode::Base {
+        if stream.mode != repo::Mode::Base {
             return;
         }
         let (added, removed, done) = stream.counts();
@@ -1129,7 +1139,7 @@ impl Runtime {
             }
             Event::Mouse(mouse) => self.mouse(*mouse),
             Event::Paste(text) => {
-                if let Some(editor) = &mut self.app.editor {
+                if let Mode::Editor(editor) = &mut self.app.mode {
                     editor.buffer.insert(text);
                 }
                 true
@@ -1163,42 +1173,33 @@ impl Runtime {
         };
         let ctrl = key.modifiers.contains(Modifiers::CONTROL);
         self.app.message = None;
-        if self.app.editor.is_some() {
-            self.editor_key(key);
-            return;
-        }
-        // Ctrl-C quits from anywhere else, overlays included.
-        if ctrl && key.code == KeyCode::Char('c') {
-            self.quit = true;
-            return;
-        }
-        if self.app.help {
-            self.app.help = false;
-            return;
-        }
-        if self.app.switcher.is_some() {
-            self.switcher_key(key, ctrl);
-            return;
-        }
-        if self.app.picker.is_some() {
-            self.picker_key(key, ctrl);
-            return;
-        }
-        if std::mem::take(&mut self.prefix) {
-            match key.code {
+        match std::mem::take(&mut self.app.mode) {
+            Mode::Editor(editor) => self.editor_key(editor, key),
+            // Ctrl-C quits from anywhere else, overlays included.
+            mode if ctrl && key.code == KeyCode::Char('c') => {
+                self.app.mode = mode;
+                self.quit = true;
+            }
+            // Any key closes help.
+            Mode::Help => {}
+            Mode::Switcher(switcher) => self.switcher_key(switcher, key, ctrl),
+            Mode::Picker(picker) => self.picker_key(picker, key, ctrl),
+            Mode::Prefix => match key.code {
                 KeyCode::Char('c') => self.app.begin_comment(Scope::Review),
                 _ => self.app.message = Some("; then c comments on the whole review".to_owned()),
+            },
+            mode @ (Mode::Normal | Mode::Visual(_)) => {
+                self.app.mode = mode;
+                let Some(action) = keys::action(key.code, ctrl) else {
+                    return;
+                };
+                if action.needs_diff() && self.app.focus != Focus::Diff {
+                    self.app.message = Some("press tab to focus the diff first".to_owned());
+                    return;
+                }
+                self.act(action);
             }
-            return;
         }
-        let Some(action) = keys::action(key.code, ctrl) else {
-            return;
-        };
-        if action.needs_diff() && self.app.focus != Focus::Diff {
-            self.app.message = Some("press tab to focus the diff first".to_owned());
-            return;
-        }
-        self.act(action);
     }
 
     /// Does what a key is bound to.
@@ -1210,7 +1211,7 @@ impl Runtime {
         let diff = self.app.focus == Focus::Diff;
         match action {
             Action::Quit => self.quit = true,
-            Action::Help => self.app.help = true,
+            Action::Help => self.app.mode = Mode::Help,
             Action::Down => self.move_by(1),
             Action::Up => self.move_by(-1),
             Action::HalfDown => self.scroll(half),
@@ -1244,9 +1245,9 @@ impl Runtime {
             Action::Comment => self.app.begin_comment(Scope::Lines),
             Action::Suggest => self.app.begin_comment(Scope::Suggestion),
             Action::Visual => self.app.toggle_visual(),
-            Action::Cancel => self.app.visual = None,
+            Action::Cancel => self.app.end_visual(),
             Action::FileComment => self.app.begin_comment(Scope::File),
-            Action::Prefix => self.prefix = true,
+            Action::Prefix => self.app.mode = Mode::Prefix,
             Action::Enter if !diff => {
                 if !self.app.toggle_dir(self.app.cursor) {
                     self.app.select_row(self.app.cursor, rows);
@@ -1297,14 +1298,11 @@ impl Runtime {
             }
             Action::Since => {
                 self.app.since = !self.app.since;
-                self.app.visual = None;
-                self.app.stream = None;
-                self.loading_since = Some(Instant::now());
-                self.start_load();
+                self.reload();
             }
             Action::Reviewed => self.app.toggle_reviewed(),
             Action::Switcher => {
-                self.app.switcher = Some(Switcher::new(&self.app.repo, self.app.current));
+                self.app.mode = Mode::Switcher(Switcher::new(&self.app.repo, self.app.current));
             }
             Action::NextWorktree => {
                 self.switch((self.app.current + 1) % self.app.repo.worktrees.len());
@@ -1341,12 +1339,10 @@ impl Runtime {
             }
             Action::Compare => {
                 self.app.settings.mode = match self.app.settings.mode {
-                    Mode::Base => Mode::Head,
-                    Mode::Head => Mode::Base,
+                    repo::Mode::Base => repo::Mode::Head,
+                    repo::Mode::Head => repo::Mode::Base,
                 };
-                self.app.stream = None;
-                self.loading_since = Some(Instant::now());
-                self.start_load();
+                self.reload();
             }
             Action::Sidebar => {
                 self.app.settings.sidebar = !self.app.settings.sidebar;
@@ -1369,19 +1365,15 @@ impl Runtime {
     }
 
     /// Keys while the worktree switcher is open: typing filters it.
-    fn switcher_key(&mut self, key: KeyEvent, ctrl: bool) {
-        let Some(sw) = self.app.switcher.as_mut() else {
-            return;
-        };
+    fn switcher_key(&mut self, mut sw: Switcher, key: KeyEvent, ctrl: bool) {
         let repo = &self.app.repo;
         match (key.code, ctrl) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c' | 'g'), true) => self.app.switcher = None,
+            (KeyCode::Escape, _) | (KeyCode::Char('c' | 'g'), true) => return,
             (KeyCode::Enter, _) => {
-                let chosen = sw.selected();
-                self.app.switcher = None;
-                if let Some(i) = chosen {
+                if let Some(i) = sw.selected() {
                     self.switch(i);
                 }
+                return;
             }
             (KeyCode::Down, _) | (KeyCode::Char('n' | 'j'), true) => sw.move_by(1),
             (KeyCode::Up, _) | (KeyCode::Char('p' | 'k'), true) => sw.move_by(-1),
@@ -1394,6 +1386,7 @@ impl Runtime {
             (KeyCode::Char(c), false) => sw.push(repo, c),
             _ => {}
         }
+        self.app.mode = Mode::Switcher(sw);
     }
 
     /// Scrolls the view; the cursor keeps its place on screen.
@@ -1415,12 +1408,7 @@ impl Runtime {
     }
 
     fn mouse(&mut self, mouse: MouseEvent) -> bool {
-        let modal = self.app.switcher.is_some()
-            || self.app.editor.is_some()
-            || self.app.picker.is_some()
-            || self.app.help
-            || self.prefix;
-        if modal {
+        if self.app.mode.modal() {
             return false;
         }
         let at = Position::new(mouse.column, mouse.row);
@@ -1431,8 +1419,8 @@ impl Runtime {
             if self.app.focus != Focus::Diff || !areas.diff.contains(at) {
                 return false;
             }
-            if self.app.visual.is_none() {
-                self.app.visual = self.app.cursor_pos();
+            if let (Mode::Normal, Some(at)) = (&self.app.mode, self.app.cursor_pos()) {
+                self.app.mode = Mode::Visual(at);
             }
             self.app.cursor_row = mouse.row - areas.diff.y;
             self.app.clamp_cursor(rows);
@@ -1449,7 +1437,7 @@ impl Runtime {
                 self.scroll(delta);
             } else {
                 self.app.focus = Focus::Diff;
-                self.app.visual = None;
+                self.app.end_visual();
                 let y = mouse.row - areas.diff.y;
                 let pinned = self
                     .app
@@ -1715,7 +1703,7 @@ mod tests {
         // A resolution in flight, as spawn_resolve numbers it.
         rt.resolve_seq += 1;
         let before = rt.resolve_seq;
-        rt.app.picker = Some(crate::picker::Picker::new(vec![agent("x", "b:2")], None));
+        rt.app.mode = Mode::Picker(crate::picker::Picker::new(vec![agent("x", "b:2")], None));
         rt.key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(rt.app.review.agent.as_deref(), Some("x"));
         let bound = deliver::Resolution::Agent {
@@ -1770,15 +1758,46 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_on_a_selection_ends_it_and_shows_the_editor_lines() {
+        let (mut rt, _rx) = runtime(TWO);
+        press(&mut rt, "jjvjc");
+        let Some(editor) = rt.app.editor() else {
+            panic!("no editor: {:?}", rt.app.message);
+        };
+        let review::Place::Lines { lines, .. } = &editor.place else {
+            panic!("{:?}", editor.place);
+        };
+        assert_eq!(
+            (lines.side, lines.start, lines.end),
+            (review::Side::New, 1, 2)
+        );
+        assert_eq!(rt.app.visual(), None, "the editor replaced the selection");
+        // The prefix waits for its second key, which the views never see.
+        rt.key(KeyEvent::from(KeyCode::Escape));
+        press(&mut rt, ";j");
+        assert!(matches!(rt.app.mode, Mode::Normal));
+        assert!(
+            rt.app
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("; then c"))
+        );
+        press(&mut rt, ";c");
+        let place = rt.app.editor().map(|e| e.place.clone());
+        assert_eq!(place, Some(review::Place::Review));
+    }
+
+    #[test]
     fn the_mouse_does_nothing_under_the_editor_and_overlays() {
         let (mut rt, _rx) = runtime(TWO);
         let x = rt.app.areas.diff.x + 10;
         press(&mut rt, "j");
         press(&mut rt, "c");
-        assert!(rt.app.editor.is_some(), "{:?}", rt.app.message);
+        assert!(rt.app.editor().is_some(), "{:?}", rt.app.message);
         let row = rt.app.cursor_row;
         mouse(&mut rt, MouseEventKind::Drag(MouseButton::Left), x, 5);
-        assert_eq!((rt.app.visual.clone(), rt.app.cursor_row), (None, row));
+        assert!(rt.app.editor().is_some());
+        assert_eq!(rt.app.cursor_row, row);
         rt.key(KeyEvent::from(KeyCode::Escape));
         press(&mut rt, "?");
         mouse(&mut rt, MouseEventKind::Down(MouseButton::Left), x, 0);
