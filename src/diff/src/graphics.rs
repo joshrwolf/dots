@@ -117,18 +117,22 @@ impl Graphics {
         let Some(fonts) = guard.as_mut() else {
             return Ok(());
         };
-        let Some(stream) = &app.stream else {
+        if app.stream.is_none() {
             drop(guard);
             return self.place(Vec::new(), 0, 0);
-        };
+        }
         let area = app.areas.diff;
         let rows = app.settings.header_rows;
         let cell = cell_pixels();
         let mut headers = Vec::new();
-        if !stream.files.is_empty() && area.height >= rows {
-            headers.push((app.top.file, area.y));
+        if area.height >= rows {
+            let pinned = app.pinned_header();
+            if let Some(file) = pinned {
+                headers.push((file, area.y));
+            }
             let top = app.global_top();
-            for y in rows..area.height.saturating_sub(rows - 1) {
+            let first = if pinned.is_some() { rows } else { 0 };
+            for y in first..area.height.saturating_sub(rows - 1) {
                 if let Line::Header { file, part: 0 } = app.line_at(top + u32::from(y)) {
                     headers.push((file, area.y + y));
                 }

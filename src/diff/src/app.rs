@@ -21,7 +21,7 @@ use crate::theme::Palette;
 use crate::wrap;
 
 mod annotate;
-pub(crate) use annotate::Scope;
+pub(crate) use annotate::{Scope, row_line};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LayoutChoice {
@@ -1120,6 +1120,13 @@ impl App {
             LayoutChoice::Split => Layout::Split,
             LayoutChoice::Unified | LayoutChoice::Auto => Layout::Unified,
         }
+    }
+
+    /// The file whose header is pinned at the top of the view: the top
+    /// file's, unless the view starts on the review's cards above it.
+    pub(crate) fn pinned_header(&self) -> Option<usize> {
+        let file = self.stream.as_ref()?.files.get(self.top.file)?;
+        (self.top.line >= file.above).then_some(self.top.file)
     }
 
     pub(crate) fn global_top(&self) -> u32 {

@@ -23,6 +23,7 @@ use crate::deliver;
 use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
 use crate::input::Input;
+use crate::keys::{self, Action};
 use crate::picker::Batch;
 use crate::repo::{self, Changes, FileChange, GitState, Mode, Reader, Side, Stamp};
 use crate::review;
@@ -989,8 +990,6 @@ impl Runtime {
             }
             _ => key,
         };
-        let rows = self.view_rows();
-        let half = i64::from(rows / 2);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         self.app.message = None;
         if self.app.editor.is_some() {
@@ -1021,101 +1020,136 @@ impl Runtime {
             }
             return;
         }
-        if self.app.focus == Focus::Diff && self.review_key(key, ctrl) {
+        let Some(action) = keys::action(key.code, ctrl) else {
+            return;
+        };
+        if action.needs_diff() && self.app.focus != Focus::Diff {
+            self.app.message = Some("press tab to focus the diff first".to_owned());
             return;
         }
-        match (key.code, ctrl) {
-            (KeyCode::Char('q'), _) | (KeyCode::Char('c'), true) => self.quit = true,
-            (KeyCode::Char('?'), _) => self.app.help = true,
-            (KeyCode::Enter | KeyCode::Char(' '), _)
-                if self.app.focus == Focus::Files && self.app.toggle_dir(self.app.cursor) => {}
-            (KeyCode::Char('d'), true) => self.scroll(half),
-            (KeyCode::Char('u'), true) => self.scroll(-half),
-            (KeyCode::Char('f'), true) | (KeyCode::PageDown | KeyCode::Char(' '), _) => {
-                self.scroll(i64::from(rows.saturating_sub(2)));
-            }
-            (KeyCode::Char('b'), true) | (KeyCode::PageUp, _) => {
-                self.scroll(-i64::from(rows.saturating_sub(2)));
-            }
-            (KeyCode::Tab | KeyCode::BackTab, _) => {
-                self.app.focus = if self.app.focus == Focus::Diff && self.app.areas.files.width > 0
-                {
-                    Focus::Files
-                } else {
-                    Focus::Diff
-                };
-            }
-            (KeyCode::Char('h') | KeyCode::Left, _) if self.app.focus == Focus::Files => {
-                self.tree_left();
-            }
-            (KeyCode::Char('h') | KeyCode::Left, _) if self.app.areas.files.width > 0 => {
-                self.app.focus = Focus::Files;
-            }
-            (KeyCode::Char('l') | KeyCode::Right, _) if self.app.focus == Focus::Files => {
-                self.tree_right();
-            }
-            (KeyCode::Char('l') | KeyCode::Right, _) => self.app.focus = Focus::Diff,
-            (KeyCode::Char('j') | KeyCode::Down, _) => self.move_by(1),
-            (KeyCode::Char('k') | KeyCode::Up, _) => self.move_by(-1),
-            (KeyCode::Char('g') | KeyCode::Home, _) => {
+        self.act(action);
+    }
+
+    /// Does what a key is bound to.
+    #[allow(clippy::too_many_lines)]
+    fn act(&mut self, action: Action) {
+        let rows = self.view_rows();
+        let half = i64::from(rows / 2);
+        let page = i64::from(rows.saturating_sub(2));
+        let diff = self.app.focus == Focus::Diff;
+        match action {
+            Action::Quit => self.quit = true,
+            Action::Help => self.app.help = true,
+            Action::Down => self.move_by(1),
+            Action::Up => self.move_by(-1),
+            Action::HalfDown => self.scroll(half),
+            Action::HalfUp => self.scroll(-half),
+            Action::Space if !diff && self.app.toggle_dir(self.app.cursor) => {}
+            Action::Space | Action::PageDown => self.scroll(page),
+            Action::PageUp => self.scroll(-page),
+            Action::Top if diff => self.app.move_cursor(i64::MIN / 2, rows),
+            Action::Bottom if diff => self.app.move_cursor(i64::MAX / 2, rows),
+            Action::Top => {
                 self.app.scroll_to(0, rows);
                 self.app.sync_files_cursor();
             }
-            (KeyCode::Char('G'), _) => {
+            Action::Bottom => {
                 self.app.scroll_to(u32::MAX, rows);
                 self.app.sync_files_cursor();
             }
-            (KeyCode::Char('J' | ']'), _) => self.app.next_file(true, rows),
-            (KeyCode::Char('K' | '['), _) => self.app.next_file(false, rows),
-            (KeyCode::Char('n'), _) => self.app.next_hunk(true, rows),
-            (KeyCode::Char('N' | 'p'), _) => self.app.next_hunk(false, rows),
-            (KeyCode::Char('}'), _) => {
-                self.switch((self.app.current + 1) % self.app.repo.worktrees.len());
+            Action::NextFile | Action::PrevFile => {
+                self.app.next_file(action == Action::NextFile, rows);
+                if diff {
+                    self.app.cursor_row = 0;
+                    self.app.clamp_cursor(rows);
+                }
             }
-            (KeyCode::Char('{'), _) => {
-                let n = self.app.repo.worktrees.len();
-                self.switch((self.app.current + n - 1) % n);
+            Action::NextChange | Action::PrevChange => {
+                self.app.next_hunk(action == Action::NextChange, rows);
+                if diff {
+                    self.cursor_to_change(rows);
+                }
             }
-            (KeyCode::Char('w'), false) => {
-                self.app.switcher = Some(Switcher::new(&self.app.repo, self.app.current));
-            }
-            (KeyCode::Enter, _) => match self.app.focus {
-                Focus::Files => {
+            Action::Comment => self.app.begin_comment(Scope::Lines),
+            Action::Suggest => self.app.begin_comment(Scope::Suggestion),
+            Action::Visual => self.app.toggle_visual(),
+            Action::Cancel => self.app.visual = None,
+            Action::FileComment => self.app.begin_comment(Scope::File),
+            Action::Prefix => self.prefix = true,
+            Action::Enter if !diff => {
+                if !self.app.toggle_dir(self.app.cursor) {
                     self.app.select_row(self.app.cursor, rows);
                     self.app.focus = Focus::Diff;
                 }
-                Focus::Diff => {
+            }
+            Action::Enter | Action::Expand => {
+                if !diff {
+                    self.app.expand_visible_gap(rows);
+                } else if let Some(card) = self.app.cursor_card() {
+                    self.app.edit_card(card);
+                } else if let Line::Body { file, row, .. } =
+                    self.app.line_at(self.app.cursor_line())
+                    && self.app.expand_at(file, row)
+                {
+                } else {
                     self.app.expand_visible_gap(rows);
                 }
-            },
-            (KeyCode::Char('e'), _) => {
-                self.app.expand_visible_gap(rows);
             }
-            (KeyCode::Char('E'), _) => self.app.toggle_expand_all(),
-            (KeyCode::Char('m'), _) => self.app.toggle_reviewed(),
-            (KeyCode::Char('C'), _) => self.app.begin_comment(Scope::File),
-            (KeyCode::Char(';'), _) => self.prefix = true,
-            (KeyCode::Char('S'), _) => self.send(Batch::All),
-            (KeyCode::Char('A'), _) => self.open_picker(None),
-            (KeyCode::Char('R'), _) => {
+            Action::ExpandAll => self.app.toggle_expand_all(),
+            Action::Delete => match self.app.cursor_card() {
+                Some(card) => self.app.delete_card(card),
+                None => self.app.message = Some("move onto a card to delete it".to_owned()),
+            },
+            Action::NextCard => self.app.next_card(true, rows),
+            Action::PrevCard => self.app.next_card(false, rows),
+            Action::OldSide => self.app.cursor_old = !self.app.cursor_old,
+            Action::Send => self.send(Batch::All),
+            Action::PickAgent => self.open_picker(None),
+            Action::Since => {
                 self.app.since = !self.app.since;
                 self.app.visual = None;
                 self.app.stream = None;
                 self.loading_since = Some(Instant::now());
                 self.start_load();
             }
-            (KeyCode::Char('L'), _) => {
+            Action::Reviewed => self.app.toggle_reviewed(),
+            Action::Switcher => {
+                self.app.switcher = Some(Switcher::new(&self.app.repo, self.app.current));
+            }
+            Action::NextWorktree => {
+                self.switch((self.app.current + 1) % self.app.repo.worktrees.len());
+            }
+            Action::PrevWorktree => {
+                let n = self.app.repo.worktrees.len();
+                self.switch((self.app.current + n - 1) % n);
+            }
+            Action::Focus => {
+                self.app.focus = if diff && self.app.areas.files.width > 0 {
+                    Focus::Files
+                } else {
+                    Focus::Diff
+                };
+            }
+            Action::Left if !diff => self.tree_left(),
+            Action::Left => {
+                if self.app.areas.files.width > 0 {
+                    self.app.focus = Focus::Files;
+                }
+            }
+            Action::Right if !diff => self.tree_right(),
+            Action::Right => {}
+            Action::Layout => {
                 self.app.settings.layout = match self.app.settings.layout {
                     LayoutChoice::Auto => LayoutChoice::Unified,
                     LayoutChoice::Unified => LayoutChoice::Split,
                     LayoutChoice::Split => LayoutChoice::Auto,
                 };
             }
-            (KeyCode::Char('z'), _) => {
+            Action::Wrap => {
                 self.app.settings.wrap = !self.app.settings.wrap;
                 self.app.relayout();
             }
-            (KeyCode::Char('b'), false) => {
+            Action::Compare => {
                 self.app.settings.mode = match self.app.settings.mode {
                     Mode::Base => Mode::Head,
                     Mode::Head => Mode::Base,
@@ -1124,15 +1158,15 @@ impl Runtime {
                 self.loading_since = Some(Instant::now());
                 self.start_load();
             }
-            (KeyCode::Char('t'), _) => {
+            Action::Sidebar => {
                 self.app.settings.sidebar = !self.app.settings.sidebar;
                 if !self.app.settings.sidebar {
                     self.app.focus = Focus::Diff;
                 }
             }
-            (KeyCode::Char(c @ ('<' | '>')), _) => {
+            Action::Narrower | Action::Wider => {
                 let now = self.app.areas.files.width;
-                let width = if c == '<' {
+                let width = if action == Action::Narrower {
                     now.saturating_sub(4)
                 } else {
                     now + 4
@@ -1140,8 +1174,7 @@ impl Runtime {
                 self.app.settings.sidebar = true;
                 self.app.settings.sidebar_width = Some(width.clamp(16, 64));
             }
-            (KeyCode::Char('r'), _) => self.start_load(),
-            _ => {}
+            Action::Refresh => self.start_load(),
         }
     }
 
@@ -1198,6 +1231,18 @@ impl Runtime {
         let at = Position::new(mouse.column, mouse.row);
         let areas = self.app.areas;
         let rows = self.view_rows();
+        if let MouseEventKind::Drag(MouseButton::Left) = mouse.kind {
+            // Dragging in the diff selects lines, from where the press was.
+            if self.app.focus != Focus::Diff || !areas.diff.contains(at) {
+                return false;
+            }
+            if self.app.visual.is_none() {
+                self.app.visual = self.app.cursor_pos();
+            }
+            self.app.cursor_row = mouse.row - areas.diff.y;
+            self.app.clamp_cursor(rows);
+            return true;
+        }
         let delta = match mouse.kind {
             MouseEventKind::ScrollDown => 3,
             MouseEventKind::ScrollUp => -3,
@@ -1209,6 +1254,7 @@ impl Runtime {
                 self.scroll(delta);
             } else {
                 self.app.focus = Focus::Diff;
+                self.app.visual = None;
                 self.app.cursor_row = mouse.row - areas.diff.y;
                 self.app.clamp_cursor(rows);
                 if let Line::Body { file, row, .. } = self.app.line_at(self.app.cursor_line()) {

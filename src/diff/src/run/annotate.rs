@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{Msg, Runtime};
-use crate::app::{Line, Scope};
+use crate::app::Line;
 use crate::ctl::NoteSpec;
 use crate::deliver::{self, Ack, Resolution, Why};
 use crate::picker::{Batch, Picker};
@@ -26,54 +26,8 @@ pub(crate) struct Delivered {
 }
 
 impl Runtime {
-    /// Keys of the diff pane that act on the cursor and the review.
-    /// Returns whether the key was one.
-    pub(super) fn review_key(&mut self, key: KeyEvent, ctrl: bool) -> bool {
-        let rows = self.view_rows();
-        if ctrl {
-            return false;
-        }
-        match key.code {
-            KeyCode::Char('c') => self.app.begin_comment(Scope::Lines),
-            KeyCode::Char('s') => self.app.begin_comment(Scope::Suggestion),
-            KeyCode::Char('v') => self.app.toggle_visual(),
-            KeyCode::Esc if self.app.visual.is_some() => self.app.visual = None,
-            KeyCode::Char('o') => self.app.cursor_old = !self.app.cursor_old,
-            KeyCode::Char('e') | KeyCode::Enter => {
-                if let Some(card) = self.app.cursor_card() {
-                    self.app.edit_card(card);
-                } else if let Line::Body { file, row, .. } =
-                    self.app.line_at(self.app.cursor_line())
-                    && self.app.expand_at(file, row)
-                {
-                } else {
-                    self.app.expand_visible_gap(rows);
-                }
-            }
-            KeyCode::Char('d' | 'x') => match self.app.cursor_card() {
-                Some(card) => self.app.delete_card(card),
-                None => self.app.message = Some("move onto a card to delete it".to_owned()),
-            },
-            KeyCode::Char(')') => self.app.next_card(true, rows),
-            KeyCode::Char('(') => self.app.next_card(false, rows),
-            KeyCode::Char('g') | KeyCode::Home => self.app.move_cursor(i64::MIN / 2, rows),
-            KeyCode::Char('G') => self.app.move_cursor(i64::MAX / 2, rows),
-            KeyCode::Char(c @ ('n' | 'N' | 'p')) => {
-                self.app.next_hunk(c == 'n', rows);
-                self.cursor_to_change(rows);
-            }
-            KeyCode::Char(c @ ('J' | 'K' | ']' | '[')) => {
-                self.app.next_file(matches!(c, 'J' | ']'), rows);
-                self.app.cursor_row = 0;
-                self.app.clamp_cursor(rows);
-            }
-            _ => return false,
-        }
-        true
-    }
-
     /// Puts the cursor on the first changed line on screen.
-    fn cursor_to_change(&mut self, rows: u16) {
+    pub(super) fn cursor_to_change(&mut self, rows: u16) {
         let top = self.app.global_top();
         for r in self.app.settings.header_rows..rows {
             let Line::Body { file, row, sub: 0 } = self.app.line_at(top + u32::from(r)) else {

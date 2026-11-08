@@ -12,6 +12,7 @@ use crate::app::{App, Body, FileTexts, FileView, Focus, Line, ListItem};
 use crate::cards::{self, Placed};
 use crate::diff::FileDiff;
 use crate::highlight::{Lines, Role, Run};
+use crate::keys::BINDINGS;
 use crate::plan::{Kind, Row};
 use crate::repo::Status;
 use crate::review;
@@ -895,12 +896,12 @@ fn draw_diff(buf: &mut Buffer, app: &App, area: Rect) {
             && lines.contains(&n)
         {
             mark_numbers(buf, app, row, f, *side, p.selection);
+            if app.visual.is_some() {
+                buf[(area.x, row.y)].set_symbol("▎").set_fg(p.accent);
+            }
         }
     }
-    // The current file's header stays pinned at the top, unless the view
-    // shows the review's cards above it.
-    let file = app.top.file;
-    if app.top.line >= stream.files[file].above {
+    if let Some(file) = app.pinned_header() {
         for part in 0..app.settings.header_rows.min(area.height) {
             let row = Rect::new(area.x, area.y + part, area.width, 1);
             draw_line(buf, app, row, Line::Header { file, part });
@@ -952,13 +953,7 @@ fn side_line(
     if f.cards.iter().any(|p| p.row == r && sub >= p.start) {
         return None;
     }
-    match (*f.rows().get(row)?, side) {
-        (Row::Line { kind, old, .. }, review::Side::Old) if kind != Kind::Insert => old,
-        (Row::Line { kind, new, .. }, review::Side::New) if kind != Kind::Delete => new,
-        (Row::Pair { old, .. }, review::Side::Old) => old,
-        (Row::Pair { new, .. }, review::Side::New) => new,
-        _ => None,
-    }
+    crate::app::row_line(f.rows().get(row)?, side)
 }
 
 /// Tints the line numbers of `side` on a row.
@@ -1580,6 +1575,17 @@ fn paint(
     flush(buf, &mut chunk, chunk_style, &mut cx);
 }
 
+/// The status line's note while lines are selected.
+fn visual_hint(app: &App) -> Option<String> {
+    app.visual.as_ref()?;
+    let (first, last) = app.selection()?;
+    let n = last - first.line + 1;
+    let s = if n == 1 { "" } else { "s" };
+    Some(format!(
+        "VISUAL {n} line{s}  c comment  s suggest  esc cancel  "
+    ))
+}
+
 fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
     let p = &app.palette;
     let bg = p.header_bg;
@@ -1599,6 +1605,16 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
             Style::new().bg(bg).fg(p.fg).add_modifier(Modifier::BOLD),
         );
         x += put(buf, x, area.y, "  ", end - x, muted);
+    }
+    if let Some(text) = visual_hint(app) {
+        x += put(
+            buf,
+            x,
+            area.y,
+            &text,
+            end - x,
+            muted.fg(p.accent).add_modifier(Modifier::BOLD),
+        );
     }
     if app.since {
         x += put(
@@ -1673,46 +1689,10 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
     }
 }
 
-const HELP: &[(&str, &str)] = &[
-    ("j k  ↓ ↑", "move the cursor, or in the file list"),
-    ("^d ^u  space", "half page down/up, page down"),
-    ("g  G", "top, bottom"),
-    ("J K  ] [", "next/previous file"),
-    ("n  N", "next/previous change"),
-    ("c  v", "comment on the line; select lines first"),
-    ("s", "suggest replacement code for the line or selection"),
-    ("C  ;c", "comment on the file; on the whole review"),
-    ("e  d", "on a card: edit, delete"),
-    ("(  )", "previous/next comment or note"),
-    ("o", "split view: comment on the old side"),
-    ("S", "send all drafts to the agent"),
-    ("A", "choose the agent reviews go to"),
-    ("R", "show only changes since the last send"),
-    ("m", "mark file reviewed"),
-    ("w", "switch worktree (type to filter)"),
-    ("{  }", "previous/next worktree"),
-    ("tab  h l", "focus files or diff"),
-    (
-        "h l  ← →",
-        "in files: fold or unfold a folder, go to parent",
-    ),
-    (
-        "enter space",
-        "in files: open file, fold folder; expand a fold",
-    ),
-    ("e  E", "expand the fold at the cursor; all folds in file"),
-    ("L", "layout: auto, unified, split"),
-    ("z", "wrap long lines"),
-    ("b", "compare: branch (merge base) or uncommitted"),
-    ("t  < >", "show sidebar; narrower, wider"),
-    ("r", "refresh now"),
-    ("q", "quit"),
-];
-
 #[allow(clippy::many_single_char_names)]
 fn draw_help(buf: &mut Buffer, p: &Palette, area: Rect) {
-    let w = 62.min(area.width);
-    let h = (u16::try_from(HELP.len()).unwrap_or(0) + 4).min(area.height);
+    let w = 80.min(area.width);
+    let h = (u16::try_from(BINDINGS.len()).unwrap_or(0) + 4).min(area.height);
     let r = Rect::new(
         area.x + (area.width - w) / 2,
         area.y + (area.height - h) / 2,
@@ -1731,7 +1711,8 @@ fn draw_help(buf: &mut Buffer, p: &Palette, area: Rect) {
             .fg(p.accent)
             .add_modifier(Modifier::BOLD),
     );
-    for (i, (keys, what)) in HELP.iter().enumerate() {
+    for (i, b) in BINDINGS.iter().enumerate() {
+        let (keys, what) = (b.label, b.help);
         let y = r.y + 3 + u16::try_from(i).unwrap_or(0);
         if y >= r.bottom() {
             break;

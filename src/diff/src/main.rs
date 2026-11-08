@@ -11,6 +11,7 @@ mod editor;
 mod graphics;
 mod highlight;
 mod input;
+mod keys;
 mod lru;
 mod picker;
 mod plan;

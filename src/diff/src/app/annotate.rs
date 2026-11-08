@@ -136,25 +136,45 @@ impl App {
     }
 
     /// The lines a comment would cover: the selection, or the cursor line.
+    /// A selection stays in its anchor's file and side: its far end is the
+    /// line of that side nearest the cursor, between it and the anchor.
     pub(crate) fn selection(&self) -> Option<(Pos, u32)> {
-        let at = self.cursor_pos();
-        match (&self.visual, at) {
-            (Some(v), Some(at)) if v.file == at.file && v.side == at.side => {
-                let (a, b) = (v.line.min(at.line), v.line.max(at.line));
-                Some((
-                    Pos {
-                        file: v.file,
-                        side: v.side,
-                        line: a,
-                    },
-                    b,
-                ))
-            }
-            (Some(v), _) => Some((v.clone(), v.line)),
-            (None, at) => at.map(|at| {
+        let Some(v) = &self.visual else {
+            return self.cursor_pos().map(|at| {
                 let line = at.line;
                 (at, line)
-            }),
+            });
+        };
+        let end = self.selection_end(v).unwrap_or(v.line);
+        let start = Pos {
+            line: v.line.min(end),
+            ..v.clone()
+        };
+        Some((start, v.line.max(end)))
+    }
+
+    /// The far end of the selection anchored at `v`.
+    fn selection_end(&self, v: &Pos) -> Option<u32> {
+        let rows = self.stream.as_ref()?.files.get(v.file)?.rows();
+        let on_side = |r: &Row| row_line(r, v.side);
+        let first = || rows.iter().find_map(on_side);
+        let last = || rows.iter().rev().find_map(on_side);
+        let file = self.cursor_file()?;
+        if file != v.file {
+            return if file < v.file { first() } else { last() };
+        }
+        match self.line_at(self.cursor_line()) {
+            Line::Body { row, .. } => {
+                let before = rows.get(..=row)?.iter().rev().find_map(on_side);
+                let after = rows.get(row..)?.iter().find_map(on_side);
+                match (before, after) {
+                    (Some(b), _) if b >= v.line => Some(b),
+                    (_, Some(a)) if a <= v.line => Some(a),
+                    (b, a) => b.or(a),
+                }
+            }
+            Line::Header { .. } | Line::Cards { .. } => first(),
+            _ => last(),
         }
     }
 
@@ -591,5 +611,16 @@ impl App {
         self.cursor_row = u16::try_from(line.saturating_sub(self.global_top())).unwrap_or(0);
         self.clamp_cursor(rows);
         true
+    }
+}
+
+/// The line of `side` that a row shows, if any.
+pub(crate) fn row_line(row: &Row, side: Side) -> Option<u32> {
+    match (*row, side) {
+        (Row::Line { kind, old, .. }, Side::Old) if kind != Kind::Insert => old,
+        (Row::Line { kind, new, .. }, Side::New) if kind != Kind::Delete => new,
+        (Row::Pair { old, .. }, Side::Old) => old,
+        (Row::Pair { new, .. }, Side::New) => new,
+        _ => None,
     }
 }
