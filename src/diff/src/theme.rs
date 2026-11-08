@@ -2,25 +2,26 @@
 //! foreground, background and the first six palette colours (OSC 10, 11 and
 //! 4) and mixes every tint from them, so it matches light and dark themes.
 
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use ratatui::style::Color;
 
 use crate::highlight::Role;
 
-pub type Rgb = (u8, u8, u8);
+pub(crate) type Rgb = (u8, u8, u8);
 
 /// What the terminal reported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Detected {
-    pub fg: Option<Rgb>,
-    pub bg: Option<Rgb>,
+pub(crate) struct Detected {
+    pub(crate) fg: Option<Rgb>,
+    pub(crate) bg: Option<Rgb>,
     /// Palette colours 1 to 6: red, green, yellow, blue, magenta, cyan.
-    pub ansi: [Option<Rgb>; 6],
+    pub(crate) ansi: [Option<Rgb>; 6],
 }
 
 impl Detected {
-    pub fn light() -> Self {
+    pub(crate) fn light() -> Self {
         Self {
             fg: Some((0x24, 0x29, 0x2f)),
             bg: Some((0xff, 0xff, 0xff)),
@@ -35,7 +36,7 @@ impl Detected {
         }
     }
 
-    pub fn dark() -> Self {
+    pub(crate) fn dark() -> Self {
         Self {
             fg: Some((0xe6, 0xed, 0xf3)),
             bg: Some((0x0d, 0x11, 0x17)),
@@ -69,45 +70,45 @@ impl Detected {
 
 /// Every colour the viewer paints.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Palette {
-    pub dark: bool,
-    pub bg: Color,
-    pub fg: Color,
-    pub muted: Color,
-    pub faint: Color,
-    pub rule: Color,
-    pub panel: Color,
-    pub selection: Color,
-    pub accent: Color,
-    pub green: Color,
-    pub red: Color,
-    pub yellow: Color,
-    pub add_bg: Color,
-    pub add_emph: Color,
-    pub add_gutter: Color,
-    pub del_bg: Color,
-    pub del_emph: Color,
-    pub del_gutter: Color,
-    pub gap_bg: Color,
-    pub header_bg: Color,
-    pub filler: Color,
+pub(crate) struct Palette {
+    pub(crate) dark: bool,
+    pub(crate) bg: Color,
+    pub(crate) fg: Color,
+    pub(crate) muted: Color,
+    pub(crate) faint: Color,
+    pub(crate) rule: Color,
+    pub(crate) panel: Color,
+    pub(crate) selection: Color,
+    pub(crate) accent: Color,
+    pub(crate) green: Color,
+    pub(crate) red: Color,
+    pub(crate) yellow: Color,
+    pub(crate) add_bg: Color,
+    pub(crate) add_emph: Color,
+    pub(crate) add_gutter: Color,
+    pub(crate) del_bg: Color,
+    pub(crate) del_emph: Color,
+    pub(crate) del_gutter: Color,
+    pub(crate) gap_bg: Color,
+    pub(crate) header_bg: Color,
+    pub(crate) filler: Color,
     syntax: [Color; Role::COUNT],
     /// The raw values, for images drawn outside the cell grid.
-    pub rgb: RawColors,
+    pub(crate) rgb: RawColors,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RawColors {
-    pub bg: Rgb,
-    pub fg: Rgb,
-    pub muted: Rgb,
-    pub green: Rgb,
-    pub red: Rgb,
-    pub accent: Rgb,
-    pub header_bg: Rgb,
+pub(crate) struct RawColors {
+    pub(crate) bg: Rgb,
+    pub(crate) fg: Rgb,
+    pub(crate) muted: Rgb,
+    pub(crate) green: Rgb,
+    pub(crate) red: Rgb,
+    pub(crate) accent: Rgb,
+    pub(crate) header_bg: Rgb,
 }
 
-pub fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
+pub(crate) fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
     let m = |x: u8, y: u8| {
         let v = f32::from(x) + (f32::from(y) - f32::from(x)) * t;
         // Clamped to 0..=255 first, so the cast cannot truncate.
@@ -118,7 +119,7 @@ pub fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
     (m(a.0, b.0), m(a.1, b.1), m(a.2, b.2))
 }
 
-pub fn luma(c: Rgb) -> f32 {
+pub(crate) fn luma(c: Rgb) -> f32 {
     (0.2126 * f32::from(c.0) + 0.7152 * f32::from(c.1) + 0.0722 * f32::from(c.2)) / 255.0
 }
 
@@ -127,7 +128,7 @@ fn rgb(c: Rgb) -> Color {
 }
 
 impl Palette {
-    pub fn new(detected: Detected) -> Self {
+    pub(crate) fn new(detected: Detected) -> Self {
         let d = detected.complete();
         let (Some(bg), Some(fg)) = (d.bg, d.fg) else {
             unreachable!("complete() fills both")
@@ -144,18 +145,15 @@ impl Palette {
         let header_bg = mix(bg, fg, if dark { 0.08 } else { 0.045 });
         let syntax_of = |role: Role| -> Rgb {
             match role {
-                Role::Plain => fg,
                 Role::Keyword => magenta,
                 Role::String => green,
                 Role::Comment => muted,
                 Role::Function => blue,
-                Role::Type => yellow,
-                Role::Constant => cyan,
+                Role::Type | Role::Attribute => yellow,
+                Role::Constant | Role::Macro => cyan,
                 Role::Operator | Role::Punctuation => mix(fg, bg, 0.25),
-                Role::Property | Role::Variable => fg,
+                Role::Plain | Role::Property | Role::Variable => fg,
                 Role::Tag => red,
-                Role::Attribute => yellow,
-                Role::Macro => cyan,
             }
         };
         let mut syntax = [Color::Reset; Role::COUNT];
@@ -197,24 +195,24 @@ impl Palette {
         }
     }
 
-    pub fn syntax(&self, role: Role) -> Color {
+    pub(crate) fn syntax(&self, role: Role) -> Color {
         self.syntax[role as usize]
     }
 }
 
 /// The query: colours, then primary device attributes, which every terminal
 /// answers, so a reader knows when the replies are complete.
-pub fn query() -> String {
+pub(crate) fn query() -> String {
     let mut q = String::from("\x1b]10;?\x1b\\\x1b]11;?\x1b\\");
     for i in 1..=6 {
-        q.push_str(&format!("\x1b]4;{i};?\x1b\\"));
+        let _ = write!(q, "\x1b]4;{i};?\x1b\\");
     }
     q.push_str("\x1b[c");
     q
 }
 
 /// True once `buf` holds the device attributes reply ending a [`query`].
-pub fn complete(buf: &[u8]) -> bool {
+pub(crate) fn complete(buf: &[u8]) -> bool {
     buf.windows(3)
         .enumerate()
         .filter(|(_, w)| *w == b"\x1b[?")
@@ -227,7 +225,7 @@ pub fn complete(buf: &[u8]) -> bool {
 }
 
 /// Reads OSC colour replies terminated by BEL or ST.
-pub fn parse(reply: &[u8]) -> Detected {
+pub(crate) fn parse(reply: &[u8]) -> Detected {
     let text = String::from_utf8_lossy(reply);
     let mut d = Detected::default();
     for part in text.split("\x1b]").skip(1) {
@@ -242,7 +240,9 @@ pub fn parse(reply: &[u8]) -> Detected {
             "10" => d.fg = Some(color),
             "11" => d.bg = Some(color),
             other => {
-                if let Some(i) = other.strip_prefix("4;").and_then(|i| i.parse::<usize>().ok())
+                if let Some(i) = other
+                    .strip_prefix("4;")
+                    .and_then(|i| i.parse::<usize>().ok())
                     && (1..=6).contains(&i)
                 {
                     d.ansi[i - 1] = Some(color);
@@ -270,7 +270,7 @@ fn parse_rgb(spec: &str) -> Option<Rgb> {
 /// Asks the terminal for its colours over the controlling terminal and
 /// waits up to `timeout` for the answer. The caller must hold raw mode and
 /// keep every other reader off standard input meanwhile.
-pub fn ask(timeout: Duration) -> std::io::Result<Option<Detected>> {
+pub(crate) fn ask(timeout: Duration) -> std::io::Result<Option<Detected>> {
     use std::io::Write as _;
     let mut out = std::io::stdout();
     out.write_all(query().as_bytes())?;
@@ -283,7 +283,10 @@ pub fn ask(timeout: Duration) -> std::io::Result<Option<Detected>> {
         if left.is_zero() {
             break;
         }
-        let mut fds = [rustix::event::PollFd::new(&stdin, rustix::event::PollFlags::IN)];
+        let mut fds = [rustix::event::PollFd::new(
+            &stdin,
+            rustix::event::PollFlags::IN,
+        )];
         let wait = rustix::event::Timespec::try_from(left).unwrap_or(rustix::event::Timespec {
             tv_sec: 0,
             tv_nsec: 50_000_000,
@@ -318,12 +321,19 @@ mod tests {
         for (detected, dark) in [(Detected::light(), false), (Detected::dark(), true)] {
             let p = Palette::new(detected);
             assert_eq!(p.dark, dark);
-            let Color::Rgb(r, g, b) = p.add_bg else { panic!("rgb") };
+            let Color::Rgb(r, g, b) = p.add_bg else {
+                panic!("rgb")
+            };
             let bg = detected.bg.expect("set");
             let distance = |c: Rgb| (luma(c) - luma(bg)).abs();
             assert!(distance((r, g, b)) < 0.2, "add tint is subtle");
-            let Color::Rgb(r2, g2, b2) = p.add_emph else { panic!("rgb") };
-            assert!(distance((r2, g2, b2)) > distance((r, g, b)), "emphasis is stronger");
+            let Color::Rgb(r2, g2, b2) = p.add_emph else {
+                panic!("rgb")
+            };
+            assert!(
+                distance((r2, g2, b2)) > distance((r, g, b)),
+                "emphasis is stronger"
+            );
         }
     }
 
@@ -345,6 +355,12 @@ mod tests {
             ..Detected::default()
         });
         assert!(p.dark);
-        assert_eq!(p, Palette::new(Detected { bg: Some((0, 0, 0)), ..Detected::dark() }));
+        assert_eq!(
+            p,
+            Palette::new(Detected {
+                bg: Some((0, 0, 0)),
+                ..Detected::dark()
+            })
+        );
     }
 }

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 
 #[derive(Debug)]
-pub struct Timings {
+pub(crate) struct Timings {
     enabled: bool,
     start: Instant,
     events: Vec<String>,
@@ -47,7 +47,7 @@ impl Stats {
 }
 
 impl Timings {
-    pub fn new(enabled: bool) -> Self {
+    pub(crate) fn new(enabled: bool) -> Self {
         Self {
             enabled,
             start: Instant::now(),
@@ -57,35 +57,40 @@ impl Timings {
         }
     }
 
-    pub fn since_start(&self) -> Duration {
+    pub(crate) fn since_start(&self) -> Duration {
         self.start.elapsed()
     }
 
     /// Something that took `took`, ending now.
-    pub fn span(&mut self, what: &str, took: Duration, detail: String) {
+    pub(crate) fn span(&mut self, what: &str, took: Duration, detail: &str) {
         if self.enabled {
             let at = self.start.elapsed();
-            let detail = if detail.is_empty() { String::new() } else { format!(" ({detail})") };
-            self.events.push(format!("{at:>10.1?}  {what}: {took:.1?}{detail}"));
+            let detail = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({detail})")
+            };
+            self.events
+                .push(format!("{at:>10.1?}  {what}: {took:.1?}{detail}"));
         }
     }
 
-    pub fn note(&mut self, what: String) {
+    pub(crate) fn note(&mut self, what: &str) {
         if self.enabled {
             let at = self.start.elapsed();
             self.events.push(format!("{at:>10.1?}  {what}"));
         }
     }
 
-    pub fn diff(&mut self, took: Duration, lines: u32) {
+    pub(crate) fn diff(&mut self, took: Duration, lines: u32) {
         self.diffs.add(took, lines);
     }
 
-    pub fn highlight(&mut self, took: Duration) {
+    pub(crate) fn highlight(&mut self, took: Duration) {
         self.highlights.add(took, 0);
     }
 
-    pub fn report(&self) -> String {
+    pub(crate) fn report(&self) -> String {
         let mut out = String::from("dots-diff timings\n");
         for e in &self.events {
             let _ = writeln!(out, "{e}");
@@ -96,13 +101,13 @@ impl Timings {
     }
 
     /// Prints the report to `dest`, or standard error.
-    pub fn write(&self, _started: Instant, dest: Option<&Path>) -> Result<()> {
-        match dest {
-            Some(path) => std::fs::write(path, self.report()).with_context(|| format!("writing {}", path.display())),
-            None => {
-                eprint!("{}", self.report());
-                Ok(())
-            }
+    pub(crate) fn write(&self, _started: Instant, dest: Option<&Path>) -> Result<()> {
+        if let Some(path) = dest {
+            std::fs::write(path, self.report())
+                .with_context(|| format!("writing {}", path.display()))
+        } else {
+            eprint!("{}", self.report());
+            Ok(())
         }
     }
 }

@@ -12,7 +12,7 @@ use crate::diff::Text;
 /// What a run of source text is, as far as colour goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
-pub enum Role {
+pub(crate) enum Role {
     Plain,
     Keyword,
     String,
@@ -30,8 +30,8 @@ pub enum Role {
 }
 
 impl Role {
-    pub const COUNT: usize = 14;
-    pub const ALL: [Role; Self::COUNT] = [
+    pub(crate) const COUNT: usize = 14;
+    pub(crate) const ALL: [Role; Self::COUNT] = [
         Role::Plain,
         Role::Keyword,
         Role::String,
@@ -49,7 +49,7 @@ impl Role {
     ];
 
     /// Maps a grammar capture name such as `keyword.return` to a role.
-    pub fn of_capture(capture: &str) -> Option<Role> {
+    pub(crate) fn of_capture(capture: &str) -> Option<Role> {
         let capture = capture.strip_prefix('@').unwrap_or(capture);
         let head = capture.split('.').next().unwrap_or(capture);
         Some(match head {
@@ -88,30 +88,30 @@ impl Role {
 
 /// A coloured byte range within one line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Run {
-    pub start: u32,
-    pub end: u32,
-    pub role: Role,
+pub(crate) struct Run {
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+    pub(crate) role: Role,
 }
 
 /// Runs for every line of a file; lines without colour have none.
 #[derive(Debug, Default)]
-pub struct Lines {
-    pub lines: Vec<Vec<Run>>,
+pub(crate) struct Lines {
+    pub(crate) lines: Vec<Vec<Run>>,
 }
 
 impl Lines {
-    pub fn line(&self, i: u32) -> &[Run] {
+    pub(crate) fn line(&self, i: u32) -> &[Run] {
         self.lines.get(i as usize).map_or(&[], Vec::as_slice)
     }
 }
 
 /// Files above either bound are shown without syntax colour.
-pub const MAX_BYTES: usize = 2 * 1024 * 1024;
-pub const MAX_LINES: u32 = 60_000;
+pub(crate) const MAX_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_LINES: u32 = 60_000;
 
 /// The grammar for a path, if any.
-pub fn language(path: &str) -> Option<&'static str> {
+pub(crate) fn language(path: &str) -> Option<&'static str> {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name {
         "Makefile" | "makefile" | "GNUmakefile" => return Some("make"),
@@ -149,7 +149,7 @@ const SUPPORTED: &[&str] = &[
 
 /// Colours one whole file. Inner captures win over the ones enclosing them,
 /// and later query patterns win ties, as tree-sitter intends.
-pub fn highlight(
+pub(crate) fn highlight(
     highlighter: &mut arborium::Highlighter,
     language: &str,
     text: &Text,
@@ -194,20 +194,20 @@ pub fn highlight(
 }
 
 /// Cache key: content hash and grammar.
-pub type Key = (u64, &'static str);
+pub(crate) type Key = (u64, &'static str);
 
 #[derive(Debug, Clone)]
-pub struct Job {
-    pub key: Key,
-    pub text: Arc<Text>,
+pub(crate) struct Job {
+    pub(crate) key: Key,
+    pub(crate) text: Arc<Text>,
 }
 
 /// A finished job: the runs, or why there are none, and how long it took.
 #[derive(Debug)]
-pub struct Done {
-    pub key: Key,
-    pub result: Result<Arc<Lines>, String>,
-    pub elapsed: Duration,
+pub(crate) struct Done {
+    pub(crate) key: Key,
+    pub(crate) result: Result<Arc<Lines>, String>,
+    pub(crate) elapsed: Duration,
 }
 
 #[derive(Debug, Default)]
@@ -217,7 +217,7 @@ struct Queue {
 }
 
 /// Background highlighting threads sharing one queue and grammar store.
-pub struct Pool {
+pub(crate) struct Pool {
     queue: Arc<(Mutex<Queue>, Condvar)>,
     in_flight: Arc<Mutex<HashSet<Key>>>,
 }
@@ -229,7 +229,7 @@ impl std::fmt::Debug for Pool {
 }
 
 impl Pool {
-    pub fn new(threads: usize, done: impl Fn(Done) + Send + Sync + 'static) -> Self {
+    pub(crate) fn new(threads: usize, done: impl Fn(Done) + Send + Sync + 'static) -> Self {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let in_flight = Arc::new(Mutex::new(HashSet::new()));
         let done = Arc::new(done);
@@ -255,7 +255,7 @@ impl Pool {
 
     /// Replaces the pending work with `jobs`, most wanted first. Jobs already
     /// running are not repeated.
-    pub fn want(&self, jobs: Vec<Job>) {
+    pub(crate) fn want(&self, jobs: Vec<Job>) {
         let (lock, wake) = &*self.queue;
         let mut queue = lock.lock().expect("highlight queue");
         let mut in_flight = self.in_flight.lock().expect("highlight state");
@@ -270,10 +270,6 @@ impl Pool {
             }
         }
         wake.notify_all();
-    }
-
-    pub fn is_pending(&self, key: &Key) -> bool {
-        self.in_flight.lock().expect("highlight state").contains(key)
     }
 }
 
@@ -322,11 +318,19 @@ mod tests {
         assert_eq!(lines.lines.len(), 3);
         assert_eq!(
             lines.line(0).first(),
-            Some(&Run { start: 0, end: 2, role: Role::Keyword })
+            Some(&Run {
+                start: 0,
+                end: 2,
+                role: Role::Keyword
+            })
         );
         assert_eq!(
             lines.line(1),
-            &[Run { start: 4, end: 9, role: Role::Comment }]
+            &[Run {
+                start: 4,
+                end: 9,
+                role: Role::Comment
+            }]
         );
     }
 }

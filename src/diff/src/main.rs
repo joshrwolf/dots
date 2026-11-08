@@ -25,7 +25,11 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
-#[command(name = "dots-diff", version, about = "Review the changes in every worktree of a repository")]
+#[command(
+    name = "dots-diff",
+    version,
+    about = "Review the changes in every worktree of a repository"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Cmd>,
@@ -37,6 +41,7 @@ struct Cli {
     graphics: bool,
     /// Print timings on exit, to standard error or FILE
     #[arg(long, value_name = "FILE", num_args = 0..=1, require_equals = true)]
+    #[allow(clippy::option_option)]
     timings: Option<Option<PathBuf>>,
     #[command(flatten)]
     look: Look,
@@ -79,7 +84,11 @@ impl Look {
                 Some(LayoutArg::Split) => app::LayoutChoice::Split,
             },
             wrap: !self.no_wrap,
-            mode: if self.uncommitted { repo::Mode::Head } else { repo::Mode::Base },
+            mode: if self.uncommitted {
+                repo::Mode::Head
+            } else {
+                repo::Mode::Base
+            },
             ..app::Settings::default()
         }
     }
@@ -114,6 +123,9 @@ enum Cmd {
         /// Keep colours as ANSI escapes
         #[arg(long)]
         ansi: bool,
+        /// Also draw the frame as a PNG picture
+        #[arg(long, value_name = "FILE")]
+        png: Option<PathBuf>,
         #[command(flatten)]
         look: Look,
     },
@@ -176,6 +188,7 @@ fn run(cli: Cli) -> Result<()> {
             file,
             scroll,
             ansi,
+            png,
             look,
         }) => {
             let frame = render::frame(&render::Frame {
@@ -188,6 +201,7 @@ fn run(cli: Cli) -> Result<()> {
                 theme: look.theme().unwrap_or_else(theme::Detected::light),
                 settings: look.settings(),
                 scroll,
+                png,
             })?;
             print!("{frame}");
             Ok(())

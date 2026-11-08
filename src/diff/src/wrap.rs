@@ -6,9 +6,9 @@ use unicode_width::UnicodeWidthChar as _;
 
 /// Cells a tab occupies. Fixed, not tab-stop aligned, so a line's width does
 /// not depend on where it is drawn.
-pub const TAB: u16 = 4;
+pub(crate) const TAB: u16 = 4;
 
-pub fn char_width(c: char) -> u16 {
+pub(crate) fn char_width(c: char) -> u16 {
     if c == '\t' {
         TAB
     } else {
@@ -19,23 +19,23 @@ pub fn char_width(c: char) -> u16 {
 /// One display line of a wrapped source line: a byte range of the source,
 /// drawn after `indent` blank cells.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Segment {
-    pub bytes: Range<usize>,
-    pub indent: u16,
+pub(crate) struct Segment {
+    pub(crate) bytes: Range<usize>,
+    pub(crate) indent: u16,
 }
 
 /// Splits `text` into display lines of at most `width` cells. Continuation
 /// lines repeat the leading indentation so wrapped code keeps its shape,
 /// unless that would leave less than half the width for text. Breaks prefer
 /// the last space in the second half of a line.
-pub fn wrap(text: &str, width: u16) -> Vec<Segment> {
+pub(crate) fn wrap(text: &str, width: u16) -> Vec<Segment> {
     let mut out = Vec::new();
     wrap_into(text, width, &mut |segment| out.push(segment));
     out
 }
 
 /// How many display lines [`wrap`] produces, without allocating them.
-pub fn wrapped_height(text: &str, width: u16) -> u32 {
+pub(crate) fn wrapped_height(text: &str, width: u16) -> u32 {
     if text.len() <= usize::from(width) && text.is_ascii() && !text.contains('\t') {
         return 1;
     }
@@ -96,7 +96,7 @@ fn wrap_into(text: &str, width: u16, emit: &mut dyn FnMut(Segment)) {
 mod tests {
     use super::*;
 
-    fn texts<'a>(text: &'a str, width: u16) -> Vec<(&'a str, u16)> {
+    fn texts(text: &str, width: u16) -> Vec<(&str, u16)> {
         wrap(text, width)
             .into_iter()
             .map(|s| (&text[s.bytes], s.indent))
@@ -120,16 +120,16 @@ mod tests {
                 ("beta);", 4)
             ]
         );
-        assert_eq!(wrapped_height("    let value = compute(alpha, beta);", 20), 3);
+        assert_eq!(
+            wrapped_height("    let value = compute(alpha, beta);", 20),
+            3
+        );
     }
 
     #[test]
     fn deep_indentation_is_dropped_when_it_would_crowd_the_text() {
         let line = format!("{}abcdefghij", " ".repeat(8));
-        assert_eq!(
-            texts(&line, 10),
-            vec![("        ab", 0), ("cdefghij", 0)]
-        );
+        assert_eq!(texts(&line, 10), vec![("        ab", 0), ("cdefghij", 0)]);
     }
 
     #[test]

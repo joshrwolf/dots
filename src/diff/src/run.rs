@@ -26,7 +26,8 @@ use crate::timings::Timings;
 use crate::ui;
 use crate::watch::{self, Touched, Watch};
 
-pub enum Msg {
+#[allow(clippy::large_enum_variant)]
+pub(crate) enum Msg {
     Input(Event),
     Loaded {
         generation: u64,
@@ -52,13 +53,14 @@ pub enum Msg {
 }
 
 #[derive(Debug, Clone)]
-pub struct Options {
-    pub path: PathBuf,
+pub(crate) struct Options {
+    pub(crate) path: PathBuf,
     /// Fixed colours instead of the terminal's.
-    pub theme: Option<Detected>,
-    pub graphics: bool,
-    pub timings: Option<Option<PathBuf>>,
-    pub settings: Settings,
+    pub(crate) theme: Option<Detected>,
+    pub(crate) graphics: bool,
+    #[allow(clippy::option_option)]
+    pub(crate) timings: Option<Option<PathBuf>>,
+    pub(crate) settings: Settings,
 }
 
 /// Wait after the last file event before reloading.
@@ -82,7 +84,7 @@ struct Runtime {
     generation: u64,
     diffs: Option<DiffJob>,
     pool: highlight::Pool,
-    _watch: Option<Watch>,
+    watcher: Option<Watch>,
     summaries: SummaryQueue,
     /// Worktrees whose rail counts are stale, and when they last changed.
     stale: HashMap<PathBuf, Instant>,
@@ -95,23 +97,40 @@ struct Runtime {
     detected: Option<Detected>,
     next_theme: Instant,
     quit: bool,
+    summaries_started: bool,
+    /// Where the current stream's contents are read from.
+    source: Option<(gix::ThreadSafeRepository, PathBuf)>,
 }
 
-pub fn run(options: Options) -> Result<()> {
+pub(crate) fn run(options: Options) -> Result<()> {
     let mut timings = Timings::new(options.timings.is_some());
     let started = Instant::now();
     let repo = repo::discover(&options.path)?;
-    timings.span("enumerate worktrees", started.elapsed(), format!("{} worktrees", repo.worktrees.len()));
+    timings.span(
+        "enumerate worktrees",
+        started.elapsed(),
+        &format!("{} worktrees", repo.worktrees.len()),
+    );
     let current = repo.index_of(&options.path).unwrap_or(0);
 
     let mut terminal = ratatui::try_init().context("starting the terminal")?;
     let result = (|| {
-        ratatui::crossterm::execute!(std::io::stdout(), ratatui::crossterm::event::EnableMouseCapture)?;
+        ratatui::crossterm::execute!(
+            std::io::stdout(),
+            ratatui::crossterm::event::EnableMouseCapture
+        )?;
         let detected = match options.theme {
             Some(d) => Some(d),
             None => theme::ask(Duration::from_millis(400)).ok().flatten(),
         };
-        timings.note(format!("theme {}", if detected.is_some() { "reported" } else { "not reported; light fallback" }));
+        timings.note(&format!(
+            "theme {}",
+            if detected.is_some() {
+                "reported"
+            } else {
+                "not reported; light fallback"
+            }
+        ));
         let palette = Palette::new(detected.unwrap_or_else(Detected::light));
         let mut settings = options.settings.clone();
         if options.graphics {
@@ -135,7 +154,7 @@ pub fn run(options: Options) -> Result<()> {
         }) {
             Ok(()) => Some(ctl::Cleanup(socket)),
             Err(e) => {
-                timings.note(format!("control socket unavailable: {e:#}"));
+                timings.note(&format!("control socket unavailable: {e:#}"));
                 None
             }
         };
@@ -146,8 +165,8 @@ pub fn run(options: Options) -> Result<()> {
             generation: 0,
             diffs: None,
             pool,
-            _watch: None,
-            summaries: SummaryQueue::new(RAIL_THREADS, tx_for_summaries),
+            watcher: None,
+            summaries: SummaryQueue::new(RAIL_THREADS, &tx_for_summaries),
             stale: HashMap::new(),
             refresh_at: None,
             wanted: Vec::new(),
@@ -157,6 +176,8 @@ pub fn run(options: Options) -> Result<()> {
             detected,
             next_theme: Instant::now() + THEME_POLL,
             quit: false,
+            summaries_started: false,
+            source: None,
         };
         let mut graphics = options.graphics.then(Graphics::new);
         rt.start_load();
@@ -167,7 +188,10 @@ pub fn run(options: Options) -> Result<()> {
         }
         outcome.map(|()| rt.timings)
     })();
-    let _ = ratatui::crossterm::execute!(std::io::stdout(), ratatui::crossterm::event::DisableMouseCapture);
+    let _ = ratatui::crossterm::execute!(
+        std::io::stdout(),
+        ratatui::crossterm::event::DisableMouseCapture
+    );
     ratatui::try_restore()?;
     let timings = result?;
     if let Some(dest) = options.timings {
@@ -199,7 +223,8 @@ impl Runtime {
                 }
                 frames += 1;
                 if frames == 1 {
-                    self.timings.span("first frame", self.timings.since_start(), String::new());
+                    self.timings
+                        .span("first frame", self.timings.since_start(), "");
                 }
                 self.after_frame(t.elapsed());
                 dirty = false;
@@ -220,12 +245,12 @@ impl Runtime {
                 deadline = deadline.min(at);
             }
             match rx.recv_timeout(deadline.saturating_duration_since(now)) {
-                Ok(msg) => dirty |= self.handle(msg)?,
+                Ok(msg) => dirty |= self.handle(msg),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
             while let Ok(msg) = rx.try_recv() {
-                dirty |= self.handle(msg)?;
+                dirty |= self.handle(msg);
             }
             let now = Instant::now();
             if self.refresh_at.is_some_and(|at| at <= now) {
@@ -277,7 +302,16 @@ impl Runtime {
             });
             if ready {
                 self.loading_since = None;
-                self.timings.span("worktree shown with diffs", since.elapsed(), format!("draw {draw:.1?}"));
+                if !self.summaries_started {
+                    // Rail counts wait for the first full frame so they never delay it.
+                    self.summaries_started = true;
+                    self.spawn_summaries();
+                }
+                self.timings.span(
+                    "worktree shown with diffs",
+                    since.elapsed(),
+                    &format!("draw {draw:.1?}"),
+                );
             }
         }
         let jobs = self.app.wanted_highlights(self.view_rows(), PREFETCH);
@@ -291,9 +325,9 @@ impl Runtime {
         }
     }
 
-    fn handle(&mut self, msg: Msg) -> Result<bool> {
+    fn handle(&mut self, msg: Msg) -> bool {
         match msg {
-            Msg::Input(event) => Ok(self.input(event)),
+            Msg::Input(event) => self.input(&event),
             Msg::Loaded {
                 generation,
                 worktree,
@@ -302,21 +336,24 @@ impl Runtime {
                 elapsed,
             } => {
                 if generation != self.generation {
-                    return Ok(false);
+                    return false;
                 }
                 match result {
                     Ok(changes) => {
-                        self.timings.span("load changes", elapsed, format!("{} files", changes.files.len()));
+                        self.timings.span(
+                            "load changes",
+                            elapsed,
+                            &format!("{} files", changes.files.len()),
+                        );
                         self.app.message = None;
-                        self.app.load(worktree.clone(), mode, changes);
+                        self.source = Some((changes.repo, changes.root));
+                        self.app
+                            .load(worktree.clone(), mode, changes.base, changes.files);
                         self.spawn_diffs();
-                        if self.app.summaries.is_empty() {
-                            self.spawn_summaries();
-                        }
                     }
                     Err(e) => self.app.message = Some(e),
                 }
-                Ok(true)
+                true
             }
             Msg::Diffed {
                 generation,
@@ -325,7 +362,7 @@ impl Runtime {
                 elapsed,
             } => {
                 if generation != self.generation {
-                    return Ok(false);
+                    return false;
                 }
                 let lines = match &body {
                     Body::Text(d) => d.old.len() + d.new.len(),
@@ -334,18 +371,18 @@ impl Runtime {
                 self.timings.diff(elapsed, lines);
                 self.app.set_body(file, body);
                 self.update_own_summary();
-                Ok(true)
+                true
             }
             Msg::Highlighted(done) => {
                 self.timings.highlight(done.elapsed);
                 self.app.highlights.insert(done.key, done.result.ok());
-                Ok(true)
+                true
             }
             Msg::Summary { path, summary } => {
                 if let Ok(s) = summary {
                     self.app.summaries.insert(path, s);
                 }
-                Ok(self.app.areas.rail.width > 0)
+                self.app.areas.rail.width > 0
             }
             Msg::Touched(touched) => {
                 let current = self.app.current;
@@ -357,18 +394,18 @@ impl Runtime {
                     }
                     _ => self.refresh_at = Some(Instant::now() + DEBOUNCE),
                 }
-                Ok(false)
+                false
             }
             Msg::Watching(result) => {
                 match result {
-                    Ok(w) => self._watch = Some(w),
+                    Ok(w) => self.watcher = Some(w),
                     Err(e) => self.app.message = Some(format!("not watching: {e}")),
                 }
-                Ok(true)
+                true
             }
             Msg::Ctl(command) => {
                 self.command(command);
-                Ok(true)
+                true
             }
         }
     }
@@ -452,7 +489,13 @@ impl Runtime {
     /// Starts watching every worktree; setting up takes a moment, so it
     /// happens off the event loop.
     fn spawn_watch(&self) {
-        let roots: Vec<PathBuf> = self.app.repo.worktrees.iter().map(|w| w.path.clone()).collect();
+        let roots: Vec<PathBuf> = self
+            .app
+            .repo
+            .worktrees
+            .iter()
+            .map(|w| w.path.clone())
+            .collect();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let events = Mutex::new(tx.clone());
@@ -472,9 +515,19 @@ impl Runtime {
         if pending.is_empty() {
             return;
         }
-        let Some(stream) = &self.app.stream else { return };
+        let Some(stream) = &self.app.stream else {
+            return;
+        };
+        let Some((repo, root)) = self.source.clone() else {
+            return;
+        };
         let todo: Vec<Option<FileChange>> = (0..stream.files.len())
-            .map(|i| pending.binary_search(&i).ok().map(|_| stream.files[i].change.clone()))
+            .map(|i| {
+                pending
+                    .binary_search(&i)
+                    .ok()
+                    .map(|_| stream.files[i].change.clone())
+            })
             .collect();
         let todo = Arc::new(Mutex::new(todo));
         let job = DiffJob {
@@ -483,6 +536,7 @@ impl Runtime {
         };
         let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
         for _ in 0..threads {
+            let (repo, root) = (repo.clone(), root.clone());
             let (todo, cancel, focus, tx, generation) = (
                 Arc::clone(&todo),
                 Arc::clone(&job.cancel),
@@ -491,14 +545,16 @@ impl Runtime {
                 self.generation,
             );
             std::thread::spawn(move || {
+                let repo = repo.to_thread_local();
                 while !cancel.load(Ordering::Relaxed) {
                     let next = {
                         let Ok(mut todo) = todo.lock() else { return };
-                        nearest(&todo, focus.load(Ordering::Relaxed)).and_then(|i| todo[i].take().map(|c| (i, c)))
+                        nearest(&todo, focus.load(Ordering::Relaxed))
+                            .and_then(|i| todo[i].take().map(|c| (i, c)))
                     };
                     let Some((file, change)) = next else { return };
                     let started = Instant::now();
-                    let body = app::compute_body(&change);
+                    let body = app::compute_body(&repo, &root, &change);
                     if tx
                         .send(Msg::Diffed {
                             generation,
@@ -522,13 +578,16 @@ impl Runtime {
         let at = self.app.rail_cursor.min(n.saturating_sub(1));
         let order = (0..n).map(|d| (at + d) % n);
         for i in order {
-            self.summaries.push(self.app.repo.worktrees[i].path.clone(), false);
+            self.summaries
+                .push(self.app.repo.worktrees[i].path.clone(), false);
         }
     }
 
     /// The selected worktree's rail entry follows its own stream once complete.
     fn update_own_summary(&mut self) {
-        let Some(stream) = &self.app.stream else { return };
+        let Some(stream) = &self.app.stream else {
+            return;
+        };
         if stream.mode != Mode::Base {
             return;
         }
@@ -543,18 +602,19 @@ impl Runtime {
         }
     }
 
-    fn input(&mut self, event: Event) -> bool {
+    fn input(&mut self, event: &Event) -> bool {
         match event {
             Event::Key(key) if key.kind != KeyEventKind::Release => {
-                self.key(key);
+                self.key(*key);
                 true
             }
-            Event::Mouse(mouse) => self.mouse(mouse),
+            Event::Mouse(mouse) => self.mouse(*mouse),
             Event::Resize(..) | Event::FocusGained => true,
             _ => false,
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn key(&mut self, key: KeyEvent) {
         let rows = self.view_rows();
         let half = i64::from(rows / 2);
@@ -572,7 +632,9 @@ impl Runtime {
             (KeyCode::Char('f'), true) | (KeyCode::PageDown | KeyCode::Char(' '), _) => {
                 self.scroll(i64::from(rows.saturating_sub(2)));
             }
-            (KeyCode::Char('b'), true) | (KeyCode::PageUp, _) => self.scroll(-i64::from(rows.saturating_sub(2))),
+            (KeyCode::Char('b'), true) | (KeyCode::PageUp, _) => {
+                self.scroll(-i64::from(rows.saturating_sub(2)));
+            }
             (KeyCode::Tab, _) => {
                 self.app.focus = match self.app.focus {
                     Focus::Worktrees => Focus::Files,
@@ -613,7 +675,9 @@ impl Runtime {
             (KeyCode::Char('K' | '['), _) => self.app.next_file(false, rows),
             (KeyCode::Char('n'), _) => self.app.next_hunk(true, rows),
             (KeyCode::Char('N' | 'p'), _) => self.app.next_hunk(false, rows),
-            (KeyCode::Char('}'), _) => self.switch((self.app.current + 1) % self.app.repo.worktrees.len()),
+            (KeyCode::Char('}'), _) => {
+                self.switch((self.app.current + 1) % self.app.repo.worktrees.len());
+            }
             (KeyCode::Char('{'), _) => {
                 let n = self.app.repo.worktrees.len();
                 self.switch((self.app.current + n - 1) % n);
@@ -715,7 +779,10 @@ impl Runtime {
             } else {
                 let slot = usize::from(mouse.row.saturating_sub(areas.rail.y + 2) / 2);
                 let visible = usize::from(areas.rail.height.saturating_sub(2) / 2);
-                let start = self.app.rail_cursor.saturating_sub(visible.saturating_sub(1));
+                let start = self
+                    .app
+                    .rail_cursor
+                    .saturating_sub(visible.saturating_sub(1));
                 self.app.focus = Focus::Worktrees;
                 self.switch(start + slot);
             }
@@ -733,7 +800,9 @@ impl Runtime {
             .iter()
             .position(|it| *it == ListItem::File(self.app.files_cursor))
             .unwrap_or(0);
-        let start = cursor_item.saturating_sub(rows / 2).min(self.app.list.len().saturating_sub(rows));
+        let start = cursor_item
+            .saturating_sub(rows / 2)
+            .min(self.app.list.len().saturating_sub(rows));
         let slot = usize::from(y.checked_sub(area.y + 2)?);
         match self.app.list.get(start + slot)? {
             ListItem::File(i) => Some(*i),
@@ -748,7 +817,7 @@ struct SummaryQueue {
 }
 
 impl SummaryQueue {
-    fn new(threads: usize, tx: Sender<Msg>) -> Self {
+    fn new(threads: usize, tx: &Sender<Msg>) -> Self {
         let queue: Arc<(Mutex<VecDeque<PathBuf>>, Condvar)> = Arc::default();
         for _ in 0..threads {
             let (queue, tx) = (Arc::clone(&queue), tx.clone());
@@ -816,11 +885,12 @@ fn nearest<T>(todo: &[Option<T>], focus: usize) -> Option<usize> {
     })
 }
 
-pub fn summarize(path: &Path) -> Result<Summary> {
+pub(crate) fn summarize(path: &Path) -> Result<Summary> {
     let changes = repo::changes(path, Mode::Base)?;
+    let repo = changes.repo.to_thread_local();
     let (mut added, mut removed) = (0, 0);
     for change in &changes.files {
-        if let Body::Text(d) = app::compute_body(change) {
+        if let Body::Text(d) = app::compute_body(&repo, &changes.root, change) {
             added += d.added;
             removed += d.removed;
         }

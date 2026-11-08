@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Command {
+pub(crate) enum Command {
     /// Show the worktree containing a path.
     Worktree(PathBuf),
     /// Scroll to a file, by absolute path or path within the worktree.
@@ -18,13 +18,15 @@ pub enum Command {
 }
 
 impl Command {
-    pub fn parse(line: &str) -> Result<Self> {
+    pub(crate) fn parse(line: &str) -> Result<Self> {
         let (verb, arg) = line.trim().split_once(' ').unwrap_or((line.trim(), ""));
         Ok(match (verb, arg.trim()) {
             ("worktree", path) if !path.is_empty() => Command::Worktree(PathBuf::from(path)),
             ("file", path) if !path.is_empty() => Command::File(path.to_owned()),
             ("refresh", "") => Command::Refresh,
-            _ => bail!("unknown command {line:?}; expected `worktree PATH`, `file PATH` or `refresh`"),
+            _ => bail!(
+                "unknown command {line:?}; expected `worktree PATH`, `file PATH` or `refresh`"
+            ),
         })
     }
 
@@ -38,7 +40,7 @@ impl Command {
 }
 
 /// The control socket: in the runtime directory, or the user's state directory.
-pub fn socket_path() -> PathBuf {
+pub(crate) fn socket_path() -> PathBuf {
     if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
         return PathBuf::from(dir).join("dots-diff.sock");
     }
@@ -51,7 +53,7 @@ pub fn socket_path() -> PathBuf {
 
 /// Accepts commands on `path` and passes each to `deliver`. A socket left by
 /// a viewer that exited is replaced; a live one is not.
-pub fn serve(path: &Path, deliver: impl Fn(Command) + Send + 'static) -> Result<()> {
+pub(crate) fn serve(path: &Path, deliver: impl Fn(Command) + Send + 'static) -> Result<()> {
     if UnixStream::connect(path).is_ok() {
         bail!("another dots-diff is listening on {}", path.display());
     }
@@ -59,7 +61,8 @@ pub fn serve(path: &Path, deliver: impl Fn(Command) + Send + 'static) -> Result<
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
     let _ = std::fs::remove_file(path);
-    let listener = UnixListener::bind(path).with_context(|| format!("listening on {}", path.display()))?;
+    let listener =
+        UnixListener::bind(path).with_context(|| format!("listening on {}", path.display()))?;
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
@@ -83,7 +86,7 @@ pub fn serve(path: &Path, deliver: impl Fn(Command) + Send + 'static) -> Result<
 
 /// Removes the socket when the viewer exits.
 #[derive(Debug)]
-pub struct Cleanup(pub PathBuf);
+pub(crate) struct Cleanup(pub PathBuf);
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
@@ -92,7 +95,7 @@ impl Drop for Cleanup {
 }
 
 /// Sends one command to the running viewer.
-pub fn send(command: &Command) -> Result<()> {
+pub(crate) fn send(command: &Command) -> Result<()> {
     let path = socket_path();
     let mut stream = UnixStream::connect(&path)
         .with_context(|| format!("no dots-diff is listening on {}", path.display()))?;

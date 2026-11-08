@@ -6,20 +6,20 @@ use std::collections::HashSet;
 use crate::diff::Hunk;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Layout {
+pub(crate) enum Layout {
     Unified,
     Split,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
+pub(crate) enum Kind {
     Context,
     Delete,
     Insert,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Row {
+pub(crate) enum Row {
     /// Unified: one line of one side, or a context line of both.
     Line {
         kind: Kind,
@@ -40,16 +40,16 @@ pub enum Row {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Options {
-    pub layout: Layout,
-    pub context: u32,
+pub(crate) struct Options {
+    pub(crate) layout: Layout,
+    pub(crate) context: u32,
     /// The most rows one file plans; the rest become a [`Row::Truncated`].
-    pub cap: usize,
+    pub(crate) cap: usize,
 }
 
 /// Plans the rows of one file. `old_len` and `new_len` are line counts;
 /// `expanded` holds the ids of unchanged regions shown in full.
-pub fn plan(
+pub(crate) fn plan(
     hunks: &[Hunk],
     old_len: u32,
     new_len: u32,
@@ -141,7 +141,7 @@ pub fn plan(
 
 /// Prefix sums of row heights: `offsets[i]` is the first display line of
 /// row `i`, and the last entry is the total.
-pub fn offsets(heights: impl Iterator<Item = u32>) -> Vec<u32> {
+pub(crate) fn offsets(heights: impl Iterator<Item = u32>) -> Vec<u32> {
     let mut out = Vec::with_capacity(heights.size_hint().0 + 1);
     let mut total = 0u32;
     out.push(0);
@@ -155,7 +155,7 @@ pub fn offsets(heights: impl Iterator<Item = u32>) -> Vec<u32> {
 /// The row containing display line `line`, and the line's index within the
 /// row. `offsets` comes from [`offsets`]; lines past the end land on the
 /// last row.
-pub fn locate(offsets: &[u32], line: u32) -> (usize, u32) {
+pub(crate) fn locate(offsets: &[u32], line: u32) -> (usize, u32) {
     let rows = offsets.len().saturating_sub(1);
     if rows == 0 {
         return (0, 0);
@@ -214,7 +214,13 @@ mod tests {
     #[test]
     fn expanding_a_gap_shows_every_line() {
         let expanded = HashSet::from([0]);
-        let rows = plan(&[hunk(5..6, 5..6)], 10, 10, &expanded, options(Layout::Unified));
+        let rows = plan(
+            &[hunk(5..6, 5..6)],
+            10,
+            10,
+            &expanded,
+            options(Layout::Unified),
+        );
         assert_eq!(rows[0], line(Kind::Context, Some(0), Some(0)));
         assert!(!rows.iter().any(|r| matches!(r, Row::Gap { id: 0, .. })));
     }
@@ -235,12 +241,26 @@ mod tests {
 
     #[test]
     fn split_pairs_deletions_with_insertions() {
-        let rows = plan(&[hunk(0..2, 0..1)], 2, 1, &HashSet::new(), options(Layout::Split));
+        let rows = plan(
+            &[hunk(0..2, 0..1)],
+            2,
+            1,
+            &HashSet::new(),
+            options(Layout::Split),
+        );
         assert_eq!(
             rows,
             vec![
-                Row::Pair { old: Some(0), new: Some(0), changed: true },
-                Row::Pair { old: Some(1), new: None, changed: true },
+                Row::Pair {
+                    old: Some(0),
+                    new: Some(0),
+                    changed: true
+                },
+                Row::Pair {
+                    old: Some(1),
+                    new: None,
+                    changed: true
+                },
             ]
         );
     }

@@ -10,15 +10,15 @@ use imara_diff::{Algorithm, Diff, InternedInput};
 /// A file's text split into lines. Line `i` spans `starts[i]..starts[i + 1]`
 /// and includes its line terminator.
 #[derive(Debug)]
-pub struct Text {
-    pub src: Arc<str>,
+pub(crate) struct Text {
+    pub(crate) src: Arc<str>,
     starts: Vec<u32>,
     /// Identifies the content for highlight caching.
-    pub hash: u64,
+    pub(crate) hash: u64,
 }
 
 impl Text {
-    pub fn new(src: Arc<str>) -> Self {
+    pub(crate) fn new(src: Arc<str>) -> Self {
         let mut starts = Vec::with_capacity(src.len() / 32 + 2);
         starts.push(0);
         for (i, b) in src.bytes().enumerate() {
@@ -38,11 +38,7 @@ impl Text {
         }
     }
 
-    pub fn empty() -> Self {
-        Self::new(Arc::from(""))
-    }
-
-    pub fn len(&self) -> u32 {
+    pub(crate) fn len(&self) -> u32 {
         offset(self.starts.len() - 1)
     }
 
@@ -53,14 +49,14 @@ impl Text {
     }
 
     /// Line `i` without its terminator.
-    pub fn line(&self, i: u32) -> &str {
+    pub(crate) fn line(&self, i: u32) -> &str {
         let raw = self.raw(i);
         let raw = raw.strip_suffix('\n').unwrap_or(raw);
         raw.strip_suffix('\r').unwrap_or(raw)
     }
 
     /// Byte offset of line `i` within `src`.
-    pub fn start(&self, i: u32) -> u32 {
+    pub(crate) fn start(&self, i: u32) -> u32 {
         self.starts[i as usize]
     }
 }
@@ -72,30 +68,30 @@ fn offset(n: usize) -> u32 {
 
 /// One changed region: `old` lines were replaced by `new` lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Hunk {
-    pub old: Range<u32>,
-    pub new: Range<u32>,
+pub(crate) struct Hunk {
+    pub(crate) old: Range<u32>,
+    pub(crate) new: Range<u32>,
 }
 
 /// Emphasised byte ranges within single lines, keyed by line number.
-pub type Emphasis = HashMap<u32, Vec<Range<u32>>>;
+pub(crate) type Emphasis = HashMap<u32, Vec<Range<u32>>>;
 
 #[derive(Debug)]
-pub struct FileDiff {
-    pub old: Arc<Text>,
-    pub new: Arc<Text>,
-    pub hunks: Vec<Hunk>,
-    pub added: u32,
-    pub removed: u32,
-    pub emph_old: Emphasis,
-    pub emph_new: Emphasis,
+pub(crate) struct FileDiff {
+    pub(crate) old: Arc<Text>,
+    pub(crate) new: Arc<Text>,
+    pub(crate) hunks: Vec<Hunk>,
+    pub(crate) added: u32,
+    pub(crate) removed: u32,
+    pub(crate) emph_old: Emphasis,
+    pub(crate) emph_new: Emphasis,
 }
 
 /// Lines longer than this get no word emphasis; the diff would cost more than it shows.
 const EMPHASIS_MAX_LINE: usize = 400;
 
 impl FileDiff {
-    pub fn compute(old: Text, new: Text) -> Self {
+    pub(crate) fn compute(old: Text, new: Text) -> Self {
         let mut input = InternedInput::default();
         input.update_before((0..old.len()).map(|i| old.raw(i)));
         input.update_after((0..new.len()).map(|i| new.raw(i)));
@@ -112,7 +108,7 @@ impl FileDiff {
         let mut emph_new = Emphasis::new();
         for hunk in &hunks {
             for (o, n) in hunk.old.clone().zip(hunk.new.clone()) {
-                if let Some((a, b)) = word_emphasis(old.line(o), new.line(n)) {
+                if let Some([a, b]) = word_emphasis(old.line(o), new.line(n)) {
                     emph_old.insert(o, a);
                     emph_new.insert(n, b);
                 }
@@ -132,7 +128,7 @@ impl FileDiff {
 
 /// The changed tokens of a paired line, or `None` when the lines share too
 /// little for word emphasis to help (the whole line is the change).
-pub fn word_emphasis(old: &str, new: &str) -> Option<(Vec<Range<u32>>, Vec<Range<u32>>)> {
+pub(crate) fn word_emphasis(old: &str, new: &str) -> Option<[Vec<Range<u32>>; 2]> {
     if old.len() > EMPHASIS_MAX_LINE || new.len() > EMPHASIS_MAX_LINE {
         return None;
     }
@@ -148,23 +144,20 @@ pub fn word_emphasis(old: &str, new: &str) -> Option<(Vec<Range<u32>>, Vec<Range
     };
     for op in ops {
         let (tag, ar, br) = op.as_tag_tuple();
-        match tag {
-            similar::DiffTag::Equal => {
-                same += a_tokens[ar].iter().map(|t| t.trim().len()).sum::<usize>();
+        if tag == similar::DiffTag::Equal {
+            same += a_tokens[ar].iter().map(|t| t.trim().len()).sum::<usize>();
+        } else {
+            if !ar.is_empty() {
+                push_range(&mut a, span(&a_tokens, ar, old));
             }
-            _ => {
-                if !ar.is_empty() {
-                    push_range(&mut a, span(&a_tokens, ar, old));
-                }
-                if !br.is_empty() {
-                    push_range(&mut b, span(&b_tokens, br, new));
-                }
+            if !br.is_empty() {
+                push_range(&mut b, span(&b_tokens, br, new));
             }
         }
     }
     let longest = old.trim().len().max(new.trim().len()).max(1);
     // Mostly rewritten lines read better as plain removals and additions.
-    (same * 10 >= longest * 4).then_some((a, b))
+    (same * 10 >= longest * 4).then_some([a, b])
 }
 
 /// Splits a line into identifier runs, whitespace runs and single symbols.
@@ -225,8 +218,14 @@ mod tests {
         assert_eq!(
             d.hunks,
             vec![
-                Hunk { old: 1..2, new: 1..2 },
-                Hunk { old: 4..4, new: 4..5 }
+                Hunk {
+                    old: 1..2,
+                    new: 1..2
+                },
+                Hunk {
+                    old: 4..4,
+                    new: 4..5
+                }
             ]
         );
         assert_eq!((d.added, d.removed), (2, 1));
@@ -234,7 +233,7 @@ mod tests {
 
     #[test]
     fn emphasises_changed_words_only_when_lines_are_similar() {
-        let (a, b) = word_emphasis("let x = foo(1);", "let x = bar(1);").expect("similar");
+        let [a, b] = word_emphasis("let x = foo(1);", "let x = bar(1);").expect("similar");
         assert_eq!(a, vec![8..11]);
         assert_eq!(b, vec![8..11]);
         assert!(word_emphasis("completely different", "nothing alike here at all").is_none());

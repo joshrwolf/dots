@@ -3,7 +3,7 @@
 //! interactive runtime and `render` both drive it.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ratatui::layout::Rect;
@@ -11,40 +11,40 @@ use ratatui::layout::Rect;
 use crate::diff::{FileDiff, Text};
 use crate::highlight::{self, Key, Lines};
 use crate::plan::{self, Kind, Layout, Row};
-use crate::repo::{Changes, FileChange, Mode, Repo};
+use crate::repo::{FileChange, Mode, Repo};
 use crate::theme::Palette;
 use crate::wrap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LayoutChoice {
+pub(crate) enum LayoutChoice {
     /// Split when the diff pane is at least [`SPLIT_MIN_WIDTH`] wide.
     Auto,
     Unified,
     Split,
 }
 
-pub const SPLIT_MIN_WIDTH: u16 = 160;
+pub(crate) const SPLIT_MIN_WIDTH: u16 = 160;
 /// Unchanged lines shown around each change.
-pub const CONTEXT: u32 = 3;
+pub(crate) const CONTEXT: u32 = 3;
 /// The most rows one file plans before the rest is cut.
-pub const ROW_CAP: usize = 40_000;
+pub(crate) const ROW_CAP: usize = 40_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
+pub(crate) enum Focus {
     Worktrees,
     Files,
     Diff,
 }
 
 #[derive(Debug, Clone)]
-pub struct Settings {
-    pub layout: LayoutChoice,
-    pub wrap: bool,
-    pub mode: Mode,
-    pub show_rail: bool,
-    pub show_files: bool,
+pub(crate) struct Settings {
+    pub(crate) layout: LayoutChoice,
+    pub(crate) wrap: bool,
+    pub(crate) mode: Mode,
+    pub(crate) show_rail: bool,
+    pub(crate) show_files: bool,
     /// Header height in rows; images get two.
-    pub header_rows: u16,
+    pub(crate) header_rows: u16,
 }
 
 impl Default for Settings {
@@ -62,9 +62,10 @@ impl Default for Settings {
 
 /// A file's diff as far as it has been computed.
 #[derive(Debug, Clone)]
-pub enum Body {
+pub(crate) enum Body {
     Pending,
     Binary,
+    Unreadable(String),
     Text(Arc<FileDiff>),
 }
 
@@ -73,14 +74,16 @@ struct LayoutKey {
     width: u16,
     layout: Layout,
     wrap: bool,
+    /// False while heights are estimated at one line per row.
+    exact: bool,
 }
 
 #[derive(Debug)]
-pub struct FileView {
-    pub change: FileChange,
-    pub body: Body,
-    pub expanded: HashSet<u32>,
-    pub reviewed: bool,
+pub(crate) struct FileView {
+    pub(crate) change: FileChange,
+    pub(crate) body: Body,
+    pub(crate) expanded: HashSet<u32>,
+    pub(crate) reviewed: bool,
     rows: Vec<Row>,
     /// Display offsets of `rows`; one longer than `rows`.
     offsets: Vec<u32>,
@@ -89,7 +92,7 @@ pub struct FileView {
 }
 
 impl FileView {
-    pub fn new(change: FileChange) -> Self {
+    pub(crate) fn new(change: FileChange) -> Self {
         Self {
             change,
             body: Body::Pending,
@@ -102,19 +105,15 @@ impl FileView {
         }
     }
 
-    pub fn counts(&self) -> Option<(u32, u32)> {
+    pub(crate) fn counts(&self) -> Option<(u32, u32)> {
         match &self.body {
             Body::Text(d) => Some((d.added, d.removed)),
             _ => None,
         }
     }
 
-    pub fn rows(&self) -> &[Row] {
+    pub(crate) fn rows(&self) -> &[Row] {
         &self.rows
-    }
-
-    pub fn row_offsets(&self) -> &[u32] {
-        &self.offsets
     }
 
     /// Lines the body takes: rows, or one line for a note.
@@ -131,7 +130,7 @@ impl FileView {
     }
 
     /// Line-number column width for this file.
-    pub fn number_width(&self) -> u16 {
+    pub(crate) fn number_width(&self) -> u16 {
         let lines = match &self.body {
             Body::Text(d) => d.old.len().max(d.new.len()),
             _ => 0,
@@ -141,7 +140,7 @@ impl FileView {
 }
 
 /// Code columns for a file at a pane width: (unified code width, split side code width).
-pub fn code_widths(pane: u16, number_width: u16) -> (u16, u16) {
+pub(crate) fn code_widths(pane: u16, number_width: u16) -> (u16, u16) {
     let unified = pane.saturating_sub(number_width * 2 + 4);
     let half = pane.saturating_sub(1) / 2;
     let split = half.saturating_sub(number_width + 3);
@@ -155,14 +154,16 @@ fn row_height(row: &Row, diff: &FileDiff, widths: (u16, u16), wrap: bool) -> u32
     match *row {
         Row::Line { kind, old, new } => {
             let text = match (kind, old, new) {
-                (Kind::Insert, _, Some(n)) | (Kind::Context, _, Some(n)) => diff.new.line(n),
+                (Kind::Insert | Kind::Context, _, Some(n)) => diff.new.line(n),
                 (_, Some(o), _) => diff.old.line(o),
                 _ => "",
             };
             wrap::wrapped_height(text, widths.0)
         }
         Row::Pair { old, new, .. } => {
-            let h = |text: &Text, i: Option<u32>| i.map_or(1, |i| wrap::wrapped_height(text.line(i), widths.1));
+            let h = |text: &Text, i: Option<u32>| {
+                i.map_or(1, |i| wrap::wrapped_height(text.line(i), widths.1))
+            };
             h(&diff.old, old).max(h(&diff.new, new))
         }
         Row::Gap { .. } | Row::Truncated { .. } => 1,
@@ -172,28 +173,28 @@ fn row_height(row: &Row, diff: &FileDiff, widths: (u16, u16), wrap: bool) -> u32
 /// The scroll position: a display line within one file's block, so the
 /// view stays put while other files load or change size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Anchor {
-    pub file: usize,
-    pub line: u32,
+pub(crate) struct Anchor {
+    pub(crate) file: usize,
+    pub(crate) line: u32,
 }
 
 /// The selected worktree's files as one scrolling stream.
 #[derive(Debug)]
-pub struct Stream {
-    pub worktree: PathBuf,
-    pub base: String,
-    pub mode: Mode,
-    pub files: Vec<FileView>,
+pub(crate) struct Stream {
+    pub(crate) worktree: PathBuf,
+    pub(crate) base: String,
+    pub(crate) mode: Mode,
+    pub(crate) files: Vec<FileView>,
     /// Start line of each file block; one longer than `files`.
-    pub offsets: Vec<u32>,
+    pub(crate) offsets: Vec<u32>,
 }
 
 impl Stream {
-    pub fn total(&self) -> u32 {
+    pub(crate) fn total(&self) -> u32 {
         self.offsets.last().copied().unwrap_or(0)
     }
 
-    pub fn counts(&self) -> (u32, u32, bool) {
+    pub(crate) fn counts(&self) -> (u32, u32, bool) {
         let mut done = true;
         let (mut a, mut r) = (0, 0);
         for f in &self.files {
@@ -211,15 +212,15 @@ impl Stream {
 
 /// Lines added and removed and files changed in a worktree, for the rail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Summary {
-    pub added: u32,
-    pub removed: u32,
-    pub files: usize,
+pub(crate) struct Summary {
+    pub(crate) added: u32,
+    pub(crate) removed: u32,
+    pub(crate) files: usize,
 }
 
 /// What a display line of the diff pane shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Line {
+pub(crate) enum Line {
     Header { file: usize, part: u16 },
     Body { file: usize, row: usize, sub: u32 },
     Note { file: usize },
@@ -228,43 +229,43 @@ pub enum Line {
 
 /// Hit areas from the last draw, for the mouse.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct Areas {
-    pub rail: Rect,
-    pub files: Rect,
-    pub diff: Rect,
+pub(crate) struct Areas {
+    pub(crate) rail: Rect,
+    pub(crate) files: Rect,
+    pub(crate) diff: Rect,
 }
 
 /// One entry of the file list: a directory heading or a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ListItem {
+pub(crate) enum ListItem {
     Dir(String),
     File(usize),
 }
 
 #[derive(Debug)]
-pub struct App {
-    pub repo: Repo,
-    pub palette: Palette,
-    pub settings: Settings,
+pub(crate) struct App {
+    pub(crate) repo: Repo,
+    pub(crate) palette: Palette,
+    pub(crate) settings: Settings,
     /// The worktree the stream shows (or is loading).
-    pub current: usize,
-    pub stream: Option<Stream>,
-    pub top: Anchor,
-    pub focus: Focus,
-    pub rail_cursor: usize,
-    pub files_cursor: usize,
-    pub summaries: HashMap<PathBuf, Summary>,
-    pub highlights: HashMap<Key, Option<Arc<Lines>>>,
-    pub areas: Areas,
-    pub help: bool,
-    pub message: Option<String>,
-    pub list: Vec<ListItem>,
+    pub(crate) current: usize,
+    pub(crate) stream: Option<Stream>,
+    pub(crate) top: Anchor,
+    pub(crate) focus: Focus,
+    pub(crate) rail_cursor: usize,
+    pub(crate) files_cursor: usize,
+    pub(crate) summaries: HashMap<PathBuf, Summary>,
+    pub(crate) highlights: HashMap<Key, Option<Arc<Lines>>>,
+    pub(crate) areas: Areas,
+    pub(crate) help: bool,
+    pub(crate) message: Option<String>,
+    pub(crate) list: Vec<ListItem>,
     /// Width the stream was laid out for.
-    laid_out: Option<(u16, Layout, bool)>,
+    laid_out: Option<(u16, Layout, bool, (usize, usize))>,
 }
 
 impl App {
-    pub fn new(repo: Repo, current: usize, palette: Palette, settings: Settings) -> Self {
+    pub(crate) fn new(repo: Repo, current: usize, palette: Palette, settings: Settings) -> Self {
         Self {
             repo,
             palette,
@@ -285,13 +286,19 @@ impl App {
         }
     }
 
-    pub fn worktree_path(&self) -> &PathBuf {
+    pub(crate) fn worktree_path(&self) -> &PathBuf {
         &self.repo.worktrees[self.current].path
     }
 
     /// Shows a freshly loaded change set, keeping diffs of unchanged files
     /// and the scroll position when it is the same worktree.
-    pub fn load(&mut self, worktree: PathBuf, mode: Mode, changes: Changes) {
+    pub(crate) fn load(
+        &mut self,
+        worktree: PathBuf,
+        mode: Mode,
+        base: String,
+        files: Vec<FileChange>,
+    ) {
         let mut previous: HashMap<String, FileView> = HashMap::new();
         let mut anchor_path = None;
         if let Some(old) = self.stream.take()
@@ -299,16 +306,21 @@ impl App {
             && old.mode == mode
         {
             anchor_path = old.files.get(self.top.file).map(|f| f.change.path.clone());
-            previous = old.files.into_iter().map(|f| (f.change.path.clone(), f)).collect();
+            previous = old
+                .files
+                .into_iter()
+                .map(|f| (f.change.path.clone(), f))
+                .collect();
         } else {
             self.top = Anchor::default();
             self.files_cursor = 0;
         }
-        let files: Vec<FileView> = changes
-            .files
+        let files: Vec<FileView> = files
             .into_iter()
             .map(|change| match previous.remove(&change.path) {
-                Some(mut kept) if kept.change.old == change.old && kept.change.new == change.new => {
+                Some(mut kept)
+                    if kept.change.old == change.old && kept.change.new == change.new =>
+                {
                     kept.change = change;
                     kept
                 }
@@ -324,13 +336,18 @@ impl App {
         if let Some(path) = anchor_path {
             match files.iter().position(|f| f.change.path == path) {
                 Some(i) => self.top.file = i,
-                None => self.top = Anchor { file: self.top.file.min(files.len().saturating_sub(1)), line: 0 },
+                None => {
+                    self.top = Anchor {
+                        file: self.top.file.min(files.len().saturating_sub(1)),
+                        line: 0,
+                    }
+                }
             }
         }
         self.list = list_items(&files);
         self.stream = Some(Stream {
             worktree,
-            base: changes.base,
+            base,
             mode,
             offsets: vec![0; files.len() + 1],
             files,
@@ -339,7 +356,7 @@ impl App {
     }
 
     /// Indexes of files that still need a diff.
-    pub fn pending(&self) -> Vec<usize> {
+    pub(crate) fn pending(&self) -> Vec<usize> {
         self.stream.as_ref().map_or_else(Vec::new, |s| {
             s.files
                 .iter()
@@ -350,32 +367,58 @@ impl App {
         })
     }
 
-    pub fn set_body(&mut self, file: usize, body: Body) {
-        let Some(stream) = &mut self.stream else { return };
-        let Some(f) = stream.files.get_mut(file) else { return };
+    pub(crate) fn set_body(&mut self, file: usize, body: Body) {
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
+        let Some(f) = stream.files.get_mut(file) else {
+            return;
+        };
         f.body = body;
         f.invalidate();
         self.laid_out = None;
     }
 
-    /// Plans rows and measures them for a diff pane `width` wide. Cheap when
-    /// nothing changed.
-    pub fn layout(&mut self, width: u16) {
+    /// Plans rows and measures them for a diff pane `width` wide and `rows`
+    /// tall. Wrapped heights are measured only for files near the view;
+    /// the rest count one line per row until they come close, so huge
+    /// streams lay out in time proportional to what is on screen.
+    pub(crate) fn layout(&mut self, width: u16, rows: u16) {
         let layout = self.effective_layout(width);
         let wrap = self.settings.wrap;
-        if self.laid_out == Some((width, layout, wrap)) {
+        let header = u32::from(self.settings.header_rows);
+        let top = self.global_top();
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
+        let near = |line: u32| {
+            stream
+                .offsets
+                .partition_point(|&o| o <= line)
+                .saturating_sub(1)
+        };
+        let window = (
+            near(top.saturating_sub(u32::from(rows))),
+            near(top + 3 * u32::from(rows)),
+        );
+        if self.laid_out == Some((width, layout, wrap, window)) {
             return;
         }
-        let header = u32::from(self.settings.header_rows);
-        let Some(stream) = &mut self.stream else { return };
         // Keep the row under the top of the view across the relayout.
         let anchor_row = stream.files.get(self.top.file).and_then(|f| {
             let line = self.top.line.checked_sub(header)?;
             (!f.rows.is_empty()).then(|| plan::locate(&f.offsets, line).0)
         });
-        let key = LayoutKey { width, layout, wrap };
-        for f in &mut stream.files {
-            if f.key == Some(key) {
+        for (i, f) in stream.files.iter_mut().enumerate() {
+            let exact = !wrap || (window.0..=window.1).contains(&i);
+            let key = LayoutKey {
+                width,
+                layout,
+                wrap,
+                exact,
+            };
+            // An exact layout serves an estimate's place too.
+            if f.key == Some(key) || f.key == Some(LayoutKey { exact: true, ..key }) {
                 continue;
             }
             let Body::Text(diff) = &f.body else {
@@ -400,7 +443,11 @@ impl App {
                 f.planned = Some((layout, expanded_size));
             }
             let widths = code_widths(width, f.number_width());
-            f.offsets = plan::offsets(f.rows.iter().map(|r| row_height(r, diff, widths, wrap)));
+            f.offsets = if exact {
+                plan::offsets(f.rows.iter().map(|r| row_height(r, diff, widths, wrap)))
+            } else {
+                (0..=u32::try_from(f.rows.len()).unwrap_or(u32::MAX)).collect()
+            };
             f.key = Some(key);
         }
         let mut at = 0;
@@ -412,19 +459,18 @@ impl App {
         if let (Some(row), Some(f)) = (anchor_row, stream.files.get(self.top.file)) {
             self.top.line = header + f.offsets.get(row).copied().unwrap_or(0);
         }
-        self.laid_out = Some((width, layout, wrap));
+        self.laid_out = Some((width, layout, wrap, window));
     }
 
-    pub fn effective_layout(&self, width: u16) -> Layout {
+    pub(crate) fn effective_layout(&self, width: u16) -> Layout {
         match self.settings.layout {
-            LayoutChoice::Unified => Layout::Unified,
-            LayoutChoice::Split => Layout::Split,
             LayoutChoice::Auto if width >= SPLIT_MIN_WIDTH => Layout::Split,
-            LayoutChoice::Auto => Layout::Unified,
+            LayoutChoice::Split => Layout::Split,
+            LayoutChoice::Unified | LayoutChoice::Auto => Layout::Unified,
         }
     }
 
-    pub fn global_top(&self) -> u32 {
+    pub(crate) fn global_top(&self) -> u32 {
         self.stream
             .as_ref()
             .and_then(|s| s.offsets.get(self.top.file))
@@ -433,7 +479,7 @@ impl App {
 
     /// Scrolls so `line` of the stream is at the top, clamped so the view
     /// stays filled.
-    pub fn scroll_to(&mut self, line: u32, view_rows: u16) {
+    pub(crate) fn scroll_to(&mut self, line: u32, view_rows: u16) {
         let Some(stream) = &self.stream else { return };
         let max = stream.total().saturating_sub(u32::from(view_rows));
         let line = line.min(max);
@@ -448,14 +494,16 @@ impl App {
         };
     }
 
-    pub fn scroll_by(&mut self, delta: i64, view_rows: u16) {
+    pub(crate) fn scroll_by(&mut self, delta: i64, view_rows: u16) {
         let target = i64::from(self.global_top()) + delta;
         self.scroll_to(u32::try_from(target.max(0)).unwrap_or(u32::MAX), view_rows);
     }
 
     /// What display line `line` of the stream shows.
-    pub fn line_at(&self, line: u32) -> Line {
-        let Some(stream) = &self.stream else { return Line::Spacer };
+    pub(crate) fn line_at(&self, line: u32) -> Line {
+        let Some(stream) = &self.stream else {
+            return Line::Spacer;
+        };
         if line >= stream.total() {
             return Line::Spacer;
         }
@@ -481,7 +529,7 @@ impl App {
     }
 
     /// Jumps to the start of file `i`.
-    pub fn jump_to_file(&mut self, i: usize, view_rows: u16) {
+    pub(crate) fn jump_to_file(&mut self, i: usize, view_rows: u16) {
         let Some(stream) = &self.stream else { return };
         if let Some(&start) = stream.offsets.get(i) {
             self.scroll_to(start, view_rows);
@@ -490,7 +538,7 @@ impl App {
         self.sync_files_cursor();
     }
 
-    pub fn next_file(&mut self, forward: bool, view_rows: u16) {
+    pub(crate) fn next_file(&mut self, forward: bool, view_rows: u16) {
         let Some(stream) = &self.stream else { return };
         let n = stream.files.len();
         if n == 0 {
@@ -507,7 +555,7 @@ impl App {
     }
 
     /// Moves to the next or previous start of a change block.
-    pub fn next_hunk(&mut self, forward: bool, view_rows: u16) {
+    pub(crate) fn next_hunk(&mut self, forward: bool, view_rows: u16) {
         let Some(stream) = &self.stream else { return };
         let header = u32::from(self.settings.header_rows);
         let top = self.global_top();
@@ -517,7 +565,10 @@ impl App {
             for (ri, row) in f.rows.iter().enumerate() {
                 let change = matches!(
                     row,
-                    Row::Line { kind: Kind::Delete | Kind::Insert, .. } | Row::Pair { changed: true, .. }
+                    Row::Line {
+                        kind: Kind::Delete | Kind::Insert,
+                        ..
+                    } | Row::Pair { changed: true, .. }
                 );
                 if change && !in_change {
                     // Leave a little context above the change.
@@ -539,7 +590,7 @@ impl App {
     }
 
     /// Expands the first folded region at or below the top of the view.
-    pub fn expand_visible_gap(&mut self, view_rows: u16) -> bool {
+    pub(crate) fn expand_visible_gap(&mut self, view_rows: u16) -> bool {
         let top = self.global_top();
         for line in top..top + u32::from(view_rows) {
             if let Line::Body { file, row, .. } = self.line_at(line)
@@ -552,8 +603,10 @@ impl App {
     }
 
     /// Expands the gap at `row` of `file`, if it is one.
-    pub fn expand_at(&mut self, file: usize, row: usize) -> bool {
-        let Some(stream) = &mut self.stream else { return false };
+    pub(crate) fn expand_at(&mut self, file: usize, row: usize) -> bool {
+        let Some(stream) = &mut self.stream else {
+            return false;
+        };
         let f = &mut stream.files[file];
         let Some(Row::Gap { id, .. }) = f.rows.get(row).copied() else {
             return false;
@@ -565,9 +618,13 @@ impl App {
     }
 
     /// Expands or folds every region of the file at the top.
-    pub fn toggle_expand_all(&mut self) {
-        let Some(stream) = &mut self.stream else { return };
-        let Some(f) = stream.files.get_mut(self.top.file) else { return };
+    pub(crate) fn toggle_expand_all(&mut self) {
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
+        let Some(f) = stream.files.get_mut(self.top.file) else {
+            return;
+        };
         let Body::Text(diff) = &f.body else { return };
         if f.expanded.is_empty() {
             f.expanded = (0..=u32::try_from(diff.hunks.len()).unwrap_or(0)).collect();
@@ -578,13 +635,17 @@ impl App {
         self.laid_out = None;
     }
 
-    pub fn toggle_reviewed(&mut self) {
-        if let Some(f) = self.stream.as_mut().and_then(|s| s.files.get_mut(self.top.file)) {
+    pub(crate) fn toggle_reviewed(&mut self) {
+        if let Some(f) = self
+            .stream
+            .as_mut()
+            .and_then(|s| s.files.get_mut(self.top.file))
+        {
             f.reviewed = !f.reviewed;
         }
     }
 
-    pub fn relayout(&mut self) {
+    pub(crate) fn relayout(&mut self) {
         self.laid_out = None;
         if let Some(stream) = &mut self.stream {
             for f in &mut stream.files {
@@ -593,18 +654,24 @@ impl App {
         }
     }
 
-    pub fn sync_files_cursor(&mut self) {
+    pub(crate) fn sync_files_cursor(&mut self) {
         self.files_cursor = self.top.file;
     }
 
     /// Highlight jobs, most wanted first: files on screen, then neighbours.
-    pub fn wanted_highlights(&self, view_rows: u16, prefetch: usize) -> Vec<highlight::Job> {
-        let Some(stream) = &self.stream else { return Vec::new() };
+    pub(crate) fn wanted_highlights(&self, view_rows: u16, prefetch: usize) -> Vec<highlight::Job> {
+        let Some(stream) = &self.stream else {
+            return Vec::new();
+        };
         let top = self.global_top();
         let first = self.top.file;
         let bottom = top + u32::from(view_rows);
-        let last = stream.offsets.partition_point(|&o| o < bottom).saturating_sub(1);
-        let mut order: Vec<usize> = (first..=last.min(stream.files.len().saturating_sub(1))).collect();
+        let last = stream
+            .offsets
+            .partition_point(|&o| o < bottom)
+            .saturating_sub(1);
+        let mut order: Vec<usize> =
+            (first..=last.min(stream.files.len().saturating_sub(1))).collect();
         for d in 1..=prefetch {
             order.push(last + d);
             if let Some(i) = first.checked_sub(d) {
@@ -613,11 +680,18 @@ impl App {
         }
         let mut jobs = Vec::new();
         for i in order {
-            let Some(f) = stream.files.get(i) else { continue };
+            let Some(f) = stream.files.get(i) else {
+                continue;
+            };
             let Body::Text(diff) = &f.body else { continue };
-            let Some(lang) = highlight::language(&f.change.path) else { continue };
+            let Some(lang) = highlight::language(&f.change.path) else {
+                continue;
+            };
             for text in [&diff.new, &diff.old] {
-                if text.len() == 0 || text.src.len() > highlight::MAX_BYTES || text.len() > highlight::MAX_LINES {
+                if text.len() == 0
+                    || text.src.len() > highlight::MAX_BYTES
+                    || text.len() > highlight::MAX_LINES
+                {
                     continue;
                 }
                 let key = (text.hash, lang);
@@ -633,10 +707,13 @@ impl App {
     }
 }
 
-/// Computes a file's diff, or marks it binary.
-pub fn compute_body(change: &FileChange) -> Body {
-    let old = change.old.as_deref().unwrap_or(&[]);
-    let new = change.new.as_deref().unwrap_or(&[]);
+/// Reads both sides of a file and diffs them, or marks it binary.
+pub(crate) fn compute_body(repo: &gix::Repository, root: &Path, change: &FileChange) -> Body {
+    let (old, new) = match crate::repo::contents(repo, root, change) {
+        Ok(sides) => sides,
+        Err(e) => return Body::Unreadable(format!("{e:#}")),
+    };
+    let (old, new) = (old.as_slice(), new.as_slice());
     let binary = |b: &[u8]| b[..b.len().min(8000)].contains(&0);
     if binary(old) || binary(new) {
         return Body::Binary;
@@ -646,7 +723,7 @@ pub fn compute_body(change: &FileChange) -> Body {
 }
 
 /// The file list grouped under directory headings, in path order.
-pub fn list_items(files: &[FileView]) -> Vec<ListItem> {
+pub(crate) fn list_items(files: &[FileView]) -> Vec<ListItem> {
     let mut items = Vec::new();
     let mut dir: Option<&str> = None;
     for (i, f) in files.iter().enumerate() {
@@ -668,12 +745,15 @@ mod tests {
     use crate::repo::Status;
     use crate::theme::Detected;
 
-    fn change(path: &str, old: &str, new: &str) -> FileChange {
+    fn change(path: &str, _old: &str, new: &str) -> FileChange {
         FileChange {
             path: path.to_owned(),
             status: Status::Modified,
-            old: Some(Arc::from(old.as_bytes())),
-            new: Some(Arc::from(new.as_bytes())),
+            old: None,
+            new: Some(crate::repo::Stamp {
+                modified: None,
+                len: new.len() as u64,
+            }),
         }
     }
 
@@ -686,14 +766,15 @@ mod tests {
                 main: true,
             }],
         };
-        let mut app = App::new(repo, 0, Palette::new(Detected::light()), Settings::default());
-        let changes = Changes {
-            base: "main".into(),
-            files: files.iter().map(|(p, o, n)| change(p, o, n)).collect(),
-        };
-        app.load("/r".into(), Mode::Base, changes);
-        for i in 0..files.len() {
-            let (_, o, n) = files[i];
+        let mut app = App::new(
+            repo,
+            0,
+            Palette::new(Detected::light()),
+            Settings::default(),
+        );
+        let changes = files.iter().map(|(p, o, n)| change(p, o, n)).collect();
+        app.load("/r".into(), Mode::Base, "main".into(), changes);
+        for (i, &(_, o, n)) in files.iter().enumerate() {
             let diff = FileDiff::compute(Text::new(Arc::from(o)), Text::new(Arc::from(n)));
             app.set_body(i, Body::Text(Arc::new(diff)));
         }
@@ -703,47 +784,62 @@ mod tests {
     #[test]
     fn stream_stacks_header_rows_and_spacer_per_file() {
         let mut app = app_with(&[("a.rs", "x\n", "y\n"), ("b/c.rs", "", "1\n2\n")]);
-        app.layout(80);
+        app.layout(80, 40);
         let s = app.stream.as_ref().expect("loaded");
         // a: header + 2 rows + spacer; b: header + 2 rows + spacer.
         assert_eq!(s.offsets, vec![0, 4, 8]);
         assert_eq!(app.line_at(0), Line::Header { file: 0, part: 0 });
-        assert_eq!(app.line_at(2), Line::Body { file: 0, row: 1, sub: 0 });
+        assert_eq!(
+            app.line_at(2),
+            Line::Body {
+                file: 0,
+                row: 1,
+                sub: 0
+            }
+        );
         assert_eq!(app.line_at(3), Line::Spacer);
         assert_eq!(app.line_at(4), Line::Header { file: 1, part: 0 });
-        assert_eq!(app.list, vec![ListItem::File(0), ListItem::Dir("b".into()), ListItem::File(1)]);
+        assert_eq!(
+            app.list,
+            vec![
+                ListItem::File(0),
+                ListItem::Dir("b".into()),
+                ListItem::File(1)
+            ]
+        );
     }
 
     #[test]
     fn wrapping_grows_rows_at_narrow_widths() {
         let long = format!("{}\n", "word ".repeat(30));
         let mut app = app_with(&[("a.txt", "", &long)]);
-        app.layout(200);
+        app.layout(200, 40);
         let wide = app.stream.as_ref().expect("loaded").total();
-        app.layout(40);
+        app.layout(40, 40);
         let narrow = app.stream.as_ref().expect("loaded").total();
         assert!(narrow > wide, "{narrow} > {wide}");
         app.settings.wrap = false;
-        app.layout(40);
+        app.layout(40, 40);
         assert_eq!(app.stream.as_ref().expect("loaded").total(), wide);
     }
 
     #[test]
     fn scroll_position_survives_relayout_and_reload() {
-        let body: String = (0..50).map(|i| format!("line {i}\n")).collect();
+        let body: String = (0..50).fold(String::new(), |s, i| s + "line " + &i.to_string() + "\n");
         let mut app = app_with(&[("a.rs", "", &body), ("b.rs", "", &body)]);
-        app.layout(80);
+        app.layout(80, 40);
         app.jump_to_file(1, 10);
         app.scroll_by(5, 10);
         let before = app.top;
-        app.layout(30);
+        app.layout(30, 40);
         assert_eq!(app.top.file, before.file);
         let path = PathBuf::from("/r");
-        let changes = Changes {
-            base: "main".into(),
-            files: vec![change("0.rs", "", "new\n"), change("a.rs", "", &body), change("b.rs", "", &body)],
-        };
-        app.load(path, Mode::Base, changes);
+        let changes = vec![
+            change("0.rs", "", "new\n"),
+            change("a.rs", "", &body),
+            change("b.rs", "", &body),
+        ];
+        app.load(path, Mode::Base, "main".into(), changes);
         assert_eq!(app.top.file, 2, "anchored to b.rs by path");
     }
 

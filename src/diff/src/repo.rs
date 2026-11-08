@@ -3,30 +3,29 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use gix::bstr::ByteSlice as _;
 
 /// One checkout of the repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Worktree {
-    pub path: PathBuf,
+pub(crate) struct Worktree {
+    pub(crate) path: PathBuf,
     /// The checked-out branch, or a short commit id when detached.
-    pub branch: String,
-    pub main: bool,
+    pub(crate) branch: String,
+    pub(crate) main: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct Repo {
+pub(crate) struct Repo {
     /// The main worktree's directory name.
-    pub name: String,
-    pub worktrees: Vec<Worktree>,
+    pub(crate) name: String,
+    pub(crate) worktrees: Vec<Worktree>,
 }
 
 impl Repo {
     /// The index of the worktree containing `path`, if any.
-    pub fn index_of(&self, path: &Path) -> Option<usize> {
+    pub(crate) fn index_of(&self, path: &Path) -> Option<usize> {
         let path = path.canonicalize().ok()?;
         self.worktrees
             .iter()
@@ -38,8 +37,9 @@ impl Repo {
 }
 
 /// The repository containing `path` and all its worktrees, main first.
-pub fn discover(path: &Path) -> Result<Repo> {
-    let repo = gix::discover(path).with_context(|| format!("no Git repository at {}", path.display()))?;
+pub(crate) fn discover(path: &Path) -> Result<Repo> {
+    let repo =
+        gix::discover(path).with_context(|| format!("no Git repository at {}", path.display()))?;
     let main = repo.main_repo().context("opening the main worktree")?;
     let mut worktrees = Vec::new();
     if let Some(dir) = main.workdir() {
@@ -52,7 +52,9 @@ pub fn discover(path: &Path) -> Result<Repo> {
     for proxy in main.worktrees().context("listing worktrees")? {
         let Ok(base) = proxy.base() else { continue };
         // Pruned or unmounted worktrees have nothing to show.
-        let Ok(base) = base.canonicalize() else { continue };
+        let Ok(base) = base.canonicalize() else {
+            continue;
+        };
         let Ok(wt) = proxy.into_repo() else { continue };
         worktrees.push(Worktree {
             path: base,
@@ -61,8 +63,7 @@ pub fn discover(path: &Path) -> Result<Repo> {
         });
     }
     let skip = usize::from(worktrees.first().is_some_and(|w| w.main));
-    worktrees[skip..]
-        .sort_by(|a, b| a.branch.cmp(&b.branch));
+    worktrees[skip..].sort_by(|a, b| a.branch.cmp(&b.branch));
     let name = worktrees
         .first()
         .and_then(|w| w.path.file_name())
@@ -73,15 +74,16 @@ pub fn discover(path: &Path) -> Result<Repo> {
 fn branch(repo: &gix::Repository) -> String {
     match repo.head_name() {
         Ok(Some(name)) => name.shorten().to_string(),
-        _ => repo
-            .head_id()
-            .map_or_else(|_| "(unborn)".to_owned(), |id| id.shorten_or_id().to_string()),
+        _ => repo.head_id().map_or_else(
+            |_| "(unborn)".to_owned(),
+            |id| id.shorten_or_id().to_string(),
+        ),
     }
 }
 
 /// What a worktree is compared against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
+pub(crate) enum Mode {
     /// The merge base of HEAD with the default branch: everything the
     /// worktree's branch adds, committed or not.
     Base,
@@ -90,14 +92,14 @@ pub enum Mode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Status {
+pub(crate) enum Status {
     Added,
     Deleted,
     Modified,
 }
 
 impl Status {
-    pub fn letter(self) -> char {
+    pub(crate) fn letter(self) -> char {
         match self {
             Status::Added => 'A',
             Status::Deleted => 'D',
@@ -107,28 +109,42 @@ impl Status {
 }
 
 #[derive(Debug, Clone)]
-pub struct FileChange {
-    pub path: String,
-    pub status: Status,
-    pub old: Option<Arc<[u8]>>,
-    pub new: Option<Arc<[u8]>>,
+pub(crate) struct FileChange {
+    pub(crate) path: String,
+    pub(crate) status: Status,
+    /// The base side's blob.
+    pub(crate) old: Option<gix::ObjectId>,
+    /// The working-tree file when listed; `None` once deleted.
+    pub(crate) new: Option<Stamp>,
+}
+
+/// A working-tree file's size and modification time, to tell whether it
+/// changed since it was read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Stamp {
+    pub(crate) modified: Option<std::time::SystemTime>,
+    pub(crate) len: u64,
 }
 
 #[derive(Debug, Clone)]
-pub struct Changes {
+pub(crate) struct Changes {
     /// What the worktree is compared against, such as `main 1a2b3c4`.
-    pub base: String,
+    pub(crate) base: String,
     /// Sorted by path.
-    pub files: Vec<FileChange>,
+    pub(crate) files: Vec<FileChange>,
+    /// For reading contents on other threads.
+    pub(crate) repo: gix::ThreadSafeRepository,
+    pub(crate) root: PathBuf,
 }
 
 /// Files above this size are listed but not read.
-pub const MAX_FILE: u64 = 16 * 1024 * 1024;
+pub(crate) const MAX_FILE: u64 = 16 * 1024 * 1024;
 
 /// Every file that differs between the base tree and the working tree,
 /// including untracked files that are not ignored.
-pub fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
-    let mut repo = gix::open(worktree).with_context(|| format!("opening {}", worktree.display()))?;
+pub(crate) fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
+    let mut repo =
+        gix::open(worktree).with_context(|| format!("opening {}", worktree.display()))?;
     repo.object_cache_size_if_unset(32 * 1024 * 1024);
     let head = repo.head_id().ok().map(gix::Id::detach);
     let (base_commit, base_label) = match (mode, head) {
@@ -147,7 +163,7 @@ pub fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
         Some(head) => repo.find_commit(head)?.tree_id()?.detach(),
         None => repo.empty_tree().id,
     };
-    let mut paths = match git_status(&repo, worktree) {
+    let mut paths = match git_status(worktree) {
         Ok((mut paths, untracked_dirs)) => {
             if !untracked_dirs.is_empty() {
                 paths.extend(untracked_files(&repo, untracked_dirs)?);
@@ -162,23 +178,30 @@ pub fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
         Err(_) => gix_status(&repo, base_tree.id)?,
     };
     paths.retain(|p| !p.is_empty());
-    let root = repo.workdir().context("bare repositories have no working tree")?.to_owned();
+    let root = repo
+        .workdir()
+        .context("bare repositories have no working tree")?
+        .to_owned();
     let mut files = Vec::with_capacity(paths.len());
     for path in paths {
         let old = match base_tree.lookup_entry_by_path(&path)? {
-            Some(entry) if entry.mode().is_blob_or_symlink() => {
-                Some(Arc::from(repo.find_blob(entry.object_id())?.take_data()))
-            }
+            Some(entry) if entry.mode().is_blob_or_symlink() => Some(entry.object_id()),
             _ => None,
         };
-        let Some(new) = read_worktree_file(&root.join(&path))? else {
-            continue;
+        let new = match std::fs::symlink_metadata(root.join(&path)) {
+            Ok(meta) if meta.is_file() || meta.file_type().is_symlink() => Some(Stamp {
+                modified: meta.modified().ok(),
+                len: meta.len(),
+            }),
+            // Submodules and other directories have no lines to show.
+            Ok(_) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e).with_context(|| format!("reading {path}")),
         };
-        let status = match (&old, &new) {
+        let status = match (old, new) {
             (None, None) => continue,
             (None, Some(_)) => Status::Added,
             (Some(_), None) => Status::Deleted,
-            (Some(a), Some(b)) if a == b => continue,
             (Some(_), Some(_)) => Status::Modified,
         };
         files.push(FileChange {
@@ -188,50 +211,62 @@ pub fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
             new,
         });
     }
+    drop(base_tree);
     Ok(Changes {
         base: base_label,
         files,
+        repo: repo.into_sync(),
+        root,
     })
 }
 
-/// A working-tree file's content: `Some(None)` when it is gone, `None` for
-/// paths that are not files (submodules, directories).
-fn read_worktree_file(path: &Path) -> Result<Option<Option<Arc<[u8]>>>> {
+/// Both sides of a change: the base blob and the working-tree file.
+pub(crate) fn contents(
+    repo: &gix::Repository,
+    root: &Path,
+    change: &FileChange,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let old = match change.old {
+        Some(id) => repo.find_blob(id)?.take_data(),
+        None => Vec::new(),
+    };
+    let new = match change.new {
+        Some(_) => read_worktree_file(&root.join(&change.path))?,
+        None => Vec::new(),
+    };
+    Ok((old, new))
+}
+
+/// A working-tree file's content, or a symlink's target. Missing files are empty.
+fn read_worktree_file(path: &Path) -> Result<Vec<u8>> {
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Some(None)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
     if meta.file_type().is_symlink() {
-        let target = std::fs::read_link(path)?;
-        return Ok(Some(Some(Arc::from(
-            target.as_os_str().as_encoded_bytes(),
-        ))));
-    }
-    if !meta.is_file() {
-        return Ok(None);
+        return Ok(std::fs::read_link(path)?
+            .into_os_string()
+            .into_encoded_bytes());
     }
     if meta.len() > MAX_FILE {
-        return Ok(Some(Some(Arc::from(&b"\0(file too large to show)"[..]))));
+        return Ok(b"\0(file too large to show)".to_vec());
     }
-    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-    Ok(Some(Some(Arc::from(bytes))))
+    std::fs::read(path).with_context(|| format!("reading {}", path.display()))
 }
 
 /// Paths that may differ from HEAD, from `git status`, and untracked
-/// directories to expand. Git's fsmonitor and untracked cache make this an
+/// directories to expand. Git's untracked cache makes this an
 /// order of magnitude faster than walking a large tree, which gix cannot yet
-/// avoid. Read-only: no optional locks, so the index is never rewritten, and
-/// fsmonitor is used only when its daemon already runs, so none is started.
-fn git_status(repo: &gix::Repository, worktree: &Path) -> Result<(BTreeSet<String>, Vec<String>)> {
-    let fsmonitor = repo.config_snapshot().boolean("core.fsmonitor") == Some(true)
-        && git(worktree, &["fsmonitor--daemon", "status"]).is_ok();
-    let setting = format!("core.fsmonitor={fsmonitor}");
+/// avoid. Read-only: no optional locks, so the index is never rewritten.
+/// fsmonitor stays off: its daemon writes cookie files into the Git
+/// directory on every query.
+fn git_status(worktree: &Path) -> Result<(BTreeSet<String>, Vec<String>)> {
     let out = git(
         worktree,
         &[
             "-c",
-            &setting,
+            "core.fsmonitor=false",
             "status",
             "--porcelain=v2",
             "-z",
@@ -246,18 +281,30 @@ fn git_status(repo: &gix::Repository, worktree: &Path) -> Result<(BTreeSet<Strin
 
 fn git(worktree: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let mut command = std::process::Command::new("git");
-    command.arg("-C").arg(worktree).arg("--no-optional-locks").args(args);
+    command
+        .arg("-C")
+        .arg(worktree)
+        .arg("--no-optional-locks")
+        .args(args);
     command.env("GIT_OPTIONAL_LOCKS", "0");
-    let output = dots_process::output(command, std::time::Duration::from_secs(60), 256 * 1024 * 1024)?;
+    let output = dots_process::output(
+        command,
+        std::time::Duration::from_secs(60),
+        256 * 1024 * 1024,
+    )?;
     if !output.status.success() {
-        anyhow::bail!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&output.stderr).trim());
+        anyhow::bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
     Ok(output.stdout)
 }
 
 /// Reads `git status --porcelain=v2 -z`: changed paths, and untracked
 /// directories (listed with a trailing slash) separately.
-pub fn parse_status(out: &[u8]) -> (BTreeSet<String>, Vec<String>) {
+pub(crate) fn parse_status(out: &[u8]) -> (BTreeSet<String>, Vec<String>) {
     let mut paths = BTreeSet::new();
     let mut dirs = Vec::new();
     for record in out.split(|&b| b == 0).filter(|r| !r.is_empty()) {
@@ -268,7 +315,9 @@ pub fn parse_status(out: &[u8]) -> (BTreeSet<String>, Vec<String>) {
             Some(b'?') => 1,
             _ => continue,
         };
-        let Some(path) = text.splitn(fields + 1, ' ').nth(fields) else { continue };
+        let Some(path) = text.splitn(fields + 1, ' ').nth(fields) else {
+            continue;
+        };
         match path.strip_suffix('/') {
             Some(dir) if text.starts_with('?') => dirs.push(dir.to_owned()),
             _ => {
@@ -299,7 +348,11 @@ fn untracked_files(repo: &gix::Repository, dirs: Vec<String>) -> Result<Vec<Stri
 }
 
 /// Paths that differ between two trees.
-fn tree_paths(repo: &gix::Repository, old: gix::ObjectId, new: gix::ObjectId) -> Result<Vec<String>> {
+fn tree_paths(
+    repo: &gix::Repository,
+    old: gix::ObjectId,
+    new: gix::ObjectId,
+) -> Result<Vec<String>> {
     let (old, new) = (repo.find_tree(old)?, repo.find_tree(new)?);
     let mut options = gix::diff::Options::default();
     options.track_path();
@@ -339,23 +392,37 @@ fn short(id: gix::ObjectId) -> String {
 }
 
 /// The default branch's merge base with `head`, and the branch's name.
-fn resolve_base(repo: &gix::Repository, head: gix::ObjectId) -> Result<Option<(String, gix::ObjectId)>> {
+fn resolve_base(
+    repo: &gix::Repository,
+    head: gix::ObjectId,
+) -> Result<Option<(String, gix::ObjectId)>> {
     let origin_head = repo
         .try_find_reference("refs/remotes/origin/HEAD")?
-        .and_then(|r| r.target().try_name().map(|n| n.as_bstr().to_str_lossy().into_owned()));
+        .and_then(|r| {
+            r.target()
+                .try_name()
+                .map(|n| n.as_bstr().to_str_lossy().into_owned())
+        });
     let exists = |name: &str| repo.try_find_reference(name).ok().flatten().is_some();
     let mut bases = Vec::new();
     for name in base_candidates(origin_head.as_deref(), exists) {
         let Ok(mut reference) = repo.find_reference(name.as_str()) else {
             continue;
         };
-        let Ok(tip) = reference.peel_to_id() else { continue };
+        let Ok(tip) = reference.peel_to_id() else {
+            continue;
+        };
         if let Some(base) = repo.merge_base(head, tip.detach())? {
             bases.push((short_ref(&name), base.detach()));
         }
     }
     let is_ancestor = |a: gix::ObjectId, b: gix::ObjectId| {
-        a == b || repo.merge_base(a, b).ok().flatten().is_some_and(|m| m.detach() == a)
+        a == b
+            || repo
+                .merge_base(a, b)
+                .ok()
+                .flatten()
+                .is_some_and(|m| m.detach() == a)
     };
     Ok(newest(bases, is_ancestor))
 }
@@ -370,21 +437,32 @@ fn short_ref(name: &str) -> String {
 /// Refs that may name the default branch, best first, keeping those that
 /// exist. With `origin/HEAD` set, its target and the local branch of the same
 /// name; otherwise `main` and `master`, local before remote.
-pub fn base_candidates(origin_head: Option<&str>, exists: impl Fn(&str) -> bool) -> Vec<String> {
-    let names: Vec<String> = match origin_head.and_then(|t| t.strip_prefix("refs/remotes/origin/")) {
+pub(crate) fn base_candidates(
+    origin_head: Option<&str>,
+    exists: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let names: Vec<String> = match origin_head.and_then(|t| t.strip_prefix("refs/remotes/origin/"))
+    {
         Some(branch) => vec![
             format!("refs/heads/{branch}"),
             format!("refs/remotes/origin/{branch}"),
         ],
         None => ["main", "master"]
             .iter()
-            .flat_map(|b| [format!("refs/heads/{b}"), format!("refs/remotes/origin/{b}")])
+            .flat_map(|b| {
+                [
+                    format!("refs/heads/{b}"),
+                    format!("refs/remotes/origin/{b}"),
+                ]
+            })
             .collect(),
     };
     let mut names: Vec<String> = names.into_iter().filter(|n| exists(n)).collect();
     if origin_head.is_none() {
         // Without origin/HEAD, the first branch name that exists decides.
-        let branch = names.first().map(|n| n.rsplit('/').next().unwrap_or("").to_owned());
+        let branch = names
+            .first()
+            .map(|n| n.rsplit('/').next().unwrap_or("").to_owned());
         names.retain(|n| Some(n.rsplit('/').next().unwrap_or("").to_owned()) == branch);
     }
     names
@@ -393,7 +471,7 @@ pub fn base_candidates(origin_head: Option<&str>, exists: impl Fn(&str) -> bool)
 /// The most recent of several merge bases: the one every other is an
 /// ancestor of. A local branch behind its remote, or ahead of it, then
 /// yields the fork point closest to the worktree's branch.
-pub fn newest<T: Copy>(
+pub(crate) fn newest<T: Copy>(
     bases: Vec<(String, T)>,
     is_ancestor: impl Fn(T, T) -> bool,
 ) -> Option<(String, T)> {
@@ -435,7 +513,10 @@ mod tests {
         );
         let both = |n: &str| n == "refs/heads/main" || n == "refs/heads/master";
         assert_eq!(base_candidates(None, both), vec!["refs/heads/main"]);
-        assert!(base_candidates(None, |_| false).is_empty());
+        assert_eq!(
+            base_candidates(None, |_| false),
+            [] as [std::string::String; 0]
+        );
     }
 
     #[test]
@@ -443,7 +524,10 @@ mod tests {
         // History 1 <- 2 <- 3: a larger number descends from a smaller one.
         let is_ancestor = |a: u32, b: u32| a <= b;
         let bases = vec![("main".to_owned(), 2), ("origin/main".to_owned(), 3)];
-        assert_eq!(newest(bases, is_ancestor), Some(("origin/main".to_owned(), 3)));
+        assert_eq!(
+            newest(bases, is_ancestor),
+            Some(("origin/main".to_owned(), 3))
+        );
         let bases = vec![("main".to_owned(), 3), ("origin/main".to_owned(), 1)];
         assert_eq!(newest(bases, is_ancestor), Some(("main".to_owned(), 3)));
         assert_eq!(newest::<u32>(vec![], is_ancestor), None);

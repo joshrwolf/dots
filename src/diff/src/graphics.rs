@@ -45,19 +45,21 @@ struct Placed {
     y: u16,
 }
 
-pub struct Graphics {
+pub(crate) struct Graphics {
     fonts: Arc<Mutex<Option<Fonts>>>,
     images: HashMap<u64, (u32, Instant)>,
     placed: Vec<Placed>,
     next_id: u32,
     next_placement: u32,
     /// Time spent drawing and encoding images, for `--timings`.
-    pub drawn: Vec<Duration>,
+    pub(crate) drawn: Vec<Duration>,
 }
 
 impl std::fmt::Debug for Graphics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Graphics").field("images", &self.images.len()).finish_non_exhaustive()
+        f.debug_struct("Graphics")
+            .field("images", &self.images.len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -65,7 +67,7 @@ impl std::fmt::Debug for Graphics {
 const KEEP: usize = 48;
 
 impl Graphics {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let fonts = Arc::new(Mutex::new(None));
         let loading = Arc::clone(&fonts);
         // Loading system fonts takes a while; headers stay text until then.
@@ -89,16 +91,16 @@ impl Graphics {
     }
 
     /// True until fonts have loaded and a redraw can show images.
-    pub fn pending(&self) -> bool {
-        self.fonts.lock().map_or(false, |f| f.is_none())
+    pub(crate) fn pending(&self) -> bool {
+        self.fonts.lock().is_ok_and(|f| f.is_none())
     }
 
     /// Forgets every image, after a theme change.
-    pub fn invalidate(&mut self) {
+    pub(crate) fn invalidate(&mut self) {
         self.clear();
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         let mut out = std::io::stdout().lock();
         let _ = out.write_all(b"\x1b_Ga=d,d=A,q=2\x1b\\");
         let _ = out.flush();
@@ -107,20 +109,21 @@ impl Graphics {
     }
 
     /// Places an image over every header on screen, after the text frame.
-    pub fn after_draw(&mut self, app: &App) -> Result<()> {
+    pub(crate) fn after_draw(&mut self, app: &App) -> Result<()> {
         let fonts_slot = Arc::clone(&self.fonts);
-        let Ok(mut fonts) = fonts_slot.lock() else { return Ok(()) };
-        let Some(fonts) = fonts.as_mut() else { return Ok(()) };
+        let Ok(mut guard) = fonts_slot.lock() else {
+            return Ok(());
+        };
+        let Some(fonts) = guard.as_mut() else {
+            return Ok(());
+        };
         let Some(stream) = &app.stream else {
-            drop(fonts);
+            drop(guard);
             return self.place(Vec::new(), 0, 0);
         };
         let area = app.areas.diff;
         let rows = app.settings.header_rows;
         let cell = cell_pixels();
-        let (reviewed, total) = (stream.files.iter().filter(|f| f.reviewed).count(), stream.files.len());
-        let p = &app.palette.rgb;
-        let colors = [p.bg, p.fg, p.muted, p.green, p.red, p.accent, p.header_bg];
         let mut headers = Vec::new();
         if !stream.files.is_empty() && area.height >= rows {
             headers.push((app.top.file, area.y));
@@ -134,17 +137,7 @@ impl Graphics {
         let mut out = Vec::new();
         let mut wanted = Vec::new();
         for (file, y) in headers {
-            let f = &stream.files[file];
-            let spec = Spec {
-                path: f.change.path.clone(),
-                status: f.change.status,
-                counts: f.counts(),
-                reviewed: f.reviewed,
-                progress: (reviewed, total),
-                cols: area.width,
-                colors,
-                cell,
-            };
+            let spec = spec_for(app, file, area.width, cell);
             let mut hasher = std::hash::DefaultHasher::new();
             spec.hash(&mut hasher);
             let key = hasher.finish();
@@ -163,7 +156,7 @@ impl Graphics {
             };
             wanted.push((id, area.x, y));
         }
-        drop(fonts);
+        drop(guard);
         let mut stdout = std::io::stdout().lock();
         stdout.write_all(&out)?;
         drop(stdout);
@@ -176,7 +169,11 @@ impl Graphics {
         let mut out = Vec::new();
         let mut kept = Vec::new();
         for (image, x, y) in wanted {
-            if let Some(p) = self.placed.iter().find(|p| p.image == image && p.x == x && p.y == y) {
+            if let Some(p) = self
+                .placed
+                .iter()
+                .find(|p| p.image == image && p.x == x && p.y == y)
+            {
                 kept.push(*p);
                 continue;
             }
@@ -188,11 +185,20 @@ impl Graphics {
                 y + 1,
                 x + 1
             )?;
-            kept.push(Placed { image, placement, x, y });
+            kept.push(Placed {
+                image,
+                placement,
+                x,
+                y,
+            });
         }
         for old in &self.placed {
             if !kept.contains(old) {
-                write!(out, "\x1b_Ga=d,d=i,i={},p={},q=2\x1b\\", old.image, old.placement)?;
+                write!(
+                    out,
+                    "\x1b_Ga=d,d=i,i={},p={},q=2\x1b\\",
+                    old.image, old.placement
+                )?;
             }
         }
         self.placed = kept;
@@ -206,7 +212,11 @@ impl Graphics {
         if self.images.len() <= KEEP {
             return;
         }
-        let mut by_age: Vec<(u64, u32, Instant)> = self.images.iter().map(|(k, (id, t))| (*k, *id, *t)).collect();
+        let mut by_age: Vec<(u64, u32, Instant)> = self
+            .images
+            .iter()
+            .map(|(k, (id, t))| (*k, *id, *t))
+            .collect();
         by_age.sort_by_key(|e| e.2);
         let mut out = std::io::stdout().lock();
         for (key, id, _) in by_age.into_iter().take(self.images.len() - KEEP) {
@@ -220,10 +230,48 @@ impl Graphics {
     }
 }
 
+/// What the header image of `file` shows.
+fn spec_for(app: &App, file: usize, cols: u16, cell: (u16, u16)) -> Spec {
+    let stream = app
+        .stream
+        .as_ref()
+        .expect("headers are drawn for a loaded stream");
+    let f = &stream.files[file];
+    let p = &app.palette.rgb;
+    Spec {
+        path: f.change.path.clone(),
+        status: f.change.status,
+        counts: f.counts(),
+        reviewed: f.reviewed,
+        progress: (
+            stream.files.iter().filter(|f| f.reviewed).count(),
+            stream.files.len(),
+        ),
+        cols,
+        colors: [p.bg, p.fg, p.muted, p.green, p.red, p.accent, p.header_bg],
+        cell,
+    }
+}
+
+/// Draws the header image of the file at the top of the view to a PNG,
+/// to check it without a terminal.
+pub(crate) fn header_picture(app: &App, cols: u16, path: &std::path::Path) -> Result<()> {
+    let mut fonts = Fonts {
+        system: FontSystem::new(),
+        cache: SwashCache::new(),
+    };
+    let spec = spec_for(app, app.top.file, cols, (10, 20));
+    let pixmap = render(&mut fonts, &spec, 2);
+    pixmap.save_png(path)?;
+    Ok(())
+}
+
 /// Pixels per cell, from the terminal; a common size when it does not say.
 fn cell_pixels() -> (u16, u16) {
     match ratatui::crossterm::terminal::window_size() {
-        Ok(s) if s.width > 0 && s.columns > 0 && s.rows > 0 => (s.width / s.columns, s.height / s.rows),
+        Ok(s) if s.width > 0 && s.columns > 0 && s.rows > 0 => {
+            (s.width / s.columns, s.height / s.rows)
+        }
         _ => (10, 20),
     }
 }
@@ -238,6 +286,7 @@ fn text_color(c: Rgb) -> cosmic_text::Color {
 
 /// Draws a header: status pill, path in a proportional font, counts, and a
 /// ring showing how many of the worktree's files are reviewed.
+#[allow(clippy::too_many_lines)]
 fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     // Draw at twice the cell size when the terminal reports small cells, so
     // high-density screens stay sharp.
@@ -265,30 +314,77 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     let pill_h = h_px * 0.56;
     let pill_w = pill_h * 1.15;
     let pill_x = cw;
-    rounded(&mut pixmap, pill_x, mid - pill_h / 2.0, pill_w, pill_h, pill_h * 0.3, mix(header_bg, status_rgb, 0.22));
+    rounded(
+        &mut pixmap,
+        pill_x,
+        mid - pill_h / 2.0,
+        pill_w,
+        pill_h,
+        pill_h * 0.3,
+        mix(header_bg, status_rgb, 0.22),
+    );
     let letter = spec.status.letter().to_string();
     let lw = measure(fonts, &letter, font, Weight::BOLD);
-    draw_text(fonts, &mut pixmap, &[(&letter, status_rgb, Weight::BOLD)], pill_x + (pill_w - lw) / 2.0, mid, font, header_bg);
+    draw_text(
+        fonts,
+        &mut pixmap,
+        &[(&letter, status_rgb, Weight::BOLD)],
+        pill_x + (pill_w - lw) / 2.0,
+        mid,
+        font,
+        header_bg,
+    );
     // Right side: counts, then the review ring.
     let ring_d = h_px * 0.5;
     let ring_x = w_px - cw - ring_d;
-    ring(&mut pixmap, ring_x + ring_d / 2.0, mid, ring_d / 2.0, spec, scale, (accent, green, mix(header_bg, fg, 0.18)));
+    ring(
+        &mut pixmap,
+        ring_x + ring_d / 2.0,
+        mid,
+        ring_d / 2.0,
+        spec,
+        scale,
+        (accent, green, mix(header_bg, fg, 0.18)),
+    );
     let mut right = ring_x - cw;
     if let Some((a, r)) = spec.counts {
         let removed = format!("−{r}");
         let added = format!("+{a}");
         let rw = measure(fonts, &removed, font, Weight::SEMIBOLD);
         right -= rw;
-        draw_text(fonts, &mut pixmap, &[(&removed, red, Weight::SEMIBOLD)], right, mid, font, header_bg);
+        draw_text(
+            fonts,
+            &mut pixmap,
+            &[(&removed, red, Weight::SEMIBOLD)],
+            right,
+            mid,
+            font,
+            header_bg,
+        );
         let aw = measure(fonts, &added, font, Weight::SEMIBOLD);
         right -= aw + cw * 0.8;
-        draw_text(fonts, &mut pixmap, &[(&added, green, Weight::SEMIBOLD)], right, mid, font, header_bg);
+        draw_text(
+            fonts,
+            &mut pixmap,
+            &[(&added, green, Weight::SEMIBOLD)],
+            right,
+            mid,
+            font,
+            header_bg,
+        );
     }
     // Path: directory muted, name bold, cut from the left to fit.
     let x0 = pill_x + pill_w + cw * 0.9;
     let avail = (right - cw - x0).max(0.0);
-    let (dir, name) = spec.path.rsplit_once('/').map_or(("", spec.path.as_str()), |(d, n)| (d, n));
-    let mut dir = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+    let (dir, name) = spec
+        .path
+        .rsplit_once('/')
+        .map_or(("", spec.path.as_str()), |(d, n)| (d, n));
+    let mut dir = if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
     let name_w = measure(fonts, name, font * 1.05, Weight::BOLD);
     while !dir.is_empty() && measure(fonts, &dir, font, Weight::NORMAL) + name_w > avail {
         let cut: String = dir.chars().skip(2).collect();
@@ -298,9 +394,25 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
         }
     }
     let dw = measure(fonts, &dir, font, Weight::NORMAL);
-    draw_text(fonts, &mut pixmap, &[(&dir, muted, Weight::NORMAL)], x0, mid, font, header_bg);
+    draw_text(
+        fonts,
+        &mut pixmap,
+        &[(&dir, muted, Weight::NORMAL)],
+        x0,
+        mid,
+        font,
+        header_bg,
+    );
     let name_color = if spec.reviewed { muted } else { fg };
-    draw_text(fonts, &mut pixmap, &[(name, name_color, Weight::BOLD)], x0 + dw, mid, font * 1.05, header_bg);
+    draw_text(
+        fonts,
+        &mut pixmap,
+        &[(name, name_color, Weight::BOLD)],
+        x0 + dw,
+        mid,
+        font * 1.05,
+        header_bg,
+    );
     let _ = bg;
     pixmap
 }
@@ -312,6 +424,7 @@ fn paint(c: Rgb) -> Paint<'static> {
     p
 }
 
+#[allow(clippy::many_single_char_names)]
 fn rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb) {
     let mut pb = PathBuilder::new();
     pb.move_to(x + r, y);
@@ -325,13 +438,27 @@ fn rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb) 
     pb.quad_to(x, y, x + r, y);
     pb.close();
     if let Some(path) = pb.finish() {
-        pixmap.fill_path(&path, &paint(c), FillRule::Winding, Transform::identity(), None);
+        pixmap.fill_path(
+            &path,
+            &paint(c),
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
     }
 }
 
 /// The review ring: an arc for the share of reviewed files, and a check
 /// mark when this file is reviewed.
-fn ring(pixmap: &mut Pixmap, cx: f32, cy: f32, r: f32, spec: &Spec, scale: f32, colors: (Rgb, Rgb, Rgb)) {
+fn ring(
+    pixmap: &mut Pixmap,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    spec: &Spec,
+    scale: f32,
+    colors: (Rgb, Rgb, Rgb),
+) {
     let (accent, green, track) = colors;
     let stroke = Stroke {
         width: 2.0 * scale,
@@ -348,7 +475,8 @@ fn ring(pixmap: &mut Pixmap, cx: f32, cy: f32, r: f32, spec: &Spec, scale: f32, 
         let steps = 48;
         for i in 0..=steps {
             #[allow(clippy::cast_precision_loss)]
-            let a = -std::f32::consts::FRAC_PI_2 + share * std::f32::consts::TAU * (i as f32 / steps as f32);
+            let a = -std::f32::consts::FRAC_PI_2
+                + share * std::f32::consts::TAU * (i as f32 / steps as f32);
             let (x, y) = (cx + r * a.cos(), cy + r * a.sin());
             if i == 0 {
                 pb.move_to(x, y);
@@ -374,10 +502,21 @@ fn ring(pixmap: &mut Pixmap, cx: f32, cy: f32, r: f32, spec: &Spec, scale: f32, 
 fn buffer(fonts: &mut Fonts, spans: &[(&str, Rgb, Weight)], size: f32) -> Buffer {
     let mut buffer = Buffer::new(&mut fonts.system, Metrics::new(size, size * 1.25));
     buffer.set_size(None, None);
-    let spans = spans
-        .iter()
-        .map(|(t, c, w)| (*t, Attrs::new().family(Family::SansSerif).weight(*w).color(text_color(*c))));
-    buffer.set_rich_text(spans, &Attrs::new().family(Family::SansSerif), Shaping::Advanced, None);
+    let spans = spans.iter().map(|(t, c, w)| {
+        (
+            *t,
+            Attrs::new()
+                .family(Family::SansSerif)
+                .weight(*w)
+                .color(text_color(*c)),
+        )
+    });
+    buffer.set_rich_text(
+        spans,
+        &Attrs::new().family(Family::SansSerif),
+        Shaping::Advanced,
+        None,
+    );
     buffer.shape_until_scroll(&mut fonts.system, false);
     buffer
 }
@@ -390,37 +529,56 @@ fn measure(fonts: &mut Fonts, text: &str, size: f32, weight: Weight) -> f32 {
     b.layout_runs().map(|r| r.line_w).fold(0.0, f32::max)
 }
 
+#[allow(clippy::many_single_char_names)]
 /// Draws text with its vertical centre at `mid`, blending glyph coverage
 /// over the opaque background.
-fn draw_text(fonts: &mut Fonts, pixmap: &mut Pixmap, spans: &[(&str, Rgb, Weight)], x: f32, mid: f32, size: f32, bg: Rgb) {
+fn draw_text(
+    fonts: &mut Fonts,
+    pixmap: &mut Pixmap,
+    spans: &[(&str, Rgb, Weight)],
+    x: f32,
+    mid: f32,
+    size: f32,
+    bg: Rgb,
+) {
     let mut b = buffer(fonts, spans, size);
     let line_h = size * 1.25;
     let top = mid - line_h / 2.0;
     let (w, h) = (pixmap.width(), pixmap.height());
     let data = pixmap.data_mut();
     let _ = bg;
-    b.draw(&mut fonts.system, &mut fonts.cache, text_color((0, 0, 0)), |gx, gy, gw, gh, color| {
-        let a = u32::from(color.a());
-        if a == 0 {
-            return;
-        }
-        #[allow(clippy::cast_possible_truncation)]
-        let (ox, oy) = (x as i32 + gx, top as i32 + gy);
-        for yy in oy..oy + i32::try_from(gh).unwrap_or(0) {
-            for xx in ox..ox + i32::try_from(gw).unwrap_or(0) {
-                let (Ok(ux), Ok(uy)) = (u32::try_from(xx), u32::try_from(yy)) else { continue };
-                if ux >= w || uy >= h {
-                    continue;
-                }
-                let i = ((uy * w + ux) * 4) as usize;
-                let blend = |d: u8, s: u8| u8::try_from((u32::from(s) * a + u32::from(d) * (255 - a)) / 255).unwrap_or(255);
-                data[i] = blend(data[i], color.r());
-                data[i + 1] = blend(data[i + 1], color.g());
-                data[i + 2] = blend(data[i + 2], color.b());
-                data[i + 3] = 255;
+    b.draw(
+        &mut fonts.system,
+        &mut fonts.cache,
+        text_color((0, 0, 0)),
+        |gx, gy, gw, gh, color| {
+            let a = u32::from(color.a());
+            if a == 0 {
+                return;
             }
-        }
-    });
+            #[allow(clippy::cast_possible_truncation)]
+            let (ox, oy) = (x as i32 + gx, top as i32 + gy);
+            for yy in oy..oy + i32::try_from(gh).unwrap_or(0) {
+                for xx in ox..ox + i32::try_from(gw).unwrap_or(0) {
+                    let (Ok(ux), Ok(uy)) = (u32::try_from(xx), u32::try_from(yy)) else {
+                        continue;
+                    };
+                    if ux >= w || uy >= h {
+                        continue;
+                    }
+                    let i = ((uy * w + ux) * 4) as usize;
+                    let blend = |d: u8, s: u8| {
+                        u8::try_from((u32::from(s) * a + u32::from(d) * (255 - a)) / 255)
+                            .unwrap_or(255)
+                    };
+                    data[i] = blend(data[i], color.r());
+                    data[i + 1] = blend(data[i + 1], color.g());
+                    data[i + 2] = blend(data[i + 2], color.b());
+                    data[i + 3] = 255;
+                }
+            }
+        },
+    );
 }
 
 /// Transmits `pixmap` as image `id` (raw RGBA, zlib-compressed) without placing it.

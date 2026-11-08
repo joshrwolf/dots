@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result};
 use notify::{RecursiveMode, Watcher as _};
 
 /// Keeps the watch alive; dropping it stops notifications.
-pub struct Watch {
+pub(crate) struct Watch {
     _watcher: notify::RecommendedWatcher,
 }
 
@@ -19,7 +19,7 @@ impl std::fmt::Debug for Watch {
 
 /// What an event touched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Touched {
+pub(crate) enum Touched {
     /// Files or Git state of one worktree.
     Worktree(usize),
     /// Shared refs, which can move every worktree's base.
@@ -28,7 +28,10 @@ pub enum Touched {
 
 /// Watches every worktree's files, each worktree's own Git state (HEAD,
 /// index) and the shared refs, reporting which worktree changed.
-pub fn watch(worktrees: &[PathBuf], changed: impl Fn(Touched) + Send + 'static) -> Result<Watch> {
+pub(crate) fn watch(
+    worktrees: &[PathBuf],
+    changed: impl Fn(Touched) + Send + 'static,
+) -> Result<Watch> {
     let mut roots: Vec<(PathBuf, usize)> = Vec::new();
     let mut common = None;
     for (i, root) in worktrees.iter().enumerate() {
@@ -50,7 +53,9 @@ pub fn watch(worktrees: &[PathBuf], changed: impl Fn(Touched) + Send + 'static) 
             return;
         }
         for path in &event.paths {
-            if refs.as_ref().is_some_and(|r| path.starts_with(r)) || path.file_name().is_some_and(|n| n == "packed-refs") {
+            if refs.as_ref().is_some_and(|r| path.starts_with(r))
+                || path.file_name().is_some_and(|n| n == "packed-refs")
+            {
                 changed(Touched::Refs);
                 continue;
             }
@@ -62,7 +67,11 @@ pub fn watch(worktrees: &[PathBuf], changed: impl Fn(Touched) + Send + 'static) 
         }
     })?;
     for (path, i) in &roots {
-        let mode = if worktrees.get(*i) == Some(path) { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+        let mode = if worktrees.get(*i) == Some(path) {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
         watcher.watch(path, mode)?;
     }
     if let Some(refs) = common_refs.filter(|r| r.is_dir()) {
@@ -73,7 +82,7 @@ pub fn watch(worktrees: &[PathBuf], changed: impl Fn(Touched) + Send + 'static) 
 
 /// Build output, dependencies and Git's object store change constantly and
 /// never decide what the diff shows.
-pub fn relevant(path: &Path, root: &Path) -> bool {
+pub(crate) fn relevant(path: &Path, root: &Path) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
     let parts: Vec<&std::ffi::OsStr> = rel
         .components()

@@ -16,13 +16,13 @@ enum Gate {
 }
 
 #[derive(Debug, Clone)]
-pub struct Input {
+pub(crate) struct Input {
     gate: Arc<(Mutex<Gate>, Condvar)>,
 }
 
 /// While held, the input thread reads nothing.
 #[derive(Debug)]
-pub struct Paused<'a> {
+pub(crate) struct Paused<'a> {
     input: &'a Input,
 }
 
@@ -38,7 +38,7 @@ impl Drop for Paused<'_> {
 
 impl Input {
     /// Forwards every terminal event through `send` until it fails.
-    pub fn spawn<M: Send + 'static>(tx: Sender<M>, wrap: fn(Event) -> M) -> Self {
+    pub(crate) fn spawn<M: Send + 'static>(tx: Sender<M>, wrap: fn(Event) -> M) -> Self {
         let gate = Arc::new((Mutex::new(Gate::Run), Condvar::new()));
         let input = Self { gate };
         let thread_gate = Arc::clone(&input.gate);
@@ -72,14 +72,17 @@ impl Input {
     }
 
     /// Stops the input thread between reads and returns once it has.
-    pub fn pause(&self) -> Paused<'_> {
+    pub(crate) fn pause(&self) -> Paused<'_> {
         let (lock, cv) = &*self.gate;
         let mut g = lock.lock().expect("input gate");
         *g = Gate::PauseWanted;
         cv.notify_all();
         let deadline = std::time::Instant::now() + Duration::from_millis(200);
         while *g != Gate::Paused && std::time::Instant::now() < deadline {
-            g = cv.wait_timeout(g, Duration::from_millis(50)).expect("input gate").0;
+            g = cv
+                .wait_timeout(g, Duration::from_millis(50))
+                .expect("input gate")
+                .0;
         }
         drop(g);
         Paused { input: self }
