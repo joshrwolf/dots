@@ -67,7 +67,10 @@ pub(crate) struct Worker {
 
 /// Who a review goes to.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "built once per resolution and moved, never stored in bulk"
+)]
 pub(crate) enum Resolution {
     Agent {
         agent: Agent,
@@ -198,11 +201,7 @@ pub(crate) fn resolve(
 
 /// Where interactive Pi sessions register: the user's state directory.
 pub(crate) fn inbox_dir() -> PathBuf {
-    let state = std::env::var_os("XDG_STATE_HOME").map_or_else(
-        || PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"),
-        PathBuf::from,
-    );
-    state.join("dots").join("pi-inbox")
+    crate::state_home().join("dots").join("pi-inbox")
 }
 
 /// The registered sessions whose process is alive, and registrations that

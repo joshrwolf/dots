@@ -189,7 +189,11 @@ const PAIR_BLANK_SIMILARITY: f32 = 0.6;
 /// Pairs the old lines of a changed region with their most similar new
 /// lines, in order. Each pair is (old line, new line).
 // The backtrack compares totals copied by `max`, so exactly.
-#[allow(clippy::many_single_char_names, clippy::float_cmp)]
+#[expect(
+    clippy::many_single_char_names,
+    clippy::float_cmp,
+    reason = "a, b, i, j follow the alignment's notation; scores are compared for the exact value they were copied from"
+)]
 pub(crate) fn pair_lines(
     old: &Text,
     new: &Text,
@@ -276,7 +280,10 @@ fn line_tokens(line: &str) -> Vec<&str> {
 }
 
 /// The Dice coefficient of two sorted token multisets.
-#[allow(clippy::many_single_char_names)]
+#[expect(
+    clippy::many_single_char_names,
+    reason = "a, b, i, j follow the alignment's notation"
+)]
 fn similarity(a: &[&str], b: &[&str]) -> f32 {
     if a.is_empty() && b.is_empty() {
         return PAIR_BLANK_SIMILARITY;
@@ -293,7 +300,10 @@ fn similarity(a: &[&str], b: &[&str]) -> f32 {
             }
         }
     }
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "line and byte counts stay far below f32's exact range"
+    )]
     let s = (2 * common) as f32 / (a.len() + b.len()) as f32;
     s
 }
@@ -411,7 +421,10 @@ pub(crate) fn line_emphasis(a: &str, b: &str) -> Option<(Ranges, Ranges)> {
         s.trim().len().saturating_sub(changed)
     };
     let longest = a.trim().len().max(b.trim().len()).max(1);
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "line and byte counts stay far below f32's exact range"
+    )]
     let share = same(a, &ra).min(same(b, &rb)) as f32 / longest as f32;
     if share < INLINE_MIN_SAME {
         return None;

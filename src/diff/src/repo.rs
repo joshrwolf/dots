@@ -92,6 +92,11 @@ pub(crate) fn same_repository(a: &Path, b: &Path) -> bool {
 }
 
 /// The repository containing `path` and all its worktrees, main first.
+/// `path` with symlinks resolved, or as given when it cannot be.
+pub(crate) fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_owned())
+}
+
 pub(crate) fn discover(path: &Path) -> Result<Repo> {
     let repo =
         gix::discover(path).with_context(|| format!("no Git repository at {}", path.display()))?;
@@ -99,7 +104,7 @@ pub(crate) fn discover(path: &Path) -> Result<Repo> {
     let mut worktrees = Vec::new();
     if let Some(dir) = main.workdir() {
         worktrees.push(Worktree {
-            path: dir.canonicalize().unwrap_or_else(|_| dir.to_owned()),
+            path: canonical(dir),
             branch: branch(&main),
             main: true,
             touched: touched(main.git_dir()),

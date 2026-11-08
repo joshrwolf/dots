@@ -166,7 +166,7 @@ pub(crate) const READ_ONLY: &str =
 /// show the review read-only until it is released, so none saves over
 /// another's changes. The system releases it when the viewer exits.
 #[derive(Debug)]
-pub(crate) struct Lock(#[allow(dead_code, reason = "held for its lock")] std::fs::File);
+pub(crate) struct Lock(#[expect(dead_code, reason = "held for its lock")] std::fs::File);
 
 impl Lock {
     /// Takes the review in `git_dir`, or `None` while another viewer has it.

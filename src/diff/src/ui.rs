@@ -223,7 +223,7 @@ fn count_text(a: u32, r: u32) -> (String, String) {
 
 /// Added and removed counts drawn right-aligned to `end`; returns their
 /// starting column.
-#[allow(clippy::many_single_char_names)]
+#[expect(clippy::many_single_char_names, reason = "cell coordinates")]
 fn put_counts(
     buf: &mut Buffer,
     end: u16,
@@ -254,7 +254,7 @@ fn put_counts(
 }
 
 /// The sidebar: the current worktree's branch, then its files as a tree.
-#[allow(clippy::many_single_char_names, clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "one region drawn top to bottom")]
 fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
     let p = &app.palette;
     let inner = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
@@ -455,7 +455,7 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
 }
 
 /// The comment editor, over the bottom of the diff pane.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "one region drawn top to bottom")]
 fn draw_editor(buf: &mut Buffer, app: &App, ed: &Editor, area: Rect) {
     let p = &app.palette;
     let lines = ed.buffer.lines();
@@ -580,7 +580,7 @@ fn skip_cells(text: &str, n: usize) -> String {
 }
 
 /// The list of live Pi sessions to send the review to.
-#[allow(clippy::many_single_char_names)]
+#[expect(clippy::many_single_char_names, reason = "cell coordinates")]
 fn draw_picker(buf: &mut Buffer, app: &App, pk: &Picker, area: Rect) {
     let p = &app.palette;
     let w = 96.min(area.width.saturating_sub(4));
@@ -712,7 +712,11 @@ fn border(buf: &mut Buffer, r: Rect, style: Style) {
 
 /// The worktree switcher: a filter line over branch, counts, file count
 /// and how recently each was used. Counts fill in as they are computed.
-#[allow(clippy::many_single_char_names, clippy::too_many_lines)]
+#[expect(
+    clippy::many_single_char_names,
+    clippy::too_many_lines,
+    reason = "one region drawn top to bottom, in cell coordinates"
+)]
 fn draw_switcher(buf: &mut Buffer, app: &App, sw: &Switcher, area: Rect) {
     let p = &app.palette;
     let w = 76.min(area.width.saturating_sub(4));
@@ -1319,7 +1323,7 @@ struct Side {
     line: Option<u32>,
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "one region drawn top to bottom")]
 fn draw_row(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, row: Row, sub: u32) {
     let p = ctx.palette;
     match row {
@@ -1615,7 +1619,10 @@ fn move_note(old: bool, path: &str, at: u32, here: &str, room: usize) -> Option<
     notes.into_iter().find(|note| width(note) <= room)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a span of one row and its styles; a struct would only rename them"
+)]
 fn paint(
     buf: &mut Buffer,
     x: u16,
@@ -1803,7 +1810,7 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
     }
 }
 
-#[allow(clippy::many_single_char_names)]
+#[expect(clippy::many_single_char_names, reason = "cell coordinates")]
 fn draw_help(buf: &mut Buffer, p: &Palette, area: Rect) {
     let w = 80.min(area.width);
     let h = (u16::try_from(BINDINGS.len()).unwrap_or(0) + 4).min(area.height);

@@ -121,8 +121,11 @@ pub(crate) struct RawColors {
 pub(crate) fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
     let m = |x: u8, y: u8| {
         let v = f32::from(x) + (f32::from(y) - f32::from(x)) * t;
-        // Clamped to 0..=255 first, so the cast cannot truncate.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped to 0..=255 first"
+        )]
         let v = v.round().clamp(0.0, 255.0) as u8;
         v
     };

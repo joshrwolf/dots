@@ -111,6 +111,7 @@ Run installation only when ready to change the live setup:
 ```sh
 mise run //src/dots:install         # dots CLI
 mise run //src/pick:install         # dots-pick, for Rex views
+mise run //src/diff:install         # dots-diff, for the Rex diff split
 mise run pi:packages               # selected third-party Pi resources, from HOME
 mise run pi:install                # register the installed module's durable source, from HOME
 ```
@@ -119,7 +120,7 @@ Use [machine setup](../bootstrap/README.md) to deploy native home groups,
 including Neovim and selected desktop configuration. Runtime directories stay
 outside source. Native status and explicit unapply/prune own removal.
 
-Cargo owns executable installation. `dots` and `dots-pick` install with `cargo install --locked --path .` into Cargo's bin directory
+Cargo owns executable installation. `dots`, `dots-pick` and `dots-diff` install with `cargo install --locked --path .` into Cargo's bin directory
 (`~/.cargo/bin`, on `PATH` through mise and the zsh configuration); Cargo
 owns their tracking and replacement.
 

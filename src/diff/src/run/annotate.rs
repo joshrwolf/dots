@@ -15,7 +15,7 @@ use crate::deliver::{self, Ack, Resolution, Why};
 use crate::editor::Editor;
 use crate::picker::{Batch, Picker};
 use crate::plan::{Kind, Row};
-use crate::repo::Reader;
+use crate::repo::{self, Reader};
 use crate::review::{self, Comment, Place, Side};
 
 /// A delivered review: how the session took it, the snapshot of what was
@@ -306,13 +306,12 @@ impl Runtime {
         self.delivery.resolve_seq += 1;
         let seq = self.delivery.resolve_seq;
         let worktree = self.app.worktree_path().clone();
-        let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_owned());
         let worktrees: Vec<PathBuf> = self
             .app
             .repo
             .worktrees
             .iter()
-            .map(|w| canonical(&w.path))
+            .map(|w| repo::canonical(&w.path))
             .collect();
         let bound = self
             .delivery
@@ -325,7 +324,7 @@ impl Runtime {
         std::thread::spawn(move || {
             let found = deliver::agents(&deliver::inbox_dir());
             let workers = deliver::workers().map_err(|e| format!("{e:#}"));
-            let here = canonical(&worktree);
+            let here = repo::canonical(&worktree);
             let resolution = deliver::resolve(
                 &found.agents,
                 workers.as_deref().map_err(String::as_str),
@@ -380,9 +379,8 @@ impl Runtime {
         }
         let index = self.app.repo.index_of(p).unwrap_or(self.app.current);
         let root = self.app.repo.worktrees[index].path.clone();
-        let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_owned());
-        let rel = canonical(p)
-            .strip_prefix(canonical(&root))
+        let rel = repo::canonical(p)
+            .strip_prefix(repo::canonical(&root))
             .map_or_else(|_| path.to_owned(), |r| r.to_string_lossy().into_owned());
         (root, rel)
     }

@@ -36,6 +36,14 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+/// The user's state directory: `$XDG_STATE_HOME`, or `~/.local/state`.
+pub(crate) fn state_home() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME").map_or_else(
+        || PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"),
+        PathBuf::from,
+    )
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "dots-diff",
@@ -60,7 +68,10 @@ struct Cli {
     graphics: bool,
     /// Print timings on exit, to standard error or FILE
     #[arg(long, value_name = "FILE", num_args = 0..=1, require_equals = true)]
-    #[allow(clippy::option_option)]
+    #[expect(
+        clippy::option_option,
+        reason = "absent, given bare (stderr), or given a file"
+    )]
     timings: Option<Option<PathBuf>>,
     #[command(flatten)]
     look: Look,

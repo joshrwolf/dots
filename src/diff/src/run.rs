@@ -40,7 +40,10 @@ use crate::watch::{self, Burst, Refresh, Touched, Watch};
 
 mod annotate;
 
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "each message is moved once through the channel; boxing buys nothing"
+)]
 pub(crate) enum Msg {
     Input(Input),
     Loaded {
@@ -118,7 +121,10 @@ pub(crate) struct Options {
     /// Fixed colours instead of the terminal's.
     pub(crate) theme: Option<Detected>,
     pub(crate) graphics: bool,
-    #[allow(clippy::option_option)]
+    #[expect(
+        clippy::option_option,
+        reason = "absent, given bare (stderr), or given a file"
+    )]
     pub(crate) timings: Option<Option<PathBuf>>,
     pub(crate) settings: Settings,
 }
@@ -607,7 +613,7 @@ impl Runtime {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "one match arm per message or action")]
     fn handle(&mut self, msg: Msg) -> bool {
         match msg {
             Msg::Input(Input::Event(event)) => self.input(&event),
@@ -1244,7 +1250,7 @@ impl Runtime {
     }
 
     /// Does what a key is bound to.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "one match arm per message or action")]
     fn act(&mut self, action: Action) {
         let rows = self.view_rows();
         let half = i64::from(rows / 2);

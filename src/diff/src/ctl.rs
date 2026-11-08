@@ -145,11 +145,7 @@ fn socket_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
         return PathBuf::from(dir).join("dots-diff");
     }
-    let state = std::env::var_os("XDG_STATE_HOME").map_or_else(
-        || PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"),
-        PathBuf::from,
-    );
-    state.join("dots").join("diff")
+    crate::state_home().join("dots").join("diff")
 }
 
 /// This viewer's socket.

@@ -230,17 +230,21 @@ fn percentile(sorted: &[Duration], p: f64) -> Duration {
     if sorted.is_empty() {
         return Duration::ZERO;
     }
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_precision_loss
+        clippy::cast_precision_loss,
+        reason = "a percentile index of a short sample list"
     )]
     let i = ((sorted.len() - 1) as f64 * p).round() as usize;
     sorted[i]
 }
 
 /// Measures the viewer's work on real worktrees and prints a report.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one benchmark run, step by step, reported in order"
+)]
 pub(crate) fn bench(options: &Bench) -> Result<String> {
     let mut out = String::new();
     let t = Instant::now();
@@ -551,7 +555,7 @@ fn redact(base: &str) -> String {
 
 /// Draws the buffer as a PNG-like RGBA picture for eyeballing colours
 /// without a terminal: cells as rectangles, text in a monospace font.
-#[allow(clippy::many_single_char_names)]
+#[expect(clippy::many_single_char_names, reason = "cell and pixel coordinates")]
 pub(crate) fn picture(buf: &Buffer, path: &Path) -> Result<()> {
     use cosmic_text::{
         Attrs, Buffer as TextBuffer, Family, FontSystem, Metrics, Shaping, SwashCache, Weight,
@@ -637,7 +641,10 @@ pub(crate) fn picture(buf: &Buffer, path: &Path) -> Result<()> {
 }
 
 fn mib(bytes: usize) -> String {
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "byte counts stay far below f64's exact range"
+    )]
     let m = bytes as f64 / (1024.0 * 1024.0);
     format!("{m:.1} MiB")
 }

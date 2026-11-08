@@ -294,7 +294,7 @@ fn text_color(c: Rgb) -> cosmic_text::Color {
 
 /// Draws a header: a status dot, the path in a proportional font, counts,
 /// and a check mark once the file is reviewed.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "one header drawn top to bottom")]
 fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     // Draw at twice the cell size when the terminal reports small cells, so
     // high-density screens stay sharp.
@@ -302,7 +302,11 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     let cw = f32::from(spec.cell.0) * scale;
     let w_px = (f32::from(spec.cols) * cw).max(1.0);
     let h_px = (f32::from(spec.cell.1 * rows) * scale).max(1.0);
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "pixel sizes are positive and small"
+    )]
     let mut pixmap = Pixmap::new(w_px as u32, h_px as u32).expect("header size is positive");
     let [fg, muted, green, red, amber, header_bg] = spec.colors;
     pixmap.fill(skia(header_bg));
@@ -517,7 +521,7 @@ fn measure(fonts: &mut Fonts, text: &str, size: f32, weight: Weight) -> f32 {
     b.layout_runs().map(|r| r.line_w).fold(0.0, f32::max)
 }
 
-#[allow(clippy::many_single_char_names)]
+#[expect(clippy::many_single_char_names, reason = "glyph coordinates")]
 /// Draws text with its vertical centre at `mid`, blending glyph coverage
 /// over the opaque background.
 fn draw_text(
@@ -544,7 +548,10 @@ fn draw_text(
             if a == 0 {
                 return;
             }
-            #[allow(clippy::cast_possible_truncation)]
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "glyph positions are within the header"
+            )]
             let (ox, oy) = (x as i32 + gx, top as i32 + gy);
             for yy in oy..oy + i32::try_from(gh).unwrap_or(0) {
                 for xx in ox..ox + i32::try_from(gw).unwrap_or(0) {

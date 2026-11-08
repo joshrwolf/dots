@@ -50,7 +50,10 @@ pub(crate) enum Record {
 }
 
 impl Record {
-    #[allow(clippy::many_single_char_names)]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "the record's fields by position"
+    )]
     pub(crate) fn encode(&self) -> [u8; RECORD] {
         let mut out = [0u8; RECORD];
         let (tag, a, b, x, y, z) = match *self {
@@ -76,7 +79,10 @@ impl Record {
         out
     }
 
-    #[allow(clippy::many_single_char_names)]
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "the record's fields by position"
+    )]
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
         let bytes: &[u8; RECORD] = bytes.try_into().ok()?;
         let id = |r: Range| gix::ObjectId::try_from(&bytes[r]).ok();
