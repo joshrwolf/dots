@@ -4,6 +4,7 @@
 
 mod agents;
 mod app;
+mod attribution;
 mod cards;
 mod ctl;
 mod deliver;

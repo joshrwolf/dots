@@ -616,7 +616,7 @@ fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize) {
         Style::new().bg(bg).fg(status_color(p, st)),
     );
     let muted = Style::new().bg(bg).fg(p.muted);
-    let note = f.change.mode_note().map(|m| format!("  {m}"));
+    let note = app.header_note(&f.change).map(|m| format!("  {m}"));
     let counts = f.counts().map(|(a, r)| (format!("+{a}"), format!(" −{r}")));
     let counts_w = counts
         .as_ref()
@@ -1206,6 +1206,16 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
             x,
             area.y,
             "since last send  ",
+            end - x,
+            muted.fg(p.amber).add_modifier(Modifier::BOLD),
+        );
+    }
+    if let Some(filter) = &app.author_filter {
+        x += put(
+            buf,
+            x,
+            area.y,
+            &format!("only {}  ", filter.label()),
             end - x,
             muted.fg(p.amber).add_modifier(Modifier::BOLD),
         );

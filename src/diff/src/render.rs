@@ -72,7 +72,11 @@ fn loaded(
         .iter()
         .map(|c| app::compute_body(&mut reader, c))
         .collect();
+    let sources = app.attribution_sources();
+    let attribution = (!sources.is_empty())
+        .then(|| crate::attribution::Sessions::default().attribute(&wt, &sources));
     app.message = app.install(wt, mode, changes, review).or(problem);
+    app.set_attribution(attribution);
     for (i, (body, texts)) in bodies.into_iter().enumerate() {
         app.set_body(i, body, texts);
     }

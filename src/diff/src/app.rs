@@ -21,10 +21,12 @@ use crate::theme::Palette;
 use crate::wrap;
 
 mod annotate;
+mod authors;
 mod cache;
 mod sidebar;
 mod standing;
 pub(crate) use annotate::{Scope, row_line};
+pub(crate) use authors::AuthorFilter;
 pub(crate) use cache::Cache;
 use cache::Loaded;
 pub(crate) use sidebar::{ListItem, Sidebar};
@@ -642,6 +644,10 @@ pub(crate) struct App {
     /// Workers that finished or asked while the viewer was open, by the
     /// worktree they worked in, until it is shown.
     pub(crate) markers: HashMap<PathBuf, Marker>,
+    /// Which agent wrote which of the shown worktree's files, once read.
+    attribution: Option<crate::attribution::Attribution>,
+    /// Show only one author's files.
+    pub(crate) author_filter: Option<AuthorFilter>,
     pub(crate) cache: Cache,
     /// Set when a file's contents changed under its diff, so it needs a new one.
     pub(crate) needs_diffs: bool,
@@ -694,6 +700,8 @@ impl App {
             agents: None,
             owners: Vec::new(),
             markers: HashMap::new(),
+            attribution: None,
+            author_filter: None,
             cache: Cache::default(),
             needs_diffs: false,
             pending_anchor: None,
@@ -739,7 +747,8 @@ impl App {
             base: changes.base,
             target: changes.target,
         };
-        self.load(keys, changes.files, Some(reader));
+        let files = self.filter_authors(changes.files);
+        self.load(keys, files, Some(reader));
         self.refresh_marks();
         self.cards_changed();
         message
@@ -771,7 +780,7 @@ impl App {
             .iter()
             .filter(|f| !touched.contains(f.change.path.as_str()))
             .map(|f| f.change.clone())
-            .chain(files)
+            .chain(self.filter_authors(files))
             .collect();
         merged.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let keys = Keys {

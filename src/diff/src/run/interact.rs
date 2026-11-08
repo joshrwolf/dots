@@ -195,6 +195,17 @@ impl Runtime {
                 self.reload();
             }
             Action::Reviewed => self.app.toggle_reviewed(),
+            Action::Authors => {
+                if !self.app.can_attribute() {
+                    self.app.message = Some("no agent's sessions to attribute files from".into());
+                    return;
+                }
+                self.app.message = Some(match self.app.next_author_filter() {
+                    Some(f) => format!("only {}'s files (a: next)", f.label()),
+                    None => "every file".to_owned(),
+                });
+                self.reload();
+            }
             Action::Switcher => {
                 self.app.mode = Mode::Switcher(Switcher::new(&self.app));
             }

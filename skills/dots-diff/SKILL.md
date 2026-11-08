@@ -32,7 +32,14 @@ first, naming the worker (label and model) or session working in each and the
 worker's status; the status line names the shown worktree's. The user steps
 through waiting worktrees with `.` and `,`. When a worker finishes or asks a question
 while the viewer is open, the status line names it and the switcher marks
-its worktree, without changing what the viewer shows. Opening a worktree counts as
+its worktree, without changing what the viewer shows.
+
+Experimental: where several agents wrote in one worktree, file headers name
+each file's authors from the agents' Pi session files, and `a` shows one
+agent's files at a time. Only edit and write calls and plain shell writes
+(redirects, `tee`, `touch`, `rm`, `mv`, `cp`, `sed -i`) count; files written
+any other way, such as by a script, show as unknown. To be attributed, change
+files with the edit and write tools. Opening a worktree counts as
 looking at it until its changes change again. A clear,
 specific worker label therefore helps the user more than opening the viewer
 for each worker.

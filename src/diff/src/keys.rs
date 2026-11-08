@@ -47,6 +47,7 @@ pub(crate) enum Action {
     PickAgent,
     Since,
     Reviewed,
+    Authors,
     Switcher,
     NextWorktree,
     PrevWorktree,
@@ -236,6 +237,11 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[(key('R'), Action::Since)],
     ),
     row("m", "mark file reviewed", &[(key('m'), Action::Reviewed)]),
+    row(
+        "a",
+        "show one agent's files, then unknown, then all (experimental)",
+        &[(key('a'), Action::Authors)],
+    ),
     row(
         "w",
         "switch worktree, waiting for review first (type to filter)",

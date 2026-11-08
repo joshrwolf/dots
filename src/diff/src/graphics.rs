@@ -567,7 +567,7 @@ fn spec_for(app: &App, file: usize, cols: u16, cell: (u16, u16)) -> Spec {
     Spec {
         path: f.change.path.clone(),
         from: f.change.from.clone(),
-        note: f.change.mode_note(),
+        note: app.header_note(&f.change),
         folded: f.folded,
         status: f.change.status,
         counts: f.counts(),

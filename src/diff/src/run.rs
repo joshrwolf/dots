@@ -102,6 +102,8 @@ pub(crate) enum Msg {
     Watching(Result<Watch, String>),
     /// Interactive Pi sessions and workers changed.
     Agents(crate::agents::Snapshot),
+    /// Which agent wrote which file of a worktree.
+    Attributed(crate::attribution::Attribution),
     Ctl(Command),
 }
 
@@ -180,6 +182,10 @@ struct Runtime {
     /// A file to scroll to once the worktree loading now has loaded.
     pending_file: Option<String>,
     delivery: annotate::Delivery,
+    /// Attributes files to agents, off the event loop; `None` in tests.
+    attribution: Option<Sender<crate::attribution::Request>>,
+    /// Session files that could not be read, as last reported.
+    attribution_problems: Vec<String>,
     /// Save the next frame as a PNG here.
     shot: Option<PathBuf>,
 }
@@ -241,7 +247,11 @@ fn view(
     let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);
     let agents_tx = tx.clone();
     crate::agents::follow(move |s| agents_tx.send(Msg::Agents(s)).is_ok());
+    let attributed_tx = tx.clone();
     let mut rt = Runtime::new(app, tx, Threads::default());
+    rt.attribution = Some(crate::attribution::spawn(move |a| {
+        attributed_tx.send(Msg::Attributed(a)).is_ok()
+    }));
     rt.ctl_status = ctl_status;
     rt.timings = timings;
     rt.pipeline.loading_since = Some(started);
@@ -363,6 +373,8 @@ impl Runtime {
             })),
             pending_file: None,
             delivery: annotate::Delivery::default(),
+            attribution: None,
+            attribution_problems: Vec::new(),
             shot: None,
         }
     }
@@ -681,6 +693,8 @@ impl Runtime {
                     && let Some(content) = &s.content
                 {
                     self.app.look(content);
+                    // Its files changed, so their authors may have.
+                    self.request_attribution();
                 }
                 self.app.summaries.insert(path, s);
                 matches!(self.app.mode, Mode::Switcher(_))
@@ -688,6 +702,22 @@ impl Runtime {
             Msg::Agents(snapshot) => {
                 if let Some(problem) = self.app.set_agents(snapshot) {
                     self.app.message = Some(problem);
+                }
+                self.request_attribution();
+                true
+            }
+            Msg::Attributed(attribution) => {
+                if attribution.worktree != *self.app.worktree_path() {
+                    return false;
+                }
+                if attribution.problems != self.attribution_problems {
+                    self.attribution_problems.clone_from(&attribution.problems);
+                    if let Some(p) = attribution.problems.first() {
+                        self.app.message = Some(format!("not attributed: {p}"));
+                    }
+                }
+                if self.app.set_attribution(Some(attribution)) {
+                    self.start_load();
                 }
                 true
             }
@@ -838,6 +868,10 @@ impl Runtime {
             return;
         }
         self.app.current = worktree;
+        // Authors are the shown worktree's.
+        self.app.author_filter = None;
+        self.app.set_attribution(None);
+        self.request_attribution();
         self.reload();
         if !WATCH_ALL_FILES {
             self.spawn_watch();
@@ -851,6 +885,18 @@ impl Runtime {
         self.app.stream = None;
         self.pipeline.loading_since = Some(Instant::now());
         self.start_load();
+    }
+
+    /// Asks who wrote the shown worktree's files.
+    fn request_attribution(&self) {
+        let Some(tx) = &self.attribution else { return };
+        let sources = self.app.attribution_sources();
+        if !sources.is_empty() {
+            let _ = tx.send(crate::attribution::Request {
+                worktree: self.app.worktree_path().clone(),
+                sources,
+            });
+        }
     }
 
     /// The terminal answered a colour query.
