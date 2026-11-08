@@ -6,6 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
 use super::{cells, fill, put, put_counts, truncate_left, truncate_middle, worker_color};
+use crate::agents::Status;
 use crate::app::{App, Standing};
 use crate::editor::Editor;
 use crate::keys::BINDINGS;
@@ -357,7 +358,23 @@ pub(super) fn draw_switcher(buf: &mut Buffer, app: &App, sw: &Switcher, area: Re
         if m.worktree == app.current {
             put(buf, r.x, y, "▌", 1, style.fg(p.accent));
         }
-        if app.unseen(m.worktree) {
+        if let Some(marker) = app.marker(m.worktree) {
+            let badge = match marker.status {
+                Status::Asking => "?",
+                Status::Done => "✓",
+                Status::Stopped => "■",
+                _ => "✗",
+            };
+            let fg = worker_color(&marker.status, p);
+            put(
+                buf,
+                x,
+                y,
+                badge,
+                1,
+                style.fg(fg).add_modifier(Modifier::BOLD),
+            );
+        } else if app.unseen(m.worktree) {
             put(buf, x, y, "●", 1, style.fg(p.accent));
         }
         let end = r.right().saturating_sub(1);

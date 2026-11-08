@@ -987,6 +987,32 @@ mod tests {
     }
 
     #[test]
+    fn a_worker_finishing_is_named_on_the_status_line_without_switching() {
+        let (mut rt, _rx) = runtime(TWO);
+        let snapshot = |status| crate::agents::Snapshot {
+            agents: Vec::new(),
+            workers: vec![crate::agents::Worker {
+                id: "w-1".into(),
+                label: "fix".into(),
+                status,
+                cwd: "/r/src".into(),
+                model: None,
+                owner_session: None,
+                session_file: None,
+                updated_at: 1,
+            }],
+            problems: Vec::new(),
+        };
+        rt.handle(Msg::Agents(snapshot(crate::agents::Status::Running)));
+        assert_eq!(rt.app.message, None);
+        assert!(draw(&mut rt).contains("fix running"));
+        rt.handle(Msg::Agents(snapshot(crate::agents::Status::Done)));
+        assert_eq!(rt.app.message.as_deref(), Some("fix finished in main"));
+        assert_eq!(rt.app.current, 0);
+        assert!(draw(&mut rt).contains("fix finished in main"));
+    }
+
+    #[test]
     fn showing_a_worktree_records_its_content_as_looked_at() {
         let dir = std::env::temp_dir().join(format!("dots-diff-looked-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

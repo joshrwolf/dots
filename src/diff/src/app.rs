@@ -28,7 +28,7 @@ pub(crate) use annotate::{Scope, row_line};
 pub(crate) use cache::Cache;
 use cache::Loaded;
 pub(crate) use sidebar::{ListItem, Sidebar};
-pub(crate) use standing::Standing;
+pub(crate) use standing::{Marker, Standing};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LayoutChoice {
@@ -635,10 +635,13 @@ pub(crate) struct App {
     pub(crate) mode: Mode,
     pub(crate) sidebar: Sidebar,
     pub(crate) summaries: HashMap<PathBuf, Summary>,
-    /// Interactive Pi sessions and workers, as last read.
-    agents: crate::agents::Snapshot,
+    /// Interactive Pi sessions and workers, once read.
+    agents: Option<crate::agents::Snapshot>,
     /// Who works in each worktree, in the repository's order.
     owners: Vec<crate::agents::Owners>,
+    /// Workers that finished or asked while the viewer was open, by the
+    /// worktree they worked in, until it is shown.
+    pub(crate) markers: HashMap<PathBuf, Marker>,
     pub(crate) cache: Cache,
     /// Set when a file's contents changed under its diff, so it needs a new one.
     pub(crate) needs_diffs: bool,
@@ -688,8 +691,9 @@ impl App {
             mode: Mode::Normal,
             sidebar: Sidebar::default(),
             summaries: HashMap::new(),
-            agents: crate::agents::Snapshot::default(),
+            agents: None,
             owners: Vec::new(),
+            markers: HashMap::new(),
             cache: Cache::default(),
             needs_diffs: false,
             pending_anchor: None,
@@ -721,6 +725,7 @@ impl App {
         changes: Changes,
         review: Result<(PathBuf, review::State), String>,
     ) -> Option<String> {
+        self.markers.remove(&worktree);
         let message = if self.session.shows(&worktree) {
             None
         } else {
