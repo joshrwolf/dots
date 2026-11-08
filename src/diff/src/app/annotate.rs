@@ -265,7 +265,7 @@ impl App {
                 let (start, end) = self
                     .selection()
                     .ok_or("move to a code line, or press C for the whole file")?;
-                if self.since && start.side == Side::Old {
+                if self.settings.since && start.side == Side::Old {
                     return Err("since the last send, comment on the new side".to_owned());
                 }
                 let f = stream
@@ -494,7 +494,7 @@ impl App {
         }
         if let Some(texts) = texts {
             // Since the last send, the old side is what was sent.
-            changed |= self.session.file_changed(path, texts, !self.since);
+            changed |= self.session.file_changed(path, texts, !self.settings.since);
         }
         if changed {
             self.cards_changed();

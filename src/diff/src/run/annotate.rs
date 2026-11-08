@@ -38,6 +38,22 @@ impl Delivered {
     }
 }
 
+/// Who reviews go to, and the send under way.
+#[derive(Debug, Default)]
+pub(super) struct Delivery {
+    /// The Rex pane reviews go to while its worktree is shown.
+    pub(super) bound: Option<(String, usize)>,
+    /// Who a review goes to, once resolved.
+    pub(super) resolution: Option<Resolution>,
+    /// Numbers resolutions and picks, so an older result never replaces a
+    /// newer one.
+    pub(super) resolve_seq: u64,
+    /// The live sessions.
+    pub(super) agents: Vec<deliver::Agent>,
+    /// A review is being delivered.
+    pub(super) sending: bool,
+}
+
 impl Runtime {
     /// Puts the cursor on the first changed line on screen.
     pub(super) fn cursor_to_change(&mut self, rows: u16) {
@@ -130,7 +146,7 @@ impl Runtime {
                     return;
                 };
                 // Resolutions started before the pick do not replace it.
-                self.resolve_seq += 1;
+                self.delivery.resolve_seq += 1;
                 self.app.session.edit().agent = Some(agent.session_id.clone());
                 self.set_resolution(Resolution::Agent {
                     agent,
@@ -159,7 +175,7 @@ impl Runtime {
     /// Sends every draft, or one comment, to the resolved session. With no
     /// single session, asks which.
     pub(super) fn send(&mut self, batch: Batch) {
-        if self.sending {
+        if self.delivery.sending {
             self.app.message = Some("still sending the last review".to_owned());
             return;
         }
@@ -177,7 +193,7 @@ impl Runtime {
             self.app.message = Some("no drafts to send; c comments on a line".to_owned());
             return;
         }
-        let (agent, worker) = match &self.resolution {
+        let (agent, worker) = match &self.delivery.resolution {
             Some(Resolution::Agent { agent, worker, .. }) => (agent.clone(), worker.clone()),
             Some(other) => {
                 let gone = *other == Resolution::PickGone;
@@ -193,7 +209,8 @@ impl Runtime {
                 return;
             }
         };
-        let (Some(stream), Some((repo, root))) = (&self.app.stream, self.source.clone()) else {
+        let (Some(stream), Some((repo, root))) = (&self.app.stream, self.pipeline.source.clone())
+        else {
             return;
         };
         let wt = &self.app.repo.worktrees[self.app.current];
@@ -210,7 +227,7 @@ impl Runtime {
         let worktree = stream.worktree.clone();
         let dir = self.app.session.dir().map(Path::to_owned);
         let tx = self.tx.clone();
-        self.sending = true;
+        self.delivery.sending = true;
         self.app.message = Some(format!("sending to {}…", agent.label()));
         std::thread::spawn(move || {
             let mut reader = Reader::new(repo.to_thread_local(), root);
@@ -248,7 +265,7 @@ impl Runtime {
         ids: &[u64],
         result: Result<Delivered, String>,
     ) {
-        self.sending = false;
+        self.delivery.sending = false;
         match result {
             Ok(d) => {
                 let n = ids.len();
@@ -272,13 +289,13 @@ impl Runtime {
                     }
                 }
                 self.app.message = Some(message);
-                if self.app.since {
+                if self.app.settings.since {
                     self.start_load();
                 }
             }
             Err(e) => {
                 self.app.message = Some(format!("not sent, drafts kept: {e}"));
-                self.resolution = None;
+                self.delivery.resolution = None;
                 self.spawn_resolve();
             }
         }
@@ -286,8 +303,8 @@ impl Runtime {
 
     /// Finds who a review of the shown worktree goes to, off the event loop.
     pub(super) fn spawn_resolve(&mut self) {
-        self.resolve_seq += 1;
-        let seq = self.resolve_seq;
+        self.delivery.resolve_seq += 1;
+        let seq = self.delivery.resolve_seq;
         let worktree = self.app.worktree_path().clone();
         let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_owned());
         let worktrees: Vec<PathBuf> = self
@@ -298,6 +315,7 @@ impl Runtime {
             .map(|w| canonical(&w.path))
             .collect();
         let bound = self
+            .delivery
             .bound
             .as_ref()
             .filter(|(_, i)| *i == self.app.current)
@@ -343,7 +361,7 @@ impl Runtime {
             Resolution::Unavailable(e) => format!("→ workers unreadable ({e}): A to choose"),
             Resolution::PickGone => "→ the picked session ended: A to choose".to_owned(),
         };
-        self.resolution = Some(resolution);
+        self.delivery.resolution = Some(resolution);
     }
 
     pub(super) fn save_review(&mut self) {

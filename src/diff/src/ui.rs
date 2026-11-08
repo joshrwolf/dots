@@ -1729,7 +1729,7 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
             muted.fg(p.accent).add_modifier(Modifier::BOLD),
         );
     }
-    if app.since {
+    if app.settings.since {
         x += put(
             buf,
             x,
@@ -1742,7 +1742,7 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
     if let Some(stream) = &app.stream {
         let reviewed = stream.files.iter().filter(|f| f.reviewed).count();
         let (a, r, done) = stream.counts();
-        if !app.since {
+        if !app.settings.since {
             x += put(
                 buf,
                 x,

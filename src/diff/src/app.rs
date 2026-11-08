@@ -111,6 +111,8 @@ pub(crate) struct Settings {
     pub(crate) layout: LayoutChoice,
     pub(crate) wrap: bool,
     pub(crate) mode: repo::Mode,
+    /// Show only what changed since the last send.
+    pub(crate) since: bool,
     pub(crate) sidebar: bool,
     /// Sidebar columns chosen with the resize keys; `None` sizes it to the screen.
     pub(crate) sidebar_width: Option<u16>,
@@ -124,6 +126,7 @@ impl Default for Settings {
             layout: LayoutChoice::Auto,
             wrap: true,
             mode: repo::Mode::Base,
+            since: false,
             sidebar: true,
             sidebar_width: None,
             header_rows: 1,
@@ -603,7 +606,6 @@ pub(crate) struct Areas {
 }
 
 #[derive(Debug)]
-#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct App {
     pub(crate) repo: Repo,
     pub(crate) palette: Palette,
@@ -629,8 +631,6 @@ pub(crate) struct App {
     pub(crate) cursor_row: u16,
     /// On a split row, comment on the old side.
     pub(crate) cursor_old: bool,
-    /// Show only what changed since the last send.
-    pub(crate) since: bool,
     /// Mark code moved between places.
     pub(crate) show_moves: bool,
     /// The last moved-code search, once one finished.
@@ -672,7 +672,6 @@ impl App {
             session: Session::default(),
             cursor_row: 0,
             cursor_old: false,
-            since: false,
             show_moves: false,
             moves: None,
             target: String::new(),

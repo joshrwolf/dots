@@ -154,60 +154,88 @@ struct Theme {
     changed: bool,
 }
 
-#[allow(clippy::struct_excessive_bools)]
-struct Runtime {
-    app: App,
-    tx: Sender<Msg>,
+/// Keeping the stream current: loads, path-limited rescans after file
+/// events, diffs and the safety-net check.
+struct Pipeline {
+    /// Numbers loads, so results of an older one are dropped.
     generation: u64,
+    /// Numbers file lists, so diffs of an older list are dropped.
+    epoch: u64,
     diffs: Option<DiffJob>,
-    pool: highlight::Pool,
-    watcher: Option<Watch>,
-    summaries: SummaryQueue,
-    /// Worktrees whose switcher counts are stale, and when they last changed.
-    stale: HashMap<PathBuf, Instant>,
     /// File events waiting to be coalesced into one refresh.
     burst: Burst,
     /// A path-limited rescan is running; later bursts wait for it.
     partial_busy: bool,
-    /// Changes with each new file list, so diffs of an older list are dropped.
-    epoch: u64,
     /// A refresh waiting to reach the screen: when its burst began and its paths.
     refreshing: Option<(Instant, Vec<String>)>,
     next_reconcile: Instant,
+    /// What the last full scan saw of HEAD, the index and the base.
     state: Option<GitState>,
-    wanted: Vec<Key>,
-    timings: Timings,
-    /// When the current worktree began loading, until its first full frame.
-    loading_since: Option<Instant>,
-    theme: Theme,
-    quit: bool,
-    summaries_started: bool,
     /// Where the current stream's contents are read from.
     source: Option<(gix::ThreadSafeRepository, PathBuf)>,
-    /// The diffs the last moved-code search was started for, by fingerprint.
-    moves_for: Option<u64>,
-    /// Numbers moved-code searches; only the latest one's result is kept.
-    moves_seq: u64,
+    /// When the current worktree began loading, until its first full frame.
+    loading_since: Option<Instant>,
+}
+
+impl Pipeline {
+    fn new() -> Self {
+        Self {
+            generation: 0,
+            epoch: 0,
+            diffs: None,
+            burst: Burst::default(),
+            partial_busy: false,
+            refreshing: None,
+            next_reconcile: Instant::now() + RECONCILE,
+            state: None,
+            source: None,
+            loading_since: None,
+        }
+    }
+
+    /// Stops the diffs running for the current file list.
+    fn cancel_diffs(&mut self) {
+        if let Some(job) = self.diffs.take() {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The latest moved-code search.
+#[derive(Debug, Default)]
+struct MovesSearch {
+    /// The diffs it was started for, by fingerprint.
+    started_for: Option<u64>,
+    /// Numbers searches; only the latest one's result is kept.
+    seq: u64,
+}
+
+struct Runtime {
+    app: App,
+    tx: Sender<Msg>,
+    pipeline: Pipeline,
+    pool: highlight::Pool,
+    watcher: Option<Watch>,
     /// The worktree the file watch was set up around.
     watched: Option<usize>,
+    summaries: SummaryQueue,
+    summaries_started: bool,
+    /// Worktrees whose switcher counts are stale, and when they last changed.
+    stale: HashMap<PathBuf, Instant>,
+    wanted: Vec<Key>,
+    timings: Timings,
+    theme: Theme,
+    quit: bool,
+    moves: MovesSearch,
     /// What the control socket reports.
     ctl_status: Arc<Mutex<ctl::Status>>,
     /// A file to scroll to once the worktree loading now has loaded.
     pending_file: Option<String>,
-    /// The Rex pane reviews go to while its worktree is shown.
-    bound: Option<(String, usize)>,
-    /// Who a review goes to, once resolved, and the live sessions.
-    resolution: Option<deliver::Resolution>,
-    /// Numbers resolutions and picks, so an older result never replaces a newer one.
-    resolve_seq: u64,
-    agents: Vec<deliver::Agent>,
-    /// A review is being delivered.
-    sending: bool,
+    delivery: annotate::Delivery,
     /// Save the next frame as a PNG here.
     shot: Option<PathBuf>,
 }
 
-#[allow(clippy::too_many_lines)]
 pub(crate) fn run(options: Options) -> Result<()> {
     let mut timings = Timings::new(options.timings.is_some());
     let started = Instant::now();
@@ -220,59 +248,70 @@ pub(crate) fn run(options: Options) -> Result<()> {
     let current = repo.index_of(&options.path).unwrap_or(0);
 
     let mut terminal = terminal::start().context("starting the terminal")?;
-    let result = (|| {
-        let (tx, rx) = mpsc::channel();
-        input::spawn(tx.clone(), Msg::Input)?;
-        // Input that arrives while the colours are awaited is handled after.
-        let (detected, early) = if let Some(d) = options.theme {
-            (Some(d), Vec::new())
-        } else {
-            terminal::send(&mut terminal, &theme::query())?;
-            first_colours(&rx, Duration::from_millis(400))
-        };
-        timings.note(&format!(
-            "theme {}",
-            if detected.is_some() {
-                "reported"
-            } else {
-                "not reported; light fallback"
-            }
-        ));
-        let palette = Palette::new(detected.unwrap_or_else(Detected::light));
-        let mut settings = options.settings.clone();
-        if options.graphics {
-            settings.header_rows = 2;
-        }
-        let app = App::new(repo, current, palette, settings);
-        let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);
-        let mut rt = Runtime::new(app, tx, Threads::default());
-        rt.ctl_status = ctl_status;
-        rt.timings = timings;
-        rt.loading_since = Some(started);
-        if options.theme.is_some() {
-            rt.theme.next_poll = None;
-        }
-        rt.theme.detected = detected;
-        rt.pending_file.clone_from(&options.file);
-        rt.bound = options.bind.clone().map(|b| (b, current));
-        let mut graphics = options.graphics.then(Graphics::new);
-        rt.start_load();
-        rt.spawn_watch();
-        for msg in early {
-            rt.handle(msg);
-        }
-        let outcome = rt.event_loop(&mut terminal, &rx, graphics.as_mut());
-        if let Some(g) = graphics.as_mut() {
-            g.clear();
-        }
-        outcome.map(|()| rt.timings)
-    })();
+    let result = view(&mut terminal, &options, repo, current, timings, started);
     terminal::stop(&mut terminal)?;
     let timings = result?;
     if let Some(dest) = options.timings {
         timings.write(started, dest.as_deref())?;
     }
     Ok(())
+}
+
+/// Shows worktree `current` of `repo` in the started terminal until the
+/// user quits. Returns the timings.
+fn view(
+    terminal: &mut terminal::Tui,
+    options: &Options,
+    repo: repo::Repo,
+    current: usize,
+    mut timings: Timings,
+    started: Instant,
+) -> Result<Timings> {
+    let (tx, rx) = mpsc::channel();
+    input::spawn(tx.clone(), Msg::Input)?;
+    // Input that arrives while the colours are awaited is handled after.
+    let (detected, early) = if let Some(d) = options.theme {
+        (Some(d), Vec::new())
+    } else {
+        terminal::send(terminal, &theme::query())?;
+        first_colours(&rx, Duration::from_millis(400))
+    };
+    timings.note(&format!(
+        "theme {}",
+        if detected.is_some() {
+            "reported"
+        } else {
+            "not reported; light fallback"
+        }
+    ));
+    let palette = Palette::new(detected.unwrap_or_else(Detected::light));
+    let mut settings = options.settings.clone();
+    if options.graphics {
+        settings.header_rows = 2;
+    }
+    let app = App::new(repo, current, palette, settings);
+    let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);
+    let mut rt = Runtime::new(app, tx, Threads::default());
+    rt.ctl_status = ctl_status;
+    rt.timings = timings;
+    rt.pipeline.loading_since = Some(started);
+    if options.theme.is_some() {
+        rt.theme.next_poll = None;
+    }
+    rt.theme.detected = detected;
+    rt.pending_file.clone_from(&options.file);
+    rt.delivery.bound = options.bind.clone().map(|b| (b, current));
+    let mut graphics = options.graphics.then(Graphics::new);
+    rt.start_load();
+    rt.spawn_watch();
+    for msg in early {
+        rt.handle(msg);
+    }
+    let outcome = rt.event_loop(terminal, &rx, graphics.as_mut());
+    if let Some(g) = graphics.as_mut() {
+        g.clear();
+    }
+    outcome.map(|()| rt.timings)
 }
 
 /// Waits up to `timeout` for the terminal's colours, keeping what else
@@ -352,20 +391,12 @@ impl Runtime {
             summaries: SummaryQueue::new(threads.summaries, &tx),
             app,
             tx,
-            generation: 0,
-            diffs: None,
+            pipeline: Pipeline::new(),
             pool,
             watcher: None,
             stale: HashMap::new(),
-            burst: Burst::default(),
-            partial_busy: false,
-            epoch: 0,
-            refreshing: None,
-            next_reconcile: Instant::now() + RECONCILE,
-            state: None,
             wanted: Vec::new(),
             timings: Timings::new(false),
-            loading_since: None,
             theme: Theme {
                 next_poll: Some(Instant::now() + THEME_POLL),
                 detected: None,
@@ -374,20 +405,14 @@ impl Runtime {
             },
             quit: false,
             summaries_started: false,
-            source: None,
-            moves_for: None,
-            moves_seq: 0,
+            moves: MovesSearch::default(),
             watched: None,
             ctl_status: Arc::new(Mutex::new(ctl::Status {
                 block: None,
                 worktree,
             })),
             pending_file: None,
-            bound: None,
-            resolution: None,
-            resolve_seq: 0,
-            agents: Vec::new(),
-            sending: false,
+            delivery: annotate::Delivery::default(),
             shot: None,
         }
     }
@@ -396,7 +421,6 @@ impl Runtime {
         self.app.areas.diff.height.max(1)
     }
 
-    #[allow(clippy::too_many_lines)]
     fn event_loop(
         &mut self,
         terminal: &mut terminal::Tui,
@@ -427,26 +451,11 @@ impl Runtime {
                 dirty = false;
             }
             let now = Instant::now();
-            let mut deadline = now + Duration::from_secs(60);
-            if let Some(at) = self.theme.next_poll {
-                deadline = deadline.min(at);
-            }
-            if let Some(at) = self.stale.values().min() {
-                deadline = deadline.min(*at + SUMMARY_SETTLE);
-            }
+            let mut deadline = self.deadline(now);
             if graphics.as_deref().is_some_and(Graphics::pending) {
                 deadline = deadline.min(now + Duration::from_millis(50));
                 dirty = true;
             }
-            if !self.partial_busy
-                && let Some(at) = self.burst.due()
-            {
-                deadline = deadline.min(at);
-            }
-            if let Some(at) = self.app.flash_deadline() {
-                deadline = deadline.min(at);
-            }
-            deadline = deadline.min(self.next_reconcile);
             match rx.recv_timeout(deadline.saturating_duration_since(now)) {
                 Ok(msg) => dirty |= self.handle(msg),
                 Err(RecvTimeoutError::Timeout) => {}
@@ -455,61 +464,94 @@ impl Runtime {
             while let Ok(msg) = rx.try_recv() {
                 dirty |= self.handle(msg);
             }
-            self.refresh_moves();
-            if self.app.session.dirty() {
-                self.save_review();
-            }
-            let now = Instant::now();
-            if !self.partial_busy {
-                match self.burst.take(now) {
-                    Some(Refresh::Full) => self.start_load(),
-                    Some(Refresh::Paths(paths)) => self.start_partial(paths, now),
-                    None => {}
-                }
-            }
-            if self.app.flash_deadline().is_some_and(|at| at <= now) {
-                self.app.expire_flashes(now);
-                dirty = true;
-            }
-            if self.next_reconcile <= now {
-                self.next_reconcile = now + RECONCILE;
-                self.spawn_reconcile();
-                self.spawn_resolve();
-            }
-            if let Some(at) = self.theme.next_poll
-                && at <= now
-            {
-                self.theme.next_poll = Some(now + THEME_POLL);
-                self.theme.ask = true;
-            }
-            if std::mem::take(&mut self.theme.ask) {
-                // The replies arrive as input.
-                terminal::send(terminal, &theme::query())?;
-            }
-            if std::mem::take(&mut self.theme.changed) {
-                if let Some(g) = graphics.as_deref_mut() {
-                    g.invalidate();
-                }
-                // Repaint everything: the buffer diff cannot know every cell changed.
-                terminal::repaint(terminal)?;
-                dirty = true;
-            }
-            let settled: Vec<PathBuf> = self
-                .stale
-                .iter()
-                .filter(|(_, at)| **at + SUMMARY_SETTLE <= now)
-                .map(|(p, _)| p.clone())
-                .collect();
-            for path in settled {
-                self.stale.remove(&path);
-                self.summaries.push(path, false);
-            }
+            dirty |= self.tick(terminal, graphics.as_deref_mut())?;
         }
         Ok(())
     }
 
+    /// When the loop next has work of its own, without messages.
+    fn deadline(&self, now: Instant) -> Instant {
+        let mut deadline = (now + Duration::from_secs(60)).min(self.pipeline.next_reconcile);
+        if let Some(at) = self.theme.next_poll {
+            deadline = deadline.min(at);
+        }
+        if let Some(at) = self.stale.values().min() {
+            deadline = deadline.min(*at + SUMMARY_SETTLE);
+        }
+        if !self.pipeline.partial_busy
+            && let Some(at) = self.pipeline.burst.due()
+        {
+            deadline = deadline.min(at);
+        }
+        if let Some(at) = self.app.flash_deadline() {
+            deadline = deadline.min(at);
+        }
+        deadline
+    }
+
+    /// Does the loop's own work once messages are handled: saving,
+    /// refreshes that are due, fading marks, the safety net, colour
+    /// queries and stale switcher counts. Returns whether to draw.
+    fn tick(
+        &mut self,
+        terminal: &mut terminal::Tui,
+        graphics: Option<&mut Graphics>,
+    ) -> Result<bool> {
+        let mut dirty = false;
+        self.refresh_moves();
+        if self.app.session.dirty() {
+            self.save_review();
+        }
+        let now = Instant::now();
+        if !self.pipeline.partial_busy {
+            match self.pipeline.burst.take(now) {
+                Some(Refresh::Full) => self.start_load(),
+                Some(Refresh::Paths(paths)) => self.start_partial(paths, now),
+                None => {}
+            }
+        }
+        if self.app.flash_deadline().is_some_and(|at| at <= now) {
+            self.app.expire_flashes(now);
+            dirty = true;
+        }
+        if self.pipeline.next_reconcile <= now {
+            self.pipeline.next_reconcile = now + RECONCILE;
+            self.spawn_reconcile();
+            self.spawn_resolve();
+        }
+        if let Some(at) = self.theme.next_poll
+            && at <= now
+        {
+            self.theme.next_poll = Some(now + THEME_POLL);
+            self.theme.ask = true;
+        }
+        if std::mem::take(&mut self.theme.ask) {
+            // The replies arrive as input.
+            terminal::send(terminal, &theme::query())?;
+        }
+        if std::mem::take(&mut self.theme.changed) {
+            if let Some(g) = graphics {
+                g.invalidate();
+            }
+            // Repaint everything: the buffer diff cannot know every cell changed.
+            terminal::repaint(terminal)?;
+            dirty = true;
+        }
+        let settled: Vec<PathBuf> = self
+            .stale
+            .iter()
+            .filter(|(_, at)| **at + SUMMARY_SETTLE <= now)
+            .map(|(p, _)| p.clone())
+            .collect();
+        for path in settled {
+            self.stale.remove(&path);
+            self.summaries.push(path, false);
+        }
+        Ok(dirty)
+    }
+
     fn after_frame(&mut self, draw: Duration) {
-        if let Some(since) = self.loading_since
+        if let Some(since) = self.pipeline.loading_since
             && let Some(stream) = &self.app.stream
         {
             // A frame is complete once every file on screen has its diff.
@@ -520,7 +562,7 @@ impl Runtime {
                 _ => true,
             });
             if ready {
-                self.loading_since = None;
+                self.pipeline.loading_since = None;
                 if !self.summaries_started {
                     // Rail counts wait for the first full frame so they never delay it.
                     self.summaries_started = true;
@@ -533,7 +575,7 @@ impl Runtime {
                 );
             }
         }
-        if let Some((since, paths)) = &self.refreshing
+        if let Some((since, paths)) = &self.pipeline.refreshing
             && let Some(stream) = &self.app.stream
         {
             let done = stream
@@ -547,7 +589,7 @@ impl Runtime {
                     since.elapsed(),
                     &format!("{} paths, draw {draw:.1?}", paths.len()),
                 );
-                self.refreshing = None;
+                self.pipeline.refreshing = None;
             }
         }
         if self.app.needs_diffs {
@@ -560,7 +602,7 @@ impl Runtime {
             self.wanted = keys;
             self.pool.want(jobs);
         }
-        if let Some(job) = &self.diffs {
+        if let Some(job) = &self.pipeline.diffs {
             job.focus.store(self.app.top.file, Ordering::Relaxed);
         }
     }
@@ -579,7 +621,7 @@ impl Runtime {
                 review,
                 elapsed,
             } => {
-                if generation != self.generation {
+                if generation != self.pipeline.generation {
                     return false;
                 }
                 match result {
@@ -591,13 +633,13 @@ impl Runtime {
                         );
                         if !self.app.session.shows(&worktree) {
                             // Another worktree's review goes to its own agent.
-                            self.resolution = None;
+                            self.delivery.resolution = None;
                             "→ …".clone_into(&mut self.app.target);
                         }
-                        self.state = Some(changes.state.clone());
-                        self.source = Some((changes.repo.clone(), changes.root.clone()));
+                        self.pipeline.state = Some(changes.state.clone());
+                        self.pipeline.source = Some((changes.repo.clone(), changes.root.clone()));
                         self.app.message = self.app.install(worktree, mode, changes, review);
-                        self.epoch += 1;
+                        self.pipeline.epoch += 1;
                         self.spawn_diffs();
                         self.spawn_resolve();
                         if let Some(file) = self.pending_file.take() {
@@ -609,7 +651,7 @@ impl Runtime {
                 true
             }
             Msg::Moves { epoch, seq, moves } => {
-                if epoch != self.epoch || seq != self.moves_seq {
+                if epoch != self.pipeline.epoch || seq != self.moves.seq {
                     return false;
                 }
                 if moves.skipped {
@@ -626,7 +668,7 @@ impl Runtime {
                 texts,
                 elapsed,
             } => {
-                if epoch != self.epoch {
+                if epoch != self.pipeline.epoch {
                     return false;
                 }
                 let lines = match &body {
@@ -644,19 +686,19 @@ impl Runtime {
                 result,
                 since,
             } => {
-                self.partial_busy = false;
-                if generation != self.generation {
+                self.pipeline.partial_busy = false;
+                if generation != self.pipeline.generation {
                     return false;
                 }
                 match result {
                     Ok(files) => {
                         self.app.apply_paths(&paths, files);
-                        self.epoch += 1;
-                        self.refreshing = Some((since, paths));
+                        self.pipeline.epoch += 1;
+                        self.pipeline.refreshing = Some((since, paths));
                         self.spawn_diffs();
                     }
                     // The paths could not be scanned alone; scan everything.
-                    Err(_) => self.burst.push_full(Instant::now()),
+                    Err(_) => self.pipeline.burst.push_full(Instant::now()),
                 }
                 true
             }
@@ -665,15 +707,15 @@ impl Runtime {
                 state,
                 moved,
             } => {
-                if generation != self.generation {
+                if generation != self.pipeline.generation {
                     return false;
                 }
-                if state.is_some() && state != self.state {
+                if state.is_some() && state != self.pipeline.state {
                     // The full scan records the new state.
-                    self.burst.push_full(Instant::now());
+                    self.pipeline.burst.push_full(Instant::now());
                 }
                 if !moved.is_empty() {
-                    self.burst.push(Instant::now(), moved);
+                    self.pipeline.burst.push(Instant::now(), moved);
                 }
                 false
             }
@@ -693,9 +735,9 @@ impl Runtime {
                 let now = Instant::now();
                 match touched {
                     Touched::Files { worktree, paths } if worktree == current => {
-                        self.burst.push(now, paths);
+                        self.pipeline.burst.push(now, paths);
                     }
-                    Touched::GitState(i) if i == current => self.burst.push_full(now),
+                    Touched::GitState(i) if i == current => self.pipeline.burst.push_full(now),
                     Touched::Files { worktree: i, .. } | Touched::GitState(i) => {
                         if let Some(w) = self.app.repo.worktrees.get(i) {
                             self.stale.insert(w.path.clone(), now);
@@ -703,7 +745,7 @@ impl Runtime {
                     }
                     Touched::Refs => {
                         // Any worktree's base may have moved.
-                        self.burst.push_full(now);
+                        self.pipeline.burst.push_full(now);
                         for (i, w) in self.app.repo.worktrees.iter().enumerate() {
                             if i != current {
                                 self.stale.insert(w.path.clone(), now);
@@ -731,13 +773,13 @@ impl Runtime {
                 agents,
                 problems,
             } => {
-                if seq != self.resolve_seq || worktree != *self.app.worktree_path() {
+                if seq != self.delivery.resolve_seq || worktree != *self.app.worktree_path() {
                     return false;
                 }
                 if let Some(problem) = problems.first() {
                     self.app.message = Some(format!("unreadable Pi registration {problem}"));
                 }
-                self.agents = agents;
+                self.delivery.agents = agents;
                 self.set_resolution(resolution);
                 true
             }
@@ -781,7 +823,7 @@ impl Runtime {
                 self.app.clear_notes(rel.as_deref());
             }
             Command::Bind(block) => {
-                self.bound = Some((block, self.app.current));
+                self.delivery.bound = Some((block, self.app.current));
                 self.spawn_resolve();
             }
             Command::Shot(path) => self.shot = Some(path),
@@ -841,24 +883,22 @@ impl Runtime {
     fn reload(&mut self) {
         self.app.end_visual();
         self.app.stream = None;
-        self.loading_since = Some(Instant::now());
+        self.pipeline.loading_since = Some(Instant::now());
         self.start_load();
     }
 
     fn start_load(&mut self) {
-        self.generation += 1;
+        self.pipeline.generation += 1;
         if let Ok(mut status) = self.ctl_status.lock() {
             status.worktree.clone_from(self.app.worktree_path());
         }
-        if let Some(job) = self.diffs.take() {
-            job.cancel.store(true, Ordering::Relaxed);
-        }
-        self.burst = Burst::default();
-        self.state = None;
-        let generation = self.generation;
+        self.pipeline.cancel_diffs();
+        self.pipeline.burst = Burst::default();
+        self.pipeline.state = None;
+        let generation = self.pipeline.generation;
         let worktree = self.app.worktree_path().clone();
         let mode = self.app.settings.mode;
-        let since = self.app.since;
+        let since = self.app.settings.since;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
@@ -876,7 +916,8 @@ impl Runtime {
 
     /// Rescans `paths` alone, off the event loop.
     fn start_partial(&mut self, paths: Vec<String>, since: Instant) {
-        let (Some((repo, root)), Some(stream)) = (self.source.clone(), &self.app.stream) else {
+        let (Some((repo, root)), Some(stream)) = (self.pipeline.source.clone(), &self.app.stream)
+        else {
             return;
         };
         let listed: Vec<&str> = stream
@@ -895,13 +936,14 @@ impl Runtime {
             .filter_map(|f| Some((f.change.path.clone(), f.change.from.clone()?)))
             .filter(|(path, _)| paths.contains(path))
             .collect();
-        let generation = self.generation;
+        let generation = self.pipeline.generation;
         let tx = self.tx.clone();
         let seen = self
             .app
+            .settings
             .since
             .then(|| self.app.session.state().seen.clone());
-        self.partial_busy = true;
+        self.pipeline.partial_busy = true;
         std::thread::spawn(move || {
             let repo = repo.to_thread_local();
             let result = repo::changes_for(&repo, target, &paths, &renames)
@@ -932,7 +974,7 @@ impl Runtime {
             return;
         };
         let worktree = stream.worktree.clone();
-        let state = self.state.clone();
+        let state = self.pipeline.state.clone();
         let files: Vec<(String, Stamp)> = stream
             .files
             .iter()
@@ -941,7 +983,7 @@ impl Runtime {
                 _ => None,
             })
             .collect();
-        let generation = self.generation;
+        let generation = self.pipeline.generation;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let state = state.map(|s| s.restat());
@@ -1004,16 +1046,17 @@ impl Runtime {
         let Some(print) = self.app.move_fingerprint() else {
             return;
         };
-        if self.moves_for == Some(print) {
+        if self.moves.started_for == Some(print) {
             return;
         }
-        let (Some(inputs), Some((repo, root))) = (self.app.move_inputs(), self.source.clone())
+        let (Some(inputs), Some((repo, root))) =
+            (self.app.move_inputs(), self.pipeline.source.clone())
         else {
             return;
         };
-        self.moves_for = Some(print);
-        self.moves_seq += 1;
-        let (tx, epoch, seq) = (self.tx.clone(), self.epoch, self.moves_seq);
+        self.moves.started_for = Some(print);
+        self.moves.seq += 1;
+        let (tx, epoch, seq) = (self.tx.clone(), self.pipeline.epoch, self.moves.seq);
         std::thread::spawn(move || {
             let mut reader = Reader::new(repo.to_thread_local(), root);
             let moves = Arc::new(moves::search(&mut reader, &inputs));
@@ -1027,13 +1070,11 @@ impl Runtime {
         if pending.is_empty() {
             return;
         }
-        if let Some(job) = self.diffs.take() {
-            job.cancel.store(true, Ordering::Relaxed);
-        }
+        self.pipeline.cancel_diffs();
         let Some(stream) = &self.app.stream else {
             return;
         };
-        let Some((repo, root)) = self.source.clone() else {
+        let Some((repo, root)) = self.pipeline.source.clone() else {
             return;
         };
         let todo: Vec<Option<FileChange>> = (0..stream.files.len())
@@ -1057,7 +1098,7 @@ impl Runtime {
                 Arc::clone(&job.cancel),
                 Arc::clone(&job.focus),
                 self.tx.clone(),
-                self.epoch,
+                self.pipeline.epoch,
             );
             std::thread::spawn(move || {
                 let mut reader = Reader::new(repo.to_thread_local(), root);
@@ -1085,7 +1126,7 @@ impl Runtime {
                 }
             });
         }
-        self.diffs = Some(job);
+        self.pipeline.diffs = Some(job);
     }
 
     /// Queues every worktree's switcher counts, those listed after the
@@ -1158,7 +1199,6 @@ impl Runtime {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     fn key(&mut self, key: KeyEvent) {
         // Terminals reporting keys unambiguously send Shift+c rather than C.
         let key = match key.code {
@@ -1299,7 +1339,7 @@ impl Runtime {
                 self.refresh_moves();
             }
             Action::Since => {
-                self.app.since = !self.app.since;
+                self.app.settings.since = !self.app.settings.since;
                 self.reload();
             }
             Action::Reviewed => self.app.toggle_reviewed(),
@@ -1706,8 +1746,8 @@ mod tests {
     fn a_pick_is_not_replaced_by_a_resolution_started_before_it() {
         let (mut rt, _rx) = runtime(TWO);
         // A resolution in flight, as spawn_resolve numbers it.
-        rt.resolve_seq += 1;
-        let before = rt.resolve_seq;
+        rt.delivery.resolve_seq += 1;
+        let before = rt.delivery.resolve_seq;
         rt.app.mode = Mode::Picker(crate::picker::Picker::new(vec![agent("x", "b:2")], None));
         rt.key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(rt.app.session.state().agent.as_deref(), Some("x"));
@@ -1724,7 +1764,7 @@ mod tests {
             problems: Vec::new(),
         });
         assert!(
-            matches!(&rt.resolution, Some(deliver::Resolution::Agent { agent, .. }) if agent.session_id == "x"),
+            matches!(&rt.delivery.resolution, Some(deliver::Resolution::Agent { agent, .. }) if agent.session_id == "x"),
             "{}",
             rt.app.target
         );
