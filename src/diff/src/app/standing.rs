@@ -5,7 +5,7 @@
 use std::time::SystemTime;
 
 use super::App;
-use crate::agents::{Owners, Snapshot, Status};
+use crate::agents::{Owners, Snapshot, Status, Worker};
 
 /// Where a worktree stands, in the order the switcher lists them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -98,6 +98,16 @@ impl App {
             .as_ref()
             .map(|a| a.owners(&paths))
             .unwrap_or_default();
+    }
+
+    /// The worker that owns worker `w`, if a worker does.
+    pub(crate) fn owning_worker(&self, w: &Worker) -> Option<&Worker> {
+        let owner = w.owner_session.as_ref()?;
+        self.agents
+            .as_ref()?
+            .workers
+            .iter()
+            .find(|o| o.session_file.as_ref() == Some(owner))
     }
 
     /// The marker of worktree `i`, if a worker there finished or asked

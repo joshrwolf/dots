@@ -448,9 +448,40 @@ pub(crate) struct Header<'a> {
     pub(crate) branch: &'a str,
     pub(crate) worktree: &'a Path,
     pub(crate) base: &'a str,
-    /// A worker whose result this reviews: its label and id. Its parent
-    /// receives the message and forwards it.
-    pub(crate) worker: Option<(&'a str, &'a str)>,
+    /// The worker whose result this reviews. The session that owns it,
+    /// directly or through other workers, receives the message.
+    pub(crate) worker: Option<Reviewed<'a>>,
+}
+
+/// A worker a review is about.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Reviewed<'a> {
+    pub(crate) label: &'a str,
+    pub(crate) id: &'a str,
+    /// As the workers' registry records it: `done`, `running`, ….
+    pub(crate) status: &'a str,
+    /// The worker that owns it, when the receiving session does not:
+    /// its label and id.
+    pub(crate) via: Option<(&'a str, &'a str)>,
+}
+
+impl Reviewed<'_> {
+    /// How the receiving session gets the worker to address a review.
+    fn instructions(&self) -> String {
+        let (label, id, status) = (self.label, self.id, self.status);
+        match self.via {
+            None => format!(
+                "This reviews the work of your worker **{label}** (`{id}`, {status}). To have it \
+                 address these comments, send them to it with `message` to `{id}`: that continues \
+                 its own session, or steers it while it runs. Or address them yourself."
+            ),
+            Some((owner, owner_id)) => format!(
+                "This reviews the work of worker **{label}** (`{id}`, {status}), which your \
+                 worker **{owner}** (`{owner_id}`) owns. To have it address these comments, ask \
+                 `{owner_id}` with `message` to send them to `{id}`. Or address them yourself."
+            ),
+        }
+    }
 }
 
 /// The review as one Markdown message: the review-level comment first,
@@ -465,11 +496,8 @@ pub(crate) fn message(header: &Header<'_>, comments: &[&Comment]) -> String {
         header.worktree.display(),
         header.base
     );
-    if let Some((label, id)) = header.worker {
-        let _ = writeln!(
-            out,
-            "\nThis reviews worker **{label}** (`{id}`). Forward these comments to it with `message`."
-        );
+    if let Some(w) = header.worker {
+        let _ = writeln!(out, "\n{}", w.instructions());
     }
     for c in comments.iter().filter(|c| c.place == Place::Review) {
         let _ = writeln!(out, "\n**Overall:** {}", c.text.trim());
@@ -786,12 +814,17 @@ mod tests {
             branch: "feature",
             worktree: Path::new("/w/feature"),
             base: "main 1a2b3c4",
-            worker: Some(("fix-auth", "w-1")),
+            worker: Some(Reviewed {
+                label: "fix-auth",
+                id: "w-1",
+                status: "done",
+                via: None,
+            }),
         };
         let text = message(&header, &comments);
         let expected = "## Review of `feature` (/w/feature) against main 1a2b3c4
 
-This reviews worker **fix-auth** (`w-1`). Forward these comments to it with `message`.
+This reviews the work of your worker **fix-auth** (`w-1`, done). To have it address these comments, send them to it with `message` to `w-1`: that continues its own session, or steers it while it runs. Or address them yourself.
 
 **Overall:** Close, two fixes.
 
@@ -817,5 +850,19 @@ This reviews worker **fix-auth** (`w-1`). Forward these comments to it with `mes
 Address the comments, then reply with which ones you changed and which you did not, and why.
 ";
         assert_eq!(text, expected);
+        let nested = Header {
+            worker: Some(Reviewed {
+                label: "fix-auth",
+                id: "w-2",
+                status: "running",
+                via: Some(("lead", "w-1")),
+            }),
+            ..header
+        };
+        assert!(message(&nested, &comments).contains(
+            "This reviews the work of worker **fix-auth** (`w-2`, running), which your worker \
+             **lead** (`w-1`) owns. To have it address these comments, ask `w-1` with `message` \
+             to send them to `w-2`."
+        ));
     }
 }

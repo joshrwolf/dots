@@ -218,7 +218,15 @@ impl Runtime {
             branch: &wt.branch,
             worktree: &wt.path,
             base: &stream.base,
-            worker: worker.as_ref().map(|w| (w.label.as_str(), w.id.as_str())),
+            worker: worker.as_ref().map(|w| review::Reviewed {
+                label: &w.label,
+                id: &w.id,
+                status: w.status.label(),
+                via: self
+                    .app
+                    .owning_worker(w)
+                    .map(|o| (o.label.as_str(), o.id.as_str())),
+            }),
         };
         let text = review::message(&header, &comments);
         let ids: Vec<u64> = comments.iter().map(|c| c.id).collect();
