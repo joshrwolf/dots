@@ -270,3 +270,93 @@ impl Session {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::review::Kind;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("dots-diff-session-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
+    fn draft(session: &mut Session, text: &str) -> u64 {
+        session
+            .edit()
+            .add(Place::Review, Kind::Comment, text.into(), None)
+    }
+
+    #[test]
+    fn edits_are_saved_by_the_holder_and_survive_a_switch() {
+        let dir = scratch("save");
+        let mut session = Session::default();
+        assert_eq!(
+            session.install(Path::new("/wt/a"), Ok((dir.clone(), State::default()))),
+            None
+        );
+        assert_eq!(session.hold(), Ok(false), "already held");
+        draft(&mut session, "one");
+        assert!(session.dirty());
+        // Switching saves the review it replaces.
+        let message = session.install(Path::new("/wt/b"), Err("unreadable".into()));
+        assert!(message.is_some_and(|m| m.contains("not saved")));
+        assert_eq!(State::load(&dir).expect("load").drafts().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_second_viewer_is_read_only_until_the_first_is_gone() {
+        let dir = scratch("second");
+        let mut first = Session::default();
+        first.install(Path::new("/wt"), Ok((dir.clone(), State::default())));
+        draft(&mut first, "first");
+        first.save().expect("save");
+        let mut second = Session::default();
+        let message = second.install(Path::new("/wt"), Ok((dir.clone(), State::default())));
+        assert_eq!(message.as_deref(), Some(review::READ_ONLY));
+        assert_eq!(second.hold(), Err(review::READ_ONLY.to_owned()));
+        // A read-only viewer's changes are never written.
+        draft(&mut second, "second");
+        second.save().expect("save");
+        assert_eq!(State::load(&dir).expect("load").drafts().count(), 1);
+        drop(first);
+        assert_eq!(
+            second.hold(),
+            Ok(true),
+            "the saved review replaces the one shown"
+        );
+        assert_eq!(second.state().drafts().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_review_that_could_not_be_read_is_never_saved() {
+        let mut session = Session::default();
+        let message = session.install(Path::new("/wt"), Err("bad json".into()));
+        assert!(message.is_some_and(|m| m.contains("bad json")));
+        assert_eq!(session.dir(), None);
+        draft(&mut session, "x");
+        assert_eq!(session.save(), Ok(()));
+        assert!(!session.dirty());
+    }
+
+    #[test]
+    fn notes_are_dismissed_by_id_and_cleared_by_path() {
+        let mut session = Session::default();
+        let file = |path: &str| Place::File { path: path.into() };
+        for (path, text) in [("a.rs", "a"), ("b.rs", "b"), ("b.rs", "b2"), ("c.rs", "c")] {
+            session.add_note(PathBuf::from("/wt"), file(path), text.into(), None);
+        }
+        let a = session.notes()[0].id;
+        session.dismiss_note(a);
+        session.clear_notes(Some("b.rs"));
+        let left: Vec<_> = session.notes().iter().map(|n| n.text.as_str()).collect();
+        assert_eq!(left, ["c"]);
+        session.clear_notes(None);
+        assert_eq!(session.notes().len(), 0);
+    }
+}

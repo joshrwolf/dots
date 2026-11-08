@@ -1873,4 +1873,84 @@ mod tests {
         assert_eq!(nearest(&[None::<()>, None], 0), None);
         assert_eq!(nearest(&todo, 9), Some(4));
     }
+
+    fn ctrl(rt: &mut Runtime, c: char) {
+        rt.key(KeyEvent::new(KeyCode::Char(c), Modifiers::CONTROL));
+    }
+
+    #[test]
+    fn a_saved_comment_is_drawn_under_its_line_and_can_be_deleted() {
+        let (mut rt, _rx) = runtime(TWO);
+        press(&mut rt, "jjc");
+        press(&mut rt, "looks off");
+        ctrl(&mut rt, 's');
+        assert!(matches!(rt.app.mode, Mode::Normal));
+        assert_eq!(rt.app.session.state().drafts().count(), 1);
+        assert!(rt.app.session.dirty(), "the draft waits to be saved");
+        let frame = draw(&mut rt);
+        let code = frame.find("+ B").expect("the commented line is drawn");
+        let card = frame.find("looks off").expect("the card is drawn");
+        assert!(code < card, "{frame}");
+        // ( moves to the card from below; d deletes it.
+        press(&mut rt, "G(d");
+        draw(&mut rt);
+        assert_eq!(rt.app.session.state().drafts().count(), 0);
+        assert!(!draw(&mut rt).contains("looks off"));
+    }
+
+    #[test]
+    fn an_abandoned_editor_leaves_no_draft() {
+        let (mut rt, _rx) = runtime(TWO);
+        press(&mut rt, "jjcnot this");
+        rt.key(KeyEvent::from(KeyCode::Escape));
+        assert!(matches!(rt.app.mode, Mode::Normal));
+        assert_eq!(rt.app.session.state().drafts().count(), 0);
+        assert!(!rt.app.session.dirty());
+    }
+
+    #[test]
+    fn folding_a_file_hides_its_body_and_moves_the_next_one_up() {
+        let (mut rt, _rx) = runtime(TWO);
+        let before = draw(&mut rt);
+        assert!(before.contains("+ B"), "{before}");
+        press(&mut rt, "f");
+        let after = draw(&mut rt);
+        assert!(!after.contains("+ B"), "{after}");
+        let row = |frame: &str| frame.lines().position(|l| l.contains("▾ ● b.rs"));
+        assert!(row(&after) < row(&before), "{after}");
+        press(&mut rt, "f");
+        assert_eq!(draw(&mut rt), before);
+    }
+
+    #[test]
+    fn help_and_the_switcher_open_over_the_diff_and_close_with_escape() {
+        let (mut rt, _rx) = runtime(TWO);
+        let plain = draw(&mut rt);
+        press(&mut rt, "?");
+        assert!(matches!(rt.app.mode, Mode::Help));
+        let help = draw(&mut rt);
+        assert!(help.contains("send all drafts to the agent"), "{help}");
+        rt.key(KeyEvent::from(KeyCode::Escape));
+        assert!(matches!(rt.app.mode, Mode::Normal));
+        press(&mut rt, "w");
+        assert!(matches!(rt.app.mode, Mode::Switcher(_)));
+        assert!(draw(&mut rt).contains("main"));
+        rt.key(KeyEvent::from(KeyCode::Escape));
+        assert_eq!(draw(&mut rt), plain);
+    }
+
+    #[test]
+    fn the_split_layout_shows_both_sides_on_one_row() {
+        let (mut rt, _rx) = runtime(TWO);
+        let one_row = |frame: &str| {
+            frame
+                .lines()
+                .any(|l| l.contains("- b") && l.contains("+ B"))
+        };
+        // At 100 columns Auto is unified; L goes to unified, then split.
+        assert!(!one_row(&draw(&mut rt)));
+        press(&mut rt, "LL");
+        let frame = draw(&mut rt);
+        assert!(one_row(&frame), "{frame}");
+    }
 }
