@@ -50,7 +50,7 @@ pub(crate) struct FileTexts {
     pub(crate) new: (Option<gix::ObjectId>, Arc<Text>),
 }
 
-/// A hunk's word emphasis is keyed by the contents it was computed from.
+/// A hunk's within-line emphasis is keyed by the contents it was computed from.
 type EmphasisKey = (Option<gix::ObjectId>, Option<gix::ObjectId>, u32);
 
 /// How long changed hunks stay marked after a refresh.
@@ -1481,7 +1481,7 @@ impl App {
         ]
     }
 
-    /// Computes word emphasis for the changed hunks on screen.
+    /// Computes within-line emphasis for the changed hunks on screen.
     pub(crate) fn prepare_emphasis(&mut self, view_rows: u16) {
         let top = self.global_top();
         let mut wanted: Vec<(EmphasisKey, usize, usize)> = Vec::new();
@@ -1538,7 +1538,7 @@ impl App {
         }
     }
 
-    /// The word emphasis of hunk `hunk` of `f`, once computed.
+    /// The within-line emphasis of hunk `hunk` of `f`, once computed.
     pub(crate) fn emphasis(&self, f: &FileView, hunk: usize) -> Option<&HunkEmphasis> {
         let Body::Text(diff) = &f.body else {
             return None;

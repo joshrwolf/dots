@@ -1,5 +1,6 @@
 //! Line diffs of one file through gix's imara-diff, line counts for
-//! summaries, and word emphasis computed per hunk when it is first drawn.
+//! summaries, and within-line emphasis computed per hunk when it is first
+//! drawn.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -60,11 +61,6 @@ impl Text {
     /// Byte offset of line `i` within `src`; `i == len()` gives the end.
     pub(crate) fn start(&self, i: u32) -> u32 {
         self.starts[i as usize]
-    }
-
-    /// Lines `range` as one slice, terminators included.
-    fn span(&self, range: &Range<u32>) -> &str {
-        &self.src[self.start(range.start) as usize..self.start(range.end) as usize]
     }
 }
 
@@ -176,7 +172,7 @@ pub(crate) fn line_counts(old: &[u8], new: &[u8]) -> Option<(u32, u32)> {
     Some((diff.count_additions(), diff.count_removals()))
 }
 
-/// Word-level emphasis of one hunk: changed byte ranges of each side, as
+/// Within-line emphasis of one hunk: changed byte ranges of each side, as
 /// offsets into the file, sorted.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct HunkEmphasis {
@@ -199,117 +195,154 @@ impl HunkEmphasis {
     }
 }
 
-/// Hunks larger than this many lines per side get no word emphasis: big
-/// rewrites read better as plain removals and additions.
-const EMPHASIS_MAX_LINES: u32 = 8;
-const EMPHASIS_MAX_BYTES: usize = 4096;
-const EMPHASIS_MAX_WORDS: usize = 1000;
-/// Above this many emphasised runs on one line the emphasis is noise.
-const EMPHASIS_MAX_ALTERNATION: usize = 3;
+/// Lines longer than this get no within-line emphasis.
+const INLINE_MAX_BYTES: usize = 1000;
+/// Hunks with more line pairs than this get none either; the emphasis of a
+/// hunk is computed at once when it first shows.
+const INLINE_MAX_PAIRS: usize = 1000;
+/// Pairs sharing less than this share of their text are rewrites, shown as
+/// plain removals and additions.
+const INLINE_MIN_SAME: f32 = 0.4;
+/// Unchanged text between two changes up to this many bytes, or only
+/// whitespace, is emphasised with them, so emphasis does not flicker.
+const INLINE_MERGE_GAP: u32 = 2;
 
-/// Word emphasis for `hunk`, or `None` when it would not help: one-sided,
-/// large or unequal hunks, mostly rewritten text, or emphasis alternating
-/// too often within a line.
+/// Within-line emphasis for `hunk`: for each pair of an old and a new line,
+/// the changed parts of each, snapped to whole words. `None` when no pair
+/// has any.
 pub(crate) fn hunk_emphasis(old: &Text, new: &Text, hunk: &Hunk) -> Option<HunkEmphasis> {
-    let (o, n) = (hunk.old.len(), hunk.new.len());
-    let lines_ok = |x: usize| (1..=EMPHASIS_MAX_LINES as usize).contains(&x);
-    if !lines_ok(o) || !lines_ok(n) || o.max(n) > 2 * o.min(n) {
+    let pairs = hunk.old.clone().zip(hunk.new.clone());
+    if pairs.len() > INLINE_MAX_PAIRS {
         return None;
     }
-    let (a, b) = (old.span(&hunk.old), new.span(&hunk.new));
-    if a.len() > EMPHASIS_MAX_BYTES || b.len() > EMPHASIS_MAX_BYTES {
-        return None;
+    let mut emphasis = HunkEmphasis::default();
+    for (o, n) in pairs {
+        let Some((a, b)) = line_emphasis(old.line(o), new.line(n)) else {
+            continue;
+        };
+        let shift = |ranges: Vec<Range<u32>>, start: u32| {
+            ranges
+                .into_iter()
+                .map(move |r| r.start + start..r.end + start)
+        };
+        emphasis.old.extend(shift(a, old.start(o)));
+        emphasis.new.extend(shift(b, new.start(n)));
     }
-    let (a_tokens, b_tokens) = (tokens(a), tokens(b));
-    if a_tokens.len() + b_tokens.len() > EMPHASIS_MAX_WORDS {
-        return None;
-    }
-    let mut input = InternedInput::default();
-    input.update_before(a_tokens.iter().copied());
-    input.update_after(b_tokens.iter().copied());
-    let mut diff = Diff::compute(Algorithm::Myers, &input);
-    diff.postprocess_no_heuristic(&input);
-    let collect = |tokens: &[&str], base: &str, file_start: u32, changed: &dyn Fn(u32) -> bool| {
-        let mut ranges = Vec::new();
-        let mut same = 0usize;
-        for (i, t) in (0u32..).zip(tokens) {
-            if changed(i) {
-                if t.trim().is_empty() {
-                    continue;
-                }
-                let at = offset(t.as_ptr() as usize - base.as_ptr() as usize) + file_start;
-                push_range(&mut ranges, at..at + offset(t.len()));
-            } else {
-                same += t.trim().len();
-            }
-        }
-        (ranges, same)
-    };
-    let (old_ranges, same) = collect(&a_tokens, a, old.start(hunk.old.start), &|i| {
-        diff.is_removed(i)
-    });
-    let (new_ranges, _) = collect(&b_tokens, b, new.start(hunk.new.start), &|i| {
-        diff.is_added(i)
-    });
-    let longest = a.trim().len().max(b.trim().len()).max(1);
-    // Mostly rewritten text reads better as plain removals and additions.
-    if same * 10 < longest * 4 {
-        return None;
-    }
-    let emphasis = HunkEmphasis {
-        old: old_ranges,
-        new: new_ranges,
-    };
-    let noisy = |text: &Text, lines: &Range<u32>, new_side: bool| {
-        lines.clone().any(|l| {
-            emphasis
-                .within(new_side, text.start(l)..text.start(l + 1))
-                .len()
-                > EMPHASIS_MAX_ALTERNATION
-        })
-    };
-    if noisy(old, &hunk.old, false) || noisy(new, &hunk.new, true) {
-        return None;
-    }
-    Some(emphasis)
+    (!emphasis.old.is_empty() || !emphasis.new.is_empty()).then_some(emphasis)
 }
 
-/// Splits text into identifier runs, whitespace runs (newlines apart) and
-/// single symbols.
-fn tokens(text: &str) -> Vec<&str> {
-    let class = |c: char| {
-        if c.is_alphanumeric() || c == '_' {
-            0
-        } else if c == '\n' {
-            3
-        } else if c.is_whitespace() {
-            1
-        } else {
-            2
-        }
-    };
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut prev = None;
-    for (i, c) in text.char_indices() {
-        let k = class(c);
-        if i > start && (prev != Some(k) || k >= 2) {
-            out.push(&text[start..i]);
-            start = i;
-        }
-        prev = Some(k);
+/// Byte ranges within one line.
+type Ranges = Vec<Range<u32>>;
+
+/// The changed byte ranges of two versions of a line, or `None` when they
+/// are too long, equal, or mostly rewritten.
+fn line_emphasis(a: &str, b: &str) -> Option<(Ranges, Ranges)> {
+    if a == b || a.len() > INLINE_MAX_BYTES || b.len() > INLINE_MAX_BYTES {
+        return None;
     }
-    if start < text.len() {
-        out.push(&text[start..]);
+    let (ac, bc) = (chars(a), chars(b));
+    let mut input = InternedInput::default();
+    input.update_before(ac.iter().copied());
+    input.update_after(bc.iter().copied());
+    let diff = Diff::compute(Algorithm::Myers, &input);
+    let bytes = |cs: &[&str], s: &str, r: Range<u32>| {
+        let at = |i: u32| {
+            cs.get(i as usize).map_or(offset(s.len()), |c| {
+                offset(c.as_ptr() as usize - s.as_ptr() as usize)
+            })
+        };
+        at(r.start)..at(r.end)
+    };
+    let (mut ra, mut rb) = (Vec::new(), Vec::new());
+    let hunks: Vec<_> = diff.hunks().collect();
+    for (i, h) in hunks.iter().enumerate() {
+        let (a_range, b_range) = (
+            bytes(&ac, a, h.before.clone()),
+            bytes(&bc, b, h.after.clone()),
+        );
+        // Text between changes is the same on both sides, so a change is
+        // widened by the same amount on each, to whole words on either.
+        let room_left = i.checked_sub(1).map_or(a_range.start, |p| {
+            a_range.start - bytes(&ac, a, hunks[p].before.clone()).end
+        });
+        let room_right = hunks.get(i + 1).map_or(offset(a.len()) - a_range.end, |n| {
+            bytes(&ac, a, n.before.clone()).start - a_range.end
+        });
+        let left = word_left(a, a_range.start)
+            .max(word_left(b, b_range.start))
+            .min(room_left);
+        let right = word_right(a, a_range.end)
+            .max(word_right(b, b_range.end))
+            .min(room_right);
+        ra.push(a_range.start - left..a_range.end + right);
+        rb.push(b_range.start - left..b_range.end + right);
+    }
+    let same = |s: &str, ranges: &[Range<u32>]| {
+        let changed: usize = ranges
+            .iter()
+            .map(|r| s[r.start as usize..r.end as usize].trim().len())
+            .sum();
+        s.trim().len().saturating_sub(changed)
+    };
+    let longest = a.trim().len().max(b.trim().len()).max(1);
+    #[allow(clippy::cast_precision_loss)]
+    let share = same(a, &ra).min(same(b, &rb)) as f32 / longest as f32;
+    if share < INLINE_MIN_SAME {
+        return None;
+    }
+    Some((settle(a, ra), settle(b, rb)))
+}
+
+/// Each character of `s` as its own slice.
+fn chars(s: &str) -> Vec<&str> {
+    s.char_indices()
+        .map(|(i, c)| &s[i..i + c.len_utf8()])
+        .collect()
+}
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// For a change starting at `at` inside a word, the bytes back to the
+/// word's start.
+fn word_left(s: &str, at: u32) -> u32 {
+    let (head, tail) = s.split_at(at as usize);
+    if tail.starts_with(is_word) {
+        offset(head.len() - head.trim_end_matches(is_word).len())
+    } else {
+        0
+    }
+}
+
+/// For a change ending at `at` inside a word, the bytes on to the word's
+/// end.
+fn word_right(s: &str, at: u32) -> u32 {
+    let (head, tail) = s.split_at(at as usize);
+    if head.ends_with(is_word) {
+        offset(tail.len() - tail.trim_start_matches(is_word).len())
+    } else {
+        0
+    }
+}
+
+/// Merges changed ranges of `s` across small unchanged gaps and drops
+/// empty ones.
+fn settle(s: &str, ranges: Vec<Range<u32>>) -> Vec<Range<u32>> {
+    let mut out: Vec<Range<u32>> = Vec::new();
+    for range in ranges.into_iter().filter(|r| !r.is_empty()) {
+        match out.last_mut() {
+            Some(last)
+                if range.start <= last.end
+                    || range.start - last.end <= INLINE_MERGE_GAP
+                    || s[last.end as usize..range.start as usize].trim().is_empty() =>
+            {
+                last.end = last.end.max(range.end);
+            }
+            _ => out.push(range),
+        }
     }
     out
-}
-
-fn push_range(ranges: &mut Vec<Range<u32>>, range: Range<u32>) {
-    match ranges.last_mut() {
-        Some(last) if last.end == range.start => last.end = range.end,
-        _ => ranges.push(range),
-    }
 }
 
 #[cfg(test)]
@@ -372,43 +405,78 @@ mod tests {
         assert_eq!(line_counts(b"a\0b", b"a"), None);
     }
 
-    #[test]
-    fn emphasises_changed_words_in_small_similar_hunks() {
-        let (old, new) = (text("let x = foo(1);\n"), text("let x = bar(1);\n"));
-        let hunk = Hunk {
-            old: 0..1,
-            new: 0..1,
+    fn emph<'a>(a: &'a str, b: &'a str) -> Option<(Vec<&'a str>, Vec<&'a str>)> {
+        let (ra, rb) = line_emphasis(a, b)?;
+        let cut = |s: &'a str, r: &[Range<u32>]| -> Vec<&'a str> {
+            r.iter()
+                .map(|r| &s[r.start as usize..r.end as usize])
+                .collect()
         };
-        let e = hunk_emphasis(&old, &new, &hunk).expect("similar lines");
-        assert_eq!(e.old, vec![8..11]);
-        assert_eq!(e.new, vec![8..11]);
-        assert_eq!(e.within(true, 0..16), vec![8..11]);
+        Some((cut(a, &ra), cut(b, &rb)))
     }
 
     #[test]
-    fn skips_emphasis_for_rewrites_noise_and_large_hunks() {
-        let rewrite = (
-            text("completely different\n"),
-            text("nothing alike here at all\n"),
+    fn changes_snap_to_whole_words() {
+        // A character diff finds "oo" -> "a"; the emphasis takes the words.
+        assert_eq!(
+            emph("let x = foo(1);", "let x = fa(1);"),
+            Some((vec!["foo"], vec!["fa"]))
         );
-        let one = Hunk {
-            old: 0..1,
-            new: 0..1,
-        };
-        assert_eq!(hunk_emphasis(&rewrite.0, &rewrite.1, &one), None);
-        // Many small edits along one line alternate too often.
-        let noisy = (
-            text("alpha beta gamma delta epsilon zeta eta theta\n"),
-            text("alpha Beta gamma Delta epsilon Zeta eta Theta\n"),
+        // Both sides widen together: an insertion inside a word marks the
+        // old word too.
+        assert_eq!(
+            emph("pub host: String,", "pub bind_host: String,"),
+            Some((vec!["host"], vec!["bind_host"]))
         );
-        assert_eq!(hunk_emphasis(&noisy.0, &noisy.1, &one), None);
-        let big = (0..20).fold(String::new(), |s, i| s + "line " + &i.to_string() + "\n");
-        let changed = big.replace("line", "Line");
-        let all = Hunk {
-            old: 0..20,
-            new: 0..20,
+        assert_eq!(
+            emph("let a = count;", "let a = count_all;"),
+            Some((vec!["count"], vec!["count_all"]))
+        );
+        // Punctuation changes stay narrow.
+        assert_eq!(
+            emph("call(a, b);", "call(a, b)?;"),
+            Some((vec![], vec!["?"]))
+        );
+    }
+
+    #[test]
+    fn small_unchanged_gaps_merge() {
+        // Two changed words around one space read as one change.
+        assert_eq!(
+            emph("let value = old thing here;", "let value = new stuff here;"),
+            Some((vec!["old thing"], vec!["new stuff"]))
+        );
+        // A real unchanged word between changes keeps them apart.
+        assert_eq!(
+            emph("alpha middle omega", "ALPHA middle OMEGA"),
+            Some((vec!["alpha", "omega"], vec!["ALPHA", "OMEGA"]))
+        );
+    }
+
+    #[test]
+    fn rewrites_and_long_lines_get_no_emphasis() {
+        assert_eq!(
+            emph("completely different", "nothing alike here at all"),
+            None
+        );
+        assert_eq!(emph("same", "same"), None);
+        let long = "x".repeat(INLINE_MAX_BYTES + 1);
+        assert_eq!(emph(&long, "x"), None);
+    }
+
+    #[test]
+    fn hunk_emphasis_is_in_file_offsets() {
+        let (old, new) = (
+            text("keep\nlet x = foo(1);\n"),
+            text("keep\nlet x = bar(1);\n"),
+        );
+        let hunk = Hunk {
+            old: 1..2,
+            new: 1..2,
         };
-        assert_eq!(hunk_emphasis(&text(&big), &text(&changed), &all), None);
+        let e = hunk_emphasis(&old, &new, &hunk).expect("similar lines");
+        assert_eq!(e.old, vec![13..16]);
+        assert_eq!(e.within(true, 5..21), vec![8..11]);
         let pure = Hunk {
             old: 0..0,
             new: 0..1,
