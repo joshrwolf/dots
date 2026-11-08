@@ -21,6 +21,7 @@ use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
 use crate::input::Input;
 use crate::repo::{self, Changes, FileChange, Mode};
+use crate::switcher::Switcher;
 use crate::theme::{self, Detected, Palette};
 use crate::timings::Timings;
 use crate::ui;
@@ -67,10 +68,10 @@ pub(crate) struct Options {
 const DEBOUNCE: Duration = Duration::from_millis(250);
 /// Rex reports no theme change, so the colours are asked for again.
 const THEME_POLL: Duration = Duration::from_secs(2);
-/// Quiet time before another worktree's rail counts are recomputed.
-const RAIL_SETTLE: Duration = Duration::from_secs(3);
-/// Threads computing rail counts.
-const RAIL_THREADS: usize = 3;
+/// Quiet time before another worktree's switcher counts are recomputed.
+const SUMMARY_SETTLE: Duration = Duration::from_secs(3);
+/// Threads computing switcher counts.
+const SUMMARY_THREADS: usize = 3;
 const PREFETCH: usize = 3;
 
 struct DiffJob {
@@ -86,7 +87,7 @@ struct Runtime {
     pool: highlight::Pool,
     watcher: Option<Watch>,
     summaries: SummaryQueue,
-    /// Worktrees whose rail counts are stale, and when they last changed.
+    /// Worktrees whose switcher counts are stale, and when they last changed.
     stale: HashMap<PathBuf, Instant>,
     refresh_at: Option<Instant>,
     wanted: Vec<Key>,
@@ -166,7 +167,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
             diffs: None,
             pool,
             watcher: None,
-            summaries: SummaryQueue::new(RAIL_THREADS, &tx_for_summaries),
+            summaries: SummaryQueue::new(SUMMARY_THREADS, &tx_for_summaries),
             stale: HashMap::new(),
             refresh_at: None,
             wanted: Vec::new(),
@@ -235,7 +236,7 @@ impl Runtime {
                 deadline = deadline.min(self.next_theme);
             }
             if let Some(at) = self.stale.values().min() {
-                deadline = deadline.min(*at + RAIL_SETTLE);
+                deadline = deadline.min(*at + SUMMARY_SETTLE);
             }
             if graphics.as_deref().is_some_and(Graphics::pending) {
                 deadline = deadline.min(now + Duration::from_millis(50));
@@ -278,7 +279,7 @@ impl Runtime {
             let settled: Vec<PathBuf> = self
                 .stale
                 .iter()
-                .filter(|(_, at)| **at + RAIL_SETTLE <= now)
+                .filter(|(_, at)| **at + SUMMARY_SETTLE <= now)
                 .map(|(p, _)| p.clone())
                 .collect();
             for path in settled {
@@ -382,7 +383,7 @@ impl Runtime {
                 if let Ok(s) = summary {
                     self.app.summaries.insert(path, s);
                 }
-                self.app.areas.rail.width > 0
+                self.app.switcher.is_some()
             }
             Msg::Touched(touched) => {
                 let current = self.app.current;
@@ -458,7 +459,6 @@ impl Runtime {
             return;
         }
         self.app.current = worktree;
-        self.app.rail_cursor = worktree;
         self.app.stream = None;
         self.loading_since = Some(Instant::now());
         self.start_load();
@@ -572,10 +572,11 @@ impl Runtime {
         self.diffs = Some(job);
     }
 
-    /// Queues every worktree's rail counts, those near the rail cursor first.
+    /// Queues every worktree's switcher counts, those listed after the
+    /// current one first.
     fn spawn_summaries(&self) {
         let n = self.app.repo.worktrees.len();
-        let at = self.app.rail_cursor.min(n.saturating_sub(1));
+        let at = self.app.current.min(n.saturating_sub(1));
         let order = (0..n).map(|d| (at + d) % n);
         for i in order {
             self.summaries
@@ -583,7 +584,7 @@ impl Runtime {
         }
     }
 
-    /// The selected worktree's rail entry follows its own stream once complete.
+    /// The selected worktree's switcher entry follows its own stream once complete.
     fn update_own_summary(&mut self) {
         let Some(stream) = &self.app.stream else {
             return;
@@ -620,8 +621,17 @@ impl Runtime {
         let half = i64::from(rows / 2);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         self.app.message = None;
+        // Ctrl-C quits from anywhere, overlays included.
+        if ctrl && key.code == KeyCode::Char('c') {
+            self.quit = true;
+            return;
+        }
         if self.app.help {
             self.app.help = false;
+            return;
+        }
+        if self.app.switcher.is_some() {
+            self.switcher_key(key, ctrl);
             return;
         }
         match (key.code, ctrl) {
@@ -635,32 +645,18 @@ impl Runtime {
             (KeyCode::Char('b'), true) | (KeyCode::PageUp, _) => {
                 self.scroll(-i64::from(rows.saturating_sub(2)));
             }
-            (KeyCode::Tab, _) => {
-                self.app.focus = match self.app.focus {
-                    Focus::Worktrees => Focus::Files,
-                    Focus::Files => Focus::Diff,
-                    Focus::Diff => Focus::Worktrees,
+            (KeyCode::Tab | KeyCode::BackTab, _) => {
+                self.app.focus = if self.app.focus == Focus::Diff && self.app.areas.files.width > 0
+                {
+                    Focus::Files
+                } else {
+                    Focus::Diff
                 };
             }
-            (KeyCode::BackTab, _) => {
-                self.app.focus = match self.app.focus {
-                    Focus::Worktrees => Focus::Diff,
-                    Focus::Files => Focus::Worktrees,
-                    Focus::Diff => Focus::Files,
-                };
+            (KeyCode::Char('h') | KeyCode::Left, _) if self.app.areas.files.width > 0 => {
+                self.app.focus = Focus::Files;
             }
-            (KeyCode::Char('h') | KeyCode::Left, _) => {
-                self.app.focus = match self.app.focus {
-                    Focus::Diff => Focus::Files,
-                    _ => Focus::Worktrees,
-                };
-            }
-            (KeyCode::Char('l') | KeyCode::Right, _) => {
-                self.app.focus = match self.app.focus {
-                    Focus::Worktrees => Focus::Files,
-                    _ => Focus::Diff,
-                };
-            }
+            (KeyCode::Char('l') | KeyCode::Right, _) => self.app.focus = Focus::Diff,
             (KeyCode::Char('j') | KeyCode::Down, _) => self.move_by(1),
             (KeyCode::Char('k') | KeyCode::Up, _) => self.move_by(-1),
             (KeyCode::Char('g') | KeyCode::Home, _) => {
@@ -682,8 +678,10 @@ impl Runtime {
                 let n = self.app.repo.worktrees.len();
                 self.switch((self.app.current + n - 1) % n);
             }
+            (KeyCode::Char('w'), false) => {
+                self.app.switcher = Some(Switcher::new(&self.app.repo, self.app.current));
+            }
             (KeyCode::Enter, _) => match self.app.focus {
-                Focus::Worktrees => self.switch(self.app.rail_cursor),
                 Focus::Files => {
                     self.app.jump_to_file(self.app.files_cursor, rows);
                     self.app.focus = Focus::Diff;
@@ -704,7 +702,7 @@ impl Runtime {
                     LayoutChoice::Split => LayoutChoice::Auto,
                 };
             }
-            (KeyCode::Char('w'), _) => {
+            (KeyCode::Char('z'), _) => {
                 self.app.settings.wrap = !self.app.settings.wrap;
                 self.app.relayout();
             }
@@ -717,9 +715,51 @@ impl Runtime {
                 self.loading_since = Some(Instant::now());
                 self.start_load();
             }
-            (KeyCode::Char('1'), _) => self.app.settings.show_rail = !self.app.settings.show_rail,
-            (KeyCode::Char('2'), _) => self.app.settings.show_files = !self.app.settings.show_files,
+            (KeyCode::Char('t'), _) => {
+                self.app.settings.sidebar = !self.app.settings.sidebar;
+                if !self.app.settings.sidebar {
+                    self.app.focus = Focus::Diff;
+                }
+            }
+            (KeyCode::Char(c @ ('<' | '>')), _) => {
+                let now = self.app.areas.files.width;
+                let width = if c == '<' {
+                    now.saturating_sub(4)
+                } else {
+                    now + 4
+                };
+                self.app.settings.sidebar = true;
+                self.app.settings.sidebar_width = Some(width.clamp(16, 64));
+            }
             (KeyCode::Char('r'), _) => self.start_load(),
+            _ => {}
+        }
+    }
+
+    /// Keys while the worktree switcher is open: typing filters it.
+    fn switcher_key(&mut self, key: KeyEvent, ctrl: bool) {
+        let Some(sw) = self.app.switcher.as_mut() else {
+            return;
+        };
+        let repo = &self.app.repo;
+        match (key.code, ctrl) {
+            (KeyCode::Esc, _) | (KeyCode::Char('c' | 'g'), true) => self.app.switcher = None,
+            (KeyCode::Enter, _) => {
+                let chosen = sw.selected();
+                self.app.switcher = None;
+                if let Some(i) = chosen {
+                    self.switch(i);
+                }
+            }
+            (KeyCode::Down, _) | (KeyCode::Char('n' | 'j'), true) => sw.move_by(1),
+            (KeyCode::Up, _) | (KeyCode::Char('p' | 'k'), true) => sw.move_by(-1),
+            (KeyCode::Backspace, _) => sw.pop(repo),
+            (KeyCode::Char('u'), true) => {
+                while !sw.query.is_empty() {
+                    sw.pop(repo);
+                }
+            }
+            (KeyCode::Char(c), false) => sw.push(repo, c),
             _ => {}
         }
     }
@@ -733,10 +773,6 @@ impl Runtime {
     fn move_by(&mut self, delta: i64) {
         match self.app.focus {
             Focus::Diff => self.scroll(delta),
-            Focus::Worktrees => {
-                let n = self.app.repo.worktrees.len();
-                self.app.rail_cursor = step(self.app.rail_cursor, delta, n);
-            }
             Focus::Files => {
                 let n = self.app.stream.as_ref().map_or(0, |s| s.files.len());
                 self.app.files_cursor = step(self.app.files_cursor, delta, n);
@@ -745,6 +781,9 @@ impl Runtime {
     }
 
     fn mouse(&mut self, mouse: MouseEvent) -> bool {
+        if self.app.switcher.is_some() {
+            return false;
+        }
         let at = Position::new(mouse.column, mouse.row);
         let areas = self.app.areas;
         let rows = self.view_rows();
@@ -772,46 +811,24 @@ impl Runtime {
                 self.app.focus = Focus::Files;
                 self.app.jump_to_file(i, rows);
             }
-        } else if areas.rail.contains(at) {
-            if delta != 0 {
-                self.app.focus = Focus::Worktrees;
-                self.move_by(delta.signum());
-            } else {
-                let slot = usize::from(mouse.row.saturating_sub(areas.rail.y + 2) / 2);
-                let visible = usize::from(areas.rail.height.saturating_sub(2) / 2);
-                let start = self
-                    .app
-                    .rail_cursor
-                    .saturating_sub(visible.saturating_sub(1));
-                self.app.focus = Focus::Worktrees;
-                self.switch(start + slot);
-            }
         }
         true
     }
 
-    /// The file listed at screen row `y`, mirroring the list's scrolling in `ui`.
+    /// The file listed at screen row `y`, below the sidebar's branch line.
     fn file_at_row(&self, y: u16) -> Option<usize> {
         let area = self.app.areas.files;
-        let rows = usize::from(area.height.saturating_sub(2));
-        let cursor_item = self
-            .app
-            .list
-            .iter()
-            .position(|it| *it == ListItem::File(self.app.files_cursor))
-            .unwrap_or(0);
-        let start = cursor_item
-            .saturating_sub(rows / 2)
-            .min(self.app.list.len().saturating_sub(rows));
-        let slot = usize::from(y.checked_sub(area.y + 2)?);
+        let rows = usize::from(area.height.saturating_sub(1));
+        let start = self.app.list_start(rows);
+        let slot = usize::from(y.checked_sub(area.y + 1)?);
         match self.app.list.get(start + slot)? {
-            ListItem::File(i) => Some(*i),
-            ListItem::Dir(_) => None,
+            ListItem::File { index, .. } => Some(*index),
+            ListItem::Dir { .. } => None,
         }
     }
 }
 
-/// Background threads computing rail counts, one worktree at a time each.
+/// Background threads computing switcher counts, one worktree at a time each.
 struct SummaryQueue {
     queue: Arc<(Mutex<VecDeque<PathBuf>>, Condvar)>,
 }

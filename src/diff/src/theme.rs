@@ -83,6 +83,11 @@ pub(crate) struct Palette {
     pub(crate) green: Color,
     pub(crate) red: Color,
     pub(crate) yellow: Color,
+    /// Modified files: yellow, deepened when too pale for the background.
+    pub(crate) amber: Color,
+    /// Quieter counts for lists.
+    pub(crate) green_dim: Color,
+    pub(crate) red_dim: Color,
     pub(crate) add_bg: Color,
     pub(crate) add_emph: Color,
     pub(crate) add_gutter: Color,
@@ -104,6 +109,7 @@ pub(crate) struct RawColors {
     pub(crate) muted: Rgb,
     pub(crate) green: Rgb,
     pub(crate) red: Rgb,
+    pub(crate) amber: Rgb,
     pub(crate) accent: Rgb,
     pub(crate) header_bg: Rgb,
 }
@@ -142,6 +148,12 @@ impl Palette {
             (0.10, 0.26, 0.17)
         };
         let muted = mix(fg, bg, 0.45);
+        // Pale terminal yellows vanish on light backgrounds; deepen only those.
+        let amber = if !dark && luma(yellow) > 0.5 {
+            mix(yellow, fg, 0.35)
+        } else {
+            yellow
+        };
         let header_bg = mix(bg, fg, if dark { 0.08 } else { 0.045 });
         let syntax_of = |role: Role| -> Rgb {
             match role {
@@ -173,6 +185,9 @@ impl Palette {
             green: rgb(green),
             red: rgb(red),
             yellow: rgb(yellow),
+            amber: rgb(amber),
+            green_dim: rgb(mix(green, bg, 0.3)),
+            red_dim: rgb(mix(red, bg, 0.3)),
             add_bg: rgb(mix(bg, green, row)),
             add_emph: rgb(mix(bg, green, emph)),
             add_gutter: rgb(mix(bg, green, gutter)),
@@ -189,6 +204,7 @@ impl Palette {
                 muted,
                 green,
                 red,
+                amber,
                 accent: blue,
                 header_bg,
             },

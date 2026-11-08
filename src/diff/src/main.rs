@@ -12,6 +12,7 @@ mod plan;
 mod render;
 mod repo;
 mod run;
+mod switcher;
 mod theme;
 mod timings;
 mod ui;
@@ -61,6 +62,9 @@ struct Look {
     /// Compare with HEAD (uncommitted changes) instead of the merge base
     #[arg(long)]
     uncommitted: bool,
+    /// Hide the file sidebar
+    #[arg(long)]
+    no_sidebar: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -89,6 +93,7 @@ impl Look {
             } else {
                 repo::Mode::Base
             },
+            sidebar: !self.no_sidebar,
             ..app::Settings::default()
         }
     }
@@ -126,6 +131,9 @@ enum Cmd {
         /// Also draw the frame as a PNG picture
         #[arg(long, value_name = "FILE")]
         png: Option<PathBuf>,
+        /// Show the worktree switcher, filtered by QUERY
+        #[arg(long, value_name = "QUERY", num_args = 0..=1, default_missing_value = "")]
+        switcher: Option<String>,
         #[command(flatten)]
         look: Look,
     },
@@ -189,6 +197,7 @@ fn run(cli: Cli) -> Result<()> {
             scroll,
             ansi,
             png,
+            switcher,
             look,
         }) => {
             let frame = render::frame(&render::Frame {
@@ -202,6 +211,7 @@ fn run(cli: Cli) -> Result<()> {
                 settings: look.settings(),
                 scroll,
                 png,
+                switcher,
             })?;
             print!("{frame}");
             Ok(())

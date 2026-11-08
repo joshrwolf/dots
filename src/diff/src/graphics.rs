@@ -31,9 +31,9 @@ struct Spec {
     status: Status,
     counts: Option<(u32, u32)>,
     reviewed: bool,
-    progress: (usize, usize),
     cols: u16,
-    colors: [Rgb; 7],
+    /// Foreground, muted, green, red, amber and background.
+    colors: [Rgb; 6],
     cell: (u16, u16),
 }
 
@@ -243,12 +243,8 @@ fn spec_for(app: &App, file: usize, cols: u16, cell: (u16, u16)) -> Spec {
         status: f.change.status,
         counts: f.counts(),
         reviewed: f.reviewed,
-        progress: (
-            stream.files.iter().filter(|f| f.reviewed).count(),
-            stream.files.len(),
-        ),
         cols,
-        colors: [p.bg, p.fg, p.muted, p.green, p.red, p.accent, p.header_bg],
+        colors: [p.fg, p.muted, p.green, p.red, p.amber, p.header_bg],
         cell,
     }
 }
@@ -284,8 +280,8 @@ fn text_color(c: Rgb) -> cosmic_text::Color {
     cosmic_text::Color::rgb(c.0, c.1, c.2)
 }
 
-/// Draws a header: status pill, path in a proportional font, counts, and a
-/// ring showing how many of the worktree's files are reviewed.
+/// Draws a header: a status dot, the path in a proportional font, counts,
+/// and a check mark once the file is reviewed.
 #[allow(clippy::too_many_lines)]
 fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     // Draw at twice the cell size when the terminal reports small cells, so
@@ -296,7 +292,7 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     let h_px = (f32::from(spec.cell.1 * rows) * scale).max(1.0);
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let mut pixmap = Pixmap::new(w_px as u32, h_px as u32).expect("header size is positive");
-    let [bg, fg, muted, green, red, accent, header_bg] = spec.colors;
+    let [fg, muted, green, red, amber, header_bg] = spec.colors;
     pixmap.fill(skia(header_bg));
     // A hairline under the header separates it from code.
     let rule = mix(header_bg, fg, 0.12);
@@ -306,75 +302,57 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     let status_rgb = match spec.status {
         Status::Added => green,
         Status::Deleted => red,
-        Status::Modified => mix(accent, red, 0.5),
+        Status::Modified => amber,
     };
     let mid = h_px / 2.0;
     let font = h_px * 0.36;
-    // Status pill.
-    let pill_h = h_px * 0.56;
-    let pill_w = pill_h * 1.15;
-    let pill_x = cw;
-    rounded(
-        &mut pixmap,
-        pill_x,
-        mid - pill_h / 2.0,
-        pill_w,
-        pill_h,
-        pill_h * 0.3,
-        mix(header_bg, status_rgb, 0.22),
-    );
-    let letter = spec.status.letter().to_string();
-    let lw = measure(fonts, &letter, font, Weight::BOLD);
-    draw_text(
-        fonts,
-        &mut pixmap,
-        &[(&letter, status_rgb, Weight::BOLD)],
-        pill_x + (pill_w - lw) / 2.0,
-        mid,
-        font,
-        header_bg,
-    );
-    // Right side: counts, then the review ring.
-    let ring_d = h_px * 0.5;
-    let ring_x = w_px - cw - ring_d;
-    ring(
-        &mut pixmap,
-        ring_x + ring_d / 2.0,
-        mid,
-        ring_d / 2.0,
-        spec,
-        scale,
-        (accent, green, mix(header_bg, fg, 0.18)),
-    );
-    let mut right = ring_x - cw;
+    let dot_r = h_px * 0.1;
+    let dot_x = cw + dot_r;
+    if let Some(dot) = PathBuilder::from_circle(dot_x, mid, dot_r) {
+        pixmap.fill_path(
+            &dot,
+            &paint(status_rgb),
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+    let mut right = w_px - cw;
+    if spec.reviewed {
+        let size = h_px * 0.3;
+        right -= size;
+        check(&mut pixmap, right, mid, size, scale, green);
+        right -= cw;
+    }
     if let Some((a, r)) = spec.counts {
         let removed = format!("−{r}");
         let added = format!("+{a}");
-        let rw = measure(fonts, &removed, font, Weight::SEMIBOLD);
+        let quiet = |c| mix(c, header_bg, 0.2);
+        let rw = measure(fonts, &removed, font, Weight::NORMAL);
         right -= rw;
         draw_text(
             fonts,
             &mut pixmap,
-            &[(&removed, red, Weight::SEMIBOLD)],
+            &[(&removed, quiet(red), Weight::NORMAL)],
             right,
             mid,
             font,
             header_bg,
         );
-        let aw = measure(fonts, &added, font, Weight::SEMIBOLD);
+        let aw = measure(fonts, &added, font, Weight::NORMAL);
         right -= aw + cw * 0.8;
         draw_text(
             fonts,
             &mut pixmap,
-            &[(&added, green, Weight::SEMIBOLD)],
+            &[(&added, quiet(green), Weight::NORMAL)],
             right,
             mid,
             font,
             header_bg,
         );
     }
-    // Path: directory muted, name bold, cut from the left to fit.
-    let x0 = pill_x + pill_w + cw * 0.9;
+    // Path: directory muted, name bold; the directory is cut first.
+    let x0 = dot_x + dot_r + cw * 0.9;
     let avail = (right - cw - x0).max(0.0);
     let (dir, name) = spec
         .path
@@ -385,7 +363,7 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     } else {
         format!("{dir}/")
     };
-    let name_w = measure(fonts, name, font * 1.05, Weight::BOLD);
+    let name_w = measure(fonts, name, font * 1.05, Weight::SEMIBOLD);
     while !dir.is_empty() && measure(fonts, &dir, font, Weight::NORMAL) + name_w > avail {
         let cut: String = dir.chars().skip(2).collect();
         dir = format!("…{}", cut.trim_start_matches('…'));
@@ -407,13 +385,12 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     draw_text(
         fonts,
         &mut pixmap,
-        &[(name, name_color, Weight::BOLD)],
+        &[(name, name_color, Weight::SEMIBOLD)],
         x0 + dw,
         mid,
         font * 1.05,
         header_bg,
     );
-    let _ = bg;
     pixmap
 }
 
@@ -424,78 +401,20 @@ fn paint(c: Rgb) -> Paint<'static> {
     p
 }
 
-#[allow(clippy::many_single_char_names)]
-fn rounded(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgb) {
-    let mut pb = PathBuilder::new();
-    pb.move_to(x + r, y);
-    pb.line_to(x + w - r, y);
-    pb.quad_to(x + w, y, x + w, y + r);
-    pb.line_to(x + w, y + h - r);
-    pb.quad_to(x + w, y + h, x + w - r, y + h);
-    pb.line_to(x + r, y + h);
-    pb.quad_to(x, y + h, x, y + h - r);
-    pb.line_to(x, y + r);
-    pb.quad_to(x, y, x + r, y);
-    pb.close();
-    if let Some(path) = pb.finish() {
-        pixmap.fill_path(
-            &path,
-            &paint(c),
-            FillRule::Winding,
-            Transform::identity(),
-            None,
-        );
-    }
-}
-
-/// The review ring: an arc for the share of reviewed files, and a check
-/// mark when this file is reviewed.
-fn ring(
-    pixmap: &mut Pixmap,
-    cx: f32,
-    cy: f32,
-    r: f32,
-    spec: &Spec,
-    scale: f32,
-    colors: (Rgb, Rgb, Rgb),
-) {
-    let (accent, green, track) = colors;
+/// A check mark `size` wide starting at `x`, centred on `mid`.
+fn check(pixmap: &mut Pixmap, x: f32, mid: f32, size: f32, scale: f32, color: Rgb) {
     let stroke = Stroke {
-        width: 2.0 * scale,
+        width: 1.6 * scale,
+        line_cap: tiny_skia::LineCap::Round,
+        line_join: tiny_skia::LineJoin::Round,
         ..Stroke::default()
     };
-    if let Some(circle) = PathBuilder::from_circle(cx, cy, r) {
-        pixmap.stroke_path(&circle, &paint(track), &stroke, Transform::identity(), None);
-    }
-    let (done, total) = spec.progress;
-    if total > 0 && done > 0 {
-        #[allow(clippy::cast_precision_loss)]
-        let share = done as f32 / total as f32;
-        let mut pb = PathBuilder::new();
-        let steps = 48;
-        for i in 0..=steps {
-            #[allow(clippy::cast_precision_loss)]
-            let a = -std::f32::consts::FRAC_PI_2
-                + share * std::f32::consts::TAU * (i as f32 / steps as f32);
-            let (x, y) = (cx + r * a.cos(), cy + r * a.sin());
-            if i == 0 {
-                pb.move_to(x, y);
-            } else {
-                pb.line_to(x, y);
-            }
-        }
-        if let Some(arc) = pb.finish() {
-            pixmap.stroke_path(&arc, &paint(accent), &stroke, Transform::identity(), None);
-        }
-    }
-    if spec.reviewed {
-        let mut pb = PathBuilder::new();
-        pb.move_to(cx - r * 0.45, cy);
-        pb.line_to(cx - r * 0.1, cy + r * 0.35);
-        pb.line_to(cx + r * 0.5, cy - r * 0.35);
-        if let Some(check) = pb.finish() {
-            pixmap.stroke_path(&check, &paint(green), &stroke, Transform::identity(), None);
-        }
+    let mut pb = PathBuilder::new();
+    pb.move_to(x, mid);
+    pb.line_to(x + size * 0.35, mid + size * 0.32);
+    pb.line_to(x + size, mid - size * 0.38);
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint(color), &stroke, Transform::identity(), None);
     }
 }
 

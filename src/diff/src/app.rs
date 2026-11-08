@@ -31,7 +31,6 @@ pub(crate) const ROW_CAP: usize = 40_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
-    Worktrees,
     Files,
     Diff,
 }
@@ -41,8 +40,9 @@ pub(crate) struct Settings {
     pub(crate) layout: LayoutChoice,
     pub(crate) wrap: bool,
     pub(crate) mode: Mode,
-    pub(crate) show_rail: bool,
-    pub(crate) show_files: bool,
+    pub(crate) sidebar: bool,
+    /// Sidebar columns chosen with the resize keys; `None` sizes it to the screen.
+    pub(crate) sidebar_width: Option<u16>,
     /// Header height in rows; images get two.
     pub(crate) header_rows: u16,
 }
@@ -53,8 +53,8 @@ impl Default for Settings {
             layout: LayoutChoice::Auto,
             wrap: true,
             mode: Mode::Base,
-            show_rail: true,
-            show_files: true,
+            sidebar: true,
+            sidebar_width: None,
             header_rows: 1,
         }
     }
@@ -210,7 +210,7 @@ impl Stream {
     }
 }
 
-/// Lines added and removed and files changed in a worktree, for the rail.
+/// Lines added and removed and files changed in a worktree, for the switcher.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Summary {
     pub(crate) added: u32,
@@ -230,16 +230,15 @@ pub(crate) enum Line {
 /// Hit areas from the last draw, for the mouse.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Areas {
-    pub(crate) rail: Rect,
     pub(crate) files: Rect,
     pub(crate) diff: Rect,
 }
 
-/// One entry of the file list: a directory heading or a file.
+/// One row of the file tree, `depth` levels in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ListItem {
-    Dir(String),
-    File(usize),
+    Dir { label: String, depth: u16 },
+    File { index: usize, depth: u16 },
 }
 
 #[derive(Debug)]
@@ -252,7 +251,7 @@ pub(crate) struct App {
     pub(crate) stream: Option<Stream>,
     pub(crate) top: Anchor,
     pub(crate) focus: Focus,
-    pub(crate) rail_cursor: usize,
+    pub(crate) switcher: Option<crate::switcher::Switcher>,
     pub(crate) files_cursor: usize,
     pub(crate) summaries: HashMap<PathBuf, Summary>,
     pub(crate) highlights: HashMap<Key, Option<Arc<Lines>>>,
@@ -274,7 +273,7 @@ impl App {
             stream: None,
             top: Anchor::default(),
             focus: Focus::Diff,
-            rail_cursor: current,
+            switcher: None,
             files_cursor: 0,
             summaries: HashMap::new(),
             highlights: HashMap::new(),
@@ -658,6 +657,21 @@ impl App {
         self.files_cursor = self.top.file;
     }
 
+    /// The first file-tree row shown in a sidebar list `rows` tall: the
+    /// cursor stays near the middle.
+    pub(crate) fn list_start(&self, rows: usize) -> usize {
+        let cursor = self
+            .list
+            .iter()
+            .position(
+                |it| matches!(it, ListItem::File { index, .. } if *index == self.files_cursor),
+            )
+            .unwrap_or(0);
+        cursor
+            .saturating_sub(rows / 2)
+            .min(self.list.len().saturating_sub(rows))
+    }
+
     /// Highlight jobs, most wanted first: files on screen, then neighbours.
     pub(crate) fn wanted_highlights(&self, view_rows: u16, prefetch: usize) -> Vec<highlight::Job> {
         let Some(stream) = &self.stream else {
@@ -722,21 +736,51 @@ pub(crate) fn compute_body(repo: &gix::Repository, root: &Path, change: &FileCha
     Body::Text(Arc::new(FileDiff::compute(text(old), text(new))))
 }
 
-/// The file list grouped under directory headings, in path order.
+/// The file list as a compact tree in path order: a directory chain with a
+/// single child directory collapses into one row, like `docs/containers/`.
 pub(crate) fn list_items(files: &[FileView]) -> Vec<ListItem> {
+    let paths: Vec<&str> = files.iter().map(|f| f.change.path.as_str()).collect();
     let mut items = Vec::new();
-    let mut dir: Option<&str> = None;
-    for (i, f) in files.iter().enumerate() {
-        let parent = f.change.path.rsplit_once('/').map_or("", |(d, _)| d);
-        if dir != Some(parent) {
-            if !parent.is_empty() {
-                items.push(ListItem::Dir(parent.to_owned()));
-            }
-            dir = Some(parent);
-        }
-        items.push(ListItem::File(i));
-    }
+    tree(&paths, 0..paths.len(), 0, 0, &mut items);
     items
+}
+
+/// Lists `paths[range]`, which share their first `prefix` bytes.
+fn tree(
+    paths: &[&str],
+    range: std::ops::Range<usize>,
+    prefix: usize,
+    depth: u16,
+    out: &mut Vec<ListItem>,
+) {
+    let mut i = range.start;
+    while i < range.end {
+        let rest = &paths[i][prefix..];
+        let Some(slash) = rest.find('/') else {
+            out.push(ListItem::File { index: i, depth });
+            i += 1;
+            continue;
+        };
+        // Paths in sorted order keep each directory's contents together.
+        let head = &rest[..=slash];
+        let end = (i..range.end)
+            .find(|&j| !paths[j][prefix..].starts_with(head))
+            .unwrap_or(range.end);
+        let mut label_end = prefix + head.len();
+        while let Some(slash) = paths[i][label_end..].find('/') {
+            let next = &paths[i][label_end..=label_end + slash];
+            if !(i..end).all(|j| paths[j][label_end..].starts_with(next)) {
+                break;
+            }
+            label_end += next.len();
+        }
+        out.push(ListItem::Dir {
+            label: paths[i][prefix..label_end].to_owned(),
+            depth,
+        });
+        tree(paths, i..end, label_end, depth + 1, out);
+        i = end;
+    }
 }
 
 #[cfg(test)]
@@ -759,11 +803,11 @@ mod tests {
 
     fn app_with(files: &[(&str, &str, &str)]) -> App {
         let repo = Repo {
-            name: "r".into(),
             worktrees: vec![crate::repo::Worktree {
                 path: "/r".into(),
                 branch: "main".into(),
                 main: true,
+                touched: None,
             }],
         };
         let mut app = App::new(
@@ -802,9 +846,43 @@ mod tests {
         assert_eq!(
             app.list,
             vec![
-                ListItem::File(0),
-                ListItem::Dir("b".into()),
-                ListItem::File(1)
+                ListItem::File { index: 0, depth: 0 },
+                ListItem::Dir {
+                    label: "b/".into(),
+                    depth: 0
+                },
+                ListItem::File { index: 1, depth: 1 }
+            ]
+        );
+    }
+
+    #[test]
+    fn file_tree_collapses_single_child_directories() {
+        let paths = [
+            "docs/containers/a.md",
+            "docs/containers/b.md",
+            "src/x/y.rs",
+            "src/z.rs",
+            "top.rs",
+        ];
+        let mut items = Vec::new();
+        tree(&paths, 0..paths.len(), 0, 0, &mut items);
+        let dir = |label: &str, depth| ListItem::Dir {
+            label: label.into(),
+            depth,
+        };
+        let file = |index, depth| ListItem::File { index, depth };
+        assert_eq!(
+            items,
+            vec![
+                dir("docs/containers/", 0),
+                file(0, 1),
+                file(1, 1),
+                dir("src/", 0),
+                dir("x/", 1),
+                file(2, 2),
+                file(3, 1),
+                file(4, 0),
             ]
         );
     }

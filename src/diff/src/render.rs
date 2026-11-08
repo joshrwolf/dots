@@ -33,6 +33,8 @@ pub(crate) struct Frame {
     pub(crate) scroll: u32,
     /// Also draw the frame as a PNG here.
     pub(crate) png: Option<PathBuf>,
+    /// Open the worktree switcher with this query.
+    pub(crate) switcher: Option<String>,
 }
 
 /// Loads a worktree's changes with every diff computed.
@@ -103,6 +105,18 @@ pub(crate) fn frame(options: &Frame) -> Result<String> {
         app.jump_to_file(i, rows);
     }
     app.scroll_by(i64::from(options.scroll), rows);
+    if let Some(query) = &options.switcher {
+        for wt in app.repo.worktrees.clone() {
+            if let Ok(s) = crate::run::summarize(&wt.path) {
+                app.summaries.insert(wt.path, s);
+            }
+        }
+        let mut sw = crate::switcher::Switcher::new(&app.repo, app.current);
+        for c in query.chars() {
+            sw.push(&app.repo, c);
+        }
+        app.switcher = Some(sw);
+    }
     let mut hl = arborium::Highlighter::new();
     highlight_visible(&mut app, &mut hl, rows);
     terminal.draw(|f| ui::draw(f, &mut app))?;

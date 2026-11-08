@@ -1051,6 +1051,7 @@ dependencies = [
  "gix",
  "imara-diff",
  "notify",
+ "nucleo",
  "ratatui",
  "rustix",
  "serde",

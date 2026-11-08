@@ -16,63 +16,59 @@ use crate::repo::Status;
 use crate::theme::Palette;
 use crate::wrap::{self, Segment};
 
-pub(crate) const RAIL_WIDTH: u16 = 30;
-pub(crate) const FILES_WIDTH: u16 = 36;
+/// Sidebar width when the user has not chosen one: a fifth of the screen.
+const SIDEBAR_MIN: u16 = 26;
+const SIDEBAR_MAX: u16 = 32;
+/// Below this width the diff gets the whole screen.
+const SIDEBAR_HIDE_BELOW: u16 = 80;
+/// The status mark of a file, coloured by its status.
+pub(crate) const STATUS_MARK: &str = "●";
 
-/// Splits the screen into rail, file list, diff pane and status line.
-pub(crate) fn areas(app: &App, area: Rect) -> (Rect, Rect, Rect, Rect) {
+/// The sidebar's width on a screen `width` columns wide; 0 when hidden.
+pub(crate) fn sidebar_width(app: &App, width: u16) -> u16 {
+    if !app.settings.sidebar || width < SIDEBAR_HIDE_BELOW {
+        return 0;
+    }
+    app.settings
+        .sidebar_width
+        .unwrap_or_else(|| (width / 5).clamp(SIDEBAR_MIN, SIDEBAR_MAX))
+        .min(width / 2)
+}
+
+/// Splits the screen into sidebar, diff pane and status line.
+pub(crate) fn areas(app: &App, area: Rect) -> (Rect, Rect, Rect) {
     let status = Rect::new(
         area.x,
         area.bottom().saturating_sub(1),
         area.width,
         1.min(area.height),
     );
-    let body = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
-    let show_rail = app.settings.show_rail && body.width >= 130;
-    let show_files = app.settings.show_files && body.width >= 100;
-    let mut x = body.x;
-    let mut take = |show: bool, w: u16| {
-        if show {
-            let r = Rect::new(x, body.y, w, body.height);
-            x += w;
-            r
-        } else {
-            Rect::new(x, body.y, 0, body.height)
-        }
-    };
-    let rail = take(show_rail, RAIL_WIDTH);
-    let files = take(show_files, FILES_WIDTH.min(body.width / 4).max(24));
-    let diff = Rect::new(x, body.y, body.right().saturating_sub(x), body.height);
-    (rail, files, diff, status)
+    let height = area.height.saturating_sub(1);
+    let side = sidebar_width(app, area.width);
+    let files = Rect::new(area.x, area.y, side, height);
+    let diff = Rect::new(area.x + side, area.y, area.width - side, height);
+    (files, diff, status)
 }
 
 pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let full = frame.area();
-    let (rail, files, diff, status) = areas(app, full);
-    app.areas = crate::app::Areas { rail, files, diff };
+    let (files, diff, status) = areas(app, full);
+    app.areas = crate::app::Areas { files, diff };
     app.layout(diff.width, diff.height);
     let buf = frame.buffer_mut();
     let p = app.palette.clone();
-    fill(
-        buf,
-        frame_area(rail, files, diff, status),
-        Style::new().bg(p.bg).fg(p.fg),
-    );
-    if rail.width > 0 {
-        draw_rail(buf, app, rail);
-    }
+    fill(buf, full, Style::new().bg(p.bg).fg(p.fg));
     if files.width > 0 {
-        draw_files(buf, app, files);
+        draw_sidebar(buf, app, files);
     }
     draw_diff(buf, app, diff);
     draw_status(buf, app, status);
+    if app.switcher.is_some() {
+        draw_switcher(buf, app, full);
+    }
     if app.help {
         draw_help(buf, &p, full);
     }
-}
-
-fn frame_area(a: Rect, b: Rect, c: Rect, d: Rect) -> Rect {
-    a.union(b).union(c).union(d)
 }
 
 fn fill(buf: &mut Buffer, area: Rect, style: Style) {
@@ -93,9 +89,17 @@ fn put(buf: &mut Buffer, x: u16, y: u16, text: &str, max: u16, style: Style) -> 
     end - x
 }
 
+fn width(text: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(text)
+}
+
+fn cells(text: &str) -> u16 {
+    u16::try_from(width(text)).unwrap_or(u16::MAX)
+}
+
+/// Keeps the end of `text` within `max` cells, marking the cut with `…`.
 fn truncate_left(text: &str, max: usize) -> String {
-    let width = unicode_width::UnicodeWidthStr::width(text);
-    if width <= max {
+    if width(text) <= max {
         return text.to_owned();
     }
     let mut out: String = text
@@ -110,269 +114,393 @@ fn truncate_left(text: &str, max: usize) -> String {
     out.chars().rev().collect()
 }
 
-fn status_color(p: &Palette, status: Status) -> Color {
+/// Keeps both ends of `text` within `max` cells, cutting the middle, so a
+/// file name keeps its start and its extension.
+pub(crate) fn truncate_middle(text: &str, max: usize) -> String {
+    if width(text) <= max {
+        return text.to_owned();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let keep = max - 1;
+    let tail_w = keep / 2;
+    let head_w = keep - tail_w;
+    let take = |chars: &mut dyn Iterator<Item = char>, room: usize| -> String {
+        chars
+            .scan(0, |w, c| {
+                *w += usize::from(wrap::char_width(c));
+                (*w <= room).then_some(c)
+            })
+            .collect()
+    };
+    let head = take(&mut text.chars(), head_w);
+    let tail: String = take(&mut text.chars().rev(), tail_w)
+        .chars()
+        .rev()
+        .collect();
+    format!("{head}…{tail}")
+}
+
+/// Fits a path into `max` cells: the directory is cut first, from the
+/// left, and the name only once no directory is left, in its middle.
+pub(crate) fn fit_path(path: &str, max: usize) -> (String, String) {
+    let (dir, name) = path.rsplit_once('/').map_or(("", path), |(d, n)| (d, n));
+    let name_w = width(name);
+    if name_w >= max || dir.is_empty() {
+        return (String::new(), truncate_middle(name, max));
+    }
+    let room = max - name_w;
+    let dir = format!("{dir}/");
+    let dir = if width(&dir) <= room {
+        dir
+    } else if room >= 3 {
+        truncate_left(&dir, room)
+    } else {
+        String::new()
+    };
+    (dir, name.to_owned())
+}
+
+pub(crate) fn status_color(p: &Palette, status: Status) -> Color {
     match status {
         Status::Added => p.green,
         Status::Deleted => p.red,
-        Status::Modified => p.yellow,
+        Status::Modified => p.amber,
     }
 }
 
-#[allow(clippy::many_single_char_names, clippy::too_many_lines)]
-fn draw_rail(buf: &mut Buffer, app: &App, area: Rect) {
-    let p = &app.palette;
-    fill(buf, area, Style::new().bg(p.panel).fg(p.fg));
-    let focused = app.focus == Focus::Worktrees;
-    let title = format!(" {} worktrees", app.repo.worktrees.len());
+/// Counts as `+a` and ` −r`, leaving out a zero side when the other is not.
+fn count_text(a: u32, r: u32) -> (String, String) {
+    match (a, r) {
+        (_, 0) if a > 0 => (format!("+{a}"), String::new()),
+        (0, _) if r > 0 => (String::new(), format!("−{r}")),
+        _ => (format!("+{a}"), format!(" −{r}")),
+    }
+}
+
+/// Added and removed counts drawn right-aligned to `end`; returns their
+/// starting column.
+#[allow(clippy::many_single_char_names)]
+fn put_counts(
+    buf: &mut Buffer,
+    end: u16,
+    y: u16,
+    (a, r): (u32, u32),
+    bg: Color,
+    p: &Palette,
+) -> u16 {
+    let (added, removed) = count_text(a, r);
+    let x = end.saturating_sub(cells(&added) + cells(&removed));
+    let aw = put(
+        buf,
+        x,
+        y,
+        &added,
+        end - x,
+        Style::new().bg(bg).fg(p.green_dim),
+    );
     put(
         buf,
-        area.x,
-        area.y,
-        &title,
-        area.width,
+        x + aw,
+        y,
+        &removed,
+        end - x - aw,
+        Style::new().bg(bg).fg(p.red_dim),
+    );
+    x
+}
+
+/// The sidebar: the current worktree's branch, then its files as a tree.
+#[allow(clippy::many_single_char_names, clippy::too_many_lines)]
+fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
+    let p = &app.palette;
+    let inner = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+    fill(buf, inner, Style::new().bg(p.panel).fg(p.fg));
+    for y in area.top()..area.bottom() {
+        let cell = &mut buf[(area.right() - 1, y)];
+        cell.set_symbol("│").set_fg(p.rule).set_bg(p.bg);
+    }
+    // The branch line, which `w` replaces with the switcher.
+    let branch = &app.repo.worktrees[app.current].branch;
+    let head = Rect::new(inner.x, inner.y, inner.width, 1);
+    fill(buf, head, Style::new().bg(p.header_bg));
+    let room = inner.width.saturating_sub(2);
+    let branch = truncate_middle(branch, usize::from(room));
+    put(
+        buf,
+        inner.x + 1,
+        inner.y,
+        &branch,
+        room,
         Style::new()
-            .fg(if focused { p.accent } else { p.muted })
+            .bg(p.header_bg)
+            .fg(p.fg)
             .add_modifier(Modifier::BOLD),
     );
-    let per = 2u16;
-    let visible = usize::from(area.height.saturating_sub(2) / per);
-    let start = app.rail_cursor.saturating_sub(visible.saturating_sub(1));
-    for (slot, (i, wt)) in app
-        .repo
-        .worktrees
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(visible)
-        .enumerate()
-    {
-        let y = area.y + 2 + u16::try_from(slot).unwrap_or(0) * per;
-        let selected = i == app.rail_cursor;
-        let current = i == app.current;
-        let bg = if selected && focused {
-            p.selection
-        } else {
-            p.panel
-        };
-        fill(
-            buf,
-            Rect::new(area.x, y, area.width, per),
-            Style::new().bg(bg),
-        );
-        let marker = if current { "▌" } else { " " };
-        put(buf, area.x, y, marker, 1, Style::new().fg(p.accent).bg(bg));
-        // The repository prefix goes first when space runs out; branch names
-        // differ at their start, so they are cut at the end.
-        let room = usize::from(area.width.saturating_sub(3));
-        let prefix = format!("{}@", app.repo.name);
-        let branch_w = unicode_width::UnicodeWidthStr::width(wt.branch.as_str());
-        let style = Style::new().bg(bg).fg(p.fg).add_modifier(if current {
-            Modifier::BOLD
-        } else {
-            Modifier::empty()
-        });
-        let mut nx = area.x + 2;
-        if prefix.chars().count() + branch_w <= room {
-            nx += put(
-                buf,
-                nx,
-                y,
-                &prefix,
-                area.width - 3,
-                Style::new().bg(bg).fg(p.muted),
-            );
-        }
-        let left = usize::from(area.right().saturating_sub(nx + 1));
-        let branch = if branch_w > left {
-            let cut: String = wt.branch.chars().take(left.saturating_sub(1)).collect();
-            format!("{cut}…")
-        } else {
-            wt.branch.clone()
-        };
-        put(
-            buf,
-            nx,
-            y,
-            &branch,
-            area.right().saturating_sub(nx + 1),
-            style,
-        );
-        let x = area.x + 2;
-        let w = area.width.saturating_sub(3);
-        match app.summaries.get(&wt.path) {
-            Some(s) if s.files == 0 => {
-                put(
-                    buf,
-                    x,
-                    y + 1,
-                    "no changes",
-                    w,
-                    Style::new().bg(bg).fg(p.faint),
-                );
-            }
-            Some(s) => {
-                let mut cx = x;
-                cx += put(
-                    buf,
-                    cx,
-                    y + 1,
-                    &format!("+{}", s.added),
-                    w,
-                    Style::new().bg(bg).fg(p.green),
-                );
-                cx += put(
-                    buf,
-                    cx,
-                    y + 1,
-                    &format!(" −{}", s.removed),
-                    w.saturating_sub(cx - x),
-                    Style::new().bg(bg).fg(p.red),
-                );
-                let files = format!(" · {} file{}", s.files, if s.files == 1 { "" } else { "s" });
-                put(
-                    buf,
-                    cx,
-                    y + 1,
-                    &files,
-                    w.saturating_sub(cx - x),
-                    Style::new().bg(bg).fg(p.muted),
-                );
-            }
-            None => {
-                put(buf, x, y + 1, "…", w, Style::new().bg(bg).fg(p.faint));
-            }
-        }
-    }
-    draw_vrule(buf, p, area);
-}
-
-fn draw_vrule(buf: &mut Buffer, p: &Palette, area: Rect) {
-    let x = area.right().saturating_sub(1);
-    for y in area.top()..area.bottom() {
-        buf[(x, y)].set_symbol("│").set_fg(p.rule);
-    }
-}
-
-#[allow(clippy::many_single_char_names, clippy::too_many_lines)]
-fn draw_files(buf: &mut Buffer, app: &App, area: Rect) {
-    let p = &app.palette;
-    fill(buf, area, Style::new().bg(p.panel).fg(p.fg));
-    let focused = app.focus == Focus::Files;
+    let list = Rect::new(
+        inner.x,
+        inner.y + 1,
+        inner.width,
+        inner.height.saturating_sub(1),
+    );
     let Some(stream) = &app.stream else {
         put(
             buf,
-            area.x + 1,
-            area.y,
+            list.x + 1,
+            list.y,
             "loading…",
-            area.width,
-            Style::new().fg(p.muted),
+            list.width,
+            Style::new().bg(p.panel).fg(p.faint),
         );
-        draw_vrule(buf, p, area);
         return;
     };
-    let reviewed = stream.files.iter().filter(|f| f.reviewed).count();
-    let title = format!(
-        " {} files  {}/{} reviewed",
-        stream.files.len(),
-        reviewed,
-        stream.files.len()
-    );
-    put(
-        buf,
-        area.x,
-        area.y,
-        &title,
-        area.width - 1,
-        Style::new()
-            .fg(if focused { p.accent } else { p.muted })
-            .add_modifier(Modifier::BOLD),
-    );
-    let rows = usize::from(area.height.saturating_sub(2));
-    let cursor_item = app
-        .list
-        .iter()
-        .position(|it| *it == ListItem::File(app.files_cursor))
-        .unwrap_or(0);
-    let start = cursor_item
-        .saturating_sub(rows / 2)
-        .min(app.list.len().saturating_sub(rows));
-    let w = area.width.saturating_sub(1);
-    for (slot, item) in app.list.iter().skip(start).take(rows).enumerate() {
-        let y = area.y + 2 + u16::try_from(slot).unwrap_or(0);
+    let focused = app.focus == Focus::Files;
+    let rows = usize::from(list.height);
+    let start = app.list_start(rows);
+    let visible = &app.list[start..(start + rows).min(app.list.len())];
+    let end = list.right().saturating_sub(1);
+    // Names matter more than counts: the counts column shows only when
+    // every visible name fits beside it, so rows stay aligned.
+    let show_counts = visible.iter().all(|item| match item {
+        ListItem::Dir { .. } => true,
+        ListItem::File { index, depth } => {
+            let f = &stream.files[*index];
+            let name = f.change.path.rsplit('/').next().unwrap_or(&f.change.path);
+            let counts = f.counts().map_or(3, |(a, r)| {
+                let (added, removed) = count_text(a, r);
+                cells(&added) + cells(&removed)
+            });
+            list.x + 3 + depth + cells(name) + 1 + counts <= end
+        }
+    });
+    for (slot, item) in visible.iter().enumerate() {
+        let y = list.y + u16::try_from(slot).unwrap_or(0);
         match item {
-            ListItem::Dir(dir) => {
-                let text = truncate_left(&format!("{dir}/"), usize::from(w.saturating_sub(1)));
-                put(buf, area.x + 1, y, &text, w - 1, Style::new().fg(p.muted));
+            ListItem::Dir { label, depth } => {
+                let x = list.x + 1 + depth;
+                let label = truncate_left(label, usize::from(list.right().saturating_sub(x + 1)));
+                put(
+                    buf,
+                    x,
+                    y,
+                    &label,
+                    list.right().saturating_sub(x),
+                    Style::new().bg(p.panel).fg(p.muted),
+                );
             }
-            ListItem::File(i) => {
-                let f = &stream.files[*i];
-                let selected = *i == app.files_cursor;
-                let current = *i == app.top.file;
-                let bg = if selected && focused {
+            ListItem::File { index, depth } => {
+                let f = &stream.files[*index];
+                let bg = if *index == app.files_cursor && focused {
                     p.selection
-                } else if current {
+                } else if *index == app.top.file {
                     p.header_bg
                 } else {
                     p.panel
                 };
-                fill(buf, Rect::new(area.x, y, w, 1), Style::new().bg(bg));
+                fill(
+                    buf,
+                    Rect::new(list.x, y, list.width, 1),
+                    Style::new().bg(bg),
+                );
+                let x = list.x + 1 + depth;
                 let st = f.change.status;
                 put(
                     buf,
-                    area.x + 1,
+                    x,
                     y,
-                    &st.letter().to_string(),
+                    STATUS_MARK,
                     1,
-                    Style::new()
-                        .bg(bg)
-                        .fg(status_color(p, st))
-                        .add_modifier(Modifier::BOLD),
+                    Style::new().bg(bg).fg(status_color(p, st)),
                 );
-                let counts = match (&f.body, f.counts()) {
-                    (_, Some((a, r))) => format!("+{a} −{r}"),
-                    (Body::Binary, _) => "bin".to_owned(),
-                    _ => "…".to_owned(),
-                };
-                let cw = u16::try_from(unicode_width::UnicodeWidthStr::width(counts.as_str()))
-                    .unwrap_or(0);
                 let name = f.change.path.rsplit('/').next().unwrap_or(&f.change.path);
-                let indent = if f.change.path.contains('/') { 2 } else { 0 };
-                let name_w = w.saturating_sub(4 + indent + cw + 1);
-                let name = truncate_left(name, usize::from(name_w));
-                let name_style = Style::new()
-                    .bg(bg)
-                    .fg(if f.reviewed { p.muted } else { p.fg });
-                let name_style = if f.reviewed {
-                    name_style.add_modifier(Modifier::CROSSED_OUT)
-                } else {
-                    name_style
+                let name_x = x + 2;
+                let counts = f.counts().filter(|_| show_counts);
+                let counts_x = match (counts, &f.body) {
+                    (Some(c), _) => put_counts(buf, end, y, c, bg, p),
+                    (None, Body::Binary) if show_counts => {
+                        let x = end.saturating_sub(3);
+                        put(buf, x, y, "bin", 3, Style::new().bg(bg).fg(p.faint));
+                        x
+                    }
+                    _ => end,
                 };
-                put(buf, area.x + 3 + indent, y, &name, name_w, name_style);
-                let cx = area.x + w.saturating_sub(cw + 1);
-                if let Some((a, r)) = f.counts() {
-                    let aw = put(
-                        buf,
-                        cx,
-                        y,
-                        &format!("+{a}"),
-                        cw,
-                        Style::new().bg(bg).fg(p.green),
-                    );
-                    put(
-                        buf,
-                        cx + aw,
-                        y,
-                        &format!(" −{r}"),
-                        cw - aw,
-                        Style::new().bg(bg).fg(p.red),
-                    );
+                let room = usize::from(counts_x.saturating_sub(name_x + 1));
+                let name = truncate_middle(name, room);
+                let style = if f.reviewed {
+                    Style::new().bg(bg).fg(p.faint)
                 } else {
-                    put(buf, cx, y, &counts, cw, Style::new().bg(bg).fg(p.faint));
-                }
+                    Style::new().bg(bg).fg(p.fg)
+                };
+                put(
+                    buf,
+                    name_x,
+                    y,
+                    &name,
+                    counts_x.saturating_sub(name_x),
+                    style,
+                );
             }
         }
     }
-    draw_vrule(buf, p, area);
+}
+
+/// A thin rounded frame just inside `r`.
+fn border(buf: &mut Buffer, r: Rect, style: Style) {
+    if r.width < 2 || r.height < 2 {
+        return;
+    }
+    let (right, bottom) = (r.right() - 1, r.bottom() - 1);
+    for x in r.left()..=right {
+        buf[(x, r.y)].set_symbol("─").set_style(style);
+        buf[(x, bottom)].set_symbol("─").set_style(style);
+    }
+    for y in r.top()..=bottom {
+        buf[(r.x, y)].set_symbol("│").set_style(style);
+        buf[(right, y)].set_symbol("│").set_style(style);
+    }
+    buf[(r.x, r.y)].set_symbol("╭");
+    buf[(right, r.y)].set_symbol("╮");
+    buf[(r.x, bottom)].set_symbol("╰");
+    buf[(right, bottom)].set_symbol("╯");
+}
+
+/// The worktree switcher: a filter line over branch, counts, file count
+/// and how recently each was used. Counts fill in as they are computed.
+#[allow(clippy::many_single_char_names, clippy::too_many_lines)]
+fn draw_switcher(buf: &mut Buffer, app: &App, area: Rect) {
+    let Some(sw) = &app.switcher else { return };
+    let p = &app.palette;
+    let w = 76.min(area.width.saturating_sub(4));
+    let n = u16::try_from(app.repo.worktrees.len()).unwrap_or(u16::MAX);
+    let h = (n + 2).min(area.height.saturating_sub(4)).max(3);
+    let outer = Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + area.height.saturating_sub(h + 2) / 3,
+        w,
+        h + 2,
+    );
+    let bg = p.panel;
+    fill(buf, outer, Style::new().bg(bg).fg(p.fg));
+    border(buf, outer, Style::new().bg(bg).fg(p.rule));
+    let r = Rect::new(outer.x + 1, outer.y + 1, w - 2, h);
+    let w = r.width;
+    let x = r.x + 1;
+    let iw = w.saturating_sub(2);
+    let px = x + put(
+        buf,
+        x,
+        r.y,
+        "> ",
+        iw,
+        Style::new()
+            .bg(bg)
+            .fg(p.accent)
+            .add_modifier(Modifier::BOLD),
+    );
+    let qx = px
+        + put(
+            buf,
+            px,
+            r.y,
+            &sw.query,
+            iw.saturating_sub(px - x),
+            Style::new().bg(bg).fg(p.fg),
+        );
+    put(buf, qx, r.y, "▏", 1, Style::new().bg(bg).fg(p.accent));
+    let count = format!("{}/{}", sw.matches.len(), n);
+    put(
+        buf,
+        r.right().saturating_sub(cells(&count) + 1),
+        r.y,
+        &count,
+        cells(&count),
+        Style::new().bg(bg).fg(p.faint),
+    );
+    for col in r.left()..r.right() {
+        buf[(col, r.y + 1)]
+            .set_symbol("─")
+            .set_fg(p.rule)
+            .set_bg(bg);
+    }
+    let rows = usize::from(h.saturating_sub(2));
+    let start = sw.cursor.saturating_sub(rows.saturating_sub(1));
+    let now = std::time::SystemTime::now();
+    for (slot, (i, m)) in sw
+        .matches
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(rows)
+        .enumerate()
+    {
+        let y = r.y + 2 + u16::try_from(slot).unwrap_or(0);
+        let wt = &app.repo.worktrees[m.worktree];
+        let row_bg = if i == sw.cursor { p.selection } else { bg };
+        fill(buf, Rect::new(r.x, y, w, 1), Style::new().bg(row_bg));
+        if m.worktree == app.current {
+            put(buf, r.x, y, "▌", 1, Style::new().bg(row_bg).fg(p.accent));
+        }
+        // Right columns: counts, file count, age; blank until known.
+        let end = r.right().saturating_sub(1);
+        let age = wt
+            .touched
+            .map(|t| crate::switcher::age(t, now))
+            .unwrap_or_default();
+        put(
+            buf,
+            end.saturating_sub(4),
+            y,
+            &format!("{age:>4}"),
+            4,
+            Style::new().bg(row_bg).fg(p.faint),
+        );
+        let files_end = end.saturating_sub(5);
+        let mut left_end = files_end.saturating_sub(24);
+        if let Some(s) = app.summaries.get(&wt.path) {
+            let (files, fg) = match s.files {
+                0 => ("clean".to_owned(), p.faint),
+                1 => ("1 file".to_owned(), p.muted),
+                n => (format!("{n} files"), p.muted),
+            };
+            put(
+                buf,
+                files_end.saturating_sub(cells(&files)),
+                y,
+                &files,
+                cells(&files),
+                Style::new().bg(row_bg).fg(fg),
+            );
+            if s.files > 0 {
+                let cx = put_counts(
+                    buf,
+                    files_end.saturating_sub(11),
+                    y,
+                    (s.added, s.removed),
+                    row_bg,
+                    p,
+                );
+                left_end = left_end.min(cx);
+            }
+        }
+        let room = usize::from(left_end.saturating_sub(x + 2));
+        let branch = truncate_middle(&wt.branch, room);
+        let plain = Style::new().bg(row_bg).fg(p.fg);
+        let hit = plain.fg(p.accent).add_modifier(Modifier::BOLD);
+        let mut cx = x + 1;
+        for (ci, ch) in branch.chars().enumerate() {
+            let hit_here = branch.chars().count() == wt.branch.chars().count()
+                && m.positions.contains(&u32::try_from(ci).unwrap_or(u32::MAX));
+            cx += put(
+                buf,
+                cx,
+                y,
+                ch.encode_utf8(&mut [0; 4]),
+                left_end.saturating_sub(cx),
+                if hit_here { hit } else { plain },
+            );
+        }
+    }
 }
 
 fn draw_diff(buf: &mut Buffer, app: &App, area: Rect) {
@@ -478,30 +606,24 @@ pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, 
         buf,
         x,
         area.y,
-        &format!("{} ", st.letter()),
+        &format!("{STATUS_MARK} "),
         end - x,
-        Style::new()
-            .bg(bg)
-            .fg(status_color(p, st))
-            .add_modifier(Modifier::BOLD),
+        Style::new().bg(bg).fg(status_color(p, st)),
     );
     let counts = f.counts().map(|(a, r)| (format!("+{a}"), format!(" −{r}")));
     let counts_w = counts
         .as_ref()
         .map_or(0, |(a, r)| a.chars().count() + r.chars().count());
-    let mark = if f.reviewed { "  ✓ reviewed" } else { "" };
+    let mark = if f.reviewed { "  ✓" } else { "" };
     let reserve = u16::try_from(counts_w + mark.chars().count() + 2).unwrap_or(0);
     let avail = usize::from(end.saturating_sub(x).saturating_sub(reserve));
-    let path = truncate_left(&f.change.path, avail);
-    let (dir, name) = path
-        .rsplit_once('/')
-        .map_or(("", path.as_str()), |(d, n)| (d, n));
+    let (dir, name) = fit_path(&f.change.path, avail);
     if !dir.is_empty() {
         x += put(
             buf,
             x,
             area.y,
-            &format!("{dir}/"),
+            &dir,
             end - x,
             Style::new().bg(bg).fg(p.muted),
         );
@@ -510,7 +632,7 @@ pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, 
         buf,
         x,
         area.y,
-        name,
+        &name,
         end - x,
         Style::new().bg(bg).fg(p.fg).add_modifier(Modifier::BOLD),
     );
@@ -846,64 +968,47 @@ fn paint(
 
 fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
     let p = &app.palette;
-    fill(buf, area, Style::new().bg(p.header_bg).fg(p.muted));
-    let wt = &app.repo.worktrees[app.current];
+    let bg = p.header_bg;
+    fill(buf, area, Style::new().bg(bg).fg(p.muted));
     let mut x = area.x + 1;
     let end = area.right();
-    x += put(
-        buf,
-        x,
-        area.y,
-        &format!("{}@{}", app.repo.name, wt.branch),
-        end - x,
-        Style::new()
-            .bg(p.header_bg)
-            .fg(p.fg)
-            .add_modifier(Modifier::BOLD),
-    );
-    if let Some(stream) = &app.stream {
+    let muted = Style::new().bg(bg).fg(p.muted);
+    // The sidebar names the branch; without it the status line does.
+    if app.areas.files.width == 0 {
+        let branch = &app.repo.worktrees[app.current].branch;
         x += put(
             buf,
             x,
             area.y,
-            &format!("  vs {}", stream.base),
+            branch,
             end - x,
-            Style::new().bg(p.header_bg).fg(p.muted),
+            Style::new().bg(bg).fg(p.fg).add_modifier(Modifier::BOLD),
         );
+        x += put(buf, x, area.y, "  ", end - x, muted);
+    }
+    if let Some(stream) = &app.stream {
+        let reviewed = stream.files.iter().filter(|f| f.reviewed).count();
         let (a, r, done) = stream.counts();
         x += put(
             buf,
             x,
             area.y,
-            &format!("  {} files ", stream.files.len()),
+            &format!("vs {}  ", stream.base),
             end - x,
-            Style::new().bg(p.header_bg).fg(p.muted),
+            muted,
         );
         x += put(
             buf,
             x,
             area.y,
-            &format!("+{a}"),
+            &format!("{}/{} files  ", reviewed, stream.files.len()),
             end - x,
-            Style::new().bg(p.header_bg).fg(p.green),
+            muted,
         );
-        x += put(
-            buf,
-            x,
-            area.y,
-            &format!(" −{r}"),
-            end - x,
-            Style::new().bg(p.header_bg).fg(p.red),
-        );
+        x += put(buf, x, area.y, &format!("+{a}"), end - x, muted.fg(p.green));
+        x += put(buf, x, area.y, &format!(" −{r}"), end - x, muted.fg(p.red));
         if !done {
-            x += put(
-                buf,
-                x,
-                area.y,
-                " …",
-                end - x,
-                Style::new().bg(p.header_bg).fg(p.faint),
-            );
+            x += put(buf, x, area.y, " …", end - x, muted.fg(p.faint));
         }
     }
     let layout = match app.effective_layout(app.areas.diff.width) {
@@ -915,40 +1020,34 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
         crate::repo::Mode::Head => "uncommitted",
     };
     let right = match &app.message {
-        Some(m) => format!("{m}  "),
+        Some(m) => format!("{m} "),
         None => format!(
-            "{mode} · {layout} · {}  ? help ",
-            if app.settings.wrap { "wrap" } else { "nowrap" }
+            "{mode} · {layout}{} · ? ",
+            if app.settings.wrap { "" } else { " · nowrap" }
         ),
     };
-    let rw = u16::try_from(unicode_width::UnicodeWidthStr::width(right.as_str())).unwrap_or(0);
+    let rw = cells(&right);
     if x + rw + 2 < end {
-        put(
-            buf,
-            end - rw,
-            area.y,
-            &right,
-            rw,
-            Style::new().bg(p.header_bg).fg(p.muted),
-        );
+        put(buf, end - rw, area.y, &right, rw, muted.fg(p.faint));
     }
 }
 
 const HELP: &[(&str, &str)] = &[
-    ("j k  ↓ ↑", "scroll, or move in a list"),
+    ("j k  ↓ ↑", "scroll, or move in the file list"),
     ("^d ^u  space", "half page down/up, page down"),
     ("g  G", "top, bottom"),
     ("J K  ] [", "next/previous file"),
     ("n  N", "next/previous change"),
+    ("w", "switch worktree (type to filter)"),
     ("{  }", "previous/next worktree"),
-    ("tab  h l", "focus worktrees, files, diff"),
-    ("enter", "open worktree or file; expand a fold"),
+    ("tab  h l", "focus files or diff"),
+    ("enter", "open file; expand a fold"),
     ("e  E", "expand the first fold on screen; all folds in file"),
     ("v", "mark file reviewed"),
     ("s", "layout: auto, unified, split"),
-    ("w", "wrap long lines"),
+    ("z", "wrap long lines"),
     ("m", "compare: branch (merge base) or uncommitted"),
-    ("1  2", "show worktrees, files"),
+    ("t  < >", "show sidebar; narrower, wider"),
     ("r", "refresh now"),
     ("q", "quit"),
 ];
@@ -999,5 +1098,26 @@ fn draw_help(buf: &mut Buffer, p: &Palette, area: Rect) {
             w.saturating_sub(18),
             Style::new().bg(p.header_bg).fg(p.muted),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_are_cut_in_the_middle() {
+        assert_eq!(truncate_middle("highlight.rs", 12), "highlight.rs");
+        assert_eq!(truncate_middle("highlight.rs", 9), "high…t.rs");
+        assert_eq!(width(&truncate_middle("highlight.rs", 9)), 9);
+    }
+
+    #[test]
+    fn paths_lose_their_directory_before_their_name() {
+        let fit = |max| fit_path("docs/containers/guide.md", max);
+        assert_eq!(fit(30), ("docs/containers/".into(), "guide.md".into()));
+        assert_eq!(fit(14), ("…ners/".into(), "guide.md".into()));
+        assert_eq!(fit(9), (String::new(), "guide.md".into()));
+        assert_eq!(fit(6), (String::new(), "gui…md".into()));
     }
 }

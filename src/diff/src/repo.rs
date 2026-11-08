@@ -14,12 +14,13 @@ pub(crate) struct Worktree {
     /// The checked-out branch, or a short commit id when detached.
     pub(crate) branch: String,
     pub(crate) main: bool,
+    /// When the worktree's Git state last changed: a commit, checkout or
+    /// staging.
+    pub(crate) touched: Option<std::time::SystemTime>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Repo {
-    /// The main worktree's directory name.
-    pub(crate) name: String,
     pub(crate) worktrees: Vec<Worktree>,
 }
 
@@ -47,6 +48,7 @@ pub(crate) fn discover(path: &Path) -> Result<Repo> {
             path: dir.canonicalize().unwrap_or_else(|_| dir.to_owned()),
             branch: branch(&main),
             main: true,
+            touched: touched(main.git_dir()),
         });
     }
     for proxy in main.worktrees().context("listing worktrees")? {
@@ -60,15 +62,20 @@ pub(crate) fn discover(path: &Path) -> Result<Repo> {
             path: base,
             branch: branch(&wt),
             main: false,
+            touched: touched(wt.git_dir()),
         });
     }
     let skip = usize::from(worktrees.first().is_some_and(|w| w.main));
     worktrees[skip..].sort_by(|a, b| a.branch.cmp(&b.branch));
-    let name = worktrees
-        .first()
-        .and_then(|w| w.path.file_name())
-        .map_or_else(|| "repo".to_owned(), |n| n.to_string_lossy().into_owned());
-    Ok(Repo { name, worktrees })
+    Ok(Repo { worktrees })
+}
+
+/// The newest change to a worktree's HEAD reflog or index.
+fn touched(git_dir: &Path) -> Option<std::time::SystemTime> {
+    ["logs/HEAD", "index", "HEAD"]
+        .iter()
+        .filter_map(|f| std::fs::metadata(git_dir.join(f)).ok()?.modified().ok())
+        .max()
 }
 
 fn branch(repo: &gix::Repository) -> String {
@@ -96,16 +103,6 @@ pub(crate) enum Status {
     Added,
     Deleted,
     Modified,
-}
-
-impl Status {
-    pub(crate) fn letter(self) -> char {
-        match self {
-            Status::Added => 'A',
-            Status::Deleted => 'D',
-            Status::Modified => 'M',
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
