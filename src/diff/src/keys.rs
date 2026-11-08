@@ -50,6 +50,8 @@ pub(crate) enum Action {
     Switcher,
     NextWorktree,
     PrevWorktree,
+    NextReview,
+    PrevReview,
     Focus,
     Left,
     Right,
@@ -248,6 +250,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
         ],
     ),
     row(
+        ",  .",
+        "previous/next worktree waiting for review",
+        &[
+            (key(','), Action::PrevReview),
+            (key('.'), Action::NextReview),
+        ],
+    ),
+    row(
         "tab",
         "focus files or diff",
         &[
@@ -347,5 +357,7 @@ mod tests {
         assert_eq!(action(KeyCode::Char('v'), false), Some(Action::Visual));
         assert_eq!(action(KeyCode::Char('c'), true), Some(Action::Quit));
         assert_eq!(action(KeyCode::Char('Z'), false), None);
+        assert_eq!(action(KeyCode::Char('.'), false), Some(Action::NextReview));
+        assert_eq!(action(KeyCode::Char(','), false), Some(Action::PrevReview));
     }
 }

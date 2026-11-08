@@ -99,6 +99,23 @@ impl App {
         order
     }
 
+    /// The next worktree waiting for review after the shown one in review
+    /// order, or with `forward` false the one before it, cycling.
+    pub(crate) fn next_to_review(&self, forward: bool) -> Option<usize> {
+        let order = self.review_order();
+        let n = order.len();
+        let at = order.iter().position(|&i| i == self.current).unwrap_or(0);
+        (1..=n)
+            .map(|d| {
+                if forward {
+                    order[(at + d) % n]
+                } else {
+                    order[(at + n - d % n) % n]
+                }
+            })
+            .find(|&i| i != self.current && self.standing(i) == Standing::Waiting)
+    }
+
     /// Records that the user looked at the shown worktree's changes, named
     /// by `content`.
     pub(crate) fn look(&mut self, content: &str) {
@@ -110,7 +127,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     use super::*;
@@ -213,5 +230,21 @@ mod tests {
         assert!(!app.unseen(1));
         assert_eq!(app.session.state().looked.as_deref(), Some("B2"));
         assert_eq!(app.review_order()[0], 3);
+    }
+
+    #[test]
+    fn next_to_review_cycles_through_waiting_worktrees_in_order() {
+        let mut app = app();
+        // Order: d, b (waiting), c (active), a, e.
+        app.current = 0;
+        assert_eq!(app.next_to_review(true), Some(3));
+        assert_eq!(app.next_to_review(false), Some(1));
+        app.current = 3;
+        assert_eq!(app.next_to_review(true), Some(1));
+        assert_eq!(app.next_to_review(false), Some(1), "only one other");
+        app.current = 1;
+        assert_eq!(app.next_to_review(true), Some(3), "wraps");
+        app.summaries.get_mut(Path::new("/w/d")).expect("d").looked = Some("D".into());
+        assert_eq!(app.next_to_review(true), None, "the shown one is not next");
     }
 }

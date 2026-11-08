@@ -205,6 +205,12 @@ impl Runtime {
                 let n = self.app.repo.worktrees.len();
                 self.switch((self.app.current + n - 1) % n);
             }
+            Action::NextReview | Action::PrevReview => {
+                match self.app.next_to_review(action == Action::NextReview) {
+                    Some(i) => self.switch(i),
+                    None => self.app.message = Some("nothing waits for review".to_owned()),
+                }
+            }
             Action::Focus => {
                 self.app.focus = if diff && self.app.areas.files.width > 0 {
                     Focus::Files

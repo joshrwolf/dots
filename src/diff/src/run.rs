@@ -987,6 +987,37 @@ mod tests {
     }
 
     #[test]
+    fn showing_a_worktree_records_its_content_as_looked_at() {
+        let dir = std::env::temp_dir().join(format!("dots-diff-looked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut rt, _rx) = runtime(TWO);
+        rt.app
+            .session
+            .install(Path::new("/r"), Ok((dir.clone(), review::State::default())));
+        let summary = |content: &str| crate::app::Summary {
+            files: 2,
+            content: Some(content.into()),
+            ..crate::app::Summary::default()
+        };
+        rt.handle(Msg::Summary {
+            path: "/r".into(),
+            summary: Ok(summary("c1")),
+        });
+        rt.save_review();
+        let saved = review::State::load(&dir).expect("load");
+        assert_eq!(saved.looked.as_deref(), Some("c1"));
+        // Another worktree's summary is not looked at.
+        rt.handle(Msg::Summary {
+            path: "/elsewhere".into(),
+            summary: Ok(summary("c2")),
+        });
+        assert_eq!(rt.app.session.state().looked.as_deref(), Some("c1"));
+        press(&mut rt, ".");
+        assert_eq!(rt.app.message.as_deref(), Some("nothing waits for review"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_send_finishing_after_a_switch_is_recorded_in_its_worktree() {
         let root = std::env::temp_dir().join(format!("dots-diff-sent-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);

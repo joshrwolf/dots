@@ -29,8 +29,9 @@ toggles, and closes a viewer the user has open.
 The viewer reads Pi's worker registry and the interactive sessions' inbox
 registrations itself. Its worktree switcher lists worktrees waiting for review
 first, naming the worker (label and model) or session working in each and the
-worker's status; the status line names the shown worktree's. Opening a
-worktree counts as looking at it until its changes change again. A clear,
+worker's status; the status line names the shown worktree's. The user steps
+through waiting worktrees with `.` and `,`. Opening a worktree counts as
+looking at it until its changes change again. A clear,
 specific worker label therefore helps the user more than opening the viewer
 for each worker.
 
