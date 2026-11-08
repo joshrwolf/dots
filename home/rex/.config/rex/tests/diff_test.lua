@@ -1,6 +1,7 @@
 local diff = require("dots.diff")
 local expect = require("tests.expect")
 local fake_rex = require("tests.fake_rex")
+local hosts = require("dots.hosts")
 local process = require("dots.process")
 
 ---A session with one pane at /src, and the viewer `split` beside it when
@@ -36,6 +37,23 @@ end
 local pane = { session_id = "s", block_id = "pane" }
 
 return {
+  ["a pane on another host opens that host's viewer, resolving nothing here"] = function(t)
+    t.stub(diff, "viewers", {})
+    fake_rex.install(t, { sessions = {} })
+    local args = { show = true, path = "/wt" }
+    t.stub(hosts, "forward", function(ctx, action, got)
+      expect.equal({ ctx.server, action, got }, { "remote", "diff_toggle", args })
+      return true, "remote-split"
+    end)
+    t.stub(process, "which", function()
+      error("resolved locally")
+    end)
+    local actions = fake_rex.registered(t, diff)
+    local ctx = { server = "remote", session_id = "s", block_id = "pane" }
+    expect.equal(actions.diff_toggle.run(ctx, args), "remote-split")
+    expect.equal(diff.viewers, {})
+  end,
+
   ["the key opens the viewer for the pane's worktree beside it, focused"] = function(t)
     t.stub(diff, "viewers", {})
     local fake = fake_rex.install(t, world())

@@ -24,6 +24,9 @@ scrolls to that file. Then tell the user in chat what to look at; the viewer
 does not explain itself. Use `show=true` always: without it the action
 toggles, and closes a viewer the user has open.
 
+The viewer runs on the host of the pane, with that host's `dots-diff`,
+worktrees and agents; a pane on another Rex host opens the viewer there.
+
 ## What the user sees without you
 
 The viewer reads Pi's worker registry and the interactive sessions' inbox
