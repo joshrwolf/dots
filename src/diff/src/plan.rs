@@ -117,14 +117,29 @@ pub(crate) fn plan(
                 }));
             }
             Layout::Split => {
-                let (dels, ins) = (hunk.old.len(), hunk.new.len());
-                for i in 0..dels.max(ins) {
-                    let i = u32::try_from(i).expect("hunk lengths are u32");
-                    rows.push(Row::Pair {
-                        old: (i < hunk.old.end - hunk.old.start).then(|| hunk.old.start + i),
-                        new: (i < hunk.new.end - hunk.new.start).then(|| hunk.new.start + i),
-                        changed: true,
-                    });
+                // Paired lines share a row. Between pairs, the remaining
+                // removals and additions sit side by side, the shorter run
+                // padded with blanks.
+                let (mut o, mut n) = (hunk.old.start, hunk.new.start);
+                let stops = hunk.pairs.iter().copied().map(Some).chain([None]);
+                for pair in stops {
+                    let (po, pn) = pair.unwrap_or((hunk.old.end, hunk.new.end));
+                    let (dels, ins) = (po - o, pn - n);
+                    for i in 0..dels.max(ins) {
+                        rows.push(Row::Pair {
+                            old: (i < dels).then_some(o + i),
+                            new: (i < ins).then_some(n + i),
+                            changed: true,
+                        });
+                    }
+                    if pair.is_some() {
+                        rows.push(Row::Pair {
+                            old: Some(po),
+                            new: Some(pn),
+                            changed: true,
+                        });
+                    }
+                    (o, n) = (po + 1, pn + 1);
                 }
             }
         }
@@ -236,7 +251,11 @@ mod tests {
     }
 
     fn hunk(old: std::ops::Range<u32>, new: std::ops::Range<u32>) -> Hunk {
-        Hunk { old, new }
+        Hunk {
+            old,
+            new,
+            pairs: Vec::new(),
+        }
     }
 
     fn line(kind: Kind, old: Option<u32>, new: Option<u32>) -> Row {
@@ -319,6 +338,32 @@ mod tests {
                     new: None,
                     changed: true
                 },
+            ]
+        );
+    }
+
+    #[test]
+    fn split_aligns_paired_lines_on_one_row() {
+        // Old 0 became new 1 and old 2 became new 2; old 1 and new 0 are
+        // unpaired, and share the row before the first pair.
+        let mut h = hunk(0..3, 0..4);
+        h.pairs = vec![(0, 1), (2, 2)];
+        let rows = plan(&[h], 3, 4, &HashSet::new(), options(Layout::Split));
+        let sides: Vec<_> = rows
+            .iter()
+            .map(|r| match r {
+                Row::Pair { old, new, .. } => (*old, *new),
+                _ => panic!("split rows are pairs"),
+            })
+            .collect();
+        assert_eq!(
+            sides,
+            vec![
+                (None, Some(0)),
+                (Some(0), Some(1)),
+                (Some(1), None),
+                (Some(2), Some(2)),
+                (None, Some(3)),
             ]
         );
     }

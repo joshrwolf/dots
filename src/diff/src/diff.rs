@@ -74,6 +74,9 @@ fn offset(n: usize) -> u32 {
 pub(crate) struct Hunk {
     pub(crate) old: Range<u32>,
     pub(crate) new: Range<u32>,
+    /// Old lines paired with the new lines they became, in order; see
+    /// [`pair_lines`]. The rest are plain removals and additions.
+    pub(crate) pairs: Vec<(u32, u32)>,
 }
 
 /// What stays resident per file: hunks and sizes, not texts. Texts are
@@ -101,6 +104,7 @@ impl FileDiff {
                 vec![Hunk {
                     old: 0..old_len,
                     new: 0..new_len,
+                    pairs: Vec::new(),
                 }]
             }
         } else {
@@ -111,6 +115,7 @@ impl FileDiff {
             diff.postprocess_lines(&input);
             diff.hunks()
                 .map(|h| Hunk {
+                    pairs: pair_lines(old, new, h.before.clone(), h.after.clone()),
                     old: h.before,
                     new: h.after,
                 })
@@ -172,6 +177,122 @@ pub(crate) fn line_counts(old: &[u8], new: &[u8]) -> Option<(u32, u32)> {
     Some((diff.count_additions(), diff.count_removals()))
 }
 
+/// Hunks with more old × new lines than this pair lines position by
+/// position instead of by best alignment.
+const PAIR_MAX_CELLS: usize = 10_000;
+/// Lines less similar than this are not paired: they show as plain
+/// removals and additions.
+const PAIR_MIN_SIMILARITY: f32 = 0.5;
+/// Two blank lines pair, but below any real match.
+const PAIR_BLANK_SIMILARITY: f32 = 0.6;
+
+/// Pairs the old lines of a changed region with their most similar new
+/// lines, in order. Each pair is (old line, new line).
+// The backtrack compares totals copied by `max`, so exactly.
+#[allow(clippy::many_single_char_names, clippy::float_cmp)]
+pub(crate) fn pair_lines(
+    old: &Text,
+    new: &Text,
+    old_lines: Range<u32>,
+    new_lines: Range<u32>,
+) -> Vec<(u32, u32)> {
+    if old_lines.is_empty() || new_lines.is_empty() {
+        return Vec::new();
+    }
+    let a: Vec<Vec<&str>> = old_lines
+        .clone()
+        .map(|i| line_tokens(old.line(i)))
+        .collect();
+    let b: Vec<Vec<&str>> = new_lines
+        .clone()
+        .map(|i| line_tokens(new.line(i)))
+        .collect();
+    let (m, n) = (a.len(), b.len());
+    let at = |i: usize, j: usize| (old_lines.start + offset(i), new_lines.start + offset(j));
+    if m * n > PAIR_MAX_CELLS {
+        return (0..m.min(n))
+            .filter(|&i| similarity(&a[i], &b[i]) >= PAIR_MIN_SIMILARITY)
+            .map(|i| at(i, i))
+            .collect();
+    }
+    // best[i][j]: the best total over old lines i.. and new lines j.., where
+    // a pair scores by how far its similarity clears the threshold.
+    let width = n + 1;
+    let mut best = vec![0f32; (m + 1) * width];
+    for i in (0..m).rev() {
+        for j in (0..n).rev() {
+            let s = similarity(&a[i], &b[j]);
+            let pair = if s >= PAIR_MIN_SIMILARITY {
+                best[(i + 1) * width + j + 1] + s - PAIR_MIN_SIMILARITY + f32::EPSILON
+            } else {
+                f32::NEG_INFINITY
+            };
+            best[i * width + j] = pair
+                .max(best[(i + 1) * width + j])
+                .max(best[i * width + j + 1]);
+        }
+    }
+    let (mut i, mut j, mut pairs) = (0, 0, Vec::new());
+    while i < m && j < n {
+        let here = best[i * width + j];
+        if here == best[(i + 1) * width + j] {
+            i += 1;
+        } else if here == best[i * width + j + 1] {
+            j += 1;
+        } else {
+            pairs.push(at(i, j));
+            i += 1;
+            j += 1;
+        }
+    }
+    pairs
+}
+
+/// A line's words and symbols, sorted, for comparing as multisets.
+fn line_tokens(line: &str) -> Vec<&str> {
+    if line.len() > INLINE_MAX_BYTES {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut rest = line.trim();
+    while let Some(c) = rest.chars().next() {
+        let len = if is_word(c) {
+            rest.len() - rest.trim_start_matches(is_word).len()
+        } else {
+            c.len_utf8()
+        };
+        if !c.is_whitespace() {
+            out.push(&rest[..len]);
+        }
+        rest = &rest[len..];
+    }
+    out.sort_unstable();
+    out
+}
+
+/// The Dice coefficient of two sorted token multisets.
+#[allow(clippy::many_single_char_names)]
+fn similarity(a: &[&str], b: &[&str]) -> f32 {
+    if a.is_empty() && b.is_empty() {
+        return PAIR_BLANK_SIMILARITY;
+    }
+    let (mut i, mut j, mut common) = (0, 0, 0usize);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                common += 1;
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let s = (2 * common) as f32 / (a.len() + b.len()) as f32;
+    s
+}
+
 /// Within-line emphasis of one hunk: changed byte ranges of each side, as
 /// offsets into the file, sorted.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -211,7 +332,7 @@ const INLINE_MERGE_GAP: u32 = 2;
 /// the changed parts of each, snapped to whole words. `None` when no pair
 /// has any.
 pub(crate) fn hunk_emphasis(old: &Text, new: &Text, hunk: &Hunk) -> Option<HunkEmphasis> {
-    let pairs = hunk.old.clone().zip(hunk.new.clone());
+    let pairs = hunk.pairs.iter().copied();
     if pairs.len() > INLINE_MAX_PAIRS {
         return None;
     }
@@ -370,11 +491,13 @@ mod tests {
             vec![
                 Hunk {
                     old: 1..2,
-                    new: 1..2
+                    new: 1..2,
+                    pairs: vec![],
                 },
                 Hunk {
                     old: 4..4,
-                    new: 4..5
+                    new: 4..5,
+                    pairs: vec![],
                 }
             ]
         );
@@ -391,7 +514,8 @@ mod tests {
             d.hunks,
             vec![Hunk {
                 old: 0..0,
-                new: 0..2
+                new: 0..2,
+                pairs: vec![],
             }]
         );
         assert_eq!((d.added, d.removed), (2, 0));
@@ -473,6 +597,7 @@ mod tests {
         let hunk = Hunk {
             old: 1..2,
             new: 1..2,
+            pairs: vec![(1, 1)],
         };
         let e = hunk_emphasis(&old, &new, &hunk).expect("similar lines");
         assert_eq!(e.old, vec![13..16]);
@@ -480,7 +605,39 @@ mod tests {
         let pure = Hunk {
             old: 0..0,
             new: 0..1,
+            pairs: vec![],
         };
         assert_eq!(hunk_emphasis(&text(""), &text("x\n"), &pure), None);
+    }
+
+    fn pairs(old: &str, new: &str) -> Vec<(u32, u32)> {
+        let (old, new) = (text(old), text(new));
+        pair_lines(&old, &new, 0..old.len(), 0..new.len())
+    }
+
+    #[test]
+    fn pairs_lines_with_their_most_similar_counterparts_in_order() {
+        let old = "let a = compute(1);\nlet b = other(2);\n";
+        let new = "// a new comment\nlet a = compute(10);\nfn helper() {}\nlet b = other(2, 3);\n";
+        assert_eq!(pairs(old, new), vec![(0, 1), (1, 3)]);
+        // Order holds: a line moved up does not pair across another pair.
+        let old = "alpha beta gamma\ndelta epsilon zeta\n";
+        let new = "delta epsilon zeta eta\nalpha beta gamma delta\n";
+        assert_eq!(pairs(old, new).len(), 1);
+    }
+
+    #[test]
+    fn dissimilar_lines_stay_unpaired() {
+        assert_eq!(pairs("one two three\n", "four five six\n"), vec![]);
+        assert_eq!(pairs("", "x\n"), vec![]);
+    }
+
+    #[test]
+    fn large_regions_pair_by_position() {
+        let side =
+            |tag: &str| (0..120).fold(String::new(), |s, i| s + &format!("item {i} {tag}\n"));
+        let found = pairs(&side("a"), &side("b"));
+        assert_eq!(found.len(), 120);
+        assert_eq!(found[7], (7, 7));
     }
 }
