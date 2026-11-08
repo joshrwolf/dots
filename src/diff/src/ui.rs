@@ -1,7 +1,7 @@
 //! Drawing. Only visible rows are touched: each display line of the diff
 //! pane is located in the stream and painted straight into the buffer.
 
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
@@ -9,10 +9,12 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
 use crate::app::{App, Body, FileTexts, FileView, Focus, Line, ListItem};
+use crate::cards::{self, Placed};
 use crate::diff::FileDiff;
 use crate::highlight::{Lines, Role, Run};
 use crate::plan::{Kind, Row};
 use crate::repo::Status;
+use crate::review;
 use crate::theme::Palette;
 use crate::wrap::{self, Segment};
 
@@ -57,6 +59,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let (files, diff, status) = areas(app, full);
     app.areas = crate::app::Areas { files, diff };
     app.layout(diff.width, diff.height);
+    app.clamp_cursor(diff.height);
     app.prepare_emphasis(diff.height);
     let buf = frame.buffer_mut();
     let p = app.palette.clone();
@@ -68,6 +71,12 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut App) {
     draw_status(buf, app, status);
     if app.switcher.is_some() {
         draw_switcher(buf, app, full);
+    }
+    if app.editor.is_some() {
+        draw_editor(buf, app, diff);
+    }
+    if app.picker.is_some() {
+        draw_picker(buf, app, full);
     }
     if app.help {
         draw_help(buf, &p, full);
@@ -294,6 +303,7 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
     let visible = &app.list[start..(start + rows).min(app.list.len())];
     let end = list.right().saturating_sub(1);
     let current_row = app.row_of_file(app.top.file);
+    let drafts = app.draft_counts();
     // What each row shows: marker, name, counts and whether it is reviewed.
     let rows: Vec<SidebarRow<'_>> = visible
         .iter()
@@ -310,6 +320,7 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
                     binary: false,
                     reviewed,
                     dir: true,
+                    drafts: 0,
                 }
             }
             ListItem::File { index, .. } => {
@@ -323,9 +334,10 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
                     mark,
                     name: f.change.path.rsplit('/').next().unwrap_or(&f.change.path),
                     counts: f.counts(),
-                    binary: matches!(f.body, Body::Binary),
+                    binary: matches!(f.body, Body::Binary(_)),
                     reviewed: f.reviewed,
                     dir: false,
+                    drafts: drafts.get(f.change.path.as_str()).copied().unwrap_or(0),
                 }
             }
         })
@@ -391,6 +403,14 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
             (false, true) => p.muted,
             (false, false) => p.fg,
         };
+        let badge = (row.drafts > 0).then(|| format!(" {} ", row.drafts));
+        let badge_w = badge.as_deref().map_or(0, |b| usize::from(cells(b)) + 1);
+        let badge = badge.filter(|_| room >= badge_w + 4);
+        let room = if badge.is_some() {
+            room - badge_w
+        } else {
+            room
+        };
         let check = row.dir && row.reviewed && room >= 4;
         let room = if check { room - 2 } else { room };
         let name = if row.dir {
@@ -416,6 +436,245 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
                 Style::new().bg(bg).fg(p.green_dim),
             );
         }
+        if let Some(badge) = badge {
+            put(
+                buf,
+                name_x + w + 1,
+                y,
+                &badge,
+                cells(&badge),
+                Style::new()
+                    .bg(p.accent)
+                    .fg(p.bg)
+                    .add_modifier(Modifier::BOLD),
+            );
+        }
+    }
+}
+
+/// The comment editor, over the bottom of the diff pane.
+#[allow(clippy::too_many_lines)]
+fn draw_editor(buf: &mut Buffer, app: &App, area: Rect) {
+    let Some(ed) = &app.editor else { return };
+    let p = &app.palette;
+    let lines = ed.buffer.lines();
+    let w = area.width.saturating_sub(4).clamp(20.min(area.width), 110);
+    let text_rows = u16::try_from(lines.len())
+        .unwrap_or(u16::MAX)
+        .clamp(3, (area.height / 2).max(3));
+    let h = (text_rows + 4).min(area.height);
+    let outer = Rect::new(
+        area.x + (area.width - w) / 2,
+        area.bottom().saturating_sub(h + 1).max(area.y),
+        w,
+        h,
+    );
+    let bg = p.panel;
+    fill(buf, outer, Style::new().bg(bg).fg(p.fg));
+    border(buf, outer, Style::new().bg(bg).fg(p.accent));
+    let inner = Rect::new(
+        outer.x + 2,
+        outer.y + 1,
+        w.saturating_sub(4),
+        h.saturating_sub(2),
+    );
+    let what = match &ed.place {
+        review::Place::Review => "the review".to_owned(),
+        review::Place::File { path } => path.clone(),
+        review::Place::Lines { path, lines } => {
+            if lines.end > lines.start {
+                format!("{path}:{}-{}", lines.start + 1, lines.end + 1)
+            } else {
+                format!("{path}:{}", lines.start + 1)
+            }
+        }
+    };
+    let verb = match (ed.editing, ed.suggestion) {
+        (_, true) => "suggest replacement code for",
+        (Some(_), false) => "edit comment on",
+        (None, false) => "comment on",
+    };
+    let title = format!("{verb} {what}");
+    let kind = format!("[{}]", ed.kind.label());
+    let used = put(
+        buf,
+        inner.x,
+        inner.y,
+        &title,
+        inner.width.saturating_sub(cells(&kind) + 2),
+        Style::new().bg(bg).fg(p.fg).add_modifier(Modifier::BOLD),
+    );
+    let kind_color = match ed.kind {
+        review::Kind::Issue => p.red,
+        review::Kind::Nit => p.muted,
+        _ => p.accent,
+    };
+    put(
+        buf,
+        (inner.x + used + 2).min(inner.right().saturating_sub(cells(&kind))),
+        inner.y,
+        &kind,
+        cells(&kind),
+        Style::new().bg(bg).fg(kind_color),
+    );
+    let (row, col) = ed.buffer.cursor();
+    let rows = usize::from(text_rows);
+    let first = row.saturating_sub(rows.saturating_sub(1));
+    let line = |i: usize| -> &str { lines.get(i).map_or("", String::as_str) };
+    // Long lines scroll sideways with the cursor.
+    let before: String = line(row).chars().take(col).collect();
+    let shift = usize::from(cells(&before).saturating_sub(inner.width.saturating_sub(2)));
+    let text_style = if ed.suggestion {
+        Style::new().bg(p.add_bg).fg(p.fg)
+    } else {
+        Style::new().bg(bg).fg(p.fg)
+    };
+    for slot in 0..rows {
+        let y = inner.y + 1 + u16::try_from(slot).unwrap_or(0);
+        if ed.suggestion {
+            fill(buf, Rect::new(inner.x, y, inner.width, 1), text_style);
+        }
+        let text = skip_cells(&line(first + slot).replace('\t', "    "), shift);
+        put(buf, inner.x, y, &text, inner.width, text_style);
+    }
+    if lines.len() == 1 && lines[0].is_empty() && !ed.suggestion {
+        put(
+            buf,
+            inner.x + 1,
+            inner.y + 1,
+            "type the comment; Enter adds a line",
+            inner.width.saturating_sub(1),
+            Style::new().bg(bg).fg(p.faint),
+        );
+    }
+    let cx = inner.x + cells(&before).saturating_sub(u16::try_from(shift).unwrap_or(0));
+    let cy = inner.y + 1 + u16::try_from(row - first).unwrap_or(0);
+    if cx < inner.right() && cy < inner.bottom() {
+        buf[(cx, cy)].set_bg(p.accent).set_fg(p.bg);
+    }
+    let hints = "Tab type · Ctrl+Enter or Ctrl+S save · Ctrl+G send now · Esc cancel";
+    put(
+        buf,
+        inner.x,
+        inner.bottom().saturating_sub(1),
+        hints,
+        inner.width,
+        Style::new().bg(bg).fg(p.muted),
+    );
+}
+
+/// `text` less its first `n` cells.
+fn skip_cells(text: &str, n: usize) -> String {
+    let mut skipped = 0;
+    text.chars()
+        .skip_while(|c| {
+            let w = usize::from(wrap::char_width(*c));
+            let skip = skipped + w <= n;
+            if skip {
+                skipped += w;
+            }
+            skip
+        })
+        .collect()
+}
+
+/// The list of live Pi sessions to send the review to.
+#[allow(clippy::many_single_char_names)]
+fn draw_picker(buf: &mut Buffer, app: &App, area: Rect) {
+    let Some(pk) = &app.picker else { return };
+    let p = &app.palette;
+    let w = 96.min(area.width.saturating_sub(4));
+    let n = u16::try_from(pk.agents.len()).unwrap_or(u16::MAX);
+    let h = (n + 3).min(area.height.saturating_sub(4)).max(4);
+    let outer = Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + area.height.saturating_sub(h + 2) / 3,
+        w,
+        h + 2,
+    );
+    let bg = p.panel;
+    fill(buf, outer, Style::new().bg(bg).fg(p.fg));
+    border(buf, outer, Style::new().bg(bg).fg(p.rule));
+    let r = Rect::new(outer.x + 2, outer.y + 1, w.saturating_sub(4), h);
+    put(
+        buf,
+        r.x,
+        r.y,
+        "Send reviews of this worktree to",
+        r.width,
+        Style::new().bg(bg).fg(p.muted),
+    );
+    let qx = r.x
+        + put(
+            buf,
+            r.x,
+            r.y + 1,
+            "> ",
+            r.width,
+            Style::new()
+                .bg(bg)
+                .fg(p.accent)
+                .add_modifier(Modifier::BOLD),
+        );
+    let end = qx
+        + put(
+            buf,
+            qx,
+            r.y + 1,
+            &pk.query,
+            r.width.saturating_sub(2),
+            Style::new().bg(bg).fg(p.fg),
+        );
+    put(buf, end, r.y + 1, "▏", 1, Style::new().bg(bg).fg(p.accent));
+    let rows = usize::from(h.saturating_sub(3));
+    let start = pk.cursor.saturating_sub(rows.saturating_sub(1));
+    for (slot, (i, &agent)) in pk
+        .matches
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(rows)
+        .enumerate()
+    {
+        let y = r.y + 3 + u16::try_from(slot).unwrap_or(0);
+        let a = &pk.agents[agent];
+        let row_bg = if i == pk.cursor { p.selection } else { bg };
+        fill(
+            buf,
+            Rect::new(r.x.saturating_sub(1), y, r.width + 2, 1),
+            Style::new().bg(row_bg),
+        );
+        let used = put(
+            buf,
+            r.x,
+            y,
+            &a.label(),
+            r.width / 3,
+            Style::new()
+                .bg(row_bg)
+                .fg(p.fg)
+                .add_modifier(Modifier::BOLD),
+        );
+        let pane = format!("  {}  ", a.pane());
+        let px = r.x + used;
+        let used2 = put(
+            buf,
+            px,
+            y,
+            &pane,
+            r.width.saturating_sub(used),
+            Style::new().bg(row_bg).fg(p.accent),
+        );
+        let cwd = a.cwd.display().to_string();
+        let room = usize::from(r.width.saturating_sub(used + used2));
+        put(
+            buf,
+            px + used2,
+            y,
+            &truncate_left(&cwd, room),
+            r.width.saturating_sub(used + used2),
+            Style::new().bg(row_bg).fg(p.muted),
+        );
     }
 }
 
@@ -427,6 +686,8 @@ struct SidebarRow<'a> {
     binary: bool,
     reviewed: bool,
     dir: bool,
+    /// Draft comments on the file.
+    drafts: usize,
 }
 
 /// A thin rounded frame just inside `r`.
@@ -616,16 +877,205 @@ fn draw_diff(buf: &mut Buffer, app: &App, area: Rect) {
         return;
     }
     let top = app.global_top();
+    let selected = selection(app);
     for y in 0..area.height {
         let line = app.line_at(top + u32::from(y));
         let row = Rect::new(area.x, area.y + y, area.width, 1);
         draw_line(buf, app, row, line);
+        if let (
+            Some((file, side, lines)),
+            Line::Body {
+                file: f,
+                row: r,
+                sub,
+            },
+        ) = (&selected, line)
+            && *file == f
+            && let Some(n) = side_line(stream, f, r, sub, *side)
+            && lines.contains(&n)
+        {
+            mark_numbers(buf, app, row, f, *side, p.selection);
+        }
     }
-    // The current file's header stays pinned at the top.
+    // The current file's header stays pinned at the top, unless the view
+    // shows the review's cards above it.
     let file = app.top.file;
-    for part in 0..app.settings.header_rows.min(area.height) {
-        let row = Rect::new(area.x, area.y + part, area.width, 1);
-        draw_line(buf, app, row, Line::Header { file, part });
+    if app.top.line >= stream.files[file].above {
+        for part in 0..app.settings.header_rows.min(area.height) {
+            let row = Rect::new(area.x, area.y + part, area.width, 1);
+            draw_line(buf, app, row, Line::Header { file, part });
+        }
+    }
+    if app.focus == Focus::Diff && app.editor.is_none() && app.cursor_row < area.height {
+        let y = area.y + app.cursor_row;
+        let row = Rect::new(area.x, y, area.width, 1);
+        if let Line::Body { file, row: r, sub } = app.line_at(app.cursor_line())
+            && let Some(pos) = app.cursor_pos()
+            && side_line(stream, file, r, sub, pos.side).is_some()
+        {
+            mark_numbers(buf, app, row, file, pos.side, p.selection);
+        }
+        buf[(area.x, y)].set_symbol("▌").set_fg(p.accent);
+    }
+}
+
+/// The lines to show selected: the visual selection, or those the editor
+/// comments on.
+fn selection(app: &App) -> Option<(usize, review::Side, RangeInclusive<u32>)> {
+    if app.visual.is_some() {
+        let (start, end) = app.selection()?;
+        return Some((start.file, start.side, start.line..=end));
+    }
+    let review::Place::Lines { path, lines } = &app.editor.as_ref()?.place else {
+        return None;
+    };
+    let file = app
+        .stream
+        .as_ref()?
+        .files
+        .iter()
+        .position(|f| f.change.path == *path)?;
+    Some((file, lines.side, lines.start..=lines.end))
+}
+
+/// The line of `side` that code line `sub` of a row shows, unless it is a
+/// card's line.
+fn side_line(
+    stream: &crate::app::Stream,
+    file: usize,
+    row: usize,
+    sub: u32,
+    side: review::Side,
+) -> Option<u32> {
+    let f = &stream.files[file];
+    let r = u32::try_from(row).ok()?;
+    if f.cards.iter().any(|p| p.row == r && sub >= p.start) {
+        return None;
+    }
+    match (*f.rows().get(row)?, side) {
+        (Row::Line { kind, old, .. }, review::Side::Old) if kind != Kind::Insert => old,
+        (Row::Line { kind, new, .. }, review::Side::New) if kind != Kind::Delete => new,
+        (Row::Pair { old, .. }, review::Side::Old) => old,
+        (Row::Pair { new, .. }, review::Side::New) => new,
+        _ => None,
+    }
+}
+
+/// Tints the line numbers of `side` on a row.
+fn mark_numbers(
+    buf: &mut Buffer,
+    app: &App,
+    row: Rect,
+    file: usize,
+    side: review::Side,
+    bg: Color,
+) {
+    let Some(f) = app.stream.as_ref().and_then(|s| s.files.get(file)) else {
+        return;
+    };
+    let nw = f.number_width();
+    let (x, w) = match (f.layout(), side) {
+        (crate::plan::Layout::Unified, _) => (row.x, nw * 2 + 2),
+        (crate::plan::Layout::Split, review::Side::Old) => (row.x, nw + 1),
+        (crate::plan::Layout::Split, review::Side::New) => {
+            (row.x + row.width.saturating_sub(1) / 2 + 1, nw + 1)
+        }
+    };
+    for cx in x..(x + w).min(row.right()) {
+        buf[(cx, row.y)].set_bg(bg).set_fg(app.palette.fg);
+    }
+}
+
+/// Draws line `line` of a card in columns `span` of the row `area`.
+fn draw_card(
+    buf: &mut Buffer,
+    app: &App,
+    area: Rect,
+    placed: &Placed,
+    line: u32,
+    span: (u16, u16),
+    in_stack: bool,
+) {
+    let p = &app.palette;
+    let Some(card) = cards::get(&app.review, &app.notes, placed.card) else {
+        return;
+    };
+    let lines = cards::lines(&card, cards::text_width(span.1), in_stack);
+    let Some(this) = lines.get(line as usize) else {
+        return;
+    };
+    let (bar, dim, bg) = match &card {
+        cards::Card::Comment(c) => {
+            let bar = match (c.sent, c.outdated, c.kind) {
+                (true, ..) => p.faint,
+                (_, true, _) => p.amber,
+                (_, _, review::Kind::Issue) => p.red,
+                (_, _, review::Kind::Nit) => p.muted,
+                _ => p.accent,
+            };
+            (bar, c.sent, if c.sent { p.bg } else { p.panel })
+        }
+        cards::Card::Note(n) => (p.amber, n.seen, if n.seen { p.bg } else { p.header_bg }),
+    };
+    let x = area.x + span.0;
+    let r = Rect::new(x, area.y, span.1.min(area.right().saturating_sub(x)), 1);
+    let (text_fg, title_fg) = if dim { (p.faint, p.faint) } else { (p.fg, bar) };
+    let mut style = Style::new().bg(bg).fg(text_fg);
+    if this.look == cards::Look::Code {
+        style = style.bg(if dim { p.bg } else { p.add_bg });
+    }
+    fill(buf, r, Style::new().bg(bg));
+    put(buf, r.x, r.y, "▌", 1, Style::new().bg(bg).fg(bar));
+    let inner = r.width.saturating_sub(3);
+    match this.look {
+        cards::Look::Title => {
+            let used = put(
+                buf,
+                r.x + 2,
+                r.y,
+                &this.text,
+                inner,
+                Style::new()
+                    .bg(bg)
+                    .fg(title_fg)
+                    .add_modifier(Modifier::BOLD),
+            );
+            if app.focus == Focus::Diff && app.cursor_card() == Some(placed.card) {
+                let hint = match &card {
+                    cards::Card::Comment(c) if !c.sent => "e edit  d delete",
+                    cards::Card::Comment(_) => "d delete",
+                    cards::Card::Note(_) => "d dismiss",
+                };
+                let hx = r.right().saturating_sub(cells(hint) + 1);
+                if hx > r.x + 2 + used + 1 {
+                    put(
+                        buf,
+                        hx,
+                        r.y,
+                        hint,
+                        cells(hint),
+                        Style::new().bg(bg).fg(p.muted),
+                    );
+                }
+            }
+        }
+        cards::Look::Text | cards::Look::Code => {
+            if this.look == cards::Look::Code {
+                fill(
+                    buf,
+                    Rect::new(r.x + 1, r.y, r.width.saturating_sub(1), 1),
+                    style,
+                );
+            }
+            put(
+                buf,
+                r.x + 2,
+                r.y,
+                &this.text.replace('\t', "    "),
+                inner,
+                style,
+            );
+        }
     }
 }
 
@@ -635,11 +1085,43 @@ fn draw_line(buf: &mut Buffer, app: &App, area: Rect, line: Line) {
     match line {
         Line::Spacer => fill(buf, area, Style::new().bg(p.bg)),
         Line::Header { file, part } => draw_header(buf, app, area, file, part),
+        Line::Cards { file, review, line } => {
+            fill(buf, area, Style::new().bg(p.bg));
+            let placed = if review {
+                &app.review_cards
+            } else {
+                &stream.files[file].file_cards
+            };
+            if let Some(at) = placed
+                .iter()
+                .find(|c| (c.start..c.start + c.height).contains(&line))
+            {
+                let span = cards::span(area.width, crate::plan::Layout::Unified, 0, None);
+                draw_card(buf, app, area, at, line - at.start, span, true);
+            }
+        }
+        Line::Body { file, row, sub }
+            if let Some(at) = stream.files[file].cards.iter().find(|c| {
+                c.row as usize == row && (c.start..c.start + c.height).contains(&sub)
+            }) =>
+        {
+            let f = &stream.files[file];
+            fill(buf, area, Style::new().bg(p.bg));
+            let layout = f.layout();
+            if layout == crate::plan::Layout::Split {
+                let half = area.width.saturating_sub(1) / 2;
+                buf[(area.x + half, area.y)].set_symbol("│").set_fg(p.rule);
+            }
+            let side = cards::get(&app.review, &app.notes, at.card)
+                .and_then(|c| c.place().lines().map(|l| l.side));
+            let span = cards::span(area.width, layout, f.number_width(), side);
+            draw_card(buf, app, area, at, sub - at.start, span, false);
+        }
         Line::Note { file } => {
             fill(buf, area, Style::new().bg(p.bg));
             let text = match &stream.files[file].body {
                 Body::Pending => "computing diff…",
-                Body::Binary => "binary file not shown",
+                Body::Binary(_) => "binary file not shown",
                 Body::Unreadable(e) => e.as_str(),
                 Body::Text(_) => "no line changes (whitespace, mode or line endings)",
             };
@@ -1118,17 +1600,29 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
         );
         x += put(buf, x, area.y, "  ", end - x, muted);
     }
-    if let Some(stream) = &app.stream {
-        let reviewed = stream.files.iter().filter(|f| f.reviewed).count();
-        let (a, r, done) = stream.counts();
+    if app.since {
         x += put(
             buf,
             x,
             area.y,
-            &format!("vs {}  ", stream.base),
+            "since last send  ",
             end - x,
-            muted,
+            muted.fg(p.amber).add_modifier(Modifier::BOLD),
         );
+    }
+    if let Some(stream) = &app.stream {
+        let reviewed = stream.files.iter().filter(|f| f.reviewed).count();
+        let (a, r, done) = stream.counts();
+        if !app.since {
+            x += put(
+                buf,
+                x,
+                area.y,
+                &format!("vs {}  ", stream.base),
+                end - x,
+                muted,
+            );
+        }
         x += put(
             buf,
             x,
@@ -1142,6 +1636,21 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
         if !done {
             x += put(buf, x, area.y, " …", end - x, muted.fg(p.faint));
         }
+        let drafts = app.review.drafts().count();
+        if drafts > 0 {
+            x += put(
+                buf,
+                x,
+                area.y,
+                &format!("  {drafts} draft{}", if drafts == 1 { "" } else { "s" }),
+                end - x,
+                muted.fg(p.accent),
+            );
+        }
+    }
+    if !app.target.is_empty() {
+        x += put(buf, x, area.y, "  ", end - x, muted);
+        x += put(buf, x, area.y, &app.target, end - x, muted.fg(p.fg));
     }
     let layout = match app.effective_layout(app.areas.diff.width) {
         crate::plan::Layout::Unified => "unified",
@@ -1165,11 +1674,21 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
 }
 
 const HELP: &[(&str, &str)] = &[
-    ("j k  ↓ ↑", "scroll, or move in the file list"),
+    ("j k  ↓ ↑", "move the cursor, or in the file list"),
     ("^d ^u  space", "half page down/up, page down"),
     ("g  G", "top, bottom"),
     ("J K  ] [", "next/previous file"),
     ("n  N", "next/previous change"),
+    ("c  v", "comment on the line; select lines first"),
+    ("s", "suggest replacement code for the line or selection"),
+    ("C  ;c", "comment on the file; on the whole review"),
+    ("e  d", "on a card: edit, delete"),
+    ("(  )", "previous/next comment or note"),
+    ("o", "split view: comment on the old side"),
+    ("S", "send all drafts to the agent"),
+    ("A", "choose the agent reviews go to"),
+    ("R", "show only changes since the last send"),
+    ("m", "mark file reviewed"),
     ("w", "switch worktree (type to filter)"),
     ("{  }", "previous/next worktree"),
     ("tab  h l", "focus files or diff"),
@@ -1181,11 +1700,10 @@ const HELP: &[(&str, &str)] = &[
         "enter space",
         "in files: open file, fold folder; expand a fold",
     ),
-    ("e  E", "expand the first fold on screen; all folds in file"),
-    ("v", "mark file reviewed"),
-    ("s", "layout: auto, unified, split"),
+    ("e  E", "expand the fold at the cursor; all folds in file"),
+    ("L", "layout: auto, unified, split"),
     ("z", "wrap long lines"),
-    ("m", "compare: branch (merge base) or uncommitted"),
+    ("b", "compare: branch (merge base) or uncommitted"),
     ("t  < >", "show sidebar; narrower, wider"),
     ("r", "refresh now"),
     ("q", "quit"),

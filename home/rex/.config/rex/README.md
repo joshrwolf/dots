@@ -29,7 +29,7 @@ the app.
 | Cmd+Shift+H / Cmd+Shift+L | Move tab back, forward |
 | Cmd+B | Show or hide the sidebar |
 | Ctrl+S, then \| / - | Split right, down |
-| Ctrl+S, then D | Diff: this pane's worktree and its siblings in `dots-diff`, in a split beside it; again, from either pane, closes it |
+| Ctrl+S, then D | Diff: this pane's worktree and its siblings in `dots-diff`, in a split beside it; reviews sent there go to this pane's Pi. Again, from either pane, closes it |
 | Ctrl+H/J/K/L | Move between panes, or within Neovim splits |
 | Ctrl+Shift+H/J/K/L | Resize pane |
 

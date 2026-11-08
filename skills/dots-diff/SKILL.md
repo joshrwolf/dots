@@ -36,8 +36,32 @@ dots-diff ctl --block ID refresh        # one viewer, by its pane
 Without `--block`, `ctl` picks the viewer showing the path's repository, or the
 only one running, and lists the candidates when that is ambiguous.
 
+## Explain changes with notes
+
+Pin a short note to the lines you want the user to look at; it shows inline
+until the file changes or you clear it:
+
+```sh
+dots-diff ctl note --file /abs/worktree/src/a.rs --line 42 --end 48 "Why this loop now saturates"
+dots-diff ctl note --file /abs/worktree/src/a.rs --line 7 --side old "Removed: callers moved to b.rs"
+dots-diff ctl note --clear [--file /abs/worktree/src/a.rs]
+```
+
+Lines are the file's own line numbers, on the new side unless `--side old`.
+Without `--line` the note is about the whole file; without `--file`, the review.
+
+## Reviews from the user
+
+The user comments in the viewer and sends the batch to the Pi session in the
+pane the viewer was opened from, or one they pick. It arrives as a user
+message headed "Review of `branch`": numbered comments with file, line, type,
+an excerpt and optional suggested code. Address each, then reply with which
+you changed and which you did not, and why. The viewer then shows the user
+only what changed since that send.
+
 ## Constraints
 
-- The viewer is read-only. It never stages, commits or starts Git daemons.
+- The viewer never stages, commits or starts Git daemons; it writes only its
+  review state under the repository's Git directory.
 - Outside Rex, or with no `dots-diff` on the command path, say so instead of
   opening something else.

@@ -3,15 +3,20 @@
 //! scrolling stream of files.
 
 mod app;
+mod cards;
 mod ctl;
+mod deliver;
 mod diff;
+mod editor;
 mod graphics;
 mod highlight;
 mod input;
 mod lru;
+mod picker;
 mod plan;
 mod render;
 mod repo;
+mod review;
 mod run;
 mod stats;
 mod switcher;
@@ -42,6 +47,10 @@ struct Cli {
     /// Scroll to this file once loaded, by path within the worktree
     #[arg(long, value_name = "PATH")]
     file: Option<String>,
+    /// Send reviews to the Pi session in this Rex pane while the first
+    /// worktree is shown
+    #[arg(long, value_name = "BLOCK")]
+    bind: Option<String>,
     /// Draw file headers as kitty graphics images
     #[arg(long)]
     graphics: bool,
@@ -198,6 +207,38 @@ enum CtlCmd {
     Refresh,
     /// List running viewers: their Rex pane and worktree
     List,
+    /// Show the user a note: on lines of a file, a whole file, or the review
+    Note {
+        /// The file: absolute, or relative to the current directory or the
+        /// worktree
+        #[arg(long, value_name = "PATH")]
+        file: Option<String>,
+        /// First line, 1-based; without it the note is about the whole file
+        #[arg(long, requires = "file")]
+        line: Option<u32>,
+        /// Last line of a range
+        #[arg(long, requires = "line")]
+        end: Option<u32>,
+        /// The side the line numbers count
+        #[arg(long, value_enum, default_value_t = NoteSide::New)]
+        side: NoteSide,
+        /// Clear notes instead: those of --file, or all
+        #[arg(long, conflicts_with_all = ["line", "text"])]
+        clear: bool,
+        /// What the note says
+        #[arg(required_unless_present = "clear")]
+        text: Option<String>,
+    },
+    /// Send reviews to the Pi session in this Rex pane
+    Bind { block: String },
+    /// Save the viewer's screen as a PNG picture
+    Shot { path: PathBuf },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum NoteSide {
+    New,
+    Old,
 }
 
 fn main() -> ExitCode {
@@ -215,6 +256,7 @@ fn run(cli: Cli) -> Result<()> {
         None => run::run(run::Options {
             path: cli.path,
             file: cli.file,
+            bind: cli.bind,
             theme: cli.look.theme(),
             graphics: cli.graphics,
             timings: cli.timings,
@@ -279,6 +321,17 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// A file named from inside a worktree travels as an absolute path, so it
+/// reaches that worktree; otherwise it is taken within the viewer's.
+fn absolute_if_exists(path: String) -> Result<(String, Option<PathBuf>)> {
+    let absolute = std::path::absolute(&path)?;
+    Ok(if absolute.exists() {
+        (absolute.to_string_lossy().into_owned(), Some(absolute))
+    } else {
+        (path, None)
+    })
+}
+
 /// Sends a `ctl` command to the viewer it is meant for.
 fn steer(block: Option<&str>, command: CtlCmd) -> Result<()> {
     let viewers = ctl::viewers();
@@ -298,17 +351,40 @@ fn steer(block: Option<&str>, command: CtlCmd) -> Result<()> {
             (ctl::Command::Worktree(path.clone()), Some(path))
         }
         CtlCmd::File { path } => {
-            // A file named from inside a worktree travels as an absolute
-            // path, so it reaches that worktree.
-            let absolute = std::path::absolute(&path)?;
-            if absolute.exists() {
-                let line = absolute.to_string_lossy().into_owned();
-                (ctl::Command::File(line), Some(absolute))
-            } else {
-                (ctl::Command::File(path), None)
-            }
+            let (path, absolute) = absolute_if_exists(path)?;
+            (ctl::Command::File(path), absolute)
         }
         CtlCmd::Refresh => (ctl::Command::Refresh, None),
+        CtlCmd::Note {
+            file,
+            line,
+            end,
+            side,
+            clear,
+            text,
+        } => {
+            let (file, path) = match file {
+                Some(f) => {
+                    let (f, p) = absolute_if_exists(f)?;
+                    (Some(f), p)
+                }
+                None => (None, None),
+            };
+            if clear {
+                (ctl::Command::ClearNotes(file), path)
+            } else {
+                let spec = ctl::NoteSpec {
+                    file,
+                    line,
+                    end,
+                    old: side == NoteSide::Old,
+                    text: text.unwrap_or_default(),
+                };
+                (ctl::Command::Note(spec), path)
+            }
+        }
+        CtlCmd::Bind { block } => (ctl::Command::Bind(block), None),
+        CtlCmd::Shot { path } => (ctl::Command::Shot(std::path::absolute(path)?), None),
     };
     let viewer = ctl::pick(&viewers, block, path.as_deref(), repo::same_repository)?;
     ctl::send(viewer, &command)

@@ -435,6 +435,8 @@ pub(crate) struct Contents {
 pub(crate) struct Reader {
     repo: gix::Repository,
     root: PathBuf,
+    /// Texts of working-tree contents sent in a review, which have no blob.
+    seen: PathBuf,
     convert: Option<(gix::filter::plumbing::Pipeline, gix::worktree::Stack)>,
 }
 
@@ -448,15 +450,70 @@ impl std::fmt::Debug for Reader {
 
 impl Reader {
     pub(crate) fn new(repo: gix::Repository, root: PathBuf) -> Self {
+        let seen = crate::review::seen_dir(repo.git_dir());
         Self {
             repo,
             root,
+            seen,
             convert: None,
         }
     }
 
+    /// A blob's data, or the text kept for it when a review was sent.
     pub(crate) fn blob(&self, id: gix::ObjectId) -> Result<Vec<u8>> {
-        Ok(self.repo.find_blob(id)?.take_data())
+        match self.repo.find_blob(id) {
+            Ok(mut blob) => Ok(blob.take_data()),
+            Err(e) => std::fs::read(self.seen.join(id.to_string())).map_err(|_| e.into()),
+        }
+    }
+
+    /// The content id of a change's new side: `None` for no file.
+    pub(crate) fn content_id(&mut self, change: &FileChange) -> Result<Option<gix::ObjectId>> {
+        Ok(match change.new {
+            Side::Blob(id) => Some(id),
+            Side::Missing => None,
+            Side::Worktree(_) => {
+                let data = self.worktree_file(&change.path)?;
+                Some(gix::objs::compute_hash(
+                    self.repo.object_hash(),
+                    gix::object::Kind::Blob,
+                    &data,
+                )?)
+            }
+        })
+    }
+
+    /// Keeps the working-tree text of `change` for diffing against later,
+    /// unless Git has it. Returns its content id.
+    pub(crate) fn keep(&mut self, change: &FileChange) -> Result<Option<gix::ObjectId>> {
+        let Side::Worktree(_) = change.new else {
+            return self.content_id(change);
+        };
+        let data = self.worktree_file(&change.path)?;
+        let id = gix::objs::compute_hash(self.repo.object_hash(), gix::object::Kind::Blob, &data)?;
+        let path = self.seen.join(id.to_string());
+        if !self.repo.has_object(id) && !path.exists() {
+            std::fs::create_dir_all(&self.seen)
+                .with_context(|| format!("creating {}", self.seen.display()))?;
+            let tmp = path.with_extension("tmp");
+            std::fs::write(&tmp, &data).with_context(|| format!("writing {}", tmp.display()))?;
+            std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
+        }
+        Ok(Some(id))
+    }
+
+    /// Removes kept texts no snapshot refers to.
+    pub(crate) fn prune_kept(&self, keep: &std::collections::BTreeMap<String, String>) {
+        let wanted: std::collections::HashSet<&str> = keep.values().map(String::as_str).collect();
+        let Ok(entries) = std::fs::read_dir(&self.seen) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if !wanted.contains(name.to_string_lossy().as_ref()) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
     }
 
     pub(crate) fn contents(&mut self, change: &FileChange) -> Result<Contents> {

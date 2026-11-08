@@ -61,6 +61,8 @@ fn loaded(
     let mut app = App::new(repo, current, Palette::new(theme), settings);
     let wt = app.worktree_path().clone();
     let changes = repo::changes(&wt, mode)?;
+    let git_dir = changes.repo.to_thread_local().git_dir().to_owned();
+    app.review = crate::review::State::load(&git_dir)?;
     let mut reader = Reader::new(changes.repo.to_thread_local(), changes.root.clone());
     let bodies: Vec<_> = changes
         .files

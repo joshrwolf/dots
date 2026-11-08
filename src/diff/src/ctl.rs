@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Command {
@@ -22,6 +23,29 @@ pub(crate) enum Command {
     Refresh,
     /// Report the viewer's pane and worktree.
     Status,
+    /// Show an agent's note to the user.
+    Note(NoteSpec),
+    /// Clear the notes of one file, or all.
+    ClearNotes(Option<String>),
+    /// Send reviews of the shown worktree to the Pi session in this Rex pane.
+    Bind(String),
+    /// Save the screen as a PNG picture.
+    Shot(PathBuf),
+}
+
+/// Where an agent's note goes and what it says. Lines are 1-based; with
+/// no file it is about the whole review, with no line the whole file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct NoteSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) end: Option<u32>,
+    #[serde(default)]
+    pub(crate) old: bool,
+    pub(crate) text: String,
 }
 
 impl Command {
@@ -32,8 +56,16 @@ impl Command {
             ("file", path) if !path.is_empty() => Command::File(path.to_owned()),
             ("refresh", "") => Command::Refresh,
             ("status", "") => Command::Status,
+            ("note", json) if !json.is_empty() => Command::Note(
+                serde_json::from_str(json).with_context(|| format!("reading note {json:?}"))?,
+            ),
+            ("clear-notes", path) => {
+                Command::ClearNotes((!path.is_empty()).then(|| path.to_owned()))
+            }
+            ("bind", block) if !block.is_empty() => Command::Bind(block.to_owned()),
+            ("shot", path) if !path.is_empty() => Command::Shot(PathBuf::from(path)),
             _ => bail!(
-                "unknown command {line:?}; expected `worktree PATH`, `file PATH`, `refresh` or `status`"
+                "unknown command {line:?}; expected `worktree PATH`, `file PATH`, `refresh`, `status`, `note JSON`, `clear-notes [PATH]`, `bind BLOCK` or `shot PATH`"
             ),
         })
     }
@@ -44,6 +76,14 @@ impl Command {
             Command::File(p) => format!("file {p}"),
             Command::Refresh => "refresh".to_owned(),
             Command::Status => "status".to_owned(),
+            Command::Note(n) => format!(
+                "note {}",
+                serde_json::to_string(n).unwrap_or_else(|_| "{}".to_owned())
+            ),
+            Command::ClearNotes(None) => "clear-notes".to_owned(),
+            Command::ClearNotes(Some(p)) => format!("clear-notes {p}"),
+            Command::Bind(b) => format!("bind {b}"),
+            Command::Shot(p) => format!("shot {}", p.display()),
         }
     }
 }
@@ -266,6 +306,22 @@ mod tests {
         );
         assert!(Command::parse("file").is_err());
         assert!(Command::parse("quit").is_err());
+        let note = Command::Note(NoteSpec {
+            file: Some("src/a.rs".into()),
+            line: Some(3),
+            end: None,
+            old: false,
+            text: "Look here\nand \"here\"".into(),
+        });
+        assert_eq!(Command::parse(&note.line()).expect("note"), note);
+        for c in [
+            Command::ClearNotes(None),
+            Command::ClearNotes(Some("a b.rs".into())),
+            Command::Bind("block:1".into()),
+        ] {
+            assert_eq!(Command::parse(&c.line()).expect("round trip"), c);
+        }
+        assert!(Command::parse("note {").is_err());
     }
 
     #[test]

@@ -28,6 +28,7 @@ local function world(open)
     commands = {
       ["/bin/dots-diff ctl --block split worktree /wt"] = {},
       ["/bin/dots-diff ctl --block split file /wt/a.rs"] = {},
+      ["/bin/dots-diff ctl --block split bind pane"] = {},
     },
   }
 end
@@ -50,7 +51,7 @@ return {
     expect.equal(split[1].args.layout.block.label, "diff")
     expect.equal(
       split[1].args.layout.block.options,
-      { command = { "/bin/dots-diff", "/src" }, cwd = "/src" }
+      { command = { "/bin/dots-diff", "/src", "--bind", "pane" }, cwd = "/src" }
     )
     expect.equal(diff.viewers, { pane = { session_id = "s", block_id = "split" } })
   end,
@@ -80,12 +81,12 @@ return {
     local split = fake.only("session.new_split")[1].args
     expect.equal(split.focus, false)
     expect.equal(split.layout.block.options, {
-      command = { "/bin/dots-diff", "/wt", "--file", "a.rs" },
+      command = { "/bin/dots-diff", "/wt", "--bind", "pane", "--file", "a.rs" },
       cwd = "/wt",
     })
   end,
 
-  ["show reuses the open viewer and points it at the worktree and file"] = function(t)
+  ["show reuses the open viewer and points and binds it here"] = function(t)
     t.stub(diff, "viewers", { pane = { session_id = "s", block_id = "split" } })
     local fake = fake_rex.install(t, world(true))
     local actions = fake_rex.registered(t, diff)
@@ -96,7 +97,8 @@ return {
     expect.equal(fake.only("session.new_split", "block.close", "session.focus_block"), {})
     local ran = fake.only("exec")
     expect.equal(ran[1].args, { "/bin/dots-diff", "ctl", "--block", "split", "worktree", "/wt" })
-    expect.equal(ran[2].args, { "/bin/dots-diff", "ctl", "--block", "split", "file", "/wt/a.rs" })
+    expect.equal(ran[2].args, { "/bin/dots-diff", "ctl", "--block", "split", "bind", "pane" })
+    expect.equal(ran[3].args, { "/bin/dots-diff", "ctl", "--block", "split", "file", "/wt/a.rs" })
   end,
 
   ["a viewer that exited is forgotten and the key opens a new one"] = function(t)

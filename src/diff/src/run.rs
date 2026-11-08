@@ -16,19 +16,24 @@ use ratatui::crossterm::event::{
 use ratatui::layout::Position;
 
 use crate::app::{
-    self, App, Body, FileTexts, Focus, LayoutChoice, Line, ListItem, Settings, Summary,
+    self, App, Body, FileTexts, Focus, LayoutChoice, Line, ListItem, Scope, Settings, Summary,
 };
 use crate::ctl::{self, Command};
+use crate::deliver;
 use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
 use crate::input::Input;
+use crate::picker::Batch;
 use crate::repo::{self, Changes, FileChange, GitState, Mode, Reader, Side, Stamp};
+use crate::review;
 use crate::stats::{self, Stats};
 use crate::switcher::Switcher;
 use crate::theme::{self, Detected, Palette};
 use crate::timings::Timings;
 use crate::ui;
 use crate::watch::{self, Burst, Refresh, Touched, Watch};
+
+mod annotate;
 
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Msg {
@@ -38,7 +43,21 @@ pub(crate) enum Msg {
         worktree: PathBuf,
         mode: Mode,
         result: Result<Changes, String>,
+        /// The worktree's Git directory and saved review.
+        review: Result<(PathBuf, review::State), String>,
         elapsed: Duration,
+    },
+    /// Who a review of `worktree` goes to, and the live sessions.
+    Resolved {
+        worktree: PathBuf,
+        resolution: deliver::Resolution,
+        agents: Vec<deliver::Agent>,
+    },
+    /// A review was delivered, or not.
+    Sent {
+        worktree: PathBuf,
+        ids: Vec<u64>,
+        result: Result<annotate::Delivered, String>,
     },
     Diffed {
         epoch: u64,
@@ -77,6 +96,8 @@ pub(crate) struct Options {
     pub(crate) path: PathBuf,
     /// A file to scroll to once loaded.
     pub(crate) file: Option<String>,
+    /// The Rex pane whose Pi session receives reviews of the first worktree.
+    pub(crate) bind: Option<String>,
     /// Fixed colours instead of the terminal's.
     pub(crate) theme: Option<Detected>,
     pub(crate) graphics: bool,
@@ -139,8 +160,20 @@ struct Runtime {
     ctl_status: Arc<Mutex<ctl::Status>>,
     /// A file to scroll to once the worktree loading now has loaded.
     pending_file: Option<String>,
+    /// The Rex pane reviews go to while its worktree is shown.
+    bound: Option<(String, usize)>,
+    /// Who a review goes to, once resolved, and the live sessions.
+    resolution: Option<deliver::Resolution>,
+    agents: Vec<deliver::Agent>,
+    /// A review is being delivered.
+    sending: bool,
+    /// `;` was pressed; the next key completes the command.
+    prefix: bool,
+    /// Save the next frame as a PNG here.
+    shot: Option<PathBuf>,
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn run(options: Options) -> Result<()> {
     let mut timings = Timings::new(options.timings.is_some());
     let started = Instant::now();
@@ -156,7 +189,12 @@ pub(crate) fn run(options: Options) -> Result<()> {
     let result = (|| {
         ratatui::crossterm::execute!(
             std::io::stdout(),
-            ratatui::crossterm::event::EnableMouseCapture
+            ratatui::crossterm::event::EnableMouseCapture,
+            ratatui::crossterm::event::EnableBracketedPaste,
+            // Tells Ctrl+Enter from Enter where the terminal can.
+            ratatui::crossterm::event::PushKeyboardEnhancementFlags(
+                ratatui::crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            )
         )?;
         let detected = match options.theme {
             Some(d) => Some(d),
@@ -213,6 +251,12 @@ pub(crate) fn run(options: Options) -> Result<()> {
             watched: None,
             ctl_status,
             pending_file: options.file.clone(),
+            bound: options.bind.clone().map(|b| (b, current)),
+            resolution: None,
+            agents: Vec::new(),
+            sending: false,
+            prefix: false,
+            shot: None,
         };
         let mut graphics = options.graphics.then(Graphics::new);
         rt.start_load();
@@ -225,6 +269,8 @@ pub(crate) fn run(options: Options) -> Result<()> {
     })();
     let _ = ratatui::crossterm::execute!(
         std::io::stdout(),
+        ratatui::crossterm::event::PopKeyboardEnhancementFlags,
+        ratatui::crossterm::event::DisableBracketedPaste,
         ratatui::crossterm::event::DisableMouseCapture
     );
     ratatui::try_restore()?;
@@ -240,6 +286,7 @@ impl Runtime {
         self.app.areas.diff.height.max(1)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn event_loop(
         &mut self,
         terminal: &mut ratatui::DefaultTerminal,
@@ -252,7 +299,13 @@ impl Runtime {
         while !self.quit {
             if dirty {
                 let t = Instant::now();
-                terminal.draw(|f| ui::draw(f, &mut self.app))?;
+                let completed = terminal.draw(|f| ui::draw(f, &mut self.app))?;
+                if let Some(path) = self.shot.take()
+                    && let Err(e) = crate::render::picture(completed.buffer, &path)
+                {
+                    self.app.message = Some(format!("{e:#}"));
+                }
+                self.app.mark_notes_seen(self.view_rows());
                 if let Some(g) = graphics.as_deref_mut() {
                     g.after_draw(&self.app)?;
                 }
@@ -293,6 +346,9 @@ impl Runtime {
             while let Ok(msg) = rx.try_recv() {
                 dirty |= self.handle(msg);
             }
+            if self.app.review_dirty {
+                self.save_review();
+            }
             let now = Instant::now();
             if !self.partial_busy {
                 match self.burst.take(now) {
@@ -308,6 +364,7 @@ impl Runtime {
             if self.next_reconcile <= now {
                 self.next_reconcile = now + RECONCILE;
                 self.spawn_reconcile();
+                self.spawn_resolve();
             }
             if !self.theme_fixed && self.next_theme <= now {
                 self.next_theme = now + THEME_POLL;
@@ -407,6 +464,7 @@ impl Runtime {
                 worktree,
                 mode,
                 result,
+                review,
                 elapsed,
             } => {
                 if generation != self.generation {
@@ -414,6 +472,7 @@ impl Runtime {
                 }
                 match result {
                     Ok(changes) => {
+                        self.install_review(&worktree, review);
                         self.timings.span(
                             "load changes",
                             elapsed,
@@ -432,8 +491,11 @@ impl Runtime {
                             changes.files,
                             Some(reader),
                         );
+                        self.app.refresh_marks();
+                        self.app.cards_changed();
                         self.epoch += 1;
                         self.spawn_diffs();
+                        self.spawn_resolve();
                         if let Some(file) = self.pending_file.take() {
                             self.command(Command::File(file));
                         }
@@ -549,6 +611,26 @@ impl Runtime {
                 self.command(command);
                 true
             }
+            Msg::Resolved {
+                worktree,
+                resolution,
+                agents,
+            } => {
+                if worktree != *self.app.worktree_path() {
+                    return false;
+                }
+                self.agents = agents;
+                self.set_resolution(resolution);
+                true
+            }
+            Msg::Sent {
+                worktree,
+                ids,
+                result,
+            } => {
+                self.on_sent(&worktree, &ids, result);
+                true
+            }
         }
     }
 
@@ -576,6 +658,16 @@ impl Runtime {
                 }
             }
             Command::Status => {}
+            Command::Note(spec) => self.note(spec),
+            Command::ClearNotes(path) => {
+                let rel = path.map(|p| self.relative(&p).1);
+                self.app.clear_notes(rel.as_deref());
+            }
+            Command::Bind(block) => {
+                self.bound = Some((block, self.app.current));
+                self.spawn_resolve();
+            }
+            Command::Shot(path) => self.shot = Some(path),
             Command::File(path) => {
                 // A file in another worktree, or before anything loaded,
                 // waits for its worktree's load.
@@ -640,15 +732,31 @@ impl Runtime {
         let generation = self.generation;
         let worktree = self.app.worktree_path().clone();
         let mode = self.app.settings.mode;
+        let since = self.app.since;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
-            let result = repo::changes(&worktree, mode).map_err(|e| format!("{e:#}"));
+            let mut review = Err(String::new());
+            let result = repo::changes(&worktree, mode)
+                .map(|mut changes| {
+                    let repo = changes.repo.to_thread_local();
+                    let git_dir = repo.git_dir().to_owned();
+                    review = review::State::load(&git_dir)
+                        .map(|s| (git_dir, s))
+                        .map_err(|e| format!("{e:#}"));
+                    if let (true, Ok((_, state))) = (since, &review) {
+                        let mut reader = Reader::new(repo, changes.root.clone());
+                        changes.files = review::since_sent(changes.files, &state.seen, &mut reader);
+                    }
+                    changes
+                })
+                .map_err(|e| format!("{e:#}"));
             let _ = tx.send(Msg::Loaded {
                 generation,
                 worktree,
                 mode,
                 result,
+                review,
                 elapsed: started.elapsed(),
             });
         });
@@ -656,16 +764,22 @@ impl Runtime {
 
     /// Rescans `paths` alone, off the event loop.
     fn start_partial(&mut self, paths: Vec<String>, since: Instant) {
-        let (Some((repo, _)), Some(stream)) = (self.source.clone(), &self.app.stream) else {
+        let (Some((repo, root)), Some(stream)) = (self.source.clone(), &self.app.stream) else {
             return;
         };
         let target = stream.target;
         let generation = self.generation;
         let tx = self.tx.clone();
+        let seen = self.app.since.then(|| self.app.review.seen.clone());
         self.partial_busy = true;
         std::thread::spawn(move || {
             let repo = repo.to_thread_local();
-            let result = repo::changes_for(&repo, target, &paths).map_err(|e| format!("{e:#}"));
+            let result = repo::changes_for(&repo, target, &paths)
+                .map(|files| match &seen {
+                    Some(seen) => review::since_sent(files, seen, &mut Reader::new(repo, root)),
+                    None => files,
+                })
+                .map_err(|e| format!("{e:#}"));
             let _ = tx.send(Msg::Partial {
                 generation,
                 paths,
@@ -850,6 +964,12 @@ impl Runtime {
                 true
             }
             Event::Mouse(mouse) => self.mouse(*mouse),
+            Event::Paste(text) => {
+                if let Some(editor) = &mut self.app.editor {
+                    editor.buffer.insert(text);
+                }
+                true
+            }
             Event::Resize(..) | Event::FocusGained => true,
             _ => false,
         }
@@ -857,11 +977,27 @@ impl Runtime {
 
     #[allow(clippy::too_many_lines)]
     fn key(&mut self, key: KeyEvent) {
+        // Terminals reporting keys unambiguously send Shift+c rather than C.
+        let key = match key.code {
+            KeyCode::Char(c)
+                if key.modifiers.contains(KeyModifiers::SHIFT) && c.is_ascii_lowercase() =>
+            {
+                KeyEvent {
+                    code: KeyCode::Char(c.to_ascii_uppercase()),
+                    ..key
+                }
+            }
+            _ => key,
+        };
         let rows = self.view_rows();
         let half = i64::from(rows / 2);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         self.app.message = None;
-        // Ctrl-C quits from anywhere, overlays included.
+        if self.app.editor.is_some() {
+            self.editor_key(key);
+            return;
+        }
+        // Ctrl-C quits from anywhere else, overlays included.
         if ctrl && key.code == KeyCode::Char('c') {
             self.quit = true;
             return;
@@ -872,6 +1008,20 @@ impl Runtime {
         }
         if self.app.switcher.is_some() {
             self.switcher_key(key, ctrl);
+            return;
+        }
+        if self.app.picker.is_some() {
+            self.picker_key(key, ctrl);
+            return;
+        }
+        if std::mem::take(&mut self.prefix) {
+            match key.code {
+                KeyCode::Char('c') => self.app.begin_comment(Scope::Review),
+                _ => self.app.message = Some("; then c comments on the whole review".to_owned()),
+            }
+            return;
+        }
+        if self.app.focus == Focus::Diff && self.review_key(key, ctrl) {
             return;
         }
         match (key.code, ctrl) {
@@ -942,8 +1092,19 @@ impl Runtime {
                 self.app.expand_visible_gap(rows);
             }
             (KeyCode::Char('E'), _) => self.app.toggle_expand_all(),
-            (KeyCode::Char('v'), _) => self.app.toggle_reviewed(),
-            (KeyCode::Char('s'), _) => {
+            (KeyCode::Char('m'), _) => self.app.toggle_reviewed(),
+            (KeyCode::Char('C'), _) => self.app.begin_comment(Scope::File),
+            (KeyCode::Char(';'), _) => self.prefix = true,
+            (KeyCode::Char('S'), _) => self.send(Batch::All),
+            (KeyCode::Char('A'), _) => self.open_picker(None),
+            (KeyCode::Char('R'), _) => {
+                self.app.since = !self.app.since;
+                self.app.visual = None;
+                self.app.stream = None;
+                self.loading_since = Some(Instant::now());
+                self.start_load();
+            }
+            (KeyCode::Char('L'), _) => {
                 self.app.settings.layout = match self.app.settings.layout {
                     LayoutChoice::Auto => LayoutChoice::Unified,
                     LayoutChoice::Unified => LayoutChoice::Split,
@@ -954,7 +1115,7 @@ impl Runtime {
                 self.app.settings.wrap = !self.app.settings.wrap;
                 self.app.relayout();
             }
-            (KeyCode::Char('m'), _) => {
+            (KeyCode::Char('b'), false) => {
                 self.app.settings.mode = match self.app.settings.mode {
                     Mode::Base => Mode::Head,
                     Mode::Head => Mode::Base,
@@ -1012,15 +1173,17 @@ impl Runtime {
         }
     }
 
+    /// Scrolls the view; the cursor keeps its place on screen.
     fn scroll(&mut self, delta: i64) {
         let rows = self.view_rows();
         self.app.scroll_by(delta, rows);
+        self.app.clamp_cursor(rows);
         self.app.sync_files_cursor();
     }
 
     fn move_by(&mut self, delta: i64) {
         match self.app.focus {
-            Focus::Diff => self.scroll(delta),
+            Focus::Diff => self.app.move_cursor(delta, self.view_rows()),
             Focus::Files => {
                 let row = step(self.app.cursor, delta, self.app.list.len());
                 self.app.select_row(row, self.view_rows());
@@ -1046,8 +1209,9 @@ impl Runtime {
                 self.scroll(delta);
             } else {
                 self.app.focus = Focus::Diff;
-                let line = self.app.global_top() + u32::from(mouse.row - areas.diff.y);
-                if let Line::Body { file, row, .. } = self.app.line_at(line) {
+                self.app.cursor_row = mouse.row - areas.diff.y;
+                self.app.clamp_cursor(rows);
+                if let Line::Body { file, row, .. } = self.app.line_at(self.app.cursor_line()) {
                     self.app.expand_at(file, row);
                 }
             }

@@ -59,13 +59,14 @@ local function find(view, block_id)
   return nil, nil
 end
 
----The viewer's program.
+---The viewer's program. Reviews go to the Pi session in pane `bind`.
 ---@param dots_diff string
 ---@param path string
+---@param bind string
 ---@param file? string
 ---@return string[]
-function M.command(dots_diff, path, file)
-  local argv = { dots_diff, path }
+function M.command(dots_diff, path, bind, file)
+  local argv = { dots_diff, path, "--bind", bind }
   if file then
     argv[#argv + 1] = "--file"
     argv[#argv + 1] = file
@@ -73,15 +74,18 @@ function M.command(dots_diff, path, file)
   return argv
 end
 
----Points a running viewer at `args.path` and `args.file`.
+---Points a running viewer at `args.path` and `args.file`, and sends its
+---reviews to the Pi session in pane `bind`.
 ---@param dots_diff string
 ---@param viewer dots.DiffViewer
 ---@param args dots.DiffArgs
-local function steer(dots_diff, viewer, args)
+---@param bind string
+local function steer(dots_diff, viewer, args, bind)
   local steps = {}
   if args.path then
     steps[#steps + 1] = { "worktree", args.path }
   end
+  steps[#steps + 1] = { "bind", bind }
   if args.file then
     steps[#steps + 1] = { "file", args.file }
   end
@@ -106,7 +110,7 @@ function M.toggle(ctx, args)
   local origin, viewer = find(view, here)
   if origin and viewer then
     if args.show then
-      steer(dots_diff, viewer, args)
+      steer(dots_diff, viewer, args, origin)
       return viewer.block_id
     end
     if here == viewer.block_id then
@@ -137,7 +141,7 @@ function M.toggle(ctx, args)
       layout = rex.layout.block({
         flavor = "com.superlogical.terminal.shell",
         label = "diff",
-        options = { command = M.command(dots_diff, path, args.file), cwd = path },
+        options = { command = M.command(dots_diff, path, here, args.file), cwd = path },
       }),
     })
   )

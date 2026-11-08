@@ -16,6 +16,7 @@
       "extensions/goal/index.ts",
       "extensions/rex/index.ts",
       "extensions/review/index.ts",
+      "extensions/inbox/index.ts",
       "extensions/status/index.ts"
     ],
     "skills": [],

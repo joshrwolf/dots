@@ -1052,6 +1052,7 @@ dependencies = [
  "notify",
  "nucleo",
  "ratatui",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",

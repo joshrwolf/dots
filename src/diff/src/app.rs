@@ -9,13 +9,19 @@ use std::sync::Arc;
 
 use ratatui::layout::Rect;
 
+use crate::cards::{self, Placed};
 use crate::diff::{self, FileDiff, HunkEmphasis, Text};
+use crate::editor::Editor;
 use crate::highlight::{self, Key, Lines};
 use crate::lru::Lru;
 use crate::plan::{self, Heights, Kind, Layout, Row};
 use crate::repo::{FileChange, Mode, Reader, Repo, Side, Target};
+use crate::review;
 use crate::theme::Palette;
 use crate::wrap;
+
+mod annotate;
+pub(crate) use annotate::Scope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LayoutChoice {
@@ -110,7 +116,8 @@ impl Default for Settings {
 #[derive(Debug, Clone)]
 pub(crate) enum Body {
     Pending,
-    Binary,
+    /// A binary file, with its new side's content id.
+    Binary(Option<gix::ObjectId>),
     Unreadable(String),
     Text(Arc<FileDiff>),
 }
@@ -129,7 +136,18 @@ pub(crate) struct FileView {
     pub(crate) change: FileChange,
     pub(crate) body: Body,
     pub(crate) expanded: HashSet<u32>,
+    /// Marked reviewed at its current content.
     pub(crate) reviewed: bool,
+    /// Cards under rows, by row, for files laid out near the view.
+    pub(crate) cards: Vec<Placed>,
+    /// Cards under the header: file-level ones and those whose lines are
+    /// not shown.
+    pub(crate) file_cards: Vec<Placed>,
+    /// Display lines of `file_cards`.
+    pub(crate) file_card_lines: u32,
+    /// Display lines above the header: the review-level cards, on the first
+    /// file.
+    pub(crate) above: u32,
     /// Planned rows, kept only for files near the view.
     rows: Vec<Row>,
     /// Display heights of the rows, measured near the view and estimated
@@ -152,6 +170,10 @@ impl FileView {
             body: Body::Pending,
             expanded: HashSet::new(),
             reviewed: false,
+            cards: Vec::new(),
+            file_cards: Vec::new(),
+            file_card_lines: 0,
+            above: 0,
             rows: Vec::new(),
             heights: Heights::default(),
             key: None,
@@ -171,6 +193,29 @@ impl FileView {
 
     pub(crate) fn rows(&self) -> &[Row] {
         &self.rows
+    }
+
+    /// The layout its rows were planned in.
+    pub(crate) fn layout(&self) -> Layout {
+        self.planned.map_or(Layout::Unified, |(l, _)| l)
+    }
+
+    /// The first body line of the file's block, after the cards above, the
+    /// header and the file's cards.
+    pub(crate) fn body_start(&self, header: u32) -> u32 {
+        self.above + header + self.file_card_lines
+    }
+
+    /// The new side's content key, once known.
+    pub(crate) fn content_key(&self) -> Option<String> {
+        let id = match (&self.body, &self.change.new) {
+            (Body::Text(d), _) => d.new_id,
+            (Body::Binary(id), _) => *id,
+            (_, Side::Blob(id)) => Some(*id),
+            (_, Side::Missing) => None,
+            (_, Side::Worktree(_)) => return None,
+        };
+        Some(review::content_key(id))
     }
 
     /// The planned rows: kept ones near the view, planned afresh elsewhere.
@@ -316,7 +361,7 @@ impl Stream {
                     a += fa;
                     r += fr;
                 }
-                None => done &= matches!(f.body, Body::Binary),
+                None => done &= matches!(f.body, Body::Binary(_)),
             }
         }
         (a, r, done)
@@ -334,9 +379,26 @@ pub(crate) struct Summary {
 /// What a display line of the diff pane shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Line {
-    Header { file: usize, part: u16 },
-    Body { file: usize, row: usize, sub: u32 },
-    Note { file: usize },
+    Header {
+        file: usize,
+        part: u16,
+    },
+    /// Line `line` of a stack of cards: the review's above the first file,
+    /// or a file's under its header.
+    Cards {
+        file: usize,
+        review: bool,
+        line: u32,
+    },
+    /// Line `sub` of a row; lines past its code are its cards.
+    Body {
+        file: usize,
+        row: usize,
+        sub: u32,
+    },
+    Note {
+        file: usize,
+    },
     Spacer,
 }
 
@@ -416,6 +478,7 @@ impl ListItem {
 }
 
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub(crate) struct App {
     pub(crate) repo: Repo,
     pub(crate) palette: Palette,
@@ -451,6 +514,62 @@ pub(crate) struct App {
     pub(crate) collapsed: HashSet<String>,
     /// Width the stream was laid out for.
     laid_out: Option<(u16, Layout, bool, (usize, usize))>,
+    /// The worktree's review, and the Git directory it is saved in; `None`
+    /// when it could not be read, so it is not overwritten.
+    pub(crate) review: review::State,
+    pub(crate) review_dir: Option<PathBuf>,
+    /// The review changed since it was last saved.
+    pub(crate) review_dirty: bool,
+    /// The worktree `review` belongs to.
+    pub(crate) review_worktree: Option<PathBuf>,
+    /// Agent notes for this viewer's lifetime.
+    pub(crate) notes: Vec<Note>,
+    pub(crate) next_note: u64,
+    /// The diff cursor, as a screen row of the diff pane.
+    pub(crate) cursor_row: u16,
+    /// On a split row, comment on the old side.
+    pub(crate) cursor_old: bool,
+    /// Where a visual selection started.
+    pub(crate) visual: Option<Pos>,
+    pub(crate) editor: Option<Editor>,
+    pub(crate) picker: Option<crate::picker::Picker>,
+    /// Show only what changed since the last send.
+    pub(crate) since: bool,
+    /// Who a send goes to, as the status line shows it.
+    pub(crate) target: String,
+    /// The review-level cards, above the first file.
+    pub(crate) review_cards: Vec<Placed>,
+    /// A card to bring into view once its file is laid out.
+    pending_card: Option<CardRef>,
+}
+
+/// A card in the stream: a comment, or an agent's note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum CardRef {
+    Comment(u64),
+    Note(u64),
+}
+
+/// A note an agent placed for the user, gone when its file changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Note {
+    pub(crate) id: u64,
+    pub(crate) worktree: PathBuf,
+    pub(crate) place: review::Place,
+    pub(crate) text: String,
+    /// The content of its file when placed, once known.
+    pub(crate) content: Option<String>,
+    /// Shown on screen, and since scrolled out of view.
+    pub(crate) shown: bool,
+    pub(crate) seen: bool,
+}
+
+/// A source line under the cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Pos {
+    pub(crate) file: usize,
+    pub(crate) side: review::Side,
+    pub(crate) line: u32,
 }
 
 impl App {
@@ -480,6 +599,21 @@ impl App {
             list: Vec::new(),
             collapsed: HashSet::new(),
             laid_out: None,
+            review: review::State::default(),
+            review_dir: None,
+            review_dirty: false,
+            review_worktree: None,
+            notes: Vec::new(),
+            next_note: 1,
+            cursor_row: 0,
+            cursor_old: false,
+            visual: None,
+            editor: None,
+            picker: None,
+            since: false,
+            target: String::new(),
+            review_cards: Vec::new(),
+            pending_card: None,
         }
     }
 
@@ -610,7 +744,7 @@ impl App {
     fn source_anchor(&self, stream: &Stream) -> Option<(String, SourceLine)> {
         let f = stream.files.get(self.top.file)?;
         let header = u32::from(self.settings.header_rows);
-        let at = match self.top.line.checked_sub(header) {
+        let at = match self.top.line.checked_sub(f.body_start(header)) {
             Some(body) if f.heights.rows() > 0 => {
                 let (row, sub) = f.heights.locate(body);
                 match f.rows.get(row as usize) {
@@ -657,6 +791,7 @@ impl App {
         f.body = body;
         f.invalidate();
         self.laid_out = None;
+        self.after_body(file, texts.as_ref());
         if near && let Some(texts) = texts {
             for (id, text) in [texts.old, texts.new] {
                 if let Some(id) = id {
@@ -759,15 +894,32 @@ impl App {
         };
         // Keep the row under the top of the view across the relayout.
         let anchor_row = stream.files.get(self.top.file).and_then(|f| {
-            let line = self.top.line.checked_sub(header)?;
+            let line = self.top.line.checked_sub(f.body_start(header))?;
             (f.heights.rows() > 0).then(|| f.heights.locate(line).0)
         });
+        let index = cards::index(&self.review, &self.notes, &stream.worktree);
+        let stack_width = cards::span(width, layout, 0, None).1;
+        let (review_cards, above) = cards::stack(
+            &self.review,
+            &self.notes,
+            index.review.iter().copied(),
+            stack_width,
+        );
+        self.review_cards = review_cards;
         for (i, f) in stream.files.iter_mut().enumerate() {
             let exact = (window.0..=window.1).contains(&i);
+            f.above = if i == 0 { above } else { 0 };
+            let mine = index
+                .by_path
+                .get(f.change.path.as_str())
+                .map_or(&[][..], Vec::as_slice);
             let Body::Text(diff) = &f.body else {
                 f.rows = Vec::new();
                 f.heights = Heights::default();
                 f.key = None;
+                f.cards = Vec::new();
+                (f.file_cards, f.file_card_lines) =
+                    cards::stack(&self.review, &self.notes, mine.iter().copied(), stack_width);
                 continue;
             };
             // One-sided files read best full width, even in split layout.
@@ -802,18 +954,77 @@ impl App {
             }
             if exact {
                 if f.key != Some(key) {
-                    let widths = code_widths(width, f.number_width());
-                    let texts = file_texts(&self.texts, &self.empty, f);
-                    f.heights = match texts {
-                        Some(texts) if wrap => {
-                            Heights::measured(f.rows.iter().map(|r| row_height(r, &texts, widths)))
+                    // Cards whose lines are shown go under them; the rest
+                    // stack under the header.
+                    let mut stacked = Vec::new();
+                    let mut under: Vec<(u32, CardRef, review::Side)> = Vec::new();
+                    for &card in mine {
+                        let c = cards::get(&self.review, &self.notes, card);
+                        let outdated = matches!(c, Some(cards::Card::Comment(c)) if c.outdated);
+                        let row = c
+                            .as_ref()
+                            .and_then(|c| c.place().lines())
+                            .filter(|_| !outdated)
+                            .and_then(|l| cards::attach(&f.rows, l).map(|r| (r, l.side)));
+                        match row {
+                            Some((r, side)) => under.push((r, card, side)),
+                            None => stacked.push(card),
                         }
-                        _ => Heights::uniform(f.heights.rows()),
+                    }
+                    under.sort_by_key(|&(r, ..)| r);
+                    (f.file_cards, f.file_card_lines) =
+                        cards::stack(&self.review, &self.notes, stacked, stack_width);
+                    let nw = f.number_width();
+                    let widths = code_widths(width, nw);
+                    let texts = file_texts(&self.texts, &self.empty, f);
+                    let mut placed: Vec<Placed> = Vec::with_capacity(under.len());
+                    let code = |r: u32| match &texts {
+                        Some(texts) if wrap => row_height(&f.rows[r as usize], texts, widths),
+                        _ => 1,
                     };
+                    for (r, card, side) in under {
+                        let start = match placed.last() {
+                            Some(p) if p.row == r => p.start + p.height,
+                            _ => code(r),
+                        };
+                        let w = cards::text_width(cards::span(width, layout, nw, Some(side)).1);
+                        let height = cards::get(&self.review, &self.notes, card)
+                            .map_or(0, |c| cards::lines(&c, w, false).len());
+                        placed.push(Placed {
+                            card,
+                            row: r,
+                            start,
+                            height: u32::try_from(height).unwrap_or(1),
+                        });
+                    }
+                    f.heights = if texts.is_some() && wrap || !placed.is_empty() {
+                        let mut next = placed.iter().peekable();
+                        Heights::measured((0..f.rows.len()).map(|r| {
+                            let r = u32::try_from(r).unwrap_or(u32::MAX);
+                            let mut h = code(r);
+                            while let Some(p) = next.next_if(|p| p.row == r) {
+                                h = p.start + p.height;
+                            }
+                            h
+                        }))
+                    } else {
+                        Heights::uniform(f.heights.rows())
+                    };
+                    f.cards = placed;
                     f.key = Some(key);
                 }
             } else {
                 f.rows = Vec::new();
+                f.cards = Vec::new();
+                (f.file_cards, f.file_card_lines) = cards::stack(
+                    &self.review,
+                    &self.notes,
+                    mine.iter().copied().filter(|&c| {
+                        cards::get(&self.review, &self.notes, c)
+                            .is_some_and(|c| c.place().lines().is_none())
+                    }),
+                    stack_width,
+                );
                 // A measurement at another width or layout is no estimate.
                 if f.key
                     .is_none_or(|k| (k.width, k.layout, k.wrap) != (width, layout, wrap))
@@ -826,14 +1037,15 @@ impl App {
         let mut at = 0;
         for (i, f) in stream.files.iter().enumerate() {
             stream.offsets[i] = at;
-            at += header + f.body_lines() + 1;
+            at += f.body_start(header) + f.body_lines() + 1;
         }
         stream.offsets[stream.files.len()] = at;
         if let (Some(row), Some(f)) = (anchor_row, stream.files.get(self.top.file)) {
-            self.top.line = header + f.heights.start(row);
+            self.top.line = f.body_start(header) + f.heights.start(row);
         }
         self.laid_out = Some((width, layout, wrap, window));
         self.restore_anchor();
+        self.settle_card(rows);
     }
 
     /// Puts the view back on the source line it showed before the top
@@ -868,10 +1080,11 @@ impl App {
                     .unwrap_or(f.rows.len() - 1);
                 let row = u32::try_from(row).unwrap_or(0);
                 let height = f.heights.start(row + 1) - f.heights.start(row);
-                self.top.line = header + f.heights.start(row) + sub.min(height.saturating_sub(1));
+                self.top.line =
+                    f.body_start(header) + f.heights.start(row) + sub.min(height.saturating_sub(1));
             }
             (_, SourceLine::Display(line)) => {
-                self.top.line = line.min(header + f.body_lines());
+                self.top.line = line.min(f.body_start(header) + f.body_lines());
             }
             _ => {}
         }
@@ -950,13 +1163,28 @@ impl App {
         let f = &stream.files[file];
         let local = line - stream.offsets[file];
         let header = u32::from(self.settings.header_rows);
+        if local < f.above {
+            return Line::Cards {
+                file,
+                review: true,
+                line: local,
+            };
+        }
+        let local = local - f.above;
         if local < header {
             return Line::Header {
                 file,
                 part: u16::try_from(local).unwrap_or(0),
             };
         }
-        let body = local - header;
+        if local < header + f.file_card_lines {
+            return Line::Cards {
+                file,
+                review: false,
+                line: local - header,
+            };
+        }
+        let body = local - header - f.file_card_lines;
         if body >= f.body_lines() {
             return Line::Spacer;
         }
@@ -1027,7 +1255,7 @@ impl App {
                 );
                 if change && !in_change {
                     // Leave a little context above the change.
-                    let line = stream.offsets[fi] + header + f.heights.start(ri);
+                    let line = stream.offsets[fi] + f.body_start(header) + f.heights.start(ri);
                     starts.push(line.saturating_sub(2).max(stream.offsets[fi]));
                 }
                 in_change = change;
@@ -1089,16 +1317,6 @@ impl App {
         }
         f.invalidate();
         self.laid_out = None;
-    }
-
-    pub(crate) fn toggle_reviewed(&mut self) {
-        if let Some(f) = self
-            .stream
-            .as_mut()
-            .and_then(|s| s.files.get_mut(self.top.file))
-        {
-            f.reviewed = !f.reviewed;
-        }
     }
 
     pub(crate) fn relayout(&mut self) {
@@ -1331,7 +1549,7 @@ pub(crate) fn compute_body(reader: &mut Reader, change: &FileChange) -> (Body, O
         Err(e) => return (Body::Unreadable(format!("{e:#}")), None),
     };
     if diff::is_binary(&contents.old) || diff::is_binary(&contents.new) {
-        return (Body::Binary, None);
+        return (Body::Binary(contents.new_id), None);
     }
     let old = Arc::new(Text::from_bytes(&contents.old));
     let new = Arc::new(Text::from_bytes(&contents.new));
