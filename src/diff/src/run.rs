@@ -814,7 +814,13 @@ impl Runtime {
                         .map_err(|e| format!("{e:#}"));
                     if let (true, Ok((_, state))) = (since, &review) {
                         let mut reader = Reader::new(repo, changes.root.clone());
-                        changes.files = review::since_sent(changes.files, &state.seen, &mut reader);
+                        changes.files = review::since_sent(
+                            changes.files,
+                            &state.seen,
+                            |_| true,
+                            changes.target,
+                            &mut reader,
+                        );
                     }
                     changes
                 })
@@ -859,7 +865,13 @@ impl Runtime {
             let repo = repo.to_thread_local();
             let result = repo::changes_for(&repo, target, &paths, &renames)
                 .map(|files| match &seen {
-                    Some(seen) => review::since_sent(files, seen, &mut Reader::new(repo, root)),
+                    Some(seen) => review::since_sent(
+                        files,
+                        seen,
+                        |p| paths.iter().any(|q| q == p),
+                        target,
+                        &mut Reader::new(repo, root),
+                    ),
                     None => files,
                 })
                 .map_err(|e| format!("{e:#}"));

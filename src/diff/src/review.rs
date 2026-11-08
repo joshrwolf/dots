@@ -329,14 +329,36 @@ pub(crate) fn reanchor(anchored: &Lines, lines: &[&str]) -> Option<u32> {
 
 /// The changes since the last send: files sent before compare with what
 /// was sent, and those unchanged since are left out. Files never sent keep
-/// their base. A file whose content cannot be read keeps its change.
+/// their base. A file whose content cannot be read keeps its change. Sent
+/// files that `files` no longer lists match the base again, reverted or
+/// removed since; those `scanned` covers come back as changes from what was
+/// sent to the base.
 pub(crate) fn since_sent(
     files: Vec<FileChange>,
     seen: &BTreeMap<String, String>,
+    scanned: impl Fn(&str) -> bool,
+    target: crate::repo::Target,
     reader: &mut Reader,
 ) -> Vec<FileChange> {
-    files
+    let listed: std::collections::HashSet<String> = files.iter().map(|f| f.path.clone()).collect();
+    let back: Vec<FileChange> = seen
+        .iter()
+        .filter(|(path, _)| !listed.contains(path.as_str()) && scanned(path))
+        .filter_map(|(path, sent)| {
+            let base = reader.blob_in(target.base_tree, path).ok()?;
+            (content_key(base) != *sent).then(|| FileChange {
+                path: path.clone(),
+                status: Status::Modified,
+                old: None,
+                new: base.map_or(crate::repo::Side::Missing, crate::repo::Side::Blob),
+                from: None,
+                modes: None,
+            })
+        })
+        .collect();
+    let mut out: Vec<FileChange> = files
         .into_iter()
+        .chain(back)
         .filter_map(|mut change| {
             let Some(sent) = seen.get(&change.path) else {
                 return Some(change);
@@ -355,7 +377,9 @@ pub(crate) fn since_sent(
             };
             Some(change)
         })
-        .collect()
+        .collect();
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
 }
 
 /// What a review message needs besides the comments.
@@ -584,6 +608,69 @@ mod tests {
         assert_eq!(State::load(&dir).expect("load"), state);
         std::fs::write(dir.join("dots-diff/state.json"), r#"{"version":9}"#).expect("write");
         assert!(State::load(&dir).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn since_last_send_keeps_files_reverted_or_removed_since() {
+        use gix::object::tree::EntryKind;
+        let dir = std::env::temp_dir().join(format!("dots-diff-since-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = gix::init(&dir).expect("init");
+        let base = repo.write_blob("base\n").expect("blob").detach();
+        let edited = repo.write_blob("edited\n").expect("blob").detach();
+        let added = repo.write_blob("added\n").expect("blob").detach();
+        let same = repo.write_blob("same\n").expect("blob").detach();
+        let mut tree = repo.edit_tree(repo.empty_tree().id).expect("editor");
+        tree.upsert("a.rs", EntryKind::Blob, base).expect("upsert");
+        let base_tree = tree.write().expect("write").detach();
+        let target = crate::repo::Target {
+            base_tree,
+            head_tree: base_tree,
+        };
+        let key = |id: gix::ObjectId| content_key(Some(id));
+        // Sent: a.rs edited and new.rs added; now a.rs is back to its base
+        // and new.rs is gone, so neither differs from the base any more.
+        // kept.rs still differs, unchanged since the send.
+        let seen = BTreeMap::from([
+            ("a.rs".to_owned(), key(edited)),
+            ("kept.rs".to_owned(), key(same)),
+            ("new.rs".to_owned(), key(added)),
+        ]);
+        let kept = FileChange {
+            path: "kept.rs".into(),
+            status: Status::Added,
+            old: None,
+            new: crate::repo::Side::Blob(same),
+            from: None,
+            modes: None,
+        };
+        let mut reader = Reader::new(repo, dir.clone());
+        let since = since_sent(vec![kept], &seen, |_| true, target, &mut reader);
+        let found: Vec<_> = since
+            .iter()
+            .map(|c| (c.path.as_str(), c.status, c.old, c.new))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "a.rs",
+                    Status::Modified,
+                    Some(edited),
+                    crate::repo::Side::Blob(base)
+                ),
+                (
+                    "new.rs",
+                    Status::Deleted,
+                    Some(added),
+                    crate::repo::Side::Missing
+                ),
+            ]
+        );
+        // A path-limited rescan looks only at its own paths.
+        let only_a = since_sent(Vec::new(), &seen, |p| p == "a.rs", target, &mut reader);
+        assert_eq!(only_a.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

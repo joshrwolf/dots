@@ -534,6 +534,11 @@ impl Reader {
         }
     }
 
+    /// The blob at `path` in `tree`: `None` when there is no file.
+    pub(crate) fn blob_in(&self, tree: gix::ObjectId, path: &str) -> Result<Option<gix::ObjectId>> {
+        blob_at(&self.repo.find_tree(tree)?, path)
+    }
+
     /// The content id of a change's new side: `None` for no file.
     pub(crate) fn content_id(&mut self, change: &FileChange) -> Result<Option<gix::ObjectId>> {
         Ok(match change.new {
