@@ -8,8 +8,8 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::app::{App, Body, Focus, Line, ListItem};
-use crate::diff::{FileDiff, Text};
+use crate::app::{App, Body, FileTexts, FileView, Focus, Line, ListItem};
+use crate::diff::FileDiff;
 use crate::highlight::{Lines, Role, Run};
 use crate::plan::{Kind, Row};
 use crate::repo::Status;
@@ -57,6 +57,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut App) {
     let (files, diff, status) = areas(app, full);
     app.areas = crate::app::Areas { files, diff };
     app.layout(diff.width, diff.height);
+    app.prepare_emphasis(diff.height);
     let buf = frame.buffer_mut();
     let p = app.palette.clone();
     fill(buf, full, Style::new().bg(p.bg).fg(p.fg));
@@ -653,23 +654,33 @@ fn draw_line(buf: &mut Buffer, app: &App, area: Rect, line: Line) {
         }
         Line::Body { file, row, sub } => {
             let f = &stream.files[file];
-            let Body::Text(diff) = &f.body else { return };
+            // Rows and texts are kept near the view; until then, blank.
+            let (Body::Text(diff), Some(texts), Some(&row)) =
+                (&f.body, app.texts(f), f.rows().get(row))
+            else {
+                fill(buf, area, Style::new().bg(p.bg));
+                return;
+            };
             let ctx = RowCtx {
+                app,
+                f,
                 diff,
-                old_hl: highlights(app, f, &diff.old),
-                new_hl: highlights(app, f, &diff.new),
+                old_hl: highlights(app, f, texts.old.0),
+                new_hl: highlights(app, f, texts.new.0),
+                texts,
                 number_width: f.number_width(),
                 wrap: app.settings.wrap,
                 palette: p,
+                flash: f.flashed(&row, std::time::Instant::now()),
             };
-            draw_row(buf, &ctx, area, f.rows()[row], sub);
+            draw_row(buf, &ctx, area, row, sub);
         }
     }
 }
 
-fn highlights<'a>(app: &'a App, f: &crate::app::FileView, text: &Text) -> Option<&'a Lines> {
+fn highlights<'a>(app: &'a App, f: &FileView, id: Option<gix::ObjectId>) -> Option<&'a Lines> {
     let lang = crate::highlight::language(&f.change.path)?;
-    app.highlights.get(&(text.hash, lang))?.as_deref()
+    app.highlights.peek(&(id?, lang))?.as_deref()
 }
 
 pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, part: u16) {
@@ -742,12 +753,44 @@ pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, 
 }
 
 struct RowCtx<'a> {
+    app: &'a App,
+    f: &'a FileView,
     diff: &'a FileDiff,
+    texts: FileTexts,
     old_hl: Option<&'a Lines>,
     new_hl: Option<&'a Lines>,
     number_width: u16,
     wrap: bool,
     palette: &'a Palette,
+    /// The row's hunk changed in the last refresh.
+    flash: bool,
+}
+
+impl RowCtx<'_> {
+    /// Gutter colour: the kind's, or the change mark after a refresh.
+    fn gutter(&self, kind_gutter: Color) -> Color {
+        if self.flash {
+            self.palette.selection
+        } else {
+            kind_gutter
+        }
+    }
+
+    /// Emphasised byte ranges of line `n` of one side, relative to the line.
+    fn emphasis(&self, new_side: bool, n: u32) -> Vec<Range<u32>> {
+        let Some(hunk) = self.diff.hunk_of(new_side, n) else {
+            return Vec::new();
+        };
+        let Some(e) = self.app.emphasis(self.f, hunk) else {
+            return Vec::new();
+        };
+        let text = if new_side {
+            &self.texts.new.1
+        } else {
+            &self.texts.old.1
+        };
+        e.within(new_side, text.start(n)..text.start(n + 1))
+    }
 }
 
 /// One side of a row: which line, how it changed.
@@ -792,6 +835,7 @@ fn draw_row(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, row: Row, sub: u32) 
         Row::Line { kind, old, new } => {
             let nw = ctx.number_width;
             let (bg, gutter_bg, sign, sign_fg) = kind_style(p, kind);
+            let gutter_bg = ctx.gutter(gutter_bg);
             fill(buf, area, Style::new().bg(bg));
             let gutter = Rect::new(area.x, area.y, (nw * 2 + 2).min(area.width), 1);
             fill(buf, gutter, Style::new().bg(gutter_bg));
@@ -895,6 +939,7 @@ fn draw_half(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, side: Side, sub: u3
         return;
     };
     let (bg, gutter_bg, sign, sign_fg) = kind_style(p, side.kind);
+    let gutter_bg = ctx.gutter(gutter_bg);
     fill(buf, area, Style::new().bg(bg));
     fill(
         buf,
@@ -936,10 +981,15 @@ fn draw_code(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, side: Side, sub: u3
     if area.width == 0 {
         return;
     }
-    let (text, hl, emph) = if side.old {
-        (&ctx.diff.old, ctx.old_hl, ctx.diff.emph_old.get(&n))
+    let (text, hl) = if side.old {
+        (&ctx.texts.old.1, ctx.old_hl)
     } else {
-        (&ctx.diff.new, ctx.new_hl, ctx.diff.emph_new.get(&n))
+        (&ctx.texts.new.1, ctx.new_hl)
+    };
+    let emph = if side.kind == Kind::Context {
+        Vec::new()
+    } else {
+        ctx.emphasis(!side.old, n)
     };
     let line = text.line(n);
     let segment = if ctx.wrap {
@@ -959,7 +1009,6 @@ fn draw_code(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, side: Side, sub: u3
         Kind::Insert => (p.add_bg, p.add_emph),
     };
     let runs = hl.map_or(&[][..], |h| h.line(n));
-    let emph = emph.map_or(&[][..], Vec::as_slice);
     let truncated = !ctx.wrap && wrap::wrapped_height(line, area.width) > 1;
     let limit = if truncated {
         area.width - 1
@@ -974,7 +1023,7 @@ fn draw_code(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, side: Side, sub: u3
         line,
         segment.bytes,
         runs,
-        emph,
+        &emph,
         bg,
         emph_bg,
         p,

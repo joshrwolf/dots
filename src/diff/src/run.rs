@@ -15,17 +15,20 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::Position;
 
-use crate::app::{self, App, Body, Focus, LayoutChoice, Line, ListItem, Settings, Summary};
+use crate::app::{
+    self, App, Body, FileTexts, Focus, LayoutChoice, Line, ListItem, Settings, Summary,
+};
 use crate::ctl::{self, Command};
 use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
 use crate::input::Input;
-use crate::repo::{self, Changes, FileChange, Mode};
+use crate::repo::{self, Changes, FileChange, Fsmonitor, Mode, Reader, Side, Stamp};
+use crate::stats::{self, Stats};
 use crate::switcher::Switcher;
 use crate::theme::{self, Detected, Palette};
 use crate::timings::Timings;
 use crate::ui;
-use crate::watch::{self, Touched, Watch};
+use crate::watch::{self, Burst, Refresh, Touched, Watch};
 
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Msg {
@@ -38,10 +41,26 @@ pub(crate) enum Msg {
         elapsed: Duration,
     },
     Diffed {
-        generation: u64,
+        epoch: u64,
         file: usize,
         body: Body,
+        texts: Option<FileTexts>,
         elapsed: Duration,
+    },
+    /// A path-limited rescan after file events.
+    Partial {
+        generation: u64,
+        paths: Vec<String>,
+        result: Result<Vec<FileChange>, String>,
+        /// When the first event of the burst arrived.
+        since: Instant,
+    },
+    /// The periodic safety-net check.
+    Reconciled {
+        generation: u64,
+        signature: Option<Signature>,
+        /// Working-tree files whose size or time moved without an event.
+        moved: Vec<String>,
     },
     Highlighted(highlight::Done),
     Summary {
@@ -64,8 +83,17 @@ pub(crate) struct Options {
     pub(crate) settings: Settings,
 }
 
-/// Wait after the last file event before reloading.
-const DEBOUNCE: Duration = Duration::from_millis(250);
+/// How often the safety net checks for changes the watcher missed.
+const RECONCILE: Duration = Duration::from_secs(10);
+
+/// What decides a worktree's changes besides its files: HEAD, the index
+/// and the base.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Signature {
+    head: Option<gix::ObjectId>,
+    index: Option<Stamp>,
+    target: repo::Target,
+}
 /// Rex reports no theme change, so the colours are asked for again.
 const THEME_POLL: Duration = Duration::from_secs(2);
 /// Quiet time before another worktree's switcher counts are recomputed.
@@ -79,6 +107,7 @@ struct DiffJob {
     focus: Arc<AtomicUsize>,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 struct Runtime {
     app: App,
     tx: Sender<Msg>,
@@ -89,7 +118,16 @@ struct Runtime {
     summaries: SummaryQueue,
     /// Worktrees whose switcher counts are stale, and when they last changed.
     stale: HashMap<PathBuf, Instant>,
-    refresh_at: Option<Instant>,
+    /// File events waiting to be coalesced into one refresh.
+    burst: Burst,
+    /// A path-limited rescan is running; later bursts wait for it.
+    partial_busy: bool,
+    /// Changes with each new file list, so diffs of an older list are dropped.
+    epoch: u64,
+    /// A refresh waiting to reach the screen: when its burst began and its paths.
+    refreshing: Option<(Instant, Vec<String>)>,
+    next_reconcile: Instant,
+    signature: Option<Signature>,
     wanted: Vec<Key>,
     timings: Timings,
     /// When the current worktree began loading, until its first full frame.
@@ -101,6 +139,8 @@ struct Runtime {
     summaries_started: bool,
     /// Where the current stream's contents are read from.
     source: Option<(gix::ThreadSafeRepository, PathBuf)>,
+    /// The worktree the file watch was set up around.
+    watched: Option<usize>,
 }
 
 pub(crate) fn run(options: Options) -> Result<()> {
@@ -169,7 +209,12 @@ pub(crate) fn run(options: Options) -> Result<()> {
             watcher: None,
             summaries: SummaryQueue::new(SUMMARY_THREADS, &tx_for_summaries),
             stale: HashMap::new(),
-            refresh_at: None,
+            burst: Burst::default(),
+            partial_busy: false,
+            epoch: 0,
+            refreshing: None,
+            next_reconcile: Instant::now() + RECONCILE,
+            signature: None,
             wanted: Vec::new(),
             timings,
             loading_since: Some(started),
@@ -179,6 +224,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
             quit: false,
             summaries_started: false,
             source: None,
+            watched: None,
         };
         let mut graphics = options.graphics.then(Graphics::new);
         rt.start_load();
@@ -242,9 +288,15 @@ impl Runtime {
                 deadline = deadline.min(now + Duration::from_millis(50));
                 dirty = true;
             }
-            if let Some(at) = self.refresh_at {
+            if !self.partial_busy
+                && let Some(at) = self.burst.due()
+            {
                 deadline = deadline.min(at);
             }
+            if let Some(at) = self.app.flash_deadline() {
+                deadline = deadline.min(at);
+            }
+            deadline = deadline.min(self.next_reconcile);
             match rx.recv_timeout(deadline.saturating_duration_since(now)) {
                 Ok(msg) => dirty |= self.handle(msg),
                 Err(RecvTimeoutError::Timeout) => {}
@@ -254,9 +306,20 @@ impl Runtime {
                 dirty |= self.handle(msg);
             }
             let now = Instant::now();
-            if self.refresh_at.is_some_and(|at| at <= now) {
-                self.refresh_at = None;
-                self.start_load();
+            if !self.partial_busy {
+                match self.burst.take(now) {
+                    Some(Refresh::Full) => self.start_load(),
+                    Some(Refresh::Paths(paths)) => self.start_partial(paths, now),
+                    None => {}
+                }
+            }
+            if self.app.flash_deadline().is_some_and(|at| at <= now) {
+                self.app.expire_flashes(now);
+                dirty = true;
+            }
+            if self.next_reconcile <= now {
+                self.next_reconcile = now + RECONCILE;
+                self.spawn_reconcile();
             }
             if !self.theme_fixed && self.next_theme <= now {
                 self.next_theme = now + THEME_POLL;
@@ -315,6 +378,27 @@ impl Runtime {
                 );
             }
         }
+        if let Some((since, paths)) = &self.refreshing
+            && let Some(stream) = &self.app.stream
+        {
+            let done = stream
+                .files
+                .iter()
+                .filter(|f| paths.contains(&f.change.path))
+                .all(|f| !matches!(f.body, Body::Pending));
+            if done {
+                self.timings.span(
+                    "file event to screen",
+                    since.elapsed(),
+                    &format!("{} paths, draw {draw:.1?}", paths.len()),
+                );
+                self.refreshing = None;
+            }
+        }
+        if self.app.needs_diffs {
+            self.app.needs_diffs = false;
+            self.spawn_diffs();
+        }
         let jobs = self.app.wanted_highlights(self.view_rows(), PREFETCH);
         let keys: Vec<Key> = jobs.iter().map(|j| j.key).collect();
         if keys != self.wanted {
@@ -326,6 +410,7 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle(&mut self, msg: Msg) -> bool {
         match msg {
             Msg::Input(event) => self.input(&event),
@@ -347,9 +432,18 @@ impl Runtime {
                             &format!("{} files", changes.files.len()),
                         );
                         self.app.message = None;
+                        let reader =
+                            Reader::new(changes.repo.to_thread_local(), changes.root.clone());
                         self.source = Some((changes.repo, changes.root));
-                        self.app
-                            .load(worktree.clone(), mode, changes.base, changes.files);
+                        self.app.load(
+                            worktree.clone(),
+                            mode,
+                            changes.base,
+                            changes.target,
+                            changes.files,
+                            Some(reader),
+                        );
+                        self.epoch += 1;
                         self.spawn_diffs();
                     }
                     Err(e) => self.app.message = Some(e),
@@ -357,26 +451,70 @@ impl Runtime {
                 true
             }
             Msg::Diffed {
-                generation,
+                epoch,
                 file,
                 body,
+                texts,
                 elapsed,
+            } => {
+                if epoch != self.epoch {
+                    return false;
+                }
+                let lines = match &body {
+                    Body::Text(d) => d.old_len + d.new_len,
+                    _ => 0,
+                };
+                self.timings.diff(elapsed, lines);
+                self.app.set_body(file, body, texts);
+                self.update_own_summary();
+                true
+            }
+            Msg::Partial {
+                generation,
+                paths,
+                result,
+                since,
+            } => {
+                self.partial_busy = false;
+                if generation != self.generation {
+                    return false;
+                }
+                match result {
+                    Ok(files) => {
+                        self.app.apply_paths(&paths, files);
+                        self.epoch += 1;
+                        self.refreshing = Some((since, paths));
+                        self.spawn_diffs();
+                    }
+                    // The paths could not be scanned alone; scan everything.
+                    Err(_) => self.burst.push_full(Instant::now()),
+                }
+                true
+            }
+            Msg::Reconciled {
+                generation,
+                signature,
+                moved,
             } => {
                 if generation != self.generation {
                     return false;
                 }
-                let lines = match &body {
-                    Body::Text(d) => d.old.len() + d.new.len(),
-                    _ => 0,
-                };
-                self.timings.diff(elapsed, lines);
-                self.app.set_body(file, body);
-                self.update_own_summary();
-                true
+                match (&self.signature, signature) {
+                    (Some(old), Some(new)) if *old != new => {
+                        self.burst.push_full(Instant::now());
+                    }
+                    (_, new) => self.signature = new,
+                }
+                if !moved.is_empty() {
+                    self.burst.push(Instant::now(), moved);
+                }
+                false
             }
             Msg::Highlighted(done) => {
                 self.timings.highlight(done.elapsed);
-                self.app.highlights.insert(done.key, done.result.ok());
+                let result = done.result.ok();
+                let size = result.as_ref().map_or(0, |l| l.bytes());
+                self.app.highlights.insert(done.key, result, size);
                 true
             }
             Msg::Summary { path, summary } => {
@@ -387,13 +525,26 @@ impl Runtime {
             }
             Msg::Touched(touched) => {
                 let current = self.app.current;
+                let now = Instant::now();
                 match touched {
-                    Touched::Worktree(i) if i != current => {
+                    Touched::Files { worktree, paths } if worktree == current => {
+                        self.burst.push(now, paths);
+                    }
+                    Touched::GitState(i) if i == current => self.burst.push_full(now),
+                    Touched::Files { worktree: i, .. } | Touched::GitState(i) => {
                         if let Some(w) = self.app.repo.worktrees.get(i) {
-                            self.stale.insert(w.path.clone(), Instant::now());
+                            self.stale.insert(w.path.clone(), now);
                         }
                     }
-                    _ => self.refresh_at = Some(Instant::now() + DEBOUNCE),
+                    Touched::Refs => {
+                        // Any worktree's base may have moved.
+                        self.burst.push_full(now);
+                        for (i, w) in self.app.repo.worktrees.iter().enumerate() {
+                            if i != current {
+                                self.stale.insert(w.path.clone(), now);
+                            }
+                        }
+                    }
                 }
                 false
             }
@@ -424,6 +575,8 @@ impl Runtime {
                             self.app.repo = repo;
                             self.app.summaries.clear();
                             self.app.current = usize::MAX;
+                            self.summaries.reset();
+                            self.watched = None;
                             self.switch(i);
                             self.spawn_summaries();
                             self.spawn_watch();
@@ -462,6 +615,9 @@ impl Runtime {
         self.app.stream = None;
         self.loading_since = Some(Instant::now());
         self.start_load();
+        if !WATCH_ALL_FILES {
+            self.spawn_watch();
+        }
     }
 
     fn start_load(&mut self) {
@@ -469,13 +625,17 @@ impl Runtime {
         if let Some(job) = self.diffs.take() {
             job.cancel.store(true, Ordering::Relaxed);
         }
+        self.burst = Burst::default();
+        self.signature = None;
         let generation = self.generation;
         let worktree = self.app.worktree_path().clone();
         let mode = self.app.settings.mode;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
-            let result = repo::changes(&worktree, mode).map_err(|e| format!("{e:#}"));
+            // The viewed worktree may use, and start, the configured fsmonitor.
+            let result = repo::changes(&worktree, mode, Fsmonitor::AsConfigured)
+                .map_err(|e| format!("{e:#}"));
             let _ = tx.send(Msg::Loaded {
                 generation,
                 worktree,
@@ -486,9 +646,76 @@ impl Runtime {
         });
     }
 
-    /// Starts watching every worktree; setting up takes a moment, so it
+    /// Rescans `paths` alone, off the event loop.
+    fn start_partial(&mut self, paths: Vec<String>, since: Instant) {
+        let (Some((repo, _)), Some(stream)) = (self.source.clone(), &self.app.stream) else {
+            return;
+        };
+        let target = stream.target;
+        let generation = self.generation;
+        let tx = self.tx.clone();
+        self.partial_busy = true;
+        std::thread::spawn(move || {
+            let repo = repo.to_thread_local();
+            let result = repo::changes_for(&repo, target, &paths).map_err(|e| format!("{e:#}"));
+            let _ = tx.send(Msg::Partial {
+                generation,
+                paths,
+                result,
+                since,
+            });
+        });
+    }
+
+    /// The safety net behind the watcher: compares HEAD, the index and the
+    /// base with the last check, and restats working-tree files.
+    fn spawn_reconcile(&self) {
+        let Some(stream) = &self.app.stream else {
+            return;
+        };
+        let worktree = stream.worktree.clone();
+        let mode = stream.mode;
+        let files: Vec<(String, Stamp)> = stream
+            .files
+            .iter()
+            .filter_map(|f| match f.change.new {
+                Side::Worktree(stamp) => Some((f.change.path.clone(), stamp)),
+                _ => None,
+            })
+            .collect();
+        let generation = self.generation;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let signature = signature(&worktree, mode).ok();
+            let moved = files
+                .into_iter()
+                .filter(|(path, stamp)| {
+                    let now = std::fs::symlink_metadata(worktree.join(path))
+                        .ok()
+                        .map(|m| Stamp {
+                            modified: m.modified().ok(),
+                            len: m.len(),
+                        });
+                    now != Some(*stamp)
+                })
+                .map(|(path, _)| path)
+                .collect();
+            let _ = tx.send(Msg::Reconciled {
+                generation,
+                signature,
+                moved,
+            });
+        });
+    }
+
+    /// Starts watching the worktrees; setting up takes a moment, so it
     /// happens off the event loop.
-    fn spawn_watch(&self) {
+    fn spawn_watch(&mut self) {
+        if self.watched == Some(self.app.current) {
+            return;
+        }
+        self.watched = Some(self.app.current);
+        self.watcher = None;
         let roots: Vec<PathBuf> = self
             .app
             .repo
@@ -496,10 +723,11 @@ impl Runtime {
             .iter()
             .map(|w| w.path.clone())
             .collect();
+        let selected = self.app.current;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let events = Mutex::new(tx.clone());
-            let result = watch::watch(&roots, move |t| {
+            let result = watch::watch(&roots, selected, WATCH_ALL_FILES, move |t| {
                 if let Ok(tx) = events.lock() {
                     let _ = tx.send(Msg::Touched(t));
                 }
@@ -514,6 +742,9 @@ impl Runtime {
         let pending = self.app.pending();
         if pending.is_empty() {
             return;
+        }
+        if let Some(job) = self.diffs.take() {
+            job.cancel.store(true, Ordering::Relaxed);
         }
         let Some(stream) = &self.app.stream else {
             return;
@@ -537,15 +768,15 @@ impl Runtime {
         let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
         for _ in 0..threads {
             let (repo, root) = (repo.clone(), root.clone());
-            let (todo, cancel, focus, tx, generation) = (
+            let (todo, cancel, focus, tx, epoch) = (
                 Arc::clone(&todo),
                 Arc::clone(&job.cancel),
                 Arc::clone(&job.focus),
                 self.tx.clone(),
-                self.generation,
+                self.epoch,
             );
             std::thread::spawn(move || {
-                let repo = repo.to_thread_local();
+                let mut reader = Reader::new(repo.to_thread_local(), root);
                 while !cancel.load(Ordering::Relaxed) {
                     let next = {
                         let Ok(mut todo) = todo.lock() else { return };
@@ -554,12 +785,13 @@ impl Runtime {
                     };
                     let Some((file, change)) = next else { return };
                     let started = Instant::now();
-                    let body = app::compute_body(&repo, &root, &change);
+                    let (body, texts) = app::compute_body(&mut reader, &change);
                     if tx
                         .send(Msg::Diffed {
-                            generation,
+                            epoch,
                             file,
                             body,
+                            texts,
                             elapsed: started.elapsed(),
                         })
                         .is_err()
@@ -868,19 +1100,25 @@ impl Runtime {
     }
 }
 
+/// The repository's line-count caches, opened by the first summary thread
+/// that needs them so loading never delays the first frame.
+type SharedStats = Arc<std::sync::OnceLock<Stats>>;
+type Queue = Arc<(Mutex<VecDeque<(PathBuf, SharedStats)>>, Condvar)>;
+
 /// Background threads computing switcher counts, one worktree at a time each.
 struct SummaryQueue {
-    queue: Arc<(Mutex<VecDeque<PathBuf>>, Condvar)>,
+    queue: Queue,
+    stats: SharedStats,
 }
 
 impl SummaryQueue {
     fn new(threads: usize, tx: &Sender<Msg>) -> Self {
-        let queue: Arc<(Mutex<VecDeque<PathBuf>>, Condvar)> = Arc::default();
+        let queue: Queue = Arc::default();
         for _ in 0..threads {
             let (queue, tx) = (Arc::clone(&queue), tx.clone());
             std::thread::spawn(move || {
                 loop {
-                    let path = {
+                    let (path, shared) = {
                         let (lock, cv) = &*queue;
                         let Ok(mut q) = lock.lock() else { return };
                         loop {
@@ -891,30 +1129,43 @@ impl SummaryQueue {
                             q = next;
                         }
                     };
-                    let summary = summarize(&path).map_err(|e| format!("{e:#}"));
+                    let stats = shared.get_or_init(|| Stats::open(&path));
+                    let summary = stats::summarize(stats, &path).map_err(|e| format!("{e:#}"));
                     if tx.send(Msg::Summary { path, summary }).is_err() {
                         return;
                     }
                 }
             });
         }
-        Self { queue }
+        Self {
+            queue,
+            stats: SharedStats::default(),
+        }
+    }
+
+    /// Starts over with another repository's caches.
+    fn reset(&mut self) {
+        if let Ok(mut q) = self.queue.0.lock() {
+            q.clear();
+        }
+        self.stats = SharedStats::default();
     }
 
     /// Queues `path` unless it is already waiting; `urgent` puts it first.
     fn push(&self, path: PathBuf, urgent: bool) {
         let (lock, cv) = &*self.queue;
         let Ok(mut q) = lock.lock() else { return };
-        if let Some(i) = q.iter().position(|p| *p == path) {
+        if let Some(i) = q.iter().position(|(p, _)| *p == path) {
             if !urgent {
                 return;
             }
             q.remove(i);
         }
+        let item = (path, Arc::clone(&self.stats));
         if urgent {
-            q.push_front(path);
+            q.push_front(item);
         } else {
-            q.push_back(path);
+            q.push_back(item);
         }
         cv.notify_one();
     }
@@ -942,20 +1193,21 @@ fn nearest<T>(todo: &[Option<T>], focus: usize) -> Option<usize> {
     })
 }
 
-pub(crate) fn summarize(path: &Path) -> Result<Summary> {
-    let changes = repo::changes(path, Mode::Base)?;
-    let repo = changes.repo.to_thread_local();
-    let (mut added, mut removed) = (0, 0);
-    for change in &changes.files {
-        if let Body::Text(d) = app::compute_body(&repo, &changes.root, change) {
-            added += d.added;
-            removed += d.removed;
-        }
-    }
-    Ok(Summary {
-        added,
-        removed,
-        files: changes.files.len(),
+/// Files are watched in every worktree where watches are cheap; on Linux
+/// each directory costs an inotify watch, so only the selected one is.
+const WATCH_ALL_FILES: bool = !cfg!(target_os = "linux");
+
+/// A worktree's [`Signature`].
+fn signature(worktree: &Path, mode: Mode) -> Result<Signature> {
+    let (repo, _, target) = repo::open(worktree, mode)?;
+    let index = std::fs::metadata(repo.index_path()).ok().map(|m| Stamp {
+        modified: m.modified().ok(),
+        len: m.len(),
+    });
+    Ok(Signature {
+        head: repo.head_id().ok().map(gix::Id::detach),
+        index,
+        target,
     })
 }
 

@@ -94,15 +94,26 @@ pub(crate) struct Run {
     pub(crate) role: Role,
 }
 
-/// Runs for every line of a file; lines without colour have none.
+/// Runs for every line of a file in one flat array: line `i`'s runs are
+/// `runs[starts[i]..starts[i + 1]]`. Lines without colour have none.
 #[derive(Debug, Default)]
 pub(crate) struct Lines {
-    pub(crate) lines: Vec<Vec<Run>>,
+    runs: Vec<Run>,
+    starts: Vec<u32>,
 }
 
 impl Lines {
     pub(crate) fn line(&self, i: u32) -> &[Run] {
-        self.lines.get(i as usize).map_or(&[], Vec::as_slice)
+        let i = i as usize;
+        match (self.starts.get(i), self.starts.get(i + 1)) {
+            (Some(&a), Some(&b)) => &self.runs[a as usize..b as usize],
+            _ => &[],
+        }
+    }
+
+    /// Memory held, for cache budgets.
+    pub(crate) fn bytes(&self) -> usize {
+        self.runs.len() * std::mem::size_of::<Run>() + self.starts.len() * 4
     }
 }
 
@@ -172,13 +183,15 @@ pub(crate) fn highlight(
         let start = (span.start as usize).min(end);
         roles[start..end].fill(role);
     }
-    let mut lines = Vec::with_capacity(text.len() as usize);
+    let mut runs: Vec<Run> = Vec::new();
+    let mut starts = Vec::with_capacity(text.len() as usize + 1);
+    starts.push(0u32);
     for i in 0..text.len() {
         let start = text.start(i) as usize;
         let len = text.line(i).len();
-        let mut runs: Vec<Run> = Vec::new();
+        let first = runs.len();
         for (offset, &role) in (0u32..).zip(&roles[start..start + len]) {
-            match runs.last_mut() {
+            match runs[first..].last_mut() {
                 Some(run) if run.role == role && run.end == offset => run.end += 1,
                 _ => runs.push(Run {
                     start: offset,
@@ -187,14 +200,22 @@ pub(crate) fn highlight(
                 }),
             }
         }
-        runs.retain(|r| r.role != Role::Plain);
-        lines.push(runs);
+        let mut keep = first;
+        for k in first..runs.len() {
+            if runs[k].role != Role::Plain {
+                runs[keep] = runs[k];
+                keep += 1;
+            }
+        }
+        runs.truncate(keep);
+        starts.push(u32::try_from(runs.len()).unwrap_or(u32::MAX));
     }
-    Ok(Lines { lines })
+    runs.shrink_to_fit();
+    Ok(Lines { runs, starts })
 }
 
-/// Cache key: content hash and grammar.
-pub(crate) type Key = (u64, &'static str);
+/// Cache key: content id and grammar.
+pub(crate) type Key = (gix::ObjectId, &'static str);
 
 #[derive(Debug, Clone)]
 pub(crate) struct Job {
@@ -315,7 +336,7 @@ mod tests {
         let mut hl = arborium::Highlighter::new();
         let text = Text::new(Arc::from("fn main() {\n    // hi\n}\n"));
         let lines = highlight(&mut hl, "rust", &text).expect("rust grammar");
-        assert_eq!(lines.lines.len(), 3);
+        assert!(lines.line(3).is_empty(), "past the last line");
         assert_eq!(
             lines.line(0).first(),
             Some(&Run {

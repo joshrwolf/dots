@@ -14,8 +14,8 @@ use ratatui::style::{Color, Modifier};
 
 use crate::app::{self, App, Body, Settings};
 use crate::highlight;
-use crate::repo::{self, Mode};
-use crate::run::summarize;
+use crate::repo::{self, Fsmonitor, Mode, Reader};
+use crate::stats::{self, Stats};
 use crate::theme::{Detected, Palette};
 use crate::ui;
 
@@ -60,16 +60,23 @@ fn loaded(
     let mode = settings.mode;
     let mut app = App::new(repo, current, Palette::new(theme), settings);
     let wt = app.worktree_path().clone();
-    let changes = repo::changes(&wt, mode)?;
-    let source = changes.repo.to_thread_local();
-    let bodies: Vec<Body> = changes
+    let changes = repo::changes(&wt, mode, Fsmonitor::IfRunning)?;
+    let mut reader = Reader::new(changes.repo.to_thread_local(), changes.root.clone());
+    let bodies: Vec<_> = changes
         .files
         .iter()
-        .map(|c| app::compute_body(&source, &changes.root, c))
+        .map(|c| app::compute_body(&mut reader, c))
         .collect();
-    app.load(wt, mode, changes.base, changes.files);
-    for (i, body) in bodies.into_iter().enumerate() {
-        app.set_body(i, body);
+    app.load(
+        wt,
+        mode,
+        changes.base,
+        changes.target,
+        changes.files,
+        Some(reader),
+    );
+    for (i, (body, texts)) in bodies.into_iter().enumerate() {
+        app.set_body(i, body, texts);
     }
     Ok(app)
 }
@@ -83,7 +90,8 @@ fn highlight_visible(app: &mut App, hl: &mut arborium::Highlighter, rows: u16) -
             .ok()
             .map(Arc::new);
         times.push(t.elapsed());
-        app.highlights.insert(job.key, result);
+        let size = result.as_ref().map_or(0, |l| l.bytes());
+        app.highlights.insert(job.key, result, size);
     }
     times
 }
@@ -142,8 +150,9 @@ pub(crate) fn frame(options: &Frame) -> Result<String> {
         app.focus = app::Focus::Files;
     }
     if let Some(query) = &options.switcher {
+        let stats = Stats::open(app.worktree_path());
         for wt in app.repo.worktrees.clone() {
-            if let Ok(s) = crate::run::summarize(&wt.path) {
+            if let Ok(s) = stats::summarize(&stats, &wt.path) {
                 app.summaries.insert(wt.path, s);
             }
         }
@@ -216,6 +225,10 @@ pub(crate) struct Bench {
     pub(crate) width: u16,
     pub(crate) height: u16,
     pub(crate) summaries: bool,
+    /// Count without the on-disk cache, as on a first run.
+    pub(crate) cold: bool,
+    /// Also compare full status with and without the fsmonitor.
+    pub(crate) fsmonitor: bool,
 }
 
 fn ms(d: Duration) -> String {
@@ -264,7 +277,7 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
         let _ = writeln!(out, "\nworktree #{index}");
         for mode in [Mode::Head, Mode::Base] {
             let t = Instant::now();
-            let changes = repo::changes(wt, mode)?;
+            let changes = repo::changes(wt, mode, Fsmonitor::IfRunning)?;
             let _ = writeln!(
                 out,
                 "  status scan ({mode:?}): {} → {} files vs {}",
@@ -276,7 +289,7 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
         // First frame of a switch: load, diff the files on screen, draw.
         let settings = Settings::default();
         let switch = Instant::now();
-        let changes = repo::changes(wt, Mode::Base)?;
+        let changes = repo::changes(wt, Mode::Base, Fsmonitor::IfRunning)?;
         let loaded_at = switch.elapsed();
         let mut app = App::new(
             repo.clone(),
@@ -285,9 +298,18 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
             settings,
         );
         let files: Vec<repo::FileChange> = changes.files.clone();
-        let source = changes.repo.to_thread_local();
-        let root = changes.root.clone();
-        app.load(wt.clone(), Mode::Base, changes.base, changes.files);
+        let mut reader = Reader::new(changes.repo.to_thread_local(), changes.root.clone());
+        app.load(
+            wt.clone(),
+            Mode::Base,
+            changes.base,
+            changes.target,
+            changes.files,
+            Some(Reader::new(
+                changes.repo.to_thread_local(),
+                changes.root.clone(),
+            )),
+        );
         let mut terminal = Terminal::new(TestBackend::new(options.width, options.height))?;
         terminal.draw(|f| ui::draw(f, &mut app))?;
         let rows = app.areas.diff.height;
@@ -298,7 +320,8 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
                 .as_ref()
                 .is_some_and(|s| s.offsets[first] < u32::from(rows))
         {
-            app.set_body(first, app::compute_body(&source, &root, &files[first]));
+            let (body, texts) = app::compute_body(&mut reader, &files[first]);
+            app.set_body(first, body, texts);
             app.layout(app.areas.diff.width, app.areas.diff.height);
             first += 1;
         }
@@ -314,15 +337,19 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
         let t = Instant::now();
         let mut per_file = Vec::new();
         let (mut added, mut removed) = (0, 0);
+        let mut biggest: Option<(u32, usize)> = None;
         for (i, f) in files.iter().enumerate().skip(first) {
             let ft = Instant::now();
-            let body = app::compute_body(&source, &root, f);
+            let (body, texts) = app::compute_body(&mut reader, f);
             per_file.push(ft.elapsed());
             if let Body::Text(d) = &body {
                 added += d.added;
                 removed += d.removed;
+                if biggest.is_none_or(|(n, _)| d.new_len > n) {
+                    biggest = Some((d.new_len, i));
+                }
             }
-            app.set_body(i, body);
+            app.set_body(i, body, texts);
         }
         per_file.sort();
         let _ = writeln!(
@@ -385,21 +412,102 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
             ms(percentile(&hl_all, 0.95)),
             ms(percentile(&hl_all, 1.0))
         );
-        let biggest = files
-            .iter()
-            .filter_map(|f| f.new.map(|n| (n.len, f)))
-            .max_by_key(|(n, _)| *n);
-        if let Some((_, f)) = biggest
-            && let Body::Text(d) = app::compute_body(&source, &root, f)
-            && let Some(lang) = highlight::language(&f.path)
+        if let Some((_, i)) = biggest
+            && let (Body::Text(_), Some(texts)) = app::compute_body(&mut reader, &files[i])
+            && let Some(lang) = highlight::language(&files[i].path)
         {
             let t = Instant::now();
-            let ok = highlight::highlight(&mut hl, lang, &d.new).is_ok();
+            let ok = highlight::highlight(&mut hl, lang, &texts.new.1).is_ok();
             let _ = writeln!(
                 out,
                 "  highlight largest changed file ({} lines, {lang}): {} ok={ok}",
-                d.new.len(),
+                texts.new.1.len(),
                 ms(t.elapsed())
+            );
+        }
+        let [texts_b, colour_b, emph_b] = app.cache_bytes();
+        let _ = writeln!(
+            out,
+            "  memory after diffing and scrolling: resident {}, caches: texts {}, colour {}, emphasis {}",
+            resident().map_or_else(|| "?".to_owned(), mib),
+            mib(texts_b),
+            mib(colour_b),
+            mib(emph_b),
+        );
+        // A file event's work once it arrives: rescan the paths, diff, lay
+        // out and draw. Files are only read, never written.
+        let local = changes.repo.to_thread_local();
+        let target = app.stream.as_ref().map(|s| s.target);
+        let mut refresh = Vec::new();
+        for f in files
+            .iter()
+            .filter(|f| matches!(f.new, repo::Side::Worktree(_)))
+            .chain(files.iter())
+            .take(5)
+        {
+            let Some(target) = target else { break };
+            let t = Instant::now();
+            let paths = vec![f.path.clone()];
+            let found = repo::changes_for(&local, target, &paths)?;
+            let scanned = t.elapsed();
+            app.apply_paths(&paths, found);
+            if let Some(i) = app
+                .stream
+                .as_ref()
+                .and_then(|s| s.files.iter().position(|x| x.change.path == f.path))
+            {
+                let change = app.stream.as_ref().map(|s| s.files[i].change.clone());
+                if let Some(change) = change {
+                    let (body, texts) = app::compute_body(&mut reader, &change);
+                    app.set_body(i, body, texts);
+                }
+                app.jump_to_file(i, rows);
+            }
+            terminal.draw(|f| ui::draw(f, &mut app))?;
+            refresh.push((scanned, t.elapsed()));
+        }
+        refresh.sort_by_key(|r| r.1);
+        if let Some(&(scan, total)) = refresh.get(refresh.len() / 2) {
+            let _ = writeln!(
+                out,
+                "  file event → screen without event delivery, median of {}: {} (path-limited status {})",
+                refresh.len(),
+                ms(total),
+                ms(scan)
+            );
+        }
+        if options.fsmonitor {
+            let root = &changes.root;
+            let running = repo::fsmonitor_running(root);
+            let time = |mode: repo::Fsmonitor| -> Result<Vec<Duration>> {
+                let mut times = Vec::new();
+                for _ in 0..5 {
+                    let t = Instant::now();
+                    repo::status(&local, root, mode, &[])?;
+                    times.push(t.elapsed());
+                }
+                times.sort();
+                Ok(times)
+            };
+            let without = if running {
+                None
+            } else {
+                Some(time(repo::Fsmonitor::IfRunning)?)
+            };
+            let with = time(repo::Fsmonitor::AsConfigured)?;
+            let fmt = |t: &[Duration]| format!("p50 {}, min {}", ms(percentile(t, 0.5)), ms(t[0]));
+            let _ = writeln!(
+                out,
+                "  full status, 5 runs: fsmonitor off: {}; as configured (daemon {}): {}",
+                without
+                    .as_deref()
+                    .map_or_else(|| "not measured, daemon already running".to_owned(), fmt),
+                if running {
+                    "was running"
+                } else {
+                    "started on demand"
+                },
+                fmt(&with),
             );
         }
     }
@@ -407,9 +515,17 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
         let _ = writeln!(out, "\nrail stats, one worktree at a time:");
         let t = Instant::now();
         let mut times = Vec::new();
+        let stats = if options.cold {
+            Stats::default()
+        } else {
+            let t = Instant::now();
+            let stats = Stats::open(&options.path);
+            let _ = writeln!(out, "  load line-count cache: {}", ms(t.elapsed()));
+            stats
+        };
         for (i, wt) in repo.worktrees.iter().enumerate() {
             let w = Instant::now();
-            let s = summarize(&wt.path);
+            let s = stats::summarize(&stats, &wt.path);
             let took = w.elapsed();
             times.push(took);
             match s {
@@ -541,4 +657,19 @@ pub(crate) fn picture(buf: &Buffer, path: &Path) -> Result<()> {
         .save_png(path)
         .with_context(|| format!("writing {}", path.display()))?;
     Ok(())
+}
+
+fn mib(bytes: usize) -> String {
+    #[allow(clippy::cast_precision_loss)]
+    let m = bytes as f64 / (1024.0 * 1024.0);
+    format!("{m:.1} MiB")
+}
+
+/// This process's resident memory, as `ps` reports it.
+fn resident() -> Option<usize> {
+    let mut command = std::process::Command::new("ps");
+    command.args(["-o", "rss=", "-p", &std::process::id().to_string()]);
+    let out = dots_process::output(command, Duration::from_secs(5), 4096).ok()?;
+    let kib: usize = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
+    Some(kib * 1024)
 }

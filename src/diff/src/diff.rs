@@ -1,11 +1,10 @@
-//! Line diffs of one file, with word-level emphasis inside paired changed lines.
+//! Line diffs of one file through gix's imara-diff, line counts for
+//! summaries, and word emphasis computed per hunk when it is first drawn.
 
-use std::collections::HashMap;
-use std::hash::{Hash as _, Hasher as _};
 use std::ops::Range;
 use std::sync::Arc;
 
-use imara_diff::{Algorithm, Diff, InternedInput};
+use gix::diff::blob::{Algorithm, Diff, InternedInput};
 
 /// A file's text split into lines. Line `i` spans `starts[i]..starts[i + 1]`
 /// and includes its line terminator.
@@ -13,33 +12,36 @@ use imara_diff::{Algorithm, Diff, InternedInput};
 pub(crate) struct Text {
     pub(crate) src: Arc<str>,
     starts: Vec<u32>,
-    /// Identifies the content for highlight caching.
-    pub(crate) hash: u64,
 }
 
 impl Text {
     pub(crate) fn new(src: Arc<str>) -> Self {
         let mut starts = Vec::with_capacity(src.len() / 32 + 2);
         starts.push(0);
-        for (i, b) in src.bytes().enumerate() {
-            if b == b'\n' {
-                starts.push(offset(i + 1));
-            }
-        }
+        starts.extend(
+            src.bytes()
+                .enumerate()
+                .filter(|&(_, b)| b == b'\n')
+                .map(|(i, _)| offset(i + 1)),
+        );
         if starts.last().copied() != Some(offset(src.len())) {
             starts.push(offset(src.len()));
         }
-        let mut hasher = std::hash::DefaultHasher::new();
-        src.hash(&mut hasher);
-        Self {
-            src,
-            starts,
-            hash: hasher.finish(),
-        }
+        starts.shrink_to_fit();
+        Self { src, starts }
+    }
+
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Self {
+        Self::new(Arc::from(String::from_utf8_lossy(bytes).as_ref()))
     }
 
     pub(crate) fn len(&self) -> u32 {
         offset(self.starts.len() - 1)
+    }
+
+    /// Memory held, for cache budgets.
+    pub(crate) fn bytes(&self) -> usize {
+        self.src.len() + self.starts.len() * 4
     }
 
     /// Line `i` with its terminator.
@@ -55,9 +57,14 @@ impl Text {
         raw.strip_suffix('\r').unwrap_or(raw)
     }
 
-    /// Byte offset of line `i` within `src`.
+    /// Byte offset of line `i` within `src`; `i == len()` gives the end.
     pub(crate) fn start(&self, i: u32) -> u32 {
         self.starts[i as usize]
+    }
+
+    /// Lines `range` as one slice, terminators included.
+    fn span(&self, range: &Range<u32>) -> &str {
+        &self.src[self.start(range.start) as usize..self.start(range.end) as usize]
     }
 }
 
@@ -73,98 +80,208 @@ pub(crate) struct Hunk {
     pub(crate) new: Range<u32>,
 }
 
-/// Emphasised byte ranges within single lines, keyed by line number.
-pub(crate) type Emphasis = HashMap<u32, Vec<Range<u32>>>;
-
+/// What stays resident per file: hunks and sizes, not texts. Texts are
+/// reloaded on demand by their blob ids.
 #[derive(Debug)]
 pub(crate) struct FileDiff {
-    pub(crate) old: Arc<Text>,
-    pub(crate) new: Arc<Text>,
     pub(crate) hunks: Vec<Hunk>,
     pub(crate) added: u32,
     pub(crate) removed: u32,
-    pub(crate) emph_old: Emphasis,
-    pub(crate) emph_new: Emphasis,
+    pub(crate) old_len: u32,
+    pub(crate) new_len: u32,
+    /// The new side's content id: its blob, or the hash of the working-tree
+    /// file in Git's form.
+    pub(crate) new_id: Option<gix::ObjectId>,
 }
-
-/// Lines longer than this get no word emphasis; the diff would cost more than it shows.
-const EMPHASIS_MAX_LINE: usize = 400;
 
 impl FileDiff {
-    pub(crate) fn compute(old: Text, new: Text) -> Self {
-        let mut input = InternedInput::default();
-        input.update_before((0..old.len()).map(|i| old.raw(i)));
-        input.update_after((0..new.len()).map(|i| new.raw(i)));
-        let mut diff = Diff::compute(Algorithm::Histogram, &input);
-        diff.postprocess_lines(&input);
-        let hunks: Vec<Hunk> = diff
-            .hunks()
-            .map(|h| Hunk {
-                old: h.before,
-                new: h.after,
-            })
-            .collect();
-        let mut emph_old = Emphasis::new();
-        let mut emph_new = Emphasis::new();
-        for hunk in &hunks {
-            for (o, n) in hunk.old.clone().zip(hunk.new.clone()) {
-                if let Some([a, b]) = word_emphasis(old.line(o), new.line(n)) {
-                    emph_old.insert(o, a);
-                    emph_new.insert(n, b);
-                }
+    pub(crate) fn compute(old: &Text, new: &Text, new_id: Option<gix::ObjectId>) -> Self {
+        let (old_len, new_len) = (old.len(), new.len());
+        let hunks = if old_len == 0 || new_len == 0 {
+            // One-sided: no interning needed.
+            if old_len == new_len {
+                Vec::new()
+            } else {
+                vec![Hunk {
+                    old: 0..old_len,
+                    new: 0..new_len,
+                }]
             }
-        }
+        } else {
+            let mut input = InternedInput::default();
+            input.update_before((0..old_len).map(|i| old.raw(i)));
+            input.update_after((0..new_len).map(|i| new.raw(i)));
+            let mut diff = Diff::compute(Algorithm::Histogram, &input);
+            diff.postprocess_lines(&input);
+            diff.hunks()
+                .map(|h| Hunk {
+                    old: h.before,
+                    new: h.after,
+                })
+                .collect()
+        };
+        let (added, removed) = hunks.iter().fold((0, 0), |(a, r), h| {
+            (a + h.new.end - h.new.start, r + h.old.end - h.old.start)
+        });
         Self {
-            added: diff.count_additions(),
-            removed: diff.count_removals(),
-            old: Arc::new(old),
-            new: Arc::new(new),
             hunks,
-            emph_old,
-            emph_new,
+            added,
+            removed,
+            old_len,
+            new_len,
+            new_id,
         }
+    }
+
+    /// The hunk containing `line` of one side, if any.
+    pub(crate) fn hunk_of(&self, new_side: bool, line: u32) -> Option<usize> {
+        let side = |h: &Hunk| {
+            if new_side {
+                h.new.clone()
+            } else {
+                h.old.clone()
+            }
+        };
+        let i = self.hunks.partition_point(|h| side(h).end <= line);
+        self.hunks
+            .get(i)
+            .filter(|h| side(h).contains(&line))
+            .map(|_| i)
     }
 }
 
-/// The changed tokens of a paired line, or `None` when the lines share too
-/// little for word emphasis to help (the whole line is the change).
-pub(crate) fn word_emphasis(old: &str, new: &str) -> Option<[Vec<Range<u32>>; 2]> {
-    if old.len() > EMPHASIS_MAX_LINE || new.len() > EMPHASIS_MAX_LINE {
+/// True when the first 8000 bytes hold a NUL, as git decides.
+pub(crate) fn is_binary(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(8000)].contains(&0)
+}
+
+/// Lines added and removed between two contents, or `None` for binary
+/// files. Only counts: no slider postprocessing (it moves hunks without
+/// changing counts) and no interning for one-sided changes.
+pub(crate) fn line_counts(old: &[u8], new: &[u8]) -> Option<(u32, u32)> {
+    if is_binary(old) || is_binary(new) {
         return None;
     }
-    let (a_tokens, b_tokens) = (tokens(old), tokens(new));
-    let ops = similar::capture_diff_slices(similar::Algorithm::Myers, &a_tokens, &b_tokens);
-    let (mut a, mut b, mut same) = (Vec::new(), Vec::new(), 0usize);
-    let span = |tokens: &[&str], range: Range<usize>, line: &str| -> Range<u32> {
-        let start = tokens[range.clone()]
-            .first()
-            .map_or(line.len(), |t| t.as_ptr() as usize - line.as_ptr() as usize);
-        let len: usize = tokens[range].iter().map(|t| t.len()).sum();
-        offset(start)..offset(start + len)
+    let lines = |b: &[u8]| {
+        u32::try_from(gix::diff::blob::sources::byte_lines(b).count()).unwrap_or(u32::MAX)
     };
-    for op in ops {
-        let (tag, ar, br) = op.as_tag_tuple();
-        if tag == similar::DiffTag::Equal {
-            same += a_tokens[ar].iter().map(|t| t.trim().len()).sum::<usize>();
-        } else {
-            if !ar.is_empty() {
-                push_range(&mut a, span(&a_tokens, ar, old));
-            }
-            if !br.is_empty() {
-                push_range(&mut b, span(&b_tokens, br, new));
-            }
-        }
+    if old.is_empty() || new.is_empty() {
+        return Some((lines(new), lines(old)));
     }
-    let longest = old.trim().len().max(new.trim().len()).max(1);
-    // Mostly rewritten lines read better as plain removals and additions.
-    (same * 10 >= longest * 4).then_some([a, b])
+    let input = InternedInput::new(
+        gix::diff::blob::sources::byte_lines(old),
+        gix::diff::blob::sources::byte_lines(new),
+    );
+    let diff = Diff::compute(Algorithm::Histogram, &input);
+    Some((diff.count_additions(), diff.count_removals()))
 }
 
-/// Splits a line into identifier runs, whitespace runs and single symbols.
-fn tokens(line: &str) -> Vec<&str> {
+/// Word-level emphasis of one hunk: changed byte ranges of each side, as
+/// offsets into the file, sorted.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct HunkEmphasis {
+    pub(crate) old: Vec<Range<u32>>,
+    pub(crate) new: Vec<Range<u32>>,
+}
+
+impl HunkEmphasis {
+    /// The emphasised ranges of one line spanning `line` bytes of the file,
+    /// relative to the line's start.
+    pub(crate) fn within(&self, new_side: bool, line: Range<u32>) -> Vec<Range<u32>> {
+        let ranges = if new_side { &self.new } else { &self.old };
+        let first = ranges.partition_point(|r| r.end <= line.start);
+        ranges[first..]
+            .iter()
+            .take_while(|r| r.start < line.end)
+            .map(|r| r.start.max(line.start) - line.start..r.end.min(line.end) - line.start)
+            .filter(|r| !r.is_empty())
+            .collect()
+    }
+}
+
+/// Hunks larger than this many lines per side get no word emphasis: big
+/// rewrites read better as plain removals and additions.
+const EMPHASIS_MAX_LINES: u32 = 8;
+const EMPHASIS_MAX_BYTES: usize = 4096;
+const EMPHASIS_MAX_WORDS: usize = 1000;
+/// Above this many emphasised runs on one line the emphasis is noise.
+const EMPHASIS_MAX_ALTERNATION: usize = 3;
+
+/// Word emphasis for `hunk`, or `None` when it would not help: one-sided,
+/// large or unequal hunks, mostly rewritten text, or emphasis alternating
+/// too often within a line.
+pub(crate) fn hunk_emphasis(old: &Text, new: &Text, hunk: &Hunk) -> Option<HunkEmphasis> {
+    let (o, n) = (hunk.old.len(), hunk.new.len());
+    let lines_ok = |x: usize| (1..=EMPHASIS_MAX_LINES as usize).contains(&x);
+    if !lines_ok(o) || !lines_ok(n) || o.max(n) > 2 * o.min(n) {
+        return None;
+    }
+    let (a, b) = (old.span(&hunk.old), new.span(&hunk.new));
+    if a.len() > EMPHASIS_MAX_BYTES || b.len() > EMPHASIS_MAX_BYTES {
+        return None;
+    }
+    let (a_tokens, b_tokens) = (tokens(a), tokens(b));
+    if a_tokens.len() + b_tokens.len() > EMPHASIS_MAX_WORDS {
+        return None;
+    }
+    let mut input = InternedInput::default();
+    input.update_before(a_tokens.iter().copied());
+    input.update_after(b_tokens.iter().copied());
+    let mut diff = Diff::compute(Algorithm::Myers, &input);
+    diff.postprocess_no_heuristic(&input);
+    let collect = |tokens: &[&str], base: &str, file_start: u32, changed: &dyn Fn(u32) -> bool| {
+        let mut ranges = Vec::new();
+        let mut same = 0usize;
+        for (i, t) in (0u32..).zip(tokens) {
+            if changed(i) {
+                if t.trim().is_empty() {
+                    continue;
+                }
+                let at = offset(t.as_ptr() as usize - base.as_ptr() as usize) + file_start;
+                push_range(&mut ranges, at..at + offset(t.len()));
+            } else {
+                same += t.trim().len();
+            }
+        }
+        (ranges, same)
+    };
+    let (old_ranges, same) = collect(&a_tokens, a, old.start(hunk.old.start), &|i| {
+        diff.is_removed(i)
+    });
+    let (new_ranges, _) = collect(&b_tokens, b, new.start(hunk.new.start), &|i| {
+        diff.is_added(i)
+    });
+    let longest = a.trim().len().max(b.trim().len()).max(1);
+    // Mostly rewritten text reads better as plain removals and additions.
+    if same * 10 < longest * 4 {
+        return None;
+    }
+    let emphasis = HunkEmphasis {
+        old: old_ranges,
+        new: new_ranges,
+    };
+    let noisy = |text: &Text, lines: &Range<u32>, new_side: bool| {
+        lines.clone().any(|l| {
+            emphasis
+                .within(new_side, text.start(l)..text.start(l + 1))
+                .len()
+                > EMPHASIS_MAX_ALTERNATION
+        })
+    };
+    if noisy(old, &hunk.old, false) || noisy(new, &hunk.new, true) {
+        return None;
+    }
+    Some(emphasis)
+}
+
+/// Splits text into identifier runs, whitespace runs (newlines apart) and
+/// single symbols.
+fn tokens(text: &str) -> Vec<&str> {
     let class = |c: char| {
         if c.is_alphanumeric() || c == '_' {
             0
+        } else if c == '\n' {
+            3
         } else if c.is_whitespace() {
             1
         } else {
@@ -174,16 +291,16 @@ fn tokens(line: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut prev = None;
-    for (i, c) in line.char_indices() {
+    for (i, c) in text.char_indices() {
         let k = class(c);
-        if i > start && (prev != Some(k) || k == 2) {
-            out.push(&line[start..i]);
+        if i > start && (prev != Some(k) || k >= 2) {
+            out.push(&text[start..i]);
             start = i;
         }
         prev = Some(k);
     }
-    if start < line.len() {
-        out.push(&line[start..]);
+    if start < text.len() {
+        out.push(&text[start..]);
     }
     out
 }
@@ -214,7 +331,7 @@ mod tests {
 
     #[test]
     fn computes_hunks_and_counts() {
-        let d = FileDiff::compute(text("a\nb\nc\nd\n"), text("a\nB\nc\nd\ne\n"));
+        let d = FileDiff::compute(&text("a\nb\nc\nd\n"), &text("a\nB\nc\nd\ne\n"), None);
         assert_eq!(
             d.hunks,
             vec![
@@ -229,13 +346,73 @@ mod tests {
             ]
         );
         assert_eq!((d.added, d.removed), (2, 1));
+        assert_eq!(d.hunk_of(true, 4), Some(1));
+        assert_eq!(d.hunk_of(true, 2), None);
+        assert_eq!(d.hunk_of(false, 1), Some(0));
     }
 
     #[test]
-    fn emphasises_changed_words_only_when_lines_are_similar() {
-        let [a, b] = word_emphasis("let x = foo(1);", "let x = bar(1);").expect("similar");
-        assert_eq!(a, vec![8..11]);
-        assert_eq!(b, vec![8..11]);
-        assert!(word_emphasis("completely different", "nothing alike here at all").is_none());
+    fn one_sided_files_are_one_hunk() {
+        let d = FileDiff::compute(&text(""), &text("a\nb\n"), None);
+        assert_eq!(
+            d.hunks,
+            vec![Hunk {
+                old: 0..0,
+                new: 0..2
+            }]
+        );
+        assert_eq!((d.added, d.removed), (2, 0));
+    }
+
+    #[test]
+    fn counts_lines_without_a_full_diff() {
+        assert_eq!(line_counts(b"a\nb\nc\n", b"a\nB\nc\nd"), Some((2, 1)));
+        assert_eq!(line_counts(b"", b"x\ny"), Some((2, 0)));
+        assert_eq!(line_counts(b"x\n", b""), Some((0, 1)));
+        assert_eq!(line_counts(b"a\0b", b"a"), None);
+    }
+
+    #[test]
+    fn emphasises_changed_words_in_small_similar_hunks() {
+        let (old, new) = (text("let x = foo(1);\n"), text("let x = bar(1);\n"));
+        let hunk = Hunk {
+            old: 0..1,
+            new: 0..1,
+        };
+        let e = hunk_emphasis(&old, &new, &hunk).expect("similar lines");
+        assert_eq!(e.old, vec![8..11]);
+        assert_eq!(e.new, vec![8..11]);
+        assert_eq!(e.within(true, 0..16), vec![8..11]);
+    }
+
+    #[test]
+    fn skips_emphasis_for_rewrites_noise_and_large_hunks() {
+        let rewrite = (
+            text("completely different\n"),
+            text("nothing alike here at all\n"),
+        );
+        let one = Hunk {
+            old: 0..1,
+            new: 0..1,
+        };
+        assert_eq!(hunk_emphasis(&rewrite.0, &rewrite.1, &one), None);
+        // Many small edits along one line alternate too often.
+        let noisy = (
+            text("alpha beta gamma delta epsilon zeta eta theta\n"),
+            text("alpha Beta gamma Delta epsilon Zeta eta Theta\n"),
+        );
+        assert_eq!(hunk_emphasis(&noisy.0, &noisy.1, &one), None);
+        let big = (0..20).fold(String::new(), |s, i| s + "line " + &i.to_string() + "\n");
+        let changed = big.replace("line", "Line");
+        let all = Hunk {
+            old: 0..20,
+            new: 0..20,
+        };
+        assert_eq!(hunk_emphasis(&text(&big), &text(&changed), &all), None);
+        let pure = Hunk {
+            old: 0..0,
+            new: 0..1,
+        };
+        assert_eq!(hunk_emphasis(&text(""), &text("x\n"), &pure), None);
     }
 }

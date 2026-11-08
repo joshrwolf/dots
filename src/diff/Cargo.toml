@@ -16,8 +16,6 @@ serde.workspace = true
 serde_json.workspace = true
 unicode-width.workspace = true
 gix = { version = "0.90", default-features = false, features = ["status", "blob-diff", "revision", "parallel", "sha1", "pack-cache-lru-static"] }
-imara-diff = "0.2"
-similar = "3"
 arborium = { version = "2", features = ["lang-bash", "lang-c", "lang-cpp", "lang-css", "lang-dockerfile", "lang-go", "lang-html", "lang-javascript", "lang-json", "lang-lua", "lang-make", "lang-markdown", "lang-nix", "lang-python", "lang-rust", "lang-sql", "lang-toml", "lang-tsx", "lang-typescript", "lang-yaml"] }
 rustix = { version = "1", features = ["event", "stdio", "termios"] }
 tiny-skia = "0.12"

@@ -1,7 +1,6 @@
 //! Read-only Git access through gix: worktrees, the review base, and the
 //! files that differ between a base tree and a working tree.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
@@ -105,19 +104,29 @@ pub(crate) enum Status {
     Modified,
 }
 
+/// The new side of a change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Side {
+    /// The working tree matches this blob, so it is read from Git.
+    Blob(gix::ObjectId),
+    /// The working-tree file differs from every blob; read it from disk.
+    Worktree(Stamp),
+    /// Deleted.
+    Missing,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FileChange {
     pub(crate) path: String,
     pub(crate) status: Status,
     /// The base side's blob.
     pub(crate) old: Option<gix::ObjectId>,
-    /// The working-tree file when listed; `None` once deleted.
-    pub(crate) new: Option<Stamp>,
+    pub(crate) new: Side,
 }
 
 /// A working-tree file's size and modification time, to tell whether it
 /// changed since it was read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Stamp {
     pub(crate) modified: Option<std::time::SystemTime>,
     pub(crate) len: u64,
@@ -127,6 +136,7 @@ pub(crate) struct Stamp {
 pub(crate) struct Changes {
     /// What the worktree is compared against, such as `main 1a2b3c4`.
     pub(crate) base: String,
+    pub(crate) target: Target,
     /// Sorted by path.
     pub(crate) files: Vec<FileChange>,
     /// For reading contents on other threads.
@@ -134,17 +144,33 @@ pub(crate) struct Changes {
     pub(crate) root: PathBuf,
 }
 
+/// The trees a worktree is compared through: the base and HEAD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Target {
+    pub(crate) base_tree: gix::ObjectId,
+    pub(crate) head_tree: gix::ObjectId,
+}
+
 /// Files above this size are listed but not read.
 pub(crate) const MAX_FILE: u64 = 16 * 1024 * 1024;
 
-/// Every file that differs between the base tree and the working tree,
-/// including untracked files that are not ignored.
-pub(crate) fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
+/// Whether `git status` may use the repository's fsmonitor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fsmonitor {
+    /// As configured, starting the daemon if git wants to: the viewed worktree.
+    AsConfigured,
+    /// Only when a daemon already runs for the worktree: background stats
+    /// must not start daemons.
+    IfRunning,
+}
+
+/// Opens `worktree` and resolves what `mode` compares it against.
+pub(crate) fn open(worktree: &Path, mode: Mode) -> Result<(gix::Repository, String, Target)> {
     let mut repo =
         gix::open(worktree).with_context(|| format!("opening {}", worktree.display()))?;
     repo.object_cache_size_if_unset(32 * 1024 * 1024);
     let head = repo.head_id().ok().map(gix::Id::detach);
-    let (base_commit, base_label) = match (mode, head) {
+    let (base_commit, label) = match (mode, head) {
         (Mode::Head, Some(head)) => (Some(head), format!("HEAD {}", short(head))),
         (Mode::Base, Some(head)) => match resolve_base(&repo, head)? {
             Some((name, commit)) => (Some(commit), format!("{name} {}", short(commit))),
@@ -152,54 +178,177 @@ pub(crate) fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
         },
         (_, None) => (None, "empty tree".to_owned()),
     };
-    let base_tree = match base_commit {
-        Some(commit) => repo.find_commit(commit)?.tree()?,
-        None => repo.empty_tree(),
+    let tree_of = |commit: Option<gix::ObjectId>| -> Result<gix::ObjectId> {
+        Ok(match commit {
+            Some(c) => repo.find_commit(c)?.tree_id()?.detach(),
+            None => repo.empty_tree().id,
+        })
     };
-    let head_tree = match head {
-        Some(head) => repo.find_commit(head)?.tree_id()?.detach(),
-        None => repo.empty_tree().id,
+    let target = Target {
+        base_tree: tree_of(base_commit)?,
+        head_tree: tree_of(head)?,
     };
-    let mut paths = match git_status(worktree) {
-        Ok((mut paths, untracked_dirs)) => {
-            if !untracked_dirs.is_empty() {
-                paths.extend(untracked_files(&repo, untracked_dirs)?);
+    Ok((repo, label, target))
+}
+
+/// Every file that differs between the base tree and the working tree,
+/// including untracked files that are not ignored.
+pub(crate) fn changes(worktree: &Path, mode: Mode, fsmonitor: Fsmonitor) -> Result<Changes> {
+    let (repo, base, target) = open(worktree, mode)?;
+    let status = status(&repo, worktree, fsmonitor, &[])?;
+    let tree = if target.base_tree == target.head_tree {
+        Vec::new()
+    } else {
+        tree_changes(&repo, target.base_tree, target.head_tree)?
+    };
+    let root = workdir(&repo)?;
+    let files = stat_worktree(&root, assemble(tree, status))?;
+    Ok(Changes {
+        base,
+        target,
+        files,
+        repo: repo.into_sync(),
+        root,
+    })
+}
+
+/// The changes among `paths` alone, for a worktree whose base and HEAD are
+/// still `target`: a pathspec-limited status and per-path tree lookups.
+/// A path missing from the result has no change.
+pub(crate) fn changes_for(
+    repo: &gix::Repository,
+    target: Target,
+    paths: &[String],
+) -> Result<Vec<FileChange>> {
+    let root = workdir(repo)?;
+    let status = status(repo, &root, Fsmonitor::AsConfigured, paths)?;
+    let mut tree = Vec::new();
+    if target.base_tree != target.head_tree {
+        let base = repo.find_tree(target.base_tree)?;
+        let head = repo.find_tree(target.head_tree)?;
+        for path in paths {
+            let (old, new) = (blob_at(&base, path)?, blob_at(&head, path)?);
+            if old != new {
+                tree.push(TreeChange {
+                    path: path.clone(),
+                    old,
+                    new,
+                });
             }
-            if base_tree.id != head_tree {
-                paths.extend(tree_paths(&repo, base_tree.id, head_tree)?);
-            }
-            paths
         }
-        // Without a usable git, gix compares the base tree with the index and
-        // walks the whole tree for untracked files.
-        Err(_) => gix_status(&repo, base_tree.id)?,
-    };
-    paths.retain(|p| !p.is_empty());
-    let root = repo
+    }
+    stat_worktree(&root, assemble(tree, status))
+}
+
+fn workdir(repo: &gix::Repository) -> Result<PathBuf> {
+    Ok(repo
         .workdir()
         .context("bare repositories have no working tree")?
-        .to_owned();
-    let mut files = Vec::with_capacity(paths.len());
-    for path in paths {
-        let old = match base_tree.lookup_entry_by_path(&path)? {
-            Some(entry) if entry.mode().is_blob_or_symlink() => Some(entry.object_id()),
-            _ => None,
+        .to_owned())
+}
+
+pub(crate) fn blob_at(tree: &gix::Tree<'_>, path: &str) -> Result<Option<gix::ObjectId>> {
+    Ok(match tree.lookup_entry_by_path(path)? {
+        Some(entry) if entry.mode().is_blob_or_symlink() => Some(entry.object_id()),
+        _ => None,
+    })
+}
+
+/// A path's place in `git status`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StatusEntry {
+    pub(crate) path: String,
+    /// The HEAD blob, if the path is tracked there.
+    pub(crate) head: Option<gix::ObjectId>,
+    pub(crate) new: StatusNew,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StatusNew {
+    /// The worktree file matches this index blob.
+    Blob(gix::ObjectId),
+    /// The worktree file differs from the index, or is untracked.
+    Worktree,
+    Missing,
+}
+
+/// A path whose blob differs between the base and HEAD trees.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TreeChange {
+    pub(crate) path: String,
+    pub(crate) old: Option<gix::ObjectId>,
+    pub(crate) new: Option<gix::ObjectId>,
+}
+
+/// What a change's new side will be once the working tree is checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Planned {
+    Blob(gix::ObjectId),
+    Worktree,
+    Missing,
+}
+
+/// Joins the base→HEAD tree diff with the HEAD→worktree status into
+/// base→worktree changes, sorted by path. A path in the tree diff takes its
+/// old side from there; otherwise the base and HEAD agree on it and git's
+/// HEAD blob is the old side. Paths that end where they started vanish.
+pub(crate) fn assemble(
+    tree: Vec<TreeChange>,
+    status: Vec<StatusEntry>,
+) -> Vec<(String, Option<gix::ObjectId>, Planned)> {
+    let mut tree: std::collections::HashMap<String, TreeChange> =
+        tree.into_iter().map(|t| (t.path.clone(), t)).collect();
+    let mut out = Vec::with_capacity(tree.len() + status.len());
+    for entry in status {
+        let old = tree.remove(&entry.path).map_or(entry.head, |t| t.old);
+        let new = match entry.new {
+            StatusNew::Blob(id) => Planned::Blob(id),
+            StatusNew::Worktree => Planned::Worktree,
+            StatusNew::Missing => Planned::Missing,
         };
-        let new = match std::fs::symlink_metadata(root.join(&path)) {
-            Ok(meta) if meta.is_file() || meta.file_type().is_symlink() => Some(Stamp {
-                modified: meta.modified().ok(),
-                len: meta.len(),
-            }),
-            // Submodules and other directories have no lines to show.
-            Ok(_) => continue,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e).with_context(|| format!("reading {path}")),
+        out.push((entry.path, old, new));
+    }
+    out.extend(tree.into_values().map(|t| {
+        let new = t.new.map_or(Planned::Missing, Planned::Blob);
+        (t.path, t.old, new)
+    }));
+    out.retain(|(_, old, new)| match new {
+        Planned::Blob(id) => *old != Some(*id),
+        Planned::Missing => old.is_some(),
+        Planned::Worktree => true,
+    });
+    out.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Finishes planned changes: stats working-tree files, skipping
+/// directories (submodules, nested repositories).
+fn stat_worktree(
+    root: &Path,
+    planned: Vec<(String, Option<gix::ObjectId>, Planned)>,
+) -> Result<Vec<FileChange>> {
+    let mut files = Vec::with_capacity(planned.len());
+    for (path, old, planned) in planned {
+        let new = match planned {
+            Planned::Blob(id) => Side::Blob(id),
+            Planned::Missing => Side::Missing,
+            Planned::Worktree => match std::fs::symlink_metadata(root.join(&path)) {
+                Ok(meta) if meta.is_file() || meta.file_type().is_symlink() => {
+                    Side::Worktree(Stamp {
+                        modified: meta.modified().ok(),
+                        len: meta.len(),
+                    })
+                }
+                Ok(_) => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Side::Missing,
+                Err(e) => return Err(e).with_context(|| format!("reading {path}")),
+            },
         };
         let status = match (old, new) {
-            (None, None) => continue,
-            (None, Some(_)) => Status::Added,
-            (Some(_), None) => Status::Deleted,
-            (Some(_), Some(_)) => Status::Modified,
+            (None, Side::Missing) => continue,
+            (None, _) => Status::Added,
+            (Some(_), Side::Missing) => Status::Deleted,
+            (Some(_), _) => Status::Modified,
         };
         files.push(FileChange {
             path,
@@ -208,72 +357,171 @@ pub(crate) fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
             new,
         });
     }
-    drop(base_tree);
-    Ok(Changes {
-        base: base_label,
-        files,
-        repo: repo.into_sync(),
-        root,
-    })
+    Ok(files)
 }
 
-/// Both sides of a change: the base blob and the working-tree file.
-pub(crate) fn contents(
+/// Content of both sides of a change, with the new side in Git's form.
+#[derive(Debug)]
+pub(crate) struct Contents {
+    pub(crate) old: Vec<u8>,
+    pub(crate) new: Vec<u8>,
+    /// The new side's blob id: given, or hashed from the working-tree file.
+    pub(crate) new_id: Option<gix::ObjectId>,
+}
+
+/// Reads blobs and working-tree files for one thread, converting files to
+/// Git's form (line endings, `ident`, working-tree encodings) the way
+/// `git add` would, so they compare with blobs line by line. Filter
+/// drivers such as LFS are not run.
+pub(crate) struct Reader {
+    repo: gix::Repository,
+    root: PathBuf,
+    convert: Option<(gix::filter::plumbing::Pipeline, gix::worktree::Stack)>,
+}
+
+impl std::fmt::Debug for Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reader")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Reader {
+    pub(crate) fn new(repo: gix::Repository, root: PathBuf) -> Self {
+        Self {
+            repo,
+            root,
+            convert: None,
+        }
+    }
+
+    pub(crate) fn blob(&self, id: gix::ObjectId) -> Result<Vec<u8>> {
+        Ok(self.repo.find_blob(id)?.take_data())
+    }
+
+    pub(crate) fn contents(&mut self, change: &FileChange) -> Result<Contents> {
+        let old = match change.old {
+            Some(id) => self.blob(id)?,
+            None => Vec::new(),
+        };
+        let (new, new_id) = match change.new {
+            Side::Blob(id) => (self.blob(id)?, Some(id)),
+            Side::Worktree(_) => {
+                let data = self.worktree_file(&change.path)?;
+                let id = gix::objs::compute_hash(
+                    self.repo.object_hash(),
+                    gix::object::Kind::Blob,
+                    &data,
+                )?;
+                (data, Some(id))
+            }
+            Side::Missing => (Vec::new(), None),
+        };
+        Ok(Contents { old, new, new_id })
+    }
+
+    /// A working-tree file in Git's form, or a symlink's target. Missing
+    /// files are empty.
+    pub(crate) fn worktree_file(&mut self, path: &str) -> Result<Vec<u8>> {
+        let full = self.root.join(path);
+        let meta = match std::fs::symlink_metadata(&full) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", full.display())),
+        };
+        if meta.file_type().is_symlink() {
+            return Ok(std::fs::read_link(&full)?
+                .into_os_string()
+                .into_encoded_bytes());
+        }
+        if meta.len() > MAX_FILE {
+            return Ok(b"\0(file too large to show)".to_vec());
+        }
+        let data = std::fs::read(&full).with_context(|| format!("reading {}", full.display()))?;
+        self.git_form(path, data)
+    }
+
+    fn git_form(&mut self, path: &str, data: Vec<u8>) -> Result<Vec<u8>> {
+        if self.convert.is_none() {
+            let (pipeline, _) = self.repo.filter_pipeline(None)?;
+            let (mut pipeline, stack) = pipeline.into_parts();
+            pipeline.options_mut().drivers.clear();
+            self.convert = Some((pipeline, stack));
+        }
+        let Some((pipeline, stack)) = self.convert.as_mut() else {
+            unreachable!("the converter was just created")
+        };
+        let objects = &self.repo.objects;
+        let entry = stack.at_path(Path::new(path), None, objects)?;
+        let mut outcome = pipeline.convert_to_git(
+            data.as_slice(),
+            Path::new(path),
+            &mut |_, attrs| {
+                entry.matching_attributes(attrs);
+            },
+            &mut |_| Ok(None),
+        )?;
+        if !outcome.is_changed() {
+            drop(outcome);
+            return Ok(data);
+        }
+        if let Some(bytes) = outcome.as_bytes() {
+            return Ok(bytes.to_vec());
+        }
+        let mut out = Vec::with_capacity(data.len());
+        if let Some(read) = outcome.as_read() {
+            read.read_to_end(&mut out)?;
+        }
+        Ok(out)
+    }
+}
+
+/// `git status` entries and untracked directories, expanded through gix.
+/// Read-only: no optional locks, so the index is never rewritten. Git's
+/// untracked cache makes this an order of magnitude faster than a gix walk.
+pub(crate) fn status(
     repo: &gix::Repository,
-    root: &Path,
-    change: &FileChange,
-) -> Result<(Vec<u8>, Vec<u8>)> {
-    let old = match change.old {
-        Some(id) => repo.find_blob(id)?.take_data(),
-        None => Vec::new(),
-    };
-    let new = match change.new {
-        Some(_) => read_worktree_file(&root.join(&change.path))?,
-        None => Vec::new(),
-    };
-    Ok((old, new))
+    worktree: &Path,
+    fsmonitor: Fsmonitor,
+    paths: &[String],
+) -> Result<Vec<StatusEntry>> {
+    let mut args: Vec<&str> = Vec::new();
+    if fsmonitor == Fsmonitor::IfRunning && !fsmonitor_running(worktree) {
+        args.extend(["-c", "core.fsmonitor=false"]);
+    }
+    args.extend([
+        "status",
+        "--porcelain=v2",
+        "-z",
+        "--untracked-files=normal",
+        "--ignore-submodules=all",
+        "--no-renames",
+    ]);
+    if !paths.is_empty() {
+        args.push("--");
+        args.extend(paths.iter().map(String::as_str));
+    }
+    let out = git(worktree, &args)?;
+    let (mut entries, dirs) = parse_status(&out);
+    if !dirs.is_empty() {
+        entries.extend(
+            untracked_files(repo, dirs)?
+                .into_iter()
+                .map(|path| StatusEntry {
+                    path,
+                    head: None,
+                    new: StatusNew::Worktree,
+                }),
+        );
+    }
+    Ok(entries)
 }
 
-/// A working-tree file's content, or a symlink's target. Missing files are empty.
-fn read_worktree_file(path: &Path) -> Result<Vec<u8>> {
-    let meta = match std::fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
-    if meta.file_type().is_symlink() {
-        return Ok(std::fs::read_link(path)?
-            .into_os_string()
-            .into_encoded_bytes());
-    }
-    if meta.len() > MAX_FILE {
-        return Ok(b"\0(file too large to show)".to_vec());
-    }
-    std::fs::read(path).with_context(|| format!("reading {}", path.display()))
-}
-
-/// Paths that may differ from HEAD, from `git status`, and untracked
-/// directories to expand. Git's untracked cache makes this an
-/// order of magnitude faster than walking a large tree, which gix cannot yet
-/// avoid. Read-only: no optional locks, so the index is never rewritten.
-/// fsmonitor stays off: its daemon writes cookie files into the Git
-/// directory on every query.
-fn git_status(worktree: &Path) -> Result<(BTreeSet<String>, Vec<String>)> {
-    let out = git(
-        worktree,
-        &[
-            "-c",
-            "core.fsmonitor=false",
-            "status",
-            "--porcelain=v2",
-            "-z",
-            "--untracked-files=normal",
-            "--ignore-submodules=all",
-            "--no-renames",
-        ],
-    )?;
-    let (paths, dirs) = parse_status(&out);
-    Ok((paths, dirs))
+/// Whether an fsmonitor daemon already serves `worktree`. Asking does not
+/// start one.
+pub(crate) fn fsmonitor_running(worktree: &Path) -> bool {
+    git(worktree, &["fsmonitor--daemon", "status"]).is_ok()
 }
 
 fn git(worktree: &Path, args: &[&str]) -> Result<Vec<u8>> {
@@ -284,6 +532,7 @@ fn git(worktree: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .arg("--no-optional-locks")
         .args(args);
     command.env("GIT_OPTIONAL_LOCKS", "0");
+    command.env("GIT_LITERAL_PATHSPECS", "1");
     let output = dots_process::output(
         command,
         std::time::Duration::from_secs(60),
@@ -299,30 +548,66 @@ fn git(worktree: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// Reads `git status --porcelain=v2 -z`: changed paths, and untracked
-/// directories (listed with a trailing slash) separately.
-pub(crate) fn parse_status(out: &[u8]) -> (BTreeSet<String>, Vec<String>) {
-    let mut paths = BTreeSet::new();
+fn oid(hex: &str) -> Option<gix::ObjectId> {
+    gix::ObjectId::from_hex(hex.as_bytes())
+        .ok()
+        .filter(|id| !id.is_null())
+}
+
+/// Reads `git status --porcelain=v2 -z`: entries with the blob ids git
+/// prints, and untracked directories (listed with a trailing slash).
+/// Submodules are skipped.
+pub(crate) fn parse_status(out: &[u8]) -> (Vec<StatusEntry>, Vec<String>) {
+    let mut entries = Vec::new();
     let mut dirs = Vec::new();
     for record in out.split(|&b| b == 0).filter(|r| !r.is_empty()) {
         let text = String::from_utf8_lossy(record);
-        let fields = match text.as_bytes().first() {
-            Some(b'1') => 8,
-            Some(b'u') => 10,
-            Some(b'?') => 1,
+        let fields: Vec<&str> = match text.as_bytes().first() {
+            Some(b'1') => text.splitn(9, ' ').collect(),
+            Some(b'u') => text.splitn(11, ' ').collect(),
+            Some(b'?') => text.splitn(2, ' ').collect(),
             _ => continue,
         };
-        let Some(path) = text.splitn(fields + 1, ' ').nth(fields) else {
-            continue;
-        };
-        match path.strip_suffix('/') {
-            Some(dir) if text.starts_with('?') => dirs.push(dir.to_owned()),
-            _ => {
-                paths.insert(path.to_owned());
+        let Some(&path) = fields.last() else { continue };
+        let path = path.to_owned();
+        match fields[0] {
+            "?" => match path.strip_suffix('/') {
+                Some(dir) => dirs.push(dir.to_owned()),
+                None => entries.push(StatusEntry {
+                    path,
+                    head: None,
+                    new: StatusNew::Worktree,
+                }),
+            },
+            "1" if fields.len() == 9 => {
+                // 1 XY sub mH mI mW hH hI path
+                let (xy, sub) = (fields[1].as_bytes(), fields[2]);
+                if !sub.starts_with('N') || fields[5] == "160000" {
+                    continue;
+                }
+                let new = match xy.get(1) {
+                    Some(b'.') => oid(fields[7]).map_or(StatusNew::Missing, StatusNew::Blob),
+                    Some(b'D') => StatusNew::Missing,
+                    _ => StatusNew::Worktree,
+                };
+                entries.push(StatusEntry {
+                    path,
+                    head: oid(fields[6]),
+                    new,
+                });
             }
+            "u" if fields.len() == 11 => {
+                // u XY sub m1 m2 m3 mW h1 h2 h3 path: stage 2 is ours (HEAD).
+                entries.push(StatusEntry {
+                    path,
+                    head: oid(fields[8]),
+                    new: StatusNew::Worktree,
+                });
+            }
+            _ => {}
         }
     }
-    (paths, dirs)
+    (entries, dirs)
 }
 
 /// Untracked, not ignored files under `dirs`.
@@ -344,44 +629,58 @@ fn untracked_files(repo: &gix::Repository, dirs: Vec<String>) -> Result<Vec<Stri
     Ok(out)
 }
 
-/// Paths that differ between two trees.
-fn tree_paths(
+/// Blobs that differ between two trees. Subtrees with equal ids are not
+/// entered, so this is cheap for related trees.
+pub(crate) fn tree_changes(
     repo: &gix::Repository,
     old: gix::ObjectId,
     new: gix::ObjectId,
-) -> Result<Vec<String>> {
+) -> Result<Vec<TreeChange>> {
+    use gix::object::tree::diff::ChangeDetached as C;
     let (old, new) = (repo.find_tree(old)?, repo.find_tree(new)?);
     let mut options = gix::diff::Options::default();
     options.track_path();
     options.track_rewrites(None);
-    let changes = repo.diff_tree_to_tree(&old, &new, options)?;
-    Ok(changes
-        .into_iter()
-        .filter(|c| !c.entry_mode().is_tree())
-        .map(|c| c.location().to_str_lossy().into_owned())
-        .collect())
-}
-
-/// Every path differing between `base` and the working tree, through gix
-/// alone: base tree against the index, the index against files, and a
-/// walk for untracked files.
-fn gix_status(repo: &gix::Repository, base: gix::ObjectId) -> Result<BTreeSet<String>> {
-    let mut paths = BTreeSet::new();
-    let status = repo
-        .status(gix::progress::Discard)?
-        .head_tree(base)
-        .untracked_files(gix::status::UntrackedFiles::Files)
-        .index_worktree_submodules(None);
-    for item in status.into_iter(None)? {
-        let item = item?;
-        if let gix::status::Item::IndexWorktree(change) = &item
-            && change.summary().is_none()
-        {
-            continue;
+    let blob = |mode: gix::object::tree::EntryMode, id: gix::ObjectId| {
+        mode.is_blob_or_symlink().then_some(id)
+    };
+    let mut out = Vec::new();
+    for change in repo.diff_tree_to_tree(&old, &new, options)? {
+        let (location, old, new) = match change {
+            C::Addition {
+                location,
+                entry_mode,
+                id,
+                ..
+            } => (location, None, blob(entry_mode, id)),
+            C::Deletion {
+                location,
+                entry_mode,
+                id,
+                ..
+            } => (location, blob(entry_mode, id), None),
+            C::Modification {
+                location,
+                previous_entry_mode,
+                previous_id,
+                entry_mode,
+                id,
+            } => (
+                location,
+                blob(previous_entry_mode, previous_id),
+                blob(entry_mode, id),
+            ),
+            C::Rewrite { .. } => continue,
+        };
+        if old.is_some() || new.is_some() {
+            out.push(TreeChange {
+                path: location.to_str_lossy().into_owned(),
+                old,
+                new,
+            });
         }
-        paths.insert(item.location().to_str_lossy().into_owned());
     }
-    Ok(paths)
+    Ok(out)
 }
 
 fn short(id: gix::ObjectId) -> String {
@@ -532,12 +831,71 @@ mod tests {
 
     #[test]
     fn parses_porcelain_v2_status() {
-        let out = b"1 .M N... 100644 100644 100644 abc abc src/a b.rs\0u UU N... 100644 100644 100644 100644 a b c conflict.txt\0? new.txt\0? fresh/dir/\0";
-        let (paths, dirs) = parse_status(out);
+        let (a, b, c) = ("a".repeat(40), "b".repeat(40), "c".repeat(40));
+        let zero = "0".repeat(40);
+        let out = format!(
+            "1 .M N... 100644 100644 100644 {a} {a} src/a b.rs\0\
+             1 M. N... 100644 100644 100644 {a} {b} staged.rs\0\
+             1 D. N... 100644 000000 000000 {a} {zero} gone.rs\0\
+             1 .M S... 160000 160000 160000 {a} {a} sub\0\
+             u UU N... 100644 100644 100644 100644 {a} {b} {c} conflict.txt\0\
+             ? new.txt\0? fresh/dir/\0"
+        );
+        let (entries, dirs) = parse_status(out.as_bytes());
+        let id = |hex: &str| gix::ObjectId::from_hex(hex.as_bytes()).ok();
+        let entry = |path: &str, head: &str, new| StatusEntry {
+            path: path.to_owned(),
+            head: id(head),
+            new,
+        };
         assert_eq!(
-            paths.into_iter().collect::<Vec<_>>(),
-            vec!["conflict.txt", "new.txt", "src/a b.rs"]
+            entries,
+            vec![
+                entry("src/a b.rs", &a, StatusNew::Worktree),
+                entry("staged.rs", &a, StatusNew::Blob(id(&b).expect("hex"))),
+                entry("gone.rs", &a, StatusNew::Missing),
+                entry("conflict.txt", &b, StatusNew::Worktree),
+                entry("new.txt", "", StatusNew::Worktree),
+            ]
         );
         assert_eq!(dirs, vec!["fresh/dir"]);
+    }
+
+    #[test]
+    fn assembles_base_to_worktree_changes() {
+        let id = |n: u8| gix::ObjectId::from_bytes_or_panic(&[n; 20]);
+        let tree = vec![
+            // Committed on the branch, then reverted in the working tree.
+            TreeChange {
+                path: "reverted".into(),
+                old: Some(id(1)),
+                new: Some(id(2)),
+            },
+            // Committed only.
+            TreeChange {
+                path: "committed".into(),
+                old: Some(id(3)),
+                new: Some(id(4)),
+            },
+        ];
+        let status = vec![
+            StatusEntry {
+                path: "reverted".into(),
+                head: Some(id(2)),
+                new: StatusNew::Blob(id(1)),
+            },
+            StatusEntry {
+                path: "edited".into(),
+                head: Some(id(5)),
+                new: StatusNew::Worktree,
+            },
+        ];
+        assert_eq!(
+            assemble(tree, status),
+            vec![
+                ("committed".to_owned(), Some(id(3)), Planned::Blob(id(4))),
+                ("edited".to_owned(), Some(id(5)), Planned::Worktree),
+            ]
+        );
     }
 }

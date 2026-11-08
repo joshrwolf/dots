@@ -139,30 +139,88 @@ pub(crate) fn plan(
     rows
 }
 
-/// Prefix sums of row heights: `offsets[i]` is the first display line of
-/// row `i`, and the last entry is the total.
-pub(crate) fn offsets(heights: impl Iterator<Item = u32>) -> Vec<u32> {
-    let mut out = Vec::with_capacity(heights.size_hint().0 + 1);
-    let mut total = 0u32;
-    out.push(0);
-    for h in heights {
-        total += h;
-        out.push(total);
-    }
-    out
+/// Display heights of a file's rows. Most rows take one line, so only taller
+/// rows are stored, each with the extra lines of the tall rows before it;
+/// lookups are binary searches over those.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Heights {
+    rows: u32,
+    tall: Vec<Tall>,
 }
 
-/// The row containing display line `line`, and the line's index within the
-/// row. `offsets` comes from [`offsets`]; lines past the end land on the
-/// last row.
-pub(crate) fn locate(offsets: &[u32], line: u32) -> (usize, u32) {
-    let rows = offsets.len().saturating_sub(1);
-    if rows == 0 {
-        return (0, 0);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Tall {
+    row: u32,
+    /// Extra lines of the tall rows before this one.
+    before: u32,
+    height: u32,
+}
+
+impl Heights {
+    /// `rows` rows of one line each: the estimate before measuring.
+    pub(crate) fn uniform(rows: u32) -> Self {
+        Self {
+            rows,
+            tall: Vec::new(),
+        }
     }
-    let row = offsets.partition_point(|&o| o <= line).saturating_sub(1);
-    let row = row.min(rows - 1);
-    (row, line - offsets[row])
+
+    pub(crate) fn measured(heights: impl Iterator<Item = u32>) -> Self {
+        let mut out = Self::default();
+        let mut extra = 0;
+        for h in heights {
+            if h > 1 {
+                out.tall.push(Tall {
+                    row: out.rows,
+                    before: extra,
+                    height: h,
+                });
+                extra += h - 1;
+            }
+            out.rows += 1;
+        }
+        out.tall.shrink_to_fit();
+        out
+    }
+
+    pub(crate) fn rows(&self) -> u32 {
+        self.rows
+    }
+
+    /// Display lines of all rows.
+    pub(crate) fn total(&self) -> u32 {
+        self.rows + self.tall.last().map_or(0, |t| t.before + t.height - 1)
+    }
+
+    /// The first display line of `row`.
+    pub(crate) fn start(&self, row: u32) -> u32 {
+        let i = self.tall.partition_point(|t| t.row < row);
+        row + self
+            .tall
+            .get(i.wrapping_sub(1))
+            .map_or(0, |t| t.before + t.height - 1)
+    }
+
+    /// The row containing display line `line`, and the line's index within
+    /// it. Lines past the end land on the last row.
+    pub(crate) fn locate(&self, line: u32) -> (u32, u32) {
+        if self.rows == 0 {
+            return (0, 0);
+        }
+        let i = self.tall.partition_point(|t| t.row + t.before <= line);
+        let row = match i.checked_sub(1).map(|i| self.tall[i]) {
+            None => line,
+            Some(t) => {
+                let start = t.row + t.before;
+                if line < start + t.height {
+                    return (t.row, line - start);
+                }
+                line - (t.before + t.height - 1)
+            }
+        };
+        let row = row.min(self.rows - 1);
+        (row, line - self.start(row))
+    }
 }
 
 #[cfg(test)]
@@ -276,12 +334,36 @@ mod tests {
 
     #[test]
     fn locates_display_lines_in_rows() {
-        let offs = offsets([1, 3, 1].into_iter());
-        assert_eq!(offs, vec![0, 1, 4, 5]);
-        assert_eq!(locate(&offs, 0), (0, 0));
-        assert_eq!(locate(&offs, 2), (1, 1));
-        assert_eq!(locate(&offs, 4), (2, 0));
-        assert_eq!(locate(&offs, 99), (2, 95));
-        assert_eq!(locate(&[0], 3), (0, 0));
+        let h = Heights::measured([1, 3, 1].into_iter());
+        assert_eq!((h.rows(), h.total()), (3, 5));
+        assert_eq!([h.start(0), h.start(1), h.start(2)], [0, 1, 4]);
+        assert_eq!(h.locate(0), (0, 0));
+        assert_eq!(h.locate(2), (1, 1));
+        assert_eq!(h.locate(4), (2, 0));
+        assert_eq!(h.locate(99), (2, 95));
+        assert_eq!(Heights::default().locate(3), (0, 0));
+        assert_eq!(Heights::uniform(4).locate(2), (2, 0));
+    }
+
+    #[test]
+    fn sparse_heights_agree_with_prefix_sums() {
+        // A deterministic spread of mostly short rows with tall runs.
+        let heights: Vec<u32> = (0u32..500)
+            .map(|i| match i.wrapping_mul(2_654_435_761) % 11 {
+                0 => 4,
+                1 | 2 => 2,
+                _ => 1,
+            })
+            .collect();
+        let h = Heights::measured(heights.iter().copied());
+        let mut line = 0;
+        for (row, &height) in (0u32..).zip(&heights) {
+            assert_eq!(h.start(row), line);
+            for sub in 0..height {
+                assert_eq!(h.locate(line + sub), (row, sub), "line {}", line + sub);
+            }
+            line += height;
+        }
+        assert_eq!(h.total(), line);
     }
 }

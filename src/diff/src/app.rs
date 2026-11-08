@@ -4,15 +4,16 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use ratatui::layout::Rect;
 
-use crate::diff::{FileDiff, Text};
+use crate::diff::{self, FileDiff, HunkEmphasis, Text};
 use crate::highlight::{self, Key, Lines};
-use crate::plan::{self, Kind, Layout, Row};
-use crate::repo::{FileChange, Mode, Repo};
+use crate::lru::Lru;
+use crate::plan::{self, Heights, Kind, Layout, Row};
+use crate::repo::{FileChange, Mode, Reader, Repo, Side, Target};
 use crate::theme::Palette;
 use crate::wrap;
 
@@ -29,6 +30,50 @@ pub(crate) const SPLIT_MIN_WIDTH: u16 = 160;
 pub(crate) const CONTEXT: u32 = 3;
 /// The most rows one file plans before the rest is cut.
 pub(crate) const ROW_CAP: usize = 40_000;
+/// Bytes of file text kept for drawing; the rest is reread on demand.
+const TEXT_BUDGET: usize = 64 * 1024 * 1024;
+/// Bytes of syntax colour kept.
+const HIGHLIGHT_BUDGET: usize = 32 * 1024 * 1024;
+const EMPHASIS_BUDGET: usize = 4 * 1024 * 1024;
+
+/// Both sides of a file's text, by content id: what a diff job hands over
+/// besides the diff, and what drawing reads.
+#[derive(Debug, Clone)]
+pub(crate) struct FileTexts {
+    pub(crate) old: (Option<gix::ObjectId>, Arc<Text>),
+    pub(crate) new: (Option<gix::ObjectId>, Arc<Text>),
+}
+
+/// A hunk's word emphasis is keyed by the contents it was computed from.
+type EmphasisKey = (Option<gix::ObjectId>, Option<gix::ObjectId>, u32);
+
+/// How long changed hunks stay marked after a refresh.
+pub(crate) const FLASH: std::time::Duration = std::time::Duration::from_millis(1200);
+
+/// Where the view was in a file, to find again after the file changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceLine {
+    /// A new-side line number and the display line within it.
+    New(u32, u32),
+    /// A display line within the file block.
+    Display(u32),
+}
+
+/// Whether `kept`'s diff still describes `change`: the same old blob and
+/// the same new content, even when it moved from the working tree into the
+/// index.
+fn same_contents(kept: &FileView, change: &FileChange) -> bool {
+    if kept.change.old != change.old {
+        return false;
+    }
+    if kept.change.new == change.new {
+        return true;
+    }
+    match (&kept.body, change.new) {
+        (Body::Text(d), Side::Blob(id)) => d.new_id == Some(id),
+        _ => false,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
@@ -85,11 +130,19 @@ pub(crate) struct FileView {
     pub(crate) body: Body,
     pub(crate) expanded: HashSet<u32>,
     pub(crate) reviewed: bool,
+    /// Planned rows, kept only for files near the view.
     rows: Vec<Row>,
-    /// Display offsets of `rows`; one longer than `rows`.
-    offsets: Vec<u32>,
+    /// Display heights of the rows, measured near the view and estimated
+    /// at one line per row elsewhere.
+    heights: Heights,
     key: Option<LayoutKey>,
     planned: Option<(Layout, usize)>,
+    /// The diff this file had before its contents changed, until the new
+    /// one arrives.
+    previous: Option<Arc<FileDiff>>,
+    /// Hunks that changed in the last refresh, and when.
+    pub(crate) flash: Vec<usize>,
+    pub(crate) flash_at: Option<std::time::Instant>,
 }
 
 impl FileView {
@@ -100,9 +153,12 @@ impl FileView {
             expanded: HashSet::new(),
             reviewed: false,
             rows: Vec::new(),
-            offsets: vec![0],
+            heights: Heights::default(),
             key: None,
             planned: None,
+            previous: None,
+            flash: Vec::new(),
+            flash_at: None,
         }
     }
 
@@ -117,10 +173,31 @@ impl FileView {
         &self.rows
     }
 
+    /// The planned rows: kept ones near the view, planned afresh elsewhere.
+    fn planned_rows(&self) -> std::borrow::Cow<'_, [Row]> {
+        let (Body::Text(diff), Some((layout, _))) = (&self.body, self.planned) else {
+            return std::borrow::Cow::Borrowed(&[]);
+        };
+        if self.rows.len() == self.heights.rows() as usize {
+            return std::borrow::Cow::Borrowed(&self.rows);
+        }
+        std::borrow::Cow::Owned(plan::plan(
+            &diff.hunks,
+            diff.old_len,
+            diff.new_len,
+            &self.expanded,
+            plan::Options {
+                layout,
+                context: CONTEXT,
+                cap: ROW_CAP,
+            },
+        ))
+    }
+
     /// Lines the body takes: rows, or one line for a note.
     fn body_lines(&self) -> u32 {
         match &self.body {
-            Body::Text(_) if !self.rows.is_empty() => self.offsets.last().copied().unwrap_or(0),
+            Body::Text(_) if self.heights.rows() > 0 => self.heights.total(),
             _ => 1,
         }
     }
@@ -130,10 +207,42 @@ impl FileView {
         self.planned = None;
     }
 
+    /// Whether `row` lies in a hunk changed by the last
+    /// refresh, still marked at `now`.
+    pub(crate) fn flashed(&self, row: &Row, now: std::time::Instant) -> bool {
+        let (Some(at), Body::Text(diff)) = (self.flash_at, &self.body) else {
+            return false;
+        };
+        if now >= at + FLASH {
+            return false;
+        }
+        let hunk = match *row {
+            Row::Line {
+                kind: Kind::Delete,
+                old: Some(o),
+                ..
+            } => diff.hunk_of(false, o),
+            Row::Line {
+                kind: Kind::Insert,
+                new: Some(n),
+                ..
+            } => diff.hunk_of(true, n),
+            Row::Pair {
+                changed: true,
+                old,
+                new,
+            } => new
+                .and_then(|n| diff.hunk_of(true, n))
+                .or_else(|| old.and_then(|o| diff.hunk_of(false, o))),
+            _ => None,
+        };
+        hunk.is_some_and(|h| self.flash.contains(&h))
+    }
+
     /// Line-number column width for this file.
     pub(crate) fn number_width(&self) -> u16 {
         let lines = match &self.body {
-            Body::Text(d) => d.old.len().max(d.new.len()),
+            Body::Text(d) => d.old_len.max(d.new_len),
             _ => 0,
         };
         u16::try_from(lines.max(1).ilog10() + 1).unwrap_or(9).max(3)
@@ -148,24 +257,26 @@ pub(crate) fn code_widths(pane: u16, number_width: u16) -> (u16, u16) {
     (unified.max(4), split.max(4))
 }
 
-fn row_height(row: &Row, diff: &FileDiff, widths: (u16, u16), wrap: bool) -> u32 {
-    if !wrap {
-        return 1;
-    }
+fn row_height(row: &Row, texts: &FileTexts, widths: (u16, u16)) -> u32 {
+    let (old, new) = (&texts.old.1, &texts.new.1);
     match *row {
-        Row::Line { kind, old, new } => {
-            let text = match (kind, old, new) {
-                (Kind::Insert | Kind::Context, _, Some(n)) => diff.new.line(n),
-                (_, Some(o), _) => diff.old.line(o),
+        Row::Line {
+            kind,
+            old: o,
+            new: n,
+        } => {
+            let text = match (kind, o, n) {
+                (Kind::Insert | Kind::Context, _, Some(n)) => new.line(n),
+                (_, Some(o), _) => old.line(o),
                 _ => "",
             };
             wrap::wrapped_height(text, widths.0)
         }
-        Row::Pair { old, new, .. } => {
+        Row::Pair { old: o, new: n, .. } => {
             let h = |text: &Text, i: Option<u32>| {
                 i.map_or(1, |i| wrap::wrapped_height(text.line(i), widths.1))
             };
-            h(&diff.old, old).max(h(&diff.new, new))
+            h(old, o).max(h(new, n))
         }
         Row::Gap { .. } | Row::Truncated { .. } => 1,
     }
@@ -185,6 +296,7 @@ pub(crate) struct Stream {
     pub(crate) worktree: PathBuf,
     pub(crate) base: String,
     pub(crate) mode: Mode,
+    pub(crate) target: Target,
     pub(crate) files: Vec<FileView>,
     /// Start line of each file block; one longer than `files`.
     pub(crate) offsets: Vec<u32>,
@@ -317,7 +429,17 @@ pub(crate) struct App {
     /// The selected sidebar row, an index into `list`.
     pub(crate) cursor: usize,
     pub(crate) summaries: HashMap<PathBuf, Summary>,
-    pub(crate) highlights: HashMap<Key, Option<Arc<Lines>>>,
+    pub(crate) highlights: Lru<Key, Option<Arc<Lines>>>,
+    /// File texts by content id, for files near the view.
+    texts: Lru<gix::ObjectId, Arc<Text>>,
+    emphasis: Lru<EmphasisKey, Option<Arc<HunkEmphasis>>>,
+    /// Rereads texts the cache dropped.
+    reader: Option<Reader>,
+    empty: Arc<Text>,
+    /// Set when a file's contents changed under its diff, so it needs a new one.
+    pub(crate) needs_diffs: bool,
+    /// Where to put the view once the top file's new diff is laid out.
+    pending_anchor: Option<(String, SourceLine)>,
     pub(crate) areas: Areas,
     pub(crate) help: bool,
     pub(crate) message: Option<String>,
@@ -344,7 +466,13 @@ impl App {
             switcher: None,
             cursor: 0,
             summaries: HashMap::new(),
-            highlights: HashMap::new(),
+            highlights: Lru::new(HIGHLIGHT_BUDGET),
+            texts: Lru::new(TEXT_BUDGET),
+            emphasis: Lru::new(EMPHASIS_BUDGET),
+            reader: None,
+            empty: Arc::new(Text::new(Arc::from(""))),
+            needs_diffs: false,
+            pending_anchor: None,
             areas: Areas::default(),
             help: false,
             message: None,
@@ -359,72 +487,142 @@ impl App {
         &self.repo.worktrees[self.current].path
     }
 
-    /// Shows a freshly loaded change set, keeping diffs of unchanged files
-    /// and the scroll position when it is the same worktree.
+    /// Shows a freshly loaded change set. When it is the same worktree,
+    /// unchanged files keep their diffs and the view stays on the same
+    /// source line.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn load(
         &mut self,
         worktree: PathBuf,
         mode: Mode,
         base: String,
+        target: Target,
         files: Vec<FileChange>,
+        reader: Option<Reader>,
     ) {
+        self.reader = reader;
+        let same = self
+            .stream
+            .as_ref()
+            .is_some_and(|s| s.worktree == worktree && s.mode == mode);
+        if !same {
+            self.stream = None;
+            self.top = Anchor::default();
+            self.cursor = 0;
+            self.collapsed.clear();
+        }
+        self.replace_files(files);
+        if let Some(stream) = &mut self.stream {
+            stream.worktree = worktree;
+            stream.base = base;
+            stream.mode = mode;
+            stream.target = target;
+        }
+    }
+
+    /// Replaces the changes of `paths` alone, from a path-limited scan:
+    /// `files` holds those of them that still differ.
+    pub(crate) fn apply_paths(&mut self, paths: &[String], files: Vec<FileChange>) {
+        let Some(stream) = &self.stream else { return };
+        let touched: HashSet<&str> = paths.iter().map(String::as_str).collect();
+        let mut merged: Vec<FileChange> = stream
+            .files
+            .iter()
+            .filter(|f| !touched.contains(f.change.path.as_str()))
+            .map(|f| f.change.clone())
+            .chain(files)
+            .collect();
+        merged.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        self.replace_files(merged);
+    }
+
+    /// Swaps in a new file list for the current stream, keeping what still
+    /// applies: diffs of files whose contents are unchanged, expanded
+    /// regions, and the source line at the top of the view.
+    fn replace_files(&mut self, files: Vec<FileChange>) {
         let mut previous: HashMap<String, FileView> = HashMap::new();
-        let mut anchor_path = None;
-        if let Some(old) = self.stream.take()
-            && old.worktree == worktree
-            && old.mode == mode
-        {
-            anchor_path = old.files.get(self.top.file).map(|f| f.change.path.clone());
+        let mut anchor = None;
+        let old = self.stream.take();
+        let (worktree, base, mode, target) = if let Some(old) = old {
+            anchor = self.source_anchor(&old);
+            let keys = (old.worktree, old.base, old.mode, old.target);
             previous = old
                 .files
                 .into_iter()
                 .map(|f| (f.change.path.clone(), f))
                 .collect();
+            keys
         } else {
-            self.top = Anchor::default();
-            self.cursor = 0;
-            self.collapsed.clear();
-        }
+            // `load` fills these in right after.
+            let null = gix::ObjectId::null(gix::hash::Kind::Sha1);
+            let target = Target {
+                base_tree: null,
+                head_tree: null,
+            };
+            (PathBuf::new(), String::new(), Mode::Base, target)
+        };
         let files: Vec<FileView> = files
             .into_iter()
             .map(|change| match previous.remove(&change.path) {
-                Some(mut kept)
-                    if kept.change.old == change.old && kept.change.new == change.new =>
-                {
+                Some(mut kept) if same_contents(&kept, &change) => {
                     kept.change = change;
                     kept
                 }
                 Some(stale) => {
                     let mut f = FileView::new(change);
-                    f.reviewed = false;
                     f.expanded = stale.expanded;
+                    if let Body::Text(d) = stale.body {
+                        f.previous = Some(d);
+                    }
                     f
                 }
                 None => FileView::new(change),
             })
             .collect();
-        if let Some(path) = anchor_path {
-            match files.iter().position(|f| f.change.path == path) {
-                Some(i) => self.top.file = i,
-                None => {
-                    self.top = Anchor {
-                        file: self.top.file.min(files.len().saturating_sub(1)),
-                        line: 0,
-                    }
-                }
+        if let Some((path, _)) = &anchor {
+            if let Some(i) = files.iter().position(|f| f.change.path == *path) {
+                self.top.file = i;
+            } else {
+                self.top = Anchor {
+                    file: self.top.file.min(files.len().saturating_sub(1)),
+                    line: 0,
+                };
+                anchor = None;
             }
         }
+        self.pending_anchor = anchor;
         self.tree = list_items(&files);
         self.list = visible(&self.tree, &self.collapsed);
         self.stream = Some(Stream {
             worktree,
             base,
             mode,
+            target,
             offsets: vec![0; files.len() + 1],
             files,
         });
         self.laid_out = None;
         self.sync_files_cursor();
+    }
+
+    /// The file and source position at the top of the view: a new-side line
+    /// number when the top is on a line, else the display line in the file.
+    fn source_anchor(&self, stream: &Stream) -> Option<(String, SourceLine)> {
+        let f = stream.files.get(self.top.file)?;
+        let header = u32::from(self.settings.header_rows);
+        let at = match self.top.line.checked_sub(header) {
+            Some(body) if f.heights.rows() > 0 => {
+                let (row, sub) = f.heights.locate(body);
+                match f.rows.get(row as usize) {
+                    Some(Row::Line { new: Some(n), .. } | Row::Pair { new: Some(n), .. }) => {
+                        SourceLine::New(*n, sub)
+                    }
+                    _ => SourceLine::Display(self.top.line),
+                }
+            }
+            _ => SourceLine::Display(self.top.line),
+        };
+        Some((f.change.path.clone(), at))
     }
 
     /// Indexes of files that still need a diff.
@@ -439,35 +637,112 @@ impl App {
         })
     }
 
-    pub(crate) fn set_body(&mut self, file: usize, body: Body) {
+    /// Sets a file's diff. Its texts are kept when the file is near the
+    /// view, where they will be drawn soon.
+    pub(crate) fn set_body(&mut self, file: usize, body: Body, texts: Option<FileTexts>) {
+        let near = self.near_view(file);
         let Some(stream) = &mut self.stream else {
             return;
         };
         let Some(f) = stream.files.get_mut(file) else {
             return;
         };
+        // Mark the hunks a refresh changed.
+        if let (Some(before), Body::Text(after)) = (f.previous.take(), &body) {
+            f.flash = (0..after.hunks.len())
+                .filter(|&i| !before.hunks.contains(&after.hunks[i]))
+                .collect();
+            f.flash_at = (!f.flash.is_empty()).then(std::time::Instant::now);
+        }
         f.body = body;
         f.invalidate();
         self.laid_out = None;
+        if near && let Some(texts) = texts {
+            for (id, text) in [texts.old, texts.new] {
+                if let Some(id) = id {
+                    let size = text.bytes();
+                    self.texts.insert(id, text, size);
+                }
+            }
+        }
+    }
+
+    /// Whether file `i` lies in the window laid out exactly around the view.
+    fn near_view(&self, i: usize) -> bool {
+        self.laid_out
+            .map_or(i <= self.top.file + 2, |(.., w)| (w.0..=w.1).contains(&i))
+    }
+
+    /// Both texts of a file whose diff is computed, if they are loaded.
+    pub(crate) fn texts(&self, f: &FileView) -> Option<FileTexts> {
+        file_texts(&self.texts, &self.empty, f)
+    }
+
+    /// Loads file `i`'s texts unless cached. A working-tree file that
+    /// changed since its diff was computed sends the file back for a new
+    /// diff instead.
+    fn ensure_texts(&mut self, i: usize) {
+        let Some(f) = self.stream.as_ref().and_then(|s| s.files.get(i)) else {
+            return;
+        };
+        let Body::Text(diff) = &f.body else { return };
+        let wanted = [f.change.old, diff.new_id];
+        let mut missing = false;
+        for id in wanted.into_iter().flatten() {
+            missing |= self.texts.get(&id).is_none();
+        }
+        if !missing {
+            return;
+        }
+        let Some(reader) = &mut self.reader else {
+            return;
+        };
+        let change = f.change.clone();
+        let contents = reader.contents(&change);
+        let stale = match contents {
+            Ok(c) if c.new_id == wanted[1] => {
+                for (id, bytes) in [(change.old, c.old), (c.new_id, c.new)] {
+                    if let Some(id) = id {
+                        let text = Text::from_bytes(&bytes);
+                        let size = text.bytes();
+                        self.texts.insert(id, Arc::new(text), size);
+                    }
+                }
+                false
+            }
+            Ok(_) => true,
+            Err(e) => {
+                self.set_body(i, Body::Unreadable(format!("{e:#}")), None);
+                false
+            }
+        };
+        if stale {
+            self.set_body(i, Body::Pending, None);
+            self.needs_diffs = true;
+        }
     }
 
     /// Plans rows and measures them for a diff pane `width` wide and `rows`
-    /// tall. Wrapped heights are measured only for files near the view;
-    /// the rest count one line per row until they come close, so huge
-    /// streams lay out in time proportional to what is on screen.
+    /// tall. Rows are kept and wrapped heights measured only for files near
+    /// the view; the rest keep a row count at one line per row until they
+    /// come close, so huge streams lay out in time and memory proportional
+    /// to what is on screen.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn layout(&mut self, width: u16, rows: u16) {
         let layout = self.effective_layout(width);
         let wrap = self.settings.wrap;
         let header = u32::from(self.settings.header_rows);
         let top = self.global_top();
-        let Some(stream) = &mut self.stream else {
+        let Some(stream) = &self.stream else {
             return;
         };
+        let last = stream.files.len().saturating_sub(1);
         let near = |line: u32| {
             stream
                 .offsets
                 .partition_point(|&o| o <= line)
                 .saturating_sub(1)
+                .min(last)
         };
         let window = (
             near(top.saturating_sub(u32::from(rows))),
@@ -476,35 +751,44 @@ impl App {
         if self.laid_out == Some((width, layout, wrap, window)) {
             return;
         }
+        for i in window.0..=window.1 {
+            self.ensure_texts(i);
+        }
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
         // Keep the row under the top of the view across the relayout.
         let anchor_row = stream.files.get(self.top.file).and_then(|f| {
             let line = self.top.line.checked_sub(header)?;
-            (!f.rows.is_empty()).then(|| plan::locate(&f.offsets, line).0)
+            (f.heights.rows() > 0).then(|| f.heights.locate(line).0)
         });
         for (i, f) in stream.files.iter_mut().enumerate() {
-            let exact = !wrap || (window.0..=window.1).contains(&i);
+            let exact = (window.0..=window.1).contains(&i);
+            let Body::Text(diff) = &f.body else {
+                f.rows = Vec::new();
+                f.heights = Heights::default();
+                f.key = None;
+                continue;
+            };
+            // One-sided files read best full width, even in split layout.
+            let layout = if diff.old_len == 0 || diff.new_len == 0 {
+                Layout::Unified
+            } else {
+                layout
+            };
             let key = LayoutKey {
                 width,
                 layout,
                 wrap,
                 exact,
             };
-            // An exact layout serves an estimate's place too.
-            if f.key == Some(key) || f.key == Some(LayoutKey { exact: true, ..key }) {
-                continue;
-            }
-            let Body::Text(diff) = &f.body else {
-                f.rows.clear();
-                f.offsets = vec![0];
-                f.key = Some(key);
-                continue;
-            };
-            let expanded_size = f.expanded.len();
-            if f.planned != Some((layout, expanded_size)) {
+            let planned = (layout, f.expanded.len());
+            let have_rows = f.rows.len() == f.heights.rows() as usize && f.planned == Some(planned);
+            if f.planned != Some(planned) || (exact && !have_rows) {
                 f.rows = plan::plan(
                     &diff.hunks,
-                    diff.old.len(),
-                    diff.new.len(),
+                    diff.old_len,
+                    diff.new_len,
                     &f.expanded,
                     plan::Options {
                         layout,
@@ -512,15 +796,32 @@ impl App {
                         cap: ROW_CAP,
                     },
                 );
-                f.planned = Some((layout, expanded_size));
+                f.planned = Some(planned);
+                f.heights = Heights::uniform(u32::try_from(f.rows.len()).unwrap_or(u32::MAX));
+                f.key = None;
             }
-            let widths = code_widths(width, f.number_width());
-            f.offsets = if exact {
-                plan::offsets(f.rows.iter().map(|r| row_height(r, diff, widths, wrap)))
+            if exact {
+                if f.key != Some(key) {
+                    let widths = code_widths(width, f.number_width());
+                    let texts = file_texts(&self.texts, &self.empty, f);
+                    f.heights = match texts {
+                        Some(texts) if wrap => {
+                            Heights::measured(f.rows.iter().map(|r| row_height(r, &texts, widths)))
+                        }
+                        _ => Heights::uniform(f.heights.rows()),
+                    };
+                    f.key = Some(key);
+                }
             } else {
-                (0..=u32::try_from(f.rows.len()).unwrap_or(u32::MAX)).collect()
-            };
-            f.key = Some(key);
+                f.rows = Vec::new();
+                // A measurement at another width or layout is no estimate.
+                if f.key
+                    .is_none_or(|k| (k.width, k.layout, k.wrap) != (width, layout, wrap))
+                {
+                    f.heights = Heights::uniform(f.heights.rows());
+                    f.key = Some(key);
+                }
+            }
         }
         let mut at = 0;
         for (i, f) in stream.files.iter().enumerate() {
@@ -529,9 +830,75 @@ impl App {
         }
         stream.offsets[stream.files.len()] = at;
         if let (Some(row), Some(f)) = (anchor_row, stream.files.get(self.top.file)) {
-            self.top.line = header + f.offsets.get(row).copied().unwrap_or(0);
+            self.top.line = header + f.heights.start(row);
         }
         self.laid_out = Some((width, layout, wrap, window));
+        self.restore_anchor();
+    }
+
+    /// Puts the view back on the source line it showed before the top
+    /// file changed, once that file's new diff is laid out.
+    fn restore_anchor(&mut self) {
+        let Some((path, at)) = &self.pending_anchor else {
+            return;
+        };
+        let header = u32::from(self.settings.header_rows);
+        let Some(f) = self
+            .stream
+            .as_ref()
+            .and_then(|s| s.files.get(self.top.file))
+        else {
+            self.pending_anchor = None;
+            return;
+        };
+        if f.change.path != *path {
+            self.pending_anchor = None;
+            return;
+        }
+        match (&f.body, *at) {
+            (Body::Pending, _) => return,
+            (Body::Text(_), SourceLine::New(n, sub)) if !f.rows.is_empty() => {
+                let row = f
+                    .rows
+                    .iter()
+                    .position(|r| match r {
+                        Row::Line { new: Some(x), .. } | Row::Pair { new: Some(x), .. } => *x >= n,
+                        _ => false,
+                    })
+                    .unwrap_or(f.rows.len() - 1);
+                let row = u32::try_from(row).unwrap_or(0);
+                let height = f.heights.start(row + 1) - f.heights.start(row);
+                self.top.line = header + f.heights.start(row) + sub.min(height.saturating_sub(1));
+            }
+            (_, SourceLine::Display(line)) => {
+                self.top.line = line.min(header + f.body_lines());
+            }
+            _ => {}
+        }
+        self.pending_anchor = None;
+    }
+
+    /// When the oldest change marks fade, so the view repaints then.
+    pub(crate) fn flash_deadline(&self) -> Option<std::time::Instant> {
+        self.stream
+            .as_ref()?
+            .files
+            .iter()
+            .filter_map(|f| f.flash_at)
+            .min()
+            .map(|at| at + FLASH)
+    }
+
+    /// Clears change marks that have faded by `now`.
+    pub(crate) fn expire_flashes(&mut self, now: std::time::Instant) {
+        if let Some(stream) = &mut self.stream {
+            for f in &mut stream.files {
+                if f.flash_at.is_some_and(|at| now >= at + FLASH) {
+                    f.flash_at = None;
+                    f.flash.clear();
+                }
+            }
+        }
     }
 
     pub(crate) fn effective_layout(&self, width: u16) -> Layout {
@@ -593,11 +960,15 @@ impl App {
         if body >= f.body_lines() {
             return Line::Spacer;
         }
-        if f.rows.is_empty() {
+        if f.heights.rows() == 0 {
             return Line::Note { file };
         }
-        let (row, sub) = plan::locate(&f.offsets, body);
-        Line::Body { file, row, sub }
+        let (row, sub) = f.heights.locate(body);
+        Line::Body {
+            file,
+            row: row as usize,
+            sub,
+        }
     }
 
     /// Jumps to the start of file `i`.
@@ -626,15 +997,27 @@ impl App {
         self.jump_to_file(target, view_rows);
     }
 
-    /// Moves to the next or previous start of a change block.
+    /// Moves to the next or previous start of a change block, searching
+    /// outward from the file at the top.
     pub(crate) fn next_hunk(&mut self, forward: bool, view_rows: u16) {
         let Some(stream) = &self.stream else { return };
+        let n = stream.files.len();
+        if n == 0 {
+            return;
+        }
         let header = u32::from(self.settings.header_rows);
         let top = self.global_top();
-        let mut starts = Vec::new();
-        for (fi, f) in stream.files.iter().enumerate() {
+        let order: Box<dyn Iterator<Item = usize>> = if forward {
+            Box::new(self.top.file..n)
+        } else {
+            Box::new((0..=self.top.file.min(n - 1)).rev())
+        };
+        for fi in order {
+            let f = &stream.files[fi];
+            let rows = f.planned_rows();
+            let mut starts = Vec::new();
             let mut in_change = false;
-            for (ri, row) in f.rows.iter().enumerate() {
+            for (ri, row) in (0u32..).zip(rows.iter()) {
                 let change = matches!(
                     row,
                     Row::Line {
@@ -644,20 +1027,21 @@ impl App {
                 );
                 if change && !in_change {
                     // Leave a little context above the change.
-                    let line = stream.offsets[fi] + header + f.offsets[ri];
+                    let line = stream.offsets[fi] + header + f.heights.start(ri);
                     starts.push(line.saturating_sub(2).max(stream.offsets[fi]));
                 }
                 in_change = change;
             }
-        }
-        let target = if forward {
-            starts.into_iter().find(|&s| s > top)
-        } else {
-            starts.into_iter().rev().find(|&s| s < top)
-        };
-        if let Some(line) = target {
-            self.scroll_to(line, view_rows);
-            self.sync_files_cursor();
+            let target = if forward {
+                starts.into_iter().find(|&s| s > top)
+            } else {
+                starts.into_iter().rev().find(|&s| s < top)
+            };
+            if let Some(line) = target {
+                self.scroll_to(line, view_rows);
+                self.sync_files_cursor();
+                return;
+            }
         }
     }
 
@@ -839,19 +1223,20 @@ impl App {
             let Some(f) = stream.files.get(i) else {
                 continue;
             };
-            let Body::Text(diff) = &f.body else { continue };
+            let Some(texts) = self.texts(f) else { continue };
             let Some(lang) = highlight::language(&f.change.path) else {
                 continue;
             };
-            for text in [&diff.new, &diff.old] {
+            for (id, text) in [&texts.new, &texts.old] {
+                let Some(id) = *id else { continue };
                 if text.len() == 0
                     || text.src.len() > highlight::MAX_BYTES
                     || text.len() > highlight::MAX_LINES
                 {
                     continue;
                 }
-                let key = (text.hash, lang);
-                if !self.highlights.contains_key(&key) {
+                let key = (id, lang);
+                if !self.highlights.contains(&key) {
                     jobs.push(highlight::Job {
                         key,
                         text: Arc::clone(text),
@@ -861,21 +1246,120 @@ impl App {
         }
         jobs
     }
+
+    /// Bytes held by the text, colour and emphasis caches.
+    pub(crate) fn cache_bytes(&self) -> [usize; 3] {
+        [
+            self.texts.bytes(),
+            self.highlights.bytes(),
+            self.emphasis.bytes(),
+        ]
+    }
+
+    /// Computes word emphasis for the changed hunks on screen.
+    pub(crate) fn prepare_emphasis(&mut self, view_rows: u16) {
+        let top = self.global_top();
+        let mut wanted: Vec<(EmphasisKey, usize, usize)> = Vec::new();
+        for line in top..top + u32::from(view_rows) {
+            let Line::Body { file, row, .. } = self.line_at(line) else {
+                continue;
+            };
+            let Some(stream) = &self.stream else { return };
+            let f = &stream.files[file];
+            let Body::Text(diff) = &f.body else { continue };
+            let hunk = match f.rows.get(row) {
+                Some(Row::Line {
+                    kind: Kind::Delete,
+                    old: Some(o),
+                    ..
+                }) => diff.hunk_of(false, *o),
+                Some(Row::Line {
+                    kind: Kind::Insert,
+                    new: Some(n),
+                    ..
+                }) => diff.hunk_of(true, *n),
+                Some(Row::Pair {
+                    changed: true,
+                    old,
+                    new,
+                }) => old
+                    .and_then(|o| diff.hunk_of(false, o))
+                    .or_else(|| new.and_then(|n| diff.hunk_of(true, n))),
+                _ => None,
+            };
+            if let Some(h) = hunk {
+                let key = (
+                    f.change.old,
+                    diff.new_id,
+                    u32::try_from(h).unwrap_or(u32::MAX),
+                );
+                if !self.emphasis.contains(&key) && !wanted.iter().any(|(k, ..)| *k == key) {
+                    wanted.push((key, file, h));
+                }
+            }
+        }
+        for (key, file, h) in wanted {
+            let Some(stream) = &self.stream else { return };
+            let f = &stream.files[file];
+            let (Body::Text(diff), Some(texts)) = (&f.body, self.texts(f)) else {
+                continue;
+            };
+            let emphasis = diff::hunk_emphasis(&texts.old.1, &texts.new.1, &diff.hunks[h]);
+            let size = emphasis
+                .as_ref()
+                .map_or(0, |e| (e.old.len() + e.new.len()) * 8)
+                + 64;
+            self.emphasis.insert(key, emphasis.map(Arc::new), size);
+        }
+    }
+
+    /// The word emphasis of hunk `hunk` of `f`, once computed.
+    pub(crate) fn emphasis(&self, f: &FileView, hunk: usize) -> Option<&HunkEmphasis> {
+        let Body::Text(diff) = &f.body else {
+            return None;
+        };
+        let key = (f.change.old, diff.new_id, u32::try_from(hunk).ok()?);
+        self.emphasis.peek(&key)?.as_deref()
+    }
 }
 
-/// Reads both sides of a file and diffs them, or marks it binary.
-pub(crate) fn compute_body(repo: &gix::Repository, root: &Path, change: &FileChange) -> Body {
-    let (old, new) = match crate::repo::contents(repo, root, change) {
-        Ok(sides) => sides,
-        Err(e) => return Body::Unreadable(format!("{e:#}")),
+/// Reads both sides of a file and diffs them, or marks it binary. The
+/// texts come back too, for the cache.
+pub(crate) fn compute_body(reader: &mut Reader, change: &FileChange) -> (Body, Option<FileTexts>) {
+    let contents = match reader.contents(change) {
+        Ok(c) => c,
+        Err(e) => return (Body::Unreadable(format!("{e:#}")), None),
     };
-    let (old, new) = (old.as_slice(), new.as_slice());
-    let binary = |b: &[u8]| b[..b.len().min(8000)].contains(&0);
-    if binary(old) || binary(new) {
-        return Body::Binary;
+    if diff::is_binary(&contents.old) || diff::is_binary(&contents.new) {
+        return (Body::Binary, None);
     }
-    let text = |b: &[u8]| Text::new(Arc::from(String::from_utf8_lossy(b).as_ref()));
-    Body::Text(Arc::new(FileDiff::compute(text(old), text(new))))
+    let old = Arc::new(Text::from_bytes(&contents.old));
+    let new = Arc::new(Text::from_bytes(&contents.new));
+    let diff = FileDiff::compute(&old, &new, contents.new_id);
+    let texts = FileTexts {
+        old: (change.old, old),
+        new: (contents.new_id, new),
+    };
+    (Body::Text(Arc::new(diff)), Some(texts))
+}
+
+/// Both texts of `f` from the cache; a missing side is the empty text.
+fn file_texts(
+    texts: &Lru<gix::ObjectId, Arc<Text>>,
+    empty: &Arc<Text>,
+    f: &FileView,
+) -> Option<FileTexts> {
+    let Body::Text(diff) = &f.body else {
+        return None;
+    };
+    let side = |id: Option<gix::ObjectId>| match id {
+        Some(id) => texts.peek(&id).cloned().map(|t| (Some(id), t)),
+        None => Some((None, Arc::clone(empty))),
+    };
+    Some(FileTexts {
+        old: side(f.change.old)?,
+        new: side(diff.new_id)?,
+    })
 }
 
 /// The file list as a nested tree in path order. A directory chain with a
@@ -971,15 +1455,32 @@ mod tests {
     use crate::repo::Status;
     use crate::theme::Detected;
 
-    fn change(path: &str, _old: &str, new: &str) -> FileChange {
+    fn change(path: &str, old: &str, new: &str) -> FileChange {
         FileChange {
             path: path.to_owned(),
             status: Status::Modified,
-            old: None,
-            new: Some(crate::repo::Stamp {
+            old: (!old.is_empty()).then(|| id_of(old)),
+            new: crate::repo::Side::Worktree(crate::repo::Stamp {
                 modified: None,
                 len: new.len() as u64,
             }),
+        }
+    }
+
+    fn id_of(text: &str) -> gix::ObjectId {
+        gix::objs::compute_hash(
+            gix::hash::Kind::Sha1,
+            gix::object::Kind::Blob,
+            text.as_bytes(),
+        )
+        .expect("hashing")
+    }
+
+    fn target() -> Target {
+        let null = gix::ObjectId::null(gix::hash::Kind::Sha1);
+        Target {
+            base_tree: null,
+            head_tree: null,
         }
     }
 
@@ -999,10 +1500,26 @@ mod tests {
             Settings::default(),
         );
         let changes = files.iter().map(|(p, o, n)| change(p, o, n)).collect();
-        app.load("/r".into(), Mode::Base, "main".into(), changes);
+        app.load(
+            "/r".into(),
+            Mode::Base,
+            "main".into(),
+            target(),
+            changes,
+            None,
+        );
         for (i, &(_, o, n)) in files.iter().enumerate() {
-            let diff = FileDiff::compute(Text::new(Arc::from(o)), Text::new(Arc::from(n)));
-            app.set_body(i, Body::Text(Arc::new(diff)));
+            let (old, new) = (
+                Arc::new(Text::new(Arc::from(o))),
+                Arc::new(Text::new(Arc::from(n))),
+            );
+            let new_id = Some(id_of(n));
+            let diff = FileDiff::compute(&old, &new, new_id);
+            let texts = FileTexts {
+                old: ((!o.is_empty()).then(|| id_of(o)), old),
+                new: (new_id, new),
+            };
+            app.set_body(i, Body::Text(Arc::new(diff)), Some(texts));
         }
         app
     }
@@ -1166,7 +1683,7 @@ mod tests {
             change("a.rs", "", &body),
             change("b.rs", "", &body),
         ];
-        app.load(path, Mode::Base, "main".into(), changes);
+        app.load(path, Mode::Base, "main".into(), target(), changes, None);
         assert_eq!(app.top.file, 2, "anchored to b.rs by path");
     }
 

@@ -8,10 +8,12 @@ mod diff;
 mod graphics;
 mod highlight;
 mod input;
+mod lru;
 mod plan;
 mod render;
 mod repo;
 mod run;
+mod stats;
 mod switcher;
 mod theme;
 mod timings;
@@ -169,6 +171,13 @@ enum Cmd {
         /// Also time the rail's per-worktree stats for every worktree
         #[arg(long)]
         summaries: bool,
+        /// With --summaries: ignore the on-disk line-count cache
+        #[arg(long)]
+        cold: bool,
+        /// Compare full status with and without the fsmonitor (may start its
+        /// daemon for the measured worktree)
+        #[arg(long)]
+        fsmonitor: bool,
     },
 }
 
@@ -246,6 +255,8 @@ fn run(cli: Cli) -> Result<()> {
             width,
             height,
             summaries,
+            cold,
+            fsmonitor,
         }) => {
             let report = render::bench(&render::Bench {
                 path,
@@ -253,6 +264,8 @@ fn run(cli: Cli) -> Result<()> {
                 width,
                 height,
                 summaries,
+                cold,
+                fsmonitor,
             })?;
             print!("{report}");
             Ok(())
