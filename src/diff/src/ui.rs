@@ -1114,11 +1114,14 @@ fn draw_line(buf: &mut Buffer, app: &App, area: Rect, line: Line) {
         }
         Line::Note { file } => {
             fill(buf, area, Style::new().bg(p.bg));
+            let change = &stream.files[file].change;
             let text = match &stream.files[file].body {
                 Body::Pending => "computing diff…",
                 Body::Binary(_) => "binary file not shown",
                 Body::Unreadable(e) => e.as_str(),
-                Body::Text(_) => "no line changes (whitespace, mode or line endings)",
+                Body::Text(_) if change.from.is_some() => "renamed without content changes",
+                Body::Text(_) if change.modes.is_some() => "mode changed; content unchanged",
+                Body::Text(_) => "no line changes (whitespace or line endings)",
             };
             put(
                 buf,
@@ -1171,8 +1174,16 @@ pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, 
     }
     let bg = p.header_bg;
     let st = f.change.status;
-    let mut x = area.x + 1;
+    let mut x = area.x;
     let end = area.right();
+    x += put(
+        buf,
+        x,
+        area.y,
+        if f.folded { "▸ " } else { "▾ " },
+        end - x,
+        Style::new().bg(bg).fg(p.muted),
+    );
     x += put(
         buf,
         x,
@@ -1181,25 +1192,28 @@ pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, 
         end - x,
         Style::new().bg(bg).fg(status_color(p, st)),
     );
+    let muted = Style::new().bg(bg).fg(p.muted);
+    let note = f.change.mode_note().map(|m| format!("  {m}"));
     let counts = f.counts().map(|(a, r)| (format!("+{a}"), format!(" −{r}")));
     let counts_w = counts
         .as_ref()
         .map_or(0, |(a, r)| a.chars().count() + r.chars().count());
     let mark = if f.reviewed { "  ✓" } else { "" };
     let reserve = u16::try_from(counts_w + mark.chars().count() + 2).unwrap_or(0);
-    let avail = usize::from(end.saturating_sub(x).saturating_sub(reserve));
-    let (dir, name) = fit_path(&f.change.path, avail);
-    if !dir.is_empty() {
-        x += put(
-            buf,
-            x,
-            area.y,
-            &dir,
-            end - x,
-            Style::new().bg(bg).fg(p.muted),
-        );
+    let mut avail = usize::from(end.saturating_sub(x).saturating_sub(reserve));
+    // A rename shows where the file came from, given at most a third.
+    if let Some(from) = &f.change.from {
+        let from = truncate_middle(from, avail / 3);
+        x += put(buf, x, area.y, &from, end - x, muted);
+        x += put(buf, x, area.y, " → ", end - x, muted);
+        avail = usize::from(end.saturating_sub(x).saturating_sub(reserve));
     }
-    put(
+    let note_w = note.as_deref().map_or(0, width);
+    let (dir, name) = fit_path(&f.change.path, avail.saturating_sub(note_w));
+    if !dir.is_empty() {
+        x += put(buf, x, area.y, &dir, end - x, muted);
+    }
+    x += put(
         buf,
         x,
         area.y,
@@ -1207,6 +1221,16 @@ pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, 
         end - x,
         Style::new().bg(bg).fg(p.fg).add_modifier(Modifier::BOLD),
     );
+    if let Some(note) = &note {
+        put(
+            buf,
+            x,
+            area.y,
+            note,
+            end.saturating_sub(reserve).saturating_sub(x),
+            muted,
+        );
+    }
     let mut cx = end.saturating_sub(reserve) + 1;
     if let Some((a, r)) = counts {
         cx += put(
@@ -1283,19 +1307,37 @@ fn draw_row(buf: &mut Buffer, ctx: &RowCtx<'_>, area: Rect, row: Row, sub: u32) 
     let p = ctx.palette;
     match row {
         Row::Gap { hidden, .. } => {
-            fill(buf, area, Style::new().bg(p.gap_bg).fg(p.muted));
-            let text = format!(
-                "  ⋯  {hidden} unchanged line{}  ·  e to expand",
-                if hidden == 1 { "" } else { "s" }
-            );
+            // A separator: the marker under the line numbers, the count
+            // where code starts, and a quiet hint at the right.
+            let style = Style::new().bg(p.gap_bg).fg(p.muted);
+            fill(buf, area, style);
+            let gutter = (ctx.number_width * 2 + 2).min(area.width);
             put(
                 buf,
-                area.x,
+                area.x + gutter.saturating_sub(4) / 2,
                 area.y,
-                &text,
-                area.width,
-                Style::new().bg(p.gap_bg).fg(p.muted),
+                "⋯",
+                gutter,
+                style,
             );
+            let text = format!(
+                "{hidden} unchanged line{}",
+                if hidden == 1 { "" } else { "s" }
+            );
+            let x = area.x + gutter + 1;
+            let used = put(buf, x, area.y, &text, area.right().saturating_sub(x), style);
+            let hint = "enter to expand ";
+            let hint_w = u16::try_from(width(hint)).unwrap_or(u16::MAX);
+            if gutter + 1 + used + hint_w + 2 <= area.width {
+                put(
+                    buf,
+                    area.right() - hint_w,
+                    area.y,
+                    hint,
+                    hint_w,
+                    Style::new().bg(p.gap_bg).fg(p.faint),
+                );
+            }
         }
         Row::Truncated { hidden } => {
             fill(buf, area, Style::new().bg(p.gap_bg));

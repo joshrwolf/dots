@@ -141,11 +141,12 @@ impl Palette {
         };
         let [red, green, yellow, blue, magenta, cyan] = d.ansi.map(|c| c.unwrap_or(fg));
         let dark = luma(bg) < 0.5;
-        // Dark backgrounds need more colour for a tint to read.
+        // Dark backgrounds need more colour for a tint to read. Whole lines
+        // get a soft tint and their changed parts a strong one.
         let (row, emph, gutter) = if dark {
-            (0.16, 0.34, 0.24)
+            (0.11, 0.38, 0.22)
         } else {
-            (0.10, 0.26, 0.17)
+            (0.065, 0.28, 0.14)
         };
         let muted = mix(fg, bg, 0.45);
         // Pale terminal yellows vanish on light backgrounds; deepen only those.

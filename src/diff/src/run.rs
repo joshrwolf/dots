@@ -769,13 +769,19 @@ impl Runtime {
             return;
         };
         let target = stream.target;
+        let renames: std::collections::HashMap<String, String> = stream
+            .files
+            .iter()
+            .filter_map(|f| Some((f.change.path.clone(), f.change.from.clone()?)))
+            .filter(|(path, _)| paths.contains(path))
+            .collect();
         let generation = self.generation;
         let tx = self.tx.clone();
         let seen = self.app.since.then(|| self.app.review.seen.clone());
         self.partial_busy = true;
         std::thread::spawn(move || {
             let repo = repo.to_thread_local();
-            let result = repo::changes_for(&repo, target, &paths)
+            let result = repo::changes_for(&repo, target, &paths, &renames)
                 .map(|files| match &seen {
                     Some(seen) => review::since_sent(files, seen, &mut Reader::new(repo, root)),
                     None => files,
@@ -1087,6 +1093,8 @@ impl Runtime {
                     self.app.expand_visible_gap(rows);
                 } else if let Some(card) = self.app.cursor_card() {
                     self.app.edit_card(card);
+                } else if let Line::Header { file, .. } = self.app.line_at(self.app.cursor_line()) {
+                    self.app.toggle_fold(file);
                 } else if let Line::Body { file, row, .. } =
                     self.app.line_at(self.app.cursor_line())
                     && self.app.expand_at(file, row)
@@ -1096,6 +1104,11 @@ impl Runtime {
                 }
             }
             Action::ExpandAll => self.app.toggle_expand_all(),
+            Action::Fold => {
+                let file = if diff { self.app.cursor_file() } else { None };
+                self.app.toggle_fold(file.unwrap_or(self.app.top.file));
+            }
+            Action::FoldAll => self.app.toggle_fold_all(),
             Action::Delete => match self.app.cursor_card() {
                 Some(card) => self.app.delete_card(card),
                 None => self.app.message = Some("move onto a card to delete it".to_owned()),
@@ -1255,6 +1268,21 @@ impl Runtime {
             } else {
                 self.app.focus = Focus::Diff;
                 self.app.visual = None;
+                let y = mouse.row - areas.diff.y;
+                let pinned = self
+                    .app
+                    .pinned_header()
+                    .filter(|_| y < self.app.settings.header_rows);
+                if let Some(file) = pinned {
+                    self.app.toggle_fold(file);
+                    return true;
+                }
+                if let Line::Header { file, .. } =
+                    self.app.line_at(self.app.global_top() + u32::from(y))
+                {
+                    self.app.toggle_fold(file);
+                    return true;
+                }
                 self.app.cursor_row = mouse.row - areas.diff.y;
                 self.app.clamp_cursor(rows);
                 if let Line::Body { file, row, .. } = self.app.line_at(self.app.cursor_line()) {

@@ -34,6 +34,9 @@ pub(crate) enum Action {
     /// `e`: in the diff, edits the card or expands the fold at the cursor.
     Expand,
     ExpandAll,
+    /// Folds the file at the cursor to its header, or unfolds it.
+    Fold,
+    FoldAll,
     Delete,
     NextCard,
     PrevCard,
@@ -192,6 +195,11 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "e  E",
         "edit the card or expand the fold at the cursor; all folds",
         &[(key('e'), Action::Expand), (key('E'), Action::ExpandAll)],
+    ),
+    row(
+        "f  F",
+        "fold the file at the cursor to its header; all files",
+        &[(key('f'), Action::Fold), (key('F'), Action::FoldAll)],
     ),
     row(
         "d x",

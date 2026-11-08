@@ -28,6 +28,11 @@ struct Fonts {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Spec {
     path: String,
+    /// The base path of a rename.
+    from: Option<String>,
+    /// A mode change, as text.
+    note: Option<String>,
+    folded: bool,
     status: Status,
     counts: Option<(u32, u32)>,
     reviewed: bool,
@@ -244,6 +249,9 @@ fn spec_for(app: &App, file: usize, cols: u16, cell: (u16, u16)) -> Spec {
     let p = &app.palette.rgb;
     Spec {
         path: f.change.path.clone(),
+        from: f.change.from.clone(),
+        note: f.change.mode_note(),
+        folded: f.folded,
         status: f.change.status,
         counts: f.counts(),
         reviewed: f.reviewed,
@@ -311,7 +319,29 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
     let mid = h_px / 2.0;
     let font = h_px * 0.36;
     let dot_r = h_px * 0.1;
-    let dot_x = cw + dot_r;
+    // A chevron: down while open, right while folded.
+    let chevron = h_px * 0.09;
+    let cx = cw;
+    let mut pb = PathBuilder::new();
+    if spec.folded {
+        pb.move_to(cx - chevron * 0.5, mid - chevron);
+        pb.line_to(cx + chevron * 0.5, mid);
+        pb.line_to(cx - chevron * 0.5, mid + chevron);
+    } else {
+        pb.move_to(cx - chevron, mid - chevron * 0.5);
+        pb.line_to(cx, mid + chevron * 0.5);
+        pb.line_to(cx + chevron, mid - chevron * 0.5);
+    }
+    if let Some(path) = pb.finish() {
+        let stroke = Stroke {
+            width: 1.4 * scale,
+            line_cap: tiny_skia::LineCap::Round,
+            line_join: tiny_skia::LineJoin::Round,
+            ..Stroke::default()
+        };
+        pixmap.stroke_path(&path, &paint(muted), &stroke, Transform::identity(), None);
+    }
+    let dot_x = cw * 2.0 + dot_r;
     if let Some(dot) = PathBuilder::from_circle(dot_x, mid, dot_r) {
         pixmap.fill_path(
             &dot,
@@ -355,9 +385,33 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
             header_bg,
         );
     }
-    // Path: directory muted, name bold; the directory is cut first.
-    let x0 = dot_x + dot_r + cw * 0.9;
-    let avail = (right - cw - x0).max(0.0);
+    // Path: directory muted, name bold; the directory is cut first. A
+    // rename leads with its old path, given at most a third.
+    let mut x0 = dot_x + dot_r + cw * 0.9;
+    if let Some(from) = &spec.from {
+        let budget = (right - cw - x0) / 3.0;
+        let mut from = from.clone();
+        while from.chars().count() > 2 && measure(fonts, &from, font, Weight::NORMAL) > budget {
+            let cut: String = from.chars().skip(2).collect();
+            from = format!("…{}", cut.trim_start_matches('…'));
+        }
+        let from = format!("{from}  →  ");
+        draw_text(
+            fonts,
+            &mut pixmap,
+            &[(&from, muted, Weight::NORMAL)],
+            x0,
+            mid,
+            font,
+            header_bg,
+        );
+        x0 += measure(fonts, &from, font, Weight::NORMAL);
+    }
+    let note = spec.note.as_ref().map(|n| format!("   {n}"));
+    let note_w = note
+        .as_ref()
+        .map_or(0.0, |n| measure(fonts, n, font * 0.9, Weight::NORMAL));
+    let avail = (right - cw - x0 - note_w).max(0.0);
     let (dir, name) = spec
         .path
         .rsplit_once('/')
@@ -395,6 +449,17 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
         font * 1.05,
         header_bg,
     );
+    if let Some(note) = &note {
+        draw_text(
+            fonts,
+            &mut pixmap,
+            &[(note, muted, Weight::NORMAL)],
+            x0 + dw + name_w,
+            mid,
+            font * 0.9,
+            header_bg,
+        );
+    }
     pixmap
 }
 

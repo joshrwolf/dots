@@ -177,6 +177,17 @@ pub(crate) struct FileChange {
     /// The base side's blob.
     pub(crate) old: Option<gix::ObjectId>,
     pub(crate) new: Side,
+    /// The base path, when the branch renamed the file.
+    pub(crate) from: Option<String>,
+    /// The file's modes, base and new, when they differ.
+    pub(crate) modes: Option<(u32, u32)>,
+}
+
+impl FileChange {
+    /// A mode change as git writes modes, such as `100644 → 100755`.
+    pub(crate) fn mode_note(&self) -> Option<String> {
+        self.modes.map(|(old, new)| format!("{old:o} → {new:o}"))
+    }
 }
 
 /// A working-tree file's size and modification time, to tell whether it
@@ -278,6 +289,7 @@ pub(crate) fn changes_for(
     repo: &gix::Repository,
     target: Target,
     paths: &[String],
+    renames: &std::collections::HashMap<String, String>,
 ) -> Result<Vec<FileChange>> {
     let root = workdir(repo)?;
     let status = status(repo, &root, Fsmonitor::Off, paths)?;
@@ -286,12 +298,18 @@ pub(crate) fn changes_for(
         let base = repo.find_tree(target.base_tree)?;
         let head = repo.find_tree(target.head_tree)?;
         for path in paths {
-            let (old, new) = (blob_at(&base, path)?, blob_at(&head, path)?);
-            if old != new {
+            // A renamed file's base side is at its old path.
+            let from = renames.get(path).cloned();
+            let old = entry_at(&base, from.as_deref().unwrap_or(path))?;
+            let new = entry_at(&head, path)?;
+            if old != new || from.is_some() {
+                let mode = |e: Option<(gix::ObjectId, u32)>| e.map_or(0, |(_, m)| m);
                 tree.push(TreeChange {
                     path: path.clone(),
-                    old,
-                    new,
+                    from,
+                    old: old.map(|(id, _)| id),
+                    new: new.map(|(id, _)| id),
+                    modes: (mode(old), mode(new)),
                 });
             }
         }
@@ -307,8 +325,15 @@ fn workdir(repo: &gix::Repository) -> Result<PathBuf> {
 }
 
 pub(crate) fn blob_at(tree: &gix::Tree<'_>, path: &str) -> Result<Option<gix::ObjectId>> {
+    Ok(entry_at(tree, path)?.map(|(id, _)| id))
+}
+
+/// The blob at `path` and its mode, if it is a file or symlink.
+fn entry_at(tree: &gix::Tree<'_>, path: &str) -> Result<Option<(gix::ObjectId, u32)>> {
     Ok(match tree.lookup_entry_by_path(path)? {
-        Some(entry) if entry.mode().is_blob_or_symlink() => Some(entry.object_id()),
+        Some(entry) if entry.mode().is_blob_or_symlink() => {
+            Some((entry.object_id(), u32::from(entry.mode().value())))
+        }
         _ => None,
     })
 }
@@ -320,6 +345,8 @@ pub(crate) struct StatusEntry {
     /// The HEAD blob, if the path is tracked there.
     pub(crate) head: Option<gix::ObjectId>,
     pub(crate) new: StatusNew,
+    /// File modes in HEAD and the working tree, 0 where absent or unknown.
+    pub(crate) modes: (u32, u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,12 +358,35 @@ pub(crate) enum StatusNew {
     Missing,
 }
 
-/// A path whose blob differs between the base and HEAD trees.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A path whose blob or mode differs between the base and HEAD trees.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TreeChange {
     pub(crate) path: String,
+    /// The base path of a renamed file.
+    pub(crate) from: Option<String>,
     pub(crate) old: Option<gix::ObjectId>,
     pub(crate) new: Option<gix::ObjectId>,
+    /// File modes in the base and HEAD, 0 where absent.
+    pub(crate) modes: (u32, u32),
+}
+
+/// A base→worktree change before the working tree is checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Assembled {
+    pub(crate) path: String,
+    pub(crate) from: Option<String>,
+    pub(crate) old: Option<gix::ObjectId>,
+    pub(crate) new: Planned,
+    /// Base and new modes, 0 where absent or unknown.
+    pub(crate) modes: (u32, u32),
+}
+
+impl Assembled {
+    /// The modes, when both are known and differ.
+    pub(crate) fn mode_change(&self) -> Option<(u32, u32)> {
+        let (old, new) = self.modes;
+        (old != 0 && new != 0 && old != new).then_some(self.modes)
+    }
 }
 
 /// What a change's new side will be once the working tree is checked.
@@ -351,44 +401,59 @@ pub(crate) enum Planned {
 /// base→worktree changes, sorted by path. A path in the tree diff takes its
 /// old side from there; otherwise the base and HEAD agree on it and git's
 /// HEAD blob is the old side. Paths that end where they started vanish.
-pub(crate) fn assemble(
-    tree: Vec<TreeChange>,
-    status: Vec<StatusEntry>,
-) -> Vec<(String, Option<gix::ObjectId>, Planned)> {
+pub(crate) fn assemble(tree: Vec<TreeChange>, status: Vec<StatusEntry>) -> Vec<Assembled> {
     let mut tree: std::collections::HashMap<String, TreeChange> =
         tree.into_iter().map(|t| (t.path.clone(), t)).collect();
     let mut out = Vec::with_capacity(tree.len() + status.len());
     for entry in status {
-        let old = tree.remove(&entry.path).map_or(entry.head, |t| t.old);
+        let committed = tree.remove(&entry.path);
         let new = match entry.new {
             StatusNew::Blob(id) => Planned::Blob(id),
             StatusNew::Worktree => Planned::Worktree,
             StatusNew::Missing => Planned::Missing,
         };
-        out.push((entry.path, old, new));
+        let (from, old, base_mode) = match committed {
+            Some(t) => (t.from, t.old, t.modes.0),
+            None => (None, entry.head, entry.modes.0),
+        };
+        out.push(Assembled {
+            path: entry.path,
+            from,
+            old,
+            new,
+            modes: (base_mode, entry.modes.1),
+        });
     }
-    out.extend(tree.into_values().map(|t| {
-        let new = t.new.map_or(Planned::Missing, Planned::Blob);
-        (t.path, t.old, new)
+    out.extend(tree.into_values().map(|t| Assembled {
+        new: t.new.map_or(Planned::Missing, Planned::Blob),
+        path: t.path,
+        from: t.from,
+        old: t.old,
+        modes: t.modes,
     }));
-    out.retain(|(_, old, new)| match new {
-        Planned::Blob(id) => *old != Some(*id),
-        Planned::Missing => old.is_some(),
-        Planned::Worktree => true,
+    out.retain(|a| {
+        a.from.is_some()
+            || a.mode_change().is_some()
+            || match a.new {
+                Planned::Blob(id) => a.old != Some(id),
+                Planned::Missing => a.old.is_some(),
+                Planned::Worktree => true,
+            }
     });
-    out.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    out.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     out
 }
 
 /// Finishes planned changes: stats working-tree files, skipping
 /// directories (submodules, nested repositories).
-fn stat_worktree(
-    root: &Path,
-    planned: Vec<(String, Option<gix::ObjectId>, Planned)>,
-) -> Result<Vec<FileChange>> {
+fn stat_worktree(root: &Path, planned: Vec<Assembled>) -> Result<Vec<FileChange>> {
     let mut files = Vec::with_capacity(planned.len());
-    for (path, old, planned) in planned {
-        let new = match planned {
+    for planned in planned {
+        let modes = planned.mode_change();
+        let Assembled {
+            path, from, old, ..
+        } = planned;
+        let new = match planned.new {
             Planned::Blob(id) => Side::Blob(id),
             Planned::Missing => Side::Missing,
             Planned::Worktree => match std::fs::symlink_metadata(root.join(&path)) {
@@ -414,6 +479,8 @@ fn stat_worktree(
             status,
             old,
             new,
+            from,
+            modes,
         });
     }
     Ok(files)
@@ -628,6 +695,7 @@ pub(crate) fn status(
                     path,
                     head: None,
                     new: StatusNew::Worktree,
+                    modes: (0, 0),
                 }),
         );
     }
@@ -656,6 +724,11 @@ fn git(worktree: &Path, args: &[&str]) -> Result<Vec<u8>> {
         );
     }
     Ok(output.stdout)
+}
+
+/// A file mode as git prints it, in octal; 0 when absent.
+fn mode(octal: &str) -> u32 {
+    u32::from_str_radix(octal, 8).unwrap_or(0)
 }
 
 fn oid(hex: &str) -> Option<gix::ObjectId> {
@@ -687,6 +760,7 @@ pub(crate) fn parse_status(out: &[u8]) -> (Vec<StatusEntry>, Vec<String>) {
                     path,
                     head: None,
                     new: StatusNew::Worktree,
+                    modes: (0, 0),
                 }),
             },
             "1" if fields.len() == 9 => {
@@ -704,6 +778,7 @@ pub(crate) fn parse_status(out: &[u8]) -> (Vec<StatusEntry>, Vec<String>) {
                     path,
                     head: oid(fields[6]),
                     new,
+                    modes: (mode(fields[3]), mode(fields[5])),
                 });
             }
             "u" if fields.len() == 11 => {
@@ -712,6 +787,7 @@ pub(crate) fn parse_status(out: &[u8]) -> (Vec<StatusEntry>, Vec<String>) {
                     path,
                     head: oid(fields[8]),
                     new: StatusNew::Worktree,
+                    modes: (mode(fields[4]), mode(fields[6])),
                 });
             }
             _ => {}
@@ -739,8 +815,8 @@ fn untracked_files(repo: &gix::Repository, dirs: Vec<String>) -> Result<Vec<Stri
     Ok(out)
 }
 
-/// Blobs that differ between two trees. Subtrees with equal ids are not
-/// entered, so this is cheap for related trees.
+/// Blobs and modes that differ between two trees, with renames. Subtrees with equal
+/// ids are not entered, so this is cheap for related trees.
 pub(crate) fn tree_changes(
     repo: &gix::Repository,
     old: gix::ObjectId,
@@ -750,44 +826,86 @@ pub(crate) fn tree_changes(
     let (old, new) = (repo.find_tree(old)?, repo.find_tree(new)?);
     let mut options = gix::diff::Options::default();
     options.track_path();
-    options.track_rewrites(None);
+    // Similar-content renames are tried only among a few hundred added and
+    // deleted files; past that, git-style pairing costs hundreds of
+    // milliseconds and only identical-content renames are found.
+    options.track_rewrites(Some(gix::diff::Rewrites {
+        limit: 200,
+        ..gix::diff::Rewrites::default()
+    }));
     let blob = |mode: gix::object::tree::EntryMode, id: gix::ObjectId| {
         mode.is_blob_or_symlink().then_some(id)
     };
+    let mode = |mode: gix::object::tree::EntryMode| {
+        if mode.is_blob_or_symlink() {
+            u32::from(mode.value())
+        } else {
+            0
+        }
+    };
     let mut out = Vec::new();
     for change in repo.diff_tree_to_tree(&old, &new, options)? {
-        let (location, old, new) = match change {
+        let change = match change {
             C::Addition {
                 location,
                 entry_mode,
                 id,
                 ..
-            } => (location, None, blob(entry_mode, id)),
+            } => TreeChange {
+                path: location.to_str_lossy().into_owned(),
+                new: blob(entry_mode, id),
+                modes: (0, mode(entry_mode)),
+                ..TreeChange::default()
+            },
             C::Deletion {
                 location,
                 entry_mode,
                 id,
                 ..
-            } => (location, blob(entry_mode, id), None),
+            } => TreeChange {
+                path: location.to_str_lossy().into_owned(),
+                old: blob(entry_mode, id),
+                modes: (mode(entry_mode), 0),
+                ..TreeChange::default()
+            },
             C::Modification {
                 location,
                 previous_entry_mode,
                 previous_id,
                 entry_mode,
                 id,
-            } => (
-                location,
-                blob(previous_entry_mode, previous_id),
-                blob(entry_mode, id),
-            ),
-            C::Rewrite { .. } => continue,
-        };
-        if old.is_some() || new.is_some() {
-            out.push(TreeChange {
+            } => TreeChange {
                 path: location.to_str_lossy().into_owned(),
-                old,
-                new,
-            });
+                old: blob(previous_entry_mode, previous_id),
+                new: blob(entry_mode, id),
+                modes: (mode(previous_entry_mode), mode(entry_mode)),
+                ..TreeChange::default()
+            },
+            C::Rewrite {
+                source_location,
+                source_entry_mode,
+                source_id,
+                entry_mode,
+                id,
+                location,
+                copy,
+                ..
+            } => TreeChange {
+                path: location.to_str_lossy().into_owned(),
+                // A copy leaves its source in place: the new path is added.
+                from: (!copy).then(|| source_location.to_str_lossy().into_owned()),
+                old: (!copy)
+                    .then(|| blob(source_entry_mode, source_id))
+                    .flatten(),
+                new: blob(entry_mode, id),
+                modes: (
+                    if copy { 0 } else { mode(source_entry_mode) },
+                    mode(entry_mode),
+                ),
+            },
+        };
+        if change.old.is_some() || change.new.is_some() {
+            out.push(change);
         }
     }
     Ok(out)
@@ -965,7 +1083,7 @@ mod tests {
         let zero = "0".repeat(40);
         let out = format!(
             "1 .M N... 100644 100644 100644 {a} {a} src/a b.rs\0\
-             1 M. N... 100644 100644 100644 {a} {b} staged.rs\0\
+             1 M. N... 100644 100644 100755 {a} {b} staged.rs\0\
              1 D. N... 100644 000000 000000 {a} {zero} gone.rs\0\
              1 .M S... 160000 160000 160000 {a} {a} sub\0\
              u UU N... 100644 100644 100644 100644 {a} {b} {c} conflict.txt\0\
@@ -977,15 +1095,25 @@ mod tests {
             path: path.to_owned(),
             head: id(head),
             new,
+            modes: (0o100_644, 0o100_644),
         };
         assert_eq!(
             entries,
             vec![
                 entry("src/a b.rs", &a, StatusNew::Worktree),
-                entry("staged.rs", &a, StatusNew::Blob(id(&b).expect("hex"))),
-                entry("gone.rs", &a, StatusNew::Missing),
+                StatusEntry {
+                    modes: (0o100_644, 0o100_755),
+                    ..entry("staged.rs", &a, StatusNew::Blob(id(&b).expect("hex")))
+                },
+                StatusEntry {
+                    modes: (0o100_644, 0),
+                    ..entry("gone.rs", &a, StatusNew::Missing)
+                },
                 entry("conflict.txt", &b, StatusNew::Worktree),
-                entry("new.txt", "", StatusNew::Worktree),
+                StatusEntry {
+                    modes: (0, 0),
+                    ..entry("new.txt", "", StatusNew::Worktree)
+                },
             ]
         );
         assert_eq!(dirs, vec!["fresh/dir"]);
@@ -993,6 +1121,8 @@ mod tests {
 
     #[test]
     fn assembles_base_to_worktree_changes() {
+        const FILE: u32 = 0o100_644;
+        const EXEC: u32 = 0o100_755;
         let id = |n: u8| gix::ObjectId::from_bytes_or_panic(&[n; 20]);
         let tree = vec![
             // Committed on the branch, then reverted in the working tree.
@@ -1000,12 +1130,32 @@ mod tests {
                 path: "reverted".into(),
                 old: Some(id(1)),
                 new: Some(id(2)),
+                modes: (FILE, FILE),
+                ..TreeChange::default()
             },
             // Committed only.
             TreeChange {
                 path: "committed".into(),
                 old: Some(id(3)),
                 new: Some(id(4)),
+                modes: (FILE, FILE),
+                ..TreeChange::default()
+            },
+            // Renamed without changes.
+            TreeChange {
+                path: "moved".into(),
+                from: Some("origin".into()),
+                old: Some(id(6)),
+                new: Some(id(6)),
+                modes: (FILE, FILE),
+            },
+            // Made executable on the branch.
+            TreeChange {
+                path: "script".into(),
+                old: Some(id(7)),
+                new: Some(id(7)),
+                modes: (FILE, EXEC),
+                ..TreeChange::default()
             },
         ];
         let status = vec![
@@ -1013,19 +1163,90 @@ mod tests {
                 path: "reverted".into(),
                 head: Some(id(2)),
                 new: StatusNew::Blob(id(1)),
+                modes: (FILE, FILE),
             },
             StatusEntry {
                 path: "edited".into(),
                 head: Some(id(5)),
                 new: StatusNew::Worktree,
+                modes: (FILE, FILE),
+            },
+            // Made executable in the working tree alone.
+            StatusEntry {
+                path: "tool".into(),
+                head: Some(id(8)),
+                new: StatusNew::Blob(id(8)),
+                modes: (FILE, EXEC),
             },
         ];
+        let change = |path: &str, from: Option<&str>, old: u8, new, modes| Assembled {
+            path: path.to_owned(),
+            from: from.map(str::to_owned),
+            old: Some(id(old)),
+            new,
+            modes,
+        };
         assert_eq!(
             assemble(tree, status),
             vec![
-                ("committed".to_owned(), Some(id(3)), Planned::Blob(id(4))),
-                ("edited".to_owned(), Some(id(5)), Planned::Worktree),
+                change("committed", None, 3, Planned::Blob(id(4)), (FILE, FILE)),
+                change("edited", None, 5, Planned::Worktree, (FILE, FILE)),
+                change(
+                    "moved",
+                    Some("origin"),
+                    6,
+                    Planned::Blob(id(6)),
+                    (FILE, FILE)
+                ),
+                change("script", None, 7, Planned::Blob(id(7)), (FILE, EXEC)),
+                change("tool", None, 8, Planned::Blob(id(8)), (FILE, EXEC)),
             ]
         );
+    }
+
+    #[test]
+    fn tree_changes_report_renames_and_modes() {
+        use gix::object::tree::EntryKind;
+        let dir = std::env::temp_dir().join(format!("dots-diff-renames-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = gix::init_bare(&dir).expect("init");
+        let text = "one\ntwo\nthree\nfour\nfive\n";
+        let notes = repo.write_blob(text).expect("blob").detach();
+        let script = repo.write_blob("echo hi\n").expect("blob").detach();
+        let empty = repo.empty_tree().id;
+        let mut base = repo.edit_tree(empty).expect("editor");
+        base.upsert("notes.md", EntryKind::Blob, notes)
+            .expect("upsert");
+        base.upsert("build.sh", EntryKind::Blob, script)
+            .expect("upsert");
+        let base = base.write().expect("write").detach();
+        let mut head = repo.edit_tree(empty).expect("editor");
+        head.upsert("docs/notes.md", EntryKind::Blob, notes)
+            .expect("upsert");
+        head.upsert("build.sh", EntryKind::BlobExecutable, script)
+            .expect("upsert");
+        let head = head.write().expect("write").detach();
+        let mut changes = tree_changes(&repo, base, head).expect("diff");
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(
+            changes,
+            vec![
+                TreeChange {
+                    path: "build.sh".into(),
+                    from: None,
+                    old: Some(script),
+                    new: Some(script),
+                    modes: (0o100_644, 0o100_755),
+                },
+                TreeChange {
+                    path: "docs/notes.md".into(),
+                    from: Some("notes.md".into()),
+                    old: Some(notes),
+                    new: Some(notes),
+                    modes: (0o100_644, 0o100_644),
+                },
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

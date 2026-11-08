@@ -451,7 +451,12 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
             let Some(target) = target else { break };
             let t = Instant::now();
             let paths = vec![f.path.clone()];
-            let found = repo::changes_for(&local, target, &paths)?;
+            let renames = f
+                .from
+                .iter()
+                .map(|from| (f.path.clone(), from.clone()))
+                .collect();
+            let found = repo::changes_for(&local, target, &paths, &renames)?;
             let scanned = t.elapsed();
             app.apply_paths(&paths, found);
             if let Some(i) = app

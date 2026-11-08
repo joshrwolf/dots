@@ -136,6 +136,8 @@ pub(crate) struct FileView {
     pub(crate) change: FileChange,
     pub(crate) body: Body,
     pub(crate) expanded: HashSet<u32>,
+    /// Shown as its header alone.
+    pub(crate) folded: bool,
     /// Marked reviewed at its current content.
     pub(crate) reviewed: bool,
     /// Cards under rows, by row, for files laid out near the view.
@@ -169,6 +171,7 @@ impl FileView {
             change,
             body: Body::Pending,
             expanded: HashSet::new(),
+            folded: false,
             reviewed: false,
             cards: Vec::new(),
             file_cards: Vec::new(),
@@ -203,7 +206,12 @@ impl FileView {
     /// The first body line of the file's block, after the cards above, the
     /// header and the file's cards.
     pub(crate) fn body_start(&self, header: u32) -> u32 {
-        self.above + header + self.file_card_lines
+        self.above + header + self.card_lines()
+    }
+
+    /// Display lines of the cards under the header, none while folded.
+    fn card_lines(&self) -> u32 {
+        if self.folded { 0 } else { self.file_card_lines }
     }
 
     /// The new side's content key, once known.
@@ -242,6 +250,7 @@ impl FileView {
     /// Lines the body takes: rows, or one line for a note.
     fn body_lines(&self) -> u32 {
         match &self.body {
+            _ if self.folded => 0,
             Body::Text(_) if self.heights.rows() > 0 => self.heights.total(),
             _ => 1,
         }
@@ -705,6 +714,7 @@ impl App {
                 Some(stale) => {
                     let mut f = FileView::new(change);
                     f.expanded = stale.expanded;
+                    f.folded = stale.folded;
                     if let Body::Text(d) = stale.body {
                         f.previous = Some(d);
                     }
@@ -1184,14 +1194,14 @@ impl App {
                 part: u16::try_from(local).unwrap_or(0),
             };
         }
-        if local < header + f.file_card_lines {
+        if local < header + f.card_lines() {
             return Line::Cards {
                 file,
                 review: false,
                 line: local - header,
             };
         }
-        let body = local - header - f.file_card_lines;
+        let body = local - header - f.card_lines();
         if body >= f.body_lines() {
             return Line::Spacer;
         }
@@ -1249,6 +1259,9 @@ impl App {
         };
         for fi in order {
             let f = &stream.files[fi];
+            if f.folded {
+                continue;
+            }
             let rows = f.planned_rows();
             let mut starts = Vec::new();
             let mut in_change = false;
@@ -1323,6 +1336,34 @@ impl App {
             f.expanded.clear();
         }
         f.invalidate();
+        self.laid_out = None;
+    }
+
+    /// Folds file `file` to its header or unfolds it. A file folded from
+    /// inside shows its header at the top.
+    pub(crate) fn toggle_fold(&mut self, file: usize) {
+        let Some(f) = self.stream.as_mut().and_then(|s| s.files.get_mut(file)) else {
+            return;
+        };
+        f.folded = !f.folded;
+        if f.folded && self.top.file == file {
+            self.top.line = self.top.line.min(f.above);
+        }
+        self.laid_out = None;
+    }
+
+    /// Folds every file, or unfolds them all when all are folded.
+    pub(crate) fn toggle_fold_all(&mut self) {
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
+        let fold = !stream.files.iter().all(|f| f.folded);
+        for f in &mut stream.files {
+            f.folded = fold;
+        }
+        if let Some(f) = stream.files.get(self.top.file) {
+            self.top.line = self.top.line.min(f.above);
+        }
         self.laid_out = None;
     }
 
@@ -1689,6 +1730,8 @@ mod tests {
                 modified: None,
                 len: new.len() as u64,
             }),
+            from: None,
+            modes: None,
         }
     }
 
@@ -1776,6 +1819,28 @@ mod tests {
             })
             .collect();
         assert_eq!(labels, ["0", "b/", "1"]);
+    }
+
+    #[test]
+    fn folded_files_show_only_their_header() {
+        let mut app = app_with(&[("a.rs", "x\n", "y\n"), ("b.rs", "", "1\n2\n")]);
+        app.layout(80, 40);
+        // Folding from inside the file brings its header to the top.
+        app.top.line = 2;
+        app.toggle_fold(0);
+        assert_eq!(app.top.line, 0);
+        app.layout(80, 40);
+        let offsets = |app: &App| app.stream.as_ref().expect("loaded").offsets.clone();
+        // a: header + spacer; b: header + 2 rows + spacer.
+        assert_eq!(offsets(&app), vec![0, 2, 6]);
+        assert_eq!(app.line_at(1), Line::Spacer);
+        assert_eq!(app.line_at(2), Line::Header { file: 1, part: 0 });
+        app.toggle_fold_all();
+        app.layout(80, 40);
+        assert_eq!(offsets(&app), vec![0, 2, 4]);
+        app.toggle_fold_all();
+        app.layout(80, 40);
+        assert_eq!(offsets(&app), vec![0, 4, 8]);
     }
 
     /// A tree row as text: guides, then `name/` or a file index.

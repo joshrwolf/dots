@@ -380,11 +380,13 @@ pub(crate) fn summarize(stats: &Stats, worktree: &Path) -> Result<Summary> {
                     path: entry.path.clone(),
                     old,
                     new,
+                    ..TreeChange::default()
                 });
             }
         }
-        for (path, old, planned) in repo::assemble(committed_change, vec![entry]) {
-            let counts = match planned {
+        for repo::Assembled { path, old, new, .. } in repo::assemble(committed_change, vec![entry])
+        {
+            let counts = match new {
                 Planned::Blob(id) => Some(stats.blob_counts(&reader, old, Some(id))?),
                 Planned::Missing => Some(stats.blob_counts(&reader, old, None)?),
                 Planned::Worktree => stats.worktree_counts(&mut reader, &root, &path, old)?,
