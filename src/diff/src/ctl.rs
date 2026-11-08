@@ -1,9 +1,13 @@
-//! Steering a running viewer: one text line per connection over a per-user
-//! Unix socket, answered with `ok` or an error line.
+//! Steering running viewers: each listens on its own Unix socket in a
+//! per-user directory and answers one text line per connection with `ok`
+//! or an error line. `status` reports the Rex pane a viewer runs in and the
+//! worktree it shows, so a command reaches the right one of several.
 
+use std::fmt::Write as _;
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
@@ -12,9 +16,12 @@ use anyhow::{Context as _, Result, bail};
 pub(crate) enum Command {
     /// Show the worktree containing a path.
     Worktree(PathBuf),
-    /// Scroll to a file, by absolute path or path within the worktree.
+    /// Scroll to a file, by absolute path or path within the worktree. An
+    /// absolute path in another worktree switches to it.
     File(String),
     Refresh,
+    /// Report the viewer's pane and worktree.
+    Status,
 }
 
 impl Command {
@@ -24,8 +31,9 @@ impl Command {
             ("worktree", path) if !path.is_empty() => Command::Worktree(PathBuf::from(path)),
             ("file", path) if !path.is_empty() => Command::File(path.to_owned()),
             ("refresh", "") => Command::Refresh,
+            ("status", "") => Command::Status,
             _ => bail!(
-                "unknown command {line:?}; expected `worktree PATH`, `file PATH` or `refresh`"
+                "unknown command {line:?}; expected `worktree PATH`, `file PATH`, `refresh` or `status`"
             ),
         })
     }
@@ -35,28 +43,66 @@ impl Command {
             Command::Worktree(p) => format!("worktree {}", p.display()),
             Command::File(p) => format!("file {p}"),
             Command::Refresh => "refresh".to_owned(),
+            Command::Status => "status".to_owned(),
         }
     }
 }
 
-/// The control socket: in the runtime directory, or the user's state directory.
-pub(crate) fn socket_path() -> PathBuf {
+/// What a viewer reports about itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Status {
+    /// The Rex pane it runs in, from `REX_BLOCK`.
+    pub(crate) block: Option<String>,
+    pub(crate) worktree: PathBuf,
+}
+
+impl Status {
+    fn line(&self) -> String {
+        format!(
+            "ok\t{}\t{}",
+            self.block.as_deref().unwrap_or("-"),
+            self.worktree.display()
+        )
+    }
+
+    fn parse(line: &str) -> Option<Self> {
+        let mut parts = line.trim_end_matches('\n').splitn(3, '\t');
+        let (Some("ok"), Some(block), Some(worktree)) = (parts.next(), parts.next(), parts.next())
+        else {
+            return None;
+        };
+        Some(Self {
+            block: (block != "-").then(|| block.to_owned()),
+            worktree: PathBuf::from(worktree),
+        })
+    }
+}
+
+/// Where viewers listen: the runtime directory, or the user's state
+/// directory.
+fn socket_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-        return PathBuf::from(dir).join("dots-diff.sock");
+        return PathBuf::from(dir).join("dots-diff");
     }
     let state = std::env::var_os("XDG_STATE_HOME").map_or_else(
         || PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"),
         PathBuf::from,
     );
-    state.join("dots").join("diff.sock")
+    state.join("dots").join("diff")
 }
 
-/// Accepts commands on `path` and passes each to `deliver`. A socket left by
-/// a viewer that exited is replaced; a live one is not.
-pub(crate) fn serve(path: &Path, deliver: impl Fn(Command) + Send + 'static) -> Result<()> {
-    if UnixStream::connect(path).is_ok() {
-        bail!("another dots-diff is listening on {}", path.display());
-    }
+/// This viewer's socket.
+pub(crate) fn socket_path() -> PathBuf {
+    socket_dir().join(format!("{}.sock", std::process::id()))
+}
+
+/// Accepts commands on `path`, answers `status` from `status`, and passes
+/// every other command to `deliver`.
+pub(crate) fn serve(
+    path: &Path,
+    status: Arc<Mutex<Status>>,
+    deliver: impl Fn(Command) + Send + 'static,
+) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
@@ -72,13 +118,16 @@ pub(crate) fn serve(path: &Path, deliver: impl Fn(Command) + Send + 'static) -> 
                 continue;
             }
             let reply = match Command::parse(&line) {
+                Ok(Command::Status) => status
+                    .lock()
+                    .map_or_else(|_| "error: status unavailable".to_owned(), |s| s.line()),
                 Ok(command) => {
                     deliver(command);
-                    "ok\n".to_owned()
+                    "ok".to_owned()
                 }
-                Err(e) => format!("error: {e}\n"),
+                Err(e) => format!("error: {e}"),
             };
-            let _ = stream.write_all(reply.as_bytes());
+            let _ = stream.write_all(format!("{reply}\n").as_bytes());
         }
     });
     Ok(())
@@ -94,15 +143,105 @@ impl Drop for Cleanup {
     }
 }
 
-/// Sends one command to the running viewer.
-pub(crate) fn send(command: &Command) -> Result<()> {
-    let path = socket_path();
-    let mut stream = UnixStream::connect(&path)
-        .with_context(|| format!("no dots-diff is listening on {}", path.display()))?;
+fn request(socket: &Path, command: &Command) -> Result<String> {
+    let mut stream = UnixStream::connect(socket)
+        .with_context(|| format!("no dots-diff is listening on {}", socket.display()))?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.write_all(format!("{}\n", command.line()).as_bytes())?;
     let mut reply = String::new();
     BufReader::new(&stream).read_line(&mut reply)?;
+    Ok(reply)
+}
+
+/// A running viewer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Viewer {
+    pub(crate) socket: PathBuf,
+    pub(crate) status: Status,
+}
+
+/// Every viewer that answers. A socket nobody listens on was left by a
+/// viewer that died and is removed.
+pub(crate) fn viewers() -> Vec<Viewer> {
+    let Ok(entries) = std::fs::read_dir(socket_dir()) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let socket = entry.path();
+        if socket.extension().is_none_or(|e| e != "sock") {
+            continue;
+        }
+        match request(&socket, &Command::Status) {
+            Ok(reply) => {
+                if let Some(status) = Status::parse(&reply) {
+                    found.push(Viewer { socket, status });
+                }
+            }
+            Err(e)
+                if e.downcast_ref::<std::io::Error>()
+                    .or_else(|| e.root_cause().downcast_ref())
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused) =>
+            {
+                let _ = std::fs::remove_file(&socket);
+            }
+            Err(_) => {}
+        }
+    }
+    found.sort_by(|a, b| a.socket.cmp(&b.socket));
+    found
+}
+
+/// The viewer a command goes to: the one in Rex pane `block` when given;
+/// otherwise the only viewer of the repository holding `path`, or the only
+/// viewer at all.
+pub(crate) fn pick<'a>(
+    viewers: &'a [Viewer],
+    block: Option<&str>,
+    path: Option<&Path>,
+    same_repo: impl Fn(&Path, &Path) -> bool,
+) -> Result<&'a Viewer> {
+    let listing = || {
+        viewers.iter().fold(String::new(), |mut out, v| {
+            let _ = write!(
+                out,
+                "\n  pane {} showing {}",
+                v.status.block.as_deref().unwrap_or("-"),
+                v.status.worktree.display()
+            );
+            out
+        })
+    };
+    if let Some(block) = block {
+        return viewers
+            .iter()
+            .find(|v| v.status.block.as_deref() == Some(block))
+            .with_context(|| format!("no dots-diff runs in pane {block}; running:{}", listing()));
+    }
+    if let Some(path) = path {
+        let matching: Vec<&Viewer> = viewers
+            .iter()
+            .filter(|v| same_repo(&v.status.worktree, path))
+            .collect();
+        match matching.as_slice() {
+            [one] => return Ok(one),
+            [] => {}
+            _ => bail!(
+                "several dots-diff viewers show this repository; pass --block:{}",
+                listing()
+            ),
+        }
+    }
+    match viewers {
+        [one] => Ok(one),
+        [] => bail!("no dots-diff is running"),
+        _ => bail!("several dots-diff viewers run; pass --block:{}", listing()),
+    }
+}
+
+/// Sends one command to `viewer`.
+pub(crate) fn send(viewer: &Viewer, command: &Command) -> Result<()> {
+    let reply = request(&viewer.socket, command)?;
     match reply.trim() {
         "ok" => Ok(()),
         other => bail!("{other}"),
@@ -116,6 +255,7 @@ mod tests {
     #[test]
     fn parses_commands() {
         assert_eq!(Command::parse("refresh\n").expect("ok"), Command::Refresh);
+        assert_eq!(Command::parse("status").expect("ok"), Command::Status);
         assert_eq!(
             Command::parse("file src/a b.rs").expect("ok"),
             Command::File("src/a b.rs".into())
@@ -126,5 +266,50 @@ mod tests {
         );
         assert!(Command::parse("file").is_err());
         assert!(Command::parse("quit").is_err());
+    }
+
+    #[test]
+    fn status_round_trips_with_and_without_a_pane() {
+        for block in [Some("b-1".to_owned()), None] {
+            let status = Status {
+                block,
+                worktree: "/r/a b".into(),
+            };
+            assert_eq!(Status::parse(&format!("{}\n", status.line())), Some(status));
+        }
+        assert_eq!(Status::parse("error: nope"), None);
+    }
+
+    #[test]
+    fn picks_by_pane_then_repository_then_the_only_viewer() {
+        let viewer = |block: &str, worktree: &str| Viewer {
+            socket: format!("/s/{block}.sock").into(),
+            status: Status {
+                block: Some(block.to_owned()),
+                worktree: worktree.into(),
+            },
+        };
+        // Worktrees of one repository share their first path component.
+        let same_repo = |a: &Path, b: &Path| a.components().nth(1) == b.components().nth(1);
+        let all = [viewer("a", "/one/main"), viewer("b", "/two/main")];
+        let pick_block = |block, path: Option<&str>| {
+            pick(&all, block, path.map(Path::new), same_repo).map(|v| v.socket.clone())
+        };
+        assert_eq!(
+            pick_block(Some("b"), Some("/one/x")).expect("pane"),
+            PathBuf::from("/s/b.sock")
+        );
+        assert!(pick_block(Some("c"), None).is_err());
+        assert_eq!(
+            pick_block(None, Some("/two/feature")).expect("repository"),
+            PathBuf::from("/s/b.sock")
+        );
+        assert!(pick_block(None, Some("/three/x")).is_err());
+        assert!(pick_block(None, None).is_err());
+        let one = [viewer("a", "/one/main")];
+        assert!(pick(&one, None, Some(Path::new("/three/x")), same_repo).is_ok());
+        let twins = [viewer("a", "/one/main"), viewer("b", "/one/feature")];
+        assert!(pick(&twins, None, Some(Path::new("/one/x")), same_repo).is_err());
+        assert!(pick(&[], None, None, same_repo).is_err());
     }
 }

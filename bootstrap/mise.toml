@@ -160,6 +160,7 @@ dir = "{{ env.HOME }}"
 run = [
   '"{{ vars.dots_cargo_home }}/bin/cargo" +{{ vars.dots_rust_channel }} install --locked --path "{{ vars.dots_source_root }}/src/dots"',
   '"{{ vars.dots_cargo_home }}/bin/cargo" +{{ vars.dots_rust_channel }} install --locked --path "{{ vars.dots_source_root }}/src/pick"',
+  '"{{ vars.dots_cargo_home }}/bin/cargo" +{{ vars.dots_rust_channel }} install --locked --path "{{ vars.dots_source_root }}/src/diff"',
   { task = "sync:restart" },
 ]
 

@@ -97,6 +97,7 @@ function M.install(t, fake)
     end,
     ["client.perform"] = done,
     ["session.destroy"] = done,
+    ["block.close"] = done,
   }
   t.stub(rex, "call", function(method, args)
     local respond = methods[method] or error("unexpected rex.call " .. method, 0)
@@ -116,6 +117,9 @@ function M.install(t, fake)
     end,
     new_layer = function()
       return { layer_id = "layer", block_ids = { "picker" } }
+    end,
+    new_split = function()
+      return { block_ids = { "split" } }
     end,
     close_layer = done,
     zoom_block = done,

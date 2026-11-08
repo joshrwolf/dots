@@ -22,7 +22,7 @@ use crate::ctl::{self, Command};
 use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
 use crate::input::Input;
-use crate::repo::{self, Changes, FileChange, Mode, Reader, Side, Stamp};
+use crate::repo::{self, Changes, FileChange, GitState, Mode, Reader, Side, Stamp};
 use crate::stats::{self, Stats};
 use crate::switcher::Switcher;
 use crate::theme::{self, Detected, Palette};
@@ -58,7 +58,7 @@ pub(crate) enum Msg {
     /// The periodic safety-net check.
     Reconciled {
         generation: u64,
-        signature: Option<Signature>,
+        state: Option<GitState>,
         /// Working-tree files whose size or time moved without an event.
         moved: Vec<String>,
     },
@@ -75,6 +75,8 @@ pub(crate) enum Msg {
 #[derive(Debug, Clone)]
 pub(crate) struct Options {
     pub(crate) path: PathBuf,
+    /// A file to scroll to once loaded.
+    pub(crate) file: Option<String>,
     /// Fixed colours instead of the terminal's.
     pub(crate) theme: Option<Detected>,
     pub(crate) graphics: bool,
@@ -86,14 +88,6 @@ pub(crate) struct Options {
 /// How often the safety net checks for changes the watcher missed.
 const RECONCILE: Duration = Duration::from_secs(10);
 
-/// What decides a worktree's changes besides its files: HEAD, the index
-/// and the base.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Signature {
-    head: Option<gix::ObjectId>,
-    index: Option<Stamp>,
-    target: repo::Target,
-}
 /// Rex reports no theme change, so the colours are asked for again.
 const THEME_POLL: Duration = Duration::from_secs(2);
 /// Quiet time before another worktree's switcher counts are recomputed.
@@ -127,7 +121,7 @@ struct Runtime {
     /// A refresh waiting to reach the screen: when its burst began and its paths.
     refreshing: Option<(Instant, Vec<String>)>,
     next_reconcile: Instant,
-    signature: Option<Signature>,
+    state: Option<GitState>,
     wanted: Vec<Key>,
     timings: Timings,
     /// When the current worktree began loading, until its first full frame.
@@ -141,6 +135,10 @@ struct Runtime {
     source: Option<(gix::ThreadSafeRepository, PathBuf)>,
     /// The worktree the file watch was set up around.
     watched: Option<usize>,
+    /// What the control socket reports.
+    ctl_status: Arc<Mutex<ctl::Status>>,
+    /// A file to scroll to once the worktree loading now has loaded.
+    pending_file: Option<String>,
 }
 
 pub(crate) fn run(options: Options) -> Result<()> {
@@ -186,19 +184,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
                 let _ = tx.send(Msg::Highlighted(done));
             }
         });
-        let socket = ctl::socket_path();
-        let ctl_tx = Mutex::new(tx.clone());
-        let _cleanup = match ctl::serve(&socket, move |c| {
-            if let Ok(tx) = ctl_tx.lock() {
-                let _ = tx.send(Msg::Ctl(c));
-            }
-        }) {
-            Ok(()) => Some(ctl::Cleanup(socket)),
-            Err(e) => {
-                timings.note(&format!("control socket unavailable: {e:#}"));
-                None
-            }
-        };
+        let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);
         let tx_for_summaries = tx.clone();
         let mut rt = Runtime {
             app,
@@ -214,7 +200,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
             epoch: 0,
             refreshing: None,
             next_reconcile: Instant::now() + RECONCILE,
-            signature: None,
+            state: None,
             wanted: Vec::new(),
             timings,
             loading_since: Some(started),
@@ -225,6 +211,8 @@ pub(crate) fn run(options: Options) -> Result<()> {
             summaries_started: false,
             source: None,
             watched: None,
+            ctl_status,
+            pending_file: options.file.clone(),
         };
         let mut graphics = options.graphics.then(Graphics::new);
         rt.start_load();
@@ -434,6 +422,7 @@ impl Runtime {
                         self.app.message = None;
                         let reader =
                             Reader::new(changes.repo.to_thread_local(), changes.root.clone());
+                        self.state = Some(changes.state);
                         self.source = Some((changes.repo, changes.root));
                         self.app.load(
                             worktree.clone(),
@@ -445,6 +434,9 @@ impl Runtime {
                         );
                         self.epoch += 1;
                         self.spawn_diffs();
+                        if let Some(file) = self.pending_file.take() {
+                            self.command(Command::File(file));
+                        }
                     }
                     Err(e) => self.app.message = Some(e),
                 }
@@ -493,17 +485,15 @@ impl Runtime {
             }
             Msg::Reconciled {
                 generation,
-                signature,
+                state,
                 moved,
             } => {
                 if generation != self.generation {
                     return false;
                 }
-                match (&self.signature, signature) {
-                    (Some(old), Some(new)) if *old != new => {
-                        self.burst.push_full(Instant::now());
-                    }
-                    (_, new) => self.signature = new,
+                if state.is_some() && state != self.state {
+                    // The full scan records the new state.
+                    self.burst.push_full(Instant::now());
                 }
                 if !moved.is_empty() {
                     self.burst.push(Instant::now(), moved);
@@ -585,7 +575,24 @@ impl Runtime {
                     }
                 }
             }
+            Command::Status => {}
             Command::File(path) => {
+                // A file in another worktree, or before anything loaded,
+                // waits for its worktree's load.
+                let elsewhere = Path::new(&path)
+                    .is_absolute()
+                    .then(|| self.app.repo.index_of(Path::new(&path)))
+                    .flatten()
+                    .filter(|&i| i != self.app.current);
+                if let Some(i) = elsewhere {
+                    self.pending_file = Some(path);
+                    self.switch(i);
+                    return;
+                }
+                if self.app.stream.is_none() {
+                    self.pending_file = Some(path);
+                    return;
+                }
                 let root = self.app.worktree_path().clone();
                 let rel = Path::new(&path)
                     .strip_prefix(&root)
@@ -622,11 +629,14 @@ impl Runtime {
 
     fn start_load(&mut self) {
         self.generation += 1;
+        if let Ok(mut status) = self.ctl_status.lock() {
+            status.worktree.clone_from(self.app.worktree_path());
+        }
         if let Some(job) = self.diffs.take() {
             job.cancel.store(true, Ordering::Relaxed);
         }
         self.burst = Burst::default();
-        self.signature = None;
+        self.state = None;
         let generation = self.generation;
         let worktree = self.app.worktree_path().clone();
         let mode = self.app.settings.mode;
@@ -672,7 +682,7 @@ impl Runtime {
             return;
         };
         let worktree = stream.worktree.clone();
-        let mode = stream.mode;
+        let state = self.state.clone();
         let files: Vec<(String, Stamp)> = stream
             .files
             .iter()
@@ -684,7 +694,7 @@ impl Runtime {
         let generation = self.generation;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let signature = signature(&worktree, mode).ok();
+            let state = state.map(|s| s.restat());
             let moved = files
                 .into_iter()
                 .filter(|(path, stamp)| {
@@ -700,7 +710,7 @@ impl Runtime {
                 .collect();
             let _ = tx.send(Msg::Reconciled {
                 generation,
-                signature,
+                state,
                 moved,
             });
         });
@@ -1191,23 +1201,35 @@ fn nearest<T>(todo: &[Option<T>], focus: usize) -> Option<usize> {
     })
 }
 
+/// Listens for `ctl` commands. The viewer works without its socket.
+fn serve_ctl(
+    tx: &Sender<Msg>,
+    worktree: &Path,
+    timings: &mut Timings,
+) -> (Arc<Mutex<ctl::Status>>, Option<ctl::Cleanup>) {
+    let socket = ctl::socket_path();
+    let status = Arc::new(Mutex::new(ctl::Status {
+        block: std::env::var("REX_BLOCK").ok().filter(|b| !b.is_empty()),
+        worktree: worktree.to_owned(),
+    }));
+    let tx = Mutex::new(tx.clone());
+    let served = ctl::serve(&socket, Arc::clone(&status), move |c| {
+        if let Ok(tx) = tx.lock() {
+            let _ = tx.send(Msg::Ctl(c));
+        }
+    });
+    match served {
+        Ok(()) => (status, Some(ctl::Cleanup(socket))),
+        Err(e) => {
+            timings.note(&format!("control socket unavailable: {e:#}"));
+            (status, None)
+        }
+    }
+}
+
 /// Files are watched in every worktree where watches are cheap; on Linux
 /// each directory costs an inotify watch, so only the selected one is.
 const WATCH_ALL_FILES: bool = !cfg!(target_os = "linux");
-
-/// A worktree's [`Signature`].
-fn signature(worktree: &Path, mode: Mode) -> Result<Signature> {
-    let (repo, _, target) = repo::open(worktree, mode)?;
-    let index = std::fs::metadata(repo.index_path()).ok().map(|m| Stamp {
-        modified: m.modified().ok(),
-        len: m.len(),
-    });
-    Ok(Signature {
-        head: repo.head_id().ok().map(gix::Id::detach),
-        index,
-        target,
-    })
-}
 
 #[cfg(test)]
 mod tests {

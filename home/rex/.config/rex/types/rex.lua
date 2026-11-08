@@ -83,6 +83,7 @@
 ---@field view fun(args?: { session_id?: string }): (rex.View?, rex.Err)
 ---@field new_window fun(args: rex.NewWindowArgs): (table?, rex.Err)
 ---@field new_layer fun(args: table): (table?, rex.Err)
+---@field new_split fun(args: table): (table?, rex.Err)
 ---@field close_layer fun(args: table): (table?, rex.Err)
 ---@field focus_direction fun(args: rex.FocusDirectionArgs): (table?, rex.Err)
 ---@field focus_block fun(args: { block_id: string, session_id?: string }): (table?, rex.Err)

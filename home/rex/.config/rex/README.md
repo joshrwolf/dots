@@ -8,7 +8,8 @@ popups from hotkeys.
 
 [Machine setup](../../../../bootstrap/README.md) deploys this configuration
 file by file under `~/.config/rex`. The views run in `dots-pick`, installed with
-`mise run //src/pick:install`. Rex reads the configuration on `rex config reload`. In Rex's
+`mise run //src/pick:install`; the diff split runs `dots-diff`, installed with
+`mise run //src/diff:install`. Rex reads the configuration on `rex config reload`. In Rex's
 settings, turn on **Remote Control** under **Rex Server** so actions can drive
 the app.
 
@@ -28,6 +29,7 @@ the app.
 | Cmd+Shift+H / Cmd+Shift+L | Move tab back, forward |
 | Cmd+B | Show or hide the sidebar |
 | Ctrl+S, then \| / - | Split right, down |
+| Ctrl+S, then D | Diff: this pane's worktree and its siblings in `dots-diff`, in a split beside it; again, from either pane, closes it |
 | Ctrl+H/J/K/L | Move between panes, or within Neovim splits |
 | Ctrl+Shift+H/J/K/L | Resize pane |
 

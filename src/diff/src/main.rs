@@ -39,6 +39,9 @@ struct Cli {
     /// A path inside the repository; its worktree opens first
     #[arg(default_value = ".")]
     path: PathBuf,
+    /// Scroll to this file once loaded, by path within the worktree
+    #[arg(long, value_name = "PATH")]
+    file: Option<String>,
     /// Draw file headers as kitty graphics images
     #[arg(long)]
     graphics: bool,
@@ -154,6 +157,10 @@ enum Cmd {
     },
     /// Steer a running viewer
     Ctl {
+        /// The viewer in this Rex pane; by default the one showing the
+        /// path's repository, or the only one running
+        #[arg(long, global = true, value_name = "ID")]
+        block: Option<String>,
         #[command(subcommand)]
         command: CtlCmd,
     },
@@ -185,10 +192,12 @@ enum Cmd {
 enum CtlCmd {
     /// Show the worktree containing PATH
     Worktree { path: PathBuf },
-    /// Scroll to a file
+    /// Scroll to a file; an absolute path in another worktree switches to it
     File { path: String },
     /// Reload now
     Refresh,
+    /// List running viewers: their Rex pane and worktree
+    List,
 }
 
 fn main() -> ExitCode {
@@ -205,6 +214,7 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         None => run::run(run::Options {
             path: cli.path,
+            file: cli.file,
             theme: cli.look.theme(),
             graphics: cli.graphics,
             timings: cli.timings,
@@ -244,11 +254,7 @@ fn run(cli: Cli) -> Result<()> {
             print!("{frame}");
             Ok(())
         }
-        Some(Cmd::Ctl { command }) => ctl::send(&match command {
-            CtlCmd::Worktree { path } => ctl::Command::Worktree(std::path::absolute(path)?),
-            CtlCmd::File { path } => ctl::Command::File(path),
-            CtlCmd::Refresh => ctl::Command::Refresh,
-        }),
+        Some(Cmd::Ctl { block, command }) => steer(block.as_deref(), command),
         Some(Cmd::Bench {
             path,
             worktree,
@@ -271,4 +277,39 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Sends a `ctl` command to the viewer it is meant for.
+fn steer(block: Option<&str>, command: CtlCmd) -> Result<()> {
+    let viewers = ctl::viewers();
+    let (command, path) = match command {
+        CtlCmd::List => {
+            for v in &viewers {
+                println!(
+                    "{}\t{}",
+                    v.status.block.as_deref().unwrap_or("-"),
+                    v.status.worktree.display()
+                );
+            }
+            return Ok(());
+        }
+        CtlCmd::Worktree { path } => {
+            let path = std::path::absolute(path)?;
+            (ctl::Command::Worktree(path.clone()), Some(path))
+        }
+        CtlCmd::File { path } => {
+            // A file named from inside a worktree travels as an absolute
+            // path, so it reaches that worktree.
+            let absolute = std::path::absolute(&path)?;
+            if absolute.exists() {
+                let line = absolute.to_string_lossy().into_owned();
+                (ctl::Command::File(line), Some(absolute))
+            } else {
+                (ctl::Command::File(path), None)
+            }
+        }
+        CtlCmd::Refresh => (ctl::Command::Refresh, None),
+    };
+    let viewer = ctl::pick(&viewers, block, path.as_deref(), repo::same_repository)?;
+    ctl::send(viewer, &command)
 }

@@ -1,0 +1,3 @@
+[tasks.install]
+description = "Install dots-diff into Cargo's bin directory"
+run = "cargo install --locked --path ."

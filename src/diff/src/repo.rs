@@ -18,6 +18,48 @@ pub(crate) struct Worktree {
     pub(crate) touched: Option<std::time::SystemTime>,
 }
 
+/// Stamps of the files whose change means a worktree's HEAD, index or the
+/// refs its base is resolved from moved. Restatting them is cheap, so the
+/// periodic check opens the repository only when they differ.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GitState(Vec<(PathBuf, Option<Stamp>)>);
+
+impl GitState {
+    pub(crate) fn of(repo: &gix::Repository) -> Self {
+        let common = repo.common_dir();
+        let mut paths = vec![
+            repo.git_dir().join("HEAD"),
+            repo.index_path(),
+            common.join("packed-refs"),
+            // Updating a loose ref renames a new file into its directory.
+            common.join("refs/heads"),
+            common.join("refs/remotes/origin"),
+        ];
+        if let Ok(Some(name)) = repo.head_name() {
+            paths.push(common.join(name.as_bstr().to_string()));
+        }
+        Self(paths.into_iter().map(|p| (p, None)).collect()).restat()
+    }
+
+    /// The same files, statted again.
+    pub(crate) fn restat(&self) -> Self {
+        Self(
+            self.0
+                .iter()
+                .map(|(path, _)| (path.clone(), stamp(path)))
+                .collect(),
+        )
+    }
+}
+
+fn stamp(path: &Path) -> Option<Stamp> {
+    let m = std::fs::symlink_metadata(path).ok()?;
+    Some(Stamp {
+        modified: m.modified().ok(),
+        len: m.len(),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Repo {
     pub(crate) worktrees: Vec<Worktree>,
@@ -33,6 +75,19 @@ impl Repo {
             .filter(|(_, w)| path.starts_with(&w.path))
             .max_by_key(|(_, w)| w.path.as_os_str().len())
             .map(|(i, _)| i)
+    }
+}
+
+/// Whether two paths lie in worktrees of one repository.
+pub(crate) fn same_repository(a: &Path, b: &Path) -> bool {
+    let common = |p: &Path| {
+        let dir = p.ancestors().find(|d| d.is_dir())?;
+        let repo = gix::discover(dir).ok()?;
+        repo.common_dir().canonicalize().ok()
+    };
+    match (common(a), common(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
     }
 }
 
@@ -142,6 +197,8 @@ pub(crate) struct Changes {
     /// For reading contents on other threads.
     pub(crate) repo: gix::ThreadSafeRepository,
     pub(crate) root: PathBuf,
+    /// Taken before the scan, so later changes show as a difference.
+    pub(crate) state: GitState,
 }
 
 /// The trees a worktree is compared through: the base and HEAD.
@@ -195,6 +252,7 @@ pub(crate) fn open(worktree: &Path, mode: Mode) -> Result<(gix::Repository, Stri
 /// including untracked files that are not ignored.
 pub(crate) fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
     let (repo, base, target) = open(worktree, mode)?;
+    let state = GitState::of(&repo);
     let status = status(&repo, worktree, Fsmonitor::Off, &[])?;
     let tree = if target.base_tree == target.head_tree {
         Vec::new()
@@ -209,6 +267,7 @@ pub(crate) fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
         files,
         repo: repo.into_sync(),
         root,
+        state,
     })
 }
 
@@ -821,6 +880,26 @@ mod tests {
         let bases = vec![("main".to_owned(), 3), ("origin/main".to_owned(), 1)];
         assert_eq!(newest(bases, is_ancestor), Some(("main".to_owned(), 3)));
         assert_eq!(newest::<u32>(vec![], is_ancestor), None);
+    }
+
+    #[test]
+    fn worktree_files_are_compared_in_git_form() {
+        let dir = std::env::temp_dir().join(format!("dots-diff-eol-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = gix::init(&dir).expect("init");
+        std::fs::write(
+            dir.join(".gitattributes"),
+            "*.txt text eol=crlf\n*.bin -text\n",
+        )
+        .expect("write");
+        std::fs::write(dir.join("a.txt"), "one\r\ntwo\r\n").expect("write");
+        std::fs::write(dir.join("b.bin"), "one\r\n").expect("write");
+        let mut reader = Reader::new(repo, dir.clone());
+        // Checked-out CRLF text is LF in the repository, so it matches the blob.
+        assert_eq!(reader.worktree_file("a.txt").expect("read"), b"one\ntwo\n");
+        // Unconverted files keep their bytes.
+        assert_eq!(reader.worktree_file("b.bin").expect("read"), b"one\r\n");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
