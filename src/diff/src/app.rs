@@ -12,8 +12,7 @@ use ratatui::layout::Rect;
 use crate::cards::{self, Placed};
 use crate::diff::{self, FileDiff, HunkEmphasis, Text};
 use crate::editor::Editor;
-use crate::highlight::{self, Key, Lines};
-use crate::lru::Lru;
+use crate::highlight;
 use crate::plan::{self, Heights, Kind, Layout, Row};
 use crate::repo::{self, FileChange, Reader, Repo, Side, Target};
 use crate::review;
@@ -21,8 +20,11 @@ use crate::theme::Palette;
 use crate::wrap;
 
 mod annotate;
+mod cache;
 mod sidebar;
 pub(crate) use annotate::{Scope, row_line};
+pub(crate) use cache::Cache;
+use cache::Loaded;
 pub(crate) use sidebar::{ListItem, Sidebar};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,12 +40,6 @@ pub(crate) const SPLIT_MIN_WIDTH: u16 = 160;
 pub(crate) const CONTEXT: u32 = 3;
 /// The most rows one file plans before the rest is cut.
 pub(crate) const ROW_CAP: usize = 40_000;
-/// Bytes of file text kept for drawing; the rest is reread on demand.
-const TEXT_BUDGET: usize = 64 * 1024 * 1024;
-/// Bytes of syntax colour kept.
-const HIGHLIGHT_BUDGET: usize = 32 * 1024 * 1024;
-const EMPHASIS_BUDGET: usize = 4 * 1024 * 1024;
-
 /// Both sides of a file's text, by content id: what a diff job hands over
 /// besides the diff, and what drawing reads.
 #[derive(Debug, Clone)]
@@ -51,9 +47,6 @@ pub(crate) struct FileTexts {
     pub(crate) old: (Option<gix::ObjectId>, Arc<Text>),
     pub(crate) new: (Option<gix::ObjectId>, Arc<Text>),
 }
-
-/// A hunk's within-line emphasis is keyed by the contents it was computed from.
-type EmphasisKey = (Option<gix::ObjectId>, Option<gix::ObjectId>, u32);
 
 /// How long changed hunks stay marked after a refresh.
 pub(crate) const FLASH: std::time::Duration = std::time::Duration::from_millis(1200);
@@ -457,13 +450,7 @@ pub(crate) struct App {
     pub(crate) mode: Mode,
     pub(crate) sidebar: Sidebar,
     pub(crate) summaries: HashMap<PathBuf, Summary>,
-    pub(crate) highlights: Lru<Key, Option<Arc<Lines>>>,
-    /// File texts by content id, for files near the view.
-    texts: Lru<gix::ObjectId, Arc<Text>>,
-    emphasis: Lru<EmphasisKey, Option<Arc<HunkEmphasis>>>,
-    /// Rereads texts the cache dropped.
-    reader: Option<Reader>,
-    empty: Arc<Text>,
+    pub(crate) cache: Cache,
     /// Set when a file's contents changed under its diff, so it needs a new one.
     pub(crate) needs_diffs: bool,
     /// Where to put the view once the top file's new diff is laid out.
@@ -545,11 +532,7 @@ impl App {
             mode: Mode::Normal,
             sidebar: Sidebar::default(),
             summaries: HashMap::new(),
-            highlights: Lru::new(HIGHLIGHT_BUDGET),
-            texts: Lru::new(TEXT_BUDGET),
-            emphasis: Lru::new(EMPHASIS_BUDGET),
-            reader: None,
-            empty: Arc::new(Text::new(Arc::from(""))),
+            cache: Cache::default(),
             needs_diffs: false,
             pending_anchor: None,
             areas: Areas::default(),
@@ -590,7 +573,7 @@ impl App {
         files: Vec<FileChange>,
         reader: Option<Reader>,
     ) {
-        self.reader = reader;
+        self.cache.set_reader(reader);
         let same = self
             .stream
             .as_ref()
@@ -764,12 +747,7 @@ impl App {
         self.laid_out = None;
         self.after_body(file, texts.as_ref());
         if near && let Some(texts) = texts {
-            for (id, text) in [texts.old, texts.new] {
-                if let Some(id) = id {
-                    let size = text.bytes();
-                    self.texts.insert(id, text, size);
-                }
-            }
+            self.cache.keep_texts(texts);
         }
     }
 
@@ -781,7 +759,7 @@ impl App {
 
     /// Both texts of a file whose diff is computed, if they are loaded.
     pub(crate) fn texts(&self, f: &FileView) -> Option<FileTexts> {
-        file_texts(&self.texts, &self.empty, f)
+        self.cache.texts(f)
     }
 
     /// Loads file `i`'s texts unless cached. A working-tree file that
@@ -791,40 +769,13 @@ impl App {
         let Some(f) = self.stream.as_ref().and_then(|s| s.files.get(i)) else {
             return;
         };
-        let Body::Text(diff) = &f.body else { return };
-        let wanted = [f.change.old, diff.new_id];
-        let mut missing = false;
-        for id in wanted.into_iter().flatten() {
-            missing |= self.texts.get(&id).is_none();
-        }
-        if !missing {
-            return;
-        }
-        let Some(reader) = &mut self.reader else {
-            return;
-        };
-        let change = f.change.clone();
-        let contents = reader.contents(&change);
-        let stale = match contents {
-            Ok(c) if c.new_id == wanted[1] => {
-                for (id, bytes) in [(change.old, c.old), (c.new_id, c.new)] {
-                    if let Some(id) = id {
-                        let text = Text::from_bytes(&bytes);
-                        let size = text.bytes();
-                        self.texts.insert(id, Arc::new(text), size);
-                    }
-                }
-                false
+        match self.cache.load_texts(f) {
+            Loaded::Ready => {}
+            Loaded::Stale => {
+                self.set_body(i, Body::Pending, None);
+                self.needs_diffs = true;
             }
-            Ok(_) => true,
-            Err(e) => {
-                self.set_body(i, Body::Unreadable(format!("{e:#}")), None);
-                false
-            }
-        };
-        if stale {
-            self.set_body(i, Body::Pending, None);
-            self.needs_diffs = true;
+            Loaded::Unreadable(e) => self.set_body(i, Body::Unreadable(e), None),
         }
     }
 
@@ -952,7 +903,7 @@ impl App {
                         cards::stack(&self.review, &self.notes, stacked, stack_width);
                     let nw = f.number_width();
                     let widths = code_widths(width, nw);
-                    let texts = file_texts(&self.texts, &self.empty, f);
+                    let texts = self.cache.texts(f);
                     let mut placed: Vec<Placed> = Vec::with_capacity(under.len());
                     let code = |r: u32| match &texts {
                         Some(texts) if wrap => row_height(&f.rows[r as usize], texts, widths),
@@ -1412,7 +1363,7 @@ impl App {
                     continue;
                 }
                 let key = (id, lang);
-                if !self.highlights.contains(&key) {
+                if !self.cache.has_highlight(&key) {
                     jobs.push(highlight::Job {
                         key,
                         text: Arc::clone(text),
@@ -1423,19 +1374,10 @@ impl App {
         jobs
     }
 
-    /// Bytes held by the text, colour and emphasis caches.
-    pub(crate) fn cache_bytes(&self) -> [usize; 3] {
-        [
-            self.texts.bytes(),
-            self.highlights.bytes(),
-            self.emphasis.bytes(),
-        ]
-    }
-
     /// Computes within-line emphasis for the changed hunks on screen.
     pub(crate) fn prepare_emphasis(&mut self, view_rows: u16) {
         let top = self.global_top();
-        let mut wanted: Vec<(EmphasisKey, usize, usize)> = Vec::new();
+        let mut wanted: Vec<(cache::EmphasisKey, usize, usize)> = Vec::new();
         for line in top..top + u32::from(view_rows) {
             let Line::Body { file, row, .. } = self.line_at(line) else {
                 continue;
@@ -1469,7 +1411,7 @@ impl App {
                     diff.new_id,
                     u32::try_from(h).unwrap_or(u32::MAX),
                 );
-                if !self.emphasis.contains(&key) && !wanted.iter().any(|(k, ..)| *k == key) {
+                if !self.cache.has_emphasis(&key) && !wanted.iter().any(|(k, ..)| *k == key) {
                     wanted.push((key, file, h));
                 }
             }
@@ -1481,11 +1423,7 @@ impl App {
                 continue;
             };
             let emphasis = diff::hunk_emphasis(&texts.old.1, &texts.new.1, &diff.hunks[h]);
-            let size = emphasis
-                .as_ref()
-                .map_or(0, |e| (e.old.len() + e.new.len()) * 8)
-                + 64;
-            self.emphasis.insert(key, emphasis.map(Arc::new), size);
+            self.cache.keep_emphasis(key, emphasis);
         }
     }
 
@@ -1545,7 +1483,7 @@ impl App {
             return None;
         };
         let key = (f.change.old, diff.new_id, u32::try_from(hunk).ok()?);
-        self.emphasis.peek(&key)?.as_deref()
+        self.cache.emphasis(&key)
     }
 }
 
@@ -1567,25 +1505,6 @@ pub(crate) fn compute_body(reader: &mut Reader, change: &FileChange) -> (Body, O
         new: (contents.new_id, new),
     };
     (Body::Text(Arc::new(diff)), Some(texts))
-}
-
-/// Both texts of `f` from the cache; a missing side is the empty text.
-fn file_texts(
-    texts: &Lru<gix::ObjectId, Arc<Text>>,
-    empty: &Arc<Text>,
-    f: &FileView,
-) -> Option<FileTexts> {
-    let Body::Text(diff) = &f.body else {
-        return None;
-    };
-    let side = |id: Option<gix::ObjectId>| match id {
-        Some(id) => texts.peek(&id).cloned().map(|t| (Some(id), t)),
-        None => Some((None, Arc::clone(empty))),
-    };
-    Some(FileTexts {
-        old: side(f.change.old)?,
-        new: side(diff.new_id)?,
-    })
 }
 
 #[cfg(test)]

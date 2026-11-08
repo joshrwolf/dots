@@ -653,9 +653,7 @@ impl Runtime {
             }
             Msg::Highlighted(done) => {
                 self.timings.highlight(done.elapsed);
-                let result = done.result.ok();
-                let size = result.as_ref().map_or(0, |l| l.bytes());
-                self.app.highlights.insert(done.key, result, size);
+                self.app.cache.keep_highlight(done.key, done.result.ok());
                 true
             }
             Msg::Summary { path, summary } => {

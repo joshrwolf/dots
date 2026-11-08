@@ -100,8 +100,7 @@ fn highlight_visible(app: &mut App, hl: &mut arborium::Highlighter, rows: u16) -
             .ok()
             .map(Arc::new);
         times.push(t.elapsed());
-        let size = result.as_ref().map_or(0, |l| l.bytes());
-        app.highlights.insert(job.key, result, size);
+        app.cache.keep_highlight(job.key, result);
     }
     times
 }
@@ -437,7 +436,7 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
                 ms(t.elapsed())
             );
         }
-        let [texts_b, colour_b, emph_b] = app.cache_bytes();
+        let [texts_b, colour_b, emph_b] = app.cache.bytes();
         let _ = writeln!(
             out,
             "  memory after diffing and scrolling: footprint {}, resident {} (counts mapped packs), caches: texts {}, colour {}, emphasis {}",

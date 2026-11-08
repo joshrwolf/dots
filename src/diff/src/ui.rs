@@ -1158,7 +1158,7 @@ fn draw_line(buf: &mut Buffer, app: &App, area: Rect, line: Line) {
 
 fn highlights<'a>(app: &'a App, f: &FileView, id: Option<gix::ObjectId>) -> Option<&'a Lines> {
     let lang = crate::highlight::language(&f.change.path)?;
-    app.highlights.peek(&(id?, lang))?.as_deref()
+    app.cache.highlight(&(id?, lang))
 }
 
 pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, part: u16) {
