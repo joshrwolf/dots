@@ -1,0 +1,28 @@
+[package]
+name = "dots-diff"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+dots-process.workspace = true
+notify.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unicode-width.workspace = true
+gix = { version = "0.90", default-features = false, features = ["status", "blob-diff", "revision", "parallel", "sha1", "pack-cache-lru-static"] }
+imara-diff = "0.2"
+similar = "3"
+arborium = { version = "2", features = ["lang-bash", "lang-c", "lang-cpp", "lang-css", "lang-dockerfile", "lang-go", "lang-html", "lang-javascript", "lang-json", "lang-lua", "lang-make", "lang-markdown", "lang-nix", "lang-python", "lang-rust", "lang-sql", "lang-toml", "lang-tsx", "lang-typescript", "lang-yaml"] }
+rustix = { version = "1", features = ["event", "stdio", "termios"] }
+tiny-skia = "0.12"
+cosmic-text = "0.19"
+flate2 = "1"
+base64 = "0.23"
+
+[lints]
+workspace = true

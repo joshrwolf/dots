@@ -13,6 +13,7 @@ members = [
     "src/github/client",
     "src/github/watch",
     "src/pick",
+    "src/diff",
 ]
 
 [workspace.package]
