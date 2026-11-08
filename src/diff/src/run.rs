@@ -835,6 +835,15 @@ impl Runtime {
         let (Some((repo, root)), Some(stream)) = (self.source.clone(), &self.app.stream) else {
             return;
         };
+        let listed: Vec<&str> = stream
+            .files
+            .iter()
+            .map(|f| f.change.path.as_str())
+            .collect();
+        if watch::needs_full_scan(&root, &paths, &listed) {
+            self.start_load();
+            return;
+        }
         let target = stream.target;
         let renames: std::collections::HashMap<String, String> = stream
             .files

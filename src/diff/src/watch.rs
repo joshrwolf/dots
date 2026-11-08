@@ -151,6 +151,19 @@ pub(crate) fn classify(path: &Path, root: &Path, is_worktree_root: bool) -> Opti
     Some(Event::File(parts.join("/")))
 }
 
+/// Whether a path-limited rescan of `paths` would go wrong: a path that is a
+/// directory on disk, or that holds files `listed` (sorted) shows. Renaming
+/// or removing a directory reports the directory alone, and status and the
+/// per-path tree lookups do not expand it the way the stream lists files.
+pub(crate) fn needs_full_scan(root: &Path, paths: &[String], listed: &[&str]) -> bool {
+    paths.iter().any(|p| {
+        let dir = std::fs::symlink_metadata(root.join(p)).is_ok_and(|m| m.is_dir());
+        let prefix = format!("{p}/");
+        let at = listed.partition_point(|l| *l < prefix.as_str());
+        dir || listed.get(at).is_some_and(|l| l.starts_with(&prefix))
+    })
+}
+
 /// A burst of file events, held until it goes quiet.
 #[derive(Debug, Default)]
 pub(crate) struct Burst {
@@ -246,6 +259,28 @@ mod tests {
             classify(Path::new("/c/.git/worktrees/w/logs/HEAD"), git, false),
             None
         );
+    }
+
+    #[test]
+    fn directories_and_paths_holding_listed_files_need_a_full_scan() {
+        let root = std::env::temp_dir().join(format!("dots-diff-dirs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src/dir2")).expect("dir");
+        std::fs::write(root.join("src/a.rs"), "").expect("file");
+        let listed = ["src/a.rs", "src/dir/a.rs", "src/dirt.rs"];
+        let full = |paths: &[&str]| {
+            let paths: Vec<String> = paths.iter().map(|p| (*p).to_owned()).collect();
+            needs_full_scan(&root, &paths, &listed)
+        };
+        assert!(!full(&["src/a.rs", "src/gone.rs"]));
+        // `mv src/dir src/dir2` reports the two directories alone.
+        assert!(full(&["src/dir2"]), "a directory on disk");
+        assert!(
+            full(&["src/dir"]),
+            "a removed directory holding listed files"
+        );
+        assert!(!full(&["src/di"]), "a name prefix is not a directory");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
