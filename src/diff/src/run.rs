@@ -54,6 +54,8 @@ pub(crate) enum Msg {
         worktree: PathBuf,
         resolution: deliver::Resolution,
         agents: Vec<deliver::Agent>,
+        /// Registrations that could not be read.
+        problems: Vec<String>,
     },
     /// A review was delivered, or not.
     Sent {
@@ -671,9 +673,13 @@ impl Runtime {
                 worktree,
                 resolution,
                 agents,
+                problems,
             } => {
                 if worktree != *self.app.worktree_path() {
                     return false;
+                }
+                if let Some(problem) = problems.first() {
+                    self.app.message = Some(format!("unreadable Pi registration {problem}"));
                 }
                 self.agents = agents;
                 self.set_resolution(resolution);

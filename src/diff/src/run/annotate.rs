@@ -92,13 +92,16 @@ impl Runtime {
     }
 
     pub(super) fn open_picker(&mut self, then_send: Option<Batch>) {
-        let agents = deliver::agents(&deliver::inbox_dir());
-        if agents.is_empty() {
-            self.app.message =
-                Some("no interactive Pi session is running; drafts are kept".to_owned());
+        let found = deliver::agents(&deliver::inbox_dir());
+        if found.agents.is_empty() {
+            let mut message = "no interactive Pi session is running; drafts are kept".to_owned();
+            if let Some(problem) = found.problems.first() {
+                message = format!("{message} (unreadable registration {problem})");
+            }
+            self.app.message = Some(message);
             return;
         }
-        self.app.picker = Some(Picker::new(agents, then_send));
+        self.app.picker = Some(Picker::new(found.agents, then_send));
     }
 
     pub(super) fn picker_key(&mut self, key: KeyEvent, ctrl: bool) {
@@ -263,12 +266,12 @@ impl Runtime {
         let picked = self.app.review.agent.clone();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let agents = deliver::agents(&deliver::inbox_dir());
-            let workers = deliver::workers();
+            let found = deliver::agents(&deliver::inbox_dir());
+            let workers = deliver::workers().map_err(|e| format!("{e:#}"));
             let here = canonical(&worktree);
             let resolution = deliver::resolve(
-                &agents,
-                &workers,
+                &found.agents,
+                workers.as_deref().map_err(String::as_str),
                 deliver::Ask {
                     worktree: &here,
                     worktrees: &worktrees,
@@ -279,7 +282,8 @@ impl Runtime {
             let _ = tx.send(Msg::Resolved {
                 worktree,
                 resolution,
-                agents,
+                agents: found.agents,
+                problems: found.problems,
             });
         });
     }
@@ -296,6 +300,7 @@ impl Runtime {
             }
             Resolution::Ambiguous(found) => format!("→ {} agents here: A to choose", found.len()),
             Resolution::None => "→ no agent: A to choose".to_owned(),
+            Resolution::Unavailable(e) => format!("→ workers unreadable ({e}): A to choose"),
         };
         self.resolution = Some(resolution);
     }

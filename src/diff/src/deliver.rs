@@ -78,6 +78,8 @@ pub(crate) enum Resolution {
     /// Several sessions fit; the user picks.
     Ambiguous(Vec<Agent>),
     None,
+    /// The workers registry, needed to find the session, could not be read.
+    Unavailable(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +119,11 @@ fn worktree_of<'a>(dir: &Path, worktrees: &'a [PathBuf]) -> Option<&'a Path> {
 /// Chooses the session for a worktree: the bound pane's Pi, the one picked
 /// for the worktree, the one interactive Pi working there, then the parent
 /// of the workers that worked there. Several at one step is ambiguous.
-pub(crate) fn resolve(agents: &[Agent], workers: &[Worker], ask: Ask<'_>) -> Resolution {
+pub(crate) fn resolve(
+    agents: &[Agent],
+    workers: std::result::Result<&[Worker], &str>,
+    ask: Ask<'_>,
+) -> Resolution {
     let found = |agent: &Agent, why| Resolution::Agent {
         agent: agent.clone(),
         worker: None,
@@ -142,6 +148,10 @@ pub(crate) fn resolve(agents: &[Agent], workers: &[Worker], ask: Ask<'_>) -> Res
         [] => {}
         many => return Resolution::Ambiguous(many.iter().map(|a| (*a).clone()).collect()),
     }
+    let workers = match workers {
+        Ok(w) => w,
+        Err(e) => return Resolution::Unavailable(e.to_owned()),
+    };
     // A worker's owner may be another worker; follow owners up to a session
     // with an inbox.
     let parent = |w: &Worker| {
@@ -191,24 +201,48 @@ pub(crate) fn inbox_dir() -> PathBuf {
     state.join("dots").join("pi-inbox")
 }
 
-/// Registered sessions whose process is alive.
-pub(crate) fn agents(dir: &Path) -> Vec<Agent> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
+/// The registered sessions whose process is alive, and registrations that
+/// could not be read.
+#[derive(Debug, Default)]
+pub(crate) struct Registered {
+    pub(crate) agents: Vec<Agent>,
+    pub(crate) problems: Vec<String>,
+}
+
+/// Registered sessions in `dir`. Sessions write their registration
+/// atomically, so one that does not parse is reported, not skipped quietly.
+pub(crate) fn agents(dir: &Path) -> Registered {
+    let mut out = Registered::default();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return out,
+        Err(e) => {
+            out.problems.push(format!("reading {}: {e}", dir.display()));
+            return out;
+        }
     };
-    let mut found: Vec<Agent> = entries
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-        .filter_map(|e| std::fs::read(e.path()).ok())
-        .filter_map(|b| serde_json::from_slice::<Agent>(&b).ok())
-        .filter(|a| alive(a.pid))
-        .map(|mut a| {
-            a.cwd = a.cwd.canonicalize().unwrap_or(a.cwd);
-            a
-        })
-        .collect();
-    found.sort_by(|a, b| a.session_id.cmp(&b.session_id));
-    found
+    for path in entries.flatten().map(|e| e.path()) {
+        if path.extension().is_none_or(|x| x != "json") {
+            continue;
+        }
+        let parsed = std::fs::read(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|b| Ok(serde_json::from_slice::<Agent>(&b)?));
+        match parsed {
+            Ok(mut a) if alive(a.pid) => {
+                a.cwd = a.cwd.canonicalize().unwrap_or(a.cwd);
+                out.agents.push(a);
+            }
+            Ok(_) => {}
+            // Removed by its session between listing and reading.
+            Err(e)
+                if e.downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) => {}
+            Err(e) => out.problems.push(format!("{}: {e:#}", path.display())),
+        }
+    }
+    out.agents.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+    out
 }
 
 fn alive(pid: u32) -> bool {
@@ -220,18 +254,24 @@ fn alive(pid: u32) -> bool {
 }
 
 /// Workers from Pi's worker registry, read only. A missing registry has none.
-pub(crate) fn workers() -> Vec<Worker> {
+pub(crate) fn workers() -> Result<Vec<Worker>> {
     let dir = std::env::var_os("PI_CODING_AGENT_DIR").map_or_else(
         || PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".pi/agent"),
         PathBuf::from,
     );
-    read_workers(&dir.join("dots/workers.db")).unwrap_or_default()
+    workers_in(&dir)
 }
 
-fn read_workers(db: &Path) -> Result<Vec<Worker>> {
+/// Workers from the registry of the Pi agent directory `dir`.
+fn workers_in(dir: &Path) -> Result<Vec<Worker>> {
+    let db = dir.join("dots/workers.db");
     if !db.exists() {
         return Ok(Vec::new());
     }
+    read_workers(&db).with_context(|| format!("reading {}", db.display()))
+}
+
+fn read_workers(db: &Path) -> Result<Vec<Worker>> {
     let conn = rusqlite::Connection::open_with_flags(
         db,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -352,7 +392,7 @@ mod tests {
             agent("parent", "/home", None),
         ];
         let workers = vec![worker("w1", "/r/.wt/feat", "/s/parent.jsonl", 5)];
-        let resolve = |bound, picked| resolve(&agents, &workers, ask(bound, picked));
+        let resolve = |bound, picked| resolve(&agents, Ok(&workers), ask(bound, picked));
         assert_eq!(
             chosen(&resolve(Some("block:a"), Some("parent"))),
             Some(("main", None, Why::Bound))
@@ -372,7 +412,7 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(
-            chosen(&super::resolve(&idle, &workers, ask(None, None))),
+            chosen(&super::resolve(&idle, Ok(&workers), ask(None, None))),
             Some(("parent", Some("w1"), Why::Parent))
         );
     }
@@ -387,19 +427,19 @@ mod tests {
             picked: None,
         };
         let two = vec![agent("a", "/r", None), agent("b", "/r/x", None)];
-        assert!(matches!(resolve(&two, &[], ask), Resolution::Ambiguous(v) if v.len() == 2));
+        assert!(matches!(resolve(&two, Ok(&[]), ask), Resolution::Ambiguous(v) if v.len() == 2));
         let parents = vec![agent("p", "/h", None), agent("q", "/h", None)];
         let workers = vec![
             worker("w1", "/r", "/s/p.jsonl", 1),
             worker("w2", "/r", "/s/q.jsonl", 2),
         ];
         assert!(matches!(
-            resolve(&parents, &workers, ask),
+            resolve(&parents, Ok(&workers), ask),
             Resolution::Ambiguous(_)
         ));
-        assert_eq!(resolve(&[], &workers, ask), Resolution::None);
+        assert_eq!(resolve(&[], Ok(&workers), ask), Resolution::None);
         assert_eq!(
-            resolve(&[agent("x", "/elsewhere", None)], &[], ask),
+            resolve(&[agent("x", "/elsewhere", None)], Ok(&[]), ask),
             Resolution::None
         );
     }
@@ -420,9 +460,107 @@ mod tests {
             worker("older", "/r", "/s/root.jsonl", 2),
         ];
         assert_eq!(
-            chosen(&resolve(&agents, &workers, ask)),
+            chosen(&resolve(&agents, Ok(&workers), ask)),
             Some(("root", Some("child"), Why::Parent))
         );
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dots-diff-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("dots")).expect("dir");
+        dir
+    }
+
+    #[test]
+    fn reads_workers_through_the_registry_schema() {
+        // The table is the workers extension's; read its own definition.
+        let source = include_str!("../../pi/extensions/workers/registry.ts");
+        let schema = source
+            .split_once("const SCHEMA = `")
+            .and_then(|(_, rest)| rest.split_once('`'))
+            .expect("registry.ts defines SCHEMA")
+            .0;
+        let dir = scratch("registry");
+        let conn = rusqlite::Connection::open(dir.join("dots/workers.db")).expect("open");
+        conn.execute_batch(schema).expect("schema");
+        conn.execute(
+            "insert into workers (id, root, owner_session, label, state, cwd, started_at, last_event_at, updated_at, session_file, pid) values ('w-1', 'w-1', '/s/p.jsonl', 'fix', 'running', '/nowhere', 1, 2, 3, '/s/w-1.jsonl', 9)",
+            [],
+        )
+        .expect("insert");
+        drop(conn);
+        let found = workers_in(&dir).expect("readable");
+        assert_eq!(
+            found,
+            [Worker {
+                id: "w-1".into(),
+                label: "fix".into(),
+                cwd: "/nowhere".into(),
+                owner_session: Some("/s/p.jsonl".into()),
+                session_file: Some("/s/w-1.jsonl".into()),
+                updated_at: 3,
+            }]
+        );
+        assert_eq!(workers_in(&dir.join("missing")).expect("none"), []);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_registry_is_reported_where_resolution_needs_it() {
+        let dir = scratch("registry-bad");
+        let conn = rusqlite::Connection::open(dir.join("dots/workers.db")).expect("open");
+        conn.execute_batch("create table workers (id text)")
+            .expect("schema");
+        drop(conn);
+        let workers = workers_in(&dir).map_err(|e| format!("{e:#}"));
+        assert!(workers.is_err(), "a changed table is an error");
+        let worktrees: Vec<PathBuf> = vec!["/r".into()];
+        let ask = Ask {
+            worktree: Path::new("/r"),
+            worktrees: &worktrees,
+            bound: None,
+            picked: None,
+        };
+        let agents = vec![agent("p", "/h", None)];
+        assert!(matches!(
+            resolve(&agents, workers.as_deref().map_err(String::as_str), ask),
+            Resolution::Unavailable(_)
+        ));
+        // Steps before the workers' do not need them.
+        let here = vec![agent("a", "/r", None)];
+        assert_eq!(
+            chosen(&resolve(
+                &here,
+                workers.as_deref().map_err(String::as_str),
+                ask
+            )),
+            Some(("a", None, Why::Working))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_registrations_are_reported() {
+        let dir = scratch("inbox");
+        let me = agent("me", "/r", None);
+        let live = serde_json::json!({
+            "pid": std::process::id(), "sessionId": me.session_id, "cwd": "/r", "socket": "/i/me.sock",
+        });
+        std::fs::write(dir.join("1.json"), live.to_string()).expect("write");
+        std::fs::write(dir.join("2.json"), "{\"pid\":").expect("write");
+        let found = agents(&dir);
+        assert_eq!(
+            found
+                .agents
+                .iter()
+                .map(|a| a.session_id.as_str())
+                .collect::<Vec<_>>(),
+            ["me"]
+        );
+        assert_eq!(found.problems.len(), 1, "{:?}", found.problems);
+        assert!(found.problems[0].contains("2.json"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
