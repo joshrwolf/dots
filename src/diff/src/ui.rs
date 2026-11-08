@@ -299,10 +299,12 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
     };
     let focused = app.focus == Focus::Files;
     let rows = usize::from(list.height);
-    let start = app.list_start(rows);
-    let visible = &app.list[start..(start + rows).min(app.list.len())];
+    let sidebar = &app.sidebar;
+    let start = sidebar.list_start(rows);
+    let all = sidebar.rows();
+    let visible = &all[start..(start + rows).min(all.len())];
     let end = list.right().saturating_sub(1);
-    let current_row = app.row_of_file(app.top.file);
+    let current_row = sidebar.row_of_file(app.top.file);
     let drafts = app.draft_counts();
     // What each row shows: marker, name, counts and whether it is reviewed.
     let rows: Vec<SidebarRow<'_>> = visible
@@ -312,7 +314,7 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
                 label, path, files, ..
             } => {
                 let (a, r, reviewed) = app.dir_summary(files.clone());
-                let open = !app.collapsed.contains(path);
+                let open = !sidebar.is_collapsed(path);
                 SidebarRow {
                     mark: (if open { "▾" } else { "▸" }, p.muted),
                     name: label.as_str(),
@@ -359,7 +361,7 @@ fn draw_sidebar(buf: &mut Buffer, app: &App, area: Rect) {
     for (slot, (item, row)) in visible.iter().zip(&rows).enumerate() {
         let y = list.y + u16::try_from(slot).unwrap_or(0);
         let index = start + slot;
-        let bg = if index == app.cursor && focused {
+        let bg = if index == sidebar.cursor() && focused {
             p.selection
         } else if Some(index) == current_row {
             p.header_bg

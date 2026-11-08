@@ -69,8 +69,8 @@ impl App {
     }
 
     fn sync_files_cursor_to(&mut self, file: Option<usize>) {
-        if let Some(row) = file.and_then(|f| self.row_of_file(f)) {
-            self.cursor = row;
+        if let Some(file) = file {
+            self.sidebar.follow_file(file);
         }
     }
 
@@ -266,9 +266,7 @@ impl App {
             Scope::Review => Ok(editor(Place::Review, "", false)),
             Scope::File => {
                 let file = match self.focus {
-                    super::Focus::Files => {
-                        self.list.get(self.cursor).map(super::ListItem::first_file)
-                    }
+                    super::Focus::Files => self.sidebar.selected().map(super::ListItem::first_file),
                     super::Focus::Diff => self.cursor_file(),
                 }
                 .ok_or("no file here")?;
@@ -446,7 +444,7 @@ impl App {
             return;
         }
         let file = match self.focus {
-            super::Focus::Files => self.list.get(self.cursor).map(super::ListItem::first_file),
+            super::Focus::Files => self.sidebar.selected().map(super::ListItem::first_file),
             super::Focus::Diff => self.cursor_file(),
         };
         let Some(f) = file.and_then(|i| self.stream.as_mut()?.files.get_mut(i)) else {

@@ -140,12 +140,13 @@ pub(crate) fn frame(options: &Frame) -> Result<String> {
     }
     for dir in &options.collapse {
         let path = format!("{}/", dir.trim_end_matches('/'));
-        app.set_collapsed(&path, true);
+        app.sidebar.set_collapsed(&path, true);
     }
     app.sync_files_cursor();
     if let Some(select) = &options.select {
         let row = app
-            .list
+            .sidebar
+            .rows()
             .iter()
             .position(|it| match it {
                 app::ListItem::Dir { path, .. } => {

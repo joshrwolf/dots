@@ -21,7 +21,9 @@ use crate::theme::Palette;
 use crate::wrap;
 
 mod annotate;
+mod sidebar;
 pub(crate) use annotate::{Scope, row_line};
+pub(crate) use sidebar::{ListItem, Sidebar};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LayoutChoice {
@@ -441,74 +443,6 @@ pub(crate) struct Areas {
     pub(crate) diff: Rect,
 }
 
-/// How a tree row's guides are drawn: for each ancestor column, whether a
-/// line continues past this row, and whether the row is its parent's last.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct Guides {
-    /// Bit `k` set: the guide in column `k` continues below this row.
-    pub(crate) rails: u64,
-    pub(crate) last: bool,
-}
-
-impl Guides {
-    /// Guides for the children of a row at `depth` drawn with `self`.
-    fn child(self, depth: u16, last: bool) -> Self {
-        let rails = if depth == 0 || last || depth > 64 {
-            self.rails
-        } else {
-            self.rails | 1 << (depth - 1)
-        };
-        Self { rails, last: false }
-    }
-
-    /// Whether column `k` of a row continues a guide from above.
-    pub(crate) fn rail(self, k: u16) -> bool {
-        k < 64 && self.rails & 1 << k != 0
-    }
-}
-
-/// One row of the file tree, `depth` levels in.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ListItem {
-    Dir {
-        /// The row's text: one directory, or a collapsed chain of them.
-        label: String,
-        /// Full path with a trailing slash; the collapse key.
-        path: String,
-        depth: u16,
-        /// Indexes of the files inside, which are contiguous.
-        files: Range<usize>,
-        guides: Guides,
-    },
-    File {
-        index: usize,
-        depth: u16,
-        guides: Guides,
-    },
-}
-
-impl ListItem {
-    pub(crate) fn depth(&self) -> u16 {
-        match self {
-            ListItem::Dir { depth, .. } | ListItem::File { depth, .. } => *depth,
-        }
-    }
-
-    pub(crate) fn guides(&self) -> Guides {
-        match self {
-            ListItem::Dir { guides, .. } | ListItem::File { guides, .. } => *guides,
-        }
-    }
-
-    /// The first file the row stands for.
-    fn first_file(&self) -> usize {
-        match self {
-            ListItem::Dir { files, .. } => files.start,
-            ListItem::File { index, .. } => *index,
-        }
-    }
-}
-
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct App {
@@ -521,8 +455,7 @@ pub(crate) struct App {
     pub(crate) top: Anchor,
     pub(crate) focus: Focus,
     pub(crate) mode: Mode,
-    /// The selected sidebar row, an index into `list`.
-    pub(crate) cursor: usize,
+    pub(crate) sidebar: Sidebar,
     pub(crate) summaries: HashMap<PathBuf, Summary>,
     pub(crate) highlights: Lru<Key, Option<Arc<Lines>>>,
     /// File texts by content id, for files near the view.
@@ -537,12 +470,6 @@ pub(crate) struct App {
     pending_anchor: Option<(String, SourceLine)>,
     pub(crate) areas: Areas,
     pub(crate) message: Option<String>,
-    /// The whole file tree.
-    tree: Vec<ListItem>,
-    /// Its rows outside collapsed directories, as the sidebar shows them.
-    pub(crate) list: Vec<ListItem>,
-    /// Paths of collapsed directories.
-    pub(crate) collapsed: HashSet<String>,
     /// Width the stream was laid out for.
     laid_out: Option<(u16, Layout, bool, (usize, usize))>,
     /// The worktree's review, and the Git directory it is saved in; `None`
@@ -616,7 +543,7 @@ impl App {
             top: Anchor::default(),
             focus: Focus::Diff,
             mode: Mode::Normal,
-            cursor: 0,
+            sidebar: Sidebar::default(),
             summaries: HashMap::new(),
             highlights: Lru::new(HIGHLIGHT_BUDGET),
             texts: Lru::new(TEXT_BUDGET),
@@ -627,9 +554,6 @@ impl App {
             pending_anchor: None,
             areas: Areas::default(),
             message: None,
-            tree: Vec::new(),
-            list: Vec::new(),
-            collapsed: HashSet::new(),
             laid_out: None,
             review: review::State::default(),
             review_dir: None,
@@ -674,8 +598,7 @@ impl App {
         if !same {
             self.stream = None;
             self.top = Anchor::default();
-            self.cursor = 0;
-            self.collapsed.clear();
+            self.sidebar.reset();
         }
         self.replace_files(files);
         if let Some(stream) = &mut self.stream {
@@ -774,8 +697,7 @@ impl App {
                 .unwrap_or_default();
         }
         self.pending_anchor = anchor;
-        self.tree = list_items(&files);
-        self.list = visible(&self.tree, &self.collapsed);
+        self.sidebar.set_files(&files);
         self.stream = Some(Stream {
             worktree,
             base,
@@ -1423,65 +1345,17 @@ impl App {
     /// Moves the sidebar cursor to the file at the top of the view, or to
     /// the collapsed directory hiding it.
     pub(crate) fn sync_files_cursor(&mut self) {
-        if let Some(row) = self.row_of_file(self.top.file) {
-            self.cursor = row;
-        }
-    }
-
-    /// The sidebar row showing file `index`: its own row or the collapsed
-    /// directory that holds it.
-    pub(crate) fn row_of_file(&self, index: usize) -> Option<usize> {
-        self.list.iter().position(|it| match it {
-            ListItem::File { index: i, .. } => *i == index,
-            ListItem::Dir { path, files, .. } => {
-                files.contains(&index) && self.collapsed.contains(path)
-            }
-        })
+        self.sidebar.follow_file(self.top.file);
     }
 
     /// Selects sidebar row `row` and brings the file it stands for (a
     /// directory's first file) to the top of the stream.
     pub(crate) fn select_row(&mut self, row: usize, view_rows: u16) {
-        let Some(item) = self.list.get(row) else {
+        let Some(file) = self.sidebar.rows().get(row).map(ListItem::first_file) else {
             return;
         };
-        let file = item.first_file();
         self.jump_to_file(file, view_rows);
-        self.cursor = row;
-    }
-
-    /// Collapses or expands the directory at sidebar row `row`; false when
-    /// the row is a file.
-    pub(crate) fn toggle_dir(&mut self, row: usize) -> bool {
-        let Some(ListItem::Dir { path, .. }) = self.list.get(row) else {
-            return false;
-        };
-        let path = path.clone();
-        self.set_collapsed(&path, !self.collapsed.contains(&path));
-        true
-    }
-
-    /// Collapses or expands the directory at `path`, keeping its row selected.
-    pub(crate) fn set_collapsed(&mut self, path: &str, collapse: bool) {
-        if collapse {
-            self.collapsed.insert(path.to_owned());
-        } else {
-            self.collapsed.remove(path);
-        }
-        self.list = visible(&self.tree, &self.collapsed);
-        if let Some(row) = self
-            .list
-            .iter()
-            .position(|it| matches!(it, ListItem::Dir { path: p, .. } if p == path))
-        {
-            self.cursor = row;
-        }
-    }
-
-    /// The sidebar row of the directory holding row `row`, if any.
-    pub(crate) fn parent_row(&self, row: usize) -> Option<usize> {
-        let depth = self.list.get(row)?.depth();
-        (0..row).rev().find(|&r| self.list[r].depth() < depth)
+        self.sidebar.select(row);
     }
 
     /// Lines added and removed in files `range`, and whether all of them
@@ -1498,14 +1372,6 @@ impl App {
         }
         let reviewed = !files.is_empty() && files.iter().all(|f| f.reviewed);
         (a, r, reviewed)
-    }
-
-    /// The first file-tree row shown in a sidebar list `rows` tall: the
-    /// cursor stays near the middle.
-    pub(crate) fn list_start(&self, rows: usize) -> usize {
-        self.cursor
-            .saturating_sub(rows / 2)
-            .min(self.list.len().saturating_sub(rows))
     }
 
     /// Highlight jobs, most wanted first: files on screen, then neighbours.
@@ -1722,93 +1588,6 @@ fn file_texts(
     })
 }
 
-/// The file list as a nested tree in path order. A directory chain with a
-/// single child directory collapses into one row, like `src/diff/src/`.
-pub(crate) fn list_items(files: &[FileView]) -> Vec<ListItem> {
-    let paths: Vec<&str> = files.iter().map(|f| f.change.path.as_str()).collect();
-    let mut items = Vec::new();
-    tree(&paths, 0..paths.len(), 0, 0, Guides::default(), &mut items);
-    items
-}
-
-/// Lists `paths[range]`, which share their first `prefix` bytes, as
-/// children at `depth` below ancestors drawn with `guides`.
-fn tree(
-    paths: &[&str],
-    range: Range<usize>,
-    prefix: usize,
-    depth: u16,
-    guides: Guides,
-    out: &mut Vec<ListItem>,
-) {
-    let mut i = range.start;
-    while i < range.end {
-        let rest = &paths[i][prefix..];
-        let Some(slash) = rest.find('/') else {
-            let last = i + 1 == range.end;
-            out.push(ListItem::File {
-                index: i,
-                depth,
-                guides: Guides { last, ..guides },
-            });
-            i += 1;
-            continue;
-        };
-        // Paths in sorted order keep each directory's contents together.
-        let head = &rest[..=slash];
-        let end = (i..range.end)
-            .find(|&j| !paths[j][prefix..].starts_with(head))
-            .unwrap_or(range.end);
-        let mut label_end = prefix + head.len();
-        while let Some(slash) = paths[i][label_end..].find('/') {
-            let next = &paths[i][label_end..=label_end + slash];
-            if !(i..end).all(|j| paths[j][label_end..].starts_with(next)) {
-                break;
-            }
-            label_end += next.len();
-        }
-        let last = end == range.end;
-        out.push(ListItem::Dir {
-            label: paths[i][prefix..label_end].to_owned(),
-            path: paths[i][..label_end].to_owned(),
-            depth,
-            files: i..end,
-            guides: Guides { last, ..guides },
-        });
-        tree(
-            paths,
-            i..end,
-            label_end,
-            depth + 1,
-            guides.child(depth, last),
-            out,
-        );
-        i = end;
-    }
-}
-
-/// The rows of `tree` left showing when the directories in `collapsed`
-/// hide their contents.
-pub(crate) fn visible(tree: &[ListItem], collapsed: &HashSet<String>) -> Vec<ListItem> {
-    let mut out = Vec::with_capacity(tree.len());
-    let mut hide_below: Option<u16> = None;
-    for item in tree {
-        if let Some(d) = hide_below {
-            if item.depth() > d {
-                continue;
-            }
-            hide_below = None;
-        }
-        if let ListItem::Dir { path, depth, .. } = item
-            && collapsed.contains(path)
-        {
-            hide_below = Some(*depth);
-        }
-        out.push(item.clone());
-    }
-    out
-}
-
 #[cfg(test)]
 pub(crate) mod fixture {
     //! Loaded apps without Git, for tests.
@@ -1913,7 +1692,8 @@ mod tests {
         assert_eq!(app.line_at(3), Line::Spacer);
         assert_eq!(app.line_at(4), Line::Header { file: 1, part: 0 });
         let labels: Vec<_> = app
-            .list
+            .sidebar
+            .rows()
             .iter()
             .map(|it| match it {
                 ListItem::Dir { label, .. } => label.clone(),
@@ -1943,106 +1723,6 @@ mod tests {
         app.toggle_fold_all();
         app.layout(80, 40);
         assert_eq!(offsets(&app), vec![0, 4, 8]);
-    }
-
-    /// A tree row as text: guides, then `name/` or a file index.
-    fn row(item: &ListItem) -> String {
-        let g = item.guides();
-        let mut s: String = (0..item.depth())
-            .map(|k| match () {
-                () if k + 1 == item.depth() => {
-                    if g.last {
-                        "╰ "
-                    } else {
-                        "├ "
-                    }
-                }
-                () if g.rail(k) => "│ ",
-                () => "  ",
-            })
-            .collect();
-        match item {
-            ListItem::Dir { label, .. } => s.push_str(label),
-            ListItem::File { index, .. } => s.push_str(&index.to_string()),
-        }
-        s
-    }
-
-    const PATHS: [&str; 6] = [
-        "docs/containers/a.md",
-        "docs/containers/b.md",
-        "src/x/deep/y.rs",
-        "src/x/z.rs",
-        "src/z.rs",
-        "top.rs",
-    ];
-
-    #[test]
-    fn file_tree_nests_with_guides_and_compacts_chains() {
-        let mut items = Vec::new();
-        tree(&PATHS, 0..PATHS.len(), 0, 0, Guides::default(), &mut items);
-        let rows: Vec<String> = items.iter().map(row).collect();
-        assert_eq!(
-            rows,
-            [
-                "docs/containers/",
-                "├ 0",
-                "╰ 1",
-                "src/",
-                "├ x/",
-                "│ ├ deep/",
-                "│ │ ╰ 2",
-                "│ ╰ 3",
-                "╰ 4",
-                "5",
-            ]
-        );
-        let ListItem::Dir { path, files, .. } = &items[4] else {
-            panic!("x/ is a directory");
-        };
-        assert_eq!((path.as_str(), files.clone()), ("src/x/", 2..4));
-    }
-
-    #[test]
-    fn collapsed_directories_hide_their_contents() {
-        let mut items = Vec::new();
-        tree(&PATHS, 0..PATHS.len(), 0, 0, Guides::default(), &mut items);
-        let collapsed: HashSet<String> = ["src/x/".to_owned()].into();
-        let rows: Vec<String> = visible(&items, &collapsed).iter().map(row).collect();
-        assert_eq!(
-            rows,
-            ["docs/containers/", "├ 0", "╰ 1", "src/", "├ x/", "╰ 4", "5"]
-        );
-    }
-
-    #[test]
-    fn sidebar_cursor_follows_files_into_collapsed_folders() {
-        let files: Vec<_> = PATHS
-            .iter()
-            .map(|p| {
-                (
-                    *p, "a
-", "b
-",
-                )
-            })
-            .collect();
-        let mut app = app_with(&files);
-        app.layout(80, 40);
-        app.set_collapsed("src/x/", true);
-        assert_eq!(app.cursor, 4, "the collapsed folder stays selected");
-        app.jump_to_file(3, 40);
-        assert_eq!(app.cursor, 4, "src/x/z.rs shows as its folder");
-        app.select_row(5, 40);
-        assert_eq!(app.top.file, 4);
-        assert_eq!(app.parent_row(5), Some(3));
-        assert!(app.toggle_dir(4));
-        assert_eq!(app.list.len(), 10);
-        let stream = app.stream.as_mut().expect("loaded");
-        stream.files[2].reviewed = true;
-        assert!(!app.dir_summary(2..4).2);
-        app.stream.as_mut().expect("loaded").files[3].reviewed = true;
-        assert!(app.dir_summary(2..4).2);
     }
 
     #[test]

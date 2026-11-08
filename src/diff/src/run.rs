@@ -1216,7 +1216,7 @@ impl Runtime {
             Action::Up => self.move_by(-1),
             Action::HalfDown => self.scroll(half),
             Action::HalfUp => self.scroll(-half),
-            Action::Space if !diff && self.app.toggle_dir(self.app.cursor) => {}
+            Action::Space if !diff && self.app.sidebar.toggle_dir(self.app.sidebar.cursor()) => {}
             Action::Space | Action::PageDown => self.scroll(page),
             Action::PageUp => self.scroll(-page),
             Action::Top if diff => self.app.move_cursor(i64::MIN / 2, rows),
@@ -1249,8 +1249,9 @@ impl Runtime {
             Action::FileComment => self.app.begin_comment(Scope::File),
             Action::Prefix => self.app.mode = Mode::Prefix,
             Action::Enter if !diff => {
-                if !self.app.toggle_dir(self.app.cursor) {
-                    self.app.select_row(self.app.cursor, rows);
+                let row = self.app.sidebar.cursor();
+                if !self.app.sidebar.toggle_dir(row) {
+                    self.app.select_row(row, rows);
                     self.app.focus = Focus::Diff;
                 }
             }
@@ -1401,7 +1402,8 @@ impl Runtime {
         match self.app.focus {
             Focus::Diff => self.app.move_cursor(delta, self.view_rows()),
             Focus::Files => {
-                let row = step(self.app.cursor, delta, self.app.list.len());
+                let sidebar = &self.app.sidebar;
+                let row = step(sidebar.cursor(), delta, sidebar.rows().len());
                 self.app.select_row(row, self.view_rows());
             }
         }
@@ -1465,7 +1467,7 @@ impl Runtime {
                 self.move_by(delta.signum());
             } else if let Some(row) = self.row_at(mouse.row) {
                 self.app.focus = Focus::Files;
-                if !self.app.toggle_dir(row) {
+                if !self.app.sidebar.toggle_dir(row) {
                     self.app.select_row(row, rows);
                 }
             }
@@ -1477,23 +1479,24 @@ impl Runtime {
     fn row_at(&self, y: u16) -> Option<usize> {
         let area = self.app.areas.files;
         let rows = usize::from(area.height.saturating_sub(1));
-        let start = self.app.list_start(rows);
+        let start = self.app.sidebar.list_start(rows);
         let slot = usize::from(y.checked_sub(area.y + 1)?);
         let row = start + slot;
-        (row < self.app.list.len()).then_some(row)
+        (row < self.app.sidebar.rows().len()).then_some(row)
     }
 
     /// Collapses the selected directory, or moves to the one holding the
     /// selected row.
     fn tree_left(&mut self) {
-        let row = self.app.cursor;
-        match self.app.list.get(row) {
-            Some(ListItem::Dir { path, .. }) if !self.app.collapsed.contains(path) => {
+        let sidebar = &mut self.app.sidebar;
+        let row = sidebar.cursor();
+        match sidebar.selected() {
+            Some(ListItem::Dir { path, .. }) if !sidebar.is_collapsed(path) => {
                 let path = path.clone();
-                self.app.set_collapsed(&path, true);
+                sidebar.set_collapsed(&path, true);
             }
             Some(_) => {
-                if let Some(parent) = self.app.parent_row(row) {
+                if let Some(parent) = sidebar.parent_row(row) {
                     self.app.select_row(parent, self.view_rows());
                 }
             }
@@ -1504,11 +1507,12 @@ impl Runtime {
     /// Expands the selected directory or steps into it; on a file, moves
     /// focus to the diff.
     fn tree_right(&mut self) {
-        let row = self.app.cursor;
-        match self.app.list.get(row) {
-            Some(ListItem::Dir { path, .. }) if self.app.collapsed.contains(path) => {
+        let sidebar = &mut self.app.sidebar;
+        let row = sidebar.cursor();
+        match sidebar.selected() {
+            Some(ListItem::Dir { path, .. }) if sidebar.is_collapsed(path) => {
                 let path = path.clone();
-                self.app.set_collapsed(&path, false);
+                sidebar.set_collapsed(&path, false);
             }
             Some(ListItem::Dir { .. }) => self.app.select_row(row + 1, self.view_rows()),
             _ => self.app.focus = Focus::Diff,
