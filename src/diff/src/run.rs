@@ -51,6 +51,8 @@ pub(crate) enum Msg {
     },
     /// Who a review of `worktree` goes to, and the live sessions.
     Resolved {
+        /// Numbers resolutions; only the latest one counts.
+        seq: u64,
         worktree: PathBuf,
         resolution: deliver::Resolution,
         agents: Vec<deliver::Agent>,
@@ -178,6 +180,8 @@ struct Runtime {
     bound: Option<(String, usize)>,
     /// Who a review goes to, once resolved, and the live sessions.
     resolution: Option<deliver::Resolution>,
+    /// Numbers resolutions and picks, so an older result never replaces a newer one.
+    resolve_seq: u64,
     agents: Vec<deliver::Agent>,
     /// A review is being delivered.
     sending: bool,
@@ -321,6 +325,7 @@ impl Runtime {
             pending_file: None,
             bound: None,
             resolution: None,
+            resolve_seq: 0,
             agents: Vec::new(),
             sending: false,
             prefix: false,
@@ -670,12 +675,13 @@ impl Runtime {
                 true
             }
             Msg::Resolved {
+                seq,
                 worktree,
                 resolution,
                 agents,
                 problems,
             } => {
-                if worktree != *self.app.worktree_path() {
+                if seq != self.resolve_seq || worktree != *self.app.worktree_path() {
                     return false;
                 }
                 if let Some(problem) = problems.first() {
@@ -1618,6 +1624,46 @@ mod tests {
         ("a.rs", "a\nb\nc\n", "a\nB\nc\nd\n"),
         ("b.rs", "x\n", "y\n"),
     ];
+
+    fn agent(id: &str, block: &str) -> deliver::Agent {
+        deliver::Agent {
+            pid: 1,
+            session_id: id.into(),
+            session_file: None,
+            session_name: Some(id.into()),
+            rex_block: Some(block.into()),
+            cwd: "/r".into(),
+            socket: format!("/i/{id}.sock").into(),
+        }
+    }
+
+    #[test]
+    fn a_pick_is_not_replaced_by_a_resolution_started_before_it() {
+        let (mut rt, _rx) = runtime(TWO);
+        // A resolution in flight, as spawn_resolve numbers it.
+        rt.resolve_seq += 1;
+        let before = rt.resolve_seq;
+        rt.app.picker = Some(crate::picker::Picker::new(vec![agent("x", "b:2")], None));
+        rt.key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(rt.app.review.agent.as_deref(), Some("x"));
+        let bound = deliver::Resolution::Agent {
+            agent: agent("bound", "b:1"),
+            worker: None,
+            why: deliver::Why::Bound,
+        };
+        rt.handle(Msg::Resolved {
+            seq: before,
+            worktree: "/r".into(),
+            resolution: bound,
+            agents: Vec::new(),
+            problems: Vec::new(),
+        });
+        assert!(
+            matches!(&rt.resolution, Some(deliver::Resolution::Agent { agent, .. }) if agent.session_id == "x"),
+            "{}",
+            rt.app.target
+        );
+    }
 
     #[test]
     fn the_mouse_does_nothing_under_the_editor_and_overlays() {

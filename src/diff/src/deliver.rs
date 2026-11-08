@@ -80,14 +80,16 @@ pub(crate) enum Resolution {
     None,
     /// The workers registry, needed to find the session, could not be read.
     Unavailable(String),
+    /// The session the user picked has ended; they pick again.
+    PickGone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Why {
-    /// The pane the viewer was opened beside.
-    Bound,
     /// The user picked it for this worktree.
     Picked,
+    /// The pane the viewer was opened beside.
+    Bound,
     /// The only interactive Pi working in the worktree.
     Working,
     /// The parent of the worker that worked in the worktree.
@@ -116,9 +118,11 @@ fn worktree_of<'a>(dir: &Path, worktrees: &'a [PathBuf]) -> Option<&'a Path> {
         .map(PathBuf::as_path)
 }
 
-/// Chooses the session for a worktree: the bound pane's Pi, the one picked
-/// for the worktree, the one interactive Pi working there, then the parent
-/// of the workers that worked there. Several at one step is ambiguous.
+/// Chooses the session for a worktree: the one the user picked for it, the
+/// bound pane's Pi, the one interactive Pi working there, then the parent of
+/// the workers that worked there. Several at one step is ambiguous. A pick
+/// holds until the user changes it; once its session ends, nothing else is
+/// chosen in its place.
 pub(crate) fn resolve(
     agents: &[Agent],
     workers: std::result::Result<&[Worker], &str>,
@@ -129,17 +133,17 @@ pub(crate) fn resolve(
         worker: None,
         why,
     };
+    if let Some(picked) = ask.picked {
+        return agents
+            .iter()
+            .find(|a| a.session_id == picked)
+            .map_or(Resolution::PickGone, |a| found(a, Why::Picked));
+    }
     if let Some(a) = ask
         .bound
         .and_then(|b| agents.iter().find(|a| a.rex_block.as_deref() == Some(b)))
     {
         return found(a, Why::Bound);
-    }
-    if let Some(a) = ask
-        .picked
-        .and_then(|p| agents.iter().find(|a| a.session_id == p))
-    {
-        return found(a, Why::Picked);
     }
     let here = |dir: &Path| worktree_of(dir, ask.worktrees) == Some(ask.worktree);
     let working: Vec<&Agent> = agents.iter().filter(|a| here(&a.cwd)).collect();
@@ -378,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_in_order_bound_picked_working_then_parent() {
+    fn resolves_in_order_picked_bound_working_then_parent() {
         let worktrees: Vec<PathBuf> = vec!["/r".into(), "/r/.wt/feat".into(), "/w/other".into()];
         let ask = |bound, picked| Ask {
             worktree: Path::new("/r/.wt/feat"),
@@ -393,13 +397,19 @@ mod tests {
         ];
         let workers = vec![worker("w1", "/r/.wt/feat", "/s/parent.jsonl", 5)];
         let resolve = |bound, picked| resolve(&agents, Ok(&workers), ask(bound, picked));
+        // An explicit pick wins over the pane the viewer was opened from.
         assert_eq!(
             chosen(&resolve(Some("block:a"), Some("parent"))),
-            Some(("main", None, Why::Bound))
+            Some(("parent", None, Why::Picked))
         );
         assert_eq!(
-            chosen(&resolve(Some("block:gone"), Some("parent"))),
-            Some(("parent", None, Why::Picked))
+            chosen(&resolve(Some("block:a"), None)),
+            Some(("main", None, Why::Bound))
+        );
+        // A picked session that ended is never replaced by a guess.
+        assert_eq!(
+            resolve(Some("block:a"), Some("ended")),
+            Resolution::PickGone
         );
         // The main worktree's Pi is not in the nested worktree.
         assert_eq!(

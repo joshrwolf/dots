@@ -115,6 +115,8 @@ impl Runtime {
                 let then_send = picker.then_send;
                 self.app.picker = None;
                 let Some(agent) = chosen else { return };
+                // Resolutions started before the pick do not replace it.
+                self.resolve_seq += 1;
                 self.app.review.agent = Some(agent.session_id.clone());
                 self.app.review_dirty = true;
                 self.set_resolution(Resolution::Agent {
@@ -158,8 +160,13 @@ impl Runtime {
         }
         let (agent, worker) = match &self.resolution {
             Some(Resolution::Agent { agent, worker, .. }) => (agent.clone(), worker.clone()),
-            Some(_) => {
+            Some(other) => {
+                let gone = *other == Resolution::PickGone;
                 self.open_picker(Some(batch));
+                if gone && self.app.picker.is_some() {
+                    self.app.message =
+                        Some("the session you picked has ended; choose another".to_owned());
+                }
                 return;
             }
             None => {
@@ -248,7 +255,9 @@ impl Runtime {
     }
 
     /// Finds who a review of the shown worktree goes to, off the event loop.
-    pub(super) fn spawn_resolve(&self) {
+    pub(super) fn spawn_resolve(&mut self) {
+        self.resolve_seq += 1;
+        let seq = self.resolve_seq;
         let worktree = self.app.worktree_path().clone();
         let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_owned());
         let worktrees: Vec<PathBuf> = self
@@ -280,6 +289,7 @@ impl Runtime {
                 },
             );
             let _ = tx.send(Msg::Resolved {
+                seq,
                 worktree,
                 resolution,
                 agents: found.agents,
@@ -301,6 +311,7 @@ impl Runtime {
             Resolution::Ambiguous(found) => format!("→ {} agents here: A to choose", found.len()),
             Resolution::None => "→ no agent: A to choose".to_owned(),
             Resolution::Unavailable(e) => format!("→ workers unreadable ({e}): A to choose"),
+            Resolution::PickGone => "→ the picked session ended: A to choose".to_owned(),
         };
         self.resolution = Some(resolution);
     }
