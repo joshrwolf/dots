@@ -233,7 +233,7 @@ fn view(
     let palette = Palette::new(detected.unwrap_or_else(Detected::light));
     let mut settings = options.settings.clone();
     if options.graphics {
-        settings.header_rows = 2;
+        settings.header_rows = crate::graphics::HEADER_ROWS;
     }
     let app = App::new(repo, current, palette, settings);
     let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);
@@ -255,7 +255,7 @@ fn view(
     }
     let outcome = rt.event_loop(terminal, &rx, graphics.as_mut());
     if let Some(g) = graphics.as_mut() {
-        g.clear();
+        terminal::send(terminal, &g.clear())?;
     }
     outcome.map(|()| rt.timings)
 }
@@ -378,6 +378,12 @@ impl Runtime {
         while !self.quit {
             if dirty {
                 let t = Instant::now();
+                if let Some(g) = graphics.as_deref_mut() {
+                    // Images go out before the frame whose cells show them.
+                    terminal.autoresize()?;
+                    ui::lay_out(&mut self.app, terminal.get_frame().area());
+                    terminal::send(terminal, &g.prepare(&mut self.app))?;
+                }
                 let completed = terminal.draw(|f| ui::draw(f, &mut self.app))?;
                 if let Some(path) = self.shot.take()
                     && let Err(e) = crate::render::picture(completed.buffer, &path)
@@ -385,9 +391,6 @@ impl Runtime {
                     self.app.message = Some(format!("{e:#}"));
                 }
                 self.app.mark_notes_seen(self.view_rows());
-                if let Some(g) = graphics.as_deref_mut() {
-                    g.after_draw(&self.app)?;
-                }
                 frames += 1;
                 if frames == 1 {
                     self.timings
@@ -410,7 +413,7 @@ impl Runtime {
             while let Ok(msg) = rx.try_recv() {
                 dirty |= self.handle(msg);
             }
-            dirty |= self.tick(terminal, graphics.as_deref_mut())?;
+            dirty |= self.tick(terminal)?;
         }
         Ok(())
     }
@@ -438,11 +441,7 @@ impl Runtime {
     /// Does the loop's own work once messages are handled: saving,
     /// refreshes that are due, fading marks, the safety net, colour
     /// queries and stale switcher counts. Returns whether to draw.
-    fn tick(
-        &mut self,
-        terminal: &mut terminal::Tui,
-        graphics: Option<&mut Graphics>,
-    ) -> Result<bool> {
+    fn tick(&mut self, terminal: &mut terminal::Tui) -> Result<bool> {
         let mut dirty = false;
         self.refresh_moves();
         if self.app.session.dirty() {
@@ -476,9 +475,6 @@ impl Runtime {
             terminal::send(terminal, &theme::query())?;
         }
         if std::mem::take(&mut self.theme.changed) {
-            if let Some(g) = graphics {
-                g.invalidate();
-            }
             // Repaint everything: the buffer diff cannot know every cell changed.
             terminal::repaint(terminal)?;
             dirty = true;

@@ -11,6 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use crate::app::{App, Body, FileTexts, FileView, Focus, Line, Mode};
 use crate::cards::{self, Placed};
 use crate::diff::FileDiff;
+use crate::graphics;
 use crate::highlight::{Lines, Role, Run};
 use crate::moves::Moved;
 use crate::plan::{Kind, Row};
@@ -61,13 +62,19 @@ pub(crate) fn areas(app: &App, area: Rect) -> (Rect, Rect, Rect) {
     (files, diff, status)
 }
 
-pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut App) {
-    let full = frame.area();
-    let (files, diff, status) = areas(app, full);
+/// Lays the view out for a frame of `full`; drawing does it too.
+pub(crate) fn lay_out(app: &mut App, full: Rect) {
+    let (files, diff, _) = areas(app, full);
     app.areas = crate::app::Areas { files, diff };
     app.layout(diff.width, diff.height);
     app.clamp_cursor(diff.height);
     app.prepare_emphasis(diff.height);
+}
+
+pub(crate) fn draw(frame: &mut Frame<'_>, app: &mut App) {
+    let full = frame.area();
+    lay_out(app, full);
+    let (files, diff, status) = areas(app, full);
     let buf = frame.buffer_mut();
     let p = app.palette.clone();
     fill(buf, full, Style::new().bg(p.bg).fg(p.fg));
@@ -573,6 +580,22 @@ pub(crate) fn draw_header(buf: &mut Buffer, app: &App, area: Rect, file: usize, 
     let p = &app.palette;
     let Some(stream) = &app.stream else { return };
     let f = &stream.files[file];
+    if let Some(&id) = app.header_images.get(&file) {
+        let style = Style::new().bg(p.header_bg).fg(graphics::image_color(id));
+        for (col, x) in (area.left()..area.right()).enumerate() {
+            let cell = &mut buf[(x, area.y)];
+            cell.reset();
+            let symbol = u16::try_from(col)
+                .ok()
+                .and_then(|col| graphics::placeholder(part, col));
+            match symbol {
+                Some(symbol) => cell.set_symbol(&symbol).set_style(style),
+                // Past the image's last column.
+                None => cell.set_symbol(" ").set_style(Style::new().bg(p.header_bg)),
+            };
+        }
+        return;
+    }
     fill(buf, area, Style::new().bg(p.header_bg).fg(p.fg));
     if part + 1 < app.settings.header_rows {
         // Upper rows of a tall header are left for its image.

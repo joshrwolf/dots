@@ -624,6 +624,9 @@ pub(crate) struct App {
     /// Where to put the view once the top file's new diff is laid out.
     pending_anchor: Option<(String, SourceLine)>,
     pub(crate) areas: Areas,
+    /// With `--graphics`, the kitty image that shows each file's header
+    /// in this frame, by file.
+    pub(crate) header_images: HashMap<usize, u32>,
     pub(crate) message: Option<String>,
     /// The review and agents' notes.
     pub(crate) session: Session,
@@ -668,6 +671,7 @@ impl App {
             needs_diffs: false,
             pending_anchor: None,
             areas: Areas::default(),
+            header_images: HashMap::new(),
             message: None,
             session: Session::default(),
             cursor_row: 0,

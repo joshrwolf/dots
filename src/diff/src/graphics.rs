@@ -1,18 +1,18 @@
-//! `--graphics`: file headers drawn as kitty graphics images, pinned to the
-//! header's cells (`c=`, `r=`) so every client scales them to its own cell
-//! size. Code stays text. Each image is drawn once per distinct header and
-//! re-placed as it moves; a new placement goes up before the old one is
-//! deleted, so headers never flicker.
+//! `--graphics`: file headers drawn as kitty graphics images through
+//! Unicode placeholders. Each image is transmitted once with a virtual
+//! placement; the header's cells then hold placeholder characters that
+//! name the image and the cell's row and column in it, so the terminal
+//! draws the image wherever those cells are. Headers scroll, clip and
+//! disappear with the text around them. Code stays text.
 
 use std::collections::HashMap;
-use std::hash::{Hash as _, Hasher as _};
 use std::io::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
 use base64::Engine as _;
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, Weight};
+use ratatui::style::Color;
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::app::{App, Line};
@@ -37,25 +37,437 @@ struct Spec {
     counts: Option<(u32, u32)>,
     reviewed: bool,
     cols: u16,
+    rows: u16,
     /// Foreground, muted, green, red, amber and background.
     colors: [Rgb; 6],
     cell: (u16, u16),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Placed {
-    image: u32,
-    placement: u32,
-    x: u16,
-    y: u16,
+/// Rows of a header drawn as an image.
+pub(crate) const HEADER_ROWS: u16 = 2;
+
+/// The character a placeholder cell holds.
+const PLACEHOLDER: char = '\u{10EEEE}';
+
+/// The combining marks that number a placeholder cell's row and column
+/// in its image, in order, as the kitty graphics protocol lists them.
+const DIACRITICS: [char; 297] = [
+    '\u{0305}',
+    '\u{030D}',
+    '\u{030E}',
+    '\u{0310}',
+    '\u{0312}',
+    '\u{033D}',
+    '\u{033E}',
+    '\u{033F}',
+    '\u{0346}',
+    '\u{034A}',
+    '\u{034B}',
+    '\u{034C}',
+    '\u{0350}',
+    '\u{0351}',
+    '\u{0352}',
+    '\u{0357}',
+    '\u{035B}',
+    '\u{0363}',
+    '\u{0364}',
+    '\u{0365}',
+    '\u{0366}',
+    '\u{0367}',
+    '\u{0368}',
+    '\u{0369}',
+    '\u{036A}',
+    '\u{036B}',
+    '\u{036C}',
+    '\u{036D}',
+    '\u{036E}',
+    '\u{036F}',
+    '\u{0483}',
+    '\u{0484}',
+    '\u{0485}',
+    '\u{0486}',
+    '\u{0487}',
+    '\u{0592}',
+    '\u{0593}',
+    '\u{0594}',
+    '\u{0595}',
+    '\u{0597}',
+    '\u{0598}',
+    '\u{0599}',
+    '\u{059C}',
+    '\u{059D}',
+    '\u{059E}',
+    '\u{059F}',
+    '\u{05A0}',
+    '\u{05A1}',
+    '\u{05A8}',
+    '\u{05A9}',
+    '\u{05AB}',
+    '\u{05AC}',
+    '\u{05AF}',
+    '\u{05C4}',
+    '\u{0610}',
+    '\u{0611}',
+    '\u{0612}',
+    '\u{0613}',
+    '\u{0614}',
+    '\u{0615}',
+    '\u{0616}',
+    '\u{0617}',
+    '\u{0657}',
+    '\u{0658}',
+    '\u{0659}',
+    '\u{065A}',
+    '\u{065B}',
+    '\u{065D}',
+    '\u{065E}',
+    '\u{06D6}',
+    '\u{06D7}',
+    '\u{06D8}',
+    '\u{06D9}',
+    '\u{06DA}',
+    '\u{06DB}',
+    '\u{06DC}',
+    '\u{06DF}',
+    '\u{06E0}',
+    '\u{06E1}',
+    '\u{06E2}',
+    '\u{06E4}',
+    '\u{06E7}',
+    '\u{06E8}',
+    '\u{06EB}',
+    '\u{06EC}',
+    '\u{0730}',
+    '\u{0732}',
+    '\u{0733}',
+    '\u{0735}',
+    '\u{0736}',
+    '\u{073A}',
+    '\u{073D}',
+    '\u{073F}',
+    '\u{0740}',
+    '\u{0741}',
+    '\u{0743}',
+    '\u{0745}',
+    '\u{0747}',
+    '\u{0749}',
+    '\u{074A}',
+    '\u{07EB}',
+    '\u{07EC}',
+    '\u{07ED}',
+    '\u{07EE}',
+    '\u{07EF}',
+    '\u{07F0}',
+    '\u{07F1}',
+    '\u{07F3}',
+    '\u{0816}',
+    '\u{0817}',
+    '\u{0818}',
+    '\u{0819}',
+    '\u{081B}',
+    '\u{081C}',
+    '\u{081D}',
+    '\u{081E}',
+    '\u{081F}',
+    '\u{0820}',
+    '\u{0821}',
+    '\u{0822}',
+    '\u{0823}',
+    '\u{0825}',
+    '\u{0826}',
+    '\u{0827}',
+    '\u{0829}',
+    '\u{082A}',
+    '\u{082B}',
+    '\u{082C}',
+    '\u{082D}',
+    '\u{0951}',
+    '\u{0953}',
+    '\u{0954}',
+    '\u{0F82}',
+    '\u{0F83}',
+    '\u{0F86}',
+    '\u{0F87}',
+    '\u{135D}',
+    '\u{135E}',
+    '\u{135F}',
+    '\u{17DD}',
+    '\u{193A}',
+    '\u{1A17}',
+    '\u{1A75}',
+    '\u{1A76}',
+    '\u{1A77}',
+    '\u{1A78}',
+    '\u{1A79}',
+    '\u{1A7A}',
+    '\u{1A7B}',
+    '\u{1A7C}',
+    '\u{1B6B}',
+    '\u{1B6D}',
+    '\u{1B6E}',
+    '\u{1B6F}',
+    '\u{1B70}',
+    '\u{1B71}',
+    '\u{1B72}',
+    '\u{1B73}',
+    '\u{1CD0}',
+    '\u{1CD1}',
+    '\u{1CD2}',
+    '\u{1CDA}',
+    '\u{1CDB}',
+    '\u{1CE0}',
+    '\u{1DC0}',
+    '\u{1DC1}',
+    '\u{1DC3}',
+    '\u{1DC4}',
+    '\u{1DC5}',
+    '\u{1DC6}',
+    '\u{1DC7}',
+    '\u{1DC8}',
+    '\u{1DC9}',
+    '\u{1DCB}',
+    '\u{1DCC}',
+    '\u{1DD1}',
+    '\u{1DD2}',
+    '\u{1DD3}',
+    '\u{1DD4}',
+    '\u{1DD5}',
+    '\u{1DD6}',
+    '\u{1DD7}',
+    '\u{1DD8}',
+    '\u{1DD9}',
+    '\u{1DDA}',
+    '\u{1DDB}',
+    '\u{1DDC}',
+    '\u{1DDD}',
+    '\u{1DDE}',
+    '\u{1DDF}',
+    '\u{1DE0}',
+    '\u{1DE1}',
+    '\u{1DE2}',
+    '\u{1DE3}',
+    '\u{1DE4}',
+    '\u{1DE5}',
+    '\u{1DE6}',
+    '\u{1DFE}',
+    '\u{20D0}',
+    '\u{20D1}',
+    '\u{20D4}',
+    '\u{20D5}',
+    '\u{20D6}',
+    '\u{20D7}',
+    '\u{20DB}',
+    '\u{20DC}',
+    '\u{20E1}',
+    '\u{20E7}',
+    '\u{20E9}',
+    '\u{20F0}',
+    '\u{2CEF}',
+    '\u{2CF0}',
+    '\u{2CF1}',
+    '\u{2DE0}',
+    '\u{2DE1}',
+    '\u{2DE2}',
+    '\u{2DE3}',
+    '\u{2DE4}',
+    '\u{2DE5}',
+    '\u{2DE6}',
+    '\u{2DE7}',
+    '\u{2DE8}',
+    '\u{2DE9}',
+    '\u{2DEA}',
+    '\u{2DEB}',
+    '\u{2DEC}',
+    '\u{2DED}',
+    '\u{2DEE}',
+    '\u{2DEF}',
+    '\u{2DF0}',
+    '\u{2DF1}',
+    '\u{2DF2}',
+    '\u{2DF3}',
+    '\u{2DF4}',
+    '\u{2DF5}',
+    '\u{2DF6}',
+    '\u{2DF7}',
+    '\u{2DF8}',
+    '\u{2DF9}',
+    '\u{2DFA}',
+    '\u{2DFB}',
+    '\u{2DFC}',
+    '\u{2DFD}',
+    '\u{2DFE}',
+    '\u{2DFF}',
+    '\u{A66F}',
+    '\u{A67C}',
+    '\u{A67D}',
+    '\u{A6F0}',
+    '\u{A6F1}',
+    '\u{A8E0}',
+    '\u{A8E1}',
+    '\u{A8E2}',
+    '\u{A8E3}',
+    '\u{A8E4}',
+    '\u{A8E5}',
+    '\u{A8E6}',
+    '\u{A8E7}',
+    '\u{A8E8}',
+    '\u{A8E9}',
+    '\u{A8EA}',
+    '\u{A8EB}',
+    '\u{A8EC}',
+    '\u{A8ED}',
+    '\u{A8EE}',
+    '\u{A8EF}',
+    '\u{A8F0}',
+    '\u{A8F1}',
+    '\u{AAB0}',
+    '\u{AAB2}',
+    '\u{AAB3}',
+    '\u{AAB7}',
+    '\u{AAB8}',
+    '\u{AABE}',
+    '\u{AABF}',
+    '\u{AAC1}',
+    '\u{FE20}',
+    '\u{FE21}',
+    '\u{FE22}',
+    '\u{FE23}',
+    '\u{FE24}',
+    '\u{FE25}',
+    '\u{FE26}',
+    '\u{10A0F}',
+    '\u{10A38}',
+    '\u{1D185}',
+    '\u{1D186}',
+    '\u{1D187}',
+    '\u{1D188}',
+    '\u{1D189}',
+    '\u{1D1AA}',
+    '\u{1D1AB}',
+    '\u{1D1AC}',
+    '\u{1D1AD}',
+    '\u{1D242}',
+    '\u{1D243}',
+    '\u{1D244}',
+];
+
+/// The widest image placeholders can show, in cells.
+#[expect(clippy::cast_possible_truncation, reason = "the protocol numbers 297")]
+pub(crate) const MAX_COLS: u16 = DIACRITICS.len() as u16;
+
+/// The text of the cell at `row` and `col` of an image shown through
+/// placeholders, or `None` past the last numbered row or column.
+pub(crate) fn placeholder(row: u16, col: u16) -> Option<String> {
+    let row = DIACRITICS.get(usize::from(row))?;
+    let col = DIACRITICS.get(usize::from(col))?;
+    Some([PLACEHOLDER, *row, *col].into_iter().collect())
+}
+
+/// The foreground colour that names image `id` in its placeholder cells:
+/// its low 24 bits as red, green and blue.
+pub(crate) fn image_color(id: u32) -> Color {
+    let [_, r, g, b] = id.to_be_bytes();
+    Color::Rgb(r, g, b)
+}
+
+/// Raw bytes of images kept transmitted; the least recently shown beyond
+/// these are deleted from the terminal. Rex keeps 10 MB of images per pane
+/// and silently drops the oldest beyond that, which would blank headers.
+const KEEP_BYTES: usize = 8 << 20;
+
+/// The header images transmitted to the terminal, by what they show.
+#[derive(Debug, Clone, Copy)]
+struct Image {
+    id: u32,
+    bytes: usize,
+    /// The last frame that showed it.
+    shown: u64,
+}
+
+#[derive(Debug)]
+struct Images {
+    by_spec: HashMap<Spec, Image>,
+    /// Raw bytes of all images.
+    bytes: usize,
+    next_id: u32,
+    frame: u64,
+}
+
+impl Images {
+    fn new() -> Self {
+        Self {
+            by_spec: HashMap::new(),
+            bytes: 0,
+            next_id: 1,
+            frame: 0,
+        }
+    }
+
+    /// Starts a frame; images it shows are not evicted at its end.
+    fn begin(&mut self) {
+        self.frame += 1;
+    }
+
+    /// The id of the image showing `spec`, drawn with `draw` and
+    /// transmitted into `out` the first time.
+    fn get(&mut self, spec: &Spec, out: &mut String, draw: impl FnOnce(&Spec) -> Pixmap) -> u32 {
+        if let Some(image) = self.by_spec.get_mut(spec) {
+            image.shown = self.frame;
+            return image.id;
+        }
+        let id = self.next_id;
+        // Ids fit the 24 bits a foreground colour carries, and never 0.
+        self.next_id = self.next_id % 0x00FF_FFFF + 1;
+        let pixmap = draw(spec);
+        transmit(out, &pixmap, id, spec.cols, spec.rows);
+        let image = Image {
+            id,
+            bytes: pixmap.data().len(),
+            shown: self.frame,
+        };
+        self.bytes += image.bytes;
+        self.by_spec.insert(spec.clone(), image);
+        id
+    }
+
+    /// Deletes the least recently shown images until those kept fit
+    /// [`KEEP_BYTES`], never one the current frame shows.
+    fn evict(&mut self, out: &mut String) {
+        if self.bytes <= KEEP_BYTES {
+            return;
+        }
+        let mut by_age: Vec<Image> = self
+            .by_spec
+            .values()
+            .filter(|image| image.shown != self.frame)
+            .copied()
+            .collect();
+        by_age.sort_unstable_by_key(|image| image.shown);
+        let mut gone = Vec::new();
+        for image in by_age {
+            if self.bytes <= KEEP_BYTES {
+                break;
+            }
+            delete(out, image.id);
+            self.bytes -= image.bytes;
+            gone.push(image.id);
+        }
+        self.by_spec.retain(|_, image| !gone.contains(&image.id));
+    }
+
+    /// Deletes every image.
+    fn clear(&mut self, out: &mut String) {
+        for image in self.by_spec.values() {
+            delete(out, image.id);
+        }
+        self.by_spec.clear();
+        self.bytes = 0;
+    }
 }
 
 pub(crate) struct Graphics {
     fonts: Arc<Mutex<Option<Fonts>>>,
-    images: HashMap<u64, (u32, Instant)>,
-    placed: Vec<Placed>,
-    next_id: u32,
-    next_placement: u32,
+    images: Images,
     /// Time spent drawing and encoding images, for `--timings`.
     pub(crate) drawn: Vec<Duration>,
 }
@@ -63,13 +475,10 @@ pub(crate) struct Graphics {
 impl std::fmt::Debug for Graphics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Graphics")
-            .field("images", &self.images.len())
+            .field("images", &self.images.by_spec.len())
             .finish_non_exhaustive()
     }
 }
-
-/// Images kept uploaded; older ones are deleted from the terminal.
-const KEEP: usize = 48;
 
 impl Graphics {
     pub(crate) fn new() -> Self {
@@ -87,10 +496,7 @@ impl Graphics {
         });
         Self {
             fonts,
-            images: HashMap::new(),
-            placed: Vec::new(),
-            next_id: 1,
-            next_placement: 1,
+            images: Images::new(),
             drawn: Vec::new(),
         }
     }
@@ -100,143 +506,59 @@ impl Graphics {
         self.fonts.lock().is_ok_and(|f| f.is_none())
     }
 
-    /// Forgets every image, after a theme change.
-    pub(crate) fn invalidate(&mut self) {
-        self.clear();
-    }
-
-    pub(crate) fn clear(&mut self) {
-        let mut out = std::io::stdout().lock();
-        let _ = out.write_all(b"\x1b_Ga=d,d=A,q=2\x1b\\");
-        let _ = out.flush();
-        self.images.clear();
-        self.placed.clear();
-    }
-
-    /// Places an image over every header on screen, after the text frame.
-    pub(crate) fn after_draw(&mut self, app: &App) -> Result<()> {
+    /// Sets the images of the headers the laid-out view shows in
+    /// `app.header_images`. Returns what to send the terminal before the
+    /// frame: images it has not seen, and deletions of old ones.
+    pub(crate) fn prepare(&mut self, app: &mut App) -> String {
+        app.header_images.clear();
+        let mut out = String::new();
         let fonts_slot = Arc::clone(&self.fonts);
         let Ok(mut guard) = fonts_slot.lock() else {
-            return Ok(());
+            return out;
         };
         let Some(fonts) = guard.as_mut() else {
-            return Ok(());
+            return out;
         };
-        if app.stream.is_none() {
-            drop(guard);
-            return self.place(Vec::new(), 0, 0);
-        }
-        let area = app.areas.diff;
-        let rows = app.settings.header_rows;
+        self.images.begin();
         let cell = cell_pixels();
-        let mut headers = Vec::new();
-        if area.height >= rows {
-            let pinned = app.pinned_header();
-            if let Some(file) = pinned {
-                headers.push((file, area.y));
-            }
-            let top = app.global_top();
-            let first = if pinned.is_some() { rows } else { 0 };
-            for y in first..area.height.saturating_sub(rows - 1) {
-                if let Line::Header { file, part: 0 } = app.line_at(top + u32::from(y)) {
-                    headers.push((file, area.y + y));
-                }
-            }
-        }
-        let mut out = Vec::new();
-        let mut wanted = Vec::new();
-        for (file, y) in headers {
-            let spec = spec_for(app, file, area.width, cell);
-            let mut hasher = std::hash::DefaultHasher::new();
-            spec.hash(&mut hasher);
-            let key = hasher.finish();
-            let id = if let Some((id, used)) = self.images.get_mut(&key) {
-                *used = Instant::now();
-                *id
-            } else {
+        let cols = app.areas.diff.width.min(MAX_COLS);
+        for file in shown_headers(app) {
+            let spec = spec_for(app, file, cols, cell);
+            let id = self.images.get(&spec, &mut out, |spec| {
                 let started = Instant::now();
-                let pixmap = render(fonts, &spec, rows);
-                let id = self.next_id;
-                self.next_id += 1;
-                upload(&mut out, &pixmap, id);
+                let pixmap = render(fonts, spec);
                 self.drawn.push(started.elapsed());
-                self.images.insert(key, (id, Instant::now()));
-                id
-            };
-            wanted.push((id, area.x, y));
-        }
-        drop(guard);
-        let mut stdout = std::io::stdout().lock();
-        stdout.write_all(&out)?;
-        drop(stdout);
-        self.place(wanted, area.width, rows)?;
-        self.evict();
-        Ok(())
-    }
-
-    fn place(&mut self, wanted: Vec<(u32, u16, u16)>, cols: u16, rows: u16) -> Result<()> {
-        let mut out = Vec::new();
-        let mut kept = Vec::new();
-        for (image, x, y) in wanted {
-            if let Some(p) = self
-                .placed
-                .iter()
-                .find(|p| p.image == image && p.x == x && p.y == y)
-            {
-                kept.push(*p);
-                continue;
-            }
-            let placement = self.next_placement;
-            self.next_placement += 1;
-            write!(
-                out,
-                "\x1b7\x1b[{};{}H\x1b_Ga=p,i={image},p={placement},c={cols},r={rows},C=1,q=2\x1b\\\x1b8",
-                y + 1,
-                x + 1
-            )?;
-            kept.push(Placed {
-                image,
-                placement,
-                x,
-                y,
+                pixmap
             });
+            app.header_images.insert(file, id);
         }
-        for old in &self.placed {
-            if !kept.contains(old) {
-                write!(
-                    out,
-                    "\x1b_Ga=d,d=i,i={},p={},q=2\x1b\\",
-                    old.image, old.placement
-                )?;
-            }
-        }
-        self.placed = kept;
-        let mut stdout = std::io::stdout().lock();
-        stdout.write_all(&out)?;
-        stdout.flush()?;
-        Ok(())
+        self.images.evict(&mut out);
+        out
     }
 
-    fn evict(&mut self) {
-        if self.images.len() <= KEEP {
-            return;
-        }
-        let mut by_age: Vec<(u64, u32, Instant)> = self
-            .images
-            .iter()
-            .map(|(k, (id, t))| (*k, *id, *t))
-            .collect();
-        by_age.sort_by_key(|e| e.2);
-        let mut out = std::io::stdout().lock();
-        for (key, id, _) in by_age.into_iter().take(self.images.len() - KEEP) {
-            if self.placed.iter().any(|p| p.image == id) {
-                continue;
-            }
-            let _ = write!(out, "\x1b_Ga=d,d=I,i={id},q=2\x1b\\");
-            self.images.remove(&key);
-        }
-        let _ = out.flush();
+    /// Deletes every image this viewer transmitted.
+    pub(crate) fn clear(&mut self) -> String {
+        let mut out = String::new();
+        self.images.clear(&mut out);
+        out
     }
+}
+
+/// The files whose header shows, wholly or in part, in the laid-out view.
+fn shown_headers(app: &App) -> Vec<usize> {
+    if app.stream.is_none() {
+        return Vec::new();
+    }
+    let mut files: Vec<usize> = app.pinned_header().into_iter().collect();
+    let top = app.global_top();
+    for y in 0..app.areas.diff.height {
+        if let Line::Header { file, .. } = app.line_at(top + u32::from(y))
+            && !files.contains(&file)
+        {
+            files.push(file);
+        }
+    }
+    files
 }
 
 /// What the header image of `file` shows.
@@ -256,6 +578,7 @@ fn spec_for(app: &App, file: usize, cols: u16, cell: (u16, u16)) -> Spec {
         counts: f.counts(),
         reviewed: f.reviewed,
         cols,
+        rows: app.settings.header_rows,
         colors: [p.fg, p.muted, p.green, p.red, p.amber, p.header_bg],
         cell,
     }
@@ -263,13 +586,16 @@ fn spec_for(app: &App, file: usize, cols: u16, cell: (u16, u16)) -> Spec {
 
 /// Draws the header image of the file at the top of the view to a PNG,
 /// to check it without a terminal.
-pub(crate) fn header_picture(app: &App, cols: u16, path: &std::path::Path) -> Result<()> {
+pub(crate) fn header_picture(app: &App, cols: u16, path: &std::path::Path) -> anyhow::Result<()> {
     let mut fonts = Fonts {
         system: FontSystem::new(),
         cache: SwashCache::new(),
     };
-    let spec = spec_for(app, app.top.file, cols, (10, 20));
-    let pixmap = render(&mut fonts, &spec, 2);
+    let spec = Spec {
+        rows: HEADER_ROWS,
+        ..spec_for(app, app.top.file, cols, (10, 20))
+    };
+    let pixmap = render(&mut fonts, &spec);
     pixmap.save_png(path)?;
     Ok(())
 }
@@ -295,13 +621,13 @@ fn text_color(c: Rgb) -> cosmic_text::Color {
 /// Draws a header: a status dot, the path in a proportional font, counts,
 /// and a check mark once the file is reviewed.
 #[expect(clippy::too_many_lines, reason = "one header drawn top to bottom")]
-fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
+fn render(fonts: &mut Fonts, spec: &Spec) -> Pixmap {
     // Draw at twice the cell size when the terminal reports small cells, so
     // high-density screens stay sharp.
     let scale = if spec.cell.1 < 24 { 2.0 } else { 1.0 };
     let cw = f32::from(spec.cell.0) * scale;
     let w_px = (f32::from(spec.cols) * cw).max(1.0);
-    let h_px = (f32::from(spec.cell.1 * rows) * scale).max(1.0);
+    let h_px = (f32::from(spec.cell.1 * spec.rows) * scale).max(1.0);
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -375,7 +701,6 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
             right,
             mid,
             font,
-            header_bg,
         );
         let aw = measure(fonts, &added, font, Weight::NORMAL);
         right -= aw + cw * 0.8;
@@ -386,7 +711,6 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
             right,
             mid,
             font,
-            header_bg,
         );
     }
     // Path: directory muted, name bold; the directory is cut first. A
@@ -407,7 +731,6 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
             x0,
             mid,
             font,
-            header_bg,
         );
         x0 += measure(fonts, &from, font, Weight::NORMAL);
     }
@@ -441,7 +764,6 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
         x0,
         mid,
         font,
-        header_bg,
     );
     let name_color = if spec.reviewed { muted } else { fg };
     draw_text(
@@ -451,7 +773,6 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
         x0 + dw,
         mid,
         font * 1.05,
-        header_bg,
     );
     if let Some(note) = &note {
         draw_text(
@@ -461,7 +782,6 @@ fn render(fonts: &mut Fonts, spec: &Spec, rows: u16) -> Pixmap {
             x0 + dw + name_w,
             mid,
             font * 0.9,
-            header_bg,
         );
     }
     pixmap
@@ -531,14 +851,12 @@ fn draw_text(
     x: f32,
     mid: f32,
     size: f32,
-    bg: Rgb,
 ) {
     let mut b = buffer(fonts, spans, size);
     let line_h = size * 1.25;
     let top = mid - line_h / 2.0;
     let (w, h) = (pixmap.width(), pixmap.height());
     let data = pixmap.data_mut();
-    let _ = bg;
     b.draw(
         &mut fonts.system,
         &mut fonts.cache,
@@ -576,27 +894,218 @@ fn draw_text(
     );
 }
 
-/// Transmits `pixmap` as image `id` (raw RGBA, zlib-compressed) without placing it.
-fn upload(out: &mut Vec<u8>, pixmap: &Pixmap, id: u32) {
+/// Transmits `pixmap` as image `id` (raw RGBA, zlib-compressed) with a
+/// virtual placement `cols` by `rows` cells, for placeholders to show.
+fn transmit(out: &mut String, pixmap: &Pixmap, id: u32, cols: u16, rows: u16) {
     use flate2::write::ZlibEncoder;
+    use std::fmt::Write as _;
     let mut z = ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     let _ = z.write_all(pixmap.data());
     let compressed = z.finish().unwrap_or_default();
     let data = base64::engine::general_purpose::STANDARD.encode(compressed);
-    let chunks: Vec<&[u8]> = data.as_bytes().chunks(4096).collect();
-    for (i, chunk) in chunks.iter().enumerate() {
-        let more = u8::from(i + 1 < chunks.len());
-        if i == 0 {
+    let mut chunks = data.as_bytes().chunks(4096).peekable();
+    let mut first = true;
+    while let Some(chunk) = chunks.next() {
+        let more = u8::from(chunks.peek().is_some());
+        if first {
             let _ = write!(
                 out,
-                "\x1b_Ga=t,f=32,o=z,s={},v={},i={id},q=2,m={more};",
+                "\x1b_Ga=T,U=1,f=32,o=z,s={},v={},i={id},c={cols},r={rows},q=2,m={more};",
                 pixmap.width(),
                 pixmap.height()
             );
+            first = false;
         } else {
             let _ = write!(out, "\x1b_Gm={more};");
         }
-        out.extend_from_slice(chunk);
-        out.extend_from_slice(b"\x1b\\");
+        // Base64 is ASCII.
+        out.push_str(std::str::from_utf8(chunk).unwrap_or_default());
+        out.push_str("\x1b\\");
+    }
+}
+
+/// Deletes image `id` and its placements.
+fn delete(out: &mut String, id: u32) {
+    use std::fmt::Write as _;
+    let _ = write!(out, "\x1b_Ga=d,d=I,i={id},q=2\x1b\\");
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::*;
+    use crate::app::fixture::app_with;
+
+    fn spec(path: &str) -> Spec {
+        Spec {
+            path: path.into(),
+            from: None,
+            note: None,
+            folded: false,
+            status: Status::Modified,
+            counts: Some((1, 2)),
+            reviewed: false,
+            cols: 40,
+            rows: 2,
+            colors: [(0, 0, 0); 6],
+            cell: (10, 20),
+        }
+    }
+
+    fn pixmap(_: &Spec) -> Pixmap {
+        Pixmap::new(4, 2).expect("pixmap")
+    }
+
+    #[test]
+    fn placeholders_number_their_row_and_column_with_diacritics() {
+        assert_eq!(
+            placeholder(0, 0).as_deref(),
+            Some("\u{10EEEE}\u{305}\u{305}")
+        );
+        assert_eq!(
+            placeholder(1, 2).as_deref(),
+            Some("\u{10EEEE}\u{30D}\u{30E}")
+        );
+        assert_eq!(
+            placeholder(0, MAX_COLS - 1).as_deref(),
+            Some("\u{10EEEE}\u{305}\u{1D244}")
+        );
+        assert_eq!(placeholder(0, MAX_COLS), None);
+        assert_eq!(image_color(0x0001_0203), Color::Rgb(1, 2, 3));
+        // One cell wide, so ratatui lays the row out as the terminal does.
+        let cell = placeholder(1, 7).expect("placeholder");
+        assert_eq!(unicode_width::UnicodeWidthStr::width(cell.as_str()), 1);
+    }
+
+    #[test]
+    fn an_image_is_transmitted_once_with_a_virtual_placement() {
+        let mut images = Images::new();
+        let mut out = String::new();
+        let mut drawn = 0;
+        images.begin();
+        let a = images.get(&spec("a.rs"), &mut out, |s| {
+            drawn += 1;
+            pixmap(s)
+        });
+        assert!(
+            out.starts_with(&format!(
+                "\x1b_Ga=T,U=1,f=32,o=z,s=4,v=2,i={a},c=40,r=2,q=2,m=0;"
+            )),
+            "{out:?}"
+        );
+        out.clear();
+        images.begin();
+        let again = images.get(&spec("a.rs"), &mut out, |s| {
+            drawn += 1;
+            pixmap(s)
+        });
+        assert_eq!((again, drawn, out.as_str()), (a, 1, ""));
+    }
+
+    #[test]
+    fn a_new_theme_cell_size_or_width_draws_a_new_image() {
+        let mut images = Images::new();
+        let mut out = String::new();
+        let base = spec("a.rs");
+        let themed = Spec {
+            colors: [(255, 255, 255); 6],
+            ..base.clone()
+        };
+        let finer = Spec {
+            cell: (20, 40),
+            ..base.clone()
+        };
+        let wider = Spec {
+            cols: 80,
+            ..base.clone()
+        };
+        let ids: Vec<u32> = [&base, &themed, &finer, &wider]
+            .into_iter()
+            .map(|s| images.get(s, &mut out, pixmap))
+            .collect();
+        assert_eq!(ids, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn eviction_deletes_the_least_recently_shown_but_never_what_is_on_screen() {
+        // Each image is a quarter of what is kept.
+        let quarter = |_: &Spec| Pixmap::new(1024, 512).expect("pixmap");
+        let mut images = Images::new();
+        let mut out = String::new();
+        images.begin();
+        let first = images.get(&spec("first"), &mut out, quarter);
+        for i in 0..3 {
+            images.begin();
+            images.get(&spec(&format!("{i}")), &mut out, quarter);
+        }
+        images.evict(&mut out);
+        assert_eq!(images.by_spec.len(), 4, "they fit");
+        // The oldest is shown again in the frame that overflows the cache.
+        images.begin();
+        images.get(&spec("first"), &mut out, quarter);
+        images.get(&spec("new"), &mut out, quarter);
+        images.get(&spec("newer"), &mut out, quarter);
+        out.clear();
+        images.evict(&mut out);
+        assert_eq!(images.bytes, KEEP_BYTES);
+        assert!(images.by_spec.values().any(|image| image.id == first));
+        // The images of "0" and "1" were shown least recently.
+        assert_eq!(
+            out,
+            "\x1b_Ga=d,d=I,i=2,q=2\x1b\\\x1b_Ga=d,d=I,i=3,q=2\x1b\\"
+        );
+    }
+
+    #[test]
+    fn large_images_go_in_chunks_that_carry_the_keys_once() {
+        let mut out = String::new();
+        let mut big = Pixmap::new(400, 200).expect("pixmap");
+        // Noise, so compression leaves several chunks.
+        for (i, b) in big.data_mut().iter_mut().enumerate() {
+            *b = u8::try_from(i.wrapping_mul(2_654_435_761) >> 24 & 0xFF).unwrap_or(0);
+        }
+        transmit(&mut out, &big, 7, 40, 2);
+        let chunks: Vec<&str> = out.split_terminator("\x1b\\").collect();
+        assert!(chunks.len() > 2, "{}", chunks.len());
+        assert!(chunks[0].starts_with("\x1b_Ga=T,U=1,") && chunks[0].contains(",m=1;"));
+        assert!(
+            chunks[1..chunks.len() - 1]
+                .iter()
+                .all(|c| c.starts_with("\x1b_Gm=1;"))
+        );
+        assert!(chunks[chunks.len() - 1].starts_with("\x1b_Gm=0;"));
+    }
+
+    #[test]
+    fn a_header_with_an_image_is_drawn_only_as_placeholders() {
+        let mut app = app_with(&[("a.rs", "a\n", "b\n"), ("b.rs", "x\n", "y\n")]);
+        app.settings.header_rows = 2;
+        app.relayout();
+        app.header_images.insert(0, 0x0001_0203);
+        let mut terminal = Terminal::new(TestBackend::new(100, 12)).expect("terminal");
+        terminal
+            .draw(|f| crate::ui::draw(f, &mut app))
+            .expect("draw");
+        let buf = terminal.backend().buffer();
+        let diff = app.areas.diff;
+        for part in 0..2 {
+            let y = diff.y + part;
+            let cell = &buf[(diff.x + 3, y)];
+            assert_eq!(Some(cell.symbol().to_owned()), placeholder(part, 3));
+            assert_eq!(cell.fg, Color::Rgb(1, 2, 3));
+        }
+        let text = crate::render::dump(buf, false);
+        assert_eq!(
+            text.matches("a.rs").count(),
+            1,
+            "only the sidebar names a.rs:\n{text}"
+        );
+        assert_eq!(
+            text.matches("b.rs").count(),
+            2,
+            "b.rs has no image:\n{text}"
+        );
     }
 }
