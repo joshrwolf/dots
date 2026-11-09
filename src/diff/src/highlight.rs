@@ -120,13 +120,17 @@ impl Lines {
 pub(crate) const MAX_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_LINES: u32 = 60_000;
 
-/// The grammar for a path, if any.
+/// The grammar for a path, if any. Grammars compile on first use.
 pub(crate) fn language(path: &str) -> Option<&'static str> {
     let name = path.rsplit('/').next().unwrap_or(path);
     match name {
         "Makefile" | "makefile" | "GNUmakefile" => return Some("make"),
         "Dockerfile" => return Some("dockerfile"),
         "Cargo.lock" | "uv.lock" => return Some("toml"),
+        "BUILD" | "WORKSPACE" => return Some("starlark"),
+        ".zshrc" | ".zshenv" | ".zprofile" | ".zlogin" | ".zlogout" | "zshrc" | "zshenv"
+        | "zprofile" => return Some("zsh"),
+        _ if name.ends_with(".tfvars") => return Some("hcl"),
         _ => {}
     }
     let lang = arborium::detect_language(path)?;
@@ -139,22 +143,31 @@ const SUPPORTED: &[&str] = &[
     "c",
     "cpp",
     "css",
+    "diff",
     "dockerfile",
     "go",
+    "hcl",
     "html",
+    "ini",
+    "java",
     "javascript",
     "json",
     "lua",
     "make",
     "markdown",
     "nix",
+    "proto",
     "python",
+    "rego",
     "rust",
     "sql",
+    "starlark",
     "toml",
     "tsx",
     "typescript",
+    "xml",
     "yaml",
+    "zsh",
 ];
 
 /// Colours one whole file. Inner captures win over the ones enclosing them,
@@ -348,6 +361,52 @@ mod tests {
                 end: 9,
                 role: Role::Comment
             }]
+        );
+    }
+
+    #[test]
+    fn every_supported_grammar_is_compiled_in_and_colours_its_files() {
+        let samples = [
+            (
+                "infra/main.tf",
+                "hcl",
+                "resource \"x\" \"y\" {\n  # hi\n}\n",
+            ),
+            ("prod.tfvars", "hcl", "region = \"us\"\n"),
+            (
+                "fix.patch",
+                "diff",
+                "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n",
+            ),
+            ("src/A.java", "java", "class A { // hi\n}\n"),
+            ("pom.xml", "xml", "<a b=\"c\"><!-- hi --></a>\n"),
+            ("api/v1.proto", "proto", "syntax = \"proto3\";\n// hi\n"),
+            ("setup.cfg", "ini", "[a]\n; hi\nb = c\n"),
+            ("home/.zshrc", "zsh", "# hi\nexport A=1\n"),
+            ("rex.zsh", "zsh", "# hi\n"),
+            ("pkg/BUILD", "starlark", "# hi\ncc_library(name = \"a\")\n"),
+            ("BUILD.bazel", "starlark", "# hi\n"),
+            ("policy.rego", "rego", "package a\n# hi\n"),
+        ];
+        let mut hl = arborium::Highlighter::new();
+        for (path, want, src) in samples {
+            assert_eq!(language(path), Some(want), "{path}");
+            let text = Text::new(Arc::from(src));
+            let lines = highlight(&mut hl, want, &text).expect(want);
+            let coloured = (0..text.len()).any(|i| !lines.line(i).is_empty());
+            assert!(coloured, "{path}: no colour");
+        }
+        for lang in SUPPORTED {
+            let text = Text::new(Arc::from("x\n"));
+            assert!(
+                highlight(&mut hl, lang, &text).is_ok(),
+                "{lang} is not compiled in"
+            );
+        }
+        let text = Text::new(Arc::from("x\n"));
+        assert!(
+            highlight(&mut hl, "cobol", &text).is_err(),
+            "not compiled in"
         );
     }
 }
