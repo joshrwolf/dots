@@ -278,6 +278,9 @@ impl App {
                 } else {
                     texts.new.1
                 };
+                if end >= text.len() {
+                    return Err("the selection is gone".to_owned());
+                }
                 let anchored: Vec<String> = (start.line..=end)
                     .map(|i| text.line(i).to_owned())
                     .collect();

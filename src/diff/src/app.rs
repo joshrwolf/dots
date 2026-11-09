@@ -798,7 +798,8 @@ impl App {
     /// regions, and the source line at the top of the view.
     fn replace_files(&mut self, keys: Keys, files: Vec<FileChange>) {
         let old = self.stream.take();
-        // A selection follows its file by path, and ends when it is gone.
+        // A selection follows its file by path, and ends when the file is
+        // gone or its contents changed, since its lines may be gone too.
         let visual = match &self.mode {
             Mode::Visual(v) => old
                 .as_ref()
@@ -812,6 +813,7 @@ impl App {
             .flat_map(|s| s.files)
             .map(|f| (f.change.path.clone(), f))
             .collect();
+        let mut changed: Vec<String> = Vec::new();
         let files: Vec<FileView> = files
             .into_iter()
             .map(|change| match previous.remove(&change.path) {
@@ -820,6 +822,7 @@ impl App {
                     kept
                 }
                 Some(stale) => {
+                    changed.push(change.path.clone());
                     let mut f = FileView::new(change);
                     f.expanded = stale.expanded;
                     f.folded = stale.folded;
@@ -844,6 +847,7 @@ impl App {
         }
         if let Mode::Visual(_) = self.mode {
             self.mode = visual
+                .filter(|(path, _)| !changed.contains(path))
                 .and_then(|(path, v)| {
                     let file = files.iter().position(|f| f.change.path == path)?;
                     Some(Mode::Visual(Pos { file, ..v }))
@@ -1747,6 +1751,32 @@ mod tests {
         assert_eq!(app.visual(), Some(&pos(2)));
         // b.rs reverted: the selection ends, and commenting cannot panic.
         app.apply_paths(&["b.rs".to_owned()], Vec::new());
+        app.layout(80, 40);
+        assert!(matches!(app.mode, Mode::Normal), "{:?}", app.mode);
+        app.begin_comment(Scope::Lines);
+    }
+
+    #[test]
+    fn a_selection_ends_when_its_file_changes_under_it() {
+        let long: String = (0..50).map(|i| format!("l{i}\n")).collect();
+        let mut app = app_with(&[("a.rs", "x\n", "y\n"), ("b.rs", "", &long)]);
+        app.layout(80, 40);
+        app.mode = Mode::Visual(Pos {
+            file: 1,
+            side: review::Side::New,
+            line: 40,
+        });
+        // An agent rewrites b.rs to two lines while the selection is open.
+        let short = "s0\ns1\n";
+        app.apply_paths(&["b.rs".to_owned()], vec![change("b.rs", "", short)]);
+        let text = Arc::new(Text::new(Arc::from(short)));
+        let id = Some(super::fixture::id_of(short));
+        let texts = FileTexts {
+            old: (None, Arc::new(Text::new(Arc::from("")))),
+            new: (id, Arc::clone(&text)),
+        };
+        let diff = FileDiff::compute(&texts.old.1, &text, id);
+        app.set_body(1, Body::Text(Arc::new(diff)), Some(texts));
         app.layout(80, 40);
         assert!(matches!(app.mode, Mode::Normal), "{:?}", app.mode);
         app.begin_comment(Scope::Lines);
