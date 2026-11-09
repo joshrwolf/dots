@@ -96,7 +96,13 @@ fn status(
     let view = memory.view(&head, None)?;
     let known = &view.manifest().projects;
     let (project, shared, sharing, machine) = match registered {
-        None => (None, None, Sharing::Unshared, false),
+        None => {
+            let machine = crate::project::catalog_path()?.try_exists()?
+                && crate::project::open()?
+                    .sharing()?
+                    .is_some_and(|sharing| sharing.enabled);
+            (None, None, Sharing::Unshared, machine)
+        }
         Some((mut catalog, project)) => {
             let shared = crate::memory::binding(memory, &project)?;
             let sharing = if shared.is_some() {

@@ -430,6 +430,20 @@ mod tests {
             Value::Null
         );
 
+        // An unregistered checkout still reports this machine's sharing.
+        let unregistered = a.root.join("unregistered");
+        fs::create_dir_all(&unregistered).unwrap();
+        git(&unregistered, &["init", "-q"]);
+        let unregistered = a.ok(&[
+            "--directory",
+            unregistered.to_str().unwrap(),
+            "project",
+            "share",
+        ]);
+        assert_eq!(unregistered["project"], Value::Null, "{unregistered}");
+        assert_eq!(unregistered["sharing"], "unshared");
+        assert_eq!(unregistered["machine_sharing"], true);
+
         let declined = a.ok(&["project", "share", "--decline"]);
         assert_eq!(declined["sharing"], "declined", "{declined}");
         assert_eq!(a.ok(&["memory", "context"])["sharing"], "declined");
