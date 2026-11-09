@@ -116,10 +116,7 @@ test('an open inbox registers, acknowledges deliveries and unregisters', async (
     assert.equal(statSync(registered.socket).mode & 0o077, 0);
     const text = 'Review\n\n1. `a.rs:3` "quoted"';
     assert.equal(
-      await request(
-        registered.socket,
-        JSON.stringify({type: 'deliver', text}),
-      ),
+      await request(registered.socket, JSON.stringify({type: 'deliver', text})),
       '{"ok":true,"state":"queued"}',
     );
     assert.deepEqual(received, [text]);
