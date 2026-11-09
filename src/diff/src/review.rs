@@ -442,17 +442,23 @@ pub(crate) fn since_sent(
     out
 }
 
-/// What the user was shown when a review is sent: every file listed now
-/// at its content, kept so a later view can compare with it, and every
-/// file of the last send no longer listed at its base, which it matches
-/// again. A file whose content cannot be read keeps its last record.
+/// What the user was shown when a review is sent: every file `shown` at
+/// its content, kept so a later view can compare with it, and every file
+/// of the last send no longer listed at its base, which it matches again.
+/// Files listed but `hidden` from view, and files whose content cannot be
+/// read, keep their last record.
 pub(crate) fn seen_at_send(
     mut seen: BTreeMap<String, String>,
-    listed: &[FileChange],
+    shown: &[FileChange],
+    hidden: &[String],
     target: crate::repo::Target,
     reader: &mut Reader,
 ) -> BTreeMap<String, String> {
-    let paths: std::collections::HashSet<&str> = listed.iter().map(|c| c.path.as_str()).collect();
+    let paths: std::collections::HashSet<&str> = shown
+        .iter()
+        .map(|c| c.path.as_str())
+        .chain(hidden.iter().map(String::as_str))
+        .collect();
     for (path, sent) in &mut seen {
         if !paths.contains(path.as_str())
             && let Ok(base) = reader.blob_in(target.base_tree, path)
@@ -460,7 +466,7 @@ pub(crate) fn seen_at_send(
             *sent = content_key(base);
         }
     }
-    for change in listed {
+    for change in shown {
         if let Ok(id) = reader.keep(change) {
             seen.insert(change.path.clone(), content_key(id));
         }
@@ -750,7 +756,7 @@ mod tests {
             ("new.rs".to_owned(), key(added)),
         ]);
         let mut reader = Reader::new(repo, dir.clone());
-        let second = seen_at_send(first, &[], target, &mut reader);
+        let second = seen_at_send(first.clone(), &[], &[], target, &mut reader);
         assert_eq!(
             second,
             BTreeMap::from([
@@ -761,6 +767,12 @@ mod tests {
         // So the view since send 2 shows nothing until they change again.
         let since = since_sent(Vec::new(), &second, |_| true, target, &mut reader);
         assert!(since.is_empty(), "{since:?}");
+        // Files the author filter hid were not shown, so keep their record.
+        let hidden = ["a.rs".to_owned(), "new.rs".to_owned()];
+        assert_eq!(
+            seen_at_send(first.clone(), &[], &hidden, target, &mut reader),
+            first
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

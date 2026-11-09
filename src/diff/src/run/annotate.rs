@@ -226,7 +226,13 @@ impl Runtime {
         };
         let text = review::message(&header, &comments);
         let ids: Vec<u64> = comments.iter().map(|c| c.id).collect();
-        let changes: Vec<_> = stream.files.iter().map(|f| f.change.clone()).collect();
+        let changes: Vec<_> = stream.shown().map(|(_, f)| f.change.clone()).collect();
+        let hidden: Vec<_> = stream
+            .files
+            .iter()
+            .filter(|f| f.hidden)
+            .map(|f| f.change.path.clone())
+            .collect();
         let target = stream.target;
         let seen = self.app.session.state().seen.clone();
         let worktree = stream.worktree.clone();
@@ -236,7 +242,7 @@ impl Runtime {
         self.app.message = Some(format!("sending to {}…", agent.label()));
         std::thread::spawn(move || {
             let mut reader = Reader::new(repo.to_thread_local(), root);
-            let seen = review::seen_at_send(seen, &changes, target, &mut reader);
+            let seen = review::seen_at_send(seen, &changes, &hidden, target, &mut reader);
             let result = deliver::send(&agent, &text)
                 .map(|ack| {
                     reader.prune_kept(&seen);

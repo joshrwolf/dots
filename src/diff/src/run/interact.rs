@@ -203,7 +203,6 @@ impl Runtime {
                     Some(f) => format!("only {}'s files (a: next)", f.label()),
                     None => "every file".to_owned(),
                 });
-                self.reload();
             }
             Action::Switcher => {
                 self.app.mode = Mode::Switcher(Switcher::new(&self.app));

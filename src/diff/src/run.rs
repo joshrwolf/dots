@@ -644,9 +644,7 @@ impl Runtime {
                         self.app.message = Some(format!("not attributed: {p}"));
                     }
                 }
-                if self.app.set_attribution(Some(attribution)) {
-                    self.start_load();
-                }
+                self.app.set_attribution(Some(attribution));
                 true
             }
             Msg::Touched(touched) => {
@@ -1175,6 +1173,45 @@ mod tests {
             .map(|n| n.place.path())
             .collect();
         assert_eq!(left, [Some("b.rs")]);
+    }
+
+    #[test]
+    fn the_author_filter_and_attribution_change_the_view_without_a_reload() {
+        let (mut rt, _rx) = runtime(TWO);
+        rt.app
+            .session
+            .install(Path::new("/r"), Err("fixture".into()));
+        let by = |files: &[&str]| crate::attribution::Attribution {
+            worktree: "/r".into(),
+            authors: vec!["fix".into()],
+            files: files.iter().map(|f| ((*f).to_owned(), vec![0])).collect(),
+            problems: Vec::new(),
+        };
+        rt.handle(Msg::Attributed(by(&["b.rs"])));
+        rt.app.top = crate::app::Anchor { file: 1, line: 1 };
+        press(&mut rt, "a");
+        assert_eq!(
+            rt.app.author_filter,
+            Some(crate::app::AuthorFilter::Author("fix".into()))
+        );
+        let screen = draw(&mut rt);
+        assert!(
+            !screen.contains("a.rs") && screen.contains("b.rs"),
+            "{screen}"
+        );
+        rt.handle(Msg::Attributed(by(&["a.rs", "b.rs"])));
+        press(&mut rt, "aa");
+        assert_eq!(rt.app.author_filter, None);
+        draw(&mut rt);
+        assert_eq!(
+            rt.app.top,
+            crate::app::Anchor { file: 1, line: 1 },
+            "the view stayed"
+        );
+        assert!(
+            !rt.pipeline.loading && rt.app.stream.is_some(),
+            "nothing reloaded"
+        );
     }
 
     #[test]

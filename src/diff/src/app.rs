@@ -183,6 +183,8 @@ pub(crate) struct FileView {
     pub(crate) expanded: HashSet<u32>,
     /// Shown as its header alone.
     pub(crate) folded: bool,
+    /// Left out by the author filter: it takes no lines.
+    pub(crate) hidden: bool,
     /// Marked reviewed at its current content.
     pub(crate) reviewed: bool,
     /// Cards under rows, by row, for files laid out near the view.
@@ -217,6 +219,7 @@ impl FileView {
             body: Body::Pending,
             expanded: HashSet::new(),
             folded: false,
+            hidden: false,
             reviewed: false,
             cards: Vec::new(),
             file_cards: Vec::new(),
@@ -251,6 +254,9 @@ impl FileView {
     /// The first body line of the file's block, after the cards above, the
     /// header and the file's cards.
     pub(crate) fn body_start(&self) -> u32 {
+        if self.hidden {
+            return 0;
+        }
         self.above + 1 + self.card_lines()
     }
 
@@ -295,7 +301,7 @@ impl FileView {
     /// Lines the body takes: rows, or one line for a note.
     fn body_lines(&self) -> u32 {
         match &self.body {
-            _ if self.folded => 0,
+            _ if self.folded || self.hidden => 0,
             Body::Text(_) if self.heights.rows() > 0 => self.heights.total(),
             _ => 1,
         }
@@ -557,15 +563,32 @@ impl Stream {
         let mut at = 0;
         for (i, f) in self.files.iter().enumerate() {
             self.offsets[i] = at;
-            at += f.body_start() + f.body_lines() + u32::from(spacers);
+            at += f.body_start() + f.body_lines() + u32::from(spacers && !f.hidden);
         }
         self.offsets[self.files.len()] = at;
     }
 
+    /// The files shown, with their indexes.
+    pub(crate) fn shown(&self) -> impl DoubleEndedIterator<Item = (usize, &FileView)> {
+        self.files.iter().enumerate().filter(|(_, f)| !f.hidden)
+    }
+
+    /// The first file shown at or after `i`, else the last one before it.
+    pub(crate) fn shown_near(&self, i: usize) -> Option<usize> {
+        let at_or_after = self.files.iter().skip(i).position(|f| !f.hidden);
+        at_or_after.map(|d| i + d).or_else(|| {
+            self.files[..i.min(self.files.len())]
+                .iter()
+                .rposition(|f| !f.hidden)
+        })
+    }
+
+    /// Lines added and removed in the files shown, and whether all their
+    /// diffs are computed.
     pub(crate) fn counts(&self) -> (u32, u32, bool) {
         let mut done = true;
         let (mut a, mut r) = (0, 0);
-        for f in &self.files {
+        for (_, f) in self.shown() {
             match f.counts() {
                 Some((fa, fr)) => {
                     a += fa;
@@ -756,8 +779,7 @@ impl App {
             base: changes.base,
             target: changes.target,
         };
-        let files = self.filter_authors(changes.files);
-        self.load(keys, files, Some(reader));
+        self.load(keys, changes.files, Some(reader));
         self.refresh_marks();
         self.cards_changed();
         message
@@ -789,7 +811,7 @@ impl App {
             .iter()
             .filter(|f| !touched.contains(f.change.path.as_str()))
             .map(|f| f.change.clone())
-            .chain(self.filter_authors(files))
+            .chain(files)
             .collect();
         merged.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         let keys = Keys {
@@ -863,9 +885,8 @@ impl App {
                 .unwrap_or_default();
         }
         self.pending_anchor = anchor;
-        self.sidebar.set_files(&files);
         self.stream = Some(Stream::new(keys, files));
-        self.sync_files_cursor();
+        self.apply_author_filter(true);
     }
 
     /// The file and source position at the top of the view: a new-side line
@@ -980,7 +1001,12 @@ impl App {
         if stream.laid_out == Some((width, layout, wrap, window)) {
             return;
         }
-        for i in window.0..=window.1 {
+        let near: Vec<usize> = stream
+            .shown()
+            .map(|(i, _)| i)
+            .filter(|i| (window.0..=window.1).contains(i))
+            .collect();
+        for i in near {
             self.ensure_texts(i);
         }
         let Some(stream) = &mut self.stream else {
@@ -1004,8 +1030,12 @@ impl App {
             measure.stack_width,
         );
         self.review_cards = review_cards;
+        let first = stream.shown().next().map(|(i, _)| i);
         for (i, f) in stream.files.iter_mut().enumerate() {
-            f.above = if i == 0 { above } else { 0 };
+            f.above = if Some(i) == first { above } else { 0 };
+            if f.hidden {
+                continue;
+            }
             let mine = index
                 .by_path
                 .get(f.change.path.as_str())
@@ -1174,17 +1204,20 @@ impl App {
     /// The file at `path` within the worktree, or else the first whose
     /// path ends with it.
     pub(crate) fn find_file(&self, path: &str) -> Option<usize> {
-        let files = &self.stream.as_ref()?.files;
-        files
-            .iter()
-            .position(|f| f.change.path == path)
-            .or_else(|| files.iter().position(|f| f.change.path.ends_with(path)))
+        let stream = self.stream.as_ref()?;
+        let mut shown = stream.shown();
+        shown
+            .find(|(_, f)| f.change.path == path)
+            .or_else(|| stream.shown().find(|(_, f)| f.change.path.ends_with(path)))
+            .map(|(i, _)| i)
     }
 
     /// Jumps to the start of file `i`.
     pub(crate) fn jump_to_file(&mut self, i: usize, view_rows: u16) {
         let Some(stream) = &self.stream else { return };
-        if let Some(&start) = stream.offsets.get(i) {
+        if let Some(i) = stream.shown_near(i)
+            && let Some(&start) = stream.offsets.get(i)
+        {
             self.scroll_to(start, view_rows);
             self.top = Anchor { file: i, line: 0 };
         }
@@ -1193,18 +1226,19 @@ impl App {
 
     pub(crate) fn next_file(&mut self, forward: bool, view_rows: u16) {
         let Some(stream) = &self.stream else { return };
-        let n = stream.files.len();
-        if n == 0 {
-            return;
-        }
+        let top = self.top;
+        let mut shown = stream.shown().map(|(i, _)| i);
         let target = if forward {
-            (self.top.file + 1).min(n - 1)
-        } else if self.top.line > 0 {
-            self.top.file
+            shown.find(|&i| i > top.file)
+        } else if top.line > 0 {
+            Some(top.file)
         } else {
-            self.top.file.saturating_sub(1)
+            shown.rfind(|&i| i < top.file)
         };
-        self.jump_to_file(target, view_rows);
+        drop(shown);
+        if let Some(target) = target {
+            self.jump_to_file(target, view_rows);
+        }
     }
 
     /// Moves to the next or previous start of a change block, searching
@@ -1223,7 +1257,7 @@ impl App {
         };
         for fi in order {
             let f = &stream.files[fi];
-            if f.folded {
+            if f.folded || f.hidden {
                 continue;
             }
             let rows = f.planned_rows();
@@ -1365,9 +1399,15 @@ impl App {
         let Some(stream) = &self.stream else {
             return (0, 0, false);
         };
-        let files = stream.files.get(range).unwrap_or_default();
+        let files: Vec<&FileView> = stream
+            .files
+            .get(range)
+            .unwrap_or_default()
+            .iter()
+            .filter(|f| !f.hidden)
+            .collect();
         let (mut a, mut r) = (0, 0);
-        for (fa, fr) in files.iter().filter_map(FileView::counts) {
+        for (fa, fr) in files.iter().filter_map(|f| f.counts()) {
             a += fa;
             r += fr;
         }
@@ -1397,7 +1437,7 @@ impl App {
         }
         let mut jobs = Vec::new();
         for i in order {
-            let Some(f) = stream.files.get(i) else {
+            let Some(f) = stream.files.get(i).filter(|f| !f.hidden) else {
                 continue;
             };
             let Some(texts) = self.texts(f) else { continue };
@@ -1709,6 +1749,48 @@ mod tests {
         app.toggle_fold_all();
         app.layout(80, 40);
         assert_eq!(offsets(&app), vec![0, 4, 8]);
+    }
+
+    #[test]
+    fn files_the_author_filter_hides_take_no_lines_and_are_skipped() {
+        let mut app = app_with(&[
+            ("a.rs", "x\n", "y\n"),
+            ("b.rs", "", "1\n2\n"),
+            ("c.rs", "x\n", "z\n"),
+        ]);
+        app.session
+            .install(std::path::Path::new("/r"), Err("fixture".into()));
+        app.set_attribution(Some(crate::attribution::Attribution {
+            worktree: "/r".into(),
+            authors: vec!["fix".into()],
+            files: HashMap::from([("a.rs".into(), vec![0]), ("c.rs".into(), vec![0])]),
+            problems: Vec::new(),
+        }));
+        app.layout(80, 40);
+        app.toggle_fold(2);
+        app.next_file(true, 40);
+        assert_eq!(app.top.file, 1);
+        app.next_author_filter();
+        app.layout(80, 40);
+        let offsets = |app: &App| app.stream.as_ref().expect("loaded").offsets.clone();
+        // a: header + 2 rows + spacer; b hidden; c folded: header + spacer.
+        assert_eq!(offsets(&app), vec![0, 4, 4, 6]);
+        assert_eq!(app.line_at(4), Line::Header { file: 2 });
+        assert_eq!(app.top.file, 2, "the view moves off the hidden file");
+        assert!(
+            app.stream.as_ref().expect("loaded").files[2].folded,
+            "folds stay"
+        );
+        app.next_file(false, 40);
+        assert_eq!(app.top.file, 0, "b is skipped");
+        app.next_file(true, 40);
+        assert_eq!(app.top.file, 2);
+        assert_eq!(app.find_file("b.rs"), None);
+        app.next_author_filter();
+        app.next_author_filter();
+        app.layout(80, 40);
+        assert_eq!(app.author_filter, None);
+        assert_eq!(offsets(&app), vec![0, 4, 8, 10]);
     }
 
     #[test]

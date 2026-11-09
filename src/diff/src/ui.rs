@@ -280,8 +280,13 @@ fn draw_diff(buf: &mut Buffer, app: &App, area: Rect) {
         );
         return;
     };
-    if stream.files.is_empty() {
-        let text = format!("No changes against {}", stream.base);
+    if stream.shown().next().is_none() {
+        let text = match &app.author_filter {
+            Some(filter) if !stream.files.is_empty() => {
+                format!("No files by {}; a shows the next author", filter.label())
+            }
+            _ => format!("No changes against {}", stream.base),
+        };
         put(
             buf,
             area.x + 2,
@@ -1223,7 +1228,8 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
         );
     }
     if let Some(stream) = &app.stream {
-        let reviewed = stream.files.iter().filter(|f| f.reviewed).count();
+        let reviewed = stream.shown().filter(|(_, f)| f.reviewed).count();
+        let shown = stream.shown().count();
         let (a, r, done) = stream.counts();
         if !app.settings.since {
             x += put(
@@ -1239,7 +1245,7 @@ fn draw_status(buf: &mut Buffer, app: &App, area: Rect) {
             buf,
             x,
             area.y,
-            &format!("{}/{} files  ", reviewed, stream.files.len()),
+            &format!("{reviewed}/{shown} files  "),
             end - x,
             muted,
         );

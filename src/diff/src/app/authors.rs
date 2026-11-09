@@ -73,14 +73,14 @@ impl App {
         sources
     }
 
-    /// Takes the shown worktree's attribution. Returns whether the files
-    /// shown under the author filter may have changed.
-    pub(crate) fn set_attribution(&mut self, attribution: Option<Attribution>) -> bool {
+    /// Takes the shown worktree's attribution, showing the files the
+    /// author filter now leaves in.
+    pub(crate) fn set_attribution(&mut self, attribution: Option<Attribution>) {
         if attribution == self.attribution {
-            return false;
+            return;
         }
         self.attribution = attribution;
-        self.author_filter.is_some()
+        self.apply_author_filter(false);
     }
 
     /// The agents that wrote `path` in the shown worktree: empty when
@@ -139,21 +139,56 @@ impl App {
                 .and_then(|i| choices.get(i + 1)),
         };
         self.author_filter = next.cloned();
+        self.apply_author_filter(false);
         self.author_filter.as_ref()
     }
 
-    /// `files` without those the author filter hides.
-    pub(crate) fn filter_authors(&self, mut files: Vec<FileChange>) -> Vec<FileChange> {
-        if let Some(filter) = &self.author_filter {
-            files.retain(|f| {
-                let authors = self.authors_of(&f.path).unwrap_or_default();
-                match filter {
-                    AuthorFilter::Author(name) => authors.contains(&name.as_str()),
-                    AuthorFilter::Unknown => authors.is_empty(),
-                }
-            });
+    /// Hides the files the author filter leaves out and shows the rest,
+    /// keeping the view on the file at its top or the nearest one shown.
+    /// `rebuilt`: the stream's files were replaced, so the sidebar's tree
+    /// is built again even when no file's visibility changed.
+    pub(super) fn apply_author_filter(&mut self, rebuilt: bool) {
+        let hidden: Vec<bool> = self.stream.as_ref().map_or_else(Vec::new, |s| {
+            s.files.iter().map(|f| self.hides(&f.change)).collect()
+        });
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
+        let mut changed = false;
+        for (f, hide) in stream.files.iter_mut().zip(hidden) {
+            changed |= f.hidden != hide;
+            f.hidden = hide;
         }
-        files
+        if changed {
+            stream.relayout();
+            if stream.files.get(self.top.file).is_some_and(|f| f.hidden)
+                && let Some(file) = stream.shown_near(self.top.file)
+            {
+                self.top = super::Anchor { file, line: 0 };
+                self.pending_anchor = None;
+            }
+            if let super::Mode::Visual(v) = &self.mode
+                && stream.files.get(v.file).is_none_or(|f| f.hidden)
+            {
+                self.mode = super::Mode::default();
+            }
+        }
+        if changed || rebuilt {
+            self.sidebar.set_files(&stream.files);
+            self.sync_files_cursor();
+        }
+    }
+
+    /// Whether the author filter leaves `change` out.
+    fn hides(&self, change: &FileChange) -> bool {
+        let Some(filter) = &self.author_filter else {
+            return false;
+        };
+        let authors = self.authors_of(&change.path).unwrap_or_default();
+        match filter {
+            AuthorFilter::Author(name) => !authors.contains(&name.as_str()),
+            AuthorFilter::Unknown => !authors.is_empty(),
+        }
     }
 }
 
@@ -164,6 +199,7 @@ mod tests {
     use super::*;
     use crate::agents::{Agent, Snapshot, Status, Worker};
     use crate::app::fixture::app_with;
+    use crate::app::sidebar::ListItem;
 
     fn worker(id: &str, cwd: &str, owner: &str) -> Worker {
         Worker {
@@ -231,30 +267,44 @@ mod tests {
             files: HashMap::from([("a.rs".into(), vec![0, 2])]),
             problems: Vec::new(),
         };
-        assert!(!app.set_attribution(Some(attribution.clone())), "no filter");
+        app.set_attribution(Some(attribution.clone()));
         assert_eq!(note(&app, "a.rs").as_deref(), Some("by fix, lead"));
         assert_eq!(note(&app, "b.rs").as_deref(), Some("by unknown"));
-        let files = || app_with(&[("a.rs", "", "y\n"), ("b.rs", "", "z\n")]);
-        let paths = |app: &App| -> Vec<String> {
-            let all = files().stream.expect("loaded").files;
-            app.filter_authors(all.into_iter().map(|f| f.change).collect())
-                .into_iter()
-                .map(|c| c.path)
+        let shown = |app: &App| -> Vec<String> {
+            let stream = app.stream.as_ref().expect("loaded");
+            stream.shown().map(|(_, f)| f.change.path.clone()).collect()
+        };
+        let listed = |app: &App| -> Vec<usize> {
+            app.sidebar
+                .rows()
+                .iter()
+                .map(ListItem::first_file)
                 .collect()
         };
         let mut seen = Vec::new();
         while let Some(f) = app.next_author_filter() {
             seen.push(f.label().to_owned());
             if seen.len() == 1 {
-                assert_eq!(paths(&app), ["a.rs"]);
+                assert_eq!(shown(&app), ["a.rs"]);
+                assert_eq!(listed(&app), [0]);
             }
         }
         assert_eq!(seen, ["fix", "lead", "unknown"], "idle wrote nothing");
-        assert_eq!(paths(&app), ["a.rs", "b.rs"], "all again");
+        assert_eq!(shown(&app), ["a.rs", "b.rs"], "all again");
         app.next_author_filter();
         app.next_author_filter();
         app.next_author_filter();
-        assert_eq!(paths(&app), ["b.rs"]);
-        assert!(app.set_attribution(None), "the filter needs a reload");
+        assert_eq!(shown(&app), ["b.rs"]);
+        assert_eq!(listed(&app), [1]);
+        assert_eq!(
+            app.stream.as_ref().map(|s| s.files.len()),
+            Some(2),
+            "every file is kept"
+        );
+        app.set_attribution(Some(Attribution {
+            files: HashMap::from([("b.rs".into(), vec![0])]),
+            ..attribution
+        }));
+        assert_eq!(shown(&app), ["a.rs"], "attribution changes only what shows");
     }
 }

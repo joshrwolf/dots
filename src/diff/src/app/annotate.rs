@@ -72,9 +72,7 @@ impl App {
     /// The file the cursor is in.
     pub(crate) fn cursor_file(&self) -> Option<usize> {
         let stream = self.stream.as_ref()?;
-        if stream.files.is_empty() {
-            return None;
-        }
+        stream.shown().next()?;
         Some(stream.file_at(self.cursor_line()))
     }
 

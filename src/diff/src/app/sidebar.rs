@@ -95,7 +95,7 @@ impl Sidebar {
         self.cursor = 0;
     }
 
-    /// Builds the tree of `files`, keeping collapsed directories.
+    /// Builds the tree of the `files` shown, keeping collapsed directories.
     pub(crate) fn set_files(&mut self, files: &[FileView]) {
         self.tree = list_items(files);
         self.list = visible(&self.tree, &self.collapsed);
@@ -192,9 +192,21 @@ impl Sidebar {
 /// The file list as a nested tree in path order. A directory chain with a
 /// single child directory collapses into one row, like `src/diff/src/`.
 fn list_items(files: &[FileView]) -> Vec<ListItem> {
-    let paths: Vec<&str> = files.iter().map(|f| f.change.path.as_str()).collect();
+    let (index, paths): (Vec<usize>, Vec<&str>) = files
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| !f.hidden)
+        .map(|(i, f)| (i, f.change.path.as_str()))
+        .unzip();
     let mut items = Vec::new();
     tree(&paths, 0..paths.len(), 0, 0, Guides::default(), &mut items);
+    // The tree numbers the files shown; rows name files by stream index.
+    for item in &mut items {
+        match item {
+            ListItem::File { index: i, .. } => *i = index[*i],
+            ListItem::Dir { files, .. } => *files = index[files.start]..index[files.end - 1] + 1,
+        }
+    }
     items
 }
 
