@@ -60,12 +60,7 @@ impl Fixture {
             ),
         )?;
         // File/source acceptance does not resolve or install the machine toolset.
-        f.copy_tree(
-            &repo.join("src/codediff.nvim"),
-            &f.source.join("src/codediff.nvim"),
-        )?;
         f.write(&f.source.join("bootstrap/tools.toml"), "[tools]\n")?;
-        f.write(&f.source.join("src/codediff.nvim/tools.toml"), "[tools]\n")?;
         f.copy_tree(&repo.join("home"), &f.source.join("home"))?;
         f.copy_tree(&repo.join("package.json"), &f.source.join("package.json"))?;
         f.copy_tree(
@@ -453,17 +448,6 @@ fn public_source_deploys_native_modules_and_shared_skill_discovery() -> Result {
         );
     }
     assert!(!f.home.join(".config/rex/tests").exists());
-    let codediff = f
-        .home
-        .join(".local/share/nvim/site/pack/dots/start/codediff.nvim");
-    assert!(codediff.join("plugin/codediff.lua").exists());
-    assert!(codediff.join("lua/codediff/init.lua").exists());
-    for path in ["tests", "AGENTS.md", "mise.toml", "tools.toml"] {
-        assert!(
-            !codediff.join(path).exists(),
-            "plugin development file deployed: {path}"
-        );
-    }
     assert!(!f.home.join(".config/rex/types").exists());
     assert_eq!(
         fs::read_to_string(f.home.join(".pi/agent/auth.json"))?,

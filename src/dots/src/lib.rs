@@ -13,7 +13,6 @@ mod outputs;
 mod project;
 mod project_share;
 mod render;
-mod review;
 mod share;
 mod skills;
 mod stream;
@@ -200,9 +199,6 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
             fresh,
             json: cli.json,
         }),
-        Command::Review { command } => {
-            review::run(command, &environment.directory(cli.directory)?, cli.json)
-        }
         Command::Skills {
             command: SkillCommand::Render { reference },
         } => Ok(if reference {

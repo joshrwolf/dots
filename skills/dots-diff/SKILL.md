@@ -7,8 +7,8 @@ description: Show the user a worktree's changes in the dots-diff viewer beside y
 
 `dots-diff` shows every worktree of a repository against its base, live as
 files change: the branch it builds on when it tracks another local or remote
-branch, else the nearer of the local `main` and each remote's default branch,
-the same base `dots review` uses. File headers are images in terminals with
+branch, else the nearer of the local `main` and each remote's default branch.
+File headers are images in terminals with
 kitty graphics, such as Rex. In Rex it runs in a split beside a
 pane, one viewer per pane; the user toggles it with Ctrl+S then D.
 

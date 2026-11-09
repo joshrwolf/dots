@@ -8,7 +8,6 @@ members = [
     "src/process",
     "src/substrate",
     "src/base",
-    "src/review",
     "src/dots",
     "src/github/inspect",
     "src/github/client",
@@ -32,7 +31,6 @@ dots-documents = { path = "src/documents" }
 dots-memory = { path = "src/memory" }
 dots-process = { path = "src/process" }
 dots-base = { path = "src/base" }
-dots-review = { path = "src/review" }
 dots-substrate = { path = "src/substrate" }
 dots-pick = { path = "src/pick" }
 tokio = { version = "1", features = ["rt", "sync", "time", "net", "io-util", "macros", "fs", "process"] }

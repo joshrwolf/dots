@@ -8,7 +8,7 @@ Does the change follow the repository's own written rules?
   `CLAUDE.md` if present) at the root and in every directory between the root
   and each changed file, plus documents they link as binding (style guides,
   contributor rules).
-- Flag only a clear violation of a specific rule, and cite it with `rule`
+- Flag only a clear violation of a specific rule, and cite it
   (path and line range in the reviewed head). A rule's spirit or your own
   preferences are not findings.
 - Check that docs, help text, comments and tests the rules require were

@@ -22,7 +22,7 @@ config_roots = ["home", "src/*", "src/claude/*", "private/src/*"]
 
 [tasks.check]
 description = "Complete fast gate, without installation or cloud CI"
-depends = ["check:typescript", "//src/pi:check", "//src/pi-kit:check", "//home:check", "//src/codediff.nvim:check"]
+depends = ["check:typescript", "//src/pi:check", "//src/pi-kit:check", "//home:check"]
 run = [
   "cargo fmt --all --check",
   "cargo clippy --locked --workspace --all-features --all-targets -- -D warnings",
@@ -38,7 +38,7 @@ run = ["pnpm run typecheck:tooling", "pnpm run lint", "pnpm run format:check"]
 
 [tasks.verify]
 description = "Complete checks and isolated process/host acceptance"
-depends = ["check", "//src/pi:verify", "//src/codediff.nvim:verify"]
+depends = ["check", "//src/pi:verify"]
 run = "cargo nextest run --locked --workspace --all-features --all-targets --profile acceptance"
 
 [tasks.deps]

@@ -46,31 +46,6 @@ require("gitsigns").setup({
   end,
 })
 
--- CodeDiff is the owned fork in src/codediff.nvim, deployed by machine setup as
--- a start package. Full reviews use ordinary split windows. Colors come from
--- the shared theme; stronger text highlights distinguish changed characters
--- within tinted lines.
-require("codediff").setup({
-  diff = {
-    filler_text = " ", -- Quiet shaded gaps instead of diagonal stripes.
-  },
-  explorer = {
-    position = "right",
-    view_mode = "tree",
-  },
-  highlights = {
-    char_insert = "DiffTextAdd",
-    char_delete = "DiffText",
-  },
-  keymaps = {
-    view = {
-      next_hunk = "]h",
-      prev_hunk = "[h",
-      toggle_explorer = "<leader>ge", -- Keep the buffer prefix available.
-    },
-  },
-})
-
 -- Discover mappings from their desc fields; only group names belong here.
 -- The default 200ms delay shows hints after pausing on a prefix such as Space.
 require("which-key").setup({
@@ -79,7 +54,6 @@ require("which-key").setup({
     { "<leader>c", group = "Code" },
     { "<leader>b", group = "Buffers" },
     { "<leader>g", group = "Git", mode = { "n", "x" } },
-    { "<leader>r", group = "Review", mode = { "n", "x" } },
   },
 })
 

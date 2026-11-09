@@ -1,7 +1,7 @@
 # Pi
 
 The companion adds workers, finite background jobs, wakes, memory, goal
-inspection, review submission notices and Rex status to stock Pi.
+inspection, delivery of dots-diff review comments and Rex status to stock Pi.
 
 ## Setup
 
@@ -217,18 +217,6 @@ substrate's `changes` marker moves, which it watches, and labels the copy with
 its age when it is older than the CLI's stale bound or sync is failing. Linked topics use its exact shared scope and snapshot,
 not an absolute file path. Substrate configuration, initialization, project
 bindings and reconciliation are explicit CLI operations.
-
-## Review submissions
-
-A review records its owner: the session that started it, or the agent session
-that last opened the worktree's review (`dots review open` and `start` take the
-invoking agent session unless given `--owner`). That session watches the reviews it
-owns across the repository's worktrees. The user's comments stay private drafts
-until the user submits them; each submission reaches the owner as one notice
-with its summary and comments. Like a wake fire, a notice waits until the
-session is idle and does not restart a cancelled run. Notices on the current
-branch are the receipts, so reload and resume neither repeat a submission nor
-lose one that arrived while Pi was closed.
 
 ## Anthropic request guard
 

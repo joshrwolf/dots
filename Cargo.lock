@@ -1032,7 +1032,6 @@ dependencies = [
  "dots-memory",
  "dots-pick",
  "dots-process",
- "dots-review",
  "dots-substrate",
  "dots-tasks",
  "github-inspect",
@@ -1129,18 +1128,6 @@ dependencies = [
  "nix",
  "thiserror",
  "tokio",
-]
-
-[[package]]
-name = "dots-review"
-version = "0.1.0"
-dependencies = [
- "dots-base",
- "dots-process",
- "getrandom",
- "serde",
- "serde_json",
- "thiserror",
 ]
 
 [[package]]

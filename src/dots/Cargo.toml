@@ -13,7 +13,6 @@ path = "src/main.rs"
 dots-tasks.workspace = true
 dots-pick.workspace = true
 dots-process.workspace = true
-dots-review.workspace = true
 dots-documents.workspace = true
 dots-memory.workspace = true
 dots-substrate.workspace = true

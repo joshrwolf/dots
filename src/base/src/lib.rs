@@ -1,5 +1,4 @@
-//! The base a worktree's changes compare against, shared by `dots review`
-//! and `dots-diff` so both show a branch against the same commit.
+//! The base a worktree's changes compare against.
 //!
 //! In order: the branch's upstream when it is another branch (a stacked
 //! branch tracking the one it builds on), never the branch's own name on a

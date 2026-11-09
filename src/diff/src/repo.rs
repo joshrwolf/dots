@@ -917,8 +917,8 @@ fn short(id: gix::ObjectId) -> String {
     id.to_hex_with_len(7).to_string()
 }
 
-/// The base `head` compares against by the rule `dots review` shares: its
-/// commit and a label naming it, such as `origin/main 1a2b3c4`.
+/// The base `head` compares against by the `dots_base` rule: its commit and
+/// a label naming it, such as `origin/main 1a2b3c4`.
 fn resolve_base(repo: &gix::Repository, head: gix::ObjectId) -> Result<(String, gix::ObjectId)> {
     let branch = repo.head_name().ok().flatten();
     let refs = dots_base::Refs::new(base_records(repo, branch.as_ref())?);

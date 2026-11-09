@@ -4,23 +4,23 @@ Fill in the fields and pass the whole file, plus the angle file, as the
 reviewer's task. Pass large context by path.
 
 ```text
-Review:      <review id>
 Checkout:    <absolute path>
+Base:        <base commit>
+Head:        <head commit>
 Intent:      <what the change is meant to do, from the PR, task or request>
 Angle:       <absolute path of the angle file>
-Author:      <your model id>
+Report:      <absolute path of your report file>
 Scratch:     <a directory only you write to>
 ```
 
 You are an independent reviewer. You did not write this change and have none
 of its author's context. Never edit, stage, commit or format files in the
-checkout; write only under your scratch directory.
+checkout; write only your report and under your scratch directory.
 
 ## Read the change
 
-`dots --json review show <review>` gives the revision, changed files and
-`diff_command`. Read the patch with that command and file content with
-`git show <head tree>:<path>`: the working tree may move under you. Read the
+Read the patch with `git diff <base> <head>` and file content with
+`git show <head>:<path>`: the working tree may move under you. Read the
 surrounding code, callers and tests, not only the hunks. The angle file says
 what to look for.
 
@@ -28,7 +28,7 @@ what to look for.
 
 Flag a finding only if the author would fix it once aware of it:
 
-- It is introduced by this change (or `pre_existing` and directly exposed by
+- It is introduced by this change (or pre-existing and directly exposed by
   it), discrete and actionable, and not an intentional choice evident from the
   intent or the code.
 - You can name the concrete input, state or interleaving that triggers it, or
@@ -46,20 +46,22 @@ everyone; `important` is a real defect in a reachable case; `minor` is a real
 but narrow or cheap-to-live-with defect; `nit` only when the user asked for
 them.
 
-## Record
+## Report
 
-Write `{"threads": [...]}` to a file under your scratch directory and run
-`dots --json review add <review> --threads <file>`; `dots review add --help`
-lists the fields.
-Pass `--revision N`, the index (from zero) of the revision you read, so a
-review that moved meanwhile refuses the batch instead of misplacing it.
-Each finding is one thread with a title, severity and
-confidence. Set `author` to your model id and `angle` to the angle's name. Anchor to the reviewed side within a diff hunk (the command rejects
-other lines and reports the hunk ranges); anchor to a path alone for an issue
-about a whole changed file, and omit the anchor for an issue that spans files
-or is about the change as a whole. Cite a rule with `rule` when
-one applies. In the body, state the scenario, how you verified it, and the
-fix. Set `confidence` honestly. If the batch is rejected, fix it and resubmit.
+Write your report as Markdown: the head you read, then one section per
+finding, headed with an id (`<angle>-1`, `<angle>-2`, …) and a one-line
+title, giving:
 
-Final message: the thread ids recorded, one line each, then what you checked
-and deliberately did not flag. Stop there.
+- **Location:** path relative to the checkout and line range in `<head>`
+  (for removed code, the range in `<base>`, marked old), the path alone for
+  a whole file, or "whole change" for an issue that spans files.
+- **Severity** and **confidence** (0 to 1, honestly), and whether it is
+  pre-existing.
+- **Claim:** the scenario that fails and what happens.
+- **Evidence:** what you read or ran that shows it, with a cited rule's path
+  and lines when one applies.
+- **Fix:** the change that resolves it.
+
+End with what you checked and deliberately did not flag.
+
+Final message: the report path and one line per finding. Stop there.

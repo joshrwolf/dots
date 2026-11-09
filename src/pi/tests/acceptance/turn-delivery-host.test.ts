@@ -1,6 +1,6 @@
-// Turn-requesting custom messages (review submission notices, wake fires) through
-// the pinned Pi host: an explicit cancellation never starts another run or
-// delivers twice, and compaction is never overlapped by a new run.
+// Turn-requesting custom messages (wake fires) through the pinned Pi host: an
+// explicit cancellation never starts another run or delivers twice, and
+// compaction is never overlapped by a new run.
 import assert from 'node:assert/strict';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -9,7 +9,6 @@ import {setTimeout as sleep} from 'node:timers/promises';
 import test from 'node:test';
 import type {AssistantMessage} from '@earendil-works/pi-ai';
 import type {AgentSession, ExtensionAPI} from '@earendil-works/pi-coding-agent';
-import review from '../../extensions/review/index.ts';
 import wake, {type Clock} from '../../extensions/wake/index.ts';
 import {hostModule} from '../fixtures/host.ts';
 
@@ -19,8 +18,6 @@ const host: typeof import('@earendil-works/pi-coding-agent') = await import(
 const ai: typeof import('@earendil-works/pi-ai') = await import(
   hostModule('pi-ai')
 );
-
-const REVIEW = 'r-00000001';
 
 /** Timers fire only when the test advances time. */
 function manualClock(): Clock & {advance(ms: number): Promise<void>} {
@@ -59,8 +56,6 @@ interface Fixture {
   requests(): number;
   /** Custom messages of `customType` on the branch. */
   receipts(customType: string): number;
-  /** The user submits a comment in the review; its directory watcher reports the change. */
-  reply(): void;
   clock: ReturnType<typeof manualClock>;
   /** Resolves once compaction or a summarized /tree waits on `release()`. */
   held(): Promise<void>;
@@ -69,17 +64,14 @@ interface Fixture {
 }
 
 /**
- * A native session with the review and wake extensions over fake review
- * state. Prompt `hold` streams until aborted; `set-wake` sets a recurring
- * wake; everything else answers at once with enough text to compact.
+ * A native session with the wake extension. Prompt `hold` streams until
+ * aborted; `set-wake` sets a recurring wake; everything else answers at once
+ * with enough text to compact.
  * Compaction and summarized tree navigation wait until `release()`.
  */
 async function fixture(): Promise<Fixture> {
   const dir = mkdtempSync(join(tmpdir(), 'dots-turn-delivery-'));
   const clock = manualClock();
-  const threads: unknown[] = [];
-  const submissions: unknown[] = [];
-  let changed = () => {};
   let release = () => {};
   let entered: () => void = () => {};
   const held = new Promise<void>(resolve => {
@@ -105,24 +97,6 @@ async function fixture(): Promise<Fixture> {
     noContextFiles: true,
     extensionFactories: [
       (api: ExtensionAPI) => {
-        review(api, {
-          settleMs: 5,
-          watch: (_directory, onChange) => {
-            changed = onChange;
-            return {close: () => {}};
-          },
-          dots: async args =>
-            args[1] === 'list'
-              ? {reviews: [{id: REVIEW, file: join(dir, `${REVIEW}.json`)}]}
-              : {
-                  review: {
-                    id: REVIEW,
-                    worktree: {path: dir, branch: 'main'},
-                    threads: structuredClone(threads),
-                    submissions: structuredClone(submissions),
-                  },
-                },
-        });
         wake(api, {clock});
         api.on('session_before_compact', async event => {
           entered();
@@ -256,16 +230,6 @@ async function fixture(): Promise<Fixture> {
           entry =>
             entry.type === 'custom_message' && entry.customType === customType,
         ).length,
-    reply() {
-      const id = `t${threads.length + 1}`;
-      threads.push({
-        id,
-        anchor: null,
-        comments: [{author: 'user', body: 'Please explain'}],
-      });
-      submissions.push({body: null, comments: [{thread: id, comment: 0}]});
-      changed();
-    },
     held: () => held,
     release: () => release(),
     async close() {
@@ -293,65 +257,6 @@ async function holding(f: Fixture): Promise<{run: Promise<void>}> {
   while (f.requests() === before) await sleep(5);
   return {run};
 }
-
-for (const clearQueue of [true, false]) {
-  test(
-    `a reply during a cancelled run is recorded once and starts nothing (${clearQueue ? 'queue cleared' : 'SDK abort'})`,
-    {timeout: 20_000},
-    async () => {
-      const f = await fixture();
-      try {
-        const {run} = await holding(f);
-        f.reply();
-        await sleep(100);
-        assert.equal(f.receipts('dots.review.notice'), 0);
-        if (clearQueue) f.session.clearQueue();
-        await f.session.abort();
-        await run;
-        await sleep(400);
-        assert.equal(f.requests(), 1, 'the cancellation stands');
-        assert.equal(f.receipts('dots.review.notice'), 1);
-
-        await f.session.prompt('go on');
-        await sleep(100);
-        assert.equal(f.requests(), 2);
-        assert.equal(f.receipts('dots.review.notice'), 1, 'never repeated');
-        f.reply();
-        await sleep(400);
-        assert.equal(f.requests(), 3, 'a user prompt ends the cancellation');
-        assert.equal(f.receipts('dots.review.notice'), 2);
-      } finally {
-        await f.close();
-      }
-    },
-  );
-}
-
-test(
-  'a reply during manual compaction waits for it to finish',
-  {timeout: 20_000},
-  async () => {
-    const f = await fixture();
-    try {
-      await f.session.prompt('seed '.repeat(100));
-      const compact = f.session.compact();
-      await f.held();
-      const before = f.requests();
-      f.reply();
-      await sleep(400);
-      assert.equal(f.session.isCompacting, true);
-      assert.equal(f.requests(), before, 'no run overlaps compaction');
-      assert.equal(f.receipts('dots.review.notice'), 0);
-      f.release();
-      await compact;
-      await sleep(600);
-      assert.equal(f.receipts('dots.review.notice'), 1);
-      assert.equal(f.requests(), before + 1, 'delivered once compaction ended');
-    } finally {
-      await f.close();
-    }
-  },
-);
 
 test(
   'a wake fire during manual compaction or a cancelled run never overlaps or restarts work',
