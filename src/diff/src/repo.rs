@@ -923,7 +923,12 @@ fn resolve_base(repo: &gix::Repository, head: gix::ObjectId) -> Result<(String, 
     let branch = repo.head_name().ok().flatten();
     let refs = dots_base::Refs::new(base_records(repo, branch.as_ref())?);
     let short_branch = branch.as_ref().map(|b| b.shorten().to_string());
-    let chosen = refs.choose(&History(repo), &head.to_string(), short_branch.as_deref())?;
+    let chosen = refs.choose(
+        &History(repo),
+        &head.to_string(),
+        short_branch.as_deref(),
+        dots_base::Measure::Nearest,
+    )?;
     let base = gix::ObjectId::from_hex(chosen.base.as_bytes())?;
     let label = match (chosen.reason, chosen.candidates.first()) {
         (dots_base::Reason::NoSharedHistory, Some(nearest)) => format!(
@@ -1006,6 +1011,147 @@ impl History<'_> {
     }
 }
 
+/// How many commits `to` reaches that `from` does not, or `None` past
+/// `at_most`. Both sides are walked together, newest first, so a count
+/// gives up after `at_most` commits only `to` reaches, however long the
+/// history behind either side; gix's hidden walks paint the whole
+/// difference before yielding anything.
+fn count_beyond(
+    repo: &gix::Repository,
+    from: gix::ObjectId,
+    to: gix::ObjectId,
+    at_most: Option<u64>,
+) -> Result<Option<u64>> {
+    let cache = repo.commit_graph_if_enabled()?;
+    let mut walk = Paint {
+        graph: repo.revision_graph(cache.as_ref()),
+        queue: std::collections::BinaryHeap::new(),
+        queued: 0,
+        visible_only: 0,
+        counted: std::collections::BTreeMap::new(),
+        total: 0,
+    };
+    walk.mark(to, Paint::VISIBLE)?;
+    walk.mark(from, Paint::HIDDEN)?;
+    // Once only commits both sides reach are queued, the hidden side may
+    // still reach commits counted before it: walk on while any queued
+    // commit could be their descendant.
+    while let Some(&(generation, time, _, id)) = walk.queue.peek() {
+        let top = (generation, time);
+        if walk.visible_only == 0 && walk.counted.first_key_value().is_none_or(|(o, _)| top < *o) {
+            break;
+        }
+        // A counted commit newer than every queued one keeps its count.
+        if let Some(m) = at_most
+            && walk.total > m
+            && walk.settled(top) > m
+        {
+            return Ok(None);
+        }
+        walk.queue.pop();
+        let commit = walk
+            .graph
+            .get_mut(&id)
+            .context("a queued commit is in the graph")?;
+        commit.data &= !Paint::QUEUED;
+        let flags = commit.data & Paint::SIDES;
+        if flags == Paint::VISIBLE {
+            walk.visible_only -= 1;
+            if commit.data & Paint::COUNTED == 0 {
+                commit.data |= Paint::COUNTED;
+                let key = Paint::key(commit);
+                *walk.counted.entry(key).or_default() += 1;
+                walk.total += 1;
+            }
+        }
+        let parents = commit.parents.clone();
+        for parent in parents {
+            walk.mark(parent, flags)?;
+        }
+    }
+    if at_most.is_some_and(|m| walk.total > m) {
+        return Ok(None);
+    }
+    Ok(Some(walk.total))
+}
+
+/// Commits painted by the sides that reach them, queued newest first: by
+/// generation, which commits outside the commit-graph lack and none of
+/// their ancestors in it exceeds, then commit time, then first queued, so
+/// children usually come before parents of the same second. A walked
+/// commit that a side reaches later is walked again.
+struct Paint<'r, 'c> {
+    graph: gix::revwalk::Graph<'r, 'c, gix::revwalk::graph::Commit<u8>>,
+    queue: std::collections::BinaryHeap<(u32, i64, std::cmp::Reverse<u64>, gix::ObjectId)>,
+    /// Commits queued so far, to order commits of the same second.
+    queued: u64,
+    /// Queued commits only `to` reaches; with none left the count is done.
+    visible_only: u64,
+    /// Walked commits only `to` reaches, by queue key.
+    counted: std::collections::BTreeMap<(u32, i64), u64>,
+    /// How many there are.
+    total: u64,
+}
+
+impl Paint<'_, '_> {
+    const VISIBLE: u8 = 1;
+    const HIDDEN: u8 = 2;
+    const SIDES: u8 = Self::VISIBLE | Self::HIDDEN;
+    const QUEUED: u8 = 4;
+    const COUNTED: u8 = 8;
+
+    fn key(commit: &gix::revwalk::graph::Commit<u8>) -> (u32, i64) {
+        (commit.generation.unwrap_or(u32::MAX), commit.commit_time)
+    }
+
+    /// Counted commits newer than `top`, which no queued commit reaches.
+    fn settled(&self, top: (u32, i64)) -> u64 {
+        use std::ops::Bound::{Excluded, Unbounded};
+        self.counted
+            .range((Excluded(top), Unbounded))
+            .map(|(_, n)| n)
+            .sum()
+    }
+
+    /// Paints `id` with the sides in `flags`, queueing it when it gains one.
+    fn mark(&mut self, id: gix::ObjectId, flags: u8) -> Result<()> {
+        let before = self.graph.get(&id).map(|c| c.data);
+        if before.is_some_and(|b| b & flags == flags) {
+            return Ok(());
+        }
+        let before = before.unwrap_or(0);
+        let commit = self
+            .graph
+            .get_or_insert_full_commit(id, |c| c.data |= flags)?
+            .with_context(|| format!("commit {id} is missing"))?;
+        if commit.data & Self::HIDDEN != 0 && commit.data & Self::COUNTED != 0 {
+            commit.data &= !Self::COUNTED;
+            let key = Self::key(commit);
+            if let Some(n) = self.counted.get_mut(&key) {
+                *n -= 1;
+                if *n == 0 {
+                    self.counted.remove(&key);
+                }
+            }
+            self.total -= 1;
+        }
+        let only = |data: u8| data & Self::SIDES == Self::VISIBLE;
+        if before & Self::QUEUED == 0 {
+            commit.data |= Self::QUEUED;
+            let generation = commit.generation.unwrap_or(u32::MAX);
+            self.queued += 1;
+            let order = std::cmp::Reverse(self.queued);
+            self.queue.push((generation, commit.commit_time, order, id));
+            if only(commit.data) {
+                self.visible_only += 1;
+            }
+        } else if only(before) && !only(commit.data) {
+            self.visible_only -= 1;
+        }
+        Ok(())
+    }
+}
+
 impl dots_base::History for History<'_> {
     type Error = anyhow::Error;
 
@@ -1014,18 +1160,8 @@ impl dots_base::History for History<'_> {
         Ok(a == d || self.0.merge_base(a, d)?.is_some_and(|m| m.detach() == a))
     }
 
-    fn commits_between(&self, from: &str, to: &str) -> Result<u64> {
-        let walk = self
-            .0
-            .rev_walk([Self::id(to)?])
-            .with_hidden([Self::id(from)?])
-            .all()?;
-        let mut n = 0;
-        for commit in walk {
-            commit?;
-            n += 1;
-        }
-        Ok(n)
+    fn commits_between(&self, from: &str, to: &str, at_most: Option<u64>) -> Result<Option<u64>> {
+        count_beyond(self.0, Self::id(from)?, Self::id(to)?, at_most)
     }
 
     fn merge_base(&self, left: &str, right: &str) -> Result<Option<String>> {
@@ -1118,6 +1254,50 @@ mod tests {
             "{}",
             changes.base
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn counting_commits_beyond_a_base_matches_git_and_stops_at_its_limit() {
+        let dir = std::env::temp_dir().join(format!("dots-diff-count-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let git = |args: &[&str]| git_in(&dir, args);
+        git(&["init", "-q", "-b", "main"]);
+        for i in 0..5 {
+            git(&["commit", "-q", "--allow-empty", "-m", &format!("m{i}")]);
+        }
+        // side forks from main~3 and merges main back in; main moves on.
+        git(&["switch", "-q", "-c", "side", "main~3"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "s1"]);
+        git(&["merge", "-q", "--no-ff", "-m", "merge", "main"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "s2"]);
+        git(&["switch", "-q", "main"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "m5"]);
+        git(&["switch", "-q", "--orphan", "pages"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "p1"]);
+        let repo = gix::open(&dir).expect("open");
+        let id = |r: &str| gix::ObjectId::from_hex(git(&["rev-parse", r]).as_bytes()).expect("id");
+        for (from, to) in [
+            ("main", "side"),
+            ("side", "main"),
+            ("main~3", "side"),
+            ("side", "side"),
+            ("pages", "side"),
+            ("main", "pages"),
+        ] {
+            let want: u64 = git(&["rev-list", "--count", &format!("{from}..{to}")])
+                .parse()
+                .expect("count");
+            let got = count_beyond(&repo, id(from), id(to), None).expect("count");
+            assert_eq!(got, Some(want), "{from}..{to}");
+            let limited = count_beyond(&repo, id(from), id(to), Some(want)).expect("count");
+            assert_eq!(limited, Some(want), "{from}..{to} within its limit");
+            if want > 0 {
+                let under = count_beyond(&repo, id(from), id(to), Some(want - 1)).expect("count");
+                assert_eq!(under, None, "{from}..{to} past its limit");
+            }
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -1,7 +1,7 @@
 //! The base a worktree's review compares against: a base the user or agent
 //! set, else the rule `dots-base` shares with `dots-diff`.
 
-use dots_base::{History, Reason, Record};
+use dots_base::{History, Measure, Reason, Record};
 
 use crate::git::Git;
 use crate::{BaseReason, Basis, Candidate, Error, Result};
@@ -24,8 +24,8 @@ impl History for Git {
         Git::is_ancestor(self, ancestor, descendant)
     }
 
-    fn commits_between(&self, from: &str, to: &str) -> Result<u64> {
-        Git::commits_between(self, from, to)
+    fn commits_between(&self, from: &str, to: &str, at_most: Option<u64>) -> Result<Option<u64>> {
+        Git::commits_between(self, from, to, at_most)
     }
 
     fn merge_base(&self, left: &str, right: &str) -> Result<Option<String>> {
@@ -84,7 +84,8 @@ impl Refs {
                 },
             });
         }
-        let chosen = self.0.choose(git, head, branch)?;
+        // A review records how far HEAD is from every candidate.
+        let chosen = self.0.choose(git, head, branch, Measure::Every)?;
         Ok(Chosen {
             base: chosen.base,
             basis: Basis {

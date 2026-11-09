@@ -43,8 +43,14 @@ pub trait History {
     type Error;
     /// Whether commit `ancestor` is `descendant` or one of its ancestors.
     fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool, Self::Error>;
-    /// How many commits `to` reaches that `from` does not.
-    fn commits_between(&self, from: &str, to: &str) -> Result<u64, Self::Error>;
+    /// How many commits `to` reaches that `from` does not, or `None` when
+    /// that is more than `at_most`.
+    fn commits_between(
+        &self,
+        from: &str,
+        to: &str,
+        at_most: Option<u64>,
+    ) -> Result<Option<u64>, Self::Error>;
     /// The best common ancestor of two commits, or `None` when they share
     /// no history.
     fn merge_base(&self, left: &str, right: &str) -> Result<Option<String>, Self::Error>;
@@ -83,10 +89,24 @@ pub struct Chosen {
     /// A ref such as `origin/main`, or `HEAD`.
     pub reference: String,
     pub reason: Reason,
-    /// Every default-branch candidate considered, nearest first; empty
-    /// unless the default rule ran.
+    /// The default-branch candidates measured, nearest first; empty unless
+    /// the default rule ran.
     pub candidates: Vec<Candidate>,
 }
+
+/// Which default-branch candidates [`Refs::choose`] measures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Measure {
+    /// Every candidate, to report how far HEAD is from each.
+    Every,
+    /// Only the nearest: farther ones stop counting once they pass it,
+    /// so a long history behind a stale candidate is not walked.
+    Nearest,
+}
+
+/// The first limit [`Measure::Nearest`] counts candidates to; each round
+/// raises it eightfold until some candidate comes within it.
+const FIRST_LIMIT: u64 = 256;
 
 /// A default-branch candidate.
 #[derive(Debug)]
@@ -220,12 +240,14 @@ impl Refs {
         Ok(())
     }
 
-    /// The base for HEAD commit `head` on `branch` (`None` when detached).
+    /// The base for HEAD commit `head` on `branch` (`None` when detached),
+    /// measuring the candidates `measure` names.
     pub fn choose<H: History>(
         &self,
         history: &H,
         head: &str,
         branch: Option<&str>,
+        measure: Measure,
     ) -> Result<Chosen, H::Error> {
         let at_head = |reason| Chosen {
             base: head.to_owned(),
@@ -261,18 +283,12 @@ impl Refs {
         if self.defaults.is_empty() {
             return Ok(at_head(Reason::NoDefault));
         }
-        let mut counted: BTreeMap<&str, u64> = BTreeMap::new();
-        let mut ranked = Vec::with_capacity(self.defaults.len());
-        for default in &self.defaults {
-            let commits = if let Some(commits) = counted.get(default.commit.as_str()) {
-                *commits
-            } else {
-                let commits = history.commits_between(&default.commit, head)?;
-                counted.insert(&default.commit, commits);
-                commits
-            };
-            ranked.push((commits, &default.priority, default));
-        }
+        let counted = self.count(history, head, measure)?;
+        let mut ranked: Vec<_> = self
+            .defaults
+            .iter()
+            .filter_map(|d| Some((*counted.get(d.commit.as_str())?, &d.priority, d)))
+            .collect();
         ranked.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
         let candidates = ranked
             .iter()
@@ -296,6 +312,36 @@ impl Refs {
             ..at_head(Reason::NoSharedHistory)
         })
     }
+
+    /// How many commits `head` has beyond each candidate commit `measure`
+    /// measures. With [`Measure::Nearest`], every candidate counts to a
+    /// limit that rises until some come within it; those are the nearest,
+    /// and a candidate sharing history with `head` is always nearer than
+    /// one that shares none.
+    fn count<H: History>(
+        &self,
+        history: &H,
+        head: &str,
+        measure: Measure,
+    ) -> Result<BTreeMap<&str, u64>, H::Error> {
+        let commits: BTreeSet<&str> = self.defaults.iter().map(|d| d.commit.as_str()).collect();
+        let mut limit = match measure {
+            Measure::Every => None,
+            Measure::Nearest => Some(FIRST_LIMIT),
+        };
+        loop {
+            let mut counted = BTreeMap::new();
+            for &commit in &commits {
+                if let Some(n) = history.commits_between(commit, head, limit)? {
+                    counted.insert(commit, n);
+                }
+            }
+            if !counted.is_empty() || commits.is_empty() {
+                return Ok(counted);
+            }
+            limit = limit.map(|l| l.saturating_mul(8));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -305,10 +351,12 @@ mod tests {
 
     use super::*;
 
-    /// A commit graph: each commit and its parents.
+    /// A commit graph: each commit and its parents, the refs naming
+    /// commits, and how many commits counting has walked.
     struct Graph(
         BTreeMap<&'static str, Vec<&'static str>>,
         BTreeMap<&'static str, &'static str>,
+        std::cell::Cell<u64>,
     );
 
     impl Graph {
@@ -329,9 +377,17 @@ mod tests {
         fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool, Infallible> {
             Ok(self.reach(descendant).contains(ancestor))
         }
-        fn commits_between(&self, from: &str, to: &str) -> Result<u64, Infallible> {
+        fn commits_between(
+            &self,
+            from: &str,
+            to: &str,
+            at_most: Option<u64>,
+        ) -> Result<Option<u64>, Infallible> {
             let hidden = self.reach(from);
-            Ok(self.reach(to).difference(&hidden).count() as u64)
+            let n = self.reach(to).difference(&hidden).count() as u64;
+            self.2
+                .set(self.2.get() + at_most.map_or(n, |m| n.min(m + 1)));
+            Ok(at_most.is_none_or(|m| n <= m).then_some(n))
         }
         fn merge_base(&self, left: &str, right: &str) -> Result<Option<String>, Infallible> {
             let right = self.reach(right);
@@ -357,6 +413,7 @@ mod tests {
                 ("s1", vec!["f2"]),
             ]),
             BTreeMap::from([("refs/heads/feature", "f2")]),
+            std::cell::Cell::new(0),
         )
     }
 
@@ -383,7 +440,7 @@ mod tests {
     fn the_nearest_default_wins_and_lists_every_candidate() {
         let refs = Refs::new([branch("main", "l1", None), remote_head("origin", "m3")]);
         let chosen = refs
-            .choose(&graph(), "f2", Some("feature"))
+            .choose(&graph(), "f2", Some("feature"), Measure::Every)
             .expect("chosen");
         assert_eq!(
             chosen.reference, "origin/main",
@@ -414,7 +471,7 @@ mod tests {
             remote_head("upstream", "m3"),
         ]);
         let chosen = refs
-            .choose(&graph(), "f2", Some("feature"))
+            .choose(&graph(), "f2", Some("feature"), Measure::Every)
             .expect("chosen");
         assert_eq!(chosen.reference, "upstream/main");
     }
@@ -422,14 +479,16 @@ mod tests {
     #[test]
     fn the_default_branch_compares_with_head() {
         let refs = Refs::new([branch("main", "l1", None), remote_head("origin", "m3")]);
-        let chosen = refs.choose(&graph(), "l1", Some("main")).expect("chosen");
+        let chosen = refs
+            .choose(&graph(), "l1", Some("main"), Measure::Every)
+            .expect("chosen");
         assert_eq!(
             (chosen.base.as_str(), chosen.reason),
             ("l1", Reason::DefaultBranch)
         );
         let none = Refs::new([branch("feature", "f2", None)]);
         let chosen = none
-            .choose(&graph(), "f2", Some("feature"))
+            .choose(&graph(), "f2", Some("feature"), Measure::Every)
             .expect("chosen");
         assert_eq!(chosen.reason, Reason::NoDefault);
     }
@@ -450,7 +509,9 @@ mod tests {
             ),
         ]);
         let g = graph();
-        let chosen = refs.choose(&g, "s1", Some("stacked")).expect("chosen");
+        let chosen = refs
+            .choose(&g, "s1", Some("stacked"), Measure::Every)
+            .expect("chosen");
         assert_eq!(
             (
                 chosen.reference.as_str(),
@@ -460,7 +521,9 @@ mod tests {
             ("feature", "f2", Reason::Upstream)
         );
         // Its own name on a remote is not a base: only unpushed commits.
-        let chosen = refs.choose(&g, "f2", Some("feature")).expect("chosen");
+        let chosen = refs
+            .choose(&g, "f2", Some("feature"), Measure::Every)
+            .expect("chosen");
         assert_eq!(chosen.reason, Reason::Default);
         // An upstream that is gone falls through to the defaults.
         let gone = Refs::new([
@@ -471,7 +534,9 @@ mod tests {
                 Some(("refs/heads/deleted", "refs/heads/deleted")),
             ),
         ]);
-        let chosen = gone.choose(&g, "s1", Some("stacked")).expect("chosen");
+        let chosen = gone
+            .choose(&g, "s1", Some("stacked"), Measure::Every)
+            .expect("chosen");
         assert_eq!(chosen.reason, Reason::Default);
     }
 
@@ -483,6 +548,7 @@ mod tests {
         let g = Graph(
             graph().0,
             BTreeMap::from([("refs/remotes/origin/trunk", "m3")]),
+            std::cell::Cell::new(0),
         );
         let trunk = Some(("refs/remotes/origin/trunk", "refs/heads/trunk"));
         let whole = Refs::new([remote_head("origin", "m3"), branch("main", "f2", trunk)]);
@@ -495,7 +561,9 @@ mod tests {
             },
         ]);
         for refs in [whole, split] {
-            let chosen = refs.choose(&g, "f2", Some("main")).expect("chosen");
+            let chosen = refs
+                .choose(&g, "f2", Some("main"), Measure::Every)
+                .expect("chosen");
             assert_eq!(
                 (
                     chosen.reference.as_str(),
@@ -521,7 +589,9 @@ mod tests {
                 Some(("refs/heads/feature", "refs/heads/feature")),
             ),
         ]);
-        let chosen = refs.choose(&g, "o2", Some("pages")).expect("chosen");
+        let chosen = refs
+            .choose(&g, "o2", Some("pages"), Measure::Every)
+            .expect("chosen");
         assert_eq!(
             (
                 chosen.base.as_str(),
@@ -538,7 +608,7 @@ mod tests {
         // Only a candidate that shares history gives the base.
         g.0.insert("x1", vec!["o2"]);
         g.0.insert("m3", vec!["m2", "o1"]);
-        let chosen = refs.choose(&g, "x1", None).expect("chosen");
+        let chosen = refs.choose(&g, "x1", None, Measure::Every).expect("chosen");
         assert_eq!(
             (chosen.reference.as_str(), chosen.base.as_str()),
             ("origin/main", "o1")
@@ -553,9 +623,13 @@ mod tests {
             remote_head("origin", "m3"),
             remote_head("fork", "l1"),
         ]);
-        let before = refs.choose(&g, "f2", Some("feature")).expect("chosen");
+        let before = refs
+            .choose(&g, "f2", Some("feature"), Measure::Every)
+            .expect("chosen");
         refs.prune(&g).expect("pruned");
-        let after = refs.choose(&g, "f2", Some("feature")).expect("chosen");
+        let after = refs
+            .choose(&g, "f2", Some("feature"), Measure::Every)
+            .expect("chosen");
         assert_eq!(before.base, after.base);
         let kept: Vec<&str> = after
             .candidates
@@ -568,9 +642,80 @@ mod tests {
             "main is inside origin/main"
         );
         assert_eq!(
-            refs.choose(&g, "m2", Some("main")).expect("chosen").reason,
+            refs.choose(&g, "m2", Some("main"), Measure::Every)
+                .expect("chosen")
+                .reason,
             Reason::DefaultBranch,
             "pruning keeps the default branches"
         );
+    }
+
+    #[test]
+    fn measuring_the_nearest_stops_counting_a_long_stale_history() {
+        // A stale origin far behind main, and a feature on main.
+        let mut g = graph();
+        let mut parent = "m1";
+        let stale: Vec<&'static str> = (0..1200)
+            .map(|i| &*Box::leak(format!("x{i}").into_boxed_str()))
+            .collect();
+        for c in &stale {
+            g.0.insert(c, vec![parent]);
+            parent = c;
+        }
+        g.0.insert("m1", Vec::new());
+        g.0.insert("n1", vec![stale[1199]]);
+        g.0.insert("h1", vec!["n1"]);
+        let refs = Refs::new([branch("main", "n1", None), remote_head("origin", "m2")]);
+        let every = refs.choose(&g, "h1", None, Measure::Every).expect("chosen");
+        let walked_every = g.2.replace(0);
+        let nearest = refs
+            .choose(&g, "h1", None, Measure::Nearest)
+            .expect("chosen");
+        let walked_nearest = g.2.get();
+        assert_eq!(
+            (nearest.base.as_str(), nearest.reference.as_str()),
+            (every.base.as_str(), every.reference.as_str())
+        );
+        assert_eq!(nearest.reference, "main");
+        assert_eq!(
+            nearest.candidates,
+            [Candidate {
+                reference: "main".into(),
+                commits: 1
+            }],
+            "only the nearest is measured"
+        );
+        assert_eq!(every.candidates.len(), 2);
+        assert!(
+            walked_nearest <= 2 * (FIRST_LIMIT + 1) && walked_every > 1200,
+            "walked {walked_nearest} commits, {walked_every} measuring every one"
+        );
+    }
+
+    #[test]
+    fn measuring_the_nearest_chooses_as_measuring_every_one() {
+        let mut g = graph();
+        g.0.extend([("o1", vec![]), ("o2", vec!["o1"])]);
+        let refs = Refs::new([
+            branch("main", "l1", None),
+            remote_head("origin", "m3"),
+            remote_head("upstream", "m2"),
+        ]);
+        for head in ["f2", "s1", "l1", "m3", "o2"] {
+            let every = refs.choose(&g, head, None, Measure::Every).expect("every");
+            let nearest = refs
+                .choose(&g, head, None, Measure::Nearest)
+                .expect("nearest");
+            assert_eq!(
+                (nearest.base, nearest.reference, nearest.reason),
+                (every.base, every.reference, every.reason),
+                "{head}"
+            );
+            assert_eq!(
+                nearest.candidates.first(),
+                every.candidates.first(),
+                "{head}"
+            );
+        }
     }
 }

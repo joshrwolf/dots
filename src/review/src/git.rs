@@ -256,20 +256,28 @@ impl Git {
         }
     }
 
-    /// How many commits `to` reaches that `from` does not.
-    pub(crate) fn commits_between(&self, from: &str, to: &str) -> Result<u64> {
-        let output = self.git(
-            &["rev-list", "--count", &format!("{from}..{to}")],
-            SMALL,
-            "count commits",
-        )?;
-        utf8(output, "commit count")?
+    /// How many commits `to` reaches that `from` does not, or `None` when
+    /// that is more than `at_most`.
+    pub(crate) fn commits_between(
+        &self,
+        from: &str,
+        to: &str,
+        at_most: Option<u64>,
+    ) -> Result<Option<u64>> {
+        let range = format!("{from}..{to}");
+        let limit = at_most.map(|m| format!("--max-count={}", m.saturating_add(1)));
+        let mut args = vec!["rev-list", "--count"];
+        args.extend(limit.as_deref());
+        args.push(&range);
+        let output = self.git(&args, SMALL, "count commits")?;
+        let n: u64 = utf8(output, "commit count")?
             .trim()
             .parse()
             .map_err(|_| Error::Git {
                 operation: "count commits",
                 message: "rev-list printed no count".into(),
-            })
+            })?;
+        Ok(at_most.is_none_or(|m| n <= m).then_some(n))
     }
 
     /// `git diff --numstat -z` from `commit` to the working tree's tracked
