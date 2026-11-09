@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+dots-base.workspace = true
 dots-process.workspace = true
 notify.workspace = true
 nucleo.workspace = true

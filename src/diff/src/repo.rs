@@ -33,8 +33,11 @@ impl GitState {
             common.join("packed-refs"),
             // Updating a loose ref renames a new file into its directory.
             common.join("refs/heads"),
-            common.join("refs/remotes/origin"),
         ];
+        // Each remote's HEAD and branches are candidates for the base.
+        if let Ok(remotes) = std::fs::read_dir(common.join("refs/remotes")) {
+            paths.extend(remotes.flatten().map(|e| e.path()));
+        }
         if let Ok(Some(name)) = repo.head_name() {
             paths.push(common.join(name.as_bstr().to_string()));
         }
@@ -245,10 +248,10 @@ pub(crate) fn open(worktree: &Path, mode: Mode) -> Result<(gix::Repository, Stri
     let head = repo.head_id().ok().map(gix::Id::detach);
     let (base_commit, label) = match (mode, head) {
         (Mode::Head, Some(head)) => (Some(head), format!("HEAD {}", short(head))),
-        (Mode::Base, Some(head)) => match resolve_base(&repo, head)? {
-            Some((name, commit)) => (Some(commit), format!("{name} {}", short(commit))),
-            None => (Some(head), format!("HEAD {}", short(head))),
-        },
+        (Mode::Base, Some(head)) => {
+            let (name, commit) = resolve_base(&repo, head)?;
+            (Some(commit), format!("{name} {}", short(commit)))
+        }
         (_, None) => (None, "empty tree".to_owned()),
     };
     let tree_of = |commit: Option<gix::ObjectId>| -> Result<gix::ObjectId> {
@@ -925,99 +928,125 @@ fn short(id: gix::ObjectId) -> String {
     id.to_hex_with_len(7).to_string()
 }
 
-/// The default branch's merge base with `head`, and the branch's name.
-fn resolve_base(
+/// The base `head` compares against by the rule `dots review` shares: its
+/// name and commit.
+fn resolve_base(repo: &gix::Repository, head: gix::ObjectId) -> Result<(String, gix::ObjectId)> {
+    let branch = repo.head_name().ok().flatten();
+    let refs = dots_base::Refs::new(base_records(repo, branch.as_ref())?);
+    let short_branch = branch.as_ref().map(|b| b.shorten().to_string());
+    let chosen = refs.choose(&History(repo), &head.to_string(), short_branch.as_deref())?;
+    let base = gix::ObjectId::from_hex(chosen.base.as_bytes())?;
+    Ok((chosen.reference, base))
+}
+
+/// The local `main` and `master`, each remote's `HEAD`, and the checked-out
+/// `branch` with its upstream: every ref the base rule reads for it.
+fn base_records(
     repo: &gix::Repository,
-    head: gix::ObjectId,
-) -> Result<Option<(String, gix::ObjectId)>> {
-    let origin_head = repo
-        .try_find_reference("refs/remotes/origin/HEAD")?
-        .and_then(|r| {
-            r.target()
-                .try_name()
-                .map(|n| n.as_bstr().to_str_lossy().into_owned())
-        });
-    let exists = |name: &str| repo.try_find_reference(name).ok().flatten().is_some();
-    let mut bases = Vec::new();
-    for name in base_candidates(origin_head.as_deref(), exists) {
-        let Ok(mut reference) = repo.find_reference(name.as_str()) else {
-            continue;
-        };
-        let Ok(tip) = reference.peel_to_id() else {
-            continue;
-        };
-        if let Some(base) = repo.merge_base(head, tip.detach())? {
-            bases.push((short_ref(&name), base.detach()));
+    branch: Option<&gix::refs::FullName>,
+) -> Result<Vec<dots_base::Record>> {
+    let mut records = Vec::new();
+    let commit = |r: &mut gix::Reference<'_>| r.peel_to_id().ok().map(|id| id.to_string());
+    for name in ["refs/heads/main", "refs/heads/master"] {
+        if let Some(mut r) = repo.try_find_reference(name)? {
+            records.push(dots_base::Record {
+                name: name.to_owned(),
+                commit: commit(&mut r),
+                ..dots_base::Record::default()
+            });
         }
     }
-    let is_ancestor = |a: gix::ObjectId, b: gix::ObjectId| {
-        a == b
-            || repo
-                .merge_base(a, b)
-                .ok()
-                .flatten()
-                .is_some_and(|m| m.detach() == a)
-    };
-    Ok(newest(bases, is_ancestor))
-}
-
-fn short_ref(name: &str) -> String {
-    name.strip_prefix("refs/heads/")
-        .or_else(|| name.strip_prefix("refs/remotes/"))
-        .unwrap_or(name)
-        .to_owned()
-}
-
-/// Refs that may name the default branch, best first, keeping those that
-/// exist. With `origin/HEAD` set, its target and the local branch of the same
-/// name; otherwise `main` and `master`, local before remote.
-pub(crate) fn base_candidates(
-    origin_head: Option<&str>,
-    exists: impl Fn(&str) -> bool,
-) -> Vec<String> {
-    let names: Vec<String> = match origin_head.and_then(|t| t.strip_prefix("refs/remotes/origin/"))
-    {
-        Some(branch) => vec![
-            format!("refs/heads/{branch}"),
-            format!("refs/remotes/origin/{branch}"),
-        ],
-        None => ["main", "master"]
-            .iter()
-            .flat_map(|b| {
-                [
-                    format!("refs/heads/{b}"),
-                    format!("refs/remotes/origin/{b}"),
-                ]
-            })
-            .collect(),
-    };
-    let mut names: Vec<String> = names.into_iter().filter(|n| exists(n)).collect();
-    if origin_head.is_none() {
-        // Without origin/HEAD, the first branch name that exists decides.
-        let branch = names
-            .first()
-            .map(|n| n.rsplit('/').next().unwrap_or("").to_owned());
-        names.retain(|n| Some(n.rsplit('/').next().unwrap_or("").to_owned()) == branch);
-    }
-    names
-}
-
-/// The most recent of several merge bases: the one every other is an
-/// ancestor of. A local branch behind its remote, or ahead of it, then
-/// yields the fork point closest to the worktree's branch.
-pub(crate) fn newest<T: Copy>(
-    bases: Vec<(String, T)>,
-    is_ancestor: impl Fn(T, T) -> bool,
-) -> Option<(String, T)> {
-    let mut best: Option<(String, T)> = None;
-    for (name, base) in bases {
-        best = match best {
-            Some((_, b)) if is_ancestor(b, base) => Some((name, base)),
-            Some(kept) => Some(kept),
-            None => Some((name, base)),
+    for remote in repo.remote_names() {
+        let name = format!("refs/remotes/{remote}/HEAD");
+        let Some(mut r) = repo.try_find_reference(name.as_str())? else {
+            continue;
         };
+        let symref = r
+            .target()
+            .try_name()
+            .map(|n| n.as_bstr().to_str_lossy().into_owned());
+        records.push(dots_base::Record {
+            name,
+            symref,
+            commit: commit(&mut r),
+            ..dots_base::Record::default()
+        });
     }
-    best
+    if let Some(branch) = branch
+        && !["refs/heads/main", "refs/heads/master"]
+            .contains(&branch.as_bstr().to_str_lossy().as_ref())
+    {
+        let remote_ref = repo
+            .branch_remote_ref_name(branch.as_ref(), gix::remote::Direction::Fetch)
+            .and_then(Result::ok);
+        let local = repo
+            .config_snapshot()
+            .string(format!("branch.{}.remote", branch.shorten()).as_str())
+            .is_some_and(|r| r.as_slice() == b".");
+        let upstream = if local {
+            remote_ref.clone()
+        } else {
+            repo.branch_remote_tracking_ref_name(branch.as_ref(), gix::remote::Direction::Fetch)
+                .and_then(Result::ok)
+        };
+        let name =
+            |n: Option<gix::refs::FullName>| n.map(|n| n.as_bstr().to_str_lossy().into_owned());
+        records.push(dots_base::Record {
+            name: branch.as_bstr().to_str_lossy().into_owned(),
+            upstream: name(upstream),
+            remote_ref: name(remote_ref),
+            ..dots_base::Record::default()
+        });
+    }
+    Ok(records)
+}
+
+/// The base rule's questions, answered by gix.
+struct History<'r>(&'r gix::Repository);
+
+impl History<'_> {
+    fn id(hex: &str) -> Result<gix::ObjectId> {
+        Ok(gix::ObjectId::from_hex(hex.as_bytes())?)
+    }
+}
+
+impl dots_base::History for History<'_> {
+    type Error = anyhow::Error;
+
+    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
+        let (a, d) = (Self::id(ancestor)?, Self::id(descendant)?);
+        Ok(a == d || self.0.merge_base(a, d)?.is_some_and(|m| m.detach() == a))
+    }
+
+    fn commits_between(&self, from: &str, to: &str) -> Result<u64> {
+        let walk = self
+            .0
+            .rev_walk([Self::id(to)?])
+            .with_hidden([Self::id(from)?])
+            .all()?;
+        let mut n = 0;
+        for commit in walk {
+            commit?;
+            n += 1;
+        }
+        Ok(n)
+    }
+
+    fn merge_base(&self, left: &str, right: &str) -> Result<String> {
+        let base = self
+            .0
+            .merge_base(Self::id(left)?, Self::id(right)?)?
+            .with_context(|| format!("{left} and {right} share no history"))?;
+        Ok(base.to_string())
+    }
+
+    fn commit(&self, reference: &str) -> Result<Option<String>> {
+        Ok(self
+            .0
+            .try_find_reference(reference)?
+            .and_then(|mut r| r.peel_to_id().ok())
+            .map(|id| id.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -1025,46 +1054,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn candidates_follow_origin_head_and_prefer_the_local_branch() {
-        let all = |_: &str| true;
+    fn the_base_follows_the_shared_rule() {
+        let dir = std::env::temp_dir().join(format!("dots-diff-base-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(&dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "m1"]);
+        // origin/main moves ahead of the local main, which stays behind.
+        git(&["commit", "-q", "--allow-empty", "-m", "m2"]);
+        let m2 = git(&["rev-parse", "HEAD"]);
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ]);
+        git(&["remote", "add", "origin", "https://example.invalid/r.git"]);
+        git(&["reset", "-q", "--hard", "HEAD~1"]);
+        git(&["switch", "-q", "-c", "feature", "origin/main"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "f1"]);
+        let f1 = git(&["rev-parse", "HEAD"]);
+        let base = |dir: &Path| {
+            let repo = gix::open(dir).expect("open");
+            let head = repo.head_id().expect("head").detach();
+            let (name, commit) = resolve_base(&repo, head).expect("base");
+            (name, commit.to_string())
+        };
         assert_eq!(
-            base_candidates(Some("refs/remotes/origin/trunk"), all),
-            vec!["refs/heads/trunk", "refs/remotes/origin/trunk"]
+            base(&dir),
+            ("origin/main".to_owned(), m2),
+            "the nearer default"
         );
-        let remote_only = |n: &str| n.starts_with("refs/remotes/");
-        assert_eq!(
-            base_candidates(Some("refs/remotes/origin/main"), remote_only),
-            vec!["refs/remotes/origin/main"]
-        );
-    }
-
-    #[test]
-    fn candidates_fall_back_to_main_then_master() {
-        let master_only = |n: &str| n.ends_with("/master");
-        assert_eq!(
-            base_candidates(None, master_only),
-            vec!["refs/heads/master", "refs/remotes/origin/master"]
-        );
-        let both = |n: &str| n == "refs/heads/main" || n == "refs/heads/master";
-        assert_eq!(base_candidates(None, both), vec!["refs/heads/main"]);
-        assert_eq!(
-            base_candidates(None, |_| false),
-            [] as [std::string::String; 0]
-        );
-    }
-
-    #[test]
-    fn picks_the_newest_merge_base() {
-        // History 1 <- 2 <- 3: a larger number descends from a smaller one.
-        let is_ancestor = |a: u32, b: u32| a <= b;
-        let bases = vec![("main".to_owned(), 2), ("origin/main".to_owned(), 3)];
-        assert_eq!(
-            newest(bases, is_ancestor),
-            Some(("origin/main".to_owned(), 3))
-        );
-        let bases = vec![("main".to_owned(), 3), ("origin/main".to_owned(), 1)];
-        assert_eq!(newest(bases, is_ancestor), Some(("main".to_owned(), 3)));
-        assert_eq!(newest::<u32>(vec![], is_ancestor), None);
+        // A branch stacked on feature compares with it.
+        git(&["switch", "-q", "-c", "stacked", "--track", "feature"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "s1"]);
+        assert_eq!(base(&dir), ("feature".to_owned(), f1));
+        // On the default branch: HEAD itself.
+        git(&["switch", "-q", "main"]);
+        let head = git(&["rev-parse", "HEAD"]);
+        assert_eq!(base(&dir), ("HEAD".to_owned(), head));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
