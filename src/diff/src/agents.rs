@@ -269,26 +269,34 @@ pub(crate) fn worktree_of<'a>(dir: &Path, worktrees: &'a [PathBuf]) -> Option<&'
 pub(crate) struct Snapshot {
     pub(crate) agents: Vec<Agent>,
     pub(crate) workers: Vec<Worker>,
-    /// Registrations or a registry that could not be read.
+    /// Registrations that could not be read.
     pub(crate) problems: Vec<String>,
+    /// Why the workers' registry could not be read, when it could not.
+    pub(crate) registry: Option<String>,
 }
 
 impl Snapshot {
     /// Reads the inbox registrations and the workers' registry.
     pub(crate) fn read() -> Self {
-        let Registered {
-            agents,
-            mut problems,
-        } = agents(&inbox_dir());
-        let workers = workers().unwrap_or_else(|e| {
-            problems.push(format!("{e:#}"));
-            Vec::new()
-        });
+        let Registered { agents, problems } = agents(&inbox_dir());
+        let (workers, registry) = match workers() {
+            Ok(w) => (w, None),
+            Err(e) => (Vec::new(), Some(format!("{e:#}"))),
+        };
         Self {
             agents,
             workers,
             problems,
+            registry,
         }
+    }
+
+    /// The first problem reading the sessions and workers.
+    pub(crate) fn problem(&self) -> Option<&str> {
+        self.problems
+            .first()
+            .or(self.registry.as_ref())
+            .map(String::as_str)
     }
 
     /// Who works in each of `worktrees`, in their order.
@@ -517,6 +525,7 @@ mod tests {
                 worker("ask", "/w/other", Status::Asking, 1),
             ],
             problems: Vec::new(),
+            registry: None,
         };
         let owners = snapshot.owners(&worktrees);
         assert_eq!(owners[0].names(), ["pi main"]);

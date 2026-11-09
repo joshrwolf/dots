@@ -45,11 +45,6 @@ pub(super) struct Delivery {
     pub(super) bound: Option<(String, usize)>,
     /// Who a review goes to, once resolved.
     pub(super) resolution: Option<Resolution>,
-    /// Numbers resolutions and picks, so an older result never replaces a
-    /// newer one.
-    pub(super) resolve_seq: u64,
-    /// The live sessions.
-    pub(super) agents: Vec<crate::agents::Agent>,
     /// A review is being delivered.
     pub(super) sending: bool,
 }
@@ -124,16 +119,19 @@ impl Runtime {
         if !self.app.review_writable() {
             return;
         }
-        let found = crate::agents::agents(&crate::agents::inbox_dir());
-        if found.agents.is_empty() {
+        let Some(snapshot) = self.app.agents() else {
+            self.app.message = Some("still looking for Pi sessions; try again".to_owned());
+            return;
+        };
+        if snapshot.agents.is_empty() {
             let mut message = "no interactive Pi session is running; drafts are kept".to_owned();
-            if let Some(problem) = found.problems.first() {
+            if let Some(problem) = snapshot.problems.first() {
                 message = format!("{message} (unreadable registration {problem})");
             }
             self.app.message = Some(message);
             return;
         }
-        self.app.mode = Mode::Picker(Picker::new(found.agents, then_send));
+        self.app.mode = Mode::Picker(Picker::new(snapshot.agents.clone(), then_send));
     }
 
     /// Keys while the agent picker is open; it is closed while they are
@@ -145,8 +143,6 @@ impl Runtime {
                 let Some(agent) = picker.selected().cloned() else {
                     return;
                 };
-                // Resolutions started before the pick do not replace it.
-                self.delivery.resolve_seq += 1;
                 self.app.session.edit().agent = Some(agent.session_id.clone());
                 self.set_resolution(Resolution::Agent {
                     agent,
@@ -299,17 +295,17 @@ impl Runtime {
             }
             Err(e) => {
                 self.app.message = Some(format!("not sent, drafts kept: {e}"));
-                self.delivery.resolution = None;
-                self.spawn_resolve();
+                self.resolve();
             }
         }
     }
 
-    /// Finds who a review of the shown worktree goes to, off the event loop.
-    pub(super) fn spawn_resolve(&mut self) {
-        self.delivery.resolve_seq += 1;
-        let seq = self.delivery.resolve_seq;
-        let worktree = self.app.worktree_path().clone();
+    /// Finds who a review of the shown worktree goes to, from the last read
+    /// of the sessions and workers, which the picker also lists.
+    pub(super) fn resolve(&mut self) {
+        let Some(snapshot) = self.app.agents() else {
+            return;
+        };
         let worktrees: Vec<PathBuf> = self
             .app
             .repo
@@ -322,31 +318,22 @@ impl Runtime {
             .bound
             .as_ref()
             .filter(|(_, i)| *i == self.app.current)
-            .map(|(b, _)| b.clone());
-        let picked = self.app.session.state().agent.clone();
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let found = crate::agents::agents(&crate::agents::inbox_dir());
-            let workers = crate::agents::workers().map_err(|e| format!("{e:#}"));
-            let here = repo::canonical(&worktree);
-            let resolution = deliver::resolve(
-                &found.agents,
-                workers.as_deref().map_err(String::as_str),
-                deliver::Ask {
-                    worktree: &here,
-                    worktrees: &worktrees,
-                    bound: bound.as_deref(),
-                    picked: picked.as_deref(),
-                },
-            );
-            let _ = tx.send(Msg::Resolved {
-                seq,
-                worktree,
-                resolution,
-                agents: found.agents,
-                problems: found.problems,
-            });
-        });
+            .map(|(b, _)| b.as_str());
+        let workers = snapshot
+            .registry
+            .as_deref()
+            .map_or(Ok(snapshot.workers.as_slice()), Err);
+        let resolution = deliver::resolve(
+            &snapshot.agents,
+            workers,
+            deliver::Ask {
+                worktree: &worktrees[self.app.current],
+                worktrees: &worktrees,
+                bound,
+                picked: self.app.session.state().agent.as_deref(),
+            },
+        );
+        self.set_resolution(resolution);
     }
 
     pub(super) fn set_resolution(&mut self, resolution: Resolution) {

@@ -13,7 +13,6 @@ use anyhow::{Context as _, Result};
 
 use crate::app::{App, Body, FileTexts, Line, Mode, Settings, Summary};
 use crate::ctl::{self, Command};
-use crate::deliver;
 use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
 use crate::input::{self, Input, Replies};
@@ -44,16 +43,6 @@ pub(crate) enum Msg {
         result: Result<Changes, String>,
         /// The worktree's Git directory and saved review.
         review: Result<(PathBuf, review::State), String>,
-    },
-    /// Who a review of `worktree` goes to, and the live sessions.
-    Resolved {
-        /// Numbers resolutions; only the latest one counts.
-        seq: u64,
-        worktree: PathBuf,
-        resolution: deliver::Resolution,
-        agents: Vec<crate::agents::Agent>,
-        /// Registrations that could not be read.
-        problems: Vec<String>,
     },
     /// A review was delivered, or not.
     Sent {
@@ -450,7 +439,6 @@ impl Runtime {
         if self.pipeline.next_reconcile <= now {
             self.pipeline.next_reconcile = now + RECONCILE;
             self.spawn_reconcile();
-            self.spawn_resolve();
         }
         if let Some(at) = self.theme.next_poll
             && at <= now
@@ -550,7 +538,7 @@ impl Runtime {
                         self.app.message = self.app.install(worktree, mode, changes, review);
                         self.pipeline.epoch += 1;
                         self.spawn_diffs();
-                        self.spawn_resolve();
+                        self.resolve();
                         if let Some(file) = self.pending_file.take() {
                             self.command(Command::File(file));
                         }
@@ -642,6 +630,7 @@ impl Runtime {
                 if let Some(problem) = self.app.set_agents(snapshot) {
                     self.app.message = Some(problem);
                 }
+                self.resolve();
                 self.request_attribution();
                 true
             }
@@ -700,23 +689,6 @@ impl Runtime {
                 self.command(command);
                 true
             }
-            Msg::Resolved {
-                seq,
-                worktree,
-                resolution,
-                agents,
-                problems,
-            } => {
-                if seq != self.delivery.resolve_seq || worktree != *self.app.worktree_path() {
-                    return false;
-                }
-                if let Some(problem) = problems.first() {
-                    self.app.message = Some(format!("unreadable Pi registration {problem}"));
-                }
-                self.delivery.agents = agents;
-                self.set_resolution(resolution);
-                true
-            }
             Msg::Sent {
                 worktree,
                 dir,
@@ -762,7 +734,7 @@ impl Runtime {
             }
             Command::Bind(block) => {
                 self.delivery.bound = Some((block, self.app.current));
-                self.spawn_resolve();
+                self.resolve();
             }
             Command::Shot(path) => self.shot = Some(path),
             Command::File(path) => {
@@ -900,6 +872,7 @@ mod tests {
 
     use super::*;
     use crate::app::fixture::app_with;
+    use crate::deliver;
 
     /// A runtime over a loaded app, drawn once at 100x30, with no threads.
     fn runtime(files: &[(&str, &str, &str)]) -> (Runtime, Receiver<Msg>) {
@@ -951,32 +924,54 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_pick_is_not_replaced_by_a_resolution_started_before_it() {
-        let (mut rt, _rx) = runtime(TWO);
-        // A resolution in flight, as spawn_resolve numbers it.
-        rt.delivery.resolve_seq += 1;
-        let before = rt.delivery.resolve_seq;
-        rt.app.mode = Mode::Picker(crate::picker::Picker::new(vec![agent("x", "b:2")], None));
-        rt.key(KeyEvent::from(KeyCode::Enter));
-        assert_eq!(rt.app.session.state().agent.as_deref(), Some("x"));
-        let bound = deliver::Resolution::Agent {
-            agent: agent("bound", "b:1"),
-            worker: None,
-            why: deliver::Why::Bound,
-        };
-        rt.handle(Msg::Resolved {
-            seq: before,
-            worktree: "/r".into(),
-            resolution: bound,
-            agents: Vec::new(),
+    fn sessions(agents: Vec<crate::agents::Agent>) -> Msg {
+        Msg::Agents(crate::agents::Snapshot {
+            agents,
+            workers: Vec::new(),
             problems: Vec::new(),
-        });
-        assert!(
-            matches!(&rt.delivery.resolution, Some(deliver::Resolution::Agent { agent, .. }) if agent.session_id == "x"),
-            "{}",
-            rt.app.target
+            registry: None,
+        })
+    }
+
+    fn resolved(rt: &Runtime) -> Option<(&str, deliver::Why)> {
+        match &rt.delivery.resolution {
+            Some(deliver::Resolution::Agent { agent, why, .. }) => {
+                Some((agent.session_id.as_str(), *why))
+            }
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn delivery_and_the_picker_follow_one_read_of_the_sessions() {
+        let (mut rt, _rx) = runtime(TWO);
+        rt.delivery.bound = Some(("b:1".into(), 0));
+        press(&mut rt, "A");
+        assert_eq!(
+            rt.app.message.as_deref(),
+            Some("still looking for Pi sessions; try again")
         );
+        rt.handle(sessions(vec![agent("bound", "b:1"), agent("x", "b:2")]));
+        assert_eq!(resolved(&rt), Some(("bound", deliver::Why::Bound)));
+        press(&mut rt, "A");
+        let Mode::Picker(picker) = &rt.app.mode else {
+            panic!("no picker: {:?}", rt.app.message);
+        };
+        let listed: Vec<_> = picker
+            .agents
+            .iter()
+            .map(|a| a.session_id.as_str())
+            .collect();
+        assert_eq!(listed, ["bound", "x"]);
+        rt.key(KeyEvent::from(KeyCode::Down));
+        rt.key(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(resolved(&rt), Some(("x", deliver::Why::Picked)));
+        // A later read keeps the pick while its session lives, and says so
+        // once it ends.
+        rt.handle(sessions(vec![agent("x", "b:2"), agent("bound", "b:1")]));
+        assert_eq!(resolved(&rt), Some(("x", deliver::Why::Picked)));
+        rt.handle(sessions(vec![agent("bound", "b:1")]));
+        assert_eq!(rt.delivery.resolution, Some(deliver::Resolution::PickGone));
     }
 
     #[test]
@@ -995,6 +990,7 @@ mod tests {
                 updated_at: 1,
             }],
             problems: Vec::new(),
+            registry: None,
         };
         rt.handle(Msg::Agents(snapshot(crate::agents::Status::Running)));
         assert_eq!(rt.app.message, None);

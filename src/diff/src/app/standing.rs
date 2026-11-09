@@ -57,8 +57,8 @@ impl App {
     pub(crate) fn set_agents(&mut self, snapshot: Snapshot) -> Option<String> {
         let mut notice = String::new();
         if let Some(before) = &self.agents {
-            if snapshot.problems != before.problems
-                && let Some(p) = snapshot.problems.first()
+            if snapshot.problem() != before.problem()
+                && let Some(p) = snapshot.problem()
             {
                 notice = format!("Pi agents: {p}");
             }
@@ -91,7 +91,7 @@ impl App {
                     self.markers.insert(paths[i].clone(), marker);
                 }
             }
-        } else if let Some(p) = snapshot.problems.first() {
+        } else if let Some(p) = snapshot.problem() {
             notice = format!("Pi agents: {p}");
         }
         self.agents = Some(snapshot);
@@ -127,6 +127,11 @@ impl App {
     }
 
     /// Who works in worktree `i`.
+    /// The sessions and workers as last read; `None` until they are.
+    pub(crate) fn agents(&self) -> Option<&Snapshot> {
+        self.agents.as_ref()
+    }
+
     pub(crate) fn owners(&self, i: usize) -> Option<&Owners> {
         self.owners.get(i)
     }
@@ -292,6 +297,7 @@ mod tests {
                 worker("/w/e", Status::Asking),
             ],
             problems: Vec::new(),
+            registry: None,
         });
         app
     }
@@ -352,6 +358,7 @@ mod tests {
                 worker("/w/d", Status::Done),
             ],
             problems: Vec::new(),
+            registry: None,
         });
         assert_eq!(app.next_to_review(true), None, "the shown one is not next");
     }
@@ -370,6 +377,7 @@ mod tests {
                 worker("/w/a", Status::Failed),
             ],
             problems: Vec::new(),
+            registry: None,
         };
         app.set_agents(Snapshot {
             agents: Vec::new(),
@@ -378,6 +386,7 @@ mod tests {
                 worker("/w/d", Status::Done),
             ],
             problems: Vec::new(),
+            registry: None,
         });
         // c finished; e began asking; a, the shown one, failed.
         let notice = app.set_agents(snapshot(Status::Done, Status::Asking));

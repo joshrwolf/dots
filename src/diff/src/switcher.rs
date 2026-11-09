@@ -154,6 +154,7 @@ mod tests {
                 updated_at: 1,
             }],
             problems: Vec::new(),
+            registry: None,
         });
         app
     }

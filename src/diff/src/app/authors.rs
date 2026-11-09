@@ -198,6 +198,7 @@ mod tests {
                 worker("other", "/elsewhere", "/s/lead.jsonl"),
             ],
             problems: Vec::new(),
+            registry: None,
         });
         let names: Vec<(String, String)> = app
             .attribution_sources()

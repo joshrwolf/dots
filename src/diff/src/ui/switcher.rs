@@ -480,6 +480,7 @@ mod tests {
                 worker("w-3", "fixer", "/w/fix", 1),
             ],
             problems: Vec::new(),
+            registry: None,
         });
         let sw = Switcher::new(&app);
         let area = Rect::new(0, 0, 120, 12);
