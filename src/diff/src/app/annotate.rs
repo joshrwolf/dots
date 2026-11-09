@@ -345,8 +345,13 @@ impl App {
     }
 
     /// Saves a closed editor's comment, or drops a new one left empty. Returns
-    /// the comment saved.
+    /// the comment saved. When its review cannot be changed the editor stays
+    /// open and the message says why.
     pub(crate) fn save_editor(&mut self, editor: Editor) -> Option<u64> {
+        if !self.review_writable() {
+            self.mode = Mode::Editor(editor);
+            return None;
+        }
         let text = editor.buffer.text();
         let empty = text.trim().is_empty() && !editor.suggestion;
         let content = self.anchor_content(&editor.place);

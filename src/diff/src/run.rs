@@ -733,6 +733,9 @@ impl Runtime {
         match command {
             Command::Refresh => self.start_load(),
             Command::Worktree(path) => {
+                if !self.may_leave() {
+                    return;
+                }
                 if let Some(i) = self.app.repo.index_of(&path) {
                     self.switch(i);
                 } else {
@@ -771,8 +774,10 @@ impl Runtime {
                     .flatten()
                     .filter(|&i| i != self.app.current);
                 if let Some(i) = elsewhere {
-                    self.pending_file = Some(path);
-                    self.switch(i);
+                    if self.may_leave() {
+                        self.pending_file = Some(path);
+                        self.switch(i);
+                    }
                     return;
                 }
                 if self.app.stream.is_none() {
@@ -801,9 +806,20 @@ impl Runtime {
         }
     }
 
+    /// Whether the shown worktree may be left: not while a comment on it is
+    /// being written, which belongs to its review.
+    fn may_leave(&mut self) -> bool {
+        if self.app.editor().is_some() {
+            self.app.message =
+                Some("save or cancel the comment before showing another worktree".to_owned());
+            return false;
+        }
+        true
+    }
+
     /// Shows worktree `worktree`, loading it from scratch.
     fn show(&mut self, worktree: usize) {
-        if worktree >= self.app.repo.worktrees.len() {
+        if worktree >= self.app.repo.worktrees.len() || !self.may_leave() {
             return;
         }
         self.app.current = worktree;
@@ -1053,6 +1069,78 @@ mod tests {
             rt.app.session.state().comments.is_empty(),
             "b's review is untouched"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_open_comment_keeps_its_worktree_until_it_is_saved() {
+        let root = std::env::temp_dir().join(format!("dots-diff-editing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (mut rt, _rx) = runtime(TWO);
+        rt.app.repo.worktrees.push(crate::repo::Worktree {
+            path: "/r2".into(),
+            branch: "other".into(),
+            main: false,
+            touched: None,
+        });
+        rt.app.session.install(
+            Path::new("/r"),
+            Ok((root.clone(), review::State::default())),
+        );
+        press(&mut rt, "jchello");
+        assert!(rt.app.editor().is_some(), "{:?}", rt.app.message);
+        // An agent asks the viewer to show another worktree.
+        rt.command(Command::Worktree("/r2".into()));
+        assert_eq!(rt.app.current, 0, "the switch waits for the comment");
+        assert!(rt.app.editor().is_some(), "the comment stays open");
+        assert!(
+            rt.app
+                .message
+                .as_deref()
+                .is_some_and(|m| m.contains("comment")),
+            "{:?}",
+            rt.app.message
+        );
+        ctrl(&mut rt, 's');
+        let saved: Vec<_> = rt
+            .app
+            .session
+            .state()
+            .comments
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect();
+        assert_eq!(saved, ["hello"], "saved in its own worktree's review");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_comment_that_cannot_be_saved_stays_open() {
+        let root = std::env::temp_dir().join(format!("dots-diff-unsaved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (mut rt, _rx) = runtime(TWO);
+        rt.app.session.install(
+            Path::new("/r"),
+            Ok((root.clone(), review::State::default())),
+        );
+        press(&mut rt, "jchello");
+        assert!(rt.app.editor().is_some(), "{:?}", rt.app.message);
+        // Another viewer holds the review the comment would be saved in.
+        let editor = std::mem::take(&mut rt.app.mode);
+        let other = review::Lock::take(&root.join("other"))
+            .expect("lock")
+            .expect("free");
+        let message = rt.app.session.install(
+            Path::new("/r"),
+            Ok((root.join("other"), review::State::default())),
+        );
+        assert_eq!(message.as_deref(), Some(review::READ_ONLY));
+        rt.app.mode = editor;
+        ctrl(&mut rt, 's');
+        assert!(rt.app.editor().is_some(), "the comment is kept");
+        assert!(rt.app.session.state().comments.is_empty(), "nothing saved");
+        assert!(rt.app.message.is_some(), "the refusal is reported");
+        drop(other);
         let _ = std::fs::remove_dir_all(&root);
     }
 

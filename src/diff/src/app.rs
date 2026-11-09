@@ -1758,7 +1758,10 @@ mod tests {
 
     #[test]
     fn a_selection_ends_when_its_file_changes_under_it() {
-        let long: String = (0..50).map(|i| format!("l{i}\n")).collect();
+        let long: String = (0..50)
+            .map(|i| format!("l{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut app = app_with(&[("a.rs", "x\n", "y\n"), ("b.rs", "", &long)]);
         app.layout(80, 40);
         app.mode = Mode::Visual(Pos {
