@@ -239,8 +239,8 @@ pub(crate) fn open(worktree: &Path, mode: Mode) -> Result<(gix::Repository, Stri
     let (base_commit, label) = match (mode, head) {
         (Mode::Head, Some(head)) => (Some(head), format!("HEAD {}", short(head))),
         (Mode::Base, Some(head)) => {
-            let (name, commit) = resolve_base(&repo, head)?;
-            (Some(commit), format!("{name} {}", short(commit)))
+            let (label, commit) = resolve_base(&repo, head)?;
+            (Some(commit), label)
         }
         (_, None) => (None, "empty tree".to_owned()),
     };
@@ -918,53 +918,46 @@ fn short(id: gix::ObjectId) -> String {
 }
 
 /// The base `head` compares against by the rule `dots review` shares: its
-/// name and commit.
+/// commit and a label naming it, such as `origin/main 1a2b3c4`.
 fn resolve_base(repo: &gix::Repository, head: gix::ObjectId) -> Result<(String, gix::ObjectId)> {
     let branch = repo.head_name().ok().flatten();
     let refs = dots_base::Refs::new(base_records(repo, branch.as_ref())?);
     let short_branch = branch.as_ref().map(|b| b.shorten().to_string());
     let chosen = refs.choose(&History(repo), &head.to_string(), short_branch.as_deref())?;
     let base = gix::ObjectId::from_hex(chosen.base.as_bytes())?;
-    Ok((chosen.reference, base))
+    let label = match (chosen.reason, chosen.candidates.first()) {
+        (dots_base::Reason::NoSharedHistory, Some(nearest)) => format!(
+            "HEAD {}, no history shared with {}",
+            short(base),
+            nearest.reference
+        ),
+        _ => format!("{} {}", chosen.reference, short(base)),
+    };
+    Ok((label, base))
 }
 
 /// The local `main` and `master`, each remote's `HEAD`, and the checked-out
-/// `branch` with its upstream: every ref the base rule reads for it.
+/// `branch`: every ref the base rule reads for it, each local branch with
+/// its upstream.
 fn base_records(
     repo: &gix::Repository,
     branch: Option<&gix::refs::FullName>,
 ) -> Result<Vec<dots_base::Record>> {
-    let mut records = Vec::new();
+    let text = |n: &gix::refs::FullNameRef| n.as_bstr().to_str_lossy().into_owned();
     let commit = |r: &mut gix::Reference<'_>| r.peel_to_id().ok().map(|id| id.to_string());
+    let mut records = Vec::new();
+    let mut locals: Vec<gix::refs::FullName> = Vec::new();
     for name in ["refs/heads/main", "refs/heads/master"] {
-        if let Some(mut r) = repo.try_find_reference(name)? {
-            records.push(dots_base::Record {
-                name: name.to_owned(),
-                commit: commit(&mut r),
-                ..dots_base::Record::default()
-            });
+        if let Some(r) = repo.try_find_reference(name)? {
+            locals.push(r.name().to_owned());
         }
     }
-    for remote in repo.remote_names() {
-        let name = format!("refs/remotes/{remote}/HEAD");
-        let Some(mut r) = repo.try_find_reference(name.as_str())? else {
-            continue;
-        };
-        let symref = r
-            .target()
-            .try_name()
-            .map(|n| n.as_bstr().to_str_lossy().into_owned());
-        records.push(dots_base::Record {
-            name,
-            symref,
-            commit: commit(&mut r),
-            ..dots_base::Record::default()
-        });
-    }
     if let Some(branch) = branch
-        && !["refs/heads/main", "refs/heads/master"]
-            .contains(&branch.as_bstr().to_str_lossy().as_ref())
+        && !locals.contains(branch)
     {
+        locals.push(branch.clone());
+    }
+    for branch in &locals {
         let remote_ref = repo
             .branch_remote_ref_name(branch.as_ref(), gix::remote::Direction::Fetch)
             .and_then(Result::ok);
@@ -978,12 +971,26 @@ fn base_records(
             repo.branch_remote_tracking_ref_name(branch.as_ref(), gix::remote::Direction::Fetch)
                 .and_then(Result::ok)
         };
-        let name =
-            |n: Option<gix::refs::FullName>| n.map(|n| n.as_bstr().to_str_lossy().into_owned());
         records.push(dots_base::Record {
-            name: branch.as_bstr().to_str_lossy().into_owned(),
-            upstream: name(upstream),
-            remote_ref: name(remote_ref),
+            name: text(branch.as_ref()),
+            commit: repo
+                .try_find_reference(branch.as_ref())?
+                .and_then(|mut r| commit(&mut r)),
+            upstream: upstream.as_ref().map(|n| text(n.as_ref())),
+            remote_ref: remote_ref.as_ref().map(|n| text(n.as_ref())),
+            ..dots_base::Record::default()
+        });
+    }
+    for remote in repo.remote_names() {
+        let name = format!("refs/remotes/{remote}/HEAD");
+        let Some(mut r) = repo.try_find_reference(name.as_str())? else {
+            continue;
+        };
+        let symref = r.target().try_name().map(text);
+        records.push(dots_base::Record {
+            name,
+            symref,
+            commit: commit(&mut r),
             ..dots_base::Record::default()
         });
     }
@@ -1021,12 +1028,9 @@ impl dots_base::History for History<'_> {
         Ok(n)
     }
 
-    fn merge_base(&self, left: &str, right: &str) -> Result<String> {
-        let base = self
-            .0
-            .merge_base(Self::id(left)?, Self::id(right)?)?
-            .with_context(|| format!("{left} and {right} share no history"))?;
-        Ok(base.to_string())
+    fn merge_base(&self, left: &str, right: &str) -> Result<Option<String>> {
+        let base = self.0.merge_base(Self::id(left)?, Self::id(right)?)?;
+        Ok(base.map(|b| b.to_string()))
     }
 
     fn commit(&self, reference: &str) -> Result<Option<String>> {
@@ -1042,28 +1046,87 @@ impl dots_base::History for History<'_> {
 mod tests {
     use super::*;
 
+    /// Runs Git in `dir` without the user's configuration; its output.
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// The base `dir`'s HEAD compares against: its name and commit.
+    fn base_of(dir: &Path) -> (String, String) {
+        let repo = gix::open(dir).expect("open");
+        let head = repo.head_id().expect("head").detach();
+        let (label, commit) = resolve_base(&repo, head).expect("base");
+        let name = label.split(' ').next().unwrap_or_default().to_owned();
+        (name, commit.to_string())
+    }
+
+    #[test]
+    fn a_default_named_branch_compares_with_its_differently_named_upstream() {
+        let dir = std::env::temp_dir().join(format!("dots-diff-trunk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let git = |args: &[&str]| git_in(&dir, args);
+        git(&["init", "-q", "-b", "master"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "m1"]);
+        let m1 = git(&["rev-parse", "HEAD"]);
+        git(&["remote", "add", "origin", "https://example.invalid/r.git"]);
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(&[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ]);
+        git(&["branch", "-q", "--set-upstream-to", "origin/main"]);
+        // Local master is one commit ahead of what it tracks.
+        git(&["commit", "-q", "--allow-empty", "-m", "m2"]);
+        assert_eq!(base_of(&dir), ("origin/main".to_owned(), m1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_orphan_branch_loads_against_head_and_says_why() {
+        let dir = std::env::temp_dir().join(format!("dots-diff-orphan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let git = |args: &[&str]| git_in(&dir, args);
+        git(&["init", "-q", "-b", "main"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "m1"]);
+        git(&["switch", "-q", "--orphan", "pages"]);
+        std::fs::write(dir.join("index.html"), "one\n").expect("write");
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "p1"]);
+        std::fs::write(dir.join("index.html"), "two\n").expect("write");
+        let changes = changes(&dir, Mode::Base).expect("an orphan branch loads");
+        let paths: Vec<&str> = changes.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["index.html"], "its uncommitted changes");
+        assert!(
+            changes.base.contains("no history shared with main"),
+            "{}",
+            changes.base
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_base_follows_the_shared_rule() {
         let dir = std::env::temp_dir().join(format!("dots-diff-base-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("dir");
-        let git = |args: &[&str]| {
-            let out = std::process::Command::new("git")
-                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
-                .args(["-c", "commit.gpgsign=false"])
-                .args(args)
-                .current_dir(&dir)
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .output()
-                .expect("git");
-            assert!(
-                out.status.success(),
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            String::from_utf8_lossy(&out.stdout).trim().to_owned()
-        };
+        let git = |args: &[&str]| git_in(&dir, args);
         git(&["init", "-q", "-b", "main"]);
         git(&["commit", "-q", "--allow-empty", "-m", "m1"]);
         // origin/main moves ahead of the local main, which stays behind.
@@ -1080,12 +1143,7 @@ mod tests {
         git(&["switch", "-q", "-c", "feature", "origin/main"]);
         git(&["commit", "-q", "--allow-empty", "-m", "f1"]);
         let f1 = git(&["rev-parse", "HEAD"]);
-        let base = |dir: &Path| {
-            let repo = gix::open(dir).expect("open");
-            let head = repo.head_id().expect("head").detach();
-            let (name, commit) = resolve_base(&repo, head).expect("base");
-            (name, commit.to_string())
-        };
+        let base = base_of;
         assert_eq!(
             base(&dir),
             ("origin/main".to_owned(), m2),

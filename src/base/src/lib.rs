@@ -11,6 +11,9 @@
 //! fork's `origin` and a local `main` that is behind, and keeps unpushed
 //! commits of a local `main` out of the branches built on it. Ties prefer
 //! `upstream`, then `origin`, then other remotes, then the local branch.
+//! A base shares history with HEAD: an upstream or candidate that shares
+//! none is passed over, and when none does, as on an orphan branch, HEAD is
+//! compared with itself.
 //!
 //! The rule reads refs as [`Record`]s and asks a repository about commits
 //! through [`History`], so each caller keeps its own way of reading Git.
@@ -42,8 +45,9 @@ pub trait History {
     fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool, Self::Error>;
     /// How many commits `to` reaches that `from` does not.
     fn commits_between(&self, from: &str, to: &str) -> Result<u64, Self::Error>;
-    /// The best common ancestor of two commits.
-    fn merge_base(&self, left: &str, right: &str) -> Result<String, Self::Error>;
+    /// The best common ancestor of two commits, or `None` when they share
+    /// no history.
+    fn merge_base(&self, left: &str, right: &str) -> Result<Option<String>, Self::Error>;
     /// The commit `reference` names now, or `None` when it names none.
     fn commit(&self, reference: &str) -> Result<Option<String>, Self::Error>;
 }
@@ -59,6 +63,8 @@ pub enum Reason {
     NoDefault,
     /// The default-branch candidate nearest HEAD.
     Default,
+    /// No candidate shares history with HEAD: compare with HEAD itself.
+    NoSharedHistory,
 }
 
 /// One default-branch candidate and how far HEAD is from it.
@@ -230,8 +236,10 @@ impl Refs {
         if let Some(branch) = branch
             && let Some(upstream) = self.upstreams.get(branch)
             && upstream.remote_ref != format!("refs/heads/{branch}")
-            // An upstream whose ref is gone falls through to the defaults.
+            // An upstream whose ref is gone, or that shares no history,
+            // falls through to the defaults.
             && let Some(commit) = history.commit(&upstream.reference)?
+            && let Some(base) = history.merge_base(&commit, head)?
         {
             let short = upstream
                 .reference
@@ -239,7 +247,7 @@ impl Refs {
                 .or_else(|| upstream.reference.strip_prefix("refs/heads/"))
                 .unwrap_or(&upstream.reference);
             return Ok(Chosen {
-                base: history.merge_base(&commit, head)?,
+                base,
                 reference: short.to_owned(),
                 reason: Reason::Upstream,
                 candidates: Vec::new(),
@@ -266,18 +274,26 @@ impl Refs {
             ranked.push((commits, &default.priority, default));
         }
         ranked.sort_by(|left, right| (left.0, left.1).cmp(&(right.0, right.1)));
-        let nearest = ranked[0].2;
-        Ok(Chosen {
-            base: history.merge_base(&nearest.commit, head)?,
-            reference: nearest.reference.clone(),
-            reason: Reason::Default,
-            candidates: ranked
-                .iter()
-                .map(|(commits, _, default)| Candidate {
+        let candidates = ranked
+            .iter()
+            .map(|(commits, _, default)| Candidate {
+                reference: default.reference.clone(),
+                commits: *commits,
+            })
+            .collect();
+        for (_, _, default) in &ranked {
+            if let Some(base) = history.merge_base(&default.commit, head)? {
+                return Ok(Chosen {
+                    base,
                     reference: default.reference.clone(),
-                    commits: *commits,
-                })
-                .collect(),
+                    reason: Reason::Default,
+                    candidates,
+                });
+            }
+        }
+        Ok(Chosen {
+            candidates,
+            ..at_head(Reason::NoSharedHistory)
         })
     }
 }
@@ -317,14 +333,10 @@ mod tests {
             let hidden = self.reach(from);
             Ok(self.reach(to).difference(&hidden).count() as u64)
         }
-        fn merge_base(&self, left: &str, right: &str) -> Result<String, Infallible> {
+        fn merge_base(&self, left: &str, right: &str) -> Result<Option<String>, Infallible> {
             let right = self.reach(right);
             let common: Vec<String> = self.reach(left).intersection(&right).cloned().collect();
-            Ok(common
-                .iter()
-                .max_by_key(|c| self.reach(c).len())
-                .cloned()
-                .unwrap_or_default())
+            Ok(common.iter().max_by_key(|c| self.reach(c).len()).cloned())
         }
         fn commit(&self, reference: &str) -> Result<Option<String>, Infallible> {
             Ok(self.1.get(reference).map(|c| (*c).to_owned()))
@@ -461,6 +473,76 @@ mod tests {
         ]);
         let chosen = gone.choose(&g, "s1", Some("stacked")).expect("chosen");
         assert_eq!(chosen.reason, Reason::Default);
+    }
+
+    #[test]
+    fn a_default_named_branch_compares_with_its_differently_named_upstream() {
+        // Local main tracks origin/trunk: its upstream wins over its role as
+        // a default-branch candidate, whether one record carries the branch
+        // or one gives its commit and another its upstream.
+        let g = Graph(
+            graph().0,
+            BTreeMap::from([("refs/remotes/origin/trunk", "m3")]),
+        );
+        let trunk = Some(("refs/remotes/origin/trunk", "refs/heads/trunk"));
+        let whole = Refs::new([remote_head("origin", "m3"), branch("main", "f2", trunk)]);
+        let split = Refs::new([
+            remote_head("origin", "m3"),
+            branch("main", "f2", None),
+            Record {
+                commit: None,
+                ..branch("main", "", trunk)
+            },
+        ]);
+        for refs in [whole, split] {
+            let chosen = refs.choose(&g, "f2", Some("main")).expect("chosen");
+            assert_eq!(
+                (
+                    chosen.reference.as_str(),
+                    chosen.base.as_str(),
+                    chosen.reason
+                ),
+                ("origin/trunk", "m3", Reason::Upstream)
+            );
+        }
+    }
+
+    #[test]
+    fn bases_share_history_with_head() {
+        // o1 <- o2 is an orphan branch; o2 also tracks feature.
+        let mut g = graph();
+        g.0.extend([("o1", vec![]), ("o2", vec!["o1"])]);
+        let refs = Refs::new([
+            branch("main", "l1", None),
+            remote_head("origin", "m3"),
+            branch(
+                "pages",
+                "o2",
+                Some(("refs/heads/feature", "refs/heads/feature")),
+            ),
+        ]);
+        let chosen = refs.choose(&g, "o2", Some("pages")).expect("chosen");
+        assert_eq!(
+            (
+                chosen.base.as_str(),
+                chosen.reference.as_str(),
+                chosen.reason
+            ),
+            ("o2", "HEAD", Reason::NoSharedHistory)
+        );
+        assert_eq!(
+            chosen.candidates.len(),
+            2,
+            "both candidates were considered"
+        );
+        // Only a candidate that shares history gives the base.
+        g.0.insert("x1", vec!["o2"]);
+        g.0.insert("m3", vec!["m2", "o1"]);
+        let chosen = refs.choose(&g, "x1", None).expect("chosen");
+        assert_eq!(
+            (chosen.reference.as_str(), chosen.base.as_str()),
+            ("origin/main", "o1")
+        );
     }
 
     #[test]

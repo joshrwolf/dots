@@ -282,6 +282,9 @@ impl fmt::Display for Basis {
             BaseReason::Default => "nearest default branch",
             BaseReason::DefaultBranch => "on the default branch: uncommitted changes",
             BaseReason::NoDefault => "no default branch found: uncommitted changes",
+            BaseReason::NoSharedHistory => {
+                "no history shared with a default branch: uncommitted changes"
+            }
         };
         write!(f, "{} ({reason}", self.reference)?;
         for (position, candidate) in self.candidates.iter().enumerate() {

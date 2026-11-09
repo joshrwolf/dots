@@ -28,8 +28,8 @@ impl History for Git {
         Git::commits_between(self, from, to)
     }
 
-    fn merge_base(&self, left: &str, right: &str) -> Result<String> {
-        Git::merge_base(self, left, right)
+    fn merge_base(&self, left: &str, right: &str) -> Result<Option<String>> {
+        Git::shared_base(self, left, right)
     }
 
     fn commit(&self, reference: &str) -> Result<Option<String>> {
@@ -94,6 +94,7 @@ impl Refs {
                     Reason::DefaultBranch => BaseReason::DefaultBranch,
                     Reason::NoDefault => BaseReason::NoDefault,
                     Reason::Default => BaseReason::Default,
+                    Reason::NoSharedHistory => BaseReason::NoSharedHistory,
                 },
                 candidates: chosen
                     .candidates

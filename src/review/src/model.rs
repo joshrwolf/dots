@@ -74,6 +74,9 @@ pub enum BaseReason {
     /// No default branch was found, so the review covers uncommitted
     /// changes against HEAD.
     NoDefault,
+    /// No default branch shares history with HEAD, as on an orphan branch,
+    /// so the review covers uncommitted changes against HEAD.
+    NoSharedHistory,
 }
 
 /// How a revision's base was chosen: the merge base of HEAD and `reference`.

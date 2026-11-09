@@ -192,6 +192,16 @@ impl Git {
         Ok(utf8(output, "merge base")?.trim().to_owned())
     }
 
+    /// The merge base of two commits, or `None` when they share no history.
+    pub(crate) fn shared_base(&self, left: &str, right: &str) -> Result<Option<String>> {
+        match self.merge_base(left, right) {
+            Ok(base) => Ok(Some(base)),
+            // Exit status 1 without a message: no common ancestor.
+            Err(Error::Git { message, .. }) if message.is_empty() => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// The commit HEAD names, or `None` on an unborn branch.
     pub(crate) fn head_commit(&self) -> Result<Option<String>> {
         match self.object("HEAD", "commit") {

@@ -2053,6 +2053,33 @@ mod tests {
     }
 
     #[test]
+    fn an_orphan_branch_reviews_its_uncommitted_changes() {
+        let repo = Repo::new();
+        repo.git(&["switch", "-q", "--orphan", "pages"]);
+        repo.write("index.html", "one\n");
+        repo.git(&["add", "index.html"]);
+        let pages = repo.commit("pages");
+        repo.write("index.html", "two\n");
+        let overview = repo.open(BaseChoice::Keep, None, 1);
+        let revision = overview.review.current();
+        assert_eq!(revision.base, pages);
+        assert_eq!(
+            revision.basis,
+            Basis {
+                reference: "HEAD".into(),
+                reason: BaseReason::NoSharedHistory,
+                candidates: vec![candidate("main", 1)],
+            }
+        );
+        let paths: Vec<_> = overview
+            .files
+            .iter()
+            .map(|file| file.change.path.as_str())
+            .collect();
+        assert!(paths.contains(&"index.html"), "{paths:?}");
+    }
+
+    #[test]
     fn a_branchs_own_upstream_is_ignored_and_another_branch_upstream_is_the_base() {
         let repo = Repo::new();
         let main = repo.git(&["rev-parse", "HEAD"]);
