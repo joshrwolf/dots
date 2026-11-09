@@ -1011,10 +1011,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dots-base"
-version = "0.1.0"
-
-[[package]]
 name = "dots-bootstrap-tests"
 version = "0.1.0"
 dependencies = [
@@ -1058,7 +1054,6 @@ dependencies = [
  "base64",
  "clap",
  "cosmic-text",
- "dots-base",
  "dots-process",
  "flate2",
  "gix",

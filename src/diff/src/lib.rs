@@ -8,6 +8,7 @@
 mod agents;
 mod app;
 mod attribution;
+mod base;
 mod cards;
 mod ctl;
 mod deliver;

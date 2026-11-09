@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use gix::bstr::ByteSlice as _;
 
+use crate::base;
+
 /// One checkout of the repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Worktree {
@@ -153,7 +155,7 @@ fn branch(repo: &gix::Repository) -> String {
 /// What a worktree is compared against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mode {
-    /// The base `dots_base` chooses for HEAD: everything the worktree's
+    /// The base [`crate::base`] chooses for HEAD: everything the worktree's
     /// branch adds, committed or not.
     Base,
     /// HEAD: uncommitted changes only.
@@ -917,26 +919,17 @@ fn short(id: gix::ObjectId) -> String {
     id.to_hex_with_len(7).to_string()
 }
 
-/// The base `head` compares against by the `dots_base` rule: its commit and
+/// The base `head` compares against by the [`crate::base`] rule: its commit and
 /// a label naming it, such as `origin/main 1a2b3c4`.
 fn resolve_base(repo: &gix::Repository, head: gix::ObjectId) -> Result<(String, gix::ObjectId)> {
     let branch = repo.head_name().ok().flatten();
-    let refs = dots_base::Refs::new(base_records(repo, branch.as_ref())?);
+    let refs = base::Refs::new(base_records(repo, branch.as_ref())?);
     let short_branch = branch.as_ref().map(|b| b.shorten().to_string());
-    let chosen = refs.choose(
-        &History(repo),
-        &head.to_string(),
-        short_branch.as_deref(),
-        dots_base::Measure::Nearest,
-    )?;
+    let chosen = refs.choose(&History(repo), &head.to_string(), short_branch.as_deref())?;
     let base = gix::ObjectId::from_hex(chosen.base.as_bytes())?;
-    let label = match (chosen.reason, chosen.candidates.first()) {
-        (dots_base::Reason::NoSharedHistory, Some(nearest)) => format!(
-            "HEAD {}, no history shared with {}",
-            short(base),
-            nearest.reference
-        ),
-        _ => format!("{} {}", chosen.reference, short(base)),
+    let label = match chosen.unshared {
+        Some(nearest) => format!("HEAD {}, no history shared with {nearest}", short(base)),
+        None => format!("{} {}", chosen.reference, short(base)),
     };
     Ok((label, base))
 }
@@ -947,7 +940,7 @@ fn resolve_base(repo: &gix::Repository, head: gix::ObjectId) -> Result<(String, 
 fn base_records(
     repo: &gix::Repository,
     branch: Option<&gix::refs::FullName>,
-) -> Result<Vec<dots_base::Record>> {
+) -> Result<Vec<base::Record>> {
     let text = |n: &gix::refs::FullNameRef| n.as_bstr().to_str_lossy().into_owned();
     let commit = |r: &mut gix::Reference<'_>| r.peel_to_id().ok().map(|id| id.to_string());
     let mut records = Vec::new();
@@ -976,14 +969,14 @@ fn base_records(
             repo.branch_remote_tracking_ref_name(branch.as_ref(), gix::remote::Direction::Fetch)
                 .and_then(Result::ok)
         };
-        records.push(dots_base::Record {
+        records.push(base::Record {
             name: text(branch.as_ref()),
             commit: repo
                 .try_find_reference(branch.as_ref())?
                 .and_then(|mut r| commit(&mut r)),
             upstream: upstream.as_ref().map(|n| text(n.as_ref())),
             remote_ref: remote_ref.as_ref().map(|n| text(n.as_ref())),
-            ..dots_base::Record::default()
+            ..base::Record::default()
         });
     }
     for remote in repo.remote_names() {
@@ -992,11 +985,11 @@ fn base_records(
             continue;
         };
         let symref = r.target().try_name().map(text);
-        records.push(dots_base::Record {
+        records.push(base::Record {
             name,
             symref,
             commit: commit(&mut r),
-            ..dots_base::Record::default()
+            ..base::Record::default()
         });
     }
     Ok(records)
@@ -1152,16 +1145,9 @@ impl Paint<'_, '_> {
     }
 }
 
-impl dots_base::History for History<'_> {
-    type Error = anyhow::Error;
-
-    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
-        let (a, d) = (Self::id(ancestor)?, Self::id(descendant)?);
-        Ok(a == d || self.0.merge_base(a, d)?.is_some_and(|m| m.detach() == a))
-    }
-
-    fn commits_between(&self, from: &str, to: &str, at_most: Option<u64>) -> Result<Option<u64>> {
-        count_beyond(self.0, Self::id(from)?, Self::id(to)?, at_most)
+impl base::History for History<'_> {
+    fn commits_between(&self, from: &str, to: &str, at_most: u64) -> Result<Option<u64>> {
+        count_beyond(self.0, Self::id(from)?, Self::id(to)?, Some(at_most))
     }
 
     fn merge_base(&self, left: &str, right: &str) -> Result<Option<String>> {
@@ -1302,7 +1288,7 @@ mod tests {
     }
 
     #[test]
-    fn the_base_follows_the_shared_rule() {
+    fn the_base_follows_the_rule_through_gix() {
         let dir = std::env::temp_dir().join(format!("dots-diff-base-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("dir");
