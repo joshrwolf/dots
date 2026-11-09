@@ -626,6 +626,10 @@ pub(crate) struct Areas {
 }
 
 #[derive(Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent view, load and registry flags"
+)]
 pub(crate) struct App {
     pub(crate) repo: Repo,
     pub(crate) palette: Palette,
@@ -640,6 +644,9 @@ pub(crate) struct App {
     pub(crate) summaries: HashMap<PathBuf, Summary>,
     /// Interactive Pi sessions and workers, once read.
     agents: Option<crate::agents::Snapshot>,
+    /// Whether the workers' registry has been read; until it has, no
+    /// worker counts as newly finished.
+    workers_known: bool,
     /// Who works in each worktree, in the repository's order.
     owners: Vec<crate::agents::Owners>,
     /// Workers that finished or asked while the viewer was open, by the
@@ -699,6 +706,7 @@ impl App {
             sidebar: Sidebar::default(),
             summaries: HashMap::new(),
             agents: None,
+            workers_known: false,
             owners: Vec::new(),
             markers: HashMap::new(),
             attribution: None,

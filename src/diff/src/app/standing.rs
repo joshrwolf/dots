@@ -51,17 +51,27 @@ impl Marker {
 
 impl App {
     /// Takes newly read sessions and workers, marking the worktrees of
-    /// workers that finished or began asking since the last read. Returns
-    /// what the user should know: those workers, or a problem reading them
-    /// that they have not been told about.
-    pub(crate) fn set_agents(&mut self, snapshot: Snapshot) -> Option<String> {
+    /// workers that finished or began asking since the registry was last
+    /// read. A read of the registry that failed keeps the workers read
+    /// before it. Returns what the user should know: those workers, or a
+    /// problem reading them that they have not been told about.
+    pub(crate) fn set_agents(&mut self, mut snapshot: Snapshot) -> Option<String> {
         let mut notice = String::new();
+        if snapshot.registry.is_some()
+            && let Some(before) = &self.agents
+        {
+            snapshot.workers.clone_from(&before.workers);
+        }
         if let Some(before) = &self.agents {
             if snapshot.problem() != before.problem()
                 && let Some(p) = snapshot.problem()
             {
                 notice = format!("Pi agents: {p}");
             }
+        } else if let Some(p) = snapshot.problem() {
+            notice = format!("Pi agents: {p}");
+        }
+        if let Some(before) = self.agents.as_ref().filter(|_| self.workers_known) {
             let paths: Vec<_> = self.repo.worktrees.iter().map(|w| w.path.clone()).collect();
             for w in &snapshot.workers {
                 let was = before
@@ -91,9 +101,8 @@ impl App {
                     self.markers.insert(paths[i].clone(), marker);
                 }
             }
-        } else if let Some(p) = snapshot.problem() {
-            notice = format!("Pi agents: {p}");
         }
+        self.workers_known |= snapshot.registry.is_none();
         self.agents = Some(snapshot);
         self.match_owners();
         (!notice.is_empty()).then_some(notice)
@@ -407,5 +416,28 @@ mod tests {
         app.look("C");
         assert_eq!(app.marker(2), None);
         assert!(app.marker(4).is_some());
+    }
+
+    #[test]
+    fn a_failed_registry_read_marks_nothing_when_the_registry_reads_again() {
+        let mut viewer = app();
+        let read = |workers: Vec<Worker>, registry: Option<&str>| Snapshot {
+            agents: Vec::new(),
+            workers,
+            problems: Vec::new(),
+            registry: registry.map(str::to_owned),
+        };
+        viewer.set_agents(read(vec![worker("/w/d", Status::Done)], None));
+        let notice = viewer.set_agents(read(Vec::new(), Some("database is locked")));
+        assert_eq!(notice.as_deref(), Some("Pi agents: database is locked"));
+        let notice = viewer.set_agents(read(vec![worker("/w/d", Status::Done)], None));
+        assert_eq!(notice, None, "d was done before the failed read");
+        assert_eq!(viewer.marker(3), None);
+        // Nor does a first read that failed.
+        let mut fresh = app();
+        fresh.set_agents(read(Vec::new(), Some("database is locked")));
+        let notice = fresh.set_agents(read(vec![worker("/w/d", Status::Done)], None));
+        assert_eq!(notice, None);
+        assert_eq!(fresh.marker(3), None);
     }
 }
