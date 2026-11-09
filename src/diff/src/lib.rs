@@ -1,8 +1,8 @@
 //! A terminal diff viewer for every worktree of a repository: each
 //! worktree's branch against its base, as one scrolling stream of files.
 //!
-//! The program in `main.rs` parses the command line and calls [`run`] or
-//! [`ctl`]. With the `dev` feature, `dev` holds the tools the crate's
+//! The program in `main.rs` parses the command line and calls [`run`],
+//! [`list`] or [`ctl`]. With the `dev` feature, `dev` holds the tools the crate's
 //! examples run from the checkout.
 
 mod agents;
@@ -39,6 +39,7 @@ mod wrap;
 use std::path::PathBuf;
 
 use anyhow::Result;
+pub use ctl::{Ctl, Note, NoteSide};
 
 /// The user's state directory: `$XDG_STATE_HOME`, or `~/.local/state`.
 fn state_home() -> PathBuf {
@@ -134,39 +135,6 @@ pub fn run(options: Options) -> Result<()> {
     })
 }
 
-/// A command for a running viewer.
-#[derive(Debug, Clone)]
-pub enum Ctl {
-    /// Show the worktree containing this path.
-    Worktree(PathBuf),
-    /// Scroll to a file; an absolute path in another worktree switches to it.
-    File(String),
-    Refresh,
-    /// List running viewers: their Rex pane and worktree.
-    List,
-    Note(Note),
-    /// Clear the notes on this file, or all.
-    ClearNotes(Option<String>),
-    /// Send reviews to the Pi session in this Rex pane.
-    Bind(String),
-    /// Save the viewer's screen as a PNG picture here.
-    Shot(PathBuf),
-}
-
-/// A note for the user: on lines of a file, a whole file, or the review.
-#[derive(Debug, Clone)]
-pub struct Note {
-    /// Absolute, or relative to the current directory or the worktree.
-    pub file: Option<String>,
-    /// First line, 1-based; without it the note is about the whole file.
-    pub line: Option<u32>,
-    /// Last line of a range.
-    pub end: Option<u32>,
-    /// The line numbers count the old side.
-    pub old: bool,
-    pub text: String,
-}
-
 /// A file named from inside a worktree travels as an absolute path, so it
 /// reaches that worktree; otherwise it is taken within the viewer's.
 fn absolute_if_exists(path: String) -> Result<(String, Option<PathBuf>)> {
@@ -178,60 +146,50 @@ fn absolute_if_exists(path: String) -> Result<(String, Option<PathBuf>)> {
     })
 }
 
+/// Prints the running viewers: their Rex pane and worktree.
+pub fn list() {
+    for v in &ctl::viewers() {
+        println!(
+            "{}\t{}",
+            v.status.block.as_deref().unwrap_or("-"),
+            v.status.worktree.display()
+        );
+    }
+}
+
 /// Sends `command` to the viewer in Rex pane `block`, else the one showing
-/// the repository it names, else the only one running.
+/// the repository it names, else the only one running. Paths that exist
+/// travel absolute.
 pub fn ctl(block: Option<&str>, command: Ctl) -> Result<()> {
-    let viewers = ctl::viewers();
     let (command, path) = match command {
-        Ctl::List => {
-            for v in &viewers {
-                println!(
-                    "{}\t{}",
-                    v.status.block.as_deref().unwrap_or("-"),
-                    v.status.worktree.display()
-                );
-            }
-            return Ok(());
-        }
-        Ctl::Worktree(path) => {
+        Ctl::Worktree { path } => {
             let path = std::path::absolute(path)?;
-            (ctl::Command::Worktree(path.clone()), Some(path))
+            (Ctl::Worktree { path: path.clone() }, Some(path))
         }
-        Ctl::File(path) => {
+        Ctl::File { path } => {
             let (path, absolute) = absolute_if_exists(path)?;
-            (ctl::Command::File(path), absolute)
+            (Ctl::File { path }, absolute)
         }
-        Ctl::Refresh => (ctl::Command::Refresh, None),
-        Ctl::Note(note) => {
-            let (file, path) = match note.file {
+        Ctl::Note(mut note) => {
+            let path = match note.file.take() {
                 Some(f) => {
                     let (f, p) = absolute_if_exists(f)?;
-                    (Some(f), p)
+                    note.file = Some(f);
+                    p
                 }
-                None => (None, None),
+                None => None,
             };
-            let spec = ctl::NoteSpec {
-                file,
-                line: note.line,
-                end: note.end,
-                old: note.old,
-                text: note.text,
-            };
-            (ctl::Command::Note(spec), path)
+            (Ctl::Note(note), path)
         }
-        Ctl::ClearNotes(file) => {
-            let (file, path) = match file {
-                Some(f) => {
-                    let (f, p) = absolute_if_exists(f)?;
-                    (Some(f), p)
-                }
-                None => (None, None),
-            };
-            (ctl::Command::ClearNotes(file), path)
-        }
-        Ctl::Bind(block) => (ctl::Command::Bind(block), None),
-        Ctl::Shot(path) => (ctl::Command::Shot(std::path::absolute(path)?), None),
+        Ctl::Shot { path } => (
+            Ctl::Shot {
+                path: std::path::absolute(path)?,
+            },
+            None,
+        ),
+        command @ (Ctl::Refresh | Ctl::Bind { .. }) => (command, None),
     };
+    let viewers = ctl::viewers();
     let viewer = ctl::pick(&viewers, block, path.as_deref(), repo::same_repository)?;
-    ctl::send(viewer, &command)
+    ctl::send(viewer, command)
 }

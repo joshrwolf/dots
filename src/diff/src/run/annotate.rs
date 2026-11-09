@@ -10,7 +10,7 @@ use ratatui::termina::event::{KeyCode, KeyEvent, Modifiers};
 
 use super::{Msg, Runtime};
 use crate::app::{Line, Mode};
-use crate::ctl::NoteSpec;
+use crate::ctl::{Note, NoteSide};
 use crate::deliver::{self, Ack, Resolution, Why};
 use crate::editor::Editor;
 use crate::picker::{Batch, Picker};
@@ -377,21 +377,28 @@ impl Runtime {
     }
 
     /// Places an agent's note.
-    pub(super) fn note(&mut self, spec: NoteSpec) {
-        let (worktree, place) = match spec.file {
+    pub(super) fn note(&mut self, note: Note) {
+        let Some(text) = note.text else {
+            self.app.message = Some("an agent sent a note with no text".to_owned());
+            return;
+        };
+        let (worktree, place) = match note.file {
             None => (self.app.worktree_path().clone(), Place::Review),
             Some(file) => {
                 let (worktree, path) = self.relative(&file);
-                let place = match spec.line {
+                let place = match note.line {
                     None => Place::File { path },
                     Some(line) => {
                         let start = line.saturating_sub(1);
                         Place::Lines {
                             path,
                             lines: review::Lines {
-                                side: if spec.old { Side::Old } else { Side::New },
+                                side: match note.side {
+                                    NoteSide::New => Side::New,
+                                    NoteSide::Old => Side::Old,
+                                },
                                 start,
-                                end: spec.end.map_or(start, |e| e.saturating_sub(1).max(start)),
+                                end: note.end.map_or(start, |e| e.saturating_sub(1).max(start)),
                                 text: Vec::new(),
                             },
                         }
@@ -400,6 +407,6 @@ impl Runtime {
                 (worktree, place)
             }
         };
-        self.app.add_note(worktree, place, spec.text);
+        self.app.add_note(worktree, place, text);
     }
 }

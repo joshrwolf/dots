@@ -1,6 +1,6 @@
 //! Steering running viewers: each listens on its own Unix socket in a
-//! per-user directory and answers one text line per connection with `ok`
-//! or an error line. `status` reports the Rex pane a viewer runs in and the
+//! per-user directory and answers one JSON line per connection with
+//! another. `status` reports the Rex pane a viewer runs in and the
 //! worktree it shows, so a command reaches the right one of several.
 
 use std::fmt::Write as _;
@@ -13,130 +13,96 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Command {
-    /// Show the worktree containing a path.
-    Worktree(PathBuf),
-    /// Scroll to a file, by absolute path or path within the worktree. An
-    /// absolute path in another worktree switches to it.
-    File(String),
+/// A command for a running viewer, as `dots-diff ctl` takes it and its
+/// socket receives it.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Subcommand, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Ctl {
+    /// Show the worktree containing PATH
+    Worktree { path: PathBuf },
+    /// Scroll to a file; an absolute path in another worktree switches to it
+    File { path: String },
+    /// Reload now
     Refresh,
-    /// Show an agent's note to the user.
-    Note(NoteSpec),
-    /// Clear the notes of one file, or all.
-    ClearNotes(Option<String>),
-    /// Send reviews of the shown worktree to the Pi session in this Rex pane.
-    Bind(String),
-    /// Save the screen as a PNG picture.
-    Shot(PathBuf),
+    /// Show the user a note: on lines of a file, a whole file, or the review
+    Note(Note),
+    /// Send reviews to the Pi session in this Rex pane
+    Bind { block: String },
+    /// Save the viewer's screen as a PNG picture
+    Shot { path: PathBuf },
 }
 
-/// Where an agent's note goes and what it says. Lines are 1-based; with
-/// no file it is about the whole review, with no line the whole file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct NoteSpec {
+/// A note for the user, or the notes to clear.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args, Serialize, Deserialize)]
+pub struct Note {
+    /// The file: absolute, or relative to the current directory or the
+    /// worktree
+    #[arg(long, value_name = "PATH")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) file: Option<String>,
+    pub file: Option<String>,
+    /// First line, 1-based; without it the note is about the whole file
+    #[arg(long, requires = "file")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) line: Option<u32>,
+    pub line: Option<u32>,
+    /// Last line of a range
+    #[arg(long, requires = "line")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) end: Option<u32>,
+    pub end: Option<u32>,
+    /// The side the line numbers count
+    #[arg(long, value_enum, default_value_t = NoteSide::New)]
     #[serde(default)]
-    pub(crate) old: bool,
-    pub(crate) text: String,
+    pub side: NoteSide,
+    /// Clear notes instead: those of --file, or all
+    #[arg(long, conflicts_with_all = ["line", "text"])]
+    #[serde(default)]
+    pub clear: bool,
+    /// What the note says
+    #[arg(required_unless_present = "clear")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
-impl Command {
-    pub(crate) fn parse(line: &str) -> Result<Self> {
-        let (verb, arg) = line.trim().split_once(' ').unwrap_or((line.trim(), ""));
-        Ok(match (verb, arg.trim()) {
-            ("worktree", path) if !path.is_empty() => Command::Worktree(PathBuf::from(path)),
-            ("file", path) if !path.is_empty() => Command::File(path.to_owned()),
-            ("refresh", "") => Command::Refresh,
-            ("note", json) if !json.is_empty() => Command::Note(
-                serde_json::from_str(json).with_context(|| format!("reading note {json:?}"))?,
-            ),
-            ("clear-notes", path) => {
-                Command::ClearNotes((!path.is_empty()).then(|| path.to_owned()))
-            }
-            ("bind", block) if !block.is_empty() => Command::Bind(block.to_owned()),
-            ("shot", path) if !path.is_empty() => Command::Shot(PathBuf::from(path)),
-            _ => bail!(
-                "unknown command {line:?}; expected `worktree PATH`, `file PATH`, `refresh`, `status`, `note JSON`, `clear-notes [PATH]`, `bind BLOCK` or `shot PATH`"
-            ),
-        })
-    }
-
-    fn line(&self) -> String {
-        match self {
-            Command::Worktree(p) => format!("worktree {}", p.display()),
-            Command::File(p) => format!("file {p}"),
-            Command::Refresh => "refresh".to_owned(),
-            Command::Note(n) => format!(
-                "note {}",
-                serde_json::to_string(n).unwrap_or_else(|_| "{}".to_owned())
-            ),
-            Command::ClearNotes(None) => "clear-notes".to_owned(),
-            Command::ClearNotes(Some(p)) => format!("clear-notes {p}"),
-            Command::Bind(b) => format!("bind {b}"),
-            Command::Shot(p) => format!("shot {}", p.display()),
-        }
-    }
+/// The side of a diff a note's line numbers count.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoteSide {
+    #[default]
+    New,
+    Old,
 }
 
-/// A line a viewer's socket accepts: `status`, which the socket answers
+/// A line a viewer's socket reads: `status`, which the socket answers
 /// itself, or a command for the viewer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 enum Request {
     /// Report the viewer's pane and worktree.
     Status,
-    Command(Command),
+    Command(Ctl),
 }
 
-impl Request {
-    fn parse(line: &str) -> Result<Self> {
-        if line.trim() == "status" {
-            return Ok(Request::Status);
-        }
-        Command::parse(line).map(Request::Command)
-    }
-
-    fn line(&self) -> String {
-        match self {
-            Request::Status => "status".to_owned(),
-            Request::Command(c) => c.line(),
-        }
-    }
+/// The line a viewer's socket answers with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Reply {
+    Ok,
+    Status(Status),
+    Error(String),
 }
 
 /// What a viewer reports about itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Status {
     /// The Rex pane it runs in, from `REX_BLOCK`.
     pub(crate) block: Option<String>,
     pub(crate) worktree: PathBuf,
 }
 
-impl Status {
-    fn line(&self) -> String {
-        format!(
-            "ok\t{}\t{}",
-            self.block.as_deref().unwrap_or("-"),
-            self.worktree.display()
-        )
-    }
-
-    fn parse(line: &str) -> Option<Self> {
-        let mut parts = line.trim_end_matches('\n').splitn(3, '\t');
-        let (Some("ok"), Some(block), Some(worktree)) = (parts.next(), parts.next(), parts.next())
-        else {
-            return None;
-        };
-        Some(Self {
-            block: (block != "-").then(|| block.to_owned()),
-            worktree: PathBuf::from(worktree),
-        })
-    }
+/// One JSON line.
+fn line(value: &impl Serialize) -> String {
+    let mut out = serde_json::to_string(value).expect("socket messages serialize");
+    out.push('\n');
+    out
 }
 
 /// Where viewers listen: the runtime directory, or the user's state
@@ -158,7 +124,7 @@ pub(crate) fn socket_path() -> PathBuf {
 pub(crate) fn serve(
     path: &Path,
     status: Arc<Mutex<Status>>,
-    deliver: impl Fn(Command) + Send + 'static,
+    deliver: impl Fn(Ctl) + Send + 'static,
 ) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -174,17 +140,18 @@ pub(crate) fn serve(
             if BufReader::new(&stream).read_line(&mut line).is_err() {
                 continue;
             }
-            let reply = match Request::parse(&line) {
-                Ok(Request::Status) => status
-                    .lock()
-                    .map_or_else(|_| "error: status unavailable".to_owned(), |s| s.line()),
+            let reply = match serde_json::from_str(&line) {
+                Ok(Request::Status) => status.lock().map_or_else(
+                    |_| Reply::Error("status unavailable".to_owned()),
+                    |s| Reply::Status(s.clone()),
+                ),
                 Ok(Request::Command(command)) => {
                     deliver(command);
-                    "ok".to_owned()
+                    Reply::Ok
                 }
-                Err(e) => format!("error: {e}"),
+                Err(e) => Reply::Error(format!("reading {:?}: {e}", line.trim_end())),
             };
-            let _ = stream.write_all(format!("{reply}\n").as_bytes());
+            let _ = stream.write_all(self::line(&reply).as_bytes());
         }
     });
     Ok(())
@@ -200,14 +167,20 @@ impl Drop for Cleanup {
     }
 }
 
-fn request(socket: &Path, request: &Request) -> Result<String> {
+fn request(socket: &Path, request: &Request) -> Result<Reply> {
     let mut stream = UnixStream::connect(socket)
         .with_context(|| format!("no dots-diff is listening on {}", socket.display()))?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.write_all(format!("{}\n", request.line()).as_bytes())?;
+    stream.write_all(line(request).as_bytes())?;
     let mut reply = String::new();
     BufReader::new(&stream).read_line(&mut reply)?;
-    Ok(reply)
+    serde_json::from_str(&reply).with_context(|| {
+        format!(
+            "reading the reply {:?} from {}",
+            reply.trim_end(),
+            socket.display()
+        )
+    })
 }
 
 /// A running viewer.
@@ -230,11 +203,7 @@ pub(crate) fn viewers() -> Vec<Viewer> {
             continue;
         }
         match request(&socket, &Request::Status) {
-            Ok(reply) => {
-                if let Some(status) = Status::parse(&reply) {
-                    found.push(Viewer { socket, status });
-                }
-            }
+            Ok(Reply::Status(status)) => found.push(Viewer { socket, status }),
             Err(e)
                 if e.downcast_ref::<std::io::Error>()
                     .or_else(|| e.root_cause().downcast_ref())
@@ -242,7 +211,7 @@ pub(crate) fn viewers() -> Vec<Viewer> {
             {
                 let _ = std::fs::remove_file(&socket);
             }
-            Err(_) => {}
+            Ok(_) | Err(_) => {}
         }
     }
     found.sort_by(|a, b| a.socket.cmp(&b.socket));
@@ -297,11 +266,11 @@ pub(crate) fn pick<'a>(
 }
 
 /// Sends one command to `viewer`.
-pub(crate) fn send(viewer: &Viewer, command: &Command) -> Result<()> {
-    let reply = request(&viewer.socket, &Request::Command(command.clone()))?;
-    match reply.trim() {
-        "ok" => Ok(()),
-        other => bail!("{other}"),
+pub(crate) fn send(viewer: &Viewer, command: Ctl) -> Result<()> {
+    match request(&viewer.socket, &Request::Command(command))? {
+        Reply::Ok => Ok(()),
+        Reply::Error(e) => bail!("{e}"),
+        Reply::Status(_) => bail!("the viewer answered a command with its status"),
     }
 }
 
@@ -310,51 +279,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_commands() {
-        assert_eq!(Command::parse("refresh\n").expect("ok"), Command::Refresh);
-        assert_eq!(Request::parse("status\n").expect("ok"), Request::Status);
-        assert_eq!(
-            Request::parse("refresh").expect("ok"),
-            Request::Command(Command::Refresh)
-        );
-        assert_eq!(
-            Command::parse("file src/a b.rs").expect("ok"),
-            Command::File("src/a b.rs".into())
-        );
-        assert_eq!(
-            Command::parse("worktree /x").expect("ok"),
-            Command::Worktree("/x".into())
-        );
-        assert!(Command::parse("file").is_err());
-        assert!(Command::parse("quit").is_err());
-        let note = Command::Note(NoteSpec {
-            file: Some("src/a.rs".into()),
+    fn requests_and_replies_travel_as_json_lines() {
+        let note = Ctl::Note(Note {
+            file: Some("src/a b.rs".into()),
             line: Some(3),
             end: None,
-            old: false,
-            text: "Look here\nand \"here\"".into(),
+            side: NoteSide::Old,
+            clear: false,
+            text: Some("Look here\nand \"here\"".into()),
         });
-        assert_eq!(Command::parse(&note.line()).expect("note"), note);
-        for c in [
-            Command::ClearNotes(None),
-            Command::ClearNotes(Some("a b.rs".into())),
-            Command::Bind("block:1".into()),
+        for request in [
+            Request::Status,
+            Request::Command(Ctl::Refresh),
+            Request::Command(Ctl::File {
+                path: "src/a b.rs".into(),
+            }),
+            Request::Command(note),
         ] {
-            assert_eq!(Command::parse(&c.line()).expect("round trip"), c);
+            let sent = line(&request);
+            assert_eq!(sent.matches('\n').count(), 1, "{sent}");
+            assert_eq!(
+                serde_json::from_str::<Request>(&sent).expect("read"),
+                request
+            );
         }
-        assert!(Command::parse("note {").is_err());
-    }
-
-    #[test]
-    fn status_round_trips_with_and_without_a_pane() {
-        for block in [Some("b-1".to_owned()), None] {
-            let status = Status {
-                block,
+        assert_eq!(line(&Request::Status), "\"status\"\n");
+        for reply in [
+            Reply::Ok,
+            Reply::Error("nope".into()),
+            Reply::Status(Status {
+                block: None,
                 worktree: "/r/a b".into(),
-            };
-            assert_eq!(Status::parse(&format!("{}\n", status.line())), Some(status));
+            }),
+        ] {
+            assert_eq!(
+                serde_json::from_str::<Reply>(&line(&reply)).expect("read"),
+                reply
+            );
         }
-        assert_eq!(Status::parse("error: nope"), None);
+        assert!(serde_json::from_str::<Request>("\"quit\"").is_err());
     }
 
     #[test]

@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand, ValueEnum};
-use dots_diff::{Ctl, Look, Note, Options};
+use clap::{Parser, Subcommand};
+use dots_diff::{Ctl, Look, Options};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -51,76 +51,10 @@ enum Cmd {
 
 #[derive(Debug, Subcommand)]
 enum CtlCmd {
-    /// Show the worktree containing PATH
-    Worktree { path: PathBuf },
-    /// Scroll to a file; an absolute path in another worktree switches to it
-    File { path: String },
-    /// Reload now
-    Refresh,
     /// List running viewers: their Rex pane and worktree
     List,
-    /// Show the user a note: on lines of a file, a whole file, or the review
-    Note {
-        /// The file: absolute, or relative to the current directory or the
-        /// worktree
-        #[arg(long, value_name = "PATH")]
-        file: Option<String>,
-        /// First line, 1-based; without it the note is about the whole file
-        #[arg(long, requires = "file")]
-        line: Option<u32>,
-        /// Last line of a range
-        #[arg(long, requires = "line")]
-        end: Option<u32>,
-        /// The side the line numbers count
-        #[arg(long, value_enum, default_value_t = NoteSide::New)]
-        side: NoteSide,
-        /// Clear notes instead: those of --file, or all
-        #[arg(long, conflicts_with_all = ["line", "text"])]
-        clear: bool,
-        /// What the note says
-        #[arg(required_unless_present = "clear")]
-        text: Option<String>,
-    },
-    /// Send reviews to the Pi session in this Rex pane
-    Bind { block: String },
-    /// Save the viewer's screen as a PNG picture
-    Shot { path: PathBuf },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum NoteSide {
-    New,
-    Old,
-}
-
-impl From<CtlCmd> for Ctl {
-    fn from(command: CtlCmd) -> Self {
-        match command {
-            CtlCmd::Worktree { path } => Self::Worktree(path),
-            CtlCmd::File { path } => Self::File(path),
-            CtlCmd::Refresh => Self::Refresh,
-            CtlCmd::List => Self::List,
-            CtlCmd::Note {
-                file, clear: true, ..
-            } => Self::ClearNotes(file),
-            CtlCmd::Note {
-                file,
-                line,
-                end,
-                side,
-                text,
-                ..
-            } => Self::Note(Note {
-                file,
-                line,
-                end,
-                old: side == NoteSide::Old,
-                text: text.unwrap_or_default(),
-            }),
-            CtlCmd::Bind { block } => Self::Bind(block),
-            CtlCmd::Shot { path } => Self::Shot(path),
-        }
-    }
+    #[command(flatten)]
+    Viewer(Ctl),
 }
 
 fn main() -> ExitCode {
@@ -132,7 +66,17 @@ fn main() -> ExitCode {
             bind: cli.bind,
             look: cli.look,
         }),
-        Some(Cmd::Ctl { block, command }) => dots_diff::ctl(block.as_deref(), command.into()),
+        Some(Cmd::Ctl {
+            command: CtlCmd::List,
+            ..
+        }) => {
+            dots_diff::list();
+            Ok(())
+        }
+        Some(Cmd::Ctl {
+            block,
+            command: CtlCmd::Viewer(command),
+        }) => dots_diff::ctl(block.as_deref(), command),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 
 use crate::app::{App, Body, FileTexts, Line, Mode, Settings, Summary};
-use crate::ctl::{self, Command};
+use crate::ctl::{self, Ctl};
 use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
 use crate::input::{self, Input, Replies};
@@ -88,7 +88,7 @@ pub(crate) enum Msg {
     Agents(crate::agents::Snapshot),
     /// Which agent wrote which file of a worktree.
     Attributed(crate::attribution::Attribution),
-    Ctl(Command),
+    Ctl(Ctl),
 }
 
 #[derive(Debug, Clone)]
@@ -540,7 +540,7 @@ impl Runtime {
                         self.spawn_diffs();
                         self.resolve();
                         if let Some(file) = self.pending_file.take() {
-                            self.command(Command::File(file));
+                            self.command(Ctl::File { path: file });
                         }
                     }
                     Err(e) => self.app.message = Some(e),
@@ -701,10 +701,10 @@ impl Runtime {
         }
     }
 
-    fn command(&mut self, command: Command) {
+    fn command(&mut self, command: Ctl) {
         match command {
-            Command::Refresh => self.start_load(),
-            Command::Worktree(path) => {
+            Ctl::Refresh => self.start_load(),
+            Ctl::Worktree { path } => {
                 if !self.may_leave() {
                     return;
                 }
@@ -727,17 +727,17 @@ impl Runtime {
                     }
                 }
             }
-            Command::Note(spec) => self.note(spec),
-            Command::ClearNotes(path) => {
-                let rel = path.map(|p| self.relative(&p).1);
+            Ctl::Note(note) if note.clear => {
+                let rel = note.file.map(|p| self.relative(&p).1);
                 self.app.clear_notes(rel.as_deref());
             }
-            Command::Bind(block) => {
+            Ctl::Note(note) => self.note(note),
+            Ctl::Bind { block } => {
                 self.delivery.bound = Some((block, self.app.current));
                 self.resolve();
             }
-            Command::Shot(path) => self.shot = Some(path),
-            Command::File(path) => {
+            Ctl::Shot { path } => self.shot = Some(path),
+            Ctl::File { path } => {
                 // A file in another worktree, or before anything loaded,
                 // waits for its worktree's load.
                 let elsewhere = Path::new(&path)
@@ -1086,7 +1086,7 @@ mod tests {
         press(&mut rt, "jchello");
         assert!(rt.app.editor().is_some(), "{:?}", rt.app.message);
         // An agent asks the viewer to show another worktree.
-        rt.command(Command::Worktree("/r2".into()));
+        rt.command(Ctl::Worktree { path: "/r2".into() });
         assert_eq!(rt.app.current, 0, "the switch waits for the comment");
         assert!(rt.app.editor().is_some(), "the comment stays open");
         assert!(
@@ -1138,6 +1138,43 @@ mod tests {
         assert!(rt.app.message.is_some(), "the refusal is reported");
         drop(other);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn notes_from_ctl_are_placed_and_cleared() {
+        let (mut rt, _rx) = runtime(TWO);
+        let note = |file: Option<&str>, clear, text: Option<&str>| {
+            Ctl::Note(ctl::Note {
+                file: file.map(str::to_owned),
+                line: Some(2),
+                end: Some(3),
+                side: ctl::NoteSide::Old,
+                clear,
+                text: text.map(str::to_owned),
+            })
+        };
+        rt.command(note(Some("a.rs"), false, Some("here")));
+        rt.command(note(Some("b.rs"), false, Some("there")));
+        let place = &rt.app.session.notes()[0].place;
+        let review::Place::Lines { path, lines } = place else {
+            panic!("{place:?}");
+        };
+        assert_eq!(
+            (path.as_str(), lines.side, lines.start, lines.end),
+            ("a.rs", review::Side::Old, 1, 2)
+        );
+        rt.command(note(None, false, None));
+        assert_eq!(rt.app.session.notes().len(), 2, "{:?}", rt.app.message);
+        assert!(rt.app.message.is_some(), "a note with no text is reported");
+        rt.command(note(Some("a.rs"), true, None));
+        let left: Vec<_> = rt
+            .app
+            .session
+            .notes()
+            .iter()
+            .map(|n| n.place.path())
+            .collect();
+        assert_eq!(left, [Some("b.rs")]);
     }
 
     #[test]
