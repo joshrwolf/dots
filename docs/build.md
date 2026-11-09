@@ -79,6 +79,11 @@ mise run //src/pi:check
 Code lives under named owners in `src/`, configuration trees in `home/`, and canonical
 skills in `skills/`.
 
+Development tools that must not ship, such as benchmarks against real
+repositories and frame renderers, are a crate's Cargo examples behind its
+`dev` feature: checks build them through `--all-features`, and `cargo install`
+leaves them out. The crate's `AGENTS.md` names them.
+
 TypeScript packages run directly on Node 24 or their Pi host; checks do not emit
 JavaScript. Their shared [compiler contract](../tsconfig.base.json) uses Node
 APIs, not browser globals. `mise run check:typescript` checks tooling types,
