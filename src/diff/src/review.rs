@@ -442,6 +442,32 @@ pub(crate) fn since_sent(
     out
 }
 
+/// What the user was shown when a review is sent: every file listed now
+/// at its content, kept so a later view can compare with it, and every
+/// file of the last send no longer listed at its base, which it matches
+/// again. A file whose content cannot be read keeps its last record.
+pub(crate) fn seen_at_send(
+    mut seen: BTreeMap<String, String>,
+    listed: &[FileChange],
+    target: crate::repo::Target,
+    reader: &mut Reader,
+) -> BTreeMap<String, String> {
+    let paths: std::collections::HashSet<&str> = listed.iter().map(|c| c.path.as_str()).collect();
+    for (path, sent) in &mut seen {
+        if !paths.contains(path.as_str())
+            && let Ok(base) = reader.blob_in(target.base_tree, path)
+        {
+            *sent = content_key(base);
+        }
+    }
+    for change in listed {
+        if let Ok(id) = reader.keep(change) {
+            seen.insert(change.path.clone(), content_key(id));
+        }
+    }
+    seen
+}
+
 /// What a review message needs besides the comments.
 #[derive(Debug, Clone)]
 pub(crate) struct Header<'a> {
@@ -697,6 +723,44 @@ mod tests {
         assert_eq!(State::load(&dir).expect("load"), state);
         std::fs::write(dir.join("dots-diff/state.json"), r#"{"version":9}"#).expect("write");
         assert!(State::load(&dir).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_send_records_files_reverted_since_the_last_one_at_their_base() {
+        use gix::object::tree::EntryKind;
+        let dir = std::env::temp_dir().join(format!("dots-diff-resend-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = gix::init(&dir).expect("init");
+        let base = repo.write_blob("base\n").expect("blob").detach();
+        let edited = repo.write_blob("edited\n").expect("blob").detach();
+        let added = repo.write_blob("added\n").expect("blob").detach();
+        let mut tree = repo.edit_tree(repo.empty_tree().id).expect("editor");
+        tree.upsert("a.rs", EntryKind::Blob, base).expect("upsert");
+        let base_tree = tree.write().expect("write").detach();
+        let target = crate::repo::Target {
+            base_tree,
+            head_tree: base_tree,
+        };
+        let key = |id: gix::ObjectId| content_key(Some(id));
+        // Send 1 showed a.rs edited and new.rs added; both were reverted
+        // before send 2, which lists neither.
+        let first = BTreeMap::from([
+            ("a.rs".to_owned(), key(edited)),
+            ("new.rs".to_owned(), key(added)),
+        ]);
+        let mut reader = Reader::new(repo, dir.clone());
+        let second = seen_at_send(first, &[], target, &mut reader);
+        assert_eq!(
+            second,
+            BTreeMap::from([
+                ("a.rs".to_owned(), key(base)),
+                ("new.rs".to_owned(), content_key(None)),
+            ])
+        );
+        // So the view since send 2 shows nothing until they change again.
+        let since = since_sent(Vec::new(), &second, |_| true, target, &mut reader);
+        assert!(since.is_empty(), "{since:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

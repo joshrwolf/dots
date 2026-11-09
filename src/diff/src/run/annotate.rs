@@ -231,6 +231,7 @@ impl Runtime {
         let text = review::message(&header, &comments);
         let ids: Vec<u64> = comments.iter().map(|c| c.id).collect();
         let changes: Vec<_> = stream.files.iter().map(|f| f.change.clone()).collect();
+        let target = stream.target;
         let seen = self.app.session.state().seen.clone();
         let worktree = stream.worktree.clone();
         let dir = self.app.session.dir().map(Path::to_owned);
@@ -239,12 +240,7 @@ impl Runtime {
         self.app.message = Some(format!("sending to {}…", agent.label()));
         std::thread::spawn(move || {
             let mut reader = Reader::new(repo.to_thread_local(), root);
-            let mut seen = seen;
-            for change in &changes {
-                if let Ok(id) = reader.keep(change) {
-                    seen.insert(change.path.clone(), review::content_key(id));
-                }
-            }
+            let seen = review::seen_at_send(seen, &changes, target, &mut reader);
             let result = deliver::send(&agent, &text)
                 .map(|ack| {
                     reader.prune_kept(&seen);
