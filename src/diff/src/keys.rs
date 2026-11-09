@@ -179,9 +179,10 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[(key('c'), Action::Comment), (key('s'), Action::Suggest)],
     ),
     row(
-        "v  esc",
+        "V v  esc",
         "select lines (j k or drag to extend); cancel",
         &[
+            (key('V'), Action::Visual),
             (key('v'), Action::Visual),
             (named(KeyCode::Escape), Action::Cancel),
         ],
@@ -360,6 +361,7 @@ mod tests {
 
     #[test]
     fn lookup_finds_bound_keys() {
+        assert_eq!(action(KeyCode::Char('V'), false), Some(Action::Visual));
         assert_eq!(action(KeyCode::Char('v'), false), Some(Action::Visual));
         assert_eq!(action(KeyCode::Char('c'), true), Some(Action::Quit));
         assert_eq!(action(KeyCode::Char('Z'), false), None);
