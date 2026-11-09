@@ -9,9 +9,12 @@ local function run(argv, opts)
   return vim.system(argv, vim.tbl_extend("force", { text = true }, opts or {})):wait()
 end
 
+-- A command killed by a signal reports code 0; count it as a failure.
 local function checked(argv, expected, opts)
   local result = run(argv, opts)
-  assert.equals(expected or 0, result.code, table.concat(argv, " ") .. "\n" .. (result.stderr or ""))
+  local message = table.concat(argv, " ") .. "\n" .. (result.stderr or "")
+  assert.equals(0, result.signal, message)
+  assert.equals(expected or 0, result.code, message)
   return result.stdout or "", result.code
 end
 
@@ -20,7 +23,8 @@ function M.git(dir, args)
     local argv = { "git", "-C", dir }
     vim.list_extend(argv, args)
     local result = run(argv)
-    return (result.stdout or "") .. (result.stderr or ""), result.code
+    local code = result.signal ~= 0 and 128 + result.signal or result.code
+    return (result.stdout or "") .. (result.stderr or ""), code
   end
   local root = vim.fn.has("win32") == 1 and ('"' .. dir .. '"') or vim.fn.shellescape(dir)
   local output = vim.fn.system("git -C " .. root .. " " .. args)
@@ -204,6 +208,8 @@ function M.new(opts)
     if not opts.bare then
       repo.dir = vim.trim(repo.command({ "rev-parse", "--show-toplevel" })):gsub("\\", "/")
     end
+    -- Never let a fixture command reach a repository outside its own root.
+    assert(repo.dir:sub(1, #root + 1) == root .. "/", "fixture repository " .. repo.dir .. " is outside " .. root)
     repo.root, repo.common_dir = root, common
     repo.seed = vim.deepcopy(seed.metadata)
     repo.command({ "remote", "remove", "origin" })
