@@ -29,6 +29,8 @@ interface Freshness {
   /** Set while sync passes fail, such as when the remote is unreachable. */
   readonly failing: {readonly since: number; readonly lastError: string} | null;
 }
+/** Whether the checkout's project shares across machines; null outside Git. */
+type Sharing = 'bound' | 'declined' | 'unshared' | null;
 interface MemorySnapshot {
   readonly store: string;
   readonly snapshot: string;
@@ -40,6 +42,7 @@ interface MemorySnapshot {
   readonly global: Index | Unavailable;
   readonly project: Index | Unavailable | null;
   readonly diagnostic: string | null;
+  readonly sharing: Sharing;
 }
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -148,6 +151,14 @@ export function decodeMemorySnapshot(value: unknown): MemorySnapshot {
     (response.project === null) !== (response.diagnostic !== null)
   )
     throw new Error('Invalid dots memory project availability');
+  const sharing = response.sharing;
+  if (
+    sharing !== null &&
+    sharing !== 'bound' &&
+    sharing !== 'declined' &&
+    sharing !== 'unshared'
+  )
+    throw new Error('Invalid dots memory sharing state');
   if (
     typeof response.changes !== 'string' ||
     !path.isAbsolute(response.changes)
@@ -165,6 +176,7 @@ export function decodeMemorySnapshot(value: unknown): MemorySnapshot {
         ? null
         : decodeIndex(response.project, 'project', snapshot),
     diagnostic: response.diagnostic,
+    sharing,
   };
 }
 
@@ -208,6 +220,10 @@ function section(
       : `\n[memory index truncated; use dots memory read ${INDEX} --scope ${index.scope} --snapshot ${index.snapshot} --start ${index.nextLine} for the rest]`;
   return `## ${title}\n${resource} Read linked topics with ${read}.\n\n${index.content}${more}`;
 }
+
+/** Offered once per unshared checkout; declining records the answer. */
+const UNSHARED =
+  'This repository is not shared across machines: its goals, tasks and project memory stay on this machine. Ask the user once whether to share it; `dots project share` shows the options, including declining so agents stop asking here.';
 
 /** Whole minutes, hours or days, so the label changes rarely. */
 function age(seconds: number): string {
@@ -255,9 +271,12 @@ function sections(
       section('global', observation.store, observation.global),
       CONVENTIONS,
     ].join('\n\n'),
-    dots_memory_project: observation.project
-      ? section('project', observation.store, observation.project)
-      : `## Project memory\nProject scope unavailable: ${observation.diagnostic}`,
+    dots_memory_project: [
+      observation.project
+        ? section('project', observation.store, observation.project)
+        : `## Project memory\nProject scope unavailable: ${observation.diagnostic}`,
+      ...(observation.sharing === 'unshared' ? [UNSHARED] : []),
+    ].join('\n'),
   };
 }
 

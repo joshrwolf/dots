@@ -13,8 +13,8 @@ pub const STORE_PATH: &str = "dots/workspace.sqlite3";
 
 const ID_ATTEMPTS: usize = 16;
 
-/// The catalog schema this build writes; it migrates schema 9 on open.
-const SCHEMA: i64 = 10;
+/// The catalog schema this build writes; it migrates schemas 9 and 10 on open.
+const SCHEMA: i64 = 11;
 
 /// The catalog as schema 9 created it; new catalogs start here and migrate.
 pub(super) const SCHEMA_9: &str = "
@@ -66,7 +66,7 @@ pub(super) const SCHEMA_9: &str = "
 /// the brief bytes last exported. Triggers fill `dirty_tasks` while sharing
 /// is on; claims and releases stay local. `sent_answers` keeps answers given
 /// here to trees homed elsewhere until their home records them.
-const SHARING: &str = "
+pub(super) const SHARING: &str = "
     ALTER TABLE events ADD COLUMN uid TEXT;
     ALTER TABLE events ADD COLUMN published INTEGER;
     UPDATE events SET uid=lower(hex(randomblob(16)));
@@ -105,6 +105,13 @@ const SHARING: &str = "
         request TEXT PRIMARY KEY REFERENCES requests(id), goal TEXT NOT NULL, answer TEXT NOT NULL,
         at INTEGER NOT NULL, exported INTEGER);
     PRAGMA user_version=10;
+";
+
+/// Schema 10 to 11: projects the user chose not to share from this machine.
+const DECLINES: &str = "
+    CREATE TABLE share_declines(
+        project TEXT PRIMARY KEY REFERENCES projects(id), at INTEGER NOT NULL) WITHOUT ROWID;
+    PRAGMA user_version=11;
 ";
 
 #[derive(Debug, thiserror::Error)]
@@ -724,7 +731,7 @@ impl Store {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version != SCHEMA && version != 9 {
+        if !matches!(version, 9 | 10 | SCHEMA) {
             return Err(Error::Schema(version));
         }
         Self::initialize(connection)
@@ -780,8 +787,13 @@ impl Store {
                 // Schema 9, then the migrations an existing catalog takes.
                 tx.execute_batch(SCHEMA_9)?;
                 tx.execute_batch(SHARING)?;
+                tx.execute_batch(DECLINES)?;
             }
-            9 => tx.execute_batch(SHARING)?,
+            9 => {
+                tx.execute_batch(SHARING)?;
+                tx.execute_batch(DECLINES)?;
+            }
+            10 => tx.execute_batch(DECLINES)?,
             SCHEMA => {}
             other => return Err(Error::Schema(other)),
         }

@@ -174,7 +174,7 @@ fn insert_project(tx: &Transaction<'_>, name: &str) -> Result<Project, Error> {
     Project::try_new(id)
 }
 
-fn require_project(tx: &Transaction<'_>, project: &Project) -> Result<String, Error> {
+pub(crate) fn require_project(tx: &Transaction<'_>, project: &Project) -> Result<String, Error> {
     tx.query_row(
         "SELECT name FROM projects WHERE id=?1",
         [project.as_str()],

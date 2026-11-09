@@ -65,7 +65,7 @@ function substrate(root) {
   });
   cli(root, root, 'substrate', 'init', '--remote', `file://${remote}`);
 }
-function scratchRepo() {
+function scratchRepo({bind = true} = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'dots-knowledge-'));
   const checkout = path.join(root, 'checkout');
   mkdirSync(checkout);
@@ -97,6 +97,7 @@ function scratchRepo() {
   cli(root, checkout, 'project', 'init', 'Fixture', '--fresh');
   substrate(root);
   const initialized = cli(root, checkout, 'memory', 'init');
+  if (!bind) return {root, checkout, linked: path.join(root, 'linked')};
   const registration = cli(
     root,
     checkout,
@@ -377,6 +378,7 @@ test('memory snapshot decoder rejects cross-snapshot, wrong-scope and filesystem
     changes: '/fixture/substrate/changes',
     project: null,
     diagnostic: 'unbound',
+    sharing: null,
     global: {
       state: 'available',
       snapshot,
@@ -441,6 +443,8 @@ test('memory snapshot decoder rejects cross-snapshot, wrong-scope and filesystem
     },
     {...value, global: {...value.global, state: 'incoming'}},
     {...value, diagnostic: null},
+    {...value, sharing: 'maybe'},
+    {...value, sharing: undefined},
   ]) {
     assert.throws(() => decodeMemorySnapshot(malformed));
   }
@@ -463,6 +467,7 @@ function observation(overrides = {}) {
     changes: overrides.changes ?? '/nonexistent-dots-fixture/changes',
     project: null,
     diagnostic: 'unbound',
+    sharing: null,
     global: {
       state: 'available',
       snapshot,
@@ -589,6 +594,35 @@ test('real CLI context reads the local copy without contacting the remote', asyn
     assert.doesNotMatch(text, /Stale|unavailable/);
     const after = cli(repo.root, repo.root, 'substrate', 'status').counters;
     assert.deepEqual(after, before);
+  } finally {
+    rmSync(repo.root, {recursive: true, force: true});
+  }
+});
+
+const UNSHARED =
+  'This repository is not shared across machines: its goals, tasks and project memory stay on this machine. Ask the user once whether to share it; `dots project share` shows the options, including declining so agents stop asking here.';
+
+test('an unshared checkout asks once; declined, bound and outside Git stay silent', async () => {
+  const repo = scratchRepo({bind: false});
+  try {
+    const env = environment(repo.root);
+    const project = async cwd =>
+      (await memoryContext(cwd, env)).dots_memory_project;
+    const unshared = await project(repo.linked);
+    assert.ok(unshared.endsWith(`\n${UNSHARED}`), unshared);
+    assert.equal(unshared.split(UNSHARED).length, 2);
+    assert.equal(await project(repo.linked), unshared);
+    assert.doesNotMatch(await project(repo.root), /not shared across machines/);
+
+    cli(repo.root, repo.checkout, 'project', 'share', '--decline');
+    const declined = await project(repo.linked);
+    assert.doesNotMatch(declined, /not shared across machines/);
+    assert.match(declined, /Project scope unavailable/);
+
+    cli(repo.root, repo.checkout, 'project', 'share', '--create', 'Fixture');
+    const bound = await project(repo.linked);
+    assert.doesNotMatch(bound, /not shared across machines/);
+    assert.match(bound, /## Project memory \(shared knowledge identity/);
   } finally {
     rmSync(repo.root, {recursive: true, force: true});
   }

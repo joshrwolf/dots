@@ -71,13 +71,28 @@ pub(crate) fn resolve(
 ) -> Result<Project> {
     match resolve_optional(store, directory, explicit)? {
         Resolution::Bound(project) => Ok(project),
-        Resolution::Unavailable(message) => bail!("{message}"),
+        unavailable => bail!("{}", unavailable.message()),
     }
 }
 
 pub(crate) enum Resolution {
     Bound(Project),
-    Unavailable(&'static str),
+    OutsideGit,
+    /// A Git checkout no registered project is bound to.
+    Unbound,
+}
+
+impl Resolution {
+    /// Why no project resolved, naming the commands that bind one.
+    pub(crate) fn message(&self) -> &'static str {
+        match self {
+            Self::Bound(_) => "resolved a bound project",
+            Self::OutsideGit => {
+                "outside Git: pass --project ID for a registered project or select --scope global"
+            }
+            Self::Unbound => UNBOUND,
+        }
+    }
 }
 
 pub(crate) fn resolve_optional(
@@ -90,46 +105,55 @@ pub(crate) fn resolve_optional(
         return Ok(Resolution::Bound(store.registered_project(&project)?.id));
     }
     let Some(common) = common_directory(directory)? else {
-        return Ok(Resolution::Unavailable(
-            "outside Git: pass --project ID for a registered project or select --scope global",
-        ));
+        return Ok(Resolution::OutsideGit);
     };
     Ok(match store.project_for_common_directory(&common)? {
         Some(project) => Resolution::Bound(project),
-        None => Resolution::Unavailable(UNBOUND),
+        None => Resolution::Unbound,
     })
 }
 
-pub(crate) fn run(command: ProjectCommand, directory: &Path) -> Result<String> {
+/// Register `name` and bind the checkout's Git common directory `common`,
+/// creating the catalog if absent; an existing binding is returned as is.
+/// Returns the catalog, the project and whether it was created.
+pub(crate) fn initialize(common: &Path, name: &str, fresh: bool) -> Result<(Store, Project, bool)> {
+    let name = dots_tasks::validate_project_name(name)?;
     let root = data_root()?;
+    let _lock = MutationLock::acquire(&root.join("mutation.lock"))?;
+    let path = catalog_path()?;
+    let mut store = if path.try_exists()? {
+        open()?
+    } else {
+        let old_tasks =
+            crate::xdg::base("XDG_STATE_HOME", ".local/state")?.join("dots/tasks/tasks.sqlite3");
+        ensure!(
+            fresh
+                || !(old_tasks.try_exists()?
+                    || root.join("memory").try_exists()?
+                    || root.join("goals").try_exists()?),
+            "existing data needs a reviewed cutover; --fresh explicitly starts an empty catalog without deleting it"
+        );
+        Store::create(&path)?
+    };
+    let (project, created) = store.initialize_project(name, common)?;
+    Ok((store, project, created))
+}
+
+pub(crate) fn run(command: ProjectCommand, directory: &Path, as_json: bool) -> Result<String> {
     let value = match command {
         ProjectCommand::Init { name, fresh } => {
             let common = common_directory(directory)?.context(
                 "project init requires a Git checkout; use project register for an unbound project",
             )?;
-            let name = dots_tasks::validate_project_name(&name)?;
-            let _lock = MutationLock::acquire(&root.join("mutation.lock"))?;
-            let path = catalog_path()?;
-            let mut store = if path.try_exists()? {
-                open()?
-            } else {
-                let old_tasks = crate::xdg::base("XDG_STATE_HOME", ".local/state")?
-                    .join("dots/tasks/tasks.sqlite3");
-                ensure!(
-                    fresh
-                        || !(old_tasks.try_exists()?
-                            || root.join("memory").try_exists()?
-                            || root.join("goals").try_exists()?),
-                    "existing data needs a reviewed cutover; --fresh explicitly starts an empty catalog without deleting it"
-                );
-                Store::create(&path)?
-            };
-            let (project, created) = store.initialize_project(name, &common)?;
+            let (mut store, project, created) = initialize(&common, &name, fresh)?;
             json!({
                 "project": store.registered_project(&project)?,
                 "workspace": workspace(&project)?,
                 "created": created,
             })
+        }
+        ProjectCommand::Share(share) => {
+            return crate::project_share::run(directory, &share, as_json);
         }
         ProjectCommand::Register { name } => {
             let mut store = open()?;

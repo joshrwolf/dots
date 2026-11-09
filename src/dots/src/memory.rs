@@ -40,7 +40,7 @@ struct Reconciliation {
     resolutions: Vec<Resolution>,
 }
 
-fn open() -> Result<Store> {
+pub(crate) fn open() -> Result<Store> {
     let local = crate::project::data_root()?.join("memory");
     Ok(Store::open(crate::substrate::open()?, &local)?)
 }
@@ -109,15 +109,19 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
         MemoryCommand::Context => {
             let head = store.head()?;
             let view = store.view(&head, None)?;
-            let (project, diagnostic) =
-                match project_scope(&store, &head, &view, directory, explicit) {
-                    Ok(scope) => scope,
-                    Err(error) if explicit.is_none() => (
-                        None,
-                        Some(format!("Project knowledge unavailable: {error:#}")),
-                    ),
-                    Err(error) => return Err(error),
-                };
+            let ProjectScope {
+                scope: project,
+                diagnostic,
+                sharing,
+            } = match project_scope(&store, &head, &view, directory, explicit) {
+                Ok(scope) => scope,
+                Err(error) if explicit.is_none() => ProjectScope {
+                    scope: None,
+                    diagnostic: Some(format!("Project knowledge unavailable: {error:#}")),
+                    sharing: None,
+                },
+                Err(error) => return Err(error),
+            };
             let global = index(&view, &Scope::Global);
             let project = project.map(|scope| index(&view, &scope));
             encode(&json!({
@@ -130,6 +134,7 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
                 "global": global,
                 "project": project,
                 "diagnostic": diagnostic,
+                "sharing": sharing,
             }))
         }
         MemoryCommand::Status => {
@@ -216,7 +221,7 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
             } else {
                 let (project, message) =
                     match project_scope(&store, &head, &view, directory, explicit) {
-                        Ok(scope) => scope,
+                        Ok(scope) => (scope.scope, scope.diagnostic),
                         Err(error) if explicit.is_none() => (
                             None,
                             Some(format!("Project knowledge unavailable: {error:#}")),
@@ -296,38 +301,73 @@ fn index(view: &View<'_>, scope: &Scope) -> serde_json::Value {
     }
 }
 
+/// Whether a checkout's project shares across machines, so agents can offer
+/// to set it up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Sharing {
+    Bound,
+    /// The user chose not to share it from this machine.
+    Declined,
+    Unshared,
+}
+
+struct ProjectScope {
+    scope: Option<Scope>,
+    diagnostic: Option<String>,
+    /// None outside Git.
+    sharing: Option<Sharing>,
+}
+
 fn project_scope(
     store: &Store,
     head: &Head,
     view: &View<'_>,
     directory: &Path,
     explicit: Option<&str>,
-) -> Result<(Option<Scope>, Option<String>)> {
+) -> Result<ProjectScope> {
+    let unavailable = |diagnostic: String, sharing| ProjectScope {
+        scope: None,
+        diagnostic: Some(diagnostic),
+        sharing,
+    };
     if !crate::project::catalog_path()?.try_exists()? {
         ensure!(
             explicit.is_none(),
             "local catalog unavailable; initialize a project explicitly"
         );
-        return Ok((
-            None,
-            Some("Local project catalog is absent; global knowledge remains available.".into()),
+        let sharing = crate::project::common_directory(directory)?.map(|_| Sharing::Unshared);
+        return Ok(unavailable(
+            "Local project catalog is absent; global knowledge remains available.".into(),
+            sharing,
         ));
     }
     let mut catalog = crate::project::open()?;
     let local = match crate::project::resolve_optional(&mut catalog, directory, explicit)? {
         crate::project::Resolution::Bound(local) => local,
-        crate::project::Resolution::Unavailable(message) => {
-            return Ok((None, Some(message.into())));
+        unbound @ crate::project::Resolution::Unbound => {
+            return Ok(unavailable(
+                unbound.message().into(),
+                Some(Sharing::Unshared),
+            ));
+        }
+        outside @ crate::project::Resolution::OutsideGit => {
+            return Ok(unavailable(outside.message().into(), None));
         }
     };
     let bindings = bindings(store, &head.store)?;
     let Some(id) = bindings.projects.get(local.as_str()) else {
-        return Ok((
-            None,
-            Some(format!(
-                "Local project {} has no shared knowledge binding; use memory project bind SHARED_ID.",
+        let sharing = if catalog.share_declined(&local)? {
+            Sharing::Declined
+        } else {
+            Sharing::Unshared
+        };
+        return Ok(unavailable(
+            format!(
+                "Local project {} has no shared knowledge binding; dots project share sets one up.",
                 local.as_str()
-            )),
+            ),
+            Some(sharing),
         ));
     };
     ensure!(
@@ -335,7 +375,11 @@ fn project_scope(
         "shared project binding {id} is unavailable at snapshot {}; no scope fallback",
         view.snapshot()
     );
-    Ok((Some(Scope::Project(id.clone())), None))
+    Ok(ProjectScope {
+        scope: Some(Scope::Project(id.clone())),
+        diagnostic: None,
+        sharing: Some(Sharing::Bound),
+    })
 }
 
 fn project_command(
@@ -362,29 +406,8 @@ fn project_command(
         MemoryProjectCommand::Bind { id } => {
             let mut catalog = crate::project::open()?;
             let local = crate::project::resolve(&mut catalog, directory, explicit)?;
-            let head = store.head()?;
-            ensure!(
-                store
-                    .view(&head, None)?
-                    .manifest()
-                    .projects
-                    .contains_key(&id),
-                "unknown shared knowledge project {id}"
-            );
-            let _lock = MutationLock::acquire(&store.local().join(LOCK))?;
-            let mut bindings = bindings(store, &head.store)?;
-            if let Some(current) = bindings.projects.get(local.as_str()) {
-                ensure!(
-                    current == &id,
-                    "local project is already bound to {current}; unbind that exact identity first"
-                );
-            }
-            bindings
-                .projects
-                .insert(local.as_str().to_owned(), id.clone());
-            replace_json(&store.local().join(BINDINGS), &bindings)?;
-            store.substrate().notify()?;
-            encode(&json!({"local_project": local, "shared_project": id}))
+            let queued = bind(store, &mut catalog, &local, &id)?;
+            encode(&json!({"local_project": local, "shared_project": id, "queued": queued}))
         }
         MemoryProjectCommand::Unbind { expected } => {
             let mut catalog = crate::project::open()?;
@@ -402,6 +425,65 @@ fn project_command(
             encode(&json!({"local_project": local, "unbound_shared_project": expected}))
         }
     }
+}
+
+/// Bind `local` to the shared identity `id` on this machine. Clears a
+/// decline and, while sharing is on, queues and exports the project's
+/// existing trees; returns how many were queued. Rebinding the same identity
+/// is a no-op binding that still queues.
+pub(crate) fn bind(
+    store: &Store,
+    catalog: &mut dots_tasks::Store,
+    local: &dots_tasks::Project,
+    id: &ProjectId,
+) -> Result<usize> {
+    let head = store.head()?;
+    let view = store.view(&head, None)?;
+    let known = &view.manifest().projects;
+    ensure!(
+        known.contains_key(id),
+        "unknown shared knowledge project {id}; known identities: {}",
+        identities(known)
+    );
+    {
+        let _lock = MutationLock::acquire(&store.local().join(LOCK))?;
+        let mut bindings = bindings(store, &head.store)?;
+        if let Some(current) = bindings.projects.get(local.as_str()) {
+            ensure!(
+                current == id,
+                "local project is already bound to {current}; unbind that exact identity first (dots memory project unbind --expected {current})"
+            );
+        }
+        bindings
+            .projects
+            .insert(local.as_str().to_owned(), id.clone());
+        replace_json(&store.local().join(BINDINGS), &bindings)?;
+    }
+    let queued = catalog.share_project(local)?;
+    store.substrate().notify()?;
+    crate::share::after_write(catalog);
+    Ok(queued)
+}
+
+/// The shared identity `local` is bound to on this machine, if any.
+pub(crate) fn binding(store: &Store, local: &dots_tasks::Project) -> Result<Option<ProjectId>> {
+    let head = store.head()?;
+    Ok(bindings(store, &head.store)?
+        .projects
+        .get(local.as_str())
+        .cloned())
+}
+
+/// Shared identities as `ID (name)`, for errors that list valid choices.
+pub(crate) fn identities(known: &BTreeMap<ProjectId, String>) -> String {
+    if known.is_empty() {
+        return "none".into();
+    }
+    known
+        .iter()
+        .map(|(id, name)| format!("{id} ({name})"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Local projects bound to shared project identities on this machine, as

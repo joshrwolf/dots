@@ -81,7 +81,7 @@ mod tests {
             machine.project = str_at(&catalog, "/project/id").to_owned();
             machine
         }
-        fn command(&self, args: &[&str]) -> Command {
+        fn plain(&self) -> Command {
             let mut command = Command::new(env!("CARGO_BIN_EXE_dots"));
             command
                 .env_clear()
@@ -89,10 +89,23 @@ mod tests {
                 .env("HOME", self.root.join("home"))
                 .env("XDG_DATA_HOME", self.root.join("data"))
                 .env("XDG_STATE_HOME", self.root.join("state"))
-                .current_dir(self.root.join("checkout"))
-                .args(["--json"])
-                .args(args);
+                .current_dir(self.root.join("checkout"));
             command
+        }
+        fn command(&self, args: &[&str]) -> Command {
+            let mut command = self.plain();
+            command.args(["--json"]).args(args);
+            command
+        }
+        /// Readable output, without --json.
+        fn text(&self, args: &[&str]) -> String {
+            let mut command = self.plain();
+            command.args(args);
+            let output = dots_process::Runner::new(Duration::from_secs(30), 4 * 1024 * 1024)
+                .output(command)
+                .unwrap();
+            assert!(output.status.success(), "{args:?}");
+            String::from_utf8(output.stdout).unwrap()
         }
         fn run(&self, args: &[&str], input: Option<&Value>) -> Output {
             let runner = dots_process::Runner::new(Duration::from_secs(30), 4 * 1024 * 1024);
@@ -380,5 +393,96 @@ mod tests {
         assert!(shown.pointer("/task/foreign").is_some(), "{shown}");
         let refused = a.fail(&["task", "update", &root, "--title", "Again"]);
         assert!(refused.contains("share take"), "{refused}");
+    }
+
+    fn tree_published(remote: &Remote, shared: &str, root: &str) -> bool {
+        remote_refs(remote)
+            .iter()
+            .any(|name| name.ends_with(&format!("tasks/{shared}/{root}")))
+    }
+
+    #[test]
+    fn project_share_reports_declines_creates_and_binds_and_queues_existing_trees() {
+        let remote = Rc::new(Remote::new());
+        let a = Machine::on(&remote);
+        a.ok(&["memory", "init"]);
+        a.ok(&["task", "share", "enable"]);
+        let root = str_at(&a.ok(&["task", "add", "Before binding"]), "/task/id").to_owned();
+
+        let status = a.ok(&["project", "share"]);
+        assert_eq!(status["sharing"], "unshared", "{status}");
+        assert_eq!(str_at(&status, "/project/id"), a.project);
+        assert_eq!(status["shared"], Value::Null);
+        assert_eq!(status["machine_sharing"], true);
+        assert_eq!(status["identities"], json!([]));
+        assert_eq!(a.ok(&["memory", "context"])["sharing"], "unshared");
+        let text = a.text(&["project", "share"]);
+        assert!(text.contains("not shared across machines"), "{text}");
+        assert!(text.contains("Set up: dots project share --bind"), "{text}");
+
+        // Outside Git there is nothing to share.
+        let home = a.root.join("home");
+        let home = home.to_str().unwrap();
+        let outside = a.fail(&["--directory", home, "project", "share"]);
+        assert!(outside.contains("requires a Git checkout"), "{outside}");
+        assert_eq!(
+            a.ok(&["--directory", home, "memory", "context"])["sharing"],
+            Value::Null
+        );
+
+        let declined = a.ok(&["project", "share", "--decline"]);
+        assert_eq!(declined["sharing"], "declined", "{declined}");
+        assert_eq!(a.ok(&["memory", "context"])["sharing"], "declined");
+        let conflicting = a.fail(&["project", "share", "--decline", "--create", "x"]);
+        assert!(conflicting.contains("cannot be used with"), "{conflicting}");
+
+        // Creating binds, clears the decline and queues the existing tree.
+        let created = a.ok(&["project", "share", "--create", "neutral"]);
+        assert_eq!(created["sharing"], "bound", "{created}");
+        let shared = str_at(&created, "/shared/id").to_owned();
+        assert_eq!(str_at(&created, "/shared/name"), "neutral");
+        assert_eq!(a.ok(&["memory", "context"])["sharing"], "bound");
+        a.sync();
+        assert!(tree_published(&remote, &shared, &root));
+        let again = a.fail(&["project", "share", "--create", "neutral"]);
+        assert!(
+            again.contains(&format!("already shared as {shared}")),
+            "{again}"
+        );
+        let decline = a.fail(&["project", "share", "--decline"]);
+        assert!(decline.contains("memory project unbind"), "{decline}");
+
+        // Another machine sees the identity and binds to it; an unknown one
+        // lists the valid choices.
+        let b = Machine::on(&remote);
+        b.sync();
+        let listed = b.ok(&["project", "share"]);
+        assert_eq!(
+            listed["identities"],
+            json!([{"id": shared, "name": "neutral"}]),
+            "{listed}"
+        );
+        let unknown = b.fail(&[
+            "project",
+            "share",
+            "--bind",
+            "p-00000000000000000000000000000000",
+        ]);
+        assert!(
+            unknown.contains(&format!("known identities: {shared} (neutral)")),
+            "{unknown}"
+        );
+        let bound = b.ok(&["project", "share", "--bind", &shared]);
+        assert_eq!(str_at(&bound, "/shared/id"), shared, "{bound}");
+
+        // The memory primitive queues existing trees too.
+        let c = Machine::on(&remote);
+        c.sync();
+        c.ok(&["task", "share", "enable"]);
+        let loose = str_at(&c.ok(&["task", "add", "Loose on C"]), "/task/id").to_owned();
+        let primitive = c.ok(&["memory", "project", "bind", &shared]);
+        assert_eq!(primitive["queued"], 1, "{primitive}");
+        c.sync();
+        assert!(tree_published(&remote, &shared, &loose));
     }
 }

@@ -79,9 +79,24 @@ has the content-file shapes.
 
 `dots task share enable` turns replication on for one machine; it is off by
 default. While on, every goal or top-level task tree of a project bound to a
-shared identity (`dots memory project bind`) replicates; unbound projects never
-leave the machine. A tree carries its tasks, dependencies, references, brief,
-requests, decisions, history and the outputs its tasks name. Claims stay local.
+shared identity replicates; unbound projects never leave the machine. A tree
+carries its tasks, dependencies, references, brief, requests, decisions,
+history and the outputs its tasks name. Claims stay local.
+
+`dots project share`, run in a checkout, shows whether its project is bound,
+which shared identities exist, and whether this machine shares. One action
+sets it up, registering the checkout first when needed:
+
+```sh
+dots project share --create "my project"   # a new shared identity, bound here
+dots project share --bind SHARED_ID         # the same repository's identity from another machine
+dots project share --decline                # remember on this machine not to share it
+```
+
+Binding also selects the project's shared knowledge and queues its existing
+trees for export at once. Pi tells agents in a checkout that is neither bound
+nor declined to ask the user once; binding later clears a decline. The
+underlying primitives are `dots memory project create` and `bind`.
 
 One machine, the tree's home, changes a tree. Its writes commit locally at once;
 the sync agent pushes them within its push budget, so a burst of writes leaves

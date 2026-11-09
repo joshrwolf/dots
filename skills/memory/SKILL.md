@@ -30,7 +30,7 @@ evidence before applying snippets. A missing search result proves no absence.
 
 Linked worktrees use their common-directory catalog binding. Shared knowledge
 projects have separate identities: each machine explicitly associates its local
-catalog project using `memory project bind`. Names, checkout paths and remotes
+catalog project with `dots project share`. Names, checkout paths and remotes
 never establish shared identity. Keep the exact shared selector from a resource
 when following it; a later local rebind must not redirect that read.
 

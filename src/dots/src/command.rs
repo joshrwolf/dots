@@ -208,6 +208,11 @@ pub(crate) enum ProjectCommand {
         #[arg(long)]
         fresh: bool,
     },
+    /// Show or set up this checkout's sharing across machines: bind, create, or decline
+    #[command(
+        long_about = "Without an action, report whether this checkout's project is registered, bound to a shared identity (which one), or declined on this machine, whether this machine shares (dots task share enable), and the shared identities known to knowledge. Names never establish identity: pick --bind with an identity that is this same repository, or --create for a new one. Each action registers the checkout first when needed. Binding replicates the project's goals, tasks and attention while machine sharing is on, and its project knowledge; it queues existing trees at once. --decline remembers on this machine that the user does not want the project shared, so agents stop asking; binding later clears it."
+    )]
+    Share(ProjectShare),
     /// Register an unbound project for explicit --project use
     Register { name: String },
     /// List registered projects and their exact common-directory bindings
@@ -229,6 +234,20 @@ pub(crate) enum ProjectCommand {
         #[arg(long)]
         from: PathBuf,
     },
+}
+
+#[derive(Debug, Args)]
+#[group(multiple = false)]
+pub(crate) struct ProjectShare {
+    /// Bind this checkout to an existing shared identity
+    #[arg(long, value_name = "SHARED_ID")]
+    pub bind: Option<ProjectId>,
+    /// Create a shared identity with this display name and bind this checkout to it
+    #[arg(long, value_name = "NAME")]
+    pub create: Option<String>,
+    /// Remember on this machine not to share this checkout's project
+    #[arg(long)]
+    pub decline: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -370,7 +389,7 @@ pub(crate) enum MemoryProjectCommand {
     },
     /// List shared identities; names never select identities
     List,
-    /// Associate this local catalog project with a shared identity; refuse conflicting ownership
+    /// Associate this local catalog project with a shared identity and queue its trees for sharing; refuse conflicting ownership
     Bind { id: ProjectId },
     /// Remove an exact local association without deleting shared knowledge
     Unbind {
@@ -404,7 +423,7 @@ pub(crate) enum TaskCommand {
     },
     /// Replicate goals and task trees of bound projects across machines
     #[command(
-        long_about = "Off by default and switched per machine. While on, every goal or top-level task tree of a project bound to a shared identity (dots memory project bind) replicates on the substrate (dots substrate). One machine, the tree's home, changes a tree: its writes commit locally at once and the sync agent pushes them within the push budget. Other machines import the tree read-only on each sync pass (or --fresh) and refuse changes to it, naming dots task share take. Unbound projects and live claims never leave the machine. Answers to another home's attention requests travel to that home, whose coordinator incorporates them."
+        long_about = "Off by default and switched per machine. While on, every goal or top-level task tree of a project bound to a shared identity (dots project share) replicates on the substrate (dots substrate). One machine, the tree's home, changes a tree: its writes commit locally at once and the sync agent pushes them within the push budget. Other machines import the tree read-only on each sync pass (or --fresh) and refuse changes to it, naming dots task share take. Unbound projects and live claims never leave the machine. Answers to another home's attention requests travel to that home, whose coordinator incorporates them."
     )]
     Share {
         #[command(subcommand)]

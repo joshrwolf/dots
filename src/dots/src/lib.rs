@@ -11,6 +11,7 @@ mod json;
 mod memory;
 mod outputs;
 mod project;
+mod project_share;
 mod render;
 mod review;
 mod share;
@@ -148,7 +149,7 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
             cli.json,
         ),
         Command::Project { command } => {
-            project::run(command, &environment.directory(cli.directory)?)
+            project::run(command, &environment.directory(cli.directory)?, cli.json)
         }
         Command::Memory {
             project,

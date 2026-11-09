@@ -12,7 +12,7 @@ use crate::attention::{
     AnswerContent, Choice, DecisionKind, Incorporation, RequestContent, RequestKind, Source,
 };
 use crate::outputs::{PublishMode, PublishOutput};
-use crate::store::{Error, RequestState, SCHEMA_9};
+use crate::store::{Error, RequestState, SCHEMA_9, SHARING};
 use crate::{Actor, NewTask, Owner, Project, Status, Store, Update};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -539,6 +539,68 @@ fn a_schema_9_catalog_migrates_once() {
         uids
     );
     assert!(store.sharing().unwrap().is_none());
+}
+
+#[test]
+fn a_schema_10_catalog_migrates_to_remember_declines() {
+    let lab = Lab::new();
+    let path = lab.root.join("ten.sqlite3");
+    {
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(SCHEMA_9).unwrap();
+        connection.execute_batch(SHARING).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO projects VALUES('p-00000000000000000000000000000001','fixture');",
+            )
+            .unwrap();
+    }
+    let project = Project::try_new("p-00000000000000000000000000000001").unwrap();
+    let mut store = Store::open(&path).unwrap();
+    assert!(!store.share_declined(&project).unwrap());
+    assert!(store.decline_share(&project, 5).unwrap());
+    assert!(!store.decline_share(&project, 6).unwrap());
+    drop(store);
+    let mut store = Store::open(&path).unwrap();
+    assert!(store.share_declined(&project).unwrap());
+    store.share_project(&project).unwrap();
+    assert!(!store.share_declined(&project).unwrap());
+    let unknown = Project::try_new("p-00000000000000000000000000000002").unwrap();
+    assert!(matches!(
+        store.decline_share(&unknown, 7),
+        Err(Error::UnregisteredProject(_))
+    ));
+}
+
+#[test]
+fn binding_a_project_while_sharing_is_on_queues_its_existing_trees() {
+    let lab = Lab::new();
+    let mut a = lab.machine("a");
+    let root = a.goal("brief\n");
+    a.add("child", Some(&root));
+    let loose = a.add("loose", None);
+    // Enabled while the project is unbound, nothing queues.
+    let bound = std::mem::take(&mut a.bindings);
+    a.enable();
+    assert!(!a.store.share_pending().unwrap());
+    a.bindings = bound;
+    assert_eq!(a.store.share_project(&a.project.clone()).unwrap(), 2);
+    assert!(a.store.share_pending().unwrap());
+    a.sync();
+    let names = a.substrate.names("tasks/").unwrap();
+    assert_eq!(names.len(), 2, "{names:?}");
+    for id in [&root, &loose] {
+        assert!(
+            names
+                .iter()
+                .any(|name| name.as_str().ends_with(id.as_str()))
+        );
+    }
+
+    // With sharing off, binding queues nothing.
+    let mut b = lab.machine("b");
+    b.add("loose", None);
+    assert_eq!(b.store.share_project(&b.project.clone()).unwrap(), 0);
 }
 
 #[test]

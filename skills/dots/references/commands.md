@@ -374,6 +374,7 @@ Usage: dots project [OPTIONS] <COMMAND>
 
 Commands:
   init      Initialize a catalog if absent, register a project, and bind this Git common directory
+  share     Show or set up this checkout's sharing across machines: bind, create, or decline
   register  Register an unbound project for explicit --project use
   list      List registered projects and their exact common-directory bindings
   resolve   Show the binding and workspace directory for this checkout; never initialize storage
@@ -415,6 +416,33 @@ Options:
 
   -h, --help
           Print help
+```
+
+## dots project share
+
+```text
+Without an action, report whether this checkout's project is registered, bound to a shared identity (which one), or declined on this machine, whether this machine shares (dots task share enable), and the shared identities known to knowledge. Names never establish identity: pick --bind with an identity that is this same repository, or --create for a new one. Each action registers the checkout first when needed. Binding replicates the project's goals, tasks and attention while machine sharing is on, and its project knowledge; it queues existing trees at once. --decline remembers on this machine that the user does not want the project shared, so agents stop asking; binding later clears it.
+
+Usage: dots project share [OPTIONS]
+
+Options:
+      --bind <SHARED_ID>
+          Bind this checkout to an existing shared identity
+
+      --json
+          Return JSON instead of readable output
+
+      --create <NAME>
+          Create a shared identity with this display name and bind this checkout to it
+
+      --directory <PATH>
+          Working directory for commands that use checkout context
+
+      --decline
+          Remember on this machine not to share this checkout's project
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## dots project register
@@ -1489,7 +1517,7 @@ Options:
 ## dots task share
 
 ```text
-Off by default and switched per machine. While on, every goal or top-level task tree of a project bound to a shared identity (dots memory project bind) replicates on the substrate (dots substrate). One machine, the tree's home, changes a tree: its writes commit locally at once and the sync agent pushes them within the push budget. Other machines import the tree read-only on each sync pass (or --fresh) and refuse changes to it, naming dots task share take. Unbound projects and live claims never leave the machine. Answers to another home's attention requests travel to that home, whose coordinator incorporates them.
+Off by default and switched per machine. While on, every goal or top-level task tree of a project bound to a shared identity (dots project share) replicates on the substrate (dots substrate). One machine, the tree's home, changes a tree: its writes commit locally at once and the sync agent pushes them within the push budget. Other machines import the tree read-only on each sync pass (or --fresh) and refuse changes to it, naming dots task share take. Unbound projects and live claims never leave the machine. Answers to another home's attention requests travel to that home, whose coordinator incorporates them.
 
 Usage: dots task share [OPTIONS] <COMMAND>
 
@@ -3111,7 +3139,7 @@ Usage: dots memory project [OPTIONS] <COMMAND>
 Commands:
   create  Register a shared identity in the atomic knowledge snapshot
   list    List shared identities; names never select identities
-  bind    Associate this local catalog project with a shared identity; refuse conflicting ownership
+  bind    Associate this local catalog project with a shared identity and queue its trees for sharing; refuse conflicting ownership
   unbind  Remove an exact local association without deleting shared knowledge
 
 Options:
@@ -3189,7 +3217,7 @@ Options:
 ## dots memory project bind
 
 ```text
-Associate this local catalog project with a shared identity; refuse conflicting ownership
+Associate this local catalog project with a shared identity and queue its trees for sharing; refuse conflicting ownership
 
 Usage: dots memory project bind [OPTIONS] <ID>
 

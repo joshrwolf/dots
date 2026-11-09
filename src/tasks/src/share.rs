@@ -223,13 +223,55 @@ impl Store {
         )?;
         let mut queued = 0;
         for binding in bindings {
-            queued += tx.execute(
-                "INSERT OR IGNORE INTO dirty_tasks SELECT id FROM tasks WHERE project=?1 AND parent IS NULL",
-                [binding.local.as_str()],
-            )?;
+            queued += queue_trees(&tx, &binding.local)?;
         }
         tx.commit()?;
         Ok(queued)
+    }
+
+    /// Record that `project` was just bound to a shared identity: forget a
+    /// decline and, while sharing is on, queue its top-level trees for
+    /// export. Returns how many trees were queued.
+    pub fn share_project(&mut self, project: &Project) -> Result<usize, Error> {
+        let tx = self.write()?;
+        tx.execute(
+            "DELETE FROM share_declines WHERE project=?1",
+            [project.as_str()],
+        )?;
+        let enabled: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sharing WHERE enabled=1)",
+            [],
+            |row| row.get(0),
+        )?;
+        let queued = if enabled {
+            queue_trees(&tx, project)?
+        } else {
+            0
+        };
+        tx.commit()?;
+        Ok(queued)
+    }
+
+    /// Remember that the user does not want `project` shared from this
+    /// machine. Returns false when it was already declined.
+    pub fn decline_share(&mut self, project: &Project, now: i64) -> Result<bool, Error> {
+        let tx = self.write()?;
+        crate::projects::require_project(&tx, project)?;
+        let added = tx.execute(
+            "INSERT OR IGNORE INTO share_declines(project, at) VALUES(?1, ?2)",
+            params![project.as_str(), now],
+        )?;
+        tx.commit()?;
+        Ok(added > 0)
+    }
+
+    /// Whether the user declined sharing `project` from this machine.
+    pub fn share_declined(&self, project: &Project) -> Result<bool, Error> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM share_declines WHERE project=?1)",
+            [project.as_str()],
+            |row| row.get(0),
+        )?)
     }
 
     /// Turn sharing off. Imported trees stay, read-only, as last seen.
@@ -382,6 +424,14 @@ pub(crate) fn send_answer(
         params![request, goal, json, at],
     )?;
     Ok(())
+}
+
+/// Queue every top-level tree of `project` for export.
+fn queue_trees(tx: &rusqlite::Transaction<'_>, project: &Project) -> Result<usize, Error> {
+    Ok(tx.execute(
+        "INSERT OR IGNORE INTO dirty_tasks SELECT id FROM tasks WHERE project=?1 AND parent IS NULL",
+        [project.as_str()],
+    )?)
 }
 
 /// The catalog form of a tree's withheld parts: NULL when nothing was withheld.
