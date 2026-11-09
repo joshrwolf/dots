@@ -903,6 +903,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "dots-base"
+version = "0.1.0"
+
+[[package]]
 name = "dots-bootstrap-tests"
 version = "0.1.0"
 dependencies = [
@@ -1021,6 +1025,7 @@ dependencies = [
 name = "dots-review"
 version = "0.1.0"
 dependencies = [
+ "dots-base",
  "dots-process",
  "getrandom",
  "serde",

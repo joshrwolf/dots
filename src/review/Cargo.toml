@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+dots-base.workspace = true
 dots-process.workspace = true
 getrandom.workspace = true
 serde.workspace = true
