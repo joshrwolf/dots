@@ -22,6 +22,9 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
+        // A live process owns its ID, so a directory with this name is a
+        // leftover from an earlier process that reused the ID.
+        let _ = fs::remove_dir_all(&root);
         fs::create_dir(&root).unwrap();
         let mut store = Store::create(&root.join("workspace.sqlite3")).unwrap();
         let project = store.register_project("fixture").unwrap();
