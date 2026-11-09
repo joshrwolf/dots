@@ -955,6 +955,7 @@ dependencies = [
  "dots-process",
  "flate2",
  "gix",
+ "nix",
  "notify",
  "nucleo",
  "ratatui",

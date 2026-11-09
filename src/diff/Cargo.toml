@@ -26,6 +26,9 @@ flate2 = "1"
 base64 = "0.23"
 signal-hook = "0.3"
 
+[dev-dependencies]
+nix = { workspace = true, features = ["term"] }
+
 [features]
 # The development tools the examples run from the checkout. Off by default,
 # so the installed program carries none.
