@@ -228,14 +228,12 @@ impl Palette {
     }
 }
 
-/// The query: colours, then primary device attributes, which every terminal
-/// answers, so a reader knows when the replies are complete.
+/// The colour query; [`crate::terminal::END_OF_REPLIES`] must follow it.
 pub(crate) fn query() -> String {
     let mut q = String::from("\x1b]10;?\x1b\\\x1b]11;?\x1b\\");
     for i in 1..=6 {
         let _ = write!(q, "\x1b]4;{i};?\x1b\\");
     }
-    q.push_str("\x1b[c");
     q
 }
 

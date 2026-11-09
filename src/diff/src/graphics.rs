@@ -1,5 +1,5 @@
-//! `--graphics`: file headers drawn as kitty graphics images through
-//! Unicode placeholders. Each image is transmitted once with a virtual
+//! File headers drawn as kitty graphics images through Unicode
+//! placeholders, in terminals that answer the graphics query. Each image is transmitted once with a virtual
 //! placement; the header's cells then hold placeholder characters that
 //! name the image and the cell's row and column in it, so the terminal
 //! draws the image wherever those cells are. Headers scroll, clip and
@@ -40,6 +40,13 @@ struct Spec {
     colors: [Rgb; 6],
     cell: (u16, u16),
 }
+
+/// Asks whether the terminal takes kitty graphics: a one-pixel query that
+/// stores nothing. A terminal that does answers with [`QUERY_REPLY`] before
+/// its device attributes; others answer only those.
+pub(crate) const QUERY: &str = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
+/// How a reply to [`QUERY`] starts, after its `ESC _`.
+pub(crate) const QUERY_REPLY: &[u8] = b"Gi=31;";
 
 /// The character a placeholder cell holds.
 const PLACEHOLDER: char = '\u{10EEEE}';

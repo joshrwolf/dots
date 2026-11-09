@@ -16,7 +16,7 @@ use crate::ctl::{self, Command};
 use crate::deliver;
 use crate::graphics::Graphics;
 use crate::highlight::{self, Key};
-use crate::input::{self, Input};
+use crate::input::{self, Input, Replies};
 use crate::moves;
 use crate::repo::{self, Changes, FileChange, GitState, Reader};
 use crate::review;
@@ -111,7 +111,6 @@ pub(crate) struct Options {
     pub(crate) bind: Option<String>,
     /// Fixed colours instead of the terminal's.
     pub(crate) theme: Option<Detected>,
-    pub(crate) graphics: bool,
     pub(crate) settings: Settings,
 }
 
@@ -199,16 +198,25 @@ fn view(
 ) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     input::spawn(tx.clone(), Msg::Input)?;
-    // Input that arrives while the colours are awaited is handled after.
-    let (detected, early) = if let Some(d) = options.theme {
-        (Some(d), Vec::new())
+    // Input that arrives while the replies are awaited is handled after.
+    let colours = if options.theme.is_some() {
+        String::new()
     } else {
-        terminal::send(terminal, &theme::query())?;
-        first_colours(&rx, Duration::from_millis(400))
+        theme::query()
     };
+    terminal::send(
+        terminal,
+        &format!(
+            "{}{colours}{}",
+            crate::graphics::QUERY,
+            terminal::END_OF_REPLIES
+        ),
+    )?;
+    let (replies, early) = first_replies(&rx, Duration::from_millis(400));
+    let detected = options.theme.or(replies.colours);
     let palette = Palette::new(detected.unwrap_or_else(Detected::light));
     let mut settings = options.settings.clone();
-    if options.graphics {
+    if replies.graphics {
         settings.headers = crate::app::Headers::Images;
     }
     let app = App::new(repo, current, palette, settings);
@@ -228,7 +236,7 @@ fn view(
     rt.theme.detected = detected;
     rt.pending_file.clone_from(&options.file);
     rt.delivery.bound = options.bind.clone().map(|b| (b, current));
-    let mut graphics = options.graphics.then(Graphics::new);
+    let mut graphics = replies.graphics.then(Graphics::new);
     rt.start_load();
     rt.spawn_watch();
     for msg in early {
@@ -241,18 +249,23 @@ fn view(
     outcome
 }
 
-/// Waits up to `timeout` for the terminal's colours, keeping what else
-/// arrives meanwhile.
-fn first_colours(rx: &Receiver<Msg>, timeout: Duration) -> (Option<Detected>, Vec<Msg>) {
+/// Waits up to `timeout` for the terminal to answer the startup queries,
+/// keeping what else arrives meanwhile. A terminal that does not answer
+/// gets light colours and text headers.
+fn first_replies(rx: &Receiver<Msg>, timeout: Duration) -> (Replies, Vec<Msg>) {
     let deadline = Instant::now() + timeout;
     let mut early = Vec::new();
     while let Ok(msg) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
         match msg {
-            Msg::Input(Input::Colours(d)) => return (Some(d), early),
+            Msg::Input(Input::Replies(replies)) => return (replies, early),
             msg => early.push(msg),
         }
     }
-    (None, early)
+    let none = Replies {
+        colours: None,
+        graphics: false,
+    };
+    (none, early)
 }
 
 /// Lists a worktree's changes in `mode` and reads its saved review. With
@@ -447,7 +460,10 @@ impl Runtime {
         }
         if std::mem::take(&mut self.theme.ask) {
             // The replies arrive as input.
-            terminal::send(terminal, &theme::query())?;
+            terminal::send(
+                terminal,
+                &format!("{}{}", theme::query(), terminal::END_OF_REPLIES),
+            )?;
         }
         if std::mem::take(&mut self.theme.changed) {
             // Repaint everything: the buffer diff cannot know every cell changed.
@@ -510,7 +526,8 @@ impl Runtime {
         match msg {
             Msg::Input(Input::Event(event)) => self.input(&event),
             Msg::Input(Input::Resized) => true,
-            Msg::Input(Input::Colours(d)) => self.colours(d),
+            // Graphics are chosen once, at startup.
+            Msg::Input(Input::Replies(replies)) => replies.colours.is_some_and(|d| self.colours(d)),
             Msg::Loaded {
                 generation,
                 worktree,

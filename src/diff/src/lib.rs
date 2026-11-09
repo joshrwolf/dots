@@ -120,8 +120,6 @@ pub struct Options {
     pub file: Option<String>,
     /// The Rex pane whose Pi session receives reviews of the first worktree.
     pub bind: Option<String>,
-    /// Draw file headers as kitty graphics images.
-    pub graphics: bool,
     pub look: Look,
 }
 
@@ -132,7 +130,6 @@ pub fn run(options: Options) -> Result<()> {
         file: options.file,
         bind: options.bind,
         theme: options.look.theme(),
-        graphics: options.graphics,
         settings: options.look.settings(),
     })
 }

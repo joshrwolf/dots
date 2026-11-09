@@ -77,6 +77,10 @@ pub(crate) fn stop(terminal: &mut Tui) -> Result<()> {
     Ok(())
 }
 
+/// Asks for primary device attributes, which every terminal answers in
+/// order, so the replies to the queries before it are complete.
+pub(crate) const END_OF_REPLIES: &str = "\x1b[c";
+
 /// Writes `text` to the terminal now.
 pub(crate) fn send(terminal: &mut Tui, text: &str) -> Result<()> {
     let backend = terminal.backend_mut();

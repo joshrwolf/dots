@@ -1,5 +1,6 @@
 //! Terminal input on its own thread. Every byte the terminal sends passes
-//! one reader: replies to colour queries are taken out, and the rest goes to
+//! one reader: replies to colour and graphics queries are taken out, and the
+//! rest goes to
 //! termina's parser as keys, mouse, paste and reports, so nothing typed
 //! while the terminal answers a query is lost.
 
@@ -23,25 +24,36 @@ pub(crate) enum Input {
     Event(Event),
     /// The window changed size.
     Resized,
-    /// The terminal's colours, once it finished answering a query.
-    Colours(Detected),
+    /// The terminal finished answering a query.
+    Replies(Replies),
+}
+
+/// What the terminal answered to a query, up to its device attributes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Replies {
+    /// Its colours, when it reported any.
+    pub(crate) colours: Option<Detected>,
+    /// It accepted the kitty graphics query, when it was asked.
+    pub(crate) graphics: bool,
 }
 
 const ESC: u8 = 0x1b;
 const BEL: u8 = 0x07;
-/// Longest colour reply; a longer sequence is not one.
+/// Longest reply; a longer sequence is not one.
 const MAX_REPLY: usize = 256;
 /// How long a lone Esc waits for the rest of a sequence.
 const ESC_WAIT: Duration = Duration::from_millis(20);
 
-/// Splits colour replies out of terminal input and parses the rest.
+/// Splits query replies out of terminal input and parses the rest.
 #[derive(Debug, Default)]
 pub(crate) struct Splitter {
     parser: Parser,
-    /// An OSC sequence being read, from its `ESC ]`.
+    /// An OSC or APC sequence being read, from its `ESC ]` or `ESC _`.
     reply: Option<Vec<u8>>,
     /// Colour replies to the current query.
     replies: Vec<u8>,
+    /// The terminal accepted the graphics query.
+    graphics: bool,
     /// A trailing Esc, which may start a sequence.
     esc: bool,
 }
@@ -55,28 +67,31 @@ impl Splitter {
                 reply.push(b);
                 if b == BEL || reply.ends_with(&[ESC, b'\\']) {
                     let reply = self.reply.take().unwrap_or_default();
-                    if is_colour_reply(&reply) {
+                    if let Some(ok) = graphics_reply(&reply) {
+                        self.graphics |= ok;
+                    } else if is_colour_reply(&reply) {
                         self.replies.extend_from_slice(&reply);
                     } else {
                         plain.extend_from_slice(&reply);
                     }
-                } else if !could_be_colour_reply(reply) {
-                    // Alt+] and what followed it.
+                } else if !could_be_reply(reply) {
+                    // Alt+] or Alt+_, and what followed it.
                     let rest = reply.split_off(2);
+                    let key = char::from(reply[1]);
                     self.reply = None;
                     self.parse(&plain, out);
                     plain.clear();
                     out.push(Input::Event(Event::Key(KeyEvent {
                         modifiers: Modifiers::ALT,
-                        ..KeyEvent::from(KeyCode::Char(']'))
+                        ..KeyEvent::from(KeyCode::Char(key))
                     })));
                     plain.extend_from_slice(&rest);
                 }
                 continue;
             }
             if std::mem::take(&mut self.esc) {
-                if b == b']' {
-                    self.reply = Some(vec![ESC, b']']);
+                if b == b']' || b == b'_' {
+                    self.reply = Some(vec![ESC, b]);
                     continue;
                 }
                 plain.push(ESC);
@@ -110,12 +125,13 @@ impl Splitter {
         while let Some(event) = self.parser.pop() {
             match event {
                 // Every terminal answers device attributes, and in order,
-                // so the colour replies before it are complete.
+                // so the replies before it are complete.
                 Event::Csi(Csi::Device(Device::DeviceAttributes(()))) => {
                     let d = theme::parse(&std::mem::take(&mut self.replies));
-                    if d.bg.is_some() || d.fg.is_some() {
-                        out.push(Input::Colours(d));
-                    }
+                    out.push(Input::Replies(Replies {
+                        colours: (d.bg.is_some() || d.fg.is_some()).then_some(d),
+                        graphics: std::mem::take(&mut self.graphics),
+                    }));
                 }
                 event => out.push(Input::Event(event)),
             }
@@ -130,12 +146,24 @@ fn is_colour_reply(osc: &[u8]) -> bool {
         .any(|head| osc[2..].starts_with(head))
 }
 
-/// Whether an unfinished OSC sequence can still be a colour reply: its
-/// number, then text up to the length limit.
-fn could_be_colour_reply(osc: &[u8]) -> bool {
-    let body = &osc[2..];
+/// A complete reply to the graphics query: whether the terminal accepted it.
+fn graphics_reply(apc: &[u8]) -> Option<bool> {
+    let body = apc[2..].strip_prefix(crate::graphics::QUERY_REPLY)?;
+    Some(body.starts_with(b"OK"))
+}
+
+/// Whether an unfinished sequence can still be a reply up to the length
+/// limit: an OSC number then text, or an APC graphics reply.
+fn could_be_reply(sequence: &[u8]) -> bool {
+    let body = &sequence[2..];
+    if sequence.len() > MAX_REPLY {
+        return false;
+    }
+    if sequence[1] == b'_' {
+        return body.first().is_none_or(|&b| b == b'G');
+    }
     let digits = body.iter().take_while(|b| b.is_ascii_digit()).count();
-    osc.len() <= MAX_REPLY && (digits == body.len() || (digits > 0 && body[digits] == b';'))
+    digits == body.len() || (digits > 0 && body[digits] == b';')
 }
 
 /// Reads the terminal on a thread, sending what it says until the receiver
@@ -215,7 +243,17 @@ mod tests {
                 Input::Event(Event::Paste(p)) => format!("paste {p}"),
                 Input::Event(e) => format!("{e:?}"),
                 Input::Resized => "resized".to_owned(),
-                Input::Colours(d) => format!("colours {:?} {:?} {:?}", d.bg, d.fg, d.ansi[1]),
+                Input::Replies(Replies {
+                    colours: Some(d),
+                    graphics,
+                }) => format!(
+                    "colours {:?} {:?} {:?}{}",
+                    d.bg,
+                    d.fg,
+                    d.ansi[1],
+                    if *graphics { " graphics" } else { "" }
+                ),
+                Input::Replies(Replies { graphics, .. }) => format!("replies graphics {graphics}"),
             })
             .collect()
     }
@@ -260,7 +298,22 @@ mod tests {
         let report = feed(&[b"\x1b[?997;1n"]);
         assert_eq!(report.len(), 1);
         assert!(report[0].contains("ReportTheme(Dark)"), "{report:?}");
-        // Device attributes with no colours report nothing.
-        assert_eq!(feed(&[b"\x1b[?62c"]), Vec::<String>::new());
+        // Device attributes with no colours report that they finished.
+        assert_eq!(feed(&[b"\x1b[?62c"]), ["replies graphics false"]);
+        assert_eq!(feed(&[b"\x1b_x"]), ["alt Char('_')", "Char('x')"]);
+    }
+
+    #[test]
+    fn a_graphics_reply_is_taken_out_whole_and_split() {
+        let reply: &[u8] = b"a\x1b_Gi=31;OK\x1b\\\x1b[?62;22cb";
+        for at in 1..reply.len() {
+            assert_eq!(
+                feed(&[&reply[..at], &reply[at..]]),
+                ["Char('a')", "replies graphics true", "Char('b')"],
+                "split at {at}"
+            );
+        }
+        let refused = feed(&[b"\x1b_Gi=31;ENOTSUPPORTED:no\x1b\\\x1b[?62c"]);
+        assert_eq!(refused, ["replies graphics false"]);
     }
 }

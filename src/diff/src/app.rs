@@ -655,7 +655,7 @@ pub(crate) struct App {
     /// Where to put the view once the top file's new diff is laid out.
     pending_anchor: Option<(String, SourceLine)>,
     pub(crate) areas: Areas,
-    /// With `--graphics`, the kitty image that shows each file's header
+    /// With image headers, the kitty image that shows each file's header
     /// in this frame, by file.
     pub(crate) header_images: HashMap<usize, u32>,
     pub(crate) message: Option<String>,

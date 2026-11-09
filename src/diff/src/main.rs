@@ -32,9 +32,6 @@ struct Cli {
     /// worktree is shown
     #[arg(long, value_name = "BLOCK")]
     bind: Option<String>,
-    /// Draw file headers as kitty graphics images
-    #[arg(long)]
-    graphics: bool,
     #[command(flatten)]
     look: Look,
 }
@@ -133,7 +130,6 @@ fn main() -> ExitCode {
             path: cli.path,
             file: cli.file,
             bind: cli.bind,
-            graphics: cli.graphics,
             look: cli.look,
         }),
         Some(Cmd::Ctl { block, command }) => dots_diff::ctl(block.as_deref(), command.into()),
