@@ -1,5 +1,6 @@
-//! Non-interactive output: one frame as text (`render`) and in-process
-//! measurements of the same code paths the viewer runs (`bench`).
+//! Development tools, run as the crate's examples: one frame as text and
+//! a PNG (`render`), and in-process measurements of the code paths the
+//! viewer runs (`bench`). Never part of the installed program.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -9,40 +10,39 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result, bail};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer;
-use ratatui::style::{Color, Modifier};
 
 use crate::app::{self, App, Body, Settings};
 use crate::highlight;
 use crate::repo::{self, Mode, Reader};
 use crate::stats::{self, Stats};
 use crate::theme::{Detected, Palette};
-use crate::ui;
+use crate::{Look, ui};
 
+/// One frame of the viewer, drawn without a terminal.
 #[derive(Debug, Clone)]
-pub(crate) struct Frame {
-    pub(crate) path: PathBuf,
-    pub(crate) worktree: Option<PathBuf>,
-    pub(crate) file: Option<String>,
-    pub(crate) width: u16,
-    pub(crate) height: u16,
-    pub(crate) ansi: bool,
-    pub(crate) theme: Detected,
-    pub(crate) settings: Settings,
+pub struct Frame {
+    pub path: PathBuf,
+    pub worktree: Option<PathBuf>,
+    pub file: Option<String>,
+    pub width: u16,
+    pub height: u16,
+    pub ansi: bool,
+    /// Light colours unless the look fixes them.
+    pub look: Look,
     /// Lines to scroll down from the file (or the top).
-    pub(crate) scroll: u32,
+    pub scroll: u32,
     /// Also draw the frame as a PNG here.
-    pub(crate) png: Option<PathBuf>,
+    pub png: Option<PathBuf>,
     /// Open the worktree switcher with this query.
-    pub(crate) switcher: Option<String>,
+    pub switcher: Option<String>,
     /// Sidebar folders to collapse, by path.
-    pub(crate) collapse: Vec<String>,
+    pub collapse: Vec<String>,
     /// Mark files under these path prefixes reviewed.
-    pub(crate) review: Vec<String>,
+    pub review: Vec<String>,
     /// Focus the sidebar with its cursor on this file or folder path.
-    pub(crate) select: Option<String>,
+    pub select: Option<String>,
     /// Mark moved code.
-    pub(crate) moves: bool,
+    pub moves: bool,
 }
 
 /// Loads a worktree's changes with every diff computed.
@@ -101,12 +101,13 @@ fn highlight_visible(app: &mut App, hl: &mut arborium::Highlighter, rows: u16) -
     times
 }
 
-pub(crate) fn frame(options: &Frame) -> Result<String> {
+/// The frame as text, with ANSI colours when asked, and as a PNG when asked.
+pub fn frame(options: &Frame) -> Result<String> {
     let mut app = loaded(
         &options.path,
         options.worktree.as_deref(),
-        options.theme,
-        options.settings.clone(),
+        options.look.theme().unwrap_or_else(Detected::light),
+        options.look.settings(),
         options.moves,
     )?;
     let mut terminal = Terminal::new(TestBackend::new(options.width, options.height))?;
@@ -162,69 +163,26 @@ pub(crate) fn frame(options: &Frame) -> Result<String> {
     highlight_visible(&mut app, &mut hl, rows);
     terminal.draw(|f| ui::draw(f, &mut app))?;
     if let Some(png) = &options.png {
-        picture(terminal.backend().buffer(), png)?;
+        crate::shot::picture(terminal.backend().buffer(), png)?;
         crate::graphics::header_picture(
             &app,
             app.areas.diff.width,
             &png.with_extension("header.png"),
         )?;
     }
-    Ok(dump(terminal.backend().buffer(), options.ansi))
+    Ok(crate::shot::dump(terminal.backend().buffer(), options.ansi))
 }
 
-/// The buffer as lines of text, with SGR colours when `ansi`.
-pub(crate) fn dump(buf: &Buffer, ansi: bool) -> String {
-    let mut out = String::new();
-    let area = buf.area;
-    for y in area.top()..area.bottom() {
-        let mut last = None;
-        for x in area.left()..area.right() {
-            let cell = &buf[(x, y)];
-            if ansi {
-                let style = (cell.fg, cell.bg, cell.modifier);
-                if last != Some(style) {
-                    out.push_str("\x1b[0");
-                    if let Color::Rgb(r, g, b) = cell.fg {
-                        let _ = write!(out, ";38;2;{r};{g};{b}");
-                    }
-                    if let Color::Rgb(r, g, b) = cell.bg {
-                        let _ = write!(out, ";48;2;{r};{g};{b}");
-                    }
-                    if cell.modifier.contains(Modifier::BOLD) {
-                        out.push_str(";1");
-                    }
-                    if cell.modifier.contains(Modifier::ITALIC) {
-                        out.push_str(";3");
-                    }
-                    out.push('m');
-                    last = Some(style);
-                }
-            }
-            out.push_str(cell.symbol());
-        }
-        if ansi {
-            out.push_str("\x1b[0m");
-        }
-        let trimmed = out.trim_end_matches(' ').len();
-        if !ansi {
-            out.truncate(trimmed);
-        }
-        out.push('\n');
-    }
-    out
-}
-
+/// What to measure: worktrees of the repository at `path`.
 #[derive(Debug, Clone)]
-pub(crate) struct Bench {
-    pub(crate) path: PathBuf,
-    pub(crate) worktrees: Vec<PathBuf>,
-    pub(crate) width: u16,
-    pub(crate) height: u16,
-    pub(crate) summaries: bool,
+pub struct Bench {
+    pub path: PathBuf,
+    pub worktrees: Vec<PathBuf>,
+    pub width: u16,
+    pub height: u16,
+    pub summaries: bool,
     /// Count without the on-disk cache, as on a first run.
-    pub(crate) cold: bool,
-    /// Also compare full status with and without the fsmonitor.
-    pub(crate) fsmonitor: bool,
+    pub cold: bool,
 }
 
 fn ms(d: Duration) -> String {
@@ -250,7 +208,7 @@ fn percentile(sorted: &[Duration], p: f64) -> Duration {
     clippy::too_many_lines,
     reason = "one benchmark run, step by step, reported in order"
 )]
-pub(crate) fn bench(options: &Bench) -> Result<String> {
+pub fn bench(options: &Bench) -> Result<String> {
     let mut out = String::new();
     let t = Instant::now();
     let repo = repo::discover(&options.path)?;
@@ -474,28 +432,6 @@ pub(crate) fn bench(options: &Bench) -> Result<String> {
                 ms(scan)
             );
         }
-        if options.fsmonitor {
-            let root = &root;
-            let time = |mode: repo::Fsmonitor| -> Result<Vec<Duration>> {
-                let mut times = Vec::new();
-                for _ in 0..5 {
-                    let t = Instant::now();
-                    repo::status(&local, root, mode, &[])?;
-                    times.push(t.elapsed());
-                }
-                times.sort();
-                Ok(times)
-            };
-            let without = time(repo::Fsmonitor::Off)?;
-            let with = time(repo::Fsmonitor::AsConfigured)?;
-            let fmt = |t: &[Duration]| format!("p50 {}, min {}", ms(percentile(t, 0.5)), ms(t[0]));
-            let _ = writeln!(
-                out,
-                "  full status, 5 runs: fsmonitor off: {}; as configured: {}",
-                fmt(&without),
-                fmt(&with),
-            );
-        }
     }
     if options.summaries {
         let _ = writeln!(out, "\nrail stats, one worktree at a time:");
@@ -556,93 +492,6 @@ fn redact(base: &str) -> String {
                 "default-branch merge base".to_owned()
             }
         })
-}
-
-/// Draws the buffer as a PNG-like RGBA picture for eyeballing colours
-/// without a terminal: cells as rectangles, text in a monospace font.
-#[expect(clippy::many_single_char_names, reason = "cell and pixel coordinates")]
-pub(crate) fn picture(buf: &Buffer, path: &Path) -> Result<()> {
-    use cosmic_text::{
-        Attrs, Buffer as TextBuffer, Family, FontSystem, Metrics, Shaping, SwashCache, Weight,
-    };
-    let (cw, ch) = (9u32, 19u32);
-    let area = buf.area;
-    let (w, h) = (u32::from(area.width) * cw, u32::from(area.height) * ch);
-    let mut pixmap = tiny_skia::Pixmap::new(w, h).context("picture size")?;
-    let rgb = |c: Color, fallback: (u8, u8, u8)| match c {
-        Color::Rgb(r, g, b) => (r, g, b),
-        _ => fallback,
-    };
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            let (r, g, b) = rgb(buf[(x, y)].bg, (255, 255, 255));
-            let rect =
-                tiny_skia::Rect::from_xywh(f32::from(x) * 9.0, f32::from(y) * 19.0, 9.0, 19.0)
-                    .context("cell")?;
-            let mut paint = tiny_skia::Paint::default();
-            paint.set_color_rgba8(r, g, b, 255);
-            pixmap.fill_rect(rect, &paint, tiny_skia::Transform::identity(), None);
-        }
-    }
-    let mut fonts = FontSystem::new();
-    let mut cache = SwashCache::new();
-    let data_w = pixmap.width();
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            let cell = &buf[(x, y)];
-            let symbol = cell.symbol();
-            if symbol.trim().is_empty() {
-                continue;
-            }
-            let (r, g, b) = rgb(cell.fg, (0, 0, 0));
-            let weight = if cell.modifier.contains(Modifier::BOLD) {
-                Weight::BOLD
-            } else {
-                Weight::NORMAL
-            };
-            let mut text = TextBuffer::new(&mut fonts, Metrics::new(14.0, 19.0));
-            text.set_size(None, None);
-            text.set_text(
-                symbol,
-                &Attrs::new().family(Family::Monospace).weight(weight),
-                Shaping::Advanced,
-                None,
-            );
-            text.shape_until_scroll(&mut fonts, false);
-            let (ox, oy) = (i32::from(x) * 9, i32::from(y) * 19);
-            let data = pixmap.data_mut();
-            text.draw(
-                &mut fonts,
-                &mut cache,
-                cosmic_text::Color::rgb(r, g, b),
-                |gx, gy, gw, gh, color| {
-                    let a = u32::from(color.a());
-                    for yy in oy + gy..oy + gy + i32::try_from(gh).unwrap_or(0) {
-                        for xx in ox + gx..ox + gx + i32::try_from(gw).unwrap_or(0) {
-                            let (Ok(ux), Ok(uy)) = (u32::try_from(xx), u32::try_from(yy)) else {
-                                continue;
-                            };
-                            if ux >= data_w || uy >= h {
-                                continue;
-                            }
-                            let i = ((uy * data_w + ux) * 4) as usize;
-                            let blend = |d: u8, s: u8| {
-                                u8::try_from((u32::from(s) * a + u32::from(d) * (255 - a)) / 255)
-                                    .unwrap_or(255)
-                            };
-                            data[i] = blend(data[i], color.r());
-                            data[i + 1] = blend(data[i + 1], color.g());
-                            data[i + 2] = blend(data[i + 2], color.b());
-                        }
-                    }
-                },
-            );
-        }
-    }
-    pixmap
-        .save_png(path)
-        .with_context(|| format!("writing {}", path.display()))?;
-    Ok(())
 }
 
 fn mib(bytes: usize) -> String {

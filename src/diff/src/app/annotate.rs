@@ -421,6 +421,7 @@ impl App {
 
     /// Marks the files under the path prefix `prefix` reviewed at their
     /// current contents.
+    #[cfg(feature = "dev")]
     pub(crate) fn mark_reviewed(&mut self, prefix: &str) {
         let Some(stream) = &self.stream else { return };
         for f in stream

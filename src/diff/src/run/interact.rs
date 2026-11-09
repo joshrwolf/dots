@@ -41,7 +41,6 @@ impl Runtime {
             Event::Csi(Csi::Mode(csi::Mode::ReportTheme(_))) => {
                 // Light and dark switched; ask for the new colours.
                 if self.theme.next_poll.is_some() {
-                    self.timings.note("the terminal reported a theme change");
                     self.theme.ask = true;
                 }
                 false

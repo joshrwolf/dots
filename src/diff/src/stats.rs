@@ -17,7 +17,7 @@ use anyhow::Result;
 
 use crate::app::Summary;
 use crate::diff;
-use crate::repo::{self, Fsmonitor, Mode, Planned, Reader, Stamp, Target, TreeChange};
+use crate::repo::{self, Mode, Planned, Reader, Stamp, Target, TreeChange};
 use crate::review;
 
 /// Lines added and removed, or `None` for a binary file.
@@ -353,7 +353,7 @@ fn cache_path(common_dir: &Path) -> Option<PathBuf> {
 /// user last looked at them.
 pub(crate) fn summarize(stats: &Stats, worktree: &Path) -> Result<Summary> {
     let (repo, _, target) = repo::open(worktree, Mode::Base)?;
-    let entries = repo::status(&repo, worktree, Fsmonitor::Off, &[])?;
+    let entries = repo::status(&repo, worktree, &[])?;
     let root = repo
         .workdir()
         .map_or_else(|| worktree.to_owned(), Path::to_owned);

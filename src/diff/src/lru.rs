@@ -83,6 +83,7 @@ impl<K: Hash + Eq + Clone, V> Lru<K, V> {
         Some(e.value)
     }
 
+    #[cfg(any(test, feature = "dev"))]
     pub(crate) fn bytes(&self) -> usize {
         self.bytes
     }

@@ -534,6 +534,7 @@ impl Stream {
     }
 
     /// The first line of file `i`'s block.
+    #[cfg(feature = "dev")]
     pub(crate) fn offset(&self, i: usize) -> Option<u32> {
         self.offsets.get(i).copied()
     }

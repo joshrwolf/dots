@@ -147,6 +147,7 @@ impl Cache {
     }
 
     /// Bytes held by the text, colour and emphasis caches.
+    #[cfg(feature = "dev")]
     pub(crate) fn bytes(&self) -> [usize; 3] {
         [
             self.texts.bytes(),

@@ -22,7 +22,6 @@ use crate::repo::{self, Changes, FileChange, GitState, Reader};
 use crate::review;
 use crate::terminal;
 use crate::theme::{self, Detected, Palette};
-use crate::timings::Timings;
 use crate::ui;
 use crate::watch::{Refresh, Touched, Watch};
 
@@ -45,7 +44,6 @@ pub(crate) enum Msg {
         result: Result<Changes, String>,
         /// The worktree's Git directory and saved review.
         review: Result<(PathBuf, review::State), String>,
-        elapsed: Duration,
     },
     /// Who a review of `worktree` goes to, and the live sessions.
     Resolved {
@@ -76,15 +74,12 @@ pub(crate) enum Msg {
         file: usize,
         body: Body,
         texts: Option<FileTexts>,
-        elapsed: Duration,
     },
     /// A path-limited rescan after file events.
     Partial {
         generation: u64,
         paths: Vec<String>,
         result: Result<Vec<FileChange>, String>,
-        /// When the first event of the burst arrived.
-        since: Instant,
     },
     /// The periodic safety-net check.
     Reconciled {
@@ -117,11 +112,6 @@ pub(crate) struct Options {
     /// Fixed colours instead of the terminal's.
     pub(crate) theme: Option<Detected>,
     pub(crate) graphics: bool,
-    #[expect(
-        clippy::option_option,
-        reason = "absent, given bare (stderr), or given a file"
-    )]
-    pub(crate) timings: Option<Option<PathBuf>>,
     pub(crate) settings: Settings,
 }
 
@@ -173,7 +163,6 @@ struct Runtime {
     /// Worktrees whose switcher counts are stale, and when they last changed.
     stale: HashMap<PathBuf, Instant>,
     wanted: Vec<Key>,
-    timings: Timings,
     theme: Theme,
     quit: bool,
     moves: MovesSearch,
@@ -190,37 +179,24 @@ struct Runtime {
     shot: Option<PathBuf>,
 }
 
-pub(crate) fn run(options: Options) -> Result<()> {
-    let mut timings = Timings::new(options.timings.is_some());
-    let started = Instant::now();
+pub(crate) fn run(options: &Options) -> Result<()> {
     let repo = repo::discover(&options.path)?;
-    timings.span(
-        "enumerate worktrees",
-        started.elapsed(),
-        &format!("{} worktrees", repo.worktrees.len()),
-    );
     let current = repo.index_of(&options.path).unwrap_or(0);
 
     let mut terminal = terminal::start().context("starting the terminal")?;
-    let result = view(&mut terminal, &options, repo, current, timings, started);
+    let result = view(&mut terminal, options, repo, current);
     terminal::stop(&mut terminal)?;
-    let timings = result?;
-    if let Some(dest) = options.timings {
-        timings.write(started, dest.as_deref())?;
-    }
-    Ok(())
+    result
 }
 
 /// Shows worktree `current` of `repo` in the started terminal until the
-/// user quits. Returns the timings.
+/// user quits.
 fn view(
     terminal: &mut terminal::Tui,
     options: &Options,
     repo: repo::Repo,
     current: usize,
-    mut timings: Timings,
-    started: Instant,
-) -> Result<Timings> {
+) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     input::spawn(tx.clone(), Msg::Input)?;
     // Input that arrives while the colours are awaited is handled after.
@@ -230,21 +206,13 @@ fn view(
         terminal::send(terminal, &theme::query())?;
         first_colours(&rx, Duration::from_millis(400))
     };
-    timings.note(&format!(
-        "theme {}",
-        if detected.is_some() {
-            "reported"
-        } else {
-            "not reported; light fallback"
-        }
-    ));
     let palette = Palette::new(detected.unwrap_or_else(Detected::light));
     let mut settings = options.settings.clone();
     if options.graphics {
         settings.headers = crate::app::Headers::Images;
     }
     let app = App::new(repo, current, palette, settings);
-    let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path(), &mut timings);
+    let (ctl_status, _cleanup) = serve_ctl(&tx, app.worktree_path());
     let agents_tx = tx.clone();
     crate::agents::follow(move |s| agents_tx.send(Msg::Agents(s)).is_ok());
     let attributed_tx = tx.clone();
@@ -253,8 +221,7 @@ fn view(
         attributed_tx.send(Msg::Attributed(a)).is_ok()
     }));
     rt.ctl_status = ctl_status;
-    rt.timings = timings;
-    rt.pipeline.loading_since = Some(started);
+    rt.pipeline.loading = true;
     if options.theme.is_some() {
         rt.theme.next_poll = None;
     }
@@ -271,7 +238,7 @@ fn view(
     if let Some(g) = graphics.as_mut() {
         terminal::send(terminal, &g.clear())?;
     }
-    outcome.map(|()| rt.timings)
+    outcome
 }
 
 /// Waits up to `timeout` for the terminal's colours, keeping what else
@@ -356,7 +323,6 @@ impl Runtime {
             watcher: None,
             stale: HashMap::new(),
             wanted: Vec::new(),
-            timings: Timings::new(false),
             theme: Theme {
                 next_poll: Some(Instant::now() + THEME_POLL),
                 detected: None,
@@ -390,10 +356,8 @@ impl Runtime {
         mut graphics: Option<&mut Graphics>,
     ) -> Result<()> {
         let mut dirty = true;
-        let mut frames = 0u32;
         while !self.quit {
             if dirty {
-                let t = Instant::now();
                 if let Some(g) = graphics.as_deref_mut() {
                     // Images go out before the frame whose cells show them.
                     terminal.autoresize()?;
@@ -402,17 +366,12 @@ impl Runtime {
                 }
                 let completed = terminal.draw(|f| ui::draw(f, &mut self.app))?;
                 if let Some(path) = self.shot.take()
-                    && let Err(e) = crate::render::picture(completed.buffer, &path)
+                    && let Err(e) = crate::shot::picture(completed.buffer, &path)
                 {
                     self.app.message = Some(format!("{e:#}"));
                 }
                 self.app.mark_notes_seen(self.view_rows());
-                frames += 1;
-                if frames == 1 {
-                    self.timings
-                        .span("first frame", self.timings.since_start(), "");
-                }
-                self.after_frame(t.elapsed());
+                self.after_frame();
                 dirty = false;
             }
             let now = Instant::now();
@@ -467,7 +426,7 @@ impl Runtime {
         if !self.pipeline.partial_busy {
             match self.pipeline.burst.take(now) {
                 Some(Refresh::Full) => self.start_load(),
-                Some(Refresh::Paths(paths)) => self.start_partial(paths, now),
+                Some(Refresh::Paths(paths)) => self.start_partial(paths),
                 None => {}
             }
         }
@@ -508,8 +467,8 @@ impl Runtime {
         Ok(dirty)
     }
 
-    fn after_frame(&mut self, draw: Duration) {
-        if let Some(since) = self.pipeline.loading_since
+    fn after_frame(&mut self) {
+        if self.pipeline.loading
             && let Some(stream) = &self.app.stream
         {
             // A frame is complete once every file on screen has its diff.
@@ -520,7 +479,7 @@ impl Runtime {
                 _ => true,
             });
             if ready {
-                self.pipeline.loading_since = None;
+                self.pipeline.loading = false;
                 if self.summaries_started {
                     // Its summary tells what the user is looking at.
                     self.summaries.push(self.app.worktree_path().clone(), true);
@@ -529,28 +488,6 @@ impl Runtime {
                     self.summaries_started = true;
                     self.spawn_summaries();
                 }
-                self.timings.span(
-                    "worktree shown with diffs",
-                    since.elapsed(),
-                    &format!("draw {draw:.1?}"),
-                );
-            }
-        }
-        if let Some((since, paths)) = &self.pipeline.refreshing
-            && let Some(stream) = &self.app.stream
-        {
-            let done = stream
-                .files
-                .iter()
-                .filter(|f| paths.contains(&f.change.path))
-                .all(|f| !matches!(f.body, Body::Pending));
-            if done {
-                self.timings.span(
-                    "file event to screen",
-                    since.elapsed(),
-                    &format!("{} paths, draw {draw:.1?}", paths.len()),
-                );
-                self.pipeline.refreshing = None;
             }
         }
         if self.app.needs_diffs {
@@ -580,18 +517,12 @@ impl Runtime {
                 mode,
                 result,
                 review,
-                elapsed,
             } => {
                 if generation != self.pipeline.generation {
                     return false;
                 }
                 match result {
                     Ok(changes) => {
-                        self.timings.span(
-                            "load changes",
-                            elapsed,
-                            &format!("{} files", changes.files.len()),
-                        );
                         if !self.app.session.shows(&worktree) {
                             // Another worktree's review goes to its own agent.
                             self.delivery.resolution = None;
@@ -627,16 +558,10 @@ impl Runtime {
                 file,
                 body,
                 texts,
-                elapsed,
             } => {
                 if epoch != self.pipeline.epoch {
                     return false;
                 }
-                let lines = match &body {
-                    Body::Text(d) => d.old_len + d.new_len,
-                    _ => 0,
-                };
-                self.timings.diff(elapsed, lines);
                 self.app.set_body(file, body, texts);
                 self.update_own_summary();
                 true
@@ -645,7 +570,6 @@ impl Runtime {
                 generation,
                 paths,
                 result,
-                since,
             } => {
                 self.pipeline.partial_busy = false;
                 if generation != self.pipeline.generation {
@@ -655,7 +579,6 @@ impl Runtime {
                     Ok(files) => {
                         self.app.apply_paths(&paths, files);
                         self.pipeline.epoch += 1;
-                        self.pipeline.refreshing = Some((since, paths));
                         self.spawn_diffs();
                     }
                     // The paths could not be scanned alone; scan everything.
@@ -681,7 +604,6 @@ impl Runtime {
                 false
             }
             Msg::Highlighted(done) => {
-                self.timings.highlight(done.elapsed);
                 self.app.cache.keep_highlight(done.key, done.result.ok());
                 true
             }
@@ -883,7 +805,7 @@ impl Runtime {
     fn reload(&mut self) {
         self.app.end_visual();
         self.app.stream = None;
-        self.pipeline.loading_since = Some(Instant::now());
+        self.pipeline.loading = true;
         self.start_load();
     }
 
@@ -905,8 +827,6 @@ impl Runtime {
             return false;
         }
         self.theme.detected = Some(d);
-        self.timings
-            .note(&format!("colours changed: background {:?}", d.bg));
         self.app.palette = Palette::new(d);
         self.theme.changed = true;
         true
@@ -914,11 +834,7 @@ impl Runtime {
 }
 
 /// Listens for `ctl` commands. The viewer works without its socket.
-fn serve_ctl(
-    tx: &Sender<Msg>,
-    worktree: &Path,
-    timings: &mut Timings,
-) -> (Arc<Mutex<ctl::Status>>, Option<ctl::Cleanup>) {
+fn serve_ctl(tx: &Sender<Msg>, worktree: &Path) -> (Arc<Mutex<ctl::Status>>, Option<ctl::Cleanup>) {
     let socket = ctl::socket_path();
     let status = Arc::new(Mutex::new(ctl::Status {
         block: std::env::var("REX_BLOCK").ok().filter(|b| !b.is_empty()),
@@ -932,10 +848,8 @@ fn serve_ctl(
     });
     match served {
         Ok(()) => (status, Some(ctl::Cleanup(socket))),
-        Err(e) => {
-            timings.note(&format!("control socket unavailable: {e:#}"));
-            (status, None)
-        }
+        // The viewer works without its socket; `ctl` reports it missing.
+        Err(_) => (status, None),
     }
 }
 
@@ -969,7 +883,7 @@ mod tests {
     fn draw(rt: &mut Runtime) -> String {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
         terminal.draw(|f| ui::draw(f, &mut rt.app)).expect("draw");
-        crate::render::dump(terminal.backend().buffer(), false)
+        crate::shot::dump(terminal.backend().buffer(), false)
     }
 
     fn press(rt: &mut Runtime, keys: &str) {

@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, Weight};
@@ -463,8 +462,6 @@ impl Images {
 pub(crate) struct Graphics {
     fonts: Arc<Mutex<Option<Fonts>>>,
     images: Images,
-    /// Time spent drawing and encoding images, for `--timings`.
-    pub(crate) drawn: Vec<Duration>,
 }
 
 impl std::fmt::Debug for Graphics {
@@ -492,7 +489,6 @@ impl Graphics {
         Self {
             fonts,
             images: Images::new(),
-            drawn: Vec::new(),
         }
     }
 
@@ -519,12 +515,7 @@ impl Graphics {
         let cols = app.areas.diff.width.min(MAX_COLS);
         for file in shown_headers(app) {
             let spec = spec_for(app, file, cols, cell);
-            let id = self.images.get(&spec, &mut out, |spec| {
-                let started = Instant::now();
-                let pixmap = render(fonts, spec);
-                self.drawn.push(started.elapsed());
-                pixmap
-            });
+            let id = self.images.get(&spec, &mut out, |spec| render(fonts, spec));
             app.header_images.insert(file, id);
         }
         self.images.evict(&mut out);
@@ -580,6 +571,7 @@ fn spec_for(app: &App, file: usize, cols: u16, cell: (u16, u16)) -> Spec {
 
 /// Draws the header image of the file at the top of the view to a PNG,
 /// to check it without a terminal.
+#[cfg(feature = "dev")]
 pub(crate) fn header_picture(app: &App, cols: u16, path: &std::path::Path) -> anyhow::Result<()> {
     let mut fonts = Fonts {
         system: FontSystem::new(),
@@ -1082,7 +1074,7 @@ mod tests {
         let cell = &buf[(diff.x + 3, diff.y)];
         assert_eq!(Some(cell.symbol().to_owned()), placeholder(3));
         assert_eq!(cell.fg, Color::Rgb(1, 2, 3));
-        let text = crate::render::dump(buf, false);
+        let text = crate::shot::dump(buf, false);
         assert_eq!(
             text.matches("a.rs").count(),
             1,

@@ -35,15 +35,13 @@ pub(super) struct Pipeline {
     pub(super) burst: Burst,
     /// A path-limited rescan is running; later bursts wait for it.
     pub(super) partial_busy: bool,
-    /// A refresh waiting to reach the screen: when its burst began and its paths.
-    pub(super) refreshing: Option<(Instant, Vec<String>)>,
     pub(super) next_reconcile: Instant,
     /// What the last full scan saw of HEAD, the index and the base.
     pub(super) state: Option<GitState>,
     /// Where the current stream's contents are read from.
     pub(super) source: Option<(gix::ThreadSafeRepository, PathBuf)>,
-    /// When the current worktree began loading, until its first full frame.
-    pub(super) loading_since: Option<Instant>,
+    /// The current worktree is loading, until its first full frame.
+    pub(super) loading: bool,
 }
 
 impl Pipeline {
@@ -54,11 +52,10 @@ impl Pipeline {
             diffs: None,
             burst: Burst::default(),
             partial_busy: false,
-            refreshing: None,
             next_reconcile: Instant::now() + RECONCILE,
             state: None,
             source: None,
-            loading_since: None,
+            loading: false,
         }
     }
 
@@ -164,7 +161,6 @@ impl Runtime {
         let since = self.app.settings.since;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let started = Instant::now();
             let (result, review) = load(&worktree, mode, since);
             let _ = tx.send(Msg::Loaded {
                 generation,
@@ -172,13 +168,12 @@ impl Runtime {
                 mode,
                 result,
                 review,
-                elapsed: started.elapsed(),
             });
         });
     }
 
     /// Rescans `paths` alone, off the event loop.
-    pub(super) fn start_partial(&mut self, paths: Vec<String>, since: Instant) {
+    pub(super) fn start_partial(&mut self, paths: Vec<String>) {
         let (Some((repo, root)), Some(stream)) = (self.pipeline.source.clone(), &self.app.stream)
         else {
             return;
@@ -225,7 +220,6 @@ impl Runtime {
                 generation,
                 paths,
                 result,
-                since,
             });
         });
     }
@@ -372,7 +366,6 @@ impl Runtime {
                             .and_then(|i| todo[i].take().map(|c| (i, c)))
                     };
                     let Some((file, change)) = next else { return };
-                    let started = Instant::now();
                     let (body, texts) = app::compute_body(&mut reader, &change);
                     if tx
                         .send(Msg::Diffed {
@@ -380,7 +373,6 @@ impl Runtime {
                             file,
                             body,
                             texts,
-                            elapsed: started.elapsed(),
                         })
                         .is_err()
                     {

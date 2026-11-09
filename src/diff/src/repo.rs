@@ -230,16 +230,6 @@ pub(crate) struct Target {
 /// Files above this size are listed but not read.
 pub(crate) const MAX_FILE: u64 = 16 * 1024 * 1024;
 
-/// Whether `git status` may use the repository's fsmonitor. The viewer
-/// never does: without optional locks Git cannot record what the daemon
-/// reported, and the untracked cache it then trusts can miss new files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Fsmonitor {
-    Off,
-    /// As configured, which may start a daemon: for measuring only.
-    AsConfigured,
-}
-
 /// Opens `worktree` and resolves what `mode` compares it against.
 pub(crate) fn open(worktree: &Path, mode: Mode) -> Result<(gix::Repository, String, Target)> {
     let mut repo =
@@ -272,7 +262,7 @@ pub(crate) fn open(worktree: &Path, mode: Mode) -> Result<(gix::Repository, Stri
 pub(crate) fn changes(worktree: &Path, mode: Mode) -> Result<Changes> {
     let (repo, base, target) = open(worktree, mode)?;
     let state = GitState::of(&repo);
-    let status = status(&repo, worktree, Fsmonitor::Off, &[])?;
+    let status = status(&repo, worktree, &[])?;
     let tree = if target.base_tree == target.head_tree {
         Vec::new()
     } else {
@@ -300,7 +290,7 @@ pub(crate) fn changes_for(
     renames: &std::collections::HashMap<String, String>,
 ) -> Result<Vec<FileChange>> {
     let root = workdir(repo)?;
-    let status = status(repo, &root, Fsmonitor::Off, paths)?;
+    let status = status(repo, &root, paths)?;
     let mut tree = Vec::new();
     if target.base_tree != target.head_tree {
         let base = repo.find_tree(target.base_tree)?;
@@ -676,16 +666,15 @@ impl Reader {
 /// `git status` entries and untracked directories, expanded through gix.
 /// Read-only: no optional locks, so the index is never rewritten. Git's
 /// untracked cache makes this an order of magnitude faster than a gix walk.
+/// The fsmonitor stays off: without optional locks Git cannot record what
+/// its daemon reported, and the untracked cache it then trusts can miss new
+/// files.
 pub(crate) fn status(
     repo: &gix::Repository,
     worktree: &Path,
-    fsmonitor: Fsmonitor,
     paths: &[String],
 ) -> Result<Vec<StatusEntry>> {
-    let mut args: Vec<&str> = Vec::new();
-    if fsmonitor == Fsmonitor::Off {
-        args.extend(["-c", "core.fsmonitor=false"]);
-    }
+    let mut args = vec!["-c", "core.fsmonitor=false"];
     args.extend([
         "status",
         "--porcelain=v2",

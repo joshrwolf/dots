@@ -5,7 +5,6 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
 
 use crate::diff::Text;
 
@@ -228,7 +227,6 @@ pub(crate) struct Job {
 pub(crate) struct Done {
     pub(crate) key: Key,
     pub(crate) result: Result<Arc<Lines>, String>,
-    pub(crate) elapsed: Duration,
 }
 
 #[derive(Debug, Default)]
@@ -260,13 +258,11 @@ impl Pool {
             let mut highlighter = base.fork();
             std::thread::spawn(move || {
                 while let Some(job) = next(&queue) {
-                    let started = Instant::now();
                     let result = highlight(&mut highlighter, job.key.1, &job.text).map(Arc::new);
                     in_flight.lock().expect("highlight state").remove(&job.key);
                     done(Done {
                         key: job.key,
                         result,
-                        elapsed: started.elapsed(),
                     });
                 }
             });

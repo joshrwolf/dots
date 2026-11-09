@@ -26,5 +26,18 @@ flate2 = "1"
 base64 = "0.23"
 signal-hook = "0.3"
 
+[features]
+# The development tools the examples run from the checkout. Off by default,
+# so the installed program carries none.
+dev = []
+
+[[example]]
+name = "render"
+required-features = ["dev"]
+
+[[example]]
+name = "bench"
+required-features = ["dev"]
+
 [lints]
 workspace = true
