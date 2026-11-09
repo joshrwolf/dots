@@ -489,7 +489,7 @@ fn redact(base: &str) -> String {
             if s == "HEAD" {
                 "HEAD".to_owned()
             } else {
-                "default-branch merge base".to_owned()
+                "the base".to_owned()
             }
         })
 }

@@ -153,8 +153,8 @@ fn branch(repo: &gix::Repository) -> String {
 /// What a worktree is compared against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mode {
-    /// The merge base of HEAD with the default branch: everything the
-    /// worktree's branch adds, committed or not.
+    /// The base `dots_base` chooses for HEAD: everything the worktree's
+    /// branch adds, committed or not.
     Base,
     /// HEAD: uncommitted changes only.
     Head,

@@ -346,7 +346,7 @@ fn cache_path(common_dir: &Path) -> Option<PathBuf> {
     )
 }
 
-/// A worktree's changes against its default-branch merge base, counted
+/// A worktree's changes against its base (see [`repo::Mode::Base`]), counted
 /// through the caches: committed totals by tree pair, then the
 /// uncommitted files git reports. Also names the changes' content, so a
 /// later summary tells whether anything changed since, and reads when the
