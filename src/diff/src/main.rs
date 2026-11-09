@@ -52,9 +52,9 @@ pub(crate) fn state_home() -> PathBuf {
     version,
     about = "Review the changes in every worktree of a repository",
     long_about = "Review the changes in every worktree of a repository.\n\n\
-        The switcher (w) lists worktrees waiting for review first: changes \
-        not looked at since they last changed, with no Pi worker still at \
-        them. Each row names the Pi worker or interactive Pi session working \
+        The switcher (w) lists worktrees whose Pi worker asks a question \
+        first, then those waiting for review: changes not looked at since \
+        they last changed, with no Pi worker still at them. Each row names the Pi worker or interactive Pi session working \
         there and the worker's status, read from Pi's worker registry \
         ($PI_CODING_AGENT_DIR, else ~/.pi/agent) and its inbox registrations."
 )]

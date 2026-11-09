@@ -10,12 +10,22 @@ use crate::agents::{Owners, Snapshot, Status, Worker};
 /// Where a worktree stands, in the order the switcher lists them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Standing {
+    /// A worker there asks a question.
+    Asking,
     /// Changes the user has not looked at, or a worker that finished since
     /// the worktree was shown, and no worker still at them.
     Waiting,
     /// A worker, or an interactive session, works there.
     Active,
     Idle,
+}
+
+impl Standing {
+    /// Whether the worktree waits for the user: a question or changes to
+    /// review.
+    pub(crate) fn waits(self) -> bool {
+        matches!(self, Self::Asking | Self::Waiting)
+    }
 }
 
 /// A worker that finished or asked a question while the viewer was open.
@@ -146,7 +156,9 @@ impl App {
 
     pub(crate) fn standing(&self, i: usize) -> Standing {
         let owners = self.owners(i);
-        if owners.is_some_and(Owners::busy) {
+        if owners.is_some_and(|o| o.workers.iter().any(|w| w.status == Status::Asking)) {
+            Standing::Asking
+        } else if owners.is_some_and(Owners::busy) {
             Standing::Active
         } else if self.unseen(i) || self.marker(i).is_some() {
             // A worker that finished since the worktree was last shown
@@ -167,8 +179,8 @@ impl App {
         w.touched.max(file)
     }
 
-    /// The worktrees as the switcher lists them: waiting for review, then
-    /// active, then the rest, each most recently changed first.
+    /// The worktrees as the switcher lists them: asking, waiting for
+    /// review, then active, then the rest, each most recently changed first.
     pub(crate) fn review_order(&self) -> Vec<usize> {
         let mut order: Vec<usize> = (0..self.repo.worktrees.len()).collect();
         order.sort_by_cached_key(|&i| {
@@ -181,7 +193,7 @@ impl App {
         order
     }
 
-    /// The next worktree waiting for review after the shown one in review
+    /// The next worktree that asks or waits for review after the shown one in review
     /// order, or with `forward` false the one before it, cycling.
     pub(crate) fn next_to_review(&self, forward: bool) -> Option<usize> {
         let order = self.review_order();
@@ -195,7 +207,7 @@ impl App {
                     order[(at + n - d % n) % n]
                 }
             })
-            .find(|&i| i != self.current && self.standing(i) == Standing::Waiting)
+            .find(|&i| i != self.current && self.standing(i).waits())
     }
 
     /// Records that the user looked at the shown worktree's changes, named
@@ -277,6 +289,7 @@ mod tests {
             workers: vec![
                 worker("/w/c", Status::Running),
                 worker("/w/d", Status::Done),
+                worker("/w/e", Status::Asking),
             ],
             problems: Vec::new(),
         });
@@ -284,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn waiting_worktrees_come_first_then_active_then_the_rest() {
+    fn asking_then_waiting_worktrees_come_first_then_active_then_the_rest() {
         let app = app();
         let standing: Vec<Standing> = (0..5).map(|i| app.standing(i)).collect();
         assert_eq!(
@@ -294,11 +307,11 @@ mod tests {
                 Standing::Waiting,
                 Standing::Active,
                 Standing::Waiting,
-                Standing::Idle
+                Standing::Asking
             ]
         );
         // Within a group, the most recent change first.
-        assert_eq!(app.review_order(), [3, 1, 2, 0, 4]);
+        assert_eq!(app.review_order(), [4, 3, 1, 2, 0]);
     }
 
     #[test]
@@ -313,22 +326,33 @@ mod tests {
         app.look("B2");
         assert!(!app.unseen(1));
         assert_eq!(app.session.state().looked.as_deref(), Some("B2"));
-        assert_eq!(app.review_order()[0], 3);
+        assert_eq!(app.review_order()[..2], [4, 3]);
     }
 
     #[test]
     fn next_to_review_cycles_through_waiting_worktrees_in_order() {
         let mut app = app();
-        // Order: d, b (waiting), c (active), a, e.
+        // Order: e (asking), d, b (waiting), c (active), a.
         app.current = 0;
-        assert_eq!(app.next_to_review(true), Some(3));
+        assert_eq!(app.next_to_review(true), Some(4), "wraps to the question");
         assert_eq!(app.next_to_review(false), Some(1));
+        app.current = 4;
+        assert_eq!(app.next_to_review(true), Some(3));
+        assert_eq!(app.next_to_review(false), Some(1), "wraps back");
         app.current = 3;
         assert_eq!(app.next_to_review(true), Some(1));
-        assert_eq!(app.next_to_review(false), Some(1), "only one other");
+        assert_eq!(app.next_to_review(false), Some(4));
         app.current = 1;
-        assert_eq!(app.next_to_review(true), Some(3), "wraps");
+        assert_eq!(app.next_to_review(true), Some(4), "wraps");
         app.summaries.get_mut(Path::new("/w/d")).expect("d").looked = Some("D".into());
+        app.set_agents(Snapshot {
+            agents: Vec::new(),
+            workers: vec![
+                worker("/w/c", Status::Running),
+                worker("/w/d", Status::Done),
+            ],
+            problems: Vec::new(),
+        });
         assert_eq!(app.next_to_review(true), None, "the shown one is not next");
     }
 
@@ -336,6 +360,7 @@ mod tests {
     fn workers_that_finish_or_ask_mark_their_worktree() {
         let mut app = app();
         assert!(app.markers.is_empty(), "nothing happened while open yet");
+        assert_eq!(app.standing(4), Standing::Asking);
         let snapshot = |c: Status, e: Status| Snapshot {
             agents: Vec::new(),
             workers: vec![
@@ -346,7 +371,15 @@ mod tests {
             ],
             problems: Vec::new(),
         };
-        // c finished; e appeared asking; a, the shown one, failed.
+        app.set_agents(Snapshot {
+            agents: Vec::new(),
+            workers: vec![
+                worker("/w/c", Status::Running),
+                worker("/w/d", Status::Done),
+            ],
+            problems: Vec::new(),
+        });
+        // c finished; e began asking; a, the shown one, failed.
         let notice = app.set_agents(snapshot(Status::Done, Status::Asking));
         assert_eq!(
             notice.as_deref(),

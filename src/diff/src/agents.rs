@@ -127,17 +127,17 @@ pub(crate) struct Worker {
 impl Worker {
     /// Its label and model, as the switcher names it: `fix · opus-5-5`.
     pub(crate) fn name(&self) -> String {
-        match self.model.as_deref() {
-            Some(model) => {
-                let model = model.rsplit('/').next().unwrap_or(model);
-                format!(
-                    "{} · {}",
-                    self.label,
-                    model.strip_prefix("claude-").unwrap_or(model)
-                )
-            }
+        match self.model_name() {
+            Some(model) => format!("{} · {model}", self.label),
             None => self.label.clone(),
         }
+    }
+
+    /// The model without its provider or family prefix: `opus-5-5`.
+    pub(crate) fn model_name(&self) -> Option<&str> {
+        let model = self.model.as_deref()?;
+        let model = model.rsplit('/').next().unwrap_or(model);
+        Some(model.strip_prefix("claude-").unwrap_or(model))
     }
 }
 

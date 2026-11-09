@@ -5,14 +5,12 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
-use super::{cells, fill, put, put_counts, truncate_left, truncate_middle, worker_color};
-use crate::agents::Status;
-use crate::app::{App, Standing};
+use super::{cells, fill, put, truncate_left};
+use crate::app::App;
 use crate::editor::Editor;
 use crate::keys::BINDINGS;
 use crate::picker::Picker;
 use crate::review;
-use crate::switcher::Switcher;
 use crate::theme::Palette;
 use crate::wrap::{self};
 
@@ -241,7 +239,7 @@ pub(super) fn draw_picker(buf: &mut Buffer, app: &App, pk: &Picker, area: Rect) 
 }
 
 /// A thin rounded frame just inside `r`.
-fn border(buf: &mut Buffer, r: Rect, style: Style) {
+pub(super) fn border(buf: &mut Buffer, r: Rect, style: Style) {
     if r.width < 2 || r.height < 2 {
         return;
     }
@@ -258,195 +256,6 @@ fn border(buf: &mut Buffer, r: Rect, style: Style) {
     buf[(right, r.y)].set_symbol("╮");
     buf[(r.x, bottom)].set_symbol("╰");
     buf[(right, bottom)].set_symbol("╯");
-}
-
-/// The worktree switcher: a filter line over each worktree's branch, who
-/// works there and how they stand, its counts and when it last changed.
-/// Counts fill in as they are computed.
-// Switcher columns from the right: age, files, counts, who works there
-// when there is room, their lead worker's status, and the branch in what
-// is left.
-const AGE: u16 = 4;
-const FILES: u16 = 9;
-const COUNTS: u16 = 13;
-const STATE: u16 = 9;
-
-#[expect(
-    clippy::many_single_char_names,
-    clippy::too_many_lines,
-    reason = "one region drawn top to bottom, in cell coordinates"
-)]
-pub(super) fn draw_switcher(buf: &mut Buffer, app: &App, sw: &Switcher, area: Rect) {
-    let p = &app.palette;
-    let w = 140.min(area.width.saturating_sub(4));
-    let n = u16::try_from(app.repo.worktrees.len()).unwrap_or(u16::MAX);
-    let h = (n + 2).min(area.height.saturating_sub(4)).max(3);
-    let outer = Rect::new(
-        area.x + (area.width - w) / 2,
-        area.y + area.height.saturating_sub(h + 2) / 3,
-        w,
-        h + 2,
-    );
-    let bg = p.panel;
-    fill(buf, outer, Style::new().bg(bg).fg(p.fg));
-    border(buf, outer, Style::new().bg(bg).fg(p.rule));
-    let r = Rect::new(outer.x + 1, outer.y + 1, w - 2, h);
-    let w = r.width;
-    let x = r.x + 1;
-    let iw = w.saturating_sub(2);
-    let px = x + put(
-        buf,
-        x,
-        r.y,
-        "> ",
-        iw,
-        Style::new()
-            .bg(bg)
-            .fg(p.accent)
-            .add_modifier(Modifier::BOLD),
-    );
-    let qx = px
-        + put(
-            buf,
-            px,
-            r.y,
-            &sw.query,
-            iw.saturating_sub(px - x),
-            Style::new().bg(bg).fg(p.fg),
-        );
-    put(buf, qx, r.y, "▏", 1, Style::new().bg(bg).fg(p.accent));
-    let waiting = (0..app.repo.worktrees.len())
-        .filter(|&i| app.standing(i) == Standing::Waiting)
-        .count();
-    let count = if waiting > 0 {
-        format!("{waiting} to review · {}/{}", sw.matches.len(), n)
-    } else {
-        format!("{}/{}", sw.matches.len(), n)
-    };
-    put(
-        buf,
-        r.right().saturating_sub(cells(&count) + 1),
-        r.y,
-        &count,
-        cells(&count),
-        Style::new().bg(bg).fg(p.faint),
-    );
-    for col in r.left()..r.right() {
-        buf[(col, r.y + 1)]
-            .set_symbol("─")
-            .set_fg(p.rule)
-            .set_bg(bg);
-    }
-    let rows = usize::from(h.saturating_sub(2));
-    let start = sw.cursor.saturating_sub(rows.saturating_sub(1));
-    let now = std::time::SystemTime::now();
-    let fixed = AGE + FILES + COUNTS + STATE + 2;
-    let who_w = iw.saturating_sub(fixed + 24).min(44);
-    for (slot, (i, m)) in sw
-        .matches
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(rows)
-        .enumerate()
-    {
-        let y = r.y + 2 + u16::try_from(slot).unwrap_or(0);
-        let wt = &app.repo.worktrees[m.worktree];
-        let row_bg = if i == sw.cursor { p.selection } else { bg };
-        let style = Style::new().bg(row_bg);
-        fill(buf, Rect::new(r.x, y, w, 1), style);
-        if m.worktree == app.current {
-            put(buf, r.x, y, "▌", 1, style.fg(p.accent));
-        }
-        if let Some(marker) = app.marker(m.worktree) {
-            let badge = match marker.status {
-                Status::Asking => "?",
-                Status::Done => "✓",
-                Status::Stopped => "■",
-                _ => "✗",
-            };
-            let fg = worker_color(&marker.status, p);
-            put(
-                buf,
-                x,
-                y,
-                badge,
-                1,
-                style.fg(fg).add_modifier(Modifier::BOLD),
-            );
-        } else if app.unseen(m.worktree) {
-            put(buf, x, y, "●", 1, style.fg(p.accent));
-        }
-        let end = r.right().saturating_sub(1);
-        let age = app
-            .changed_at(m.worktree)
-            .map(|t| crate::switcher::age(t, now))
-            .unwrap_or_default();
-        put(
-            buf,
-            end.saturating_sub(AGE),
-            y,
-            &format!("{age:>4}"),
-            AGE,
-            style.fg(p.faint),
-        );
-        let files_end = end.saturating_sub(AGE + 1);
-        let counts_end = files_end.saturating_sub(FILES);
-        if let Some(s) = app.summaries.get(&wt.path) {
-            let (files, fg) = match s.files {
-                0 => ("clean".to_owned(), p.faint),
-                1 => ("1 file".to_owned(), p.muted),
-                n => (format!("{n} files"), p.muted),
-            };
-            put(
-                buf,
-                files_end.saturating_sub(cells(&files)),
-                y,
-                &files,
-                cells(&files),
-                style.fg(fg),
-            );
-            if s.files > 0 {
-                put_counts(buf, counts_end, y, (s.added, s.removed), row_bg, p);
-            }
-        }
-        let owners = app.owners(m.worktree);
-        let who_x = counts_end.saturating_sub(COUNTS + who_w);
-        if who_w > 0 {
-            let who = owners.map(|o| o.names().join(", ")).unwrap_or_default();
-            put(
-                buf,
-                who_x,
-                y,
-                &truncate_middle(&who, usize::from(who_w)),
-                who_w,
-                style.fg(p.muted),
-            );
-        }
-        let state_x = who_x.saturating_sub(STATE);
-        if let Some(lead) = owners.and_then(crate::agents::Owners::lead) {
-            let fg = worker_color(&lead.status, p);
-            put(buf, state_x, y, lead.status.label(), STATE, style.fg(fg));
-        }
-        let left_end = state_x.saturating_sub(1);
-        let room = usize::from(left_end.saturating_sub(x + 2));
-        let branch = truncate_middle(&wt.branch, room);
-        let plain = style.fg(p.fg);
-        let hit = plain.fg(p.accent).add_modifier(Modifier::BOLD);
-        let mut cx = x + 2;
-        for (ci, ch) in branch.chars().enumerate() {
-            let hit_here = branch.chars().count() == wt.branch.chars().count()
-                && m.positions.contains(&u32::try_from(ci).unwrap_or(u32::MAX));
-            cx += put(
-                buf,
-                cx,
-                y,
-                ch.encode_utf8(&mut [0; 4]),
-                left_end.saturating_sub(cx),
-                if hit_here { hit } else { plain },
-            );
-        }
-    }
 }
 
 #[expect(clippy::many_single_char_names, reason = "cell coordinates")]

@@ -244,7 +244,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     row(
         "w",
-        "switch worktree, waiting for review first (type to filter)",
+        "switch worktree, questions and reviews first (type to filter)",
         &[(key('w'), Action::Switcher)],
     ),
     row(
@@ -257,7 +257,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     row(
         ",  .",
-        "previous/next worktree waiting for review",
+        "previous/next worktree that asks or waits for review",
         &[
             (key(','), Action::PrevReview),
             (key('.'), Action::NextReview),

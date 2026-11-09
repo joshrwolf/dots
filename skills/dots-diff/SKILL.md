@@ -30,10 +30,10 @@ worktrees and agents; a pane on another Rex host opens the viewer there.
 ## What the user sees without you
 
 The viewer reads Pi's worker registry and the interactive sessions' inbox
-registrations itself. Its worktree switcher lists worktrees waiting for review
-first, naming the worker (label and model) or session working in each and the
+registrations itself. Its worktree switcher lists worktrees whose worker asks a
+question first, marked `?`, then those waiting for review, naming the worker (label and model) or session working in each and the
 worker's status; the status line names the shown worktree's. The user steps
-through waiting worktrees with `.` and `,`; opening a worktree counts as
+through both with `.` and `,`; opening a worktree counts as
 looking at it until its changes change again. When a worker finishes or asks
 a question while the viewer is open, the status line names it and the switcher
 marks its worktree, without changing what the viewer shows. A clear, specific

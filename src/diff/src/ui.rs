@@ -22,9 +22,11 @@ use crate::wrap::{self, Segment};
 
 mod overlay;
 mod sidebar;
+mod switcher;
 
-use overlay::{draw_editor, draw_help, draw_picker, draw_switcher};
+use overlay::{draw_editor, draw_help, draw_picker};
 use sidebar::draw_sidebar;
+use switcher::draw_switcher;
 
 /// Sidebar width when the user has not chosen one: a fifth of the screen.
 const SIDEBAR_MIN: u16 = 26;
