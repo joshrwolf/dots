@@ -31,6 +31,9 @@ Pi saves preference edits locally, not back to dots. Change the tracked file to
 make a preference portable; explicit machine apply restores its owned values.
 Restart idle Pi sessions to use the applied preferences.
 
+Prompt caches stay warm during active runs only (`cacheWarming: "streaming"`).
+Idle sessions do not issue warming requests.
+
 ## Updates
 
 The registered source is `~/.local/share/dots/checkouts/dots/src/pi`.
@@ -223,7 +226,8 @@ bindings and reconciliation are explicit CLI operations.
 Direct Anthropic streams have 90 seconds after headers to produce
 `message_start`; keepalive pings do not extend it. Timeout uses Pi's normal retry
 budget. User cancellation never retries, and thinking after the response starts
-is not limited.
+is not limited. Pi's native byte-idle timeout handles silent streams; a response
+that has started and keeps sending pings has no progress deadline.
 
 `/request-guard` shows counts and timings. Records contain metadata, not prompts,
 response text or credentials. The guard uses Pi's simple-stream override: custom
