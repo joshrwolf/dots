@@ -51,7 +51,11 @@
 
 - `extensions/anthropic-request-guard/` owns only the direct Anthropic
   header-to-message-start deadline; Pi owns retries and worker settlement.
-  Keep provider auth, catalog and parsing upstream-owned.
+  Keep provider auth, catalog and parsing upstream-owned. It uses only the
+  public `onResponse`/`onProviderStreamEvent` hooks and a request-private
+  abort signal, so it relies on a fetch that honors its signal; test fixtures
+  must honor it too. The guard depends on stock forwarding raw
+  `message_start` to `onProviderStreamEvent`.
 - On Pi upgrades, run the guard host suite and its stock baseline in
   `tests/acceptance/anthropic-request-guard.test.mjs`. The baseline's short
   observation window is not proof of an infinite stall; set

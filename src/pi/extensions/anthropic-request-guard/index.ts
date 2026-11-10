@@ -1,7 +1,7 @@
 import {builtinProviders} from '@earendil-works/pi-ai/providers/all';
 import {VERSION, type ExtensionAPI} from '@earendil-works/pi-coding-agent';
 import {Diagnostics, ENTRY_TYPE, MAX_ENTRIES} from './diagnostics.ts';
-import {guardProvider, type GuardOptions} from './guard.ts';
+import {guardStreamSimple, type GuardOptions} from './guard.ts';
 
 /** Deadline injection is for isolated host acceptance, not user configuration. */
 export default function (
@@ -22,7 +22,7 @@ export default function (
   );
   if (!anthropic)
     throw new Error('Pi has no built-in Anthropic provider to guard');
-  const guarded = guardProvider(anthropic, {
+  const streamSimple = guardStreamSimple(anthropic, {
     ...options,
     observe(observation) {
       if (!diagnostics) return;
@@ -36,7 +36,7 @@ export default function (
   // Pi routes full calls here too: this registration uses SimpleStreamOptions.
   pi.registerProvider('anthropic', {
     api: 'anthropic-messages',
-    streamSimple: guarded.streamSimple,
+    streamSimple,
   });
   pi.on('session_start', (_event, ctx) => {
     diagnostics = new Diagnostics(VERSION);

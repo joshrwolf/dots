@@ -7,6 +7,7 @@ import {
   type ExtensionContext,
   type MarkdownTransformContext,
   type MarkdownTransformer,
+  type MarkdownTransformerOptions,
 } from '@earendil-works/pi-coding-agent';
 import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
 import {thinkingFixture} from '../dev/thinking.ts';
@@ -27,6 +28,7 @@ const plain = (view: AssistantMessageComponent, width = 120) =>
 
 function registration() {
   const transforms: MarkdownTransformer[] = [];
+  const selectors: (MarkdownTransformerOptions | undefined)[] = [];
   const handlers = new Map<
     string,
     (event: unknown, ctx: ExtensionContext) => void
@@ -50,8 +52,12 @@ function registration() {
   register({
     registerToolRenderer() {},
     registerMessageRenderer() {},
-    registerMarkdownTransformer(transform: MarkdownTransformer) {
+    registerMarkdownTransformer(
+      transform: MarkdownTransformer,
+      options?: MarkdownTransformerOptions,
+    ) {
       transforms.push(transform);
+      selectors.push(options);
     },
     on(name: string, handler: (event: unknown, ctx: ExtensionContext) => void) {
       handlers.set(name, handler);
@@ -59,6 +65,7 @@ function registration() {
   } as unknown as ExtensionAPI);
   return {
     transforms,
+    selectors,
     labels,
     start(mode = 'tui') {
       handlers.get('session_start')?.({}, {...ctx, mode} as ExtensionContext);
@@ -125,6 +132,8 @@ test('registered transformer uses real assistant rendering, native disclosure, t
   const r = registration();
   try {
     assert.deepEqual(r.transforms, [thinkingMarkdown]);
+    // The host runs it only on thinking blocks, never other Markdown surfaces.
+    assert.deepEqual(r.selectors, [{messageTypes: ['assistant-thinking']}]);
     for (const name of ['dark', 'light']) {
       initTheme(name, false);
       for (let phase = 0; phase < 3; phase++) {

@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import test from 'node:test';
-import {guardProvider} from '../../extensions/anthropic-request-guard/guard.ts';
+import {guardStreamSimple} from '../../extensions/anthropic-request-guard/guard.ts';
 import guardExtension from '../../extensions/anthropic-request-guard/index.ts';
 import {anthropicHttp} from '../fixtures/anthropic-http.mjs';
 
@@ -17,7 +17,14 @@ const {anthropicProvider} = await import(
 async function setup(
   t,
   plan,
-  {retries = 2, guard = true, overrides, backoffMs = 10} = {},
+  {
+    retries = 2,
+    guard = true,
+    overrides,
+    backoffMs = 10,
+    cacheWarming = 'off',
+    extensions = [],
+  } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), 'dots-guard-host-'));
   const http = await anthropicHttp(plan);
@@ -32,17 +39,19 @@ async function setup(
   const stock = anthropicProvider();
   // Inject below the guard, retaining the real host's auth and request conversion.
   // Guard must wrap this fetch rather than replacing it.
-  const provider = guard
-    ? guardProvider(stock, {timeoutMs: 80, observe: o => observations.push(o)})
-    : stock;
+  const streamSimple = guard
+    ? guardStreamSimple(stock, {
+        timeoutMs: 80,
+        observe: o => observations.push(o),
+      })
+    : (m, c, o) => stock.streamSimple(m, c, o);
   const fixture = {
     api: 'anthropic-messages',
-    streamSimple: (m, c, o) =>
-      provider.streamSimple(m, c, {...o, fetch: http.fetch}),
+    streamSimple: (m, c, o) => streamSimple(m, c, {...o, fetch: http.fetch}),
   };
   const settings = host.SettingsManager.inMemory({
     compaction: {enabled: false, keepRecentTokens: 0},
-    cacheWarming: 'off',
+    cacheWarming,
     retry: {
       enabled: true,
       maxRetries: retries,
@@ -59,7 +68,10 @@ async function setup(
     noPromptTemplates: true,
     noThemes: true,
     systemPromptOverride: () => 'Fixture.',
-    extensionFactories: [pi => pi.registerProvider('anthropic', fixture)],
+    extensionFactories: [
+      pi => pi.registerProvider('anthropic', fixture),
+      ...extensions,
+    ],
   });
   await loader.reload();
   if (overrides)
@@ -108,6 +120,13 @@ const messages = h =>
   h.events
     .filter(e => e.type === 'message_end' && e.message.role === 'assistant')
     .map(e => e.message);
+/** Assistant messages as the session persisted them, not as pi-ai returned them. */
+const persisted = h =>
+  h.session.sessionManager
+    .getEntries()
+    .filter(e => e.type === 'message' && e.message.role === 'assistant')
+    .map(e => e.message);
+const threads = h => h.http.requests.map(r => r.payload.thread?.type);
 
 test(
   'installed host: ping-only startup retries natively and settles once',
@@ -121,7 +140,16 @@ test(
       messages(h).map(m => m.stopReason),
       ['error', 'stop'],
     );
-    assert.equal(h.events.filter(e => e.type === 'auto_retry_start').length, 1);
+    const [failed, recovered] = persisted(h);
+    assert.equal(failed.stopReason, 'error');
+    assert.match(
+      failed.errorMessage,
+      /timed out: no message_start within 80ms/,
+    );
+    assert.equal(recovered.stopReason, 'stop');
+    const retry = h.events.filter(e => e.type === 'auto_retry_start');
+    assert.equal(retry.length, 1);
+    assert.match(retry[0].errorMessage, /timed out/);
     assert.equal(h.events.filter(e => e.type === 'agent_settled').length, 1);
     assert.equal(h.session.messages.filter(m => m.role === 'user').length, 1);
     assert.deepEqual(
@@ -147,23 +175,45 @@ test(
   },
 );
 
-test(
-  'installed host: user cancellation does not retry',
-  {timeout: 10000},
-  async t => {
-    const h = await setup(t, () => 'stall');
-    const prompt = h.session.prompt('fixture');
-    await until(() => h.http.requests.length === 1);
-    await h.session.abort();
-    await prompt;
-    await until(() => h.http.active.size === 0);
-    await delay(100);
-    assert.equal(h.http.requests.length, 1);
-    assert.equal(messages(h).at(-1).stopReason, 'aborted');
-  },
-);
+for (const [phase, mode, outcomes] of [
+  ['before headers', 'no-headers', []],
+  ['after headers', 'stall', ['cancelled']],
+  ['after message_start', 'started-stall', ['started']],
+])
+  test(
+    `installed host: user cancellation ${phase} stays aborted without retry`,
+    {timeout: 10000},
+    async t => {
+      const h = await setup(t, () => mode);
+      const prompt = h.session.prompt('fixture');
+      await until(() => h.http.requests.length === 1);
+      // Wait for the phase: headers surface as the assistant message start.
+      if (phase === 'before headers') await delay(40);
+      else if (phase === 'after headers')
+        await until(() =>
+          h.events.some(
+            e => e.type === 'message_start' && e.message.role === 'assistant',
+          ),
+        );
+      else await until(() => h.observations.length > 0);
+      await h.session.abort();
+      await prompt;
+      await until(() => h.http.active.size === 0);
+      await delay(150);
+      assert.equal(h.http.requests.length, 1);
+      assert.equal(persisted(h).at(-1).stopReason, 'aborted');
+      assert.equal(
+        h.events.filter(e => e.type === 'auto_retry_start').length,
+        0,
+      );
+      assert.deepEqual(
+        h.observations.map(o => o.outcome),
+        outcomes,
+      );
+    },
+  );
 
-for (const mode of ['ok', 'delayed-start', 'slow-content'])
+for (const mode of ['ok', 'delayed-headers', 'delayed-start', 'slow-content'])
   test(`installed host: ${mode} is unaffected`, {timeout: 10000}, async t => {
     const h = await setup(t, () => mode);
     await h.session.prompt('fixture');
@@ -227,6 +277,112 @@ test(
 );
 
 test(
+  'installed host: a stalled thread continue retries as a full create',
+  {timeout: 10000},
+  async t => {
+    const h = await setup(t, (_r, rs) => (rs.length === 2 ? 'stall' : 'ok'));
+    await h.session.prompt('fixture one');
+    await h.session.prompt('fixture two');
+    assert.deepEqual(threads(h), ['create', 'continue', 'create']);
+    const [first, continued, created] = h.http.requests;
+    assert.ok(
+      created.payload.messages.length > continued.payload.messages.length,
+      'the retry resends the whole conversation',
+    );
+    assert.ok(first.payload.system && created.payload.system);
+    assert.deepEqual(
+      persisted(h).map(m => m.stopReason),
+      ['stop', 'error', 'stop'],
+    );
+    assert.deepEqual(
+      h.observations.map(o => o.outcome),
+      ['started', 'timeout', 'started'],
+    );
+  },
+);
+
+test(
+  'installed host: a thread rejection resend gets its own deadline and keeps the fallback diagnostic',
+  {timeout: 10000},
+  async t => {
+    const h = await setup(t, (_r, rs) =>
+      rs.length === 2 ? 'thread-rejected' : rs.length === 3 ? 'stall' : 'ok',
+    );
+    await h.session.prompt('fixture one');
+    await h.session.prompt('fixture two');
+    assert.deepEqual(threads(h), ['create', 'continue', 'create', 'create']);
+    const failed = persisted(h)[1];
+    assert.equal(failed.stopReason, 'error');
+    assert.match(failed.errorMessage, /timed out/);
+    assert.ok(
+      failed.diagnostics?.some(d => d.type === 'anthropic_thread_fallback'),
+      'the timeout rewrite preserves stock diagnostics',
+    );
+    assert.equal(persisted(h).at(-1).stopReason, 'stop');
+    assert.deepEqual(
+      h.observations.map(o => o.outcome),
+      ['started', 'timeout', 'started'],
+    );
+  },
+);
+
+test(
+  'installed host: real cache warming is guarded, keeps the thread and never blocks the real request',
+  {timeout: 10000},
+  async t => {
+    const h = await setup(
+      t,
+      (r, rs) => {
+        if (rs.length === 1) r.contentDelayMs = 1500;
+        r.concurrent = rs.length > 1 && !rs[0].closed;
+        return rs.length === 1
+          ? 'slow-content'
+          : rs.length === 2
+            ? 'stall'
+            : 'ok';
+      },
+      {
+        cacheWarming: 'streaming',
+        // Shortest lifetime Pi warms: one refresh one second into the request.
+        overrides: {
+          providers: {
+            anthropic: {
+              modelOverrides: {
+                [anthropicProvider().getModels()[0].id]: {
+                  promptCache: {short: 11},
+                },
+              },
+            },
+          },
+        },
+        // Pi has no usage to price before the first reply; force the refresh.
+        extensions: [
+          pi => pi.on('cache_warming_decision', () => ({action: 'warm'})),
+        ],
+      },
+    );
+    await h.session.prompt('fixture one');
+    assert.equal(h.session.getLastAssistantText(), 'fixture ok');
+    await h.session.prompt('fixture two');
+    const [real, warm, next] = h.http.requests;
+    assert.equal(h.http.requests.length, 3, 'a failed warm is not retried');
+    assert.equal(real.payload.thread?.type, 'create');
+    assert.ok(warm.concurrent, 'the warm ran while the real request streamed');
+    assert.equal(warm.payload.max_tokens, 1);
+    assert.equal(warm.payload.thread, undefined);
+    assert.equal(next.payload.thread?.type, 'continue');
+    assert.deepEqual(
+      persisted(h).map(m => m.stopReason),
+      ['stop', 'stop'],
+    );
+    assert.deepEqual(
+      h.observations.map(o => o.outcome),
+      ['started', 'timeout', 'started'],
+    );
+  },
+);
+
+test(
   'installed host: models.json endpoint and headers survive streaming override',
   {timeout: 10000},
   async t => {
@@ -250,7 +406,7 @@ test(
   },
 );
 
-test('installed provider: federation token cache survives sequential guarded requests', async t => {
+test('installed provider: guarded sequential and concurrent requests share the federation token cache like stock', async t => {
   const dir = mkdtempSync(join(tmpdir(), 'dots-guard-federation-'));
   t.after(() => rmSync(dir, {recursive: true, force: true}));
   const tokenFile = join(dir, 'identity-token');
@@ -283,6 +439,7 @@ test('installed provider: federation token cache survives sequential guarded req
   ]
     .map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
     .join('');
+  const observed = {};
   for (const guarded of [false, true]) {
     const paths = [];
     const fetch = async input => {
@@ -301,15 +458,17 @@ test('installed provider: federation token cache survives sequential guarded req
       });
     };
     const stock = anthropicProvider();
-    const provider = guarded ? guardProvider(stock) : stock;
+    const streamSimple = guarded
+      ? guardStreamSimple(stock)
+      : (m, c, o) => stock.streamSimple(m, c, o);
+    const send = () =>
+      streamSimple(
+        stock.getModels()[0],
+        {messages: [{role: 'user', content: 'fixture', timestamp: 0}]},
+        {env, fetch, maxTokens: 8},
+      ).result();
     for (let i = 0; i < 3; i++) {
-      const result = await provider
-        .streamSimple(
-          stock.getModels()[0],
-          {messages: [{role: 'user', content: 'fixture', timestamp: 0}]},
-          {env, fetch, maxTokens: 8},
-        )
-        .result();
+      const result = await send();
       assert.equal(result.stopReason, 'stop', result.errorMessage);
     }
     assert.deepEqual(
@@ -317,7 +476,14 @@ test('installed provider: federation token cache survives sequential guarded req
       ['/v1/oauth/token', '/v1/messages', '/v1/messages', '/v1/messages'],
       `guarded=${guarded}`,
     );
+    paths.length = 0;
+    for (const result of await Promise.all([send(), send(), send()]))
+      assert.equal(result.stopReason, 'stop', result.errorMessage);
+    observed[guarded] = paths.toSorted();
   }
+  // The guard passes the caller's fetch through, so concurrent requests share
+  // the cached federation client exactly as stock requests do.
+  assert.deepEqual(observed.true, observed.false);
 });
 
 test('shipping registration preserves remote catalog, refresh and removable config overlays', async t => {
@@ -410,10 +576,20 @@ test('shipping registration preserves remote catalog, refresh and removable conf
     context,
     {
       apiKey: 'fixture',
-      fetch: async () =>
-        new Response(new ReadableStream({}), {
-          headers: {'content-type': 'text/event-stream'},
-        }),
+      // Headers, then nothing; the body ends when its signal aborts, as Node's does.
+      fetch: async (_input, init) =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              init.signal.addEventListener(
+                'abort',
+                () => c.error(init.signal.reason),
+                {once: true},
+              );
+            },
+          }),
+          {headers: {'content-type': 'text/event-stream'}},
+        ),
     },
   );
   assert.match(result.errorMessage, /timed out.*message_start/);

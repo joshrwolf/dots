@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {setTimeout as delay} from 'node:timers/promises';
+import {isRetryableAssistantError} from '@earendil-works/pi-ai';
 import {anthropicProvider} from '@earendil-works/pi-ai/providers/anthropic';
-import {guardProvider} from '../extensions/anthropic-request-guard/guard.ts';
+import {guardStreamSimple} from '../extensions/anthropic-request-guard/guard.ts';
 import extension from '../extensions/anthropic-request-guard/index.ts';
 import {
   Diagnostics,
@@ -32,22 +33,38 @@ const end = [
   }),
   encode('message_stop'),
 ];
+const malformed = new TextEncoder().encode(
+  'event: content_block_delta\ndata: definitely-not-json\n\n',
+);
 const context = {messages: [{role: 'user', content: 'fixture', timestamp: 0}]};
 
-function fixture(t, frames = []) {
+/**
+ * A fetch that honors its signal like Node's: an abort errors the open body,
+ * after `abortDelayMs` to model a slow transport. No network.
+ */
+function fixture(t, frames = [], {abortDelayMs = 0} = {}) {
   let body;
-  let cancelled = 0;
   let signal;
+  let requests = 0;
   const fetch = async (_url, init) => {
+    requests++;
     signal = init.signal;
+    signal.throwIfAborted();
     return new Response(
       new ReadableStream({
         start(c) {
           body = c;
           for (const frame of frames) c.enqueue(frame);
-        },
-        cancel() {
-          cancelled++;
+          signal.addEventListener(
+            'abort',
+            () =>
+              setTimeout(() => {
+                try {
+                  c.error(signal.reason);
+                } catch {}
+              }, abortDelayMs),
+            {once: true},
+          );
         },
       }),
       {headers: {'content-type': 'text/event-stream'}},
@@ -62,8 +79,8 @@ function fixture(t, frames = []) {
     fetch,
     push: f => body.enqueue(f),
     close: () => body.close(),
-    get cancelled() {
-      return cancelled;
+    get requests() {
+      return requests;
     },
     get signal() {
       return signal;
@@ -71,17 +88,24 @@ function fixture(t, frames = []) {
   };
 }
 const stock = anthropicProvider();
-const model = stock.getModels()[0];
-function request(provider, fetch, options = {}) {
-  return provider
-    .streamSimple(model, context, {
-      apiKey: 'fixture',
-      fetch,
-      maxTokens: 8,
-      ...options,
-    })
-    .result();
+const model = stock
+  .getModels()
+  .find(m => m.baseUrl === 'https://api.anthropic.com');
+function guarded(timeoutMs, observations = []) {
+  return guardStreamSimple(stock, {
+    timeoutMs,
+    observe: o => observations.push(o),
+  });
 }
+function request(stream, fetch, options = {}, target = model) {
+  return stream(target, context, {
+    apiKey: 'fixture',
+    fetch,
+    maxTokens: 8,
+    ...options,
+  }).result();
+}
+const outcomes = observations => observations.map(o => o.outcome);
 
 test('diagnostics retain only bounded metadata and snapshots are independent', () => {
   const d = new Diagnostics('fixture-version');
@@ -132,7 +156,7 @@ test('extension caps session entries across reload and never injects a message',
     });
     handlers.session_start({}, {sessionManager: {getEntries: () => entries}});
     const f = fixture(t, [start, ...end]);
-    const result = request(provider, f.fetch);
+    const result = request(provider.streamSimple, f.fetch);
     while (!f.signal) await delay(1);
     f.close();
     await result;
@@ -142,114 +166,172 @@ test('extension caps session entries across reload and never injects a message',
   }
 });
 
-test('ping-only body times out and cancels without aborting caller', async t => {
+test('ping-only body becomes one retryable timeout and closes only its own transport', async t => {
   const f = fixture(t, [encode('ping')]);
   const observations = [];
   const caller = new AbortController();
-  const provider = guardProvider(stock, {
-    timeoutMs: 20,
-    observe: o => observations.push(o),
+  const result = await request(guarded(20, observations), f.fetch, {
+    signal: caller.signal,
   });
-  const result = await request(provider, f.fetch, {signal: caller.signal});
   assert.equal(result.stopReason, 'error');
   assert.match(result.errorMessage, /timed out.*message_start/);
+  assert.ok(isRetryableAssistantError(result));
   assert.equal(caller.signal.aborted, false);
-  assert.equal(f.cancelled, 1);
   assert.equal(f.signal.aborted, true);
-  assert.deepEqual(
-    observations.map(o => o.outcome),
-    ['timeout'],
-  );
+  assert.deepEqual(outcomes(observations), ['timeout']);
 });
 
-test('actual message_start disables timer while content remains slow', async t => {
+test('actual message_start disarms the deadline while content stays slow', async t => {
   const f = fixture(t, [start]);
   const observations = [];
-  let observedStart;
-  const began = new Promise(resolve => {
-    observedStart = resolve;
-  });
-  const provider = guardProvider(stock, {
-    timeoutMs: 20,
-    observe: o => {
-      observations.push(o);
-      observedStart();
-    },
-  });
-  const result = request(provider, f.fetch);
-  await began;
-  await delay(50);
+  const result = request(guarded(20, observations), f.fetch);
+  while (observations.length === 0) await delay(1);
+  await delay(60);
+  assert.equal(f.signal.aborted, false, 'healthy stream left open');
   for (const frame of end) f.push(frame);
   f.close();
   assert.equal((await result).stopReason, 'stop');
-  assert.equal(f.cancelled, 0);
-  assert.deepEqual(
-    observations.map(o => o.outcome),
-    ['started'],
-  );
+  assert.deepEqual(outcomes(observations), ['started']);
+  assert.equal(f.signal.aborted, true, 'completion releases the transport');
 });
 
-test('caller cancellation is aborted rather than a retryable timeout', async t => {
-  const f = fixture(t);
+for (const phase of ['after headers', 'after message_start'])
+  test(`caller cancellation ${phase} stays aborted, never a timeout`, async t => {
+    const f = fixture(t, phase === 'after headers' ? [] : [start]);
+    const observations = [];
+    const caller = new AbortController();
+    const result = request(guarded(1000, observations), f.fetch, {
+      signal: caller.signal,
+      onResponse: () => {
+        if (phase === 'after headers') setTimeout(() => caller.abort(), 5);
+      },
+      onProviderStreamEvent: e => {
+        if (e.type === 'message_start') setTimeout(() => caller.abort(), 5);
+      },
+    });
+    const message = await result;
+    assert.equal(message.stopReason, 'aborted');
+    assert.doesNotMatch(message.errorMessage, /timed out/);
+    assert.equal(f.signal.aborted, true);
+    assert.deepEqual(
+      outcomes(observations),
+      phase === 'after headers' ? ['cancelled'] : ['started'],
+    );
+  });
+
+test('caller abort landing after the deadline fired still ends aborted', async t => {
+  const f = fixture(t, [encode('ping')], {abortDelayMs: 40});
+  const observations = [];
   const caller = new AbortController();
-  const result = request(guardProvider(stock, {timeoutMs: 1000}), f.fetch, {
+  const result = request(guarded(20, observations), f.fetch, {
     signal: caller.signal,
   });
-  while (!f.signal) await delay(1);
+  while (!f.signal?.aborted) await delay(1);
   caller.abort();
   assert.equal((await result).stopReason, 'aborted');
-  assert.equal(f.cancelled, 1);
+  assert.deepEqual(outcomes(observations), ['cancelled']);
 });
 
-test('parse failure cancels open body even after message_start removed timer', async t => {
-  const f = fixture(t, [
-    start,
-    new TextEncoder().encode(
-      'event: content_block_delta\ndata: definitely-not-json\n\n',
-    ),
-  ]);
-  const result = await request(
-    guardProvider(stock, {timeoutMs: 1000}),
-    f.fetch,
-  );
-  assert.equal(result.stopReason, 'error');
-  await delay(0);
-  assert.equal(f.cancelled, 1);
-  assert.equal(f.signal.aborted, true);
-});
-
-test('decorator preserves supplied provider methods; custom endpoints bypass guard', async t => {
-  const f = fixture(t, [start, ...end]);
+test('pre-header abort keeps caller semantics without arming the deadline', async () => {
+  const caller = new AbortController();
   const observations = [];
-  const p = guardProvider(stock, {
-    timeoutMs: 10,
-    observe: o => observations.push(o),
+  let sent;
+  const begun = new Promise(resolve => {
+    sent = resolve;
   });
-  assert.equal(p.auth, stock.auth);
-  assert.equal(p.getModels, stock.getModels);
-  const result = p
-    .streamSimple(
-      {...model, baseUrl: 'https://gateway.example.invalid'},
-      context,
-      {apiKey: 'fixture', fetch: f.fetch},
-    )
-    .result();
-  while (!f.signal) await delay(1);
-  f.close();
-  assert.equal((await result).stopReason, 'stop');
+  const result = request(
+    guarded(10, observations),
+    async (_url, init) => {
+      sent();
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener(
+          'abort',
+          () => reject(init.signal.reason),
+          {
+            once: true,
+          },
+        );
+      });
+    },
+    {signal: caller.signal},
+  );
+  await begun;
+  await delay(25);
+  caller.abort();
+  assert.equal((await result).stopReason, 'aborted');
   assert.deepEqual(observations, []);
 });
 
-test('callbacks and diagnostic failure cannot break response', async t => {
+test('malformed SSE after message_start errors without a timeout and closes the body', async t => {
+  const f = fixture(t, [start, malformed]);
+  const observations = [];
+  const result = await request(guarded(1000, observations), f.fetch);
+  assert.equal(result.stopReason, 'error');
+  assert.match(result.errorMessage, /Could not parse Anthropic SSE/);
+  assert.equal(f.signal.aborted, true);
+  assert.deepEqual(outcomes(observations), ['started']);
+});
+
+test('throwing caller onResponse surfaces its error, disarms and closes', async t => {
+  const f = fixture(t, [encode('ping')]);
+  const observations = [];
+  const result = await request(guarded(20, observations), f.fetch, {
+    onResponse: () => {
+      throw new Error('fixture hook failure');
+    },
+  });
+  assert.equal(result.stopReason, 'error');
+  assert.match(result.errorMessage, /fixture hook failure/);
+  assert.equal(f.signal.aborted, true);
+  await delay(40);
+  assert.deepEqual(outcomes(observations), ['ended']);
+});
+
+test('synchronous setup failure propagates like stock', () => {
+  // Providers may throw before returning a stream, such as on missing auth.
+  const failing = {
+    ...stock,
+    streamSimple() {
+      throw new Error('No API key for provider: anthropic');
+    },
+  };
+  assert.throws(
+    () => guardStreamSimple(failing, {timeoutMs: 20})(model, context, {}),
+    /No API key/,
+  );
+});
+
+test('custom endpoints bypass the guard and keep caller options as sent', async t => {
+  const f = fixture(t, [encode('ping')]);
+  const observations = [];
+  const caller = new AbortController();
+  let settled = false;
+  const result = request(
+    guarded(10, observations),
+    f.fetch,
+    {signal: caller.signal},
+    {...model, baseUrl: 'https://gateway.example.invalid'},
+  ).then(m => {
+    settled = true;
+    return m;
+  });
+  await delay(60);
+  assert.equal(settled, false, 'no deadline on a custom endpoint');
+  caller.abort();
+  assert.equal((await result).stopReason, 'aborted');
+  assert.deepEqual(observations, []);
+});
+
+test('caller hooks chain in order and diagnostic failure cannot break a response', async t => {
   const f = fixture(t, [start, ...end]);
   const seen = [];
-  const p = guardProvider(stock, {
+  const stream = guardStreamSimple(stock, {
     timeoutMs: 10,
     observe: () => {
       throw new Error('diagnostic unavailable');
     },
   });
-  const result = request(p, f.fetch, {
+  const result = request(stream, f.fetch, {
     onPayload: payload => {
       seen.push('payload');
       return payload;
@@ -269,24 +351,11 @@ test('callbacks and diagnostic failure cannot break response', async t => {
   ]);
 });
 
-test('full stream entry point uses the startup guard', async t => {
-  const f = fixture(t, [encode('ping')]);
-  const p = guardProvider(stock, {timeoutMs: 20});
-  const result = await p
-    .stream(model, context, {apiKey: 'fixture', fetch: f.fetch})
-    .result();
-  assert.equal(result.stopReason, 'error');
-  assert.match(result.errorMessage, /timed out/);
-});
-
 test('early EOF and non-streaming HTTP errors retain stock behavior', async () => {
   const observations = [];
-  const p = guardProvider(stock, {
-    timeoutMs: 10,
-    observe: o => observations.push(o),
-  });
+  const stream = guarded(10, observations);
   const httpError = await request(
-    p,
+    stream,
     async () =>
       new Response(
         '{"type":"error","error":{"type":"invalid_request_error","message":"fixture rejected"}}',
@@ -297,69 +366,26 @@ test('early EOF and non-streaming HTTP errors retain stock behavior', async () =
   assert.match(httpError.errorMessage, /fixture rejected/);
   assert.equal(observations.length, 0);
   await request(
-    p,
+    stream,
     async () =>
       new Response('', {headers: {'content-type': 'text/event-stream'}}),
   );
-  assert.deepEqual(
-    observations.map(o => o.outcome),
-    ['ended'],
-  );
+  assert.deepEqual(outcomes(observations), ['ended']);
 });
 
-test('pre-header abort preserves caller semantics without arming deadline', async () => {
-  const controller = new AbortController();
-  const observations = [];
-  const p = guardProvider(stock, {
-    timeoutMs: 10,
-    observe: o => observations.push(o),
-  });
-  let sent;
-  const begun = new Promise(resolve => {
-    sent = resolve;
-  });
-  const result = request(
-    p,
-    async (_url, init) => {
-      sent();
-      return new Promise((_resolve, reject) => {
-        if (init.signal.aborted) reject(init.signal.reason);
-        else
-          init.signal.addEventListener(
-            'abort',
-            () => reject(init.signal.reason),
-            {once: true},
-          );
-      });
-    },
-    {signal: controller.signal},
-  );
-  await begun;
-  await delay(25);
-  controller.abort();
-  assert.equal((await result).stopReason, 'aborted');
-  assert.deepEqual(observations, []);
-});
-
-test('concurrent requests keep independent startup timers', async t => {
+test('concurrent requests keep independent deadlines', async t => {
   const stalled = fixture(t, [encode('ping')]);
   const healthy = fixture(t, [start, ...end]);
   const observations = [];
-  const p = guardProvider(stock, {
-    timeoutMs: 20,
-    observe: o => observations.push(o),
-  });
+  const stream = guarded(20, observations);
   let calls = 0;
   const fetch = (...args) =>
     (++calls === 1 ? stalled.fetch : healthy.fetch)(...args);
-  const a = request(p, fetch);
-  const b = request(p, fetch);
+  const a = request(stream, fetch);
+  const b = request(stream, fetch);
   while (!healthy.signal) await delay(1);
   healthy.close();
   assert.equal((await b).stopReason, 'stop');
   assert.equal((await a).stopReason, 'error');
-  assert.deepEqual(observations.map(o => o.outcome).sort(), [
-    'started',
-    'timeout',
-  ]);
+  assert.deepEqual(outcomes(observations).sort(), ['started', 'timeout']);
 });

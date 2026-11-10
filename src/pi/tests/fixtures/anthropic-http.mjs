@@ -18,6 +18,7 @@ export async function anthropicHttp(plan = () => 'ok') {
       closed: false,
       mode: undefined,
       inputTokens: 1,
+      contentDelayMs: 200,
     };
     requests.push(record);
     record.mode = plan(record, requests);
@@ -29,6 +30,24 @@ export async function anthropicHttp(plan = () => 'ok') {
       for (const timer of timers) clearTimeout(timer);
     };
     res.on('close', clean);
+    if (record.mode === 'no-headers') return;
+    if (record.mode === 'thread-rejected') {
+      res.writeHead(400, {'content-type': 'application/json'});
+      res.end(
+        JSON.stringify({
+          type: 'error',
+          error: {
+            type: 'invalid_request_error',
+            message: 'fixture thread not found',
+            details: {error_code: 'thread_not_found'},
+          },
+        }),
+      );
+      return;
+    }
+    if (record.mode === 'delayed-headers')
+      await new Promise(resolve => timers.push(setTimeout(resolve, 150)));
+    if (res.destroyed) return;
     if (record.mode === 'http-error') {
       res.writeHead(503, {'content-type': 'application/json'});
       res.end(
@@ -62,6 +81,7 @@ export async function anthropicHttp(plan = () => 'ok') {
         res.write('event: content_block_delta\ndata: definitely-not-json\n\n');
         return;
       }
+      if (record.mode === 'started-stall') return;
       timers.push(
         setTimeout(
           () => {
@@ -132,7 +152,7 @@ export async function anthropicHttp(plan = () => 'ok') {
             res.write(encode('message_stop'));
             res.end();
           },
-          record.mode === 'slow-content' ? 200 : 5,
+          record.mode === 'slow-content' ? record.contentDelayMs : 5,
         ),
       );
     };

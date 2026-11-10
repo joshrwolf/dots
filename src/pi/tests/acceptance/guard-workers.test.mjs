@@ -175,6 +175,18 @@ test(
       1,
     );
     const session = status.session;
+    const assistant = readFileSync(session, 'utf8')
+      .trim()
+      .split('\n')
+      .map(JSON.parse)
+      .filter(e => e.type === 'message' && e.message.role === 'assistant')
+      .map(e => e.message);
+    assert.deepEqual(
+      assistant.map(m => m.stopReason),
+      ['error', 'stop'],
+      'the worker session file keeps the timeout, then the retried reply',
+    );
+    assert.match(assistant[0].errorMessage, /timed out: no message_start/);
     await h.run('message', {to: w.id, text: 'second fixture task'});
     assert.equal((await h.waited(w.id)).kind, 'completed');
     assert.equal(

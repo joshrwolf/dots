@@ -87,7 +87,9 @@ export default function register(pi: ExtensionAPI): void {
   pi.registerToolRenderer(rendererResolver());
   for (const [type, renderer] of messageRenderers())
     pi.registerMessageRenderer(type, renderer);
-  pi.registerMarkdownTransformer(thinkingMarkdown);
+  pi.registerMarkdownTransformer(thinkingMarkdown, {
+    messageTypes: ['assistant-thinking'],
+  });
   let releaseEditor = () => {};
   pi.on('session_shutdown', () => {
     releaseEditor();
