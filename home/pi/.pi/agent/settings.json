@@ -19,6 +19,7 @@
       "anthropic/claude-haiku-5-5": {"reserveTokens": 700000}
     }
   },
+  "cacheWarming": "streaming",
   "hideThinkingBlock": true,
   "quietStartup": true
 }
