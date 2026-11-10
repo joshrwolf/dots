@@ -37,8 +37,8 @@ async function setup(
   const events = [];
   const errors = [];
   const stock = anthropicProvider();
-  // Inject below the guard, retaining the real host's auth and request conversion.
-  // Guard must wrap this fetch rather than replacing it.
+  // Route requests to loopback while retaining real-host auth and conversion.
+  // The guard must preserve this fetch's identity.
   const streamSimple = guard
     ? guardStreamSimple(stock, {
         timeoutMs: 80,
