@@ -379,11 +379,12 @@ test(
           entry => entry.type === 'message' && entry.message.role === 'user',
         );
       assert.ok(first);
-      await session.navigateTree(first.id, {summarize: false});
-      assert.equal(notices().length, 0, 'the new branch was never told');
       const told = requests.length;
-      await session.prompt('on another branch');
-      await until('delivery on the new branch', () => notices().length === 1);
+      await session.navigateTree(first.id, {summarize: false});
+      await until(
+        'native continuation on the new branch',
+        () => requests.length > told && notices().length === 1,
+      );
       await idle();
       await sleep(200);
       assert.equal(notices().length, 1, 'once per branch');

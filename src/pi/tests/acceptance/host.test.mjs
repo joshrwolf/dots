@@ -41,12 +41,27 @@ test('Pi loads the checkout package, runs a native child, reloads, and shuts dow
     ...process.env,
     HOME: work,
     XDG_DATA_HOME: join(work, 'data'),
+    XDG_STATE_HOME: join(work, 'state'),
+    XDG_CONFIG_HOME: join(work, 'config'),
   };
-  const knowledgeInit = spawnSync(
+  const remote = join(work, 'remote.git');
+  const remoteInit = spawnSync('git', ['init', '--bare', '--quiet', remote], {
+    env: fixtureEnv,
+    encoding: 'utf8',
+  });
+  assert.equal(remoteInit.status, 0, remoteInit.stderr);
+  const substrateInit = spawnSync(
     'dots',
-    ['--json', 'memory', 'init', '--actor', 'fixture'],
+    ['--json', 'substrate', 'init', '--remote', `file://${remote}`],
     {cwd: work, env: fixtureEnv, encoding: 'utf8', timeout: 15_000},
   );
+  assert.equal(substrateInit.status, 0, substrateInit.stderr);
+  const knowledgeInit = spawnSync('dots', ['--json', 'memory', 'init'], {
+    cwd: work,
+    env: fixtureEnv,
+    encoding: 'utf8',
+    timeout: 15_000,
+  });
   assert.equal(knowledgeInit.status, 0, knowledgeInit.stderr);
   const initial = JSON.parse(knowledgeInit.stdout);
   const changes = join(work, 'knowledge.json');

@@ -347,8 +347,16 @@ test(
         /Focused goal context|Fresh accepted goal pattern after restart/,
       );
       focusNext = true;
+      const planned = new Promise(resolve => {
+        const unsubscribe = session.subscribe(event => {
+          if (event.type === 'agent_settled') {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
       await session.prompt('/goal new Consistent fixture exports');
-      await session.waitForIdle();
+      await planned;
       assert.equal(
         requests.length,
         5,
