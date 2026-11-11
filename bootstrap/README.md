@@ -69,8 +69,9 @@ provides shell, editor, agents and development tools; project configuration owns
 additional toolchains. Add `cloud` only on machines that need cloud tooling.
 
 Incus provisioning owns VM resources and durable volumes, outside this bootstrap.
-For replacement without losing work, attach a private home volume before user
-setup; `~/workspace` holds projects within it. This also preserves agent sessions,
+For replacement without losing work, attach a private block volume with a
+guest-native filesystem such as ext4 before user setup; `~/workspace` holds
+projects within it. This also preserves agent sessions,
 credentials and caches without maintaining a list of per-tool state directories.
 Never attach one writable home to two running VMs, and keep the user's UID/GID
 consistent across replacements. Installed tools and caches are rebuildable; their
@@ -81,6 +82,38 @@ Rex keeps programs running across client disconnects, not VM restarts. After a
 restart, recover files and resume agent conversations rather than automatically
 replaying interrupted commands. Tailscale enrollment and Rex account permissions
 are machine-local and must be configured before remote access is accepted.
+
+### Native provisioning and enrollment
+
+Use Incus profiles and cloud-init for VM resources, the user account, the home
+mount and OS prerequisites. Keep personal profile values in Incus configuration;
+keep OAuth credentials root-only on the provisioning host. Mise applies the
+`homelab,rex-server` modules inside the guest.
+
+[Tailscale's upstream `get-authkey`](https://tailscale.com/docs/features/oauth-clients#get-authkey-utility)
+creates enrollment keys without sending the OAuth secret to the guest. Build the
+pinned utility with `go install tailscale.com/cmd/get-authkey@v1.102.4`, then install
+the resulting binary root-owned at `/usr/local/bin/get-authkey` on the provisioning
+host. Store `TS_API_CLIENT_ID` and `TS_API_CLIENT_SECRET` in a root-owned mode-0600
+`/etc/tailscale/provisioning.env`, within a mode-0700 directory. The OAuth client
+needs Auth Keys write permission for the selected tag.
+
+For a new, unenrolled guest, pipe a key directly into the native Tailscale CLI:
+
+```sh
+sudo bash -euo pipefail -c '
+  set -a; . /etc/tailscale/provisioning.env; set +a
+  /usr/local/bin/get-authkey -tags "$1" | incus exec "$2" --mode=non-interactive -- tailscale up --auth-key=file:/dev/stdin --hostname="$2" --timeout=60s
+' -- tag:agent agent-1
+```
+
+Use your configured tag and instance name. The defaults are single-use,
+preauthorized and non-ephemeral. Keys use Tailscale's default expiry; revoke an
+unused key in the admin console after failed provisioning. Enroll only a new
+identity: an existing node keeps its state across reboots. When retiring a VM,
+remove its device in the Tailscale admin console and use native Incus stop/delete
+commands, retaining the separate home volume. No custom lifecycle service is
+required.
 
 ## Inspect and update
 
