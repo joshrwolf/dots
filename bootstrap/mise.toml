@@ -81,8 +81,6 @@ _.path = [
   "{{ vars.dots_cargo_home }}/bin",
   { path = "{{ env.HOME }}/.local/bin", position = "append" },
   { path = "{{ system_brew_prefix }}/bin", position = "append" },
-  { path = "{{ system_brew_prefix }}/opt/e2fsprogs/bin", position = "append" },
-  { path = "{{ system_brew_prefix }}/opt/e2fsprogs/sbin", position = "append" },
 ]
 
 [bootstrap.hooks.pre-packages]

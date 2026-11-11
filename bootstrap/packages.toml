@@ -2,8 +2,6 @@
 "brew:git" = { os = "macos" }
 "brew:coreutils" = { os = "macos" }
 "brew:gnu-tar" = { os = "macos" }
-"brew:e2fsprogs" = { os = "macos" }
-"brew:qemu" = { os = "macos" }
 
 "apt:build-essential" = "latest"
 "apt:libatomic1" = "latest"
@@ -16,9 +14,6 @@
 "apt:ca-certificates" = "latest"
 "apt:unzip" = "latest"
 "apt:xz-utils" = "latest"
-"apt:e2fsprogs" = "latest"
-"apt:qemu-system" = "latest"
-"apt:qemu-utils" = "latest"
 
 "apk:build-base" = "latest"
 "apk:libatomic" = "latest"
@@ -30,9 +25,6 @@
 "apk:ca-certificates" = "latest"
 "apk:unzip" = "latest"
 "apk:xz" = "latest"
-"apk:e2fsprogs" = "latest"
-"apk:qemu" = "latest"
-"apk:qemu-utils" = "latest"
 
 "dnf:gcc" = "latest"
 "dnf:libatomic" = "latest"
@@ -47,5 +39,3 @@
 "dnf:ca-certificates" = "latest"
 "dnf:unzip" = "latest"
 "dnf:xz" = "latest"
-"dnf:e2fsprogs" = "latest"
-"dnf:qemu" = "latest"

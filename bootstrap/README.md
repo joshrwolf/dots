@@ -40,6 +40,7 @@ mise -E desktop bootstrap --only files,repos,dotfiles,task
 - `desktop`: macOS arm64 desktop apps and configuration; Rex requires macOS 15+.
 - `bash`: mise activation for auxiliary Bash sessions.
 - `cloud`: Azure, Google Cloud, Terraform, CUE and Melange tooling.
+- `virtualization`: QEMU and ext filesystem tools for local VM/image work.
 - `homelab`: personal Linux agent machines with zsh, SSH and `~/workspace`.
   Compose with `rex-server` for persistent remote terminal sessions.
 - `rex-server`: Linux login service; requires glibc, GNU coreutils, systemd 253+,
