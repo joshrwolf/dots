@@ -39,6 +39,9 @@ mise -E desktop bootstrap --only files,repos,dotfiles,task
 
 - `desktop`: macOS arm64 desktop apps and configuration; Rex requires macOS 15+.
 - `bash`: mise activation for auxiliary Bash sessions.
+- `cloud`: Azure, Google Cloud, Terraform, CUE and Melange tooling.
+- `homelab`: personal Linux agent machines with zsh, SSH and `~/workspace`.
+  Compose with `rex-server` for persistent remote terminal sessions.
 - `rex-server`: Linux login service; requires glibc, GNU coreutils, systemd 253+,
   SSH PAM and an enrolled Tailscale node with account policy.
 
@@ -57,6 +60,26 @@ User-local and generated skills are not pruned automatically.
 Environment selection persists in the machine's `miserc.local.toml`. Removing
 an environment does not uninstall its resources; preview native unapply/prune
 before removing anything.
+
+## Personal agent VMs
+
+Use Debian stable with the `homelab,rex-server` environments. The shared base
+provides shell, editor, agents and development tools; project configuration owns
+additional toolchains. Add `cloud` only on machines that need cloud tooling.
+
+Incus provisioning owns VM resources and durable volumes, outside this bootstrap.
+For replacement without losing work, attach a private home volume before user
+setup; `~/workspace` holds projects within it. This also preserves agent sessions,
+credentials and caches without maintaining a list of per-tool state directories.
+Never attach one writable home to two running VMs, and keep the user's UID/GID
+consistent across replacements. Installed tools and caches are rebuildable; their
+presence on the home volume does not make them authoritative configuration.
+Credentials never belong in this repository. A persistent volume is not a backup.
+
+Rex keeps programs running across client disconnects, not VM restarts. After a
+restart, recover files and resume agent conversations rather than automatically
+replaying interrupted commands. Tailscale enrollment and Rex account permissions
+are machine-local and must be configured before remote access is accepted.
 
 ## Inspect and update
 

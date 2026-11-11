@@ -1,0 +1,10 @@
+[tools]
+# MSAL runtime wheels and the macOS Cloud SDK installer require Python 3.14.
+azure = { version = "latest", python = "3.14" }
+gcloud = { version = "latest", depends = ["python"] }
+cue = "latest"
+melange = "latest"
+terraform = "latest"
+
+[env]
+CLOUDSDK_PYTHON = "python3"
