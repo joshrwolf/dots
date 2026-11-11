@@ -77,13 +77,10 @@ dots_rust_channel = "{{ read_toml(path='../rust-toolchain.toml')['toolchain']['c
 dots_service_path = "{{ env.CARGO_HOME | default(value=env.HOME ~ '/.cargo') }}/bin:{{ env.MISE_DATA_DIR | default(value=env.HOME ~ '/.local/share/mise') }}/shims:{{ system_brew_prefix }}/bin:/usr/local/bin:/usr/bin:/bin"
 
 [env]
-CLOUDSDK_PYTHON = "python3"
 _.path = [
   "{{ vars.dots_cargo_home }}/bin",
   { path = "{{ env.HOME }}/.local/bin", position = "append" },
   { path = "{{ system_brew_prefix }}/bin", position = "append" },
-  { path = "{{ system_brew_prefix }}/opt/e2fsprogs/bin", position = "append" },
-  { path = "{{ system_brew_prefix }}/opt/e2fsprogs/sbin", position = "append" },
 ]
 
 [bootstrap.hooks.pre-packages]

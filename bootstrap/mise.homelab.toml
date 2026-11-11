@@ -1,0 +1,9 @@
+# Personal Linux agent machines; compose with rex-server for remote sessions.
+[bootstrap.user]
+login_shell = "zsh"
+
+[bootstrap.packages]
+"apt:openssh-server" = "latest"
+
+[bootstrap.directories."~/workspace"]
+mode = "0700"

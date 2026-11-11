@@ -1,0 +1,17 @@
+[bootstrap.packages]
+"brew:e2fsprogs" = { os = "macos" }
+"brew:qemu" = { os = "macos" }
+"apt:e2fsprogs" = "latest"
+"apt:qemu-system" = "latest"
+"apt:qemu-utils" = "latest"
+"apk:e2fsprogs" = "latest"
+"apk:qemu" = "latest"
+"apk:qemu-utils" = "latest"
+"dnf:e2fsprogs" = "latest"
+"dnf:qemu" = "latest"
+
+[env]
+_.path = [
+  { path = "{{ system_brew_prefix }}/opt/e2fsprogs/bin", position = "append" },
+  { path = "{{ system_brew_prefix }}/opt/e2fsprogs/sbin", position = "append" },
+]
