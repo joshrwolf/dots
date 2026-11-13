@@ -33,9 +33,3 @@ Retained candidates and their blobs live on this machine only, under
 bounded: at most 4096 documents and 64 MiB per snapshot; oversized publications
 fail rather than prune. Removing a document changes the next snapshot; earlier
 snapshots keep it.
-
-`convert` turns a store in the earlier native Git layout (`repo.git`,
-`store.json`, `bindings.json`) into manifests with the same parents and
-byte-identical documents. It reads the source with isolated read-only Git
-plumbing, publishes only when no `memory` value exists, and verifies every
-document after publishing.

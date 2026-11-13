@@ -94,7 +94,7 @@ function scratchRepo({bind = true} = {}) {
     'fixture',
   );
   git('worktree', 'add', '-qb', 'slice', path.join(root, 'linked'));
-  cli(root, checkout, 'project', 'init', 'Fixture', '--fresh');
+  cli(root, checkout, 'project', 'init', 'Fixture');
   substrate(root);
   const initialized = cli(root, checkout, 'memory', 'init');
   if (!bind) return {root, checkout, linked: path.join(root, 'linked')};

@@ -95,8 +95,7 @@ test('cold task-only inspection pins historical bytes and reports purge without 
   try {
     mkdirSync(process.env.HOME, {recursive: true});
     execFileSync('git', ['init', '--quiet', root]);
-    const project = cli('project', 'init', 'Neutral evidence', '--fresh')
-      .project.id;
+    const project = cli('project', 'init', 'Neutral evidence').project.id;
     const id = cli('task', 'add', 'Task without a goal').task.id;
     const draft = join(root, 'report.md');
     writeFileSync(draft, '# Exact evidence\n' + 'Recorded line\n'.repeat(220));

@@ -143,7 +143,7 @@ test('real isolated source reads complete history and selects the explicit proje
     project = JSON.parse(
       execFileSync(
         'dots',
-        ['--json', '--directory', dir, 'project', 'init', 'Fixture', '--fresh'],
+        ['--json', '--directory', dir, 'project', 'init', 'Fixture'],
         {encoding: 'utf8'},
       ),
     ).project.id;

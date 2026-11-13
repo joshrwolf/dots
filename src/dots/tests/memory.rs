@@ -158,7 +158,7 @@ mod tests {
         }
         fn catalog(&self) -> Value {
             git(&self.root, &["init", "-q", "checkout"]);
-            self.ok(&["project", "init", "neutral", "--fresh"])
+            self.ok(&["project", "init", "neutral"])
         }
         fn local(&self) -> PathBuf {
             self.root.join("data/dots/memory")

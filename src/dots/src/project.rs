@@ -116,7 +116,7 @@ pub(crate) fn resolve_optional(
 /// Register `name` and bind the checkout's Git common directory `common`,
 /// creating the catalog if absent; an existing binding is returned as is.
 /// Returns the catalog, the project and whether it was created.
-pub(crate) fn initialize(common: &Path, name: &str, fresh: bool) -> Result<(Store, Project, bool)> {
+pub(crate) fn initialize(common: &Path, name: &str) -> Result<(Store, Project, bool)> {
     let name = dots_tasks::validate_project_name(name)?;
     let root = data_root()?;
     let _lock = MutationLock::acquire(&root.join("mutation.lock"))?;
@@ -124,15 +124,6 @@ pub(crate) fn initialize(common: &Path, name: &str, fresh: bool) -> Result<(Stor
     let mut store = if path.try_exists()? {
         open()?
     } else {
-        let old_tasks =
-            crate::xdg::base("XDG_STATE_HOME", ".local/state")?.join("dots/tasks/tasks.sqlite3");
-        ensure!(
-            fresh
-                || !(old_tasks.try_exists()?
-                    || root.join("memory").try_exists()?
-                    || root.join("goals").try_exists()?),
-            "existing data needs a reviewed cutover; --fresh explicitly starts an empty catalog without deleting it"
-        );
         Store::create(&path)?
     };
     let (project, created) = store.initialize_project(name, common)?;
@@ -141,11 +132,11 @@ pub(crate) fn initialize(common: &Path, name: &str, fresh: bool) -> Result<(Stor
 
 pub(crate) fn run(command: ProjectCommand, directory: &Path, as_json: bool) -> Result<String> {
     let value = match command {
-        ProjectCommand::Init { name, fresh } => {
+        ProjectCommand::Init { name } => {
             let common = common_directory(directory)?.context(
                 "project init requires a Git checkout; use project register for an unbound project",
             )?;
-            let (mut store, project, created) = initialize(&common, &name, fresh)?;
+            let (mut store, project, created) = initialize(&common, &name)?;
             json!({
                 "project": store.registered_project(&project)?,
                 "workspace": workspace(&project)?,

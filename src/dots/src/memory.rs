@@ -264,29 +264,6 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
             start,
             lines,
         } => encode(&store.inspect(&candidate, &scope, &path, start, usize::from(lines))?),
-        MemoryCommand::Convert { source } => {
-            let source = input_path(directory, &source);
-            let conversion = dots_memory::convert(&source, &mut store, now)?;
-            let installed = {
-                let _lock = MutationLock::acquire(&store.local().join(LOCK))?;
-                let path = store.local().join(BINDINGS);
-                let absent = text::read_bytes(&path, MAX_CONTROL_BYTES)?.is_none();
-                if absent && !conversion.bindings.is_empty() {
-                    replace_json(
-                        &path,
-                        &Bindings {
-                            store: conversion.store.clone(),
-                            projects: conversion.bindings.clone(),
-                        },
-                    )?;
-                    store.substrate().notify()?;
-                }
-                absent
-            };
-            let mut value = serde_json::to_value(&conversion)?;
-            value["bindings_installed"] = json!(installed && !conversion.bindings.is_empty());
-            encode(&value)
-        }
     }
 }
 

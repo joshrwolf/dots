@@ -33,7 +33,7 @@ pub(crate) fn run(directory: &Path, share: &ProjectShare, as_json: bool) -> Resu
             crate::project::catalog_path()?.try_exists()?,
             "this machine has no workspace catalog; create it once with dots project init NAME in this checkout, then rerun"
         );
-        let (catalog, project, _) = crate::project::initialize(&common, name, false)?;
+        let (catalog, project, _) = crate::project::initialize(&common, name)?;
         Ok((catalog, project))
     };
     let bound = |memory: &dots_memory::Store| -> Result<Option<ProjectId>> {

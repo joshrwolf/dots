@@ -40,11 +40,11 @@ async function withCatalog(fn: (catalog: Catalog) => Promise<void>) {
     const checkout = join(dir, 'checkout');
     execFileSync('git', ['init', '--quiet', checkout], {env});
     const initialized = JSON.parse(
-      execFileSync(
-        'dots',
-        ['--json', 'project', 'init', 'fixture', '--fresh'],
-        {cwd: checkout, env, encoding: 'utf8'},
-      ),
+      execFileSync('dots', ['--json', 'project', 'init', 'fixture'], {
+        cwd: checkout,
+        env,
+        encoding: 'utf8',
+      }),
     ) as {project: {id: string}};
     const project = initialized.project.id;
     const task = (...args: string[]) =>

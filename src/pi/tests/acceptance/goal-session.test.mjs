@@ -181,8 +181,7 @@ test(
       );
     try {
       execFileSync('git', ['init', '--quiet', cwd]);
-      const project = json(['project', 'init', 'Fixture', '--fresh']).project
-        .id;
+      const project = json(['project', 'init', 'Fixture']).project.id;
       const add = title =>
         json(['task', 'add', title, '--project', project, '--owner', 'fixture'])
           .task.id;

@@ -118,7 +118,7 @@ online publication also publishes it. If knowledge moved past the plan's incomin
 snapshot, re-plan from fresh status, never force a rewrite. Retained candidates
 are unreadable as ordinary memory until published.
 
-Configure the substrate, initialize knowledge or convert a store only within the
+Configure the substrate or initialize knowledge only within the
 user's deployment mandate. No automatic transcript ingestion or background
 publication is part of upkeep.
 

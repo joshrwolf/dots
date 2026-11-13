@@ -4,13 +4,11 @@
 //! project registry and every document's content hash. The substrate ref
 //! `memory` points at the latest manifest. Machine-local state (project
 //! bindings and unpublished candidates) stays in the store's local directory.
-mod convert;
 mod identity;
 mod integration;
 mod manifest;
 mod store;
 
-pub use convert::{Conversion, Converted, convert};
 pub use identity::{ProjectId, Snapshot, StoreId};
 pub use integration::{Choice, Conflict, Integration, IntegrationKind, Resolution};
 pub use manifest::{Entry, Manifest, Resource, Scope};

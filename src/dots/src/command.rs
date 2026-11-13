@@ -177,12 +177,7 @@ pub(crate) enum OutputCommand {
 #[derive(Debug, Subcommand)]
 pub(crate) enum ProjectCommand {
     /// Initialize a catalog if absent, register a project, and bind this Git common directory
-    Init {
-        name: String,
-        /// Start a fresh catalog while leaving any old-format data untouched
-        #[arg(long)]
-        fresh: bool,
-    },
+    Init { name: String },
     /// Show or set up this checkout's sharing across machines: bind, create, or decline
     #[command(
         long_about = "Without an action, report whether this checkout's project is registered, bound to a shared identity (which one), or declined on this machine, whether this machine shares (dots task share enable), and the shared identities known to knowledge. Names never establish identity: pick --bind with an identity that is this same repository, or --create for a new one. Each action registers the checkout first when needed. Binding replicates the project's goals and tasks while machine sharing is on, and its project knowledge; it queues existing trees at once. --decline remembers on this machine that the user does not want the project shared, so agents stop asking; binding later clears it."
@@ -343,14 +338,6 @@ pub(crate) enum MemoryCommand {
         start: usize,
         #[arg(long, default_value_t=100, value_parser=clap::value_parser!(u16).range(1..=200))]
         lines: u16,
-    },
-    /// Convert a native Git knowledge store into the substrate's first snapshots (one-time)
-    #[command(
-        long_about = "Read the store directory (repo.git, store.json, bindings.json) with read-only Git plumbing, convert every snapshot into a manifest that keeps its parents and byte-identical documents, publish the history as the substrate's first memory value and verify every document. Refuses if knowledge is already published. Installs the source's local project bindings when this machine has none."
-    )]
-    Convert {
-        #[arg(long)]
-        source: PathBuf,
     },
 }
 

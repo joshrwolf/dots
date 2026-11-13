@@ -36,7 +36,7 @@ mod tests {
                 &["worktree", "add", "-q", "../linked", "-b", "slice"],
             );
             let initialized = Command::new(env!("CARGO_BIN_EXE_dots"))
-                .args(["--json", "project", "init", "fixture", "--fresh"])
+                .args(["--json", "project", "init", "fixture"])
                 .current_dir(&checkout)
                 .env("HOME", root.join("home"))
                 .env("XDG_DATA_HOME", root.join("data"))
@@ -459,7 +459,7 @@ mod tests {
         fs::create_dir_all(&second).unwrap();
         git(&second, &["init", "-q", "-b", "main"]);
         let output = Command::new(env!("CARGO_BIN_EXE_dots"))
-            .args(["--json", "project", "init", "second", "--fresh"])
+            .args(["--json", "project", "init", "second"])
             .current_dir(&second)
             .env("HOME", f.root.join("home"))
             .env("XDG_DATA_HOME", f.root.join("data"))

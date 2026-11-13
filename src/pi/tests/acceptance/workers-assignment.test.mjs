@@ -204,15 +204,7 @@ test(
       project = JSON.parse(
         execFileSync(
           'dots',
-          [
-            '--json',
-            '--directory',
-            root,
-            'project',
-            'init',
-            'Fixture',
-            '--fresh',
-          ],
+          ['--json', '--directory', root, 'project', 'init', 'Fixture'],
           {encoding: 'utf8'},
         ),
       ).project.id;

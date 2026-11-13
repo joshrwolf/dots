@@ -23,7 +23,7 @@ function isolated(t: test.TestContext) {
 test('real dots honors JSON, explicit project and isolated store/directory', async t => {
   const {dir, env} = isolated(t);
   execFileSync('git', ['init', '--quiet', dir], {env});
-  const initialized = await dots(['project', 'init', 'Fixture', '--fresh'], {
+  const initialized = await dots(['project', 'init', 'Fixture'], {
     env,
     directory: dir,
     cwd: dir,

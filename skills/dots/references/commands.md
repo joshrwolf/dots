@@ -403,9 +403,6 @@ Arguments:
 
 
 Options:
-      --fresh
-          Start a fresh catalog while leaving any old-format data untouched
-
       --json
           Return JSON instead of readable output
 
@@ -2455,7 +2452,6 @@ Commands:
   project    Manage shared identities and their separate machine-local catalog bindings
   reconcile  Publish a retained candidate against the head its plan names, with explicit choices
   inspect    Read a page of a retained, unpublished candidate, labeled as such
-  convert    Convert a native Git knowledge store into the substrate's first snapshots (one-time)
 
 Options:
       --json
@@ -2932,33 +2928,6 @@ Options:
 
   -h, --help
           Print help
-```
-
-## dots memory convert
-
-```text
-Read the store directory (repo.git, store.json, bindings.json) with read-only Git plumbing, convert every snapshot into a manifest that keeps its parents and byte-identical documents, publish the history as the substrate's first memory value and verify every document. Refuses if knowledge is already published. Installs the source's local project bindings when this machine has none.
-
-Usage: dots memory convert [OPTIONS] --source <SOURCE>
-
-Options:
-      --json
-          Return JSON instead of readable output
-
-      --project <ID>
-          Registered project ID instead of resolving the current checkout
-
-      --source <SOURCE>
-
-
-      --directory <PATH>
-          Working directory for commands that use checkout context
-
-      --fresh
-          Run one sync pass before reading, instead of serving the local copy as is
-
-  -h, --help
-          Print help (see a summary with '-h')
 ```
 
 ## dots substrate

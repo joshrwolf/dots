@@ -88,7 +88,7 @@ fn id(value: &Value) -> &str {
 }
 
 #[test]
-fn reads_do_not_create_a_catalog_and_old_data_requires_an_explicit_choice() {
+fn reads_do_not_create_a_catalog_and_init_keeps_existing_data() {
     let f = Fixture::new();
     f.repository();
     for args in [vec!["project", "list"], vec!["task", "list"]] {
@@ -98,13 +98,7 @@ fn reads_do_not_create_a_catalog_and_old_data_requires_an_explicit_choice() {
     assert!(!f.0.join("data").exists());
     fs::create_dir_all(f.0.join("data/dots/memory")).unwrap();
     fs::write(f.0.join("data/dots/memory/source.md"), "retained source").unwrap();
-    assert!(
-        !f.run("repo", &["project", "init", "project"])
-            .status
-            .success()
-    );
-    assert!(!f.0.join("data/dots/workspace.sqlite3").exists());
-    let initialized = f.ok("repo", &["project", "init", "project", "--fresh"]);
+    let initialized = f.ok("repo", &["project", "init", "project"]);
     assert_eq!(initialized["created"], true);
     assert_eq!(
         f.ok("repo", &["project", "init", "another name"])["created"],

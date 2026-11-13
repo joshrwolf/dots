@@ -111,7 +111,7 @@ mod task_events {
                 .status()
                 .unwrap();
             assert!(git.success());
-            workspace.ok(&["project", "init", "fixture", "--fresh"]);
+            workspace.ok(&["project", "init", "fixture"]);
             workspace
         }
 

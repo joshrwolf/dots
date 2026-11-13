@@ -77,7 +77,7 @@ mod tests {
                 project: String::new(),
             };
             machine.ok(&["substrate", "init", "--remote", &remote.url()]);
-            let catalog = machine.ok(&["project", "init", "neutral", "--fresh"]);
+            let catalog = machine.ok(&["project", "init", "neutral"]);
             machine.project = str_at(&catalog, "/project/id").to_owned();
             machine
         }
