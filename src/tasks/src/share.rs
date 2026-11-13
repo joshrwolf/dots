@@ -10,10 +10,6 @@
 //! mutation of them refuses with [`Error::Foreign`]. [`take`] moves a tree's
 //! home here by compare-and-swap from the version this machine last saw.
 //!
-//! Answers to requests of trees homed elsewhere go to this machine's own
-//! `answers/<machine>` ref; the home imports them as saved answers, its
-//! coordinator incorporates them, and the closure replicates back.
-//!
 //! An update the old home deferred before a takeover reached it is refused
 //! by the remote and kept as a stranded substrate entry; [`stranded`] lists
 //! what it held that never published, and the next import makes the tree
@@ -97,7 +93,7 @@ pub struct Sharing {
     pub changed_at: i64,
 }
 
-/// Trees, deferred work and answers on this machine.
+/// Trees and deferred work on this machine.
 #[derive(Debug, Serialize)]
 pub struct ShareStatus {
     pub sharing: Option<Sharing>,
@@ -107,8 +103,6 @@ pub struct ShareStatus {
     pub foreign: Vec<ForeignTree>,
     /// Tasks whose trees await export.
     pub dirty: usize,
-    /// Answers given here to trees homed elsewhere, until their home records them.
-    pub sent_answers: usize,
     /// Trees whose last exported or imported version withheld parts.
     pub withheld: Vec<WithheldTree>,
 }
@@ -287,9 +281,7 @@ impl Store {
     /// Whether sharing is on and local changes wait for export.
     pub fn share_pending(&mut self) -> Result<bool, Error> {
         Ok(self.connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sharing WHERE enabled=1)
-               AND (EXISTS(SELECT 1 FROM dirty_tasks)
-                 OR EXISTS(SELECT 1 FROM sent_answers WHERE exported IS NULL))",
+            "SELECT EXISTS(SELECT 1 FROM sharing WHERE enabled=1) AND EXISTS(SELECT 1 FROM dirty_tasks)",
             [],
             |row| row.get(0),
         )?)
@@ -329,11 +321,6 @@ impl Store {
             .query_row("SELECT COUNT(*) FROM dirty_tasks", [], |row| {
                 row.get::<_, i64>(0)
             })?;
-        let sent_answers =
-            self.connection
-                .query_row("SELECT COUNT(*) FROM sent_answers", [], |row| {
-                    row.get::<_, i64>(0)
-                })?;
         let withheld = {
             let mut statement = self.connection.prepare(
                 "SELECT project, root, home, withheld FROM shared_trees
@@ -368,7 +355,6 @@ impl Store {
             home: count(home),
             foreign,
             dirty: count(dirty),
-            sent_answers: count(sent_answers),
             withheld,
         })
     }
@@ -385,45 +371,6 @@ impl Store {
             Some(sharing) => Ok(sharing.enabled),
         }
     }
-}
-
-/// Keep an answer to a request of a foreign tree for its home, and show it
-/// on the local copy until the home records it.
-pub(crate) fn send_answer(
-    tx: &rusqlite::Transaction<'_>,
-    request: &str,
-    goal: &str,
-    answer: &crate::attention::AnswerContent,
-    at: i64,
-    by: Option<&str>,
-) -> Result<(), Error> {
-    let enabled: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sharing WHERE enabled=1)",
-        [],
-        |row| row.get(0),
-    )?;
-    if !enabled {
-        return Err(share(format!(
-            "request {request} belongs to a tree homed on another machine and sharing is off here; enable it with dots task share enable to send the answer"
-        )));
-    }
-    let record = format::AnswerRecord {
-        choice: answer.choice.clone(),
-        text: answer.text.clone(),
-        source: answer.source.as_str().to_owned(),
-        provenance: answer.provenance.clone(),
-        interpretation: answer.interpretation.clone(),
-        at,
-        by: by.map(str::to_owned),
-    };
-    import::overlay_answer(tx, request, &record)?;
-    let json =
-        serde_json::to_string(&record).map_err(|error| share(format!("encode answer: {error}")))?;
-    tx.execute(
-        "INSERT INTO sent_answers(request, goal, answer, at, exported) VALUES(?1, ?2, ?3, ?4, NULL)",
-        params![request, goal, json, at],
-    )?;
-    Ok(())
 }
 
 /// Queue every top-level tree of `project` for export.
@@ -447,11 +394,6 @@ fn withheld_column(withheld: &[Withheld]) -> Result<Option<String>, Error> {
 /// The ref of a tree.
 fn tree_ref(shared: &SharedProject, root: &str) -> Result<RefName, Error> {
     Ok(format!("tasks/{}/{root}", shared.as_str()).parse()?)
-}
-
-/// The ref of a machine's answers.
-fn answers_ref(machine: &MachineId) -> Result<RefName, Error> {
-    Ok(format!("answers/{machine}").parse()?)
 }
 
 /// Unix seconds, as the catalog stores time.
@@ -491,7 +433,7 @@ pub fn export(store: &mut Store, context: Context<'_>, now: SystemTime) -> Resul
     export::export(store, context, now)
 }
 
-/// Import every changed tree and answer list from the local substrate copy.
+/// Import every changed tree from the local substrate copy.
 pub fn import(store: &mut Store, context: Context<'_>, now: SystemTime) -> Result<Imported, Error> {
     if !store.sharing_for(context.machine())? {
         return Ok(Imported::default());

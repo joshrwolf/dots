@@ -7,7 +7,7 @@ description: Commit, push and create or update PRs when authorized, including wh
 
 Publish the relevant work to the agreed finish line. Read the actual user
 request and repository instructions; loading this skill grants no authority.
-For goal work, use `goals` for the mandate, task state, attention and handoff.
+For goal work, use `goals` for the mandate, task state and handoff.
 Do not ask again for actions already authorized. Small shipments need no goal.
 
 Load `shipping-context` when available for private environment and company
@@ -92,9 +92,9 @@ PR creation. Watch enrollment does not authorize monitoring.
 
 ## Stop or hand off
 
-For access, decisions, human-only dispositions or exhausted recovery, use goal
-attention when this work has a goal; otherwise ask directly in chat. Follow
-`goals` rather than duplicating its attention lifecycle here.
+For access, decisions, human-only dispositions or exhausted recovery, ask
+directly in chat. For goal work, follow `goals` for holding the affected tasks
+rather than duplicating it here.
 
 Report the published link and material caveats at the agreed endpoint.
 Distinguish published from CI/review-ready; monitored work continues until its

@@ -1,7 +1,7 @@
-//! The replicated form of a task tree and of a machine's answers.
+//! The replicated form of a task tree.
 //!
 //! A tree's ref points at a small manifest blob. The manifest names one blob
-//! per task, request, decision and output, the brief's content blob, and the
+//! per task and output, the brief's content blob, and the
 //! event segments in order. Records are immutable content-addressed blobs, so
 //! an update uploads only the records that changed. Events live in segments
 //! of a few KiB; a change appends to the last segment while it is small and
@@ -20,9 +20,10 @@ pub(super) const FORMAT: u32 = 1;
 /// A segment below this size takes the next events; a larger one is sealed.
 pub(super) const SEGMENT_TARGET: usize = 4 * 1024;
 
-/// One tree's current state and history.
+/// One tree's current state and history. Unknown fields are ignored, so
+/// a manifest that still lists records this build does not replicate reads
+/// as the tree without them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct Manifest {
     pub format: u32,
     /// The shared project identity.
@@ -40,10 +41,6 @@ pub(super) struct Manifest {
     pub goal: Option<GoalRecord>,
     /// Task records by task id.
     pub tasks: BTreeMap<String, Hash>,
-    /// Request records by request id.
-    pub requests: BTreeMap<String, Hash>,
-    /// Decision records by decision id.
-    pub decisions: BTreeMap<String, Hash>,
     /// Output records by slug.
     pub outputs: BTreeMap<String, Hash>,
     /// Event segments, oldest first.
@@ -71,8 +68,6 @@ impl Manifest {
         let mut hashes: BTreeSet<Hash> = self
             .tasks
             .values()
-            .chain(self.requests.values())
-            .chain(self.decisions.values())
             .chain(self.outputs.values())
             .chain(&self.segments)
             .copied()
@@ -118,73 +113,6 @@ pub(super) struct TaskRecord {
 pub(super) struct ReferenceRecord {
     pub url: String,
     pub label: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct RequestRecord {
-    pub format: u32,
-    pub id: String,
-    pub goal: String,
-    pub key: String,
-    pub kind: String,
-    pub title: String,
-    pub question: String,
-    pub context: Option<String>,
-    pub recommendation: Option<String>,
-    pub state: String,
-    pub created_at: i64,
-    pub created_by: Option<String>,
-    pub supersedes: Option<String>,
-    pub choices: Vec<ChoiceRecord>,
-    pub tasks: Vec<String>,
-    pub answer: Option<AnswerRecord>,
-    pub closure: Option<ClosureRecord>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ChoiceRecord {
-    pub id: String,
-    pub label: String,
-    pub detail: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct AnswerRecord {
-    pub choice: Option<String>,
-    pub text: Option<String>,
-    pub source: String,
-    pub provenance: String,
-    pub interpretation: Option<String>,
-    pub at: i64,
-    pub by: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ClosureRecord {
-    pub kind: String,
-    pub at: i64,
-    pub by: Option<String>,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct DecisionRecord {
-    pub format: u32,
-    pub id: String,
-    pub goal: String,
-    pub kind: String,
-    pub decision: String,
-    pub human_text: Option<String>,
-    pub human_source: Option<String>,
-    pub human_provenance: Option<String>,
-    pub request: Option<String>,
-    pub at: i64,
-    pub actor: Option<String>,
 }
 
 /// One output slug with every revision the project holds.
@@ -250,23 +178,6 @@ pub(super) struct EventRecord {
 pub(super) struct EvidenceRecord {
     pub slug: String,
     pub digest: String,
-}
-
-/// Answers this machine gave to requests of trees other machines home.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Answers {
-    pub format: u32,
-    pub machine: MachineId,
-    pub sent: Vec<SentAnswer>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SentAnswer {
-    pub request: String,
-    pub goal: String,
-    pub answer: AnswerRecord,
 }
 
 /// Encode a record as a blob.

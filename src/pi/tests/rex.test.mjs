@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import register, {rexContext, openRexView} from '../extensions/rex/index.ts';
+import register, {rexContext, openRexGoals} from '../extensions/rex/index.ts';
 
 const orientation = "You're running in a Rex terminal.\n";
 
@@ -117,8 +117,8 @@ test('centralized views use exact optional goal identities and native Rex action
     REX_BLOCK: 'block:fixture',
     REX_BIN_DIR: '/fixture/bin',
   };
-  await openRexView(pi, 'goals', {project: 'p-fixture', id: 't-123abc'}, env);
-  await openRexView(pi, 'attention', undefined, env);
+  await openRexGoals(pi, {project: 'p-fixture', id: 't-123abc'}, env);
+  await openRexGoals(pi, undefined, env);
   assert.deepEqual(calls, [
     {
       file: '/fixture/bin/rex',
@@ -134,36 +134,34 @@ test('centralized views use exact optional goal identities and native Rex action
     },
     {
       file: '/fixture/bin/rex',
-      args: ['--timeout', '30s', 'do', 'attention', '--json', '--args', '{}'],
+      args: ['--timeout', '30s', 'do', 'goals', '--json', '--args', '{}'],
     },
   ]);
   await assert.rejects(
-    openRexView(pi, 'goals', undefined, {}),
+    openRexGoals(pi, undefined, {}),
     /interactive Rex terminal/,
   );
   await assert.rejects(
-    openRexView(pi, 'goals', undefined, {...env, DOTS_WORKER_ID: 'w-fixture'}),
+    openRexGoals(pi, undefined, {...env, DOTS_WORKER_ID: 'w-fixture'}),
     /interactive Rex terminal/,
   );
   assert.equal(calls.length, 2, 'no fallback or worker navigation');
   const failure = new Error('Rex unavailable');
   await assert.rejects(
-    openRexView(
+    openRexGoals(
       {
         exec: async () => {
           throw failure;
         },
       },
-      'goals',
       undefined,
       env,
     ),
     error => error === failure,
   );
   await assert.rejects(
-    openRexView(
+    openRexGoals(
       {exec: async () => ({stdout: '', stderr: 'View unavailable', code: 1})},
-      'goals',
       undefined,
       env,
     ),

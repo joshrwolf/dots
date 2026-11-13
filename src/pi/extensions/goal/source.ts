@@ -42,16 +42,11 @@ export interface Foreign {
   /** Unix seconds when this machine imported it. */
   readonly imported_at: number | null;
 }
-export type Hold =
-  /** An ancestor is held; its whole subtree waits. */
-  | {readonly kind: 'held_ancestor'; readonly task: string}
-  /** An open or answered, not yet incorporated, request names this task or an ancestor. */
-  | {
-      readonly kind: 'request';
-      readonly request: string;
-      readonly task: string;
-      readonly state: 'open' | 'answered';
-    };
+/** An ancestor is held; its whole subtree waits. */
+export interface Hold {
+  readonly kind: 'held_ancestor';
+  readonly task: string;
+}
 export interface TaskEvent {
   readonly seq: number;
   /** Unix seconds. */
@@ -115,6 +110,11 @@ export interface Brief {
   readonly revision?: string;
   readonly warning?: string;
 }
+/** One goal, exactly: its registered project key and root task. */
+export interface GoalRef {
+  readonly project: string;
+  readonly id: string;
+}
 export interface GoalSource {
   list(cwd: string, signal: AbortSignal, claimedBy?: string): Promise<GoalList>;
   /** An explicit project key selects its task list instead of the cwd's project. */
@@ -127,6 +127,11 @@ export interface GoalSource {
   ): Promise<GoalSnapshot>;
   /** Release every claim `agent` holds, in every project, acting as it. */
   release(agent: Agent): Promise<void>;
+  /**
+   * The goals whose open or in-review root `agent` claims, in every
+   * registered project: the store's root claims, read fresh each time.
+   */
+  coordinating(agent: Agent, signal: AbortSignal): Promise<readonly GoalRef[]>;
 }
 
 // Decode the fields this consumer uses; ignore additional CLI fields. Invalid
@@ -198,13 +203,6 @@ function token(value: unknown): number | null {
 function hold(value: unknown): Hold {
   const v = record(value);
   if (v.kind === 'held_ancestor') return {kind: v.kind, task: string(v.task)};
-  if (v.kind === 'request' && (v.state === 'open' || v.state === 'answered'))
-    return {
-      kind: v.kind,
-      request: string(v.request),
-      task: string(v.task),
-      state: v.state,
-    };
   throw new Error('Invalid dots task hold');
 }
 function foreign(value: unknown): Foreign | null {
@@ -669,6 +667,22 @@ export const dotsSource: GoalSource = {
   async release(agent) {
     await dots(['task', '--owner', agent.owner, 'release', '--all'], {
       env: agentEnv(agent),
+    });
+  },
+  async coordinating(agent, signal) {
+    const v = record(
+      await dots(['task', '--owner', agent.owner, 'goal', 'coordinating'], {
+        signal,
+        env: agentEnv(agent),
+      }),
+    );
+    return array(v.goals).map(item => {
+      const goal = record(item);
+      const project = string(goal.project);
+      const id = string(goal.goal);
+      if (!/^t-[a-f0-9]+$/.test(id))
+        throw new Error('Invalid dots coordinating goal');
+      return {project, id};
     });
   },
 };

@@ -27,7 +27,7 @@ interface ShownTask {
   readonly owner: unknown;
   /** The goal root the task belongs to (itself for a root), or null. */
   readonly goal: string | null;
-  /** Held ancestors and outstanding requests that hold the task. */
+  /** Held ancestors that hold the task. */
   readonly holds: readonly unknown[];
 }
 
@@ -36,11 +36,11 @@ interface ShownTask {
  * coordinating session's job. Assigning a goal's task is dispatching goal
  * work, so it also requires `actor`, captured by the caller when the spawn
  * started, to be the goal's coordinator (its root claim's owner), and neither
- * the task nor the goal root to be held or held by a held ancestor or an
- * outstanding request. Work outside goals keeps the plain identity check.
+ * the task nor the goal root to be held or below a held ancestor. Work
+ * outside goals keeps the plain identity check.
  * This reads current records once and is not atomic with the spawn: the
  * store's own coordinator checks still govern every mutation, and nothing
- * here fences a takeover or a new request after it.
+ * here fences a takeover after it.
  */
 export async function verifyAssignment(
   value: TaskAssignment,
@@ -108,12 +108,6 @@ function describeHold(value: unknown): string {
   const hold = fields(value);
   if (hold?.kind === 'held_ancestor' && typeof hold.task === 'string')
     return `held ancestor ${hold.task}`;
-  if (
-    hold?.kind === 'request' &&
-    typeof hold.request === 'string' &&
-    typeof hold.task === 'string'
-  )
-    return `request ${hold.request} (${String(hold.state)}) on ${hold.task}`;
   return 'an unrecognized hold';
 }
 

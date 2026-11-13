@@ -1,5 +1,5 @@
 use super::{Actor, Error, Project, Status, Store, Task};
-use crate::attention::GoalRef;
+use crate::GoalRef;
 use crate::store::{NewTask, Owner, Update};
 use rusqlite::Connection;
 
@@ -467,7 +467,7 @@ fn stores_reopen_and_other_schema_versions_fail() {
         "briefs/brief.md"
     );
     assert_eq!(reopened.events(&project(), &root.id, 100).unwrap().len(), 2);
-    for version in [2, 3, 8, 99] {
+    for version in [2, 3, 8, 9, 10, 99] {
         let other = Connection::open_in_memory().unwrap();
         other.pragma_update(None, "user_version", version).unwrap();
         assert!(matches!(Store::initialize(other), Err(Error::Schema(v)) if v == version));
@@ -578,4 +578,175 @@ fn coordinated_goals_are_exactly_the_open_roots_an_owner_claims() {
         )
         .unwrap();
     assert_eq!(store.coordinated_goals(first).unwrap(), []);
+}
+
+/// Columns of every table and the names of every index and trigger.
+fn shape(connection: &Connection) -> Vec<String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT type || ' ' || name FROM sqlite_master
+             WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        )
+        .unwrap();
+    let objects: Vec<String> = statement
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let mut shape = Vec::new();
+    for object in objects {
+        if let Some(table) = object.strip_prefix("table ") {
+            let mut columns = connection
+                .prepare(&format!("SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('{table}')"))
+                .unwrap();
+            for column in columns
+                .query_map([], |row| {
+                    Ok(format!(
+                        "{table}.{} {} {} {:?} {}",
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, i64>(4)?
+                    ))
+                })
+                .unwrap()
+            {
+                shape.push(column.unwrap());
+            }
+        }
+        shape.push(object);
+    }
+    shape
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one fixture covers every way a mandate reaches its brief"
+)]
+fn schema_11_moves_mandates_into_briefs_and_drops_attention() {
+    let root = std::env::temp_dir().join(format!("dots-goals-migrate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
+    let path = root.join("workspace.sqlite3");
+    let mut store = Store::create(&path).unwrap();
+    let project = store.register_project("fixture").unwrap();
+    let mut goal = |title: &str, brief: &str| {
+        store
+            .create_goal(&project, title, brief, actor(1))
+            .unwrap()
+            .root
+            .id
+    };
+    let written = goal("written", "briefs/written.md");
+    let missing = goal("missing", "briefs/missing.md");
+    let carried = goal("carried", "briefs/carried.md");
+    let foreign = goal("foreign", "briefs/foreign.md");
+    drop(store);
+    let briefs = root
+        .join("workspaces")
+        .join(project.as_str())
+        .join("briefs");
+    std::fs::create_dir_all(&briefs).unwrap();
+    std::fs::write(briefs.join("written.md"), "# Written\n\nOutcome.").unwrap();
+    std::fs::write(briefs.join("carried.md"), "# Carried\n\nShip to main.\n").unwrap();
+    std::fs::write(briefs.join("foreign.md"), "# Foreign\n").unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE requests(
+                id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
+                key TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, question TEXT NOT NULL, context TEXT, recommendation TEXT,
+                state TEXT NOT NULL, created_at INTEGER NOT NULL, created_by TEXT, supersedes TEXT UNIQUE REFERENCES requests(id),
+                answer_choice TEXT, answer_text TEXT, answer_source TEXT, answer_provenance TEXT, answer_interpretation TEXT,
+                answered_at INTEGER, answered_by TEXT,
+                closure TEXT, closed_at INTEGER, closed_by TEXT, close_reason TEXT);
+             CREATE UNIQUE INDEX requests_key ON requests(goal,key) WHERE closure IS NOT 'superseded';
+             CREATE INDEX requests_project ON requests(project,state);
+             CREATE TABLE request_choices(request TEXT NOT NULL REFERENCES requests(id), position INTEGER NOT NULL, id TEXT NOT NULL, label TEXT NOT NULL, detail TEXT, PRIMARY KEY(request,position), UNIQUE(request,id));
+             CREATE TABLE request_tasks(request TEXT NOT NULL REFERENCES requests(id), task TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY(request,task));
+             CREATE INDEX request_tasks_task ON request_tasks(task);
+             CREATE TABLE decisions(
+                id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
+                kind TEXT NOT NULL, decision TEXT NOT NULL, human_text TEXT, human_source TEXT, human_provenance TEXT,
+                request TEXT UNIQUE REFERENCES requests(id), at INTEGER NOT NULL, actor TEXT);
+             CREATE INDEX decisions_goal ON decisions(goal,kind);
+             ALTER TABLE sharing ADD COLUMN answers_dirty INTEGER NOT NULL DEFAULT 0;
+             CREATE TABLE sent_answers(
+                request TEXT PRIMARY KEY REFERENCES requests(id), goal TEXT NOT NULL, answer TEXT NOT NULL,
+                at INTEGER NOT NULL, exported INTEGER);
+             INSERT INTO sharing(singleton, machine, enabled, changed_at) VALUES(0, 'm-here', 0, 1);
+             PRAGMA user_version=11;",
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO shared_trees(root, project, shared_project, home) VALUES(?1, ?2, ?2, 'm-there')",
+            rusqlite::params![foreign, project.as_str()],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO requests(id, project, goal, key, kind, title, question, state, created_at)
+             VALUES('r-1', ?1, ?2, 'scope', 'decision', 'Scope', 'Which?', 'open', 1)",
+            rusqlite::params![project.as_str(), written],
+        )
+        .unwrap();
+    let mut insert = connection
+        .prepare(
+            "INSERT INTO decisions(id, project, goal, kind, decision, human_text, human_source, human_provenance, at)
+             VALUES(?1, ?2, ?3, ?4, ?5, 'yes', 'chat', 'session', ?6)",
+        )
+        .unwrap();
+    for (id, goal, kind, decision, at) in [
+        ("d-2", &written, "mandate", "Later mandate.\n", 5),
+        (
+            "d-1",
+            &written,
+            "mandate",
+            "Commit locally; do not push.",
+            2,
+        ),
+        ("d-3", &written, "decision", "Not a mandate.", 3),
+        ("d-4", &missing, "mandate", "Work in a worktree.", 2),
+        ("d-5", &carried, "mandate", "Ship to main.", 2),
+        ("d-6", &foreign, "mandate", "Homed elsewhere.", 2),
+    ] {
+        insert
+            .execute(rusqlite::params![
+                id,
+                project.as_str(),
+                goal,
+                kind,
+                decision,
+                at
+            ])
+            .unwrap();
+    }
+    drop(insert);
+    drop(connection);
+
+    let migrated = Store::open(&path).unwrap();
+    let read = |name: &str| std::fs::read_to_string(briefs.join(name)).unwrap();
+    assert_eq!(
+        read("written.md"),
+        "# Written\n\nOutcome.\n\n## Mandate\n\nCommit locally; do not push.\n\nLater mandate.\n"
+    );
+    assert_eq!(read("missing.md"), "## Mandate\n\nWork in a worktree.\n");
+    assert_eq!(read("carried.md"), "# Carried\n\nShip to main.\n");
+    assert_eq!(read("foreign.md"), "# Foreign\n");
+    let version: i64 = migrated
+        .connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 12);
+    let fresh = Store::create(&root.join("fresh.sqlite3")).unwrap();
+    assert_eq!(shape(&migrated.connection), shape(&fresh.connection));
+    drop(migrated);
+    Store::open(&path).unwrap();
+    assert_eq!(read("missing.md"), "## Mandate\n\nWork in a worktree.\n");
+    std::fs::remove_dir_all(&root).unwrap();
 }

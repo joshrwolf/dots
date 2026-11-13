@@ -80,7 +80,7 @@ memory or older notes.
   them; keep `rex.*` calls in thin adapters around them.
 - Only `dots.views` decides how a view is placed and where focus goes when
   it closes. It also registers `views_dismiss`, which a view's program
-  (`dots-pick`, or a command such as `dots attention view`) runs when it
+  (`dots-pick`, or a command such as `dots task goal view`) runs when it
   closes.
 - Dependencies point from features to shared modules (`dots.checkouts`,
   `dots.result`, `dots.process`, `dots.sessions`, `dots.snapshot`,
@@ -90,7 +90,7 @@ memory or older notes.
 - Prefer Rex's built-in client actions over custom ones.
 - Search-first views are data for `dots-pick`, typed by `types/pick.lua`, which
   mirrors `src/pick/src/spec.rs`; change both together, and add every new picker
-  view to `tests/contract.lua`. Interactive command views, such as attention
+  view to `tests/contract.lua`. Interactive command views, such as goals
   and the Pi worker transcript (`workers_view`), use the same `dots.views`
   placement and dismissal owner without a picker spec.
 - A live view names what invalidates it: Rex events through

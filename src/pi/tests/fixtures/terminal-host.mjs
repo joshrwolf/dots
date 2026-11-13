@@ -13,15 +13,14 @@ const companion = fileURLToPath(new URL('../../', import.meta.url)).replace(
 );
 const fixtures = join(companion, 'tests/fixtures');
 const [flow, mode] = process.argv.slice(2);
-if (flow === 'attention') process.env.DOTS_FIXTURE_ATTENTION = '1';
 // Rex terminals declare truecolor, as the viewer's terminal does here.
 if (flow === 'viewer') process.env.COLORTERM = 'truecolor';
 if (
-  !['package', 'workbench', 'goal', 'attention', 'viewer'].includes(flow) ||
+  !['package', 'workbench', 'goal', 'viewer'].includes(flow) ||
   !['regular', 'fullscreen'].includes(mode)
 )
   throw new Error(
-    'usage: terminal-host.mjs <package|workbench|goal|attention|viewer> <regular|fullscreen>',
+    'usage: terminal-host.mjs <package|workbench|goal|viewer> <regular|fullscreen>',
   );
 const {SessionFixture} = await import(join(companion, 'dev/sessions.ts'));
 
@@ -945,16 +944,16 @@ async function goalFlow() {
     assert.ok(draftRow < goalRow, 'summary stays below the editor');
     send(`\x1b[<0;4;${goalRow}M\x1b[<0;4;${goalRow}m`);
     await wait(
-      () => lines().includes('navigate:goals:t-123abc'),
+      () => lines().includes('navigate:t-123abc'),
       'click routes to centralized Goals',
     );
     assert.ok(lines().includes('editor:DRAFT_SURVIVES_NAVIGATION'));
     send('\x15');
   }
-  const navigated = countLine('navigate:goals:t-123abc');
+  const navigated = countLine('navigate:t-123abc');
   await fresh('/goal');
   await wait(
-    () => countLine('navigate:goals:t-123abc') > navigated,
+    () => countLine('navigate:t-123abc') > navigated,
     '/goal routes to the same view',
   );
   assert.ok(
@@ -973,7 +972,7 @@ async function goalFlow() {
   await wait(() => shows('Nested fixture goal'), 'nested goal summary');
   await fresh('/goal show t-abcdef');
   await wait(
-    () => lines().includes('navigate:goals:t-abcdef'),
+    () => lines().includes('navigate:t-abcdef'),
     'exact nested goal selection',
   );
   await fresh('/goal unfollow t-abcdef');
@@ -984,7 +983,7 @@ async function goalFlow() {
   );
   await fresh('/goal show t-999999');
   await wait(
-    () => lines().includes('navigate:goals:t-999999'),
+    () => lines().includes('navigate:t-999999'),
     'exact selected goal',
   );
   await fresh('/reload');
@@ -998,7 +997,7 @@ async function goalFlow() {
   await wait(() => shows('All follows cleared'), 'clear follows');
   await fresh('/goal show');
   await wait(
-    () => lines().includes('navigate:goals:global'),
+    () => lines().includes('navigate:global'),
     'explicit inspection opens global browser without acquiring a goal',
   );
   await fresh('/goal evidence t-456def 9');
@@ -1038,46 +1037,13 @@ async function goalFlow() {
   );
   await fresh('/goal show t-fedcba');
   await wait(
-    () => lines().includes('navigate:goals:t-fedcba'),
+    () => lines().includes('navigate:t-fedcba'),
     'completed goal remains inspectable',
   );
   for (const name of ['light', 'dark']) {
     await fresh(`/goal-fixture-theme ${name}`);
     await wait(() => lines().includes(`fixture-theme:${name}`), 'stock theme');
   }
-  assert.equal(countLine('UNEXPECTED_PROVIDER_TURN'), 0);
-  await fresh('/goal-fixture-exit');
-}
-
-async function attentionFlow() {
-  await wait(() => events().includes('start'), 'startup');
-  await sleep(500);
-  await fresh('/goal focus t-123abc');
-  await wait(
-    () => shows('Needs your attention: Choose the rollout scope'),
-    'quiet attention cue',
-  );
-  if (mode === 'fullscreen') {
-    const row = paintedRows('Needs your attention:').at(-1);
-    assert.ok(row);
-    send('ATTENTION_PRESERVES_DRAFT');
-    await wait(
-      () => shows('ATTENTION_PRESERVES_DRAFT'),
-      'attention editor draft',
-    );
-    send(`\x1b[<0;4;${row}M\x1b[<0;4;${row}m`);
-    await wait(
-      () => lines().includes('navigate:attention:global'),
-      'attention click routes to the shared inbox',
-    );
-    assert.ok(lines().includes('editor:ATTENTION_PRESERVES_DRAFT'));
-    send('\x15');
-  }
-  await fresh('/goal');
-  await wait(
-    () => lines().includes('navigate:goals:t-123abc'),
-    'Goals stays separate from Attention',
-  );
   assert.equal(countLine('UNEXPECTED_PROVIDER_TURN'), 0);
   await fresh('/goal-fixture-exit');
 }
@@ -1146,7 +1112,6 @@ try {
     package: packageFlow,
     workbench: workbenchFlow,
     goal: goalFlow,
-    attention: attentionFlow,
   }[flow]();
   await sleep(15_000);
   throw new Error(`${flow}/${mode}: Pi did not shut down`);

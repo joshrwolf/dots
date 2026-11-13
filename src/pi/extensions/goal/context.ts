@@ -31,7 +31,7 @@ export function briefContext(view: GoalView): string {
   const body = sourceText(brief.text);
   return [
     identity,
-    'The brief records the agreed outcome and working agreement; the current user request takes precedence.',
+    'The brief records the agreed outcome and execution mandate; the current user request takes precedence. When unsure whether something is authorized or needs a decision, ask the user in chat.',
     `Brief: ${goal.brief} · revision ${brief.revision ?? 'unavailable'}`,
     body,
     ...(brief.warning ? [brief.warning] : []),
@@ -43,8 +43,19 @@ export function briefContext(view: GoalView): string {
   ].join('\n');
 }
 
-/** Bounded current state: counts and unfinished tasks, attention first. */
-export function taskContext(view: GoalView): string {
+/** Who may act on the goal, from its root status and claim. */
+function role(root: GoalTask, owner: string | undefined): string {
+  if (root.status === 'held')
+    return 'The goal is held (paused): do not dispatch or resume its work until a person resumes it.';
+  if (owner && root.owner === owner)
+    return 'This session coordinates the goal. Work that waits on the user is a held task whose reason names the question; ask it in chat.';
+  return root.owner
+    ? `Coordinated by ${text(root.owner, 64)}, not this session: do not dispatch its work.`
+    : 'No session coordinates this goal: do not dispatch its work.';
+}
+
+/** Bounded current state: counts and unfinished tasks, held and blocked first. */
+export function taskContext(view: GoalView, owner?: string): string {
   const identity = `Goal ${view.focus.id} · project ${view.focus.project}`;
   if (view.error)
     return `${identity}\nTask state unavailable: ${text(view.error, 512)} · /goal refresh`;
@@ -66,6 +77,7 @@ export function taskContext(view: GoalView): string {
   const lines = [
     `${identity} · ${text(goal.root.title)} [${goal.root.status}]${goal.root.owner ? ` · claimed by ${text(goal.root.owner, 64)}` : ''}${goal.root.result_event !== null ? ` · result event ${goal.root.result_event}` : ''}`,
     ...(goal.root.foreign ? [readOnly(goal.root.foreign)] : []),
+    role(goal.root, owner),
     `Tasks: ${progress || 'none yet'}`,
   ];
   if (goal.root.result !== null) {
@@ -123,18 +135,21 @@ export function taskContext(view: GoalView): string {
 
 /** An imported goal reads like any other but changes only on its home. */
 export function readOnly(foreign: Foreign): string {
-  return `Read-only on this machine: machine ${text(foreign.home, 64)} homes this goal and alone changes it; answers to its requests travel there. Take it over with dots task share take ${foreign.root}, then coordinate it here.`;
+  return `Read-only on this machine: machine ${text(foreign.home, 64)} homes this goal and alone changes it. Take it over with dots task share take ${foreign.root}, then coordinate it here.`;
 }
 
 /** Also used by goal_focus: run-start hooks have not run again after that tool call. */
-export function orientation(view: GoalView): string {
-  return `${briefContext(view)}\n\n${taskContext(view)}`;
+export function orientation(view: GoalView, owner?: string): string {
+  return `${briefContext(view)}\n\n${taskContext(view, owner)}`;
 }
 
-export function goalSections(view: GoalView): Record<string, string> {
+export function goalSections(
+  view: GoalView,
+  owner?: string,
+): Record<string, string> {
   const key = goalSectionKey(view);
   return {
     [`${key}_brief`]: briefContext(view),
-    [`${key}_tasks`]: taskContext(view),
+    [`${key}_tasks`]: taskContext(view, owner),
   };
 }

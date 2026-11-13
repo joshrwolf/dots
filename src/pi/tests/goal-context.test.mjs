@@ -58,7 +58,31 @@ test('brief, task and project identities update independent native sections', ()
   assert.match(key, /^[a-z][a-z0-9_]+$/);
 });
 
-test('task state shows claims, attention, ancestry and result revisions without result text', () => {
+test('the role follows the root status and claim, not the transcript', () => {
+  const view = fixture();
+  const root = view.snapshot.overview.goal.root;
+  assert.match(
+    taskContext(view, 'pi-self'),
+    /No session coordinates this goal: do not dispatch its work\./,
+  );
+  root.owner = 'pi-self';
+  assert.match(
+    taskContext(view, 'pi-self'),
+    /This session coordinates the goal\. Work that waits on the user is a held task whose reason names the question; ask it in chat\./,
+  );
+  assert.match(
+    taskContext(view, 'pi-other'),
+    /Coordinated by pi-self, not this session: do not dispatch its work\./,
+  );
+  root.owner = null;
+  root.status = 'held';
+  assert.match(
+    taskContext(view, 'pi-self'),
+    /The goal is held \(paused\): do not dispatch or resume its work until a person resumes it\./,
+  );
+});
+
+test('task state shows claims, held work first, ancestry and result revisions without result text', () => {
   const view = fixture();
   view.snapshot.overview.tasks = [
     task('t-aaaaaa', 'Claimed', {

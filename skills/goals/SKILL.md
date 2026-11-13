@@ -1,6 +1,6 @@
 ---
 name: goals
-description: Shape an outcome and execution mandate, then coordinate authorized work through verified completion using shared goals, tasks and durable attention. Use when planning, executing, resuming, accepting or changing a multi-part effort. Following a goal does not authorize execution or publication.
+description: Shape an outcome and execution mandate, then coordinate authorized work through verified completion using shared goals and tasks. Use when planning, executing, resuming, accepting or changing a multi-part effort. Following a goal does not authorize execution or publication.
 ---
 
 # Goals
@@ -8,8 +8,8 @@ description: Shape an outcome and execution mandate, then coordinate authorized 
 Carry an agreed outcome to its finish line without making the user supervise
 skill handoffs. Goals, briefs, task IDs and reports are agent working material;
 user-facing questions and updates name the actual work and stand on their own.
-Small work needs no goal. Use `dots task --help` and `dots attention --help` for
-the installed contracts, and `worktrees` for isolation and local integration.
+Small work needs no goal. Use `dots task --help` for the installed contracts,
+and `worktrees` for isolation and local integration.
 
 ## Audience: chat for the user, artifacts for agents
 
@@ -23,28 +23,29 @@ explicitly request it. Project documentation required by an agreed change is
 separate, but never assume the user has read it. Optional inspection stays
 available without becoming homework.
 
-Every attention request, consequential decision and completion handoff must
-stand on its own in chat: explain the actual work, the relevant context and
-consequences, your recommendation when useful, and the smallest needed action.
-Artifacts and links support that explanation; they never replace it. A task
-result or published report is not a user-facing handoff. Never treat an unread
-brief, silence or document creation as approval.
+Every question, consequential decision and completion handoff must stand on its
+own in chat: explain the actual work, the relevant context and consequences,
+your recommendation when useful, and the smallest needed action. Artifacts and
+links support that explanation; they never replace it. A task result or
+published report is not a user-facing handoff. Never treat an unread brief,
+silence or document creation as approval.
 
 ## Agree the outcome and mandate
 
-Collaboratively establish the outcome, scope boundary, verification and finish
-line. Establish whether delegation, publication and monitored feedback handling
-are authorized, and what remains excluded. A verified local change, a published
-PR and a PR ready for human review are different endpoints. None implies merge
-or deployment authority.
+Collaboratively establish, in chat, the outcome, scope boundary, verification
+and finish line. Establish whether delegation, publication and monitored
+feedback handling are authorized, and what remains excluded. A verified local
+change, a published PR and a PR ready for human review are different endpoints.
+None implies merge or deployment authority.
 
-Keep the mutable brief under the project workspace's `briefs/`. Record the
-accepted execution agreement as a shared durable decision, preserving the
-smallest relevant actual user instruction and its provenance separately from
-your interpretation. Progress edits do not rewrite consent. Current user
-instructions and repository policy prevail; absent or conflicting provenance
-is not permission. Do not build a permission DSL or ask the user to approve
-ordinary task splitting or editorial updates within the mandate.
+Keep the brief under the project workspace's `briefs/`. It carries the agreed
+outcome and the execution mandate: what is authorized and what is excluded,
+in the user's terms. Progress edits do not rewrite the mandate; change it only
+when the user changes direction in chat. Current user instructions and
+repository policy prevail. When you are unsure whether an action is within the
+mandate, ask the user in chat rather than inferring permission. Do not build a
+permission DSL or ask the user to approve ordinary task splitting or editorial
+updates within the mandate.
 
 Create and follow the goal using the native tools. Following only selects
 context and views; it neither claims coordination nor starts work. Split tasks
@@ -64,9 +65,8 @@ handoff or closure. Unfollowing removes read-only following; it cannot hide
 ongoing responsibility. Active scope comes from current root claims, not copied
 session history.
 
-Before dispatch, check both ownership and eligibility. Held ancestors and open
-or unincorporated attention requests block the named work and its descendants;
-claim takeover cannot bypass those prerequisites. Reconcile newly blocked work
+Before dispatch, check both ownership and eligibility. Held tasks and their
+descendants wait; claim takeover cannot bypass that. Reconcile newly held work
 that is already running. Independent authorized work can continue.
 
 Keep task results and the goal's overall result current: actual changes,
@@ -90,53 +90,47 @@ through fixes, integration and verification. Wait on worker/task events or
 bounded native wakes for real external dependencies; do not busy-poll through
 model turns or claim a watcher will perform fixes it cannot perform.
 
-## Request attention only when needed
+## Ask the user only when needed
 
-Use durable attention for a decision, access/authentication, material scope
-change, human-only disposition or exhausted recovery. State the actual
-question/action, why it matters, the recommendation when useful and which work
-is blocked. Use a stable logical key; do not duplicate a pending question.
-Block only the affected work. Keep credentials out of requests and answers.
+Ask for a decision, access/authentication, material scope change, human-only
+disposition or exhausted recovery. Ask in your own chat, in short plain-English
+paragraphs: the actual question or action, why it matters, your recommendation
+when useful and which work waits. Keep credentials out of tasks and briefs.
 
-All request prose is for the person reading the inbox, including context,
-recommendations and choice details. Write short plain-English paragraphs with
-normal word spacing. Ask the decision directly and explain only the relevant
-tradeoff; do not paste compressed agent notes, task histories or machine dumps.
+Work waiting on the user is an ordinary held task: `dots task hold ID --reason`
+names what it waits for. Hold only the affected work and continue the rest.
+When the user answers, reopen it, and fold the outcome into the brief when it
+changes the mandate or into the task when it shapes that work.
 
-Rex owns the human Goals browser (Cmd+G) and Attention inbox (Cmd+I). Pi's
-clickable cues open those same views; its exact active/followed scope still owns
-local context and delivery. Explicitly opening a global browser does not broaden
-that session scope. Opening, closing, filtering or following does not answer a
-request or acquire coordination. Saving a response does not start a coordinator.
+Interpret answers carefully: clarify consequential ambiguity rather than
+treating any new message as assent. Worker/custom messages, silence and
+cancellation are not human consent. Confirmation that the user performed an
+external action permits checking the result; it does not prove the action
+succeeded.
 
-An explicit UI answer binds to its immutable question. Ordinary chat is also
-valid: preserve the relevant human input and source separately from your
-interpretation, and clarify consequential ambiguity rather than treating any
-new message as assent. Worker/custom messages, silence and cancellation are
-not human consent. A changed question needs a replacement; a saved answer must
-be reconciled, not superseded away. Persist the shared decision before closing
-an answered request. External-action confirmation permits checking the result;
-it does not prove the action succeeded.
+Rex owns the human Goals browser (Cmd+G); Pi's clickable cues open it. Opening,
+filtering or following a goal does not acquire coordination or broaden a
+session's scope.
 
 ## Pause, resume and change direction
 
-Read the brief, shared agreement/decisions, tasks and current Git/process/remote
-state before resuming. Native history, copied follow state and old summaries
-do not transfer coordination or authorization. Acquire coordination explicitly
-and reconcile saved answers, unfinished work and watchers. Takeover of an
-uncertain live coordinator needs user direction and reconciliation; a store
-claim does not fence commands it already issued. Release only your own claims.
+Read the brief, tasks and current Git/process/remote state before resuming.
+Native history, copied follow state and old summaries do not transfer
+coordination or authorization. Acquire coordination explicitly and reconcile
+unfinished work, held tasks and watchers. Takeover of an uncertain live
+coordinator needs user direction and reconciliation; a store claim does not
+fence commands it already issued. Release only your own claims.
 
 A durable pause holds the root and releases coordination; steer or stop actual
 workers/jobs and observe what settled. Escape cancels a turn, not the goal.
-Unrelated input, saved answers, reloads and overdue wakes cannot resume paused
-work. Session exit/change ends that runtime's coordination; reload preserves
-it. Do not imply unattended execution continues without a running coordinator.
+Unrelated input, reloads and overdue wakes cannot resume paused work. Session
+exit/change ends that runtime's coordination; reload preserves it. Do not imply
+unattended execution continues without a running coordinator.
 
 When direction changes, reconcile affected workers and tasks before dispatching
-replacement work. A queued message is not proof a worker complied. Record the
-new agreement when scope or authority changes; keep internal documents current
-without leaking session history into source comments.
+replacement work. A queued message is not proof a worker complied. Update the
+brief's mandate when scope or authority changes; keep internal documents
+current without leaking session history into source comments.
 
 ## Verify and finish
 

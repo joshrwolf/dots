@@ -145,7 +145,7 @@ test('only the goal coordinator dispatches goal work, fresh from the store', asy
   }
 });
 
-test('held and request-blocked goal work is not dispatched; other work is', async () => {
+test('held goal work is not dispatched; other work is', async () => {
   const root = 't-a0a0a0';
   const records = {
     [root]: shown(root, {goal: root, owner: actor}),
@@ -157,28 +157,15 @@ test('held and request-blocked goal work is not dispatched; other work is', asyn
   records[assignment.id].task.status = 'held';
   await assert.rejects(verify(), /t-123abc is held; resume it/);
   records[assignment.id].task.status = 'open';
-  for (const [hold, reason] of [
-    [{kind: 'held_ancestor', task: root}, /held ancestor t-a0a0a0/],
-    [
-      {kind: 'request', request: 'r-1', task: root, state: 'answered'},
-      /request r-1 \(answered\) on t-a0a0a0/,
-    ],
-  ]) {
-    records[assignment.id].task.holds = [hold];
-    await assert.rejects(verify(), reason);
-  }
+  records[assignment.id].task.holds = [{kind: 'held_ancestor', task: root}];
+  await assert.rejects(verify(), /held ancestor t-a0a0a0/);
   // A goal-wide blocker seen on the fresher root read counts as well.
   records[assignment.id].task.holds = [];
   records[root].task.status = 'held';
   await assert.rejects(verify(), /t-a0a0a0 is held; resume it/);
   records[root].task.status = 'open';
-  records[root].task.holds = [
-    {kind: 'request', request: 'r-2', task: root, state: 'open'},
-  ];
-  await assert.rejects(
-    verify(),
-    /t-a0a0a0 is held by request r-2 \(open\) on t-a0a0a0/,
-  );
+  records[root].task.holds = [{kind: 'held_ancestor', task: 't-b0b0b0'}];
+  await assert.rejects(verify(), /t-a0a0a0 is held by held ancestor t-b0b0b0/);
   records[root].task.holds = [];
   assert.deepEqual(await verify(), assignment);
   // A task outside any goal keeps the plain identity check.

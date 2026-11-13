@@ -11,12 +11,6 @@ import goal, {
   restoreGoals,
 } from '../extensions/goal/index.ts';
 import {source, snapshot} from './goal-fixture.mjs';
-import {
-  PROJECT,
-  attentionStore,
-  request,
-  requestId,
-} from './attention-fixture.mjs';
 import {withHierarchy} from '../extensions/goal/source.ts';
 import {WORKER_ACTIVITY_EVENT} from '../src/ui/worker-activity.ts';
 
@@ -49,7 +43,6 @@ function harness(
   saved = [],
   mode = 'rpc',
   session = 'fixture-session',
-  attention = attentionStore(),
   changes = async () => undefined,
 ) {
   const emitted = [];
@@ -101,12 +94,10 @@ function harness(
     },
   };
   goal(pi, backend, undefined, {
-    source: attention.source,
-    tasks: undefined,
     changes,
-    openView: async (view, target) => {
+    openView: async target => {
       if (navigation.failure instanceof Error) throw navigation.failure;
-      navigation.calls.push({view, target});
+      navigation.calls.push({target});
     },
   });
   const ctx = {
@@ -126,7 +117,6 @@ function harness(
     },
   };
   return {
-    attention,
     emitted,
     handlers,
     tools,
@@ -658,8 +648,8 @@ test('/goal opens centralized Rex Goals with exact selection and no local popup'
   await h.command('show');
   await settle();
   assert.deepEqual(h.navigation.calls, [
-    {view: 'goals', target: {id: 't-123abc', project: '/example/project'}},
-    {view: 'goals', target: {id: 't-123abc', project: '/example/project'}},
+    {target: {id: 't-123abc', project: '/example/project'}},
+    {target: {id: 't-123abc', project: '/example/project'}},
   ]);
   assert.deepEqual(await h.list(), before);
   assert.equal(h.userMessages.length, 0);
@@ -886,7 +876,7 @@ test('the summary line uses native press/click handling and cannot revive stale 
   assert.equal(h.navigation.calls.length, 0, 'press does not navigate');
   widget.handleMouse({...event, type: 'click'});
   assert.deepEqual(h.navigation.calls, [
-    {view: 'goals', target: {project: '/example/project', id: 't-123abc'}},
+    {target: {project: '/example/project', id: 't-123abc'}},
   ]);
   assert.equal(
     h.entries.length,
@@ -923,7 +913,7 @@ test('finished goal inspection shows closed slices without expanding ordinary ag
     await h.command('show');
     if (mode === 'tui') {
       assert.deepEqual(h.navigation.calls, [
-        {view: 'goals', target: {project: '/example/project', id: 't-123abc'}},
+        {target: {project: '/example/project', id: 't-123abc'}},
       ]);
     } else
       assert.doesNotMatch(h.messages.at(-1).message.content, /Reference slice/);
@@ -1122,47 +1112,16 @@ test('a stale runtime releases only its own claims and leaves the next actor exp
 });
 
 const settle = () => new Promise(resolve => setImmediate(resolve));
-const goalOf = h => ({project: '/example/project', id: 't-123abc'});
 
-test('attention scope is the followed goals; no follows and no coordination read nothing', async () => {
-  const h = harness();
-  await h.event('session_start');
-  await h.context();
-  assert.deepEqual(
-    h.attention.state.calls.filter(call => call.op !== 'coordinating'),
-    [],
-    'no follows or coordination, no attention reads',
-  );
-  await h.command('focus t-123abc');
-  await settle();
-  const files = await h.context();
-  const lists = h.attention.state.calls.filter(call => call.op === 'list');
-  assert.deepEqual(lists.at(-1).goals, [goalOf(h)]);
-  assert.match(files[0].content, /attention and decisions/);
-  assert.match(files[0].content, /No mandate recorded/);
-  await h.command('unfocus');
-  await settle();
-  const listCount = () =>
-    h.attention.state.calls.filter(call => call.op === 'list').length;
-  const before = listCount();
-  assert.deepEqual(await h.context(), []);
-  assert.equal(listCount(), before);
-});
-
-test('a coordinated goal stays in view after unfollow until paused, and its answer arrives once', async () => {
-  const attention = attentionStore({
-    requests: [request({goal: 't-123abc'})],
-    goals: [focused()],
-  });
-  const h = harness(source(), [], 'rpc', 'fixture-session', attention);
+test('a coordinated goal stays in view after unfollow until paused', async () => {
+  const backend = source();
+  const h = harness(backend);
   await h.event('session_start');
   await h.tool('t-123abc');
   await settle();
-  const owner = attention.state.calls.find(
-    call => call.op === 'coordinating',
-  ).owner;
+  const owner = backend.coordinations[0];
   assert.match(owner, runtimeOf('fixture-session'));
-  attention.state.coordinator = owner;
+  backend.coordinator = owner;
   await h.event('agent_end');
   await settle();
   const result = await h.unfollow({id: 't-123abc'});
@@ -1187,49 +1146,29 @@ test('a coordinated goal stays in view after unfollow until paused, and its answ
     /Use one shared export interface[\s\S]*Reference slice/,
     'its brief and tasks stay in context',
   );
-  assert.match(kept, /Awaiting a person — r-0+1/);
+  assert.match(kept, /This session coordinates the goal\./);
   assert.doesNotMatch(kept, /not followed/);
-  const alerts = () =>
-    h.emitted.filter(({channel}) => channel === 'dots:attention');
-  assert.deepEqual(alerts().at(-1).data.requests, [
-    {id: requestId(1), title: 'Choose the rollout scope'},
-  ]);
-  await attention.source.answer(
-    PROJECT,
-    requestId(1),
-    {source: 'ui', choice: 'one', provenance: 'dots attention view'},
-    {env: {}},
-  );
-  const sent = () =>
-    h.messages.filter(m => m.message.customType === 'dots.attention.answer');
-  await h.event('agent_end');
-  await settle();
-  assert.equal(sent().length, 1);
-  assert.doesNotMatch(sent()[0].message.content, /goal_focus|not follow/);
-  // Pi records a delivered notice on the branch: the receipt.
-  h.entries.push({type: 'custom_message', ...sent()[0].message});
   await h.event('session_shutdown', {reason: 'reload'});
   await h.event('session_start', {reason: 'reload'});
   await h.event('agent_end');
   await h.event('session_tree');
   await h.event('agent_end');
   await settle();
-  assert.equal(sent().length, 1, 'reload and tree do not repeat it');
   assert.deepEqual(await membership(), [
     {id: 't-123abc', followed: false, coordinating: true},
   ]);
   assert.match(
     (await h.context())[0].content,
-    /Reference slice[\s\S]*Saved answer, not yet incorporated — r-0+1/,
+    /Reference slice/,
     'its view and context survive reload and tree',
   );
   assert.equal(
-    attention.state.calls.findLast(call => call.op === 'coordinating').owner,
+    backend.coordinations.at(-1),
     owner,
     'reload keeps the runtime and its responsibilities',
   );
   // Pausing ends coordination: the goal leaves the view and context.
-  attention.state.status = 'held';
+  backend.status = 'held';
   await h.event('agent_end');
   await settle();
   assert.deepEqual(await membership(), []);
@@ -1237,20 +1176,17 @@ test('a coordinated goal stays in view after unfollow until paused, and its answ
 });
 
 test('a goal this session coordinates joins the view without a follow; a worker never derives one', async () => {
-  const attention = attentionStore({goals: [focused()]});
-  const h = harness(source(), [], 'rpc', 'fixture-session', attention);
+  const backend = source();
+  const h = harness(backend);
   await h.event('session_start');
   await settle();
   assert.deepEqual((await h.list()).details.goals, []);
-  attention.state.coordinator = attention.state.calls.find(
-    call => call.op === 'coordinating',
-  ).owner;
+  backend.coordinator = backend.coordinations[0];
   const files = await h.context();
   assert.match(
     files[0].content,
     /Use one shared export interface[\s\S]*Reference slice/,
   );
-  assert.match(files[0].content, /No mandate recorded/);
   const [goal] = (await h.list()).details.goals;
   assert.deepEqual(
     {id: goal.id, selected: goal.selected, followed: goal.followed},
@@ -1268,48 +1204,30 @@ test('a goal this session coordinates joins the view without a follow; a worker 
   assert.equal((await h.list()).details.goals.length, 1, 'clear keeps it');
 
   process.env.DOTS_WORKER_ID = 'w-fixture';
-  const worker = harness(source(), [], 'rpc', 'worker-session', attention);
+  const worker = harness(backend, [], 'rpc', 'worker-session');
   await worker.event('session_start');
   await settle();
   assert.deepEqual(await worker.context(), []);
   assert.deepEqual((await worker.list()).details.goals, []);
+  assert.equal(
+    backend.coordinations.filter(owner => /worker-session/.test(owner)).length,
+    0,
+    'a worker never reads coordination',
+  );
 });
 
-test('context carries saved answers and the role across tree and compaction-independent restores', async () => {
-  const answered = request({
-    goal: 't-123abc',
-    state: 'answered',
-    answer: {
-      choice: 'one',
-      text: null,
-      source: 'ui',
-      provenance: 'pi session s · goal popup',
-      interpretation: null,
-      at: 2,
-      by: null,
-    },
-  });
-  const attention = attentionStore({
-    coordinator: 'pi-other-runtime',
-    requests: [answered],
-  });
-  const h = harness(
-    source(),
-    [entry(focused())],
-    'rpc',
-    'fixture-session',
-    attention,
-  );
+test('context states the role deterministically across tree restores', async () => {
+  const backend = source();
+  backend.coordinator = 'pi-other-runtime';
+  const h = harness(backend, [entry(focused())]);
   await h.event('session_start');
   const first = (await h.context())[0].content;
-  assert.match(first, /Saved answer, not yet incorporated — r-0+1/);
-  assert.match(first, /not this session: do not incorporate/);
-  assert.equal(
-    h.messages.filter(m => m.message.customType === 'dots.attention.answer')
-      .length,
-    0,
-    'followers never deliver',
+  assert.match(
+    first,
+    /Coordinated by pi-other-runtime, not this session: do not dispatch its work\./,
   );
+  assert.match(first, /execution mandate/);
+  assert.match(first, /ask the user in chat/);
   await h.event('session_tree');
   const again = (await h.context())[0].content;
   assert.equal(
@@ -1317,83 +1235,18 @@ test('context carries saved answers and the role across tree and compaction-inde
     first,
     'deterministic from the store, not the transcript',
   );
-});
-
-test('only native interactive input attests a chat answer', async () => {
-  const attention = attentionStore({requests: [request({goal: 't-123abc'})]});
-  const h = harness(
-    source(),
-    [entry(focused())],
-    'rpc',
-    'fixture-session',
-    attention,
+  backend.status = 'held';
+  await h.event('agent_end');
+  assert.match(
+    (await h.context())[0].content,
+    /The goal is held \(paused\): do not dispatch or resume its work/,
   );
-  await h.event('session_start');
-  const tool = h.tools.get('attention_record_chat');
-  const params = {
-    kind: 'answer',
-    quote: 'only this project',
-    request: requestId(1),
-    interpretation: 'Chose this project.',
-  };
-  await h.handlers.get('input')(
-    {type: 'input', text: 'only this project', source: 'rpc'},
-    h.ctx,
-  );
-  await assert.rejects(
-    tool.execute('c', params, undefined, undefined, h.ctx),
-    /verbatim/,
-  );
-  await h.handlers.get('input')(
-    {
-      type: 'input',
-      text: 'ok, only this project please',
-      source: 'interactive',
-    },
-    h.ctx,
-  );
-  const result = await tool.execute('c', params, undefined, undefined, h.ctx);
-  assert.match(result.content[0].text, /Saved the answer/);
-  const call = attention.state.calls.find(c => c.op === 'answer');
-  assert.equal(
-    call.content.provenance,
-    'pi session fixture-session · interactive input',
-  );
-  assert.match(call.actor.env.DOTS_AGENT_OWNER, runtimeOf('fixture-session'));
-  // A new session does not inherit the previous one's typed words.
-  await h.event('session_shutdown', {reason: 'new'});
-  await h.event('session_start', {reason: 'new'});
-  await assert.rejects(
-    tool.execute('c', params, undefined, undefined, h.ctx),
-    /verbatim/,
-  );
-});
-
-test('/goal remains Goals even while a quiet Attention cue is present', async () => {
-  const attention = attentionStore({requests: [request({goal: 't-123abc'})]});
-  const h = harness(
-    source(),
-    [entry(focused())],
-    'tui',
-    'fixture-session',
-    attention,
-  );
-  await h.event('session_start');
-  await settle();
-  assert.ok(h.widgets.findLast(([key]) => key === 'dots.goal.attention')?.[1]);
-  await h.command('');
-  await settle();
-  assert.equal(h.navigation.calls.at(-1).view, 'goals');
-  assert.equal(attention.state.requests.get(requestId(1)).state, 'open');
-  assert.equal(h.userMessages.length, 0);
-  await h.event('session_shutdown');
 });
 
 test('an unreadable coordination record is an explicit unavailable section, followed or not', async () => {
   const h = harness();
   await h.event('session_start');
-  h.attention.state.coordinatingFail =
-    'catalog schema 8 is newer than this dots';
+  h.backend.coordinatingFail = 'catalog schema 8 is newer than this dots';
   const banner =
     /Goals this session coordinates could not be checked: .*catalog schema 8 is newer than this dots\. The goals in context may be out of date; check them with dots task goal coordinating before dispatching work\./;
   const none = await h.context();
@@ -1408,7 +1261,7 @@ test('an unreadable coordination record is an explicit unavailable section, foll
     /Use one shared export interface/,
     'follows still load',
   );
-  h.attention.state.coordinatingFail = undefined;
+  h.backend.coordinatingFail = undefined;
   assert.doesNotMatch((await h.context())[0].content, /could not be checked/);
   await h.command('unfocus');
   assert.deepEqual(await h.context(), [], 'a successful empty read is empty');
@@ -1430,7 +1283,6 @@ test('an import touching the changes marker rereads the goals in view', async ()
       [entry(focused())],
       'rpc',
       'fixture-session',
-      attentionStore(),
       async () => marker,
     );
     await h.event('session_start');
@@ -1457,7 +1309,6 @@ test('without sharing, goals reread only on runs and explicit reads', async () =
     [entry(focused())],
     'rpc',
     'fixture-session',
-    attentionStore(),
     async () => {
       asked++;
       return undefined;

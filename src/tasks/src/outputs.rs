@@ -120,20 +120,25 @@ pub fn validate_digest(digest: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// The directory holding the catalog and its documents.
+pub(super) fn document_root(connection: &rusqlite::Connection) -> Result<PathBuf, Error> {
+    let path = connection.path().ok_or(Error::Invalid(
+        "document operations require an on-disk workspace catalog",
+    ))?;
+    let root = Path::new(path)
+        .parent()
+        .ok_or(Error::Invalid("catalog has no storage root"))?;
+    if !root.is_absolute() {
+        return Err(Error::Invalid(
+            "catalog path must be absolute for document operations",
+        ));
+    }
+    Ok(root.to_owned())
+}
+
 impl Store {
     pub(super) fn document_root(&self) -> Result<PathBuf, Error> {
-        let path = self.connection.path().ok_or(Error::Invalid(
-            "document operations require an on-disk workspace catalog",
-        ))?;
-        let root = Path::new(path)
-            .parent()
-            .ok_or(Error::Invalid("catalog has no storage root"))?;
-        if !root.is_absolute() {
-            return Err(Error::Invalid(
-                "catalog path must be absolute for document operations",
-            ));
-        }
-        Ok(root.to_owned())
+        document_root(&self.connection)
     }
 
     /// Publish complete bytes before catalog registration. The lock spans both operations.

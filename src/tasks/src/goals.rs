@@ -1,9 +1,34 @@
 //! Goal briefs attached to task roots. Documents stay outside the store.
-use crate::attention::GoalRef;
 use crate::store::{self, Actor, Error, EventKind, NewTask, Owner, Project, Status, Store, Task};
+use dots_documents::staged_file::StagedFile;
+use dots_documents::{directories, text};
 use rusqlite::{OptionalExtension as _, Transaction, params};
 use serde::Serialize;
+use std::io::Write as _;
 use std::path::Path;
+
+/// One goal, exactly identified across projects.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GoalRef {
+    pub project: Project,
+    pub goal: String,
+}
+
+impl GoalRef {
+    /// Parse `PROJECT:GOAL`.
+    pub fn parse(value: &str) -> Result<Self, Error> {
+        let (project, goal) = value
+            .split_once(':')
+            .ok_or(Error::Invalid("goal reference: expected PROJECT:GOAL"))?;
+        if goal.is_empty() || goal.len() > 64 || goal.chars().any(char::is_control) {
+            return Err(Error::Invalid("goal reference: expected PROJECT:GOAL"));
+        }
+        Ok(Self {
+            project: Project::try_new(project)?,
+            goal: goal.to_owned(),
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests;
@@ -159,16 +184,6 @@ impl Store {
         store::writable(&tx, id)?;
         if root.is_goal_root() {
             store::authorize(&tx, id, actor.name)?;
-            let history: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM requests WHERE goal=?1) OR EXISTS(SELECT 1 FROM decisions WHERE goal=?1)",
-                [id],
-                |row| row.get(0),
-            )?;
-            if history {
-                return Err(Error::Invalid(
-                    "goal has requests or decisions; they stay with the goal, so it cannot be detached",
-                ));
-            }
         } else {
             protect(&root, actor)?;
         }
@@ -180,8 +195,8 @@ impl Store {
     }
 
     /// Take coordination of a goal: claim its root although work remains below
-    /// it. Coordination is responsibility, not dispatch, so prerequisites,
-    /// held ancestors and request holds do not prevent it. Other owners' claims
+    /// it. Coordination is responsibility, not dispatch, so prerequisites and
+    /// held ancestors do not prevent it. Other owners' claims
     /// on the root or any descendant move to `owner` only with `take_over`;
     /// a held or closed root reopens only with `resume`.
     pub fn coordinate(
@@ -390,6 +405,82 @@ fn claim(tx: &Transaction<'_>, id: &str, actor: Actor<'_>, detail: &str) -> Resu
         params![id, actor.name.map(Owner::as_str), actor.now],
     )?;
     store::record(tx, id, actor, EventKind::Claimed, Some(detail))
+}
+
+/// Append each goal's mandate decisions, oldest first, to its brief under a
+/// `Mandate` heading, skipping those the brief already carries. Trees homed on
+/// another machine are left to their home, whose brief replicates here. The
+/// caller holds the mutation lock and drops the decision tables afterwards.
+pub(super) fn carry_mandates(tx: &Transaction<'_>, document_root: &Path) -> Result<(), Error> {
+    let rows = {
+        let mut statement = tx.prepare(
+            "SELECT goals.root, tasks.project, goals.brief, decisions.decision FROM decisions
+               JOIN goals ON goals.root=decisions.goal JOIN tasks ON tasks.id=goals.root
+             WHERE decisions.kind='mandate' ORDER BY goals.root, decisions.at, decisions.rowid",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut goals: Vec<(String, String, String, Vec<String>)> = Vec::new();
+    for (root, project, brief, decision) in rows {
+        match goals.last_mut() {
+            Some(last) if last.0 == root => last.3.push(decision),
+            _ => goals.push((root, project, brief, vec![decision])),
+        }
+    }
+    for (root, project, brief, mandates) in goals {
+        if store::foreign(tx, &root)?.is_some() {
+            continue;
+        }
+        validate_brief(&brief)?;
+        let workspace = document_root.join("workspaces").join(&project);
+        let path = workspace.join(&brief);
+        let current = text::read(&path, dots_documents::MAX_FILE_BYTES)?.unwrap_or_default();
+        let missing: Vec<&str> = mandates
+            .iter()
+            .map(|mandate| mandate.trim())
+            .filter(|mandate| !current.contains(mandate))
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let mut extended = current;
+        if !extended.is_empty() {
+            if !extended.ends_with('\n') {
+                extended.push('\n');
+            }
+            extended.push('\n');
+        }
+        extended.push_str("## Mandate\n");
+        for mandate in missing {
+            extended.push('\n');
+            extended.push_str(mandate);
+            extended.push('\n');
+        }
+        let parent = path
+            .parent()
+            .ok_or(Error::Invalid("brief path has no parent"))?;
+        directories::create_within(parent, document_root)?;
+        let staged = StagedFile::create(parent)?;
+        staged
+            .file()
+            .write_all(extended.as_bytes())
+            .map_err(|source| dots_documents::Error::Io {
+                operation: "write brief",
+                path: staged.path().to_owned(),
+                source,
+            })?;
+        staged.publish_replace(&path)?;
+    }
+    Ok(())
 }
 
 pub(super) fn attached(tx: &Transaction<'_>, id: &str) -> Result<bool, Error> {

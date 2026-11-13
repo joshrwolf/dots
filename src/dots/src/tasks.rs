@@ -45,7 +45,7 @@ pub(crate) fn run(request: Request<'_>) -> Result<String> {
         return crate::goals_view::run(
             select
                 .as_deref()
-                .map(dots_tasks::attention::GoalRef::parse)
+                .map(dots_tasks::GoalRef::parse)
                 .transpose()?,
             dismiss,
             request.json,

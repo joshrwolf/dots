@@ -108,10 +108,7 @@ fn status(store: &mut Store, json: bool) -> Result<String> {
                 .status()?
                 .pending
                 .iter()
-                .filter(|pending| {
-                    let name = pending.name.as_str();
-                    name.starts_with("tasks/") || name.starts_with("answers/")
-                })
+                .filter(|pending| pending.name.as_str().starts_with("tasks/"))
                 .map(|pending| pending.name.to_string())
                 .collect(),
             Some(substrate.changes()),
@@ -125,7 +122,6 @@ fn status(store: &mut Store, json: bool) -> Result<String> {
             "home": status.home,
             "foreign": status.foreign,
             "dirty": status.dirty,
-            "sent_answers": status.sent_answers,
             "pending": pending,
             "stranded": stranded,
             "withheld": status.withheld,
@@ -145,11 +141,10 @@ fn status(store: &mut Store, json: bool) -> Result<String> {
     }
     let _ = writeln!(
         out,
-        "{} trees homed here, {} imported read-only, {} local changes and {} answers waiting, {} updates pending push.",
+        "{} trees homed here, {} imported read-only, {} local changes waiting, {} updates pending push.",
         status.home,
         status.foreign.len(),
         status.dirty,
-        status.sent_answers,
         pending.len()
     );
     for tree in &status.foreign {
@@ -204,14 +199,8 @@ fn refused(out: &mut String, stranded: &[share::StrandedTree]) {
                     .unwrap_or_default()
             );
         }
-        for (kind, ids) in [
-            ("request", &tree.requests),
-            ("decision", &tree.decisions),
-            ("output", &tree.outputs),
-        ] {
-            for id in ids {
-                let _ = writeln!(out, "  {kind} {id}");
-            }
+        for id in &tree.outputs {
+            let _ = writeln!(out, "  output {id}");
         }
     }
 }
@@ -269,7 +258,7 @@ pub(crate) fn fresh(store: &mut Store) -> Result<()> {
 }
 
 /// A sync pass with replication when this machine has a catalog: export
-/// local changes, sync, import foreign trees and answers.
+/// local changes, sync, import foreign trees.
 pub(crate) fn pass(
     substrate: &Substrate,
     trigger: Trigger,
@@ -297,7 +286,7 @@ pub(crate) fn pass(
 
 /// Whether an import changed what local views show.
 fn changed(imported: &Imported) -> bool {
-    !imported.trees.is_empty() || !imported.answers.is_empty() || !imported.lost.is_empty()
+    !imported.trees.is_empty() || !imported.lost.is_empty()
 }
 
 /// The JSON form of what a pass replicated.

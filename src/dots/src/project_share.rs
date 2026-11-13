@@ -156,9 +156,9 @@ fn status(
         (None, _) => out.push_str(", not shared across machines.\n"),
     }
     out.push_str(if machine {
-        "Machine sharing is on: bound projects replicate goals, tasks and attention.\n"
+        "Machine sharing is on: bound projects replicate goals and tasks.\n"
     } else {
-        "Machine sharing is off: bound projects share knowledge only; dots task share enable replicates goals, tasks and attention.\n"
+        "Machine sharing is off: bound projects share knowledge only; dots task share enable replicates goals and tasks.\n"
     });
     out.push_str("Shared identities (names never establish identity):\n");
     if known.is_empty() {

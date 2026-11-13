@@ -5,14 +5,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dots_substrate::memory::MemoryBackend;
 use dots_substrate::{Config, Flush, Pass, Substrate, Trigger};
-use rusqlite::Connection;
 
+use super::format::{Manifest, decode};
 use super::{Binding, Context, SharedProject, pass, take};
-use crate::attention::{
-    AnswerContent, Choice, DecisionKind, Incorporation, RequestContent, RequestKind, Source,
-};
 use crate::outputs::{PublishMode, PublishOutput};
-use crate::store::{Error, RequestState, SCHEMA_9, SHARING};
+use crate::store::Error;
 use crate::{Actor, NewTask, Owner, Project, Status, Store, Update};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -355,98 +352,21 @@ fn a_burst_of_writes_flushes_as_one_push() {
 }
 
 #[test]
-fn an_answer_elsewhere_is_incorporated_at_home_and_closes_everywhere() {
+fn a_manifest_with_fields_this_build_does_not_know_still_reads() {
     let lab = Lab::new();
-    let (mut a, mut b) = (lab.machine("a"), lab.machine("b"));
+    let mut a = lab.machine("a");
     a.enable();
-    b.enable();
     let root = a.goal("brief\n");
-    let raised = a
-        .store
-        .raise_request(
-            &a.project,
-            &root,
-            "scope",
-            &RequestContent {
-                kind: RequestKind::Decision,
-                title: "Scope".into(),
-                question: "Which scope?".into(),
-                context: None,
-                recommendation: None,
-                choices: vec![
-                    Choice {
-                        id: "small".into(),
-                        label: "Small".into(),
-                        detail: None,
-                    },
-                    Choice {
-                        id: "large".into(),
-                        label: "Large".into(),
-                        detail: None,
-                    },
-                ],
-                tasks: Vec::new(),
-            },
-            actor(21),
-        )
-        .unwrap();
-    let id = raised.request.id;
     a.sync();
-    b.sync();
-    assert_eq!(
-        b.store.request(&b.project, &id).unwrap().state,
-        RequestState::Open
-    );
-
-    let answered = b
-        .store
-        .answer_request(
-            &b.project,
-            &id,
-            &AnswerContent {
-                choice: Some("small".into()),
-                text: None,
-                source: Source::Ui,
-                provenance: "neutral viewer".into(),
-                interpretation: None,
-            },
-            Actor {
-                name: None,
-                now: 30,
-            },
-        )
-        .unwrap();
-    assert_eq!(answered.state, RequestState::Answered);
-    b.sync();
-    let (_, imported) = a.sync().unwrap();
-    assert_eq!(imported.answers, vec![id.clone()]);
-    let at_home = a.store.request(&a.project, &id).unwrap();
-    assert_eq!(at_home.state, RequestState::Answered);
-    assert_eq!(
-        at_home.answer.unwrap().content.choice.as_deref(),
-        Some("small")
-    );
-    a.store
-        .incorporate_request(
-            &a.project,
-            &id,
-            &Incorporation {
-                kind: DecisionKind::Decision,
-                decision: "Keep it small.".into(),
-            },
-            actor(40),
-        )
-        .unwrap();
-    a.sync();
-    b.sync();
-    let closed = b.store.request(&b.project, &id).unwrap();
-    assert_eq!(closed.state, RequestState::Closed);
-    assert!(closed.closure.is_some());
-    assert_eq!(b.store.share_status().unwrap().sent_answers, 0);
-    // The emptied answer list replicates too, and the home ignores it.
-    b.sync();
-    let (_, imported) = a.sync().unwrap();
-    assert_eq!(imported.answers, Vec::<String>::new());
+    let name = format!("tasks/{SHARED}/{root}").parse().unwrap();
+    let current = a.substrate.read(&name).unwrap().unwrap();
+    let blob = a.substrate.blob(&current.root).unwrap();
+    let manifest: Manifest = decode(&blob, "manifest").unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(blob.content()).unwrap();
+    value["requests"] = serde_json::json!({ "r-1": current.root.to_string() });
+    value["decisions"] = serde_json::json!({});
+    let extended = dots_substrate::Blob::new(serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(decode::<Manifest>(&extended, "manifest").unwrap(), manifest);
 }
 
 #[test]
@@ -497,79 +417,6 @@ fn disabled_sharing_and_unbound_projects_export_nothing() {
     a.add("later", None);
     assert!(a.sync().is_none());
     assert!(!a.store.share_pending().unwrap());
-}
-
-#[test]
-fn a_schema_9_catalog_migrates_once() {
-    let lab = Lab::new();
-    let path = lab.root.join("old.sqlite3");
-    {
-        let connection = Connection::open(&path).unwrap();
-        connection.execute_batch(SCHEMA_9).unwrap();
-        connection
-            .execute_batch(
-                "INSERT INTO projects VALUES('p-00000000000000000000000000000001','fixture');
-                 INSERT INTO tasks(id,project,title,status,created_at,updated_at)
-                   VALUES('t-00000000000000000000000000000001','p-00000000000000000000000000000001','old','open',1,1);
-                 INSERT INTO events(task,at,kind) VALUES('t-00000000000000000000000000000001',1,'created');
-                 INSERT INTO events(task,at,kind) VALUES('t-00000000000000000000000000000001',2,'updated');",
-            )
-            .unwrap();
-    }
-    let mut store = Store::open(&path).unwrap();
-    let project = Project::try_new("p-00000000000000000000000000000001").unwrap();
-    let history = store
-        .events(&project, "t-00000000000000000000000000000001", 10)
-        .unwrap();
-    assert_eq!(history.len(), 2);
-    let uids: std::collections::BTreeSet<_> =
-        history.iter().map(|event| event.uid.clone()).collect();
-    assert_eq!(uids.len(), 2);
-    assert!(uids.iter().all(|uid| uid.len() == 32));
-    drop(store);
-    let mut store = Store::open(&path).unwrap();
-    let again = store
-        .events(&project, "t-00000000000000000000000000000001", 10)
-        .unwrap();
-    assert_eq!(
-        again
-            .iter()
-            .map(|event| event.uid.clone())
-            .collect::<std::collections::BTreeSet<_>>(),
-        uids
-    );
-    assert!(store.sharing().unwrap().is_none());
-}
-
-#[test]
-fn a_schema_10_catalog_migrates_to_remember_declines() {
-    let lab = Lab::new();
-    let path = lab.root.join("ten.sqlite3");
-    {
-        let connection = Connection::open(&path).unwrap();
-        connection.execute_batch(SCHEMA_9).unwrap();
-        connection.execute_batch(SHARING).unwrap();
-        connection
-            .execute_batch(
-                "INSERT INTO projects VALUES('p-00000000000000000000000000000001','fixture');",
-            )
-            .unwrap();
-    }
-    let project = Project::try_new("p-00000000000000000000000000000001").unwrap();
-    let mut store = Store::open(&path).unwrap();
-    assert!(!store.share_declined(&project).unwrap());
-    assert!(store.decline_share(&project, 5).unwrap());
-    assert!(!store.decline_share(&project, 6).unwrap());
-    drop(store);
-    let mut store = Store::open(&path).unwrap();
-    assert!(store.share_declined(&project).unwrap());
-    store.share_project(&project).unwrap();
-    assert!(!store.share_declined(&project).unwrap());
-    let unknown = Project::try_new("p-00000000000000000000000000000002").unwrap();
-    assert!(matches!(
-        store.decline_share(&unknown, 7),
-        Err(Error::UnregisteredProject(_))
-    ));
 }
 
 #[test]

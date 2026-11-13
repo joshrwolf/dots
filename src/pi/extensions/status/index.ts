@@ -16,7 +16,6 @@ import {
 } from './model.ts';
 import {currentAgent} from '../../src/host/agent.ts';
 import {summaryLine} from '../../src/host/summary.ts';
-import {ATTENTION_EVENT, isAttentionSignal} from '../../src/host/attention.ts';
 
 /**
  * Owns this terminal's program status (OSC 7501), counting the agent and the
@@ -92,7 +91,6 @@ export default function status(
   let compacting = false;
   let rest: Rest = {state: 'idle'};
   let dialog: StatusInputs['dialog'];
-  let attention: NonNullable<StatusInputs['attention']> = [];
   const activities = new Map<string, readonly ActivityItem[]>();
   let prompt: string | undefined;
   let lastRoot: StatusRecord | undefined;
@@ -121,7 +119,6 @@ export default function status(
       running,
       compacting,
       ...(dialog === undefined ? {} : {dialog}),
-      ...(attention.length ? {attention} : {}),
       rest,
       activities,
       ...(sessionName === undefined ? {} : {sessionName}),
@@ -177,7 +174,6 @@ export default function status(
     running = false;
     compacting = false;
     dialog = undefined;
-    attention = [];
     pending?.cancel();
     pending = undefined;
     // Withdraw the old runtime before reload, session change or exit.
@@ -244,14 +240,6 @@ export default function status(
     report();
   });
 
-  pi.events.on(ATTENTION_EVENT, data => {
-    if (!isAttentionSignal(data)) return;
-    attention = data.requests.map(({id, title}) => ({
-      id,
-      title: summaryLine(title) ?? id,
-    }));
-    report();
-  });
   pi.events.on(ACTIVITY_EVENT, data => {
     const snapshot = data as ActivitySnapshot;
     if (snapshot.items.length > 0)

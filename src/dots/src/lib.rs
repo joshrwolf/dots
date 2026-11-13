@@ -1,7 +1,5 @@
 //! Agent-facing command parsing and presentation over shared domain operations.
 mod agent;
-mod attention;
-mod attention_view;
 mod command;
 mod github_reviews;
 mod goal_brief;
@@ -127,10 +125,6 @@ fn write_output(out: &mut dyn Write, output: &str) -> Result<()> {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "One match maps every command to its owner"
-)]
 fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Result<String> {
     let Some(command) = cli.command else {
         return Ok(Cli::command().render_long_help().to_string());
@@ -186,19 +180,6 @@ fn dispatch(environment: &Environment<'_>, cli: Cli, out: &mut dyn Write) -> Res
                 out,
             })
         }
-        Command::Attention {
-            project,
-            owner,
-            fresh,
-            command,
-        } => attention::run(attention::Invocation {
-            command,
-            project,
-            owner: owner.as_deref(),
-            directory: &environment.directory(cli.directory)?,
-            fresh,
-            json: cli.json,
-        }),
         Command::Skills {
             command: SkillCommand::Render { reference },
         } => Ok(if reference {

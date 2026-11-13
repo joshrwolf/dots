@@ -118,12 +118,11 @@ runtime reads the goals whose root it claims (`dots task goal coordinating`),
 in every project, and shows them as its own goals, followed or not. Unfollowing
 removes only the read-only follow: a goal the session coordinates stays until
 it is paused, released, handed off or closed, and unfollowing does none of
-those. When that read fails, the session keeps the goals it last knew, says so,
-and delivers nothing until a read succeeds. Managed workers never coordinate,
+those. When that read fails, the session keeps the goals it last knew and says so. Managed workers never coordinate,
 so their goals are only the ones they follow. With no follows and no
 coordination, nothing is shown or read.
 
-A session's goals show one summary line below the editor: progress, attention,
+A session's goals show one summary line below the editor: progress,
 the task this session or its workers are on, and how many other goals it has.
 Clicking it or using `/goal` opens [Rex Goals](../home/rex/.config/rex/README.md)
 preselected to the relevant project and goal. **Cmd+G** opens the same global
@@ -131,28 +130,10 @@ browser directly. Inspection does not follow, claim or start work, and preserves
 the Pi editor draft. Outside Rex, use `dots task goal show` for text inspection.
 Headless `/goal` returns a bounded text record without starting a model turn.
 
-### Attention
-
-A goal's coordinator asks a person through `dots attention` requests; a request
-holds the tasks it names until the coordinator incorporates the answer. A quiet
-line below the editor names outstanding requests in this session's exact
-active/followed scope. Clicking it opens [Rex Attention](../home/rex/.config/rex/README.md),
-the same global inbox as **Cmd+I**. Opening either global view does not change
-the session's follows, coordination or context scope.
-
-An answer is saved before the inbox says so. Only the runtime that currently
-coordinates the goal, and only while the goal is not held, receives a message
-to incorporate it; other sessions show the same requests without acting, and
-only the coordinator reports them to the terminal status. A held goal stays
-paused whatever arrives. Answers given in chat are recorded through the
-`attention_record_chat` tool with a quote that must appear in a recent message
-Pi received as interactive input, separately from the agent's interpretation.
-Pi passes other extensions' input transforms on as interactive input, so the
-quote is the text as delivered, a cooperative record rather than proof of
-keystrokes; inbox answers are the person's own selection. Each goal's
-context carries its current mandate with the human input it rests on, recent
-decisions, saved answers not yet incorporated, and open requests, read from the
-store rather than the transcript.
+Each goal's context carries its brief, which records the agreed outcome and
+execution mandate, and its tasks with this session's role in the goal. Agents
+ask the user in chat; work waiting on the user is a held task whose reason
+names the question.
 
 For another project, supply its exact `project` key from `dots task --json`,
 not a guessed path. Several goals may be followed at once; selecting one changes

@@ -180,11 +180,7 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one scenario follows a goal across two machines"
-    )]
-    fn goals_replicate_read_only_move_home_and_carry_answers() {
+    fn goals_replicate_read_only_and_move_home() {
         let remote = Rc::new(Remote::new());
         let a = Machine::on(&remote);
         let b = Machine::on(&remote);
@@ -231,26 +227,6 @@ mod tests {
         let child = a.ok(&["task", "--owner", "coord", "add", "Leaf", "--parent", &root]);
         let child = str_at(&child, "/task/id").to_owned();
         // Pushes stay within the default budget of two per half minute.
-        let raised = a.ok_with(
-            &[
-                "attention",
-                "--owner",
-                "coord",
-                "raise",
-                &root,
-                "--key",
-                "layout",
-                "--content-file",
-                "-",
-            ],
-            Some(&json!({
-                "kind": "decision",
-                "title": "Choose the layout",
-                "question": "Which layout?",
-                "choices": [{"id": "one", "label": "One"}, {"id": "two", "label": "Two"}],
-            })),
-        );
-        let request = str_at(&raised, "/request/id").to_owned();
         let pending = a.ok(&["task", "share", "status"]);
         assert_eq!(pending["pending"].as_array().unwrap().len(), 1, "{pending}");
         assert!(
@@ -272,41 +248,6 @@ mod tests {
             refused.contains(&format!("dots task share take {root}")),
             "{refused}"
         );
-
-        // An answer on B reaches A, whose coordinator incorporates it.
-        let answered = b.ok_with(
-            &[
-                "attention",
-                "--fresh",
-                "--owner",
-                "human",
-                "answer",
-                &request,
-                "--content-file",
-                "-",
-            ],
-            Some(&json!({"choice": "two", "source": "ui", "provenance": "neutral viewer"})),
-        );
-        assert_eq!(str_at(&answered, "/request/state"), "answered");
-        b.sync();
-        let at_home = a.ok(&["attention", "--fresh", "show", &request]);
-        assert_eq!(str_at(&at_home, "/request/state"), "answered");
-        assert_eq!(str_at(&at_home, "/request/answer/choice"), "two");
-        a.ok_with(
-            &[
-                "attention",
-                "--owner",
-                "coord",
-                "incorporate",
-                &request,
-                "--content-file",
-                "-",
-            ],
-            Some(&json!({"kind": "decision", "decision": "Use two."})),
-        );
-        a.sync();
-        let closed = b.ok(&["attention", "--fresh", "show", &request]);
-        assert_eq!(str_at(&closed, "/request/state"), "closed");
 
         // B takes over, writes, and A sees the tree read-only.
         let taken = b.ok(&["task", "share", "take", &root]);

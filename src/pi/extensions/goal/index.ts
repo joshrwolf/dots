@@ -1,5 +1,5 @@
 import {Type} from 'typebox';
-import {MouseRegion, truncateToWidth} from '@earendil-works/pi-tui';
+import {MouseRegion} from '@earendil-works/pi-tui';
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -18,33 +18,10 @@ import {
   type GoalView,
 } from './present.ts';
 import {summaryRow} from './summary.ts';
-import {openRexView} from '../rex/index.ts';
-import {
-  GOAL_SECTION_PREFIX,
-  goalSectionKey,
-  goalSections,
-  orientation,
-} from './context.ts';
+import {openRexGoals} from '../rex/index.ts';
+import {GOAL_SECTION_PREFIX, goalSections, orientation} from './context.ts';
 import {bindAgent, endAgent, type Agent} from '../../src/host/agent.ts';
-import {ATTENTION_EVENT} from '../../src/host/attention.ts';
-import {TurnMessages} from '../../src/host/delivery.ts';
-import {Tasks} from '../../src/host/tasks.ts';
 import {watchChanges} from '../../src/host/changes.ts';
-import {AttentionController} from './attention/controller.ts';
-import {attentionContext} from './attention/context.ts';
-import {indicator} from './attention/model.ts';
-import {
-  HumanInputs,
-  RECORD_CHAT_DESCRIPTION,
-  RecordChatParameters,
-  recordChat,
-} from './attention/chat.ts';
-import {
-  dotsAttention,
-  failure as attentionFailure,
-  type AttentionSource,
-  type GoalRef,
-} from './attention/source.ts';
 import {
   dotsSource,
   dotsEvidenceSource,
@@ -52,6 +29,7 @@ import {
   type EvidenceSource,
   type GoalSource,
   type GoalList,
+  type GoalRef,
 } from './source.ts';
 
 import {
@@ -65,7 +43,6 @@ export const FOCUS_ENTRY = 'dots.goal.focus';
 const WIDGET = 'dots.goal';
 export const DISMISS_ENTRY = 'dots.goal.dismiss';
 const OFFERS_WIDGET = 'dots.goal.offers';
-const ATTENTION_WIDGET = 'dots.goal.attention';
 const HELP =
   "/goal [new IDEA | follow [ID [PROJECT]] | show [ID] | evidence TASK [EVENT|current] [PROJECT] | list | followed | offers | dismiss ID | refresh | unfollow ID | clear]. PROJECT is another project's exact key (the project field of dots task --json output); without it, follow uses this session's project. focus aliases follow; unfocus without an ID clears all follows. Goals this session coordinates stay in view without a follow until paused, released, handed off or closed; unfollowing never does any of those. No shared task state is changed.";
 
@@ -114,11 +91,8 @@ export function restoreFocus(
   return restoreGoals(entries).focus;
 }
 
-/** External reads, shared events and native view navigation. */
+/** Shared change notification and native view navigation. */
 export interface GoalOptions {
-  readonly source?: AttentionSource;
-  /** Undefined reads attention only on runs, opens and explicit refreshes. */
-  readonly tasks?: Pick<Tasks, 'follow' | 'head'> | undefined;
   /**
    * The changes marker to watch for other machines' task trees, or undefined
    * when this machine does not share them.
@@ -128,7 +102,6 @@ export interface GoalOptions {
     signal: AbortSignal,
   ) => Promise<string | undefined>;
   readonly openView?: (
-    view: 'goals' | 'attention',
     goal: {project: string; id: string} | undefined,
   ) => Promise<void>;
 }
@@ -137,26 +110,19 @@ export default function goalExtension(
   pi: ExtensionAPI,
   source: GoalSource = dotsSource,
   evidenceSource: EvidenceSource = dotsEvidenceSource,
-  attentionOptions: GoalOptions = {},
+  options: GoalOptions = {},
 ): void {
-  const attentionSource = attentionOptions.source ?? dotsAttention();
-  const changesMarker = attentionOptions.changes ?? shareChanges;
+  const changesMarker = options.changes ?? shareChanges;
   /** Stops watching imports for the current session. */
   let stopImports: (() => void) | undefined;
-  const attentionTasks =
-    'tasks' in attentionOptions ? attentionOptions.tasks : new Tasks();
-  const delivery = new TurnMessages(pi);
-  const humans = new HumanInputs();
-  /** Exact session scope and answer-delivery observations. */
-  let attention: AttentionController | undefined;
-  let attentionLine:
-    {text: string | undefined; theme: Theme; redraw: () => void} | undefined;
-  let attentionMounted = false;
-  const background = (
-    run: (controller: AttentionController) => Promise<void>,
-  ) => {
-    if (attention) attention.track(run(attention));
-  };
+  /**
+   * Goals the last successful coordination read found this runtime
+   * coordinating; a failed read keeps them shown, with its failure.
+   */
+  let duties: readonly GoalRef[] = [];
+  let dutyFailure: string | undefined;
+  let dutyReads = 0;
+  let dutyRead: AbortController | undefined;
   let focus: Focus | undefined;
   let model: GoalView | undefined;
   /** This session's goals: its follows plus the goals it coordinates. */
@@ -230,12 +196,6 @@ export default function goalExtension(
     if (ctx.hasUI) ctx.ui.setStatus(OFFERS_WIDGET, undefined);
     return undefined;
   };
-  const ref = (view: GoalView): GoalRef => ({
-    project: view.focus.project,
-    id: view.focus.id,
-  });
-  /** Every goal in view, followed or coordinated. */
-  const scope = (): GoalRef[] => [...views.values()].map(ref);
   const followedViews = () => [...follows].map(id => views.get(id)!);
   /** Record the follows; a coordinated goal's selection is not recorded. */
   const persist = () => {
@@ -245,7 +205,6 @@ export default function goalExtension(
       focus: (focus && follows.has(focus.id) ? focus : followed[0]) ?? null,
       followed,
     });
-    background(a => a.setScope(followedViews().map(ref)));
   };
   /**
    * Bring goals this session coordinates into view and drop those it no
@@ -254,7 +213,6 @@ export default function goalExtension(
    */
   const reconcile = (ctx: ExtensionContext): boolean => {
     if (!active) return false;
-    const duties = attention?.coordinated().goals ?? [];
     const coordinated = new Set(duties.map(goal => goal.id));
     let joined = false;
     let left = false;
@@ -329,11 +287,6 @@ export default function goalExtension(
       );
       summary.redraw();
     }
-    if (attentionLine) {
-      const model = attention?.model();
-      attentionLine.text = model && indicator(model);
-      attentionLine.redraw();
-    }
   };
   const select = (ctx: ExtensionContext, chosen: GoalView) => {
     focus = chosen.focus;
@@ -343,16 +296,13 @@ export default function goalExtension(
     draw(ctx);
   };
   /** Open the shared Rex surface; the local scope and editor draft stay unchanged. */
-  const openView = (
-    ctx: ExtensionContext,
-    view: 'goals' | 'attention' = 'goals',
-  ) => {
+  const openView = (ctx: ExtensionContext) => {
     if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
     const epoch = generation;
     const id = model?.focus.id ?? focus?.id;
     const project =
       model?.snapshot?.project ?? model?.focus.project ?? focus?.project;
-    if (view === 'goals' && id && !project) {
+    if (id && !project) {
       notify(
         ctx,
         'The goal project is unavailable. Use /goal refresh before opening it.',
@@ -360,78 +310,12 @@ export default function goalExtension(
       );
       return;
     }
-    const target =
-      view === 'goals' && id && project ? {id, project} : undefined;
+    const target = id && project ? {id, project} : undefined;
     const open =
-      attentionOptions.openView ??
-      ((view, target) => openRexView(pi, view, target, process.env));
-    open(view, target).catch((error: unknown) => {
+      options.openView ?? (target => openRexGoals(pi, target, process.env));
+    open(target).catch((error: unknown) => {
       if (active && epoch === generation) notify(ctx, String(error), 'error');
     });
-  };
-  /** One quiet clickable line near the editor while a request awaits the person. */
-  const drawAttention = (ctx: ExtensionContext) => {
-    if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
-    const model = attention?.model();
-    const text = model && indicator(model);
-    if (!text) {
-      if (attentionMounted) ctx.ui.setWidget(ATTENTION_WIDGET, undefined);
-      attentionMounted = false;
-      attentionLine = undefined;
-      return;
-    }
-    if (attentionMounted) {
-      paint();
-      return;
-    }
-    attentionMounted = true;
-    const epoch = generation;
-    ctx.ui.setWidget(
-      ATTENTION_WIDGET,
-      (tui, theme) => {
-        const owned = {text, theme, redraw: () => tui.requestRender()};
-        attentionLine = owned;
-        const region = new MouseRegion(
-          {
-            render: width =>
-              active && epoch === generation && owned.text
-                ? [
-                    truncateToWidth(
-                      theme.fg('warning', `${owned.text} · open`),
-                      width,
-                    ),
-                  ]
-                : [],
-            invalidate() {},
-          },
-          event => {
-            if (
-              !active ||
-              epoch !== generation ||
-              dialog ||
-              event.button !== 'left' ||
-              event.shift ||
-              event.alt ||
-              event.ctrl
-            )
-              return undefined;
-            if (event.type === 'press') return {handled: true, render: false};
-            if (event.type !== 'click') return undefined;
-            openView(ctx, 'attention');
-            return {handled: true, render: false};
-          },
-        );
-        return Object.assign(region, {
-          dispose: () => {
-            if (attentionLine === owned) {
-              attentionLine = undefined;
-              attentionMounted = false;
-            }
-          },
-        });
-      },
-      {placement: 'belowEditor'},
-    );
   };
   const draw = (ctx: ExtensionContext) => {
     if (!active || ctx.mode !== 'tui' || !ctx.hasUI) return;
@@ -504,12 +388,8 @@ export default function goalExtension(
     dialog = undefined;
     if (ctx && mounted && ctx.mode === 'tui' && ctx.hasUI)
       ctx.ui.setWidget(WIDGET, undefined);
-    if (ctx && attentionMounted && ctx.mode === 'tui' && ctx.hasUI)
-      ctx.ui.setWidget(ATTENTION_WIDGET, undefined);
     mounted = false;
     summary = undefined;
-    attentionMounted = false;
-    attentionLine = undefined;
   };
 
   // Ordinary observers share an in-flight read, including an explicit focus
@@ -622,9 +502,42 @@ export default function goalExtension(
   };
 
   /**
+   * Read the goals this runtime coordinates, fresh from the store's root
+   * claims; a later read supersedes an earlier one. Managed workers never
+   * coordinate. A failed read keeps the last goals: unknown is not none.
+   */
+  const readDuties = async (): Promise<void> => {
+    dutyRead?.abort();
+    const actor = agent;
+    if (!active || !actor || process.env.DOTS_WORKER_ID) return;
+    const epoch = ++dutyReads;
+    const controller = new AbortController();
+    dutyRead = controller;
+    try {
+      const goals = await source.coordinating(actor, controller.signal);
+      if (epoch !== dutyReads) return;
+      duties = goals;
+      dutyFailure = undefined;
+    } catch (error) {
+      if (epoch !== dutyReads) return;
+      dutyFailure = String(error);
+    } finally {
+      if (dutyRead === controller) dutyRead = undefined;
+    }
+  };
+  /** Reread coordination, then read any goal that joined the view. */
+  const coordinate = (ctx: ExtensionContext) => {
+    readDuties()
+      .then(() => (reconcile(ctx) ? refresh(ctx) : undefined))
+      .catch((error: unknown) => {
+        if (active) notify(ctx, String(error), 'error');
+      });
+  };
+
+  /**
    * Imported trees change only when the sync agent imports another machine's
    * writes; it then touches the substrate's changes marker. Reread the goals
-   * in view and attention when it does, as runs and explicit reads would.
+   * in view and coordination when it does, as runs and explicit reads would.
    */
   const watchImports = (ctx: ExtensionContext) => {
     const lifetime = new AbortController();
@@ -634,7 +547,7 @@ export default function goalExtension(
         if (!marker || lifetime.signal.aborted) return;
         watcher = watchChanges(marker, () => {
           if (!active || lifetime.signal.aborted) return;
-          background(a => a.refresh());
+          coordinate(ctx);
           if (views.size)
             refresh(ctx).catch((error: unknown) =>
               notify(ctx, String(error), 'error'),
@@ -678,9 +591,8 @@ export default function goalExtension(
     } catch (error) {
       notify(ctx, String(error), 'error');
     }
-    attention?.bind(agent);
-    background(a => a.setScope(followedViews().map(ref)));
     reconcile(ctx);
+    coordinate(ctx);
     const epoch = generation;
     if (focus) {
       model = views.get(focus.id);
@@ -690,32 +602,12 @@ export default function goalExtension(
     if (active && epoch === generation && ctx.mode === 'tui' && ctx.hasUI)
       await discover(ctx);
   };
-  pi.on('input', event => {
-    humans.observe(event);
-  });
   pi.on('session_start', (event, ctx) => {
     agent = bindAgent(ctx.sessionManager.getSessionId(), event.reason);
-    // Typed messages attest only within the session they were typed in.
-    if (event.reason !== 'reload') humans.clear();
-    delivery.bind(ctx);
-    attention?.close();
-    attention = new AttentionController({
-      source: attentionSource,
-      ...(attentionTasks ? {tasks: attentionTasks} : {}),
-      deliver: (compose, delivered) => delivery.send(compose, delivered),
-      branch: () => ctx.sessionManager.getBranch(),
-      // Managed workers never coordinate goals.
-      coordinates: !process.env.DOTS_WORKER_ID,
-      changed: () => {
-        drawAttention(ctx);
-        if (reconcile(ctx))
-          refresh(ctx).catch((error: unknown) =>
-            notify(ctx, String(error), 'error'),
-          );
-        paint();
-      },
-      signal: signal => pi.events.emit(ATTENTION_EVENT, signal),
-    });
+    dutyRead?.abort();
+    dutyReads++;
+    duties = [];
+    dutyFailure = undefined;
     stopImports?.();
     stopImports = watchImports(ctx);
     stopWorkerActivity?.();
@@ -748,10 +640,10 @@ export default function goalExtension(
     active = false;
     stopImports?.();
     stopImports = undefined;
-    attention?.close();
-    attention = undefined;
-    delivery.close();
-    pi.events.emit(ATTENTION_EVENT, {requests: []});
+    dutyRead?.abort();
+    dutyReads++;
+    duties = [];
+    dutyFailure = undefined;
     stopWorkerActivity?.();
     stopWorkerActivity = undefined;
     workerActivity = undefined;
@@ -787,36 +679,23 @@ export default function goalExtension(
     };
     await observe();
     if (!active) return;
-    // Attention reads coordination fresh; a goal that joined, here or in a
-    // read it started, is read before the sections are built.
-    const facts = await attention?.facts().catch(() => undefined);
+    // Coordination is read fresh; a goal that joined, here or in a read it
+    // started, is read before the sections are built.
+    await readDuties();
     if (!active) return;
     reconcile(ctx);
     if ([...views.values()].some(view => !view.snapshot && !view.error))
       await observe();
     if (!active) return;
-    const failure = attention?.coordinated().failure;
-    if (failure)
+    if (dutyFailure)
       sections[`${GOAL_SECTION_PREFIX}coordinating`] =
-        `Goals this session coordinates could not be checked: ${failure}. The goals in context may be out of date; check them with dots task goal coordinating before dispatching work.`;
-    for (const view of views.values()) {
-      Object.assign(sections, goalSections(view));
-      const goal = ref(view);
-      sections[`${goalSectionKey(view)}_attention`] = attentionContext(
-        goal,
-        facts?.get(`${goal.project}:${goal.id}`) ?? {
-          goal: undefined,
-          decisions: undefined,
-          mandateRequest: undefined,
-          failure: 'attention not read',
-        },
-        agent?.owner,
-      );
-    }
+        `Goals this session coordinates could not be checked: ${dutyFailure}. The goals in context may be out of date; check them with dots task goal coordinating before dispatching work.`;
+    for (const view of views.values())
+      Object.assign(sections, goalSections(view, agent?.owner));
   });
   pi.on('agent_end', async (_event, ctx) => {
     const epoch = generation;
-    background(a => a.refresh());
+    coordinate(ctx);
     await refresh(ctx);
     if (active && epoch === generation && ctx.mode === 'tui' && ctx.hasUI)
       await discover(ctx);
@@ -844,37 +723,6 @@ export default function goalExtension(
         {triggerTurn: false},
       );
   };
-  pi.registerTool({
-    name: 'attention_record_chat',
-    label: 'Record chat answer',
-    description: RECORD_CHAT_DESCRIPTION,
-    parameters: RecordChatParameters,
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: false,
-    },
-    async execute(_callId, params, signal) {
-      const actor = agent;
-      if (!actor) throw new Error('No live Pi session to record for.');
-      try {
-        const text = await recordChat(
-          params,
-          actor,
-          humans,
-          attentionSource,
-          scope(),
-          request => attention?.projectOf(request),
-          signal ?? new AbortController().signal,
-        );
-        background(a => a.refresh());
-        return {content: [{type: 'text', text}], details: {kind: params.kind}};
-      } catch (error) {
-        throw new Error(attentionFailure(error), {cause: error});
-      }
-    },
-  });
   pi.registerTool({
     name: 'goal_focus',
     label: 'Focus goal',
@@ -907,7 +755,7 @@ export default function goalExtension(
         if (!observed || observed.focus.id !== id)
           throw new Error('Goal focus was interrupted');
         return {
-          content: [{type: 'text', text: orientation(observed)}],
+          content: [{type: 'text', text: orientation(observed, agent?.owner)}],
           details: {id: observed.focus.id, project: observed.focus.project},
         };
       } finally {
@@ -918,9 +766,7 @@ export default function goalExtension(
 
   const unfollow = (ctx: ExtensionContext, id?: string) => {
     invalidate(ctx);
-    const coordinated = new Set(
-      (attention?.coordinated().goals ?? []).map(goal => goal.id),
-    );
+    const coordinated = new Set(duties.map(goal => goal.id));
     const leaving = id ? [id].filter(goal => follows.has(goal)) : [...follows];
     for (const goal of leaving) {
       dismiss(views.get(goal)!.focus.project, goal);
@@ -987,9 +833,7 @@ export default function goalExtension(
       openWorldHint: false,
     },
     async execute() {
-      const coordinated = new Set(
-        (attention?.coordinated().goals ?? []).map(goal => goal.id),
-      );
+      const coordinated = new Set(duties.map(goal => goal.id));
       const goals = [...views.values()].map(view => ({
         ...view.focus,
         title: view.snapshot?.overview.goal.root.title,
@@ -1060,7 +904,7 @@ export default function goalExtension(
           [
             'Help me shape a goal' +
               (idea ? `: ${idea}` : '. Ask what I want to accomplish.'),
-            'Discuss only what is unclear. When there is enough direction, capture a concise Markdown brief (including our working agreement) in a suitable document, then use dots task goal create TITLE --brief PATH --json to create its root and association together. If an appropriate root already exists, attach the brief instead. Add useful initial slices under that root and call goal_focus with its id so I can see it here.',
+            'Discuss only what is unclear. When there is enough direction, capture a concise Markdown brief (the agreed outcome and execution mandate) in a suitable document, then use dots task goal create TITLE --brief PATH --json to create its root and association together. If an appropriate root already exists, attach the brief instead. Add useful initial slices under that root and call goal_focus with its id so I can see it here.',
             'This request is to establish shared context and tracking, not to start implementation. Do not invent an execution policy or a fixed pipeline. Use the shared goals skill and worktrees skill when isolation is useful; Git and provider state are evidence, task status is coordination.',
           ].join('\n\n'),
           {deliverAs: 'followUp'},
@@ -1154,7 +998,9 @@ export default function goalExtension(
       }
       if (action === 'refresh') {
         const epoch = generation;
-        background(a => a.refresh());
+        await readDuties();
+        if (!active || generation !== epoch) return;
+        reconcile(ctx);
         await refresh(ctx);
         if (!active || generation !== epoch) return;
         while (request?.selected && views.size) {

@@ -325,8 +325,8 @@ return {
       error("a command view needs no picker", 0)
     end)
     views.open({
-      title = "attention",
-      command = { "/bin/dots", "attention", "view" },
+      title = "goals",
+      command = { "/bin/dots", "task", "goal", "view" },
       at = { session_id = "s", block_id = "go" },
     })
     local calls = changes(fake)
@@ -339,9 +339,9 @@ return {
       calls[2].args.layout,
       rex.layout.block({
         flavor = SHELL,
-        label = "attention",
+        label = "goals",
         options = {
-          command = { "/bin/dots", "attention", "view", "--dismiss", "views_dismiss" },
+          command = { "/bin/dots", "task", "goal", "view", "--dismiss", "views_dismiss" },
           cwd = "/src",
         },
       })

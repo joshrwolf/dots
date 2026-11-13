@@ -49,13 +49,13 @@ edges. `task goal list` shows each
 goal's task counts and last activity, most recent first, without reading briefs. Native edits are visible on the next inspection;
 association does not preserve historical bytes.
 
-## Goals and attention
+## Goals
 
 Each goal has one coordinator: the owner of its root claim, taken with
 `dots task goal coordinate ROOT`. A new goal starts uncoordinated. Only the
 coordinator adds, edits, claims, accepts or closes the goal's tasks, edits its
-references and brief association, and raises or incorporates its requests;
-other sessions read, and workers report to the coordinator. `--take` moves
+references and brief association; other sessions read, and workers report to
+the coordinator. `--take` moves
 every other owner's claim in the goal to the coordinator in one recorded
 transaction, and `--resume` reopens a held or closed root. Managed workers
 cannot coordinate, and a Pi session coordinates as its live runtime owner.
@@ -63,25 +63,17 @@ Releasing the root stops coordinating; holding it pauses the goal.
 `dots task goal coordinating` lists the exact goals the acting owner coordinates
 across every registered project, read from root claims alone.
 
-`dots attention` keeps the goal's durable questions for the user and its
-decisions, including the execution mandate, in the same catalog. A request
-moves open, answered, closed and never changes content; its logical key makes
-raising idempotent. An open or answered request holds the tasks it names and
-their descendants until the coordinator incorporates the answer, which records
-a decision and closes the request together. Every answer and standalone
-decision carries the human's own input with its source and provenance, separate
-from any agent interpretation; provenance is cooperative bookkeeping, not
-authentication. `attention list` and `decisions` read an explicit scope: every
-registered project, or exact `PROJECT:GOAL` identities. `dots attention --help`
-has the content-file shapes.
+The brief carries the goal's agreed outcome and execution mandate. Agents ask
+the user in chat; work waiting on an answer is held with a reason
+(`dots task hold ID --reason`) and reopened once answered.
 
 ## Across machines
 
 `dots task share enable` turns replication on for one machine; it is off by
 default. While on, every goal or top-level task tree of a project bound to a
 shared identity replicates; unbound projects never leave the machine. A tree
-carries its tasks, dependencies, references, brief, requests, decisions,
-history and the outputs its tasks name. Claims stay local.
+carries its tasks, dependencies, references, brief, history and the outputs
+its tasks name. Claims stay local.
 
 `dots project share`, run in a checkout, shows whether its project is bound,
 which shared identities exist, and whether this machine shares. One action
@@ -109,9 +101,7 @@ was offline and wrote meanwhile, the remote refuses its update; the substrate
 keeps it as a stranded entry, `dots task share status` lists the tasks and
 events it held that never published, and the tree turns read-only there.
 
-An answer given on a machine that is not the home travels to the home, whose
-coordinator incorporates it; the closure then replicates back. Disabling keeps
-imported trees read-only as last seen.
+Disabling keeps imported trees read-only as last seen.
 
 A brief or output revision the home cannot send, because it exceeds the
 substrate's 1 MiB blob limit or its bytes are gone, stays behind while the rest

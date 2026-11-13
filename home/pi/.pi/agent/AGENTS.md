@@ -35,8 +35,10 @@
 
 ## Communicating with me
 
-- Assume I read chat, not goal briefs, task entries, agent notes, checkpoints or
-  reports. Those are agent working material, not deliverables for me.
+- Assume I read chat only. dots goals, tasks, briefs and evidence are tools for
+  agents to coordinate and work with; I never read them, so ask me questions in
+  chat assuming I have read none of it. The same goes for agent notes,
+  checkpoints and reports.
 - Write a document specifically for me only when I explicitly request one.
   Maintaining project documentation within an agreed change is separate; its
   existence still does not mean I have read it.

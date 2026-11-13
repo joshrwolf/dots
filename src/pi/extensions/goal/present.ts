@@ -4,10 +4,7 @@ import type {Brief, GoalSnapshot, GoalTask, Hold} from './source.ts';
 
 /** A hold as dots states it: what the work waits on. */
 export function holdText(hold: Hold): string {
-  if (hold.kind === 'held_ancestor') return `ancestor ${hold.task} is held`;
-  return hold.state === 'answered'
-    ? `request ${hold.request} on ${hold.task} is answered, awaiting its coordinator`
-    : `request ${hold.request} on ${hold.task} awaits a person's answer`;
+  return `ancestor ${hold.task} is held`;
 }
 
 export interface Focus {

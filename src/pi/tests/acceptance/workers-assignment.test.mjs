@@ -387,37 +387,6 @@ test(
       task(['hold', goal, '--reason', 'Goal paused', '--owner', coordinator]);
       await refused('paused goal', /which has no coordinator/);
       task(['goal', 'coordinate', goal, '--resume', '--owner', coordinator]);
-      const content = path.join(directory, 'request.json');
-      writeFileSync(
-        content,
-        JSON.stringify({
-          kind: 'decision',
-          title: 'Choose the result',
-          question: 'Which result should the goal keep?',
-          tasks: [goal],
-        }),
-      );
-      const request = JSON.parse(
-        execFileSync(
-          'dots',
-          [
-            '--json',
-            'attention',
-            'raise',
-            goal,
-            '--project',
-            project,
-            '--key',
-            'result',
-            '--content-file',
-            content,
-            '--owner',
-            coordinator,
-          ],
-          {cwd: root, encoding: 'utf8'},
-        ),
-      );
-      await refused('outstanding request', /is held by request/);
       // Stopping your own worker never needs coordination; a settled one has
       // already closed its process.
       assert.match(
@@ -427,21 +396,6 @@ test(
       assert.equal(
         (await parent.call('worker_status', {id: second.id})).details.state,
         'completed',
-      );
-      execFileSync(
-        'dots',
-        [
-          'attention',
-          'withdraw',
-          request.request.id,
-          '--project',
-          project,
-          '--reason',
-          'Settled elsewhere',
-          '--owner',
-          coordinator,
-        ],
-        {cwd: root, encoding: 'utf8'},
       );
       const other = 'pi-session-other-0123456789abcdef';
       task(['goal', 'coordinate', goal, '--take', '--owner', other]);

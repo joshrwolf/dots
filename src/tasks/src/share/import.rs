@@ -1,4 +1,4 @@
-//! Foreign trees and other machines' answers into the local catalog.
+//! Foreign trees into the local catalog.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -11,10 +11,7 @@ use rusqlite::{OptionalExtension as _, Transaction, params};
 use serde::Serialize;
 
 use super::export::TREE;
-use super::format::{
-    Answers, DecisionRecord, Manifest, OutputRecord, RequestRecord, RevisionState, Segment,
-    TaskRecord, decode, share,
-};
+use super::format::{Manifest, OutputRecord, RevisionState, Segment, TaskRecord, decode, share};
 use super::{Context, imported_workspace, unix};
 use crate::store::{Error, Project, Store};
 
@@ -28,8 +25,6 @@ pub struct Imported {
     /// Home trees another machine took over; changes this machine had not
     /// yet flushed for them stay only in its local history.
     pub lost: Vec<String>,
-    /// Answers from other machines recorded on requests homed here.
-    pub answers: Vec<String>,
     /// Trees that could not be imported, with the reason.
     pub errors: Vec<(String, String)>,
 }
@@ -228,7 +223,6 @@ pub(super) fn import(
             }
         }
     }
-    import_answers(store, context, &mut imported)?;
     Ok(imported)
 }
 
@@ -361,54 +355,6 @@ fn apply(
         }
     }
 
-    let mut requests: Vec<RequestRecord> =
-        changed(&manifest.requests, previous.map(|p| &p.requests))
-            .iter()
-            .map(|hash| decode(&blob(hash)?, "request record"))
-            .collect::<Result<_, _>>()?;
-    requests.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
-    for record in &requests {
-        upsert_request(tx, project, record)?;
-        tx.execute("DELETE FROM request_choices WHERE request=?1", [&record.id])?;
-        for (position, choice) in record.choices.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO request_choices(request, position, id, label, detail) VALUES(?1, ?2, ?3, ?4, ?5)",
-                params![record.id, i64::try_from(position).expect("at most 8 choices"), choice.id, choice.label, choice.detail],
-            )?;
-        }
-        tx.execute("DELETE FROM request_tasks WHERE request=?1", [&record.id])?;
-        for task in &record.tasks {
-            if tx.execute(
-                "INSERT INTO request_tasks(request, task) SELECT ?1, id FROM tasks WHERE id=?2",
-                params![record.id, task],
-            )? == 0
-            {
-                complete = false;
-            }
-        }
-    }
-    for hash in changed(&manifest.decisions, previous.map(|p| &p.decisions)) {
-        let record: DecisionRecord = decode(&blob(&hash)?, "decision record")?;
-        tx.execute(
-            "INSERT INTO decisions(id, project, goal, kind, decision, human_text, human_source, human_provenance,
-               request, at, actor)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) ON CONFLICT(id) DO NOTHING",
-            params![
-                record.id,
-                project.as_str(),
-                record.goal,
-                record.kind,
-                record.decision,
-                record.human_text,
-                record.human_source,
-                record.human_provenance,
-                record.request,
-                record.at,
-                record.actor
-            ],
-        )?;
-    }
-
     let seen: BTreeSet<Hash> = previous
         .map(|previous| previous.segments.iter().copied().collect())
         .unwrap_or_default();
@@ -465,31 +411,6 @@ fn apply(
         }
     }
 
-    // Answers sent from here: settled ones leave, pending ones stay visible.
-    let sent: Vec<(String, String)> = {
-        let mut statement = tx.prepare(&format!(
-            "SELECT sent_answers.request, sent_answers.answer FROM sent_answers
-             JOIN requests ON requests.id=sent_answers.request WHERE requests.goal IN ({TREE})"
-        ))?;
-        statement
-            .query_map([&manifest.root], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<Result<_, _>>()?
-    };
-    for (request, answer) in sent {
-        let state: String = tx.query_row(
-            "SELECT state FROM requests WHERE id=?1",
-            [&request],
-            |row| row.get(0),
-        )?;
-        if state == "open" {
-            let answer: super::format::AnswerRecord = serde_json::from_str(&answer)
-                .map_err(|error| share(format!("stored answer for {request}: {error}")))?;
-            overlay_answer(tx, &request, &answer)?;
-        } else {
-            tx.execute("DELETE FROM sent_answers WHERE request=?1", [&request])?;
-            tx.execute("UPDATE sharing SET answers_dirty=1", [])?;
-        }
-    }
     tx.execute(
         &format!("DELETE FROM dirty_tasks WHERE task IN ({TREE})"),
         [&manifest.root],
@@ -516,78 +437,6 @@ fn upsert_task(tx: &Transaction<'_>, project: &Project, record: &TaskRecord) -> 
             record.created_at,
             record.updated_at,
             record.closed_at
-        ],
-    )?;
-    Ok(())
-}
-
-fn upsert_request(
-    tx: &Transaction<'_>,
-    project: &Project,
-    record: &RequestRecord,
-) -> Result<(), Error> {
-    let answer = record.answer.as_ref();
-    let closure = record.closure.as_ref();
-    tx.execute(
-        "INSERT INTO requests(id, project, goal, key, kind, title, question, context, recommendation, state,
-           created_at, created_by, supersedes, answer_choice, answer_text, answer_source, answer_provenance,
-           answer_interpretation, answered_at, answered_by, closure, closed_at, closed_by, close_reason)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-           ?21, ?22, ?23, ?24)
-         ON CONFLICT(id) DO UPDATE SET state=excluded.state, answer_choice=excluded.answer_choice,
-           answer_text=excluded.answer_text, answer_source=excluded.answer_source,
-           answer_provenance=excluded.answer_provenance, answer_interpretation=excluded.answer_interpretation,
-           answered_at=excluded.answered_at, answered_by=excluded.answered_by, closure=excluded.closure,
-           closed_at=excluded.closed_at, closed_by=excluded.closed_by, close_reason=excluded.close_reason",
-        params![
-            record.id,
-            project.as_str(),
-            record.goal,
-            record.key,
-            record.kind,
-            record.title,
-            record.question,
-            record.context,
-            record.recommendation,
-            record.state,
-            record.created_at,
-            record.created_by,
-            record.supersedes,
-            answer.and_then(|answer| answer.choice.clone()),
-            answer.and_then(|answer| answer.text.clone()),
-            answer.map(|answer| answer.source.clone()),
-            answer.map(|answer| answer.provenance.clone()),
-            answer.and_then(|answer| answer.interpretation.clone()),
-            answer.map(|answer| answer.at),
-            answer.and_then(|answer| answer.by.clone()),
-            closure.map(|closure| closure.kind.clone()),
-            closure.map(|closure| closure.at),
-            closure.and_then(|closure| closure.by.clone()),
-            closure.and_then(|closure| closure.reason.clone()),
-        ],
-    )?;
-    Ok(())
-}
-
-/// Show an answer sent from here on the local copy of its request.
-pub(crate) fn overlay_answer(
-    tx: &Transaction<'_>,
-    request: &str,
-    answer: &super::format::AnswerRecord,
-) -> Result<(), Error> {
-    tx.execute(
-        "UPDATE requests SET state='answered', answer_choice=?2, answer_text=?3, answer_source=?4,
-           answer_provenance=?5, answer_interpretation=?6, answered_at=?7, answered_by=?8
-         WHERE id=?1 AND state='open'",
-        params![
-            request,
-            answer.choice,
-            answer.text,
-            answer.source,
-            answer.provenance,
-            answer.interpretation,
-            answer.at,
-            answer.by
         ],
     )?;
     Ok(())
@@ -681,64 +530,6 @@ fn write_replacing(document_root: &Path, target: &Path, content: &[u8]) -> Resul
         .write_all(content)
         .map_err(|error| share(format!("write {}: {error}", staged.path().display())))?;
     staged.publish_replace(target)?;
-    Ok(())
-}
-
-/// Record answers that other machines sent for open requests homed here.
-fn import_answers(
-    store: &mut Store,
-    context: Context<'_>,
-    imported: &mut Imported,
-) -> Result<(), Error> {
-    let names = match context.substrate.names("answers/") {
-        Ok(names) => names,
-        Err(SubstrateError::Unsynced) => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    let own = super::answers_ref(context.machine())?;
-    for name in names.into_iter().filter(|name| *name != own) {
-        let value = match context.substrate.read(&name) {
-            Ok(Some(value)) => value,
-            Ok(None) | Err(SubstrateError::NotCached(_)) => continue,
-            Err(error) => return Err(error.into()),
-        };
-        let answers: Answers = decode(&context.substrate.blob(&value.root)?, "answer list")?;
-        for sent in answers.sent {
-            let tx = store.write()?;
-            let open = tx
-                .query_row(
-                    "SELECT 1 FROM requests WHERE id=?1 AND goal=?2 AND state='open'",
-                    params![sent.request, sent.goal],
-                    |_| Ok(()),
-                )
-                .optional()?
-                .is_some();
-            if !open || crate::store::foreign(&tx, &sent.goal)?.is_some() {
-                continue;
-            }
-            if let Some(choice) = &sent.answer.choice {
-                let known = tx
-                    .query_row(
-                        "SELECT 1 FROM request_choices WHERE request=?1 AND id=?2",
-                        params![sent.request, choice],
-                        |_| Ok(()),
-                    )
-                    .optional()?
-                    .is_some();
-                if !known {
-                    continue;
-                }
-            }
-            overlay_answer(&tx, &sent.request, &sent.answer)?;
-            tx.execute(
-                "INSERT INTO events(task, at, actor, kind, detail, uid)
-                 VALUES(?1, ?2, ?3, 'request-answered', ?4, lower(hex(randomblob(16))))",
-                params![sent.goal, sent.answer.at, sent.answer.by, sent.request],
-            )?;
-            tx.commit()?;
-            imported.answers.push(sent.request);
-        }
-    }
     Ok(())
 }
 

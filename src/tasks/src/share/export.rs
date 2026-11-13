@@ -1,4 +1,4 @@
-//! Home trees and sent answers into deferred substrate updates.
+//! Home trees into deferred substrate updates.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::SystemTime;
@@ -9,12 +9,10 @@ use rusqlite::{OptionalExtension as _, Transaction, params};
 use serde::Serialize;
 
 use super::format::{
-    AnswerRecord, Answers, ChoiceRecord, ClosureRecord, DecisionRecord, EventRecord,
-    EvidenceRecord, FORMAT, GoalRecord, Manifest, OutputRecord, ReferenceRecord, RequestRecord,
-    RevisionRecord, RevisionState, SEGMENT_TARGET, Segment, SentAnswer, TaskRecord, decode, encode,
-    share,
+    EventRecord, EvidenceRecord, FORMAT, GoalRecord, Manifest, OutputRecord, ReferenceRecord,
+    RevisionRecord, RevisionState, SEGMENT_TARGET, Segment, TaskRecord, decode, encode, share,
 };
-use super::{Context, SharedProject, Withheld, WithheldKind, answers_ref, tree_ref, unix};
+use super::{Context, SharedProject, Withheld, WithheldKind, tree_ref, unix};
 use crate::outputs::MAX_OUTPUT_BYTES;
 use crate::store::{Error, Store};
 
@@ -23,8 +21,6 @@ use crate::store::{Error, Store};
 pub struct Exported {
     /// Roots whose trees changed and now wait in the outbox.
     pub trees: Vec<String>,
-    /// Whether this machine's answers changed and wait in the outbox.
-    pub answers: bool,
     /// Trees that could not be exported, with the reason; their changes stay
     /// queued and the next export retries them. Other trees still export.
     pub errors: Vec<(String, String)>,
@@ -72,7 +68,6 @@ pub(super) fn export(
                 .push((root, super::import::describe(&error))),
         }
     }
-    exported.answers = export_answers(store, context, now)?;
     Ok(exported)
 }
 
@@ -339,14 +334,6 @@ fn build(
         }
         None => None,
     };
-    let mut requests = BTreeMap::new();
-    let mut decisions = BTreeMap::new();
-    for record in request_records(tx, &members)? {
-        requests.insert(record.id.clone(), add(encode(&record)?));
-    }
-    for record in decision_records(tx, &members)? {
-        decisions.insert(record.id.clone(), add(encode(&record)?));
-    }
     // Events not yet in a segment, oldest first.
     let mut fresh = Vec::new();
     let mut published = Vec::new();
@@ -437,8 +424,6 @@ fn build(
         moved_to: None,
         goal,
         tasks,
-        requests,
-        decisions,
         outputs,
         segments,
         contents,
@@ -501,115 +486,6 @@ fn strings(tx: &Transaction<'_>, sql: &str, id: &str) -> Result<Vec<String>, Err
     Ok(statement
         .query_map([id], |row| row.get(0))?
         .collect::<Result<_, _>>()?)
-}
-
-fn request_records(tx: &Transaction<'_>, members: &[String]) -> Result<Vec<RequestRecord>, Error> {
-    let mut records = Vec::new();
-    let mut statement = tx.prepare(
-        "SELECT id,goal,key,kind,title,question,context,recommendation,state,created_at,created_by,supersedes,
-           answer_choice,answer_text,answer_source,answer_provenance,answer_interpretation,answered_at,answered_by,
-           closure,closed_at,closed_by,close_reason
-         FROM requests WHERE goal=?1 ORDER BY created_at, id",
-    )?;
-    for goal in members {
-        let rows = statement.query_map([goal], |row| {
-            let answer = match row.get::<_, Option<String>>(14)? {
-                Some(source) => Some(AnswerRecord {
-                    choice: row.get(12)?,
-                    text: row.get(13)?,
-                    source,
-                    provenance: row.get::<_, Option<String>>(15)?.unwrap_or_default(),
-                    interpretation: row.get(16)?,
-                    at: row.get::<_, Option<i64>>(17)?.unwrap_or_default(),
-                    by: row.get(18)?,
-                }),
-                None => None,
-            };
-            let closure = match row.get::<_, Option<String>>(19)? {
-                Some(kind) => Some(ClosureRecord {
-                    kind,
-                    at: row.get::<_, Option<i64>>(20)?.unwrap_or_default(),
-                    by: row.get(21)?,
-                    reason: row.get(22)?,
-                }),
-                None => None,
-            };
-            Ok(RequestRecord {
-                format: FORMAT,
-                id: row.get(0)?,
-                goal: row.get(1)?,
-                key: row.get(2)?,
-                kind: row.get(3)?,
-                title: row.get(4)?,
-                question: row.get(5)?,
-                context: row.get(6)?,
-                recommendation: row.get(7)?,
-                state: row.get(8)?,
-                created_at: row.get(9)?,
-                created_by: row.get(10)?,
-                supersedes: row.get(11)?,
-                choices: Vec::new(),
-                tasks: Vec::new(),
-                answer,
-                closure,
-            })
-        })?;
-        for row in rows {
-            records.push(row?);
-        }
-    }
-    for record in &mut records {
-        let mut statement = tx.prepare(
-            "SELECT id,label,detail FROM request_choices WHERE request=?1 ORDER BY position",
-        )?;
-        record.choices = statement
-            .query_map([&record.id], |row| {
-                Ok(ChoiceRecord {
-                    id: row.get(0)?,
-                    label: row.get(1)?,
-                    detail: row.get(2)?,
-                })
-            })?
-            .collect::<Result<_, _>>()?;
-        record.tasks = strings(
-            tx,
-            "SELECT task FROM request_tasks WHERE request=?1 ORDER BY task",
-            &record.id,
-        )?;
-    }
-    Ok(records)
-}
-
-fn decision_records(
-    tx: &Transaction<'_>,
-    members: &[String],
-) -> Result<Vec<DecisionRecord>, Error> {
-    let mut statement = tx.prepare(
-        "SELECT id,goal,kind,decision,human_text,human_source,human_provenance,request,at,actor
-         FROM decisions WHERE goal=?1 ORDER BY at, id",
-    )?;
-    let mut records = Vec::new();
-    for goal in members {
-        let rows = statement.query_map([goal], |row| {
-            Ok(DecisionRecord {
-                format: FORMAT,
-                id: row.get(0)?,
-                goal: row.get(1)?,
-                kind: row.get(2)?,
-                decision: row.get(3)?,
-                human_text: row.get(4)?,
-                human_source: row.get(5)?,
-                human_provenance: row.get(6)?,
-                request: row.get(7)?,
-                at: row.get(8)?,
-                actor: row.get(9)?,
-            })
-        })?;
-        for row in rows {
-            records.push(row?);
-        }
-    }
-    Ok(records)
 }
 
 fn event_record(tx: &Transaction<'_>, seq: i64) -> Result<EventRecord, Error> {
@@ -784,64 +660,4 @@ fn output_record(
         media_type,
         revisions,
     }))
-}
-
-/// Defer this machine's answers when they changed.
-fn export_answers(store: &mut Store, context: Context<'_>, now: SystemTime) -> Result<bool, Error> {
-    let tx = store.write()?;
-    let dirty: bool = tx.query_row(
-        "SELECT answers_dirty OR EXISTS(SELECT 1 FROM sent_answers WHERE exported IS NULL) FROM sharing",
-        [],
-        |row| row.get(0),
-    )?;
-    if !dirty {
-        return Ok(false);
-    }
-    let answers = {
-        let mut statement =
-            tx.prepare("SELECT request, goal, answer FROM sent_answers ORDER BY at, request")?;
-        statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })?
-            .map(|row| {
-                let (request, goal, answer) = row?;
-                let answer: AnswerRecord = serde_json::from_str(&answer)
-                    .map_err(|error| share(format!("stored answer for {request}: {error}")))?;
-                Ok(SentAnswer {
-                    request,
-                    goal,
-                    answer,
-                })
-            })
-            .collect::<Result<Vec<_>, Error>>()?
-    };
-    let blob = encode(&Answers {
-        format: FORMAT,
-        machine: context.machine().clone(),
-        sent: answers,
-    })?;
-    let name = answers_ref(context.machine())?;
-    let expected = match context.substrate.read(&name) {
-        Ok(value) => value.map(|value| value.version),
-        Err(SubstrateError::Unsynced) => None,
-        Err(error) => return Err(error.into()),
-    };
-    context.substrate.defer(
-        Update {
-            name,
-            expected,
-            root: blob.hash(),
-            new_blobs: vec![blob],
-        },
-        now,
-    )?;
-    tx.execute("UPDATE sent_answers SET exported=1", [])?;
-    tx.execute("UPDATE sharing SET answers_dirty=0", [])?;
-    tx.commit()?;
-    Ok(true)
 }

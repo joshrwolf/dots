@@ -12,8 +12,6 @@ import {
   type GoalSnapshot,
 } from '../../extensions/goal/source.ts';
 import {goalFixtures} from '../../dev/goals.ts';
-import {attentionStore, request} from '../attention-fixture.mjs';
-import type {AttentionSource} from '../../extensions/goal/attention/source.ts';
 
 export default function (pi: ExtensionAPI): void {
   const mark = (text: string) =>
@@ -162,6 +160,9 @@ export default function (pi: ExtensionAPI): void {
         return {project: snapshot.project, goals: [snapshot.overview.goal]};
       },
       async release() {},
+      async coordinating() {
+        return [];
+      },
       async show(_cwd, id, _signal, history = false) {
         mark('read');
         if (id === 't-abcdef') {
@@ -259,16 +260,9 @@ export default function (pi: ExtensionAPI): void {
       },
     },
     {
-      // The attention flow seeds one open request on the fixture goal.
-      source: attentionStore(
-        process.env.DOTS_FIXTURE_ATTENTION
-          ? {requests: [request({goal: 't-123abc'})]}
-          : {},
-      ).source as AttentionSource,
-      tasks: undefined,
       changes: async () => undefined,
-      async openView(view, target) {
-        mark(`navigate:${view}:${target?.id ?? 'global'}`);
+      async openView(target) {
+        mark(`navigate:${target?.id ?? 'global'}`);
         mark(`editor:${current?.ui.getEditorText() ?? ''}`);
       },
     },

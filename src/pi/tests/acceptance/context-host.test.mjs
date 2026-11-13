@@ -6,7 +6,6 @@ import {join} from 'node:path';
 import test from 'node:test';
 import goal, {FOCUS_ENTRY} from '../../extensions/goal/index.ts';
 import {snapshot, source} from '../goal-fixture.mjs';
-import {attentionStore} from '../attention-fixture.mjs';
 import memory from '../../extensions/memory/index.ts';
 import rex from '../../extensions/rex/index.ts';
 import {goalSectionKey} from '../../extensions/goal/context.ts';
@@ -41,12 +40,9 @@ test(
       'PI_SESSION_ID',
     ].map(key => [key, process.env[key]]);
     for (const [key] of inherited) delete process.env[key];
+    // Goals and coordination come from fixture records: no catalog, nothing
+    // from this machine.
     const backend = source();
-    // Attention reads the same fixture records as the goals: no catalog, no
-    // task stream, nothing from this machine.
-    const attention = attentionStore({
-      goals: [{project: '/example/project', id: 't-123abc'}],
-    });
     const requests = [];
     const errors = [];
     const reports = [];
@@ -216,7 +212,7 @@ test(
                   );
                 },
               },
-              {source: attention.source, tasks: undefined},
+              {changes: async () => undefined},
             ),
         ],
       });
@@ -296,8 +292,9 @@ test(
         false,
         'coordination was read, not unavailable',
       );
-      // The report names the five largest sections and counts the rest.
-      assert.match(currentReport, /Companion sections \(6\)[\s\S]*… 1 more/);
+      // Five sections fit the report without an overflow count.
+      assert.match(currentReport, /Companion sections \(5\)/);
+      assert.doesNotMatch(currentReport, /… \d+ more/);
       for (const section of [
         'dots_memory_global',
         'dots_memory_project',
@@ -309,7 +306,7 @@ test(
         new RegExp(
           `${goalSectionKey({
             focus: {id: 't-123abc', project: '/example/project'},
-          })}_attention`,
+          })}_tasks`,
         ),
       );
       assert.equal(
@@ -540,9 +537,8 @@ test(
       assert.match(promptSections(requests.at(-1)), /Goal t-123abc/);
       assert.doesNotMatch(promptSections(requests.at(-1)), /Goal t-999999/);
       assert.ok(
-        attention.state.calls.some(call => call.op === 'coordinating') &&
-          attention.state.calls.some(call => call.op === 'list'),
-        'attention reads went to the fixture',
+        backend.coordinations.length > 0,
+        'coordination reads went to the fixture',
       );
       assert.deepEqual(errors, []);
     } finally {

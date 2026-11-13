@@ -22,28 +22,6 @@ pub(crate) fn width(text: &str) -> usize {
     text.width()
 }
 
-/// At most `max` cells, ending in `…` when cut.
-pub(crate) fn fit(text: &str, max: usize) -> String {
-    if width(text) <= max {
-        return text.to_owned();
-    }
-    if max == 0 {
-        return String::new();
-    }
-    let mut out = String::new();
-    let mut used = 0;
-    for grapheme in text.graphemes(true) {
-        let cells = grapheme.width();
-        if used + cells + 1 > max {
-            break;
-        }
-        out.push_str(grapheme);
-        used += cells;
-    }
-    out.push('…');
-    out
-}
-
 /// Word-wrapped lines of at most `max` cells; words longer than a line break
 /// between graphemes.
 pub(crate) fn wrap(text: &str, max: usize) -> Vec<String> {

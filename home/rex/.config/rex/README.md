@@ -22,7 +22,6 @@ the app.
 | In Go: Ctrl+R / Ctrl+T / Ctrl+O | Start Pi in a worktree: review the typed PR, work on the typed Linear issue, or a new session in the selected row's repo |
 | Cmd+O | Back to the last tab you jumped from; again to return |
 | Cmd+Shift+R | PRs: the watch list agents keep, with review and CI status |
-| Cmd+I | Attention: session-oriented inbox across registered projects |
 | Cmd+G | Goals: dependency graphs, progress, briefs and history |
 | Cmd+Shift+A | Rex's activity panel: everything reporting status, across sessions |
 | Cmd+H / Cmd+K, Cmd+J / Cmd+L | Previous, next tab |
@@ -40,19 +39,9 @@ action. A tab shows one view at a time: a view's key closes it, and another
 view's key replaces it. Esc closes a view and returns focus to the pane you
 were in, zoomed again if it was.
 
-Attention uses the same fuzzy picker as Go and Goals, with its inbox on the left
-and a bounded reply pane on the right. Type to filter; **Enter** moves to the
-selected question's choices. Reply actions stay below the question and
-recommendation; **Read in full** shows complete context and choices. Requests
-without a session link use their question titles. **Ctrl+O** opens the exact
-reporting conversation without starting an agent; **Ctrl+G** opens Goals and
-returns with the search and drafts intact. Missing or ambiguous sessions stay explicit. A saved reply does not prove pickup, and an
-incorporated decision does not prove work resumed. Drafts last for the open popup;
-send or clear them before jumping to a conversation. Closing answers nothing.
-
 Goals uses the same fuzzy picker as Go. Type a project or goal title; its
 preview below shows the dependency graph, task states and progress. **Enter**
-opens tasks and inspection pages, including briefs, decisions and history;
+opens tasks and inspection pages, including briefs and history;
 entering a task group shows its children. **Esc** goes back with the previous
 search and selection intact, then closes. **Tab** changes scope; **=** searches
 completed work. Click a row to select it. Scroll the preview with **Shift+Up/Down**,

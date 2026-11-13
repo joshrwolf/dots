@@ -240,6 +240,10 @@ test('real isolated source reads complete history and selects the explicit proje
       {[open.task.id]: null},
     );
     assert.equal(cli('show', second.task.id).task.owner, current.owner);
+    assert.deepEqual(
+      await dotsSource.coordinating(current, new AbortController().signal),
+      [{project, id: other}],
+    );
     await assert.rejects(
       dotsSource.show(
         dir,

@@ -26,9 +26,7 @@ pub struct StrandedTree {
     pub tasks: Vec<UnpublishedTask>,
     /// Events the remote lacks, oldest first.
     pub events: Vec<UnpublishedEvent>,
-    /// Requests, decisions and outputs whose refused records differ.
-    pub requests: Vec<String>,
-    pub decisions: Vec<String>,
+    /// Outputs whose refused records differ.
     pub outputs: Vec<String>,
     /// Set when the refused records could not be read back.
     pub error: Option<String>,
@@ -70,8 +68,6 @@ pub fn stranded(substrate: &Substrate) -> Result<Vec<StrandedTree>, Error> {
             manifest: entry.root,
             tasks: Vec::new(),
             events: Vec::new(),
-            requests: Vec::new(),
-            decisions: Vec::new(),
             outputs: Vec::new(),
             error: None,
         };
@@ -111,19 +107,10 @@ fn compare(
             status: record.status,
         });
     }
-    let ids = |pairs: Vec<(String, Hash)>| pairs.into_iter().map(|(id, _)| id).collect();
-    tree.requests = ids(differs(
-        &refused.requests,
-        remote.as_ref().map(|r| &r.requests),
-    ));
-    tree.decisions = ids(differs(
-        &refused.decisions,
-        remote.as_ref().map(|r| &r.decisions),
-    ));
-    tree.outputs = ids(differs(
-        &refused.outputs,
-        remote.as_ref().map(|r| &r.outputs),
-    ));
+    tree.outputs = differs(&refused.outputs, remote.as_ref().map(|r| &r.outputs))
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
     // Shared segments hold the same events; read only the others.
     let shared: BTreeSet<Hash> = remote
         .as_ref()

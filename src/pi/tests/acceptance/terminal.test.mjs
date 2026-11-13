@@ -69,7 +69,7 @@ async function drive(flow, mode) {
   }
 }
 
-for (const flow of ['package', 'workbench', 'goal', 'attention', 'viewer']) {
+for (const flow of ['package', 'workbench', 'goal', 'viewer']) {
   test(`${flow} in both TUI modes`, {concurrency: true}, async t => {
     await Promise.all(
       ['regular', 'fullscreen'].map(mode =>

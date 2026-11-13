@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 use serde::Serialize;
 
+use dots_documents::mutation_lock::MutationLock;
+
 use crate::goals;
+use crate::outputs::document_root;
 use crate::references::{self, ExternalReference};
 
 /// Path relative to the caller's platform data directory.
@@ -13,11 +16,20 @@ pub const STORE_PATH: &str = "dots/workspace.sqlite3";
 
 const ID_ATTEMPTS: usize = 16;
 
-/// The catalog schema this build writes; it migrates schemas 9 and 10 on open.
-const SCHEMA: i64 = 11;
+/// The catalog schema this build writes; it migrates schema 11 on open.
+const SCHEMA: i64 = 12;
 
-/// The catalog as schema 9 created it; new catalogs start here and migrate.
-pub(super) const SCHEMA_9: &str = "
+/// The current catalog, as a new catalog creates it.
+///
+/// Every event has a random `uid` that survives replication, while `seq`
+/// stays this machine's cursor; `published` marks events already placed in
+/// their tree's event segments. `sharing` holds this machine's identity and
+/// switch. `shared_trees` records each replicated tree's home, the version and
+/// manifest last confirmed on the remote, the manifest proposed since, and
+/// the brief bytes last exported. Triggers fill `dirty_tasks` while sharing
+/// is on; claims and releases stay local. `share_declines` holds projects the
+/// user chose not to share from this machine.
+const CURRENT: &str = "
     CREATE TABLE projects(id TEXT PRIMARY KEY, name TEXT NOT NULL);
     CREATE TABLE project_bindings(common_directory TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id));
     CREATE TABLE tasks(
@@ -27,7 +39,8 @@ pub(super) const SCHEMA_9: &str = "
         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER);
     CREATE INDEX tasks_project ON tasks(project, status);
     CREATE TABLE deps(task TEXT NOT NULL REFERENCES tasks(id), blocked_by TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY(task, blocked_by));
-    CREATE TABLE events(seq INTEGER PRIMARY KEY, task TEXT NOT NULL REFERENCES tasks(id), at INTEGER NOT NULL, actor TEXT, kind TEXT NOT NULL, detail TEXT, result TEXT, predecessor INTEGER, operation TEXT);
+    CREATE TABLE events(seq INTEGER PRIMARY KEY, task TEXT NOT NULL REFERENCES tasks(id), at INTEGER NOT NULL, actor TEXT, kind TEXT NOT NULL, detail TEXT, result TEXT, predecessor INTEGER, operation TEXT, uid TEXT, published INTEGER);
+    CREATE UNIQUE INDEX events_uid ON events(uid);
     CREATE TABLE goals(root TEXT PRIMARY KEY REFERENCES tasks(id), brief TEXT NOT NULL);
     CREATE TABLE task_refs(task TEXT NOT NULL REFERENCES tasks(id), url TEXT NOT NULL, label TEXT, PRIMARY KEY(task,url));
     CREATE TABLE outputs(project TEXT NOT NULL REFERENCES projects(id), slug TEXT NOT NULL, filename TEXT NOT NULL, media_type TEXT NOT NULL, PRIMARY KEY(project,slug));
@@ -36,44 +49,9 @@ pub(super) const SCHEMA_9: &str = "
     CREATE TABLE event_evidence(event INTEGER NOT NULL REFERENCES events(seq), project TEXT NOT NULL, slug TEXT NOT NULL, digest TEXT NOT NULL, PRIMARY KEY(event,project,slug,digest), FOREIGN KEY(project,slug,digest) REFERENCES output_revisions(project,slug,digest));
     CREATE UNIQUE INDEX result_predecessor ON events(task,COALESCE(predecessor,0)) WHERE result IS NOT NULL;
     CREATE TABLE purged_digests(project TEXT NOT NULL REFERENCES projects(id), digest TEXT NOT NULL, at INTEGER NOT NULL, actor TEXT, PRIMARY KEY(project,digest));
-    CREATE TABLE requests(
-        id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
-        key TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL, question TEXT NOT NULL, context TEXT, recommendation TEXT,
-        state TEXT NOT NULL, created_at INTEGER NOT NULL, created_by TEXT, supersedes TEXT UNIQUE REFERENCES requests(id),
-        answer_choice TEXT, answer_text TEXT, answer_source TEXT, answer_provenance TEXT, answer_interpretation TEXT,
-        answered_at INTEGER, answered_by TEXT,
-        closure TEXT, closed_at INTEGER, closed_by TEXT, close_reason TEXT);
-    CREATE UNIQUE INDEX requests_key ON requests(goal,key) WHERE closure IS NOT 'superseded';
-    CREATE INDEX requests_project ON requests(project,state);
-    CREATE TABLE request_choices(request TEXT NOT NULL REFERENCES requests(id), position INTEGER NOT NULL, id TEXT NOT NULL, label TEXT NOT NULL, detail TEXT, PRIMARY KEY(request,position), UNIQUE(request,id));
-    CREATE TABLE request_tasks(request TEXT NOT NULL REFERENCES requests(id), task TEXT NOT NULL REFERENCES tasks(id), PRIMARY KEY(request,task));
-    CREATE INDEX request_tasks_task ON request_tasks(task);
-    CREATE TABLE decisions(
-        id TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), goal TEXT NOT NULL REFERENCES tasks(id),
-        kind TEXT NOT NULL, decision TEXT NOT NULL, human_text TEXT, human_source TEXT, human_provenance TEXT,
-        request TEXT UNIQUE REFERENCES requests(id), at INTEGER NOT NULL, actor TEXT);
-    CREATE INDEX decisions_goal ON decisions(goal,kind);
-    PRAGMA user_version=9;
-";
-
-/// Schema 9 to 10: stable event identities and cross-machine sharing.
-///
-/// Every event gets a random `uid` that survives replication, while `seq`
-/// stays this machine's cursor; `published` marks events already placed in
-/// their tree's event segments. `sharing` holds this machine's identity and
-/// switch. `shared_trees` records each replicated tree's home, the version and
-/// manifest last confirmed on the remote, the manifest proposed since, and
-/// the brief bytes last exported. Triggers fill `dirty_tasks` while sharing
-/// is on; claims and releases stay local. `sent_answers` keeps answers given
-/// here to trees homed elsewhere until their home records them.
-pub(super) const SHARING: &str = "
-    ALTER TABLE events ADD COLUMN uid TEXT;
-    ALTER TABLE events ADD COLUMN published INTEGER;
-    UPDATE events SET uid=lower(hex(randomblob(16)));
-    CREATE UNIQUE INDEX events_uid ON events(uid);
     CREATE TABLE sharing(
         singleton INTEGER PRIMARY KEY CHECK(singleton=0), machine TEXT NOT NULL,
-        enabled INTEGER NOT NULL, changed_at INTEGER NOT NULL, answers_dirty INTEGER NOT NULL DEFAULT 0);
+        enabled INTEGER NOT NULL, changed_at INTEGER NOT NULL);
     CREATE TABLE shared_trees(
         root TEXT PRIMARY KEY, project TEXT NOT NULL REFERENCES projects(id), shared_project TEXT NOT NULL,
         home TEXT NOT NULL, version TEXT, manifest TEXT, proposed TEXT, brief TEXT, written_at INTEGER,
@@ -101,17 +79,21 @@ pub(super) const SHARING: &str = "
               WHERE output_revisions.project=NEW.project AND output_revisions.digest=NEW.digest
                 AND NOT EXISTS(SELECT 1 FROM dirty_tasks WHERE task=task_outputs.task);
         END;
-    CREATE TABLE sent_answers(
-        request TEXT PRIMARY KEY REFERENCES requests(id), goal TEXT NOT NULL, answer TEXT NOT NULL,
-        at INTEGER NOT NULL, exported INTEGER);
-    PRAGMA user_version=10;
-";
-
-/// Schema 10 to 11: projects the user chose not to share from this machine.
-const DECLINES: &str = "
     CREATE TABLE share_declines(
         project TEXT PRIMARY KEY REFERENCES projects(id), at INTEGER NOT NULL) WITHOUT ROWID;
-    PRAGMA user_version=11;
+    PRAGMA user_version=12;
+";
+
+/// Schema 11 to 12: requests, answers and decisions leave the catalog.
+/// Mandates move into their goal briefs first; see [`goals::carry_mandates`].
+const WITHOUT_ATTENTION: &str = "
+    DROP TABLE sent_answers;
+    DROP TABLE request_tasks;
+    DROP TABLE request_choices;
+    DROP TABLE decisions;
+    DROP TABLE requests;
+    ALTER TABLE sharing DROP COLUMN answers_dirty;
+    PRAGMA user_version=12;
 ";
 
 #[derive(Debug, thiserror::Error)]
@@ -216,21 +198,6 @@ pub enum Error {
         "goal {goal} has claims held by others: {claims}; pass --take if those sessions have stopped"
     )]
     ClaimsHeld { goal: String, claims: String },
-    #[error("{id} is named by outstanding requests {requests}; incorporate or withdraw them first")]
-    Outstanding { id: String, requests: String },
-    #[error("request {0} does not exist in this project")]
-    RequestNotFound(String),
-    #[error("request {id} {reason}")]
-    RequestConflict { id: String, reason: String },
-    /// An open-only transition met a request that moved on; `replacement`
-    /// names the request that superseded it.
-    #[error("request {id} {}", crate::attention::not_open_reason(*state, *closure, replacement.as_deref()))]
-    RequestNotOpen {
-        id: String,
-        state: RequestState,
-        closure: Option<crate::attention::ClosureKind>,
-        replacement: Option<String>,
-    },
 }
 
 /// Stable local project identity, independent of checkout location and display name.
@@ -364,58 +331,12 @@ pub struct Task {
 pub enum Hold {
     /// An ancestor is held; its whole subtree waits.
     HeldAncestor { task: String },
-    /// An open or answered, not yet incorporated, request names this task or an ancestor.
-    Request {
-        request: String,
-        task: String,
-        state: RequestState,
-    },
 }
 
 impl Hold {
     fn describe(&self) -> String {
         match self {
             Self::HeldAncestor { task } => format!("ancestor {task} is held"),
-            Self::Request {
-                request,
-                task,
-                state: RequestState::Answered,
-            } => format!(
-                "request {request} on {task} is answered but not yet incorporated by the coordinator"
-            ),
-            Self::Request { request, task, .. } => {
-                format!("request {request} on {task} awaits an answer")
-            }
-        }
-    }
-}
-
-/// Lifecycle of an attention request; transitions only move forward.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RequestState {
-    Open,
-    Answered,
-    Closed,
-}
-
-impl RequestState {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Answered => "answered",
-            Self::Closed => "closed",
-        }
-    }
-
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "open" => Some(Self::Open),
-            "answered" => Some(Self::Answered),
-            "closed" => Some(Self::Closed),
-            _ => None,
         }
     }
 }
@@ -557,17 +478,11 @@ pub enum EventKind {
     OutputDetached,
     GoalAttached,
     GoalDetached,
-    RequestRaised,
-    RequestAnswered,
-    RequestWithdrawn,
-    RequestSuperseded,
-    RequestIncorporated,
-    DecisionRecorded,
 }
 
 impl EventKind {
     /// Every kind, in the order help and listings present them.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 18] = [
         Self::Created,
         Self::Updated,
         Self::Claimed,
@@ -586,12 +501,6 @@ impl EventKind {
         Self::OutputDetached,
         Self::GoalAttached,
         Self::GoalDetached,
-        Self::RequestRaised,
-        Self::RequestAnswered,
-        Self::RequestWithdrawn,
-        Self::RequestSuperseded,
-        Self::RequestIncorporated,
-        Self::DecisionRecorded,
     ];
 
     /// The stored and printed name.
@@ -616,12 +525,6 @@ impl EventKind {
             Self::OutputDetached => "output-detached",
             Self::GoalAttached => "goal_attached",
             Self::GoalDetached => "goal_detached",
-            Self::RequestRaised => "request-raised",
-            Self::RequestAnswered => "request-answered",
-            Self::RequestWithdrawn => "request-withdrawn",
-            Self::RequestSuperseded => "request-superseded",
-            Self::RequestIncorporated => "request-incorporated",
-            Self::DecisionRecorded => "decision-recorded",
         }
     }
 }
@@ -731,7 +634,7 @@ impl Store {
             Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if !matches!(version, 9 | 10 | SCHEMA) {
+        if !matches!(version, 11 | SCHEMA) {
             return Err(Error::Schema(version));
         }
         Self::initialize(connection)
@@ -780,24 +683,28 @@ impl Store {
         }
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
+        // Carrying mandates writes briefs, so take the document lock first.
+        let migrating =
+            connection.pragma_query_value(None, "user_version", |row| row.get(0)) == Ok(11);
+        let lock = if migrating {
+            let root = document_root(&connection)?;
+            Some((MutationLock::acquire(&root.join("mutation.lock"))?, root))
+        } else {
+            None
+        };
         let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let version: i64 = tx.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        match version {
-            0 => {
-                // Schema 9, then the migrations an existing catalog takes.
-                tx.execute_batch(SCHEMA_9)?;
-                tx.execute_batch(SHARING)?;
-                tx.execute_batch(DECLINES)?;
+        match (version, &lock) {
+            (0, _) => tx.execute_batch(CURRENT)?,
+            (11, Some((_, root))) => {
+                goals::carry_mandates(&tx, root)?;
+                tx.execute_batch(WITHOUT_ATTENTION)?;
             }
-            9 => {
-                tx.execute_batch(SHARING)?;
-                tx.execute_batch(DECLINES)?;
-            }
-            10 => tx.execute_batch(DECLINES)?,
-            SCHEMA => {}
-            other => return Err(Error::Schema(other)),
+            (SCHEMA, _) => {}
+            (other, _) => return Err(Error::Schema(other)),
         }
         tx.commit()?;
+        drop(lock);
         Ok(Self { connection })
     }
 
@@ -1031,7 +938,7 @@ impl Store {
                 ));
             }
             if let Some(parent) = parent {
-                let target = load(&tx, project, parent)?;
+                load(&tx, project, parent)?;
                 if parent == id || descends_from(&tx, parent, id)? {
                     return Err(Error::AncestorCycle {
                         id: id.into(),
@@ -1039,11 +946,6 @@ impl Store {
                     });
                 }
                 authorize(&tx, parent, actor.name)?;
-                if target.goal != before.goal {
-                    leaving_goal(&tx, id)?;
-                }
-            } else if before.goal.is_some() && !before.is_goal_root() {
-                leaving_goal(&tx, id)?;
             }
             tx.execute(
                 "UPDATE tasks SET parent=?2 WHERE id=?1",
@@ -1089,9 +991,6 @@ impl Store {
             return Err(Error::Invalid("review and done require a result"));
         }
         authorize(&tx, id, actor.name)?;
-        if status.is_closed() && task.is_goal_root() {
-            require_settled_goal(&tx, id)?;
-        }
         if task.status == status {
             return Err(Error::Unchanged {
                 id: id.into(),
@@ -1520,51 +1419,7 @@ pub(super) fn writable(tx: &Transaction<'_>, id: &str) -> Result<(), Error> {
     }
 }
 
-/// Open or answered requests of `goal`, oldest first.
-pub(super) fn outstanding_requests(tx: &Transaction<'_>, goal: &str) -> Result<Vec<String>, Error> {
-    let mut statement = tx.prepare(
-        "SELECT id FROM requests WHERE goal=?1 AND state IN ('open','answered') ORDER BY created_at, rowid",
-    )?;
-    Ok(statement
-        .query_map([goal], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?)
-}
-
-/// A goal root may close or lose its goal only once no request is outstanding,
-/// whichever task the request names; `force` never bypasses this.
-pub(super) fn require_settled_goal(tx: &Transaction<'_>, goal: &str) -> Result<(), Error> {
-    let requests = outstanding_requests(tx, goal)?;
-    if requests.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::Outstanding {
-            id: goal.into(),
-            requests: requests.join(", "),
-        })
-    }
-}
-
-/// Refuse to move a subtree out of its goal while a request names any of it.
-fn leaving_goal(tx: &Transaction<'_>, id: &str) -> Result<(), Error> {
-    let mut statement = tx.prepare(
-        "WITH RECURSIVE subtree(id) AS (SELECT ?1 UNION SELECT tasks.id FROM tasks JOIN subtree ON tasks.parent=subtree.id)
-         SELECT DISTINCT requests.id FROM request_tasks JOIN requests ON requests.id=request_tasks.request
-         WHERE request_tasks.task IN subtree AND requests.state IN ('open','answered') ORDER BY requests.id",
-    )?;
-    let requests = statement
-        .query_map([id], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
-    if requests.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::Outstanding {
-            id: id.into(),
-            requests: requests.join(", "),
-        })
-    }
-}
-
-/// Held ancestors and unresolved requests on the task or an ancestor.
+/// Held ancestors of the task, nearest first.
 fn holds(tx: &Transaction<'_>, id: &str) -> Result<Vec<Hold>, Error> {
     let mut holds = Vec::new();
     let mut statement = tx.prepare(
@@ -1574,30 +1429,6 @@ fn holds(tx: &Transaction<'_>, id: &str) -> Result<Vec<Hold>, Error> {
     )?;
     for task in statement.query_map([id], |row| row.get::<_, String>(0))? {
         holds.push(Hold::HeldAncestor { task: task? });
-    }
-    let mut statement = tx.prepare(
-        "WITH RECURSIVE chain(id) AS (SELECT ?1 UNION SELECT tasks.parent FROM tasks JOIN chain ON tasks.id=chain.id WHERE tasks.parent IS NOT NULL)
-         SELECT requests.id, request_tasks.task, requests.state FROM request_tasks JOIN requests ON requests.id=request_tasks.request
-         WHERE request_tasks.task IN chain AND requests.state<>'closed' ORDER BY requests.created_at, requests.rowid, request_tasks.task",
-    )?;
-    let rows = statement.query_map([id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-        ))
-    })?;
-    for row in rows {
-        let (request, task, state) = row?;
-        let state = RequestState::parse(&state).ok_or_else(|| Error::Corrupt {
-            id: request.clone(),
-            field: "request state",
-        })?;
-        holds.push(Hold::Request {
-            request,
-            task,
-            state,
-        });
     }
     Ok(holds)
 }

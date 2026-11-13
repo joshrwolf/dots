@@ -9,8 +9,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, ensure};
 use dots_pick::spec::{PreviewAnchor, PreviewPosition};
 use dots_pick::{Action, Actions, Cell, Choice, Column, Entry, Group, Palette, Picker};
-use dots_tasks::attention::{GoalRef, Scope};
-use dots_tasks::{Project, Status, Store, Task};
+use dots_tasks::{GoalRef, Project, Status, Store, Task};
 use ratatui::backend::IntoCrossterm as _;
 use ratatui::crossterm::style::{StyledContent, Stylize as _, style};
 use ratatui::style::Color;
@@ -186,7 +185,6 @@ fn documents(bin: &str, key: &GoalKey) -> Vec<Row> {
     [
         GoalPreview::Graph,
         GoalPreview::Brief,
-        GoalPreview::Decisions,
         GoalPreview::History,
         GoalPreview::Record,
     ]
@@ -290,6 +288,21 @@ fn open(row: Row, bin: String) -> Result<Action<Row>> {
     Ok(Action::Push(page))
 }
 
+/// Run the Rex action the opener asked for when the view closes.
+fn run_dismiss(action: &str) -> Result<()> {
+    let mut command = std::process::Command::new("rex");
+    command.args(["--timeout", "30s", "do", action, "--json", "--args", "{}"]);
+    let output = dots_process::output(command, Duration::from_secs(35), 256 * 1024)
+        .with_context(|| format!("running rex do {action}"))?;
+    ensure!(
+        output.status.success(),
+        "rex do {action} failed ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(())
+}
+
 pub(crate) fn run(select: Option<GoalRef>, dismiss: Option<String>, json: bool) -> Result<String> {
     ensure!(
         !json && stdin().is_terminal() && stdout().is_terminal(),
@@ -316,7 +329,7 @@ pub(crate) fn run(select: Option<GoalRef>, dismiss: Option<String>, json: bool) 
     };
     view.run_actions(&actions)?;
     if let Some(action) = dismiss {
-        crate::attention_view::run_dismiss(&action)?;
+        run_dismiss(&action)?;
     }
     Ok(String::new())
 }
@@ -426,10 +439,6 @@ fn graph_preview(
     out
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "One read boundary validates goal membership and formats its inspection pages."
-)]
 pub(crate) fn preview(
     store: &mut Store,
     project: &Project,
@@ -475,32 +484,6 @@ pub(crate) fn preview(
                 );
             }
             Ok(text)
-        }
-        GoalPreview::Decisions => {
-            let list = store.decisions(
-                &Scope::Goals(vec![GoalRef {
-                    project: project.clone(),
-                    goal: goal.into(),
-                }]),
-                None,
-            )?;
-            ensure!(
-                list.errors.is_empty(),
-                "Decisions are unavailable: {:?}",
-                list.errors
-            );
-            let text = list
-                .goals
-                .iter()
-                .flat_map(|goal| &goal.decisions)
-                .map(crate::attention::decision_text)
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            Ok(if text.is_empty() {
-                "No decisions recorded.".into()
-            } else {
-                text
-            })
         }
         GoalPreview::History => {
             let events = store.history(project, Some(goal), 0, 101)?;
