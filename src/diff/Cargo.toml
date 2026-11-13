@@ -20,7 +20,7 @@ gix = { version = "0.90", default-features = false, features = ["status", "blob-
 arborium = { version = "2", features = ["lang-bash", "lang-c", "lang-cpp", "lang-css", "lang-diff", "lang-dockerfile", "lang-go", "lang-hcl", "lang-html", "lang-ini", "lang-java", "lang-javascript", "lang-json", "lang-lua", "lang-make", "lang-markdown", "lang-nix", "lang-proto", "lang-python", "lang-rego", "lang-rust", "lang-sql", "lang-starlark", "lang-toml", "lang-tsx", "lang-typescript", "lang-xml", "lang-yaml", "lang-zsh"] }
 rustix = { version = "1", features = ["event", "process", "stdio", "termios"] }
 tiny-skia = "0.12"
-cosmic-text = "0.19"
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
 flate2 = "1"
 base64 = "0.23"
 signal-hook = "0.3"

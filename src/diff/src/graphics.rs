@@ -7,10 +7,12 @@
 
 use std::collections::HashMap;
 use std::io::Write as _;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use base64::Engine as _;
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, Weight};
+use cosmic_text::{
+    Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, Weight, fontdb,
+};
 use ratatui::style::Color;
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
@@ -18,9 +20,41 @@ use crate::app::{App, Line};
 use crate::repo::Status;
 use crate::theme::{Rgb, mix};
 
+/// The fonts built into the program. Pictures draw only with these, so
+/// they look the same on every host, including hosts without system fonts.
+const FONTS: [&[u8]; 4] = [
+    include_bytes!("../fonts/Inter-Regular.ttf"),
+    include_bytes!("../fonts/Inter-SemiBold.ttf"),
+    include_bytes!("../fonts/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../fonts/JetBrainsMono-Bold.ttf"),
+];
+const SANS_SERIF: &str = "Inter";
+const MONOSPACE: &str = "JetBrains Mono";
+
+/// A font system holding only [`FONTS`].
+pub(crate) fn font_system() -> FontSystem {
+    let mut db = fontdb::Database::new();
+    for data in FONTS {
+        db.load_font_source(fontdb::Source::Binary(Arc::new(data)));
+    }
+    db.set_sans_serif_family(SANS_SERIF);
+    db.set_monospace_family(MONOSPACE);
+    // The locale only orders system fallback fonts, which this system has none of.
+    FontSystem::new_with_locale_and_db("en-US".to_owned(), db)
+}
+
 struct Fonts {
     system: FontSystem,
     cache: SwashCache,
+}
+
+impl Fonts {
+    fn new() -> Self {
+        Self {
+            system: font_system(),
+            cache: SwashCache::new(),
+        }
+    }
 }
 
 /// One header image's content; equal specs share an image.
@@ -467,7 +501,7 @@ impl Images {
 }
 
 pub(crate) struct Graphics {
-    fonts: Arc<Mutex<Option<Fonts>>>,
+    fonts: Fonts,
     images: Images,
 }
 
@@ -481,27 +515,10 @@ impl std::fmt::Debug for Graphics {
 
 impl Graphics {
     pub(crate) fn new() -> Self {
-        let fonts = Arc::new(Mutex::new(None));
-        let loading = Arc::clone(&fonts);
-        // Loading system fonts takes a while; headers stay text until then.
-        std::thread::spawn(move || {
-            let loaded = Fonts {
-                system: FontSystem::new(),
-                cache: SwashCache::new(),
-            };
-            if let Ok(mut slot) = loading.lock() {
-                *slot = Some(loaded);
-            }
-        });
         Self {
-            fonts,
+            fonts: Fonts::new(),
             images: Images::new(),
         }
-    }
-
-    /// True until fonts have loaded and a redraw can show images.
-    pub(crate) fn pending(&self) -> bool {
-        self.fonts.lock().is_ok_and(|f| f.is_none())
     }
 
     /// Sets the images of the headers the laid-out view shows in
@@ -510,13 +527,7 @@ impl Graphics {
     pub(crate) fn prepare(&mut self, app: &mut App) -> String {
         app.header_images.clear();
         let mut out = String::new();
-        let fonts_slot = Arc::clone(&self.fonts);
-        let Ok(mut guard) = fonts_slot.lock() else {
-            return out;
-        };
-        let Some(fonts) = guard.as_mut() else {
-            return out;
-        };
+        let fonts = &mut self.fonts;
         self.images.begin();
         let cell = cell_pixels();
         let cols = app.areas.diff.width.min(MAX_COLS);
@@ -580,10 +591,7 @@ fn spec_for(app: &App, file: usize, cols: u16, cell: (u16, u16)) -> Spec {
 /// to check it without a terminal.
 #[cfg(feature = "dev")]
 pub(crate) fn header_picture(app: &App, cols: u16, path: &std::path::Path) -> anyhow::Result<()> {
-    let mut fonts = Fonts {
-        system: FontSystem::new(),
-        cache: SwashCache::new(),
-    };
+    let mut fonts = Fonts::new();
     let spec = spec_for(app, app.top.file, cols, cell_pixels());
     let pixmap = render(&mut fonts, &spec);
     pixmap.save_png(path)?;
@@ -950,6 +958,31 @@ mod tests {
 
     fn pixmap(_: &Spec) -> Pixmap {
         Pixmap::new(4, 2).expect("pixmap")
+    }
+
+    #[test]
+    fn the_built_in_fonts_draw_headers_and_shots() {
+        let fonts = font_system();
+        for (family, weight) in [
+            (Family::SansSerif, Weight::NORMAL),
+            (Family::SansSerif, Weight::SEMIBOLD),
+            (Family::Monospace, Weight::NORMAL),
+            (Family::Monospace, Weight::BOLD),
+        ] {
+            let query = fontdb::Query {
+                families: &[family],
+                weight,
+                ..fontdb::Query::default()
+            };
+            let got = fonts
+                .db()
+                .query(&query)
+                .and_then(|id| fonts.db().face(id))
+                .map(|face| face.weight);
+            assert_eq!(got, Some(weight), "{family:?} at {weight:?}");
+        }
+        let width = measure(&mut Fonts::new(), "src/a.rs", 12.0, Weight::SEMIBOLD);
+        assert!(width > 0.0, "header text measures {width}");
     }
 
     #[test]

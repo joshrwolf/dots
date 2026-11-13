@@ -377,11 +377,7 @@ impl Runtime {
                 dirty = false;
             }
             let now = Instant::now();
-            let mut deadline = self.deadline(now);
-            if graphics.as_deref().is_some_and(Graphics::pending) {
-                deadline = deadline.min(now + Duration::from_millis(50));
-                dirty = true;
-            }
+            let deadline = self.deadline(now);
             match rx.recv_timeout(deadline.saturating_duration_since(now)) {
                 Ok(msg) => dirty |= self.handle(msg),
                 Err(RecvTimeoutError::Timeout) => {}

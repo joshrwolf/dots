@@ -54,9 +54,7 @@ pub(crate) fn dump(buf: &Buffer, ansi: bool) -> String {
 /// without a terminal: cells as rectangles, text in a monospace font.
 #[expect(clippy::many_single_char_names, reason = "cell and pixel coordinates")]
 pub(crate) fn picture(buf: &Buffer, path: &Path) -> Result<()> {
-    use cosmic_text::{
-        Attrs, Buffer as TextBuffer, Family, FontSystem, Metrics, Shaping, SwashCache, Weight,
-    };
+    use cosmic_text::{Attrs, Buffer as TextBuffer, Family, Metrics, Shaping, SwashCache, Weight};
     let (cw, ch) = (9u32, 19u32);
     let area = buf.area;
     let (w, h) = (u32::from(area.width) * cw, u32::from(area.height) * ch);
@@ -76,7 +74,7 @@ pub(crate) fn picture(buf: &Buffer, path: &Path) -> Result<()> {
             pixmap.fill_rect(rect, &paint, tiny_skia::Transform::identity(), None);
         }
     }
-    let mut fonts = FontSystem::new();
+    let mut fonts = crate::graphics::font_system();
     let mut cache = SwashCache::new();
     let data_w = pixmap.width();
     for y in area.top()..area.bottom() {
