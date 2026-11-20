@@ -180,7 +180,8 @@ test('indexes share one snapshot, retain missing/empty states and replace native
         {systemPromptOptions: {sections}},
         {cwd: repo.linked},
       );
-    assert.equal(Object.keys(sections).length, 3);
+    assert.equal(Object.keys(sections).length, 4);
+    const global = sections.dots_memory_global;
     const changed = publish(repo, [write(repo.project, 'Corrected fact')]);
     await handlers.before_agent_start(
       {systemPromptOptions: {sections}},
@@ -188,7 +189,9 @@ test('indexes share one snapshot, retain missing/empty states and replace native
     );
     assert.match(sections.dots_memory_project, /Corrected fact/);
     assert.doesNotMatch(sections.dots_memory_project, /Project fact/);
-    assert.ok(sections.dots_memory_global.includes(changed.snapshot));
+    assert.ok(sections.dots_memory_snapshot.includes(changed.snapshot));
+    // Another scope's publication moves only the small snapshot section.
+    assert.equal(sections.dots_memory_global, global);
     assert.equal(sections.other_source, 'unrelated');
     await handlers.before_agent_start(
       {systemPromptOptions: {sections}},
@@ -218,7 +221,8 @@ test('pages carry pinned retrieval commands, bounded Unicode and no unrelated to
     assert.doesNotMatch(page.global.content, /line 200/);
     const text = (await memoryText(repo.checkout, env)).content;
     assert.match(text, /truncated; use dots memory read/);
-    assert.ok(text.includes(`--snapshot ${page.snapshot} --start 201`));
+    assert.ok(text.includes('--snapshot SNAPSHOT --start 201'));
+    assert.ok(text.includes(`current snapshot: ${page.snapshot}`));
     assert.doesNotMatch(text, /DETAIL_ONLY/);
     publish(repo, [
       write({kind: 'global'}, Array(40).fill('界'.repeat(300)).join('\n')),
@@ -491,15 +495,18 @@ test('context labels an old or failing copy with its coarse age', async () => {
     async () => fresh,
     () => now,
   ).load;
-  assert.doesNotMatch((await load('/fixture', {})).dots_memory_global, /Stale/);
+  assert.doesNotMatch(
+    (await load('/fixture', {})).dots_memory_snapshot,
+    /Stale/,
+  );
   now = 1000 + 7 * 60;
   assert.match(
-    (await load('/fixture', {})).dots_memory_global,
+    (await load('/fixture', {})).dots_memory_snapshot,
     /Stale: this machine's copy was last synced 7 min ago; the sync agent may not be running/,
   );
   now = 1000 + 5 * 3600;
   assert.match(
-    (await load('/fixture', {})).dots_memory_global,
+    (await load('/fixture', {})).dots_memory_snapshot,
     /last synced 5 h ago/,
   );
   const failing = observation({
@@ -514,17 +521,17 @@ test('context labels an old or failing copy with its coarse age', async () => {
     },
   });
   now = 1030;
-  const text = (
-    await watchedMemoryContext(
-      async () => failing,
-      () => now,
-    ).load('/fixture', {})
-  ).dots_memory_global;
+  const text = await watchedMemoryContext(
+    async () => failing,
+    () => now,
+  ).load('/fixture', {});
   assert.match(
-    text,
+    text.dots_memory_snapshot,
     /last synced 1 min ago; sync is failing \(remote offline\)/,
   );
-  assert.match(text, /FACT/);
+  // The age changes every turn; the index must not change with it.
+  assert.doesNotMatch(text.dots_memory_global, /synced/);
+  assert.match(text.dots_memory_global, /FACT/);
 });
 
 test('context is reused until the changes marker moves', async () => {

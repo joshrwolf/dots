@@ -2485,9 +2485,12 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         out += `\n  assignment: ${JSON.stringify(w.assignment)}`;
       for (const skill of w.skills ?? [])
         out += `\n  skill: ${label(skill.name, 256)} ${label(skill.path, 4096)}`;
-      const trail = owned(w)
-        ? (withRegistry(r => r.events(w.id, 30))?.reverse() ?? [])
-        : [];
+      // A completed worker's result is what the parent came for; its trail
+      // and transcript tail are opt-in with tail.
+      const trail =
+        owned(w) && (tailLines > 0 || w.state !== 'completed')
+          ? (withRegistry(r => r.events(w.id, 30))?.reverse() ?? [])
+          : [];
       if (trail.length)
         out += `\n\nactivity (oldest first):\n${trail.map(e => `  ${new Date(e.at).toISOString().slice(11, 19)} ${e.kind.padEnd(6)} ${label(e.text, 120)}`).join('\n')}`;
       const tail = transcriptTail(w.sessionFile, tailLines);
@@ -2575,7 +2578,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
     name: 'worker_status',
     label: 'Worker status',
     description:
-      "List this session's workers and their live descendants (what each is doing right now, how long since its last event, QUIET when stalled, last failed call, pending question), or inspect one by id: its activity trail, transcript tail, and full result. The list shows live and paused workers and those finished within the last hour; all: true lists every worker, and id finds any of them. A descendant's id shows read-only registry activity and transcript tail; its final result belongs to its owner. Message its owner to steer it. Completions arrive as events; use this to look inside, not to wait.",
+      "List this session's workers and their live descendants (what each is doing right now, how long since its last event, QUIET when stalled, last failed call, pending question), or inspect one by id: its full result, plus its activity trail and transcript tail unless it completed (tail > 0 adds them). The list shows live and paused workers and those finished within the last hour; all: true lists every worker, and id finds any of them. A descendant's id shows read-only registry activity and transcript tail; its final result belongs to its owner. Message its owner to steer it. Completions arrive as events; use this to look inside, not to wait.",
     parameters: Type.Object({
       id: Type.Optional(Type.String()),
       all: Type.Optional(
@@ -2589,7 +2592,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
           minimum: 0,
           maximum: 100,
           description:
-            'Recent transcript lines to include for one worker (default 20)',
+            'Recent transcript lines to include for one worker (default 20; 0 for a completed worker, whose activity trail a positive tail also adds)',
         }),
       ),
     }),
@@ -2617,7 +2620,15 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
         }
         return {
           content: [
-            {type: 'text', text: describe(own, now, true, params.tail ?? 20)},
+            {
+              type: 'text',
+              text: describe(
+                own,
+                now,
+                true,
+                params.tail ?? (own.state === 'completed' ? 0 : 20),
+              ),
+            },
           ],
           details: summary(own),
         };

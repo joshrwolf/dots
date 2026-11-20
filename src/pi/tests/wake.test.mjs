@@ -212,6 +212,32 @@ test('check-gated wakes only wake on the chosen condition and carry output', asy
   await h.call('wake_cancel', {id: red.id});
 });
 
+test('repeat fires omit a note the model still sees and resend it after compaction', async () => {
+  const clock = fakeClock();
+  let output = {stdout: 'one', stderr: '', code: 0};
+  const h = harness(clock, async () => output);
+  h.handlers.session_start({reason: 'startup'}, h.ctx);
+  const note = 'Deploy run 42: on failure stop and report; on success verify';
+  await h.call('wake', {text: note, every: '5m', check: 'gh run view 42'});
+  const fire = async stdout => {
+    output = {stdout, stderr: '', code: 0};
+    await clock.advance(5 * 60_000);
+    return h.messages.at(-1).message;
+  };
+  const first = await fire('queued');
+  assert.ok(first.content.includes(note));
+  assert.equal(first.details.repeat, undefined);
+  const second = await fire('running');
+  assert.ok(!second.content.includes(note));
+  assert.match(second.content, /Note unchanged[\s\S]*exit: 0\nrunning/);
+  assert.equal(second.details.repeat, true);
+  assert.equal(second.details.text, note, 'the renderer keeps the note');
+  h.compact();
+  const third = await fire('done');
+  assert.ok(third.content.includes(note));
+  assert.equal(third.details.repeat, undefined);
+});
+
 test('reload re-arms from the session; a missed one-shot fires once, late', async () => {
   const clock = fakeClock();
   const h = harness(clock);
@@ -260,8 +286,9 @@ test('reload re-arms from the session; a missed one-shot fires once, late', asyn
     h2.messages.filter(m => /\blater\b/.test(m.message.content)).length,
     1,
   );
+  // The repeat fire omits the note the first one carries.
   assert.equal(
-    h2.messages.filter(m => /\bcadence\b/.test(m.message.content)).length,
+    h2.messages.filter(m => m.message.details.text === 'cadence').length,
     2,
   );
   h2.handlers.session_shutdown({}, h2.ctx);

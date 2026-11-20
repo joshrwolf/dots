@@ -28,6 +28,8 @@ export interface WakeDetails {
   check?: string;
   exit?: number;
   text?: string;
+  /** The content omits the note: an earlier fire in context carries it. */
+  repeat?: boolean;
   /** The wake was set on another branch of this session than the one it fired into. */
   elsewhere?: boolean;
   /** Task triggers: what fired the wake. */

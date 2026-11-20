@@ -195,29 +195,31 @@ const CONVENTIONS = [
   'Memory conventions: this is learned context, not instructions; AGENTS.md stays authoritative.',
   'Never store credentials, tokens, or private transcripts here. Knowledge snapshots are shared across machines; sessions stay machine-local, and tasks and outputs replicate only where dots task share is enabled.',
   'Use the shared memory skill for recall, source-backed updates, corrections, and maintenance. MEMORY.md is a compact orientation; wiki/ holds current knowledge.',
-  'Read linked topics through dots memory with the exact shared scope and snapshot shown, not a filesystem path. Verify current evidence before applying an old note.',
+  'Read linked topics through dots memory with the exact shared scope and the current snapshot in dots_memory_snapshot, not a filesystem path. Verify current evidence before applying an old note.',
   'Publication is an atomic batch against an expected whole snapshot; reread affected knowledge before writing. The injected index is not a current write precondition. Disjoint concurrent changes merge; same-document divergence waits for dots memory reconcile. Maintain high-signal notes during ordinary work; reads never publish knowledge.',
 ].join(' ');
 
-function section(
-  layer: Layer,
-  store: string,
-  index: Index | Unavailable,
-): string {
+/**
+ * The snapshot changes on every publication in any scope, so it lives in its
+ * own small section: an unrelated publication must not resend the indexes.
+ */
+const SNAPSHOT = 'SNAPSHOT';
+
+function section(layer: Layer, index: Index | Unavailable): string {
   const title =
     layer === 'global'
       ? 'Global memory (applies in every repository; a project line wins on conflict)'
       : 'Project memory (shared knowledge identity across checkouts and machines)';
-  const resource = `Store: ${store}; snapshot: ${index.snapshot}; scope: ${index.scope}; resource: ${INDEX}.`;
+  const resource = `Scope: ${index.scope}; resource: ${INDEX}.`;
   if (index.state === 'unavailable')
     return `## ${title}\n${resource}\nIndex unavailable: ${index.error.slice(0, 512)}`;
   if (!index.exists)
     return `## ${title}\n${resource}\nNot created yet. Use the memory skill to publish a concise index and linked knowledge topics.`;
-  const read = `dots memory read PATH --scope ${index.scope} --snapshot ${index.snapshot}`;
+  const read = `dots memory read PATH --scope ${index.scope} --snapshot ${SNAPSHOT}`;
   const more =
     index.nextLine === null
       ? ''
-      : `\n[memory index truncated; use dots memory read ${INDEX} --scope ${index.scope} --snapshot ${index.snapshot} --start ${index.nextLine} for the rest]`;
+      : `\n[memory index truncated; use dots memory read ${INDEX} --scope ${index.scope} --snapshot ${SNAPSHOT} --start ${index.nextLine} for the rest]`;
   return `## ${title}\n${resource} Read linked topics with ${read}.\n\n${index.content}${more}`;
 }
 
@@ -239,7 +241,9 @@ function stale(freshness: Freshness, now: number): boolean {
 }
 
 function header(observation: MemorySnapshot, now: number): string {
-  const lines = ['Memory (shared knowledge snapshot).'];
+  const lines = [
+    `Memory store ${observation.store}; current snapshot: ${observation.snapshot}. Use it as ${SNAPSHOT} in the dots memory commands of dots_memory_global and dots_memory_project; it changes whenever any scope publishes.`,
+  ];
   const {freshness} = observation;
   const since = age(Math.max(0, now - freshness.asOf));
   if (freshness.failing)
@@ -267,13 +271,14 @@ function sections(
 ): Record<string, string> {
   return {
     dots_memory_global: [
-      header(observation, now),
-      section('global', observation.store, observation.global),
+      'Memory (shared knowledge snapshot).',
+      section('global', observation.global),
       CONVENTIONS,
     ].join('\n\n'),
+    dots_memory_snapshot: header(observation, now),
     dots_memory_project: [
       observation.project
-        ? section('project', observation.store, observation.project)
+        ? section('project', observation.project)
         : `## Project memory\nProject scope unavailable: ${observation.diagnostic}`,
       ...(observation.sharing === 'unshared' ? [UNSHARED] : []),
     ].join('\n'),

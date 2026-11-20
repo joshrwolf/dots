@@ -341,7 +341,15 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       .text;
     assert.match(oneText, /one · completed · age \d+s · \d+ tok · \d+ calls?/);
     assert.match(oneText, /result:\n.*done: count things/s);
-    const states = [...oneText.matchAll(/^ {2}\S+ state {2}(.*)$/gm)].map(
+    assert.doesNotMatch(
+      oneText,
+      /activity \(oldest first\)|transcript tail/,
+      'a completed worker leads with its result',
+    );
+    const traced = (await h.run('worker_status', {id: spawned.id, tail: 5}))
+      .content[0].text;
+    assert.match(traced, /result:\n.*done: count things/s);
+    const states = [...traced.matchAll(/^ {2}\S+ state {2}(.*)$/gm)].map(
       m => m[1],
     );
     assert.deepEqual(
@@ -1752,7 +1760,10 @@ test(
         },
         {times: 1},
       );
-      const contended = await owner.run('worker_status', {id: done.id});
+      const contended = await owner.run('worker_status', {
+        id: done.id,
+        tail: 5,
+      });
       assert.doesNotMatch(
         contended.content[0].text,
         /activity \(oldest first\)/,

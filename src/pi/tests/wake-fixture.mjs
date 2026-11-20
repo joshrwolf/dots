@@ -53,6 +53,8 @@ export function harness(
   const messages = [];
   const widgets = new Map();
   const entries = [];
+  /** What the model would see: delivered messages until `compact()`. */
+  let projected = [];
   let branch;
   let next = 0;
   const pi = {
@@ -68,7 +70,10 @@ export function harness(
     registerTool: tool => tools.set(tool.name, tool),
     registerCommand: () => {},
     registerMessageRenderer: () => {},
-    sendMessage: (message, options) => messages.push({message, options}),
+    sendMessage: (message, options) => {
+      messages.push({message, options});
+      projected.push({role: 'custom', ...message});
+    },
     appendEntry: (customType, data) => {
       const entry = {type: 'custom', id: `e${++next}`, customType, data};
       entries.push(entry);
@@ -99,7 +104,12 @@ export function harness(
       getSessionId: () => session,
       getEntries: () => entries,
       getBranch: () => branch ?? entries,
+      buildSessionProjection: () => ({messages: projected}),
     },
+  };
+  /** Compaction summarizes every delivered message away. */
+  const compact = () => {
+    projected = [];
   };
   /** Moves the leaf, as /tree does: the new branch shares none of the entries so far. */
   const navigate = () => {
@@ -139,5 +149,6 @@ export function harness(
     turn,
     prompt,
     navigate,
+    compact,
   };
 }

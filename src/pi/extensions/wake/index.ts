@@ -79,6 +79,7 @@ export {
 
 export const MAX_ACTIVE = 20;
 const OUTPUT_CHARS = 4_000;
+const REPEATED_NOTE = 'Note unchanged; it is in an earlier fire of this wake.';
 
 export interface Wake extends Omit<WakeRecord, 'version' | 'owner'> {
   /** Set from a fire until its message is delivered. */
@@ -457,7 +458,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     try {
       const planned = trigger.at;
       const now = clock.now();
-      let body = wake.text;
+      let body = '';
       let gated = false;
       let exit: number | undefined;
       const check = trigger.check;
@@ -512,10 +513,12 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
       delivery.send(
         () => {
           const elsewhere = !setOnBranch(wake.id, fired);
+          const repeat = noted(wake.id, wake.text);
+          const note = repeat ? REPEATED_NOTE : wake.text;
           const header = `Wake ${wake.id}${every ? ` (fire ${fired} of ${wake.limit}, every ${describe(every)})` : ''}${late > 60_000 && reason !== 'manual' ? ` · late by ${describe(late)}` : ''}${reason === 'manual' ? ' · manual' : ''}${elsewhere ? ' · set on another branch of this session' : ''}`;
           return {
             customType: 'dots.wake',
-            content: `${header}\n\n${body}\n\nCancel with wake_cancel { id: "${wake.id}" }.`,
+            content: `${header}\n\n${note}${body}\n\nCancel with wake_cancel { id: "${wake.id}" }.`,
             display: true,
             details: {
               id: wake.id,
@@ -524,6 +527,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
               late,
               manual: reason === 'manual',
               text: wake.text,
+              ...(repeat ? {repeat} : {}),
               ...(every ? {every: describe(every)} : {}),
               ...(check ? {check: check.command} : {}),
               ...(exit === undefined ? {} : {exit}),
@@ -574,6 +578,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     if (!last) throw new Error(`wake ${wake.id} fired without a transition`);
     const outcome = last.outcome;
     const elsewhere = !setOnBranch(wake.id, fired);
+    const repeat = noted(wake.id, wake.text);
     const headline = transitions
       .map(t => `${t.outcome}: ${t.summary}`)
       .join('; ');
@@ -600,7 +605,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
     const header = `Wake ${wake.id} · task ${trigger.id} · ${outcome}${wake.limit > 1 ? ` (fire ${fired} of ${wake.limit})` : ''}${elsewhere ? ' · set on another branch of this session' : ''}`;
     return {
       customType: 'dots.wake',
-      content: `${header}\n\n${wake.text}\n\n${lines.join('\n')}`,
+      content: `${header}\n\n${repeat ? REPEATED_NOTE : wake.text}\n\n${lines.join('\n')}`,
       display: true,
       details: {
         id: wake.id,
@@ -608,6 +613,7 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
         limit: wake.limit,
         late: 0,
         text: wake.text,
+        ...(repeat ? {repeat} : {}),
         outcome,
         summary: headline,
         ...(elsewhere ? {elsewhere} : {}),
@@ -789,6 +795,21 @@ export default function (pi: ExtensionAPI, host: WakeHost = {}) {
         entry.data.fired < fired,
     );
   };
+
+  /**
+   * Whether the model already sees this note: an earlier fire that carried it
+   * is still in the context projection. Compaction or another branch drops
+   * it, and the next fire carries the note again.
+   */
+  const noted = (id: string, text: string): boolean =>
+    (context?.sessionManager.buildSessionProjection().messages ?? []).some(
+      message =>
+        message.role === 'custom' &&
+        message.customType === 'dots.wake' &&
+        (message.details as WakeDetails | undefined)?.id === id &&
+        (message.details as WakeDetails).text === text &&
+        !(message.details as WakeDetails).repeat,
+    );
 
   /** Keep observer state that was not yet written: task cursors. */
   const flush = () => {
