@@ -15,7 +15,8 @@ import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-ag
 
 initTheme('dark', false);
 const theme = getThemeByName('dark')!;
-const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const plain = (lines: readonly string[]) =>
+  stripTerminalSequences(lines.join('\n'));
 const activity = (
   project: string,
   id: string,

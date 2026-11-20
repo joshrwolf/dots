@@ -23,7 +23,8 @@ import {
 import {WorkerTranscript} from '../extensions/workers/transcript.ts';
 
 initTheme('dark', false);
-const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const plain = (lines: readonly string[]) =>
+  stripTerminalSequences(lines.join('\n'));
 const options = {
   outputPad: 1,
   hideThinkingBlock: false,

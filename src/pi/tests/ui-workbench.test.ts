@@ -28,7 +28,8 @@ const dark = getThemeByName('dark')!;
 const light = getThemeByName('light')!;
 const bindings = new KeybindingsManager({});
 const tui = new TuiMainScreen(new ProcessTerminal());
-const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const plain = (lines: readonly string[]) =>
+  stripTerminalSequences(lines.join('\n'));
 
 test('every workbench scenario uses real bounded components in both themes and expansion states', () => {
   for (const scenario of scenarios) {

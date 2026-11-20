@@ -28,7 +28,8 @@ import {installEditor} from '../src/features/editor.ts';
 import {KeybindingsManager} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js';
 import {getThemeByName} from '../../../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js';
 
-const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const plain = (lines: readonly string[]) =>
+  stripTerminalSequences(lines.join('\n'));
 initTheme('dark', false);
 const theme = getThemeByName('dark');
 assert.ok(theme);

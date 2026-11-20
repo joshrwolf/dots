@@ -41,7 +41,8 @@ const dark = builtin('dark');
 const light = builtin('light');
 assert.ok(dark && light);
 const tui = new TuiMainScreen(new ProcessTerminal()); // Not started; no terminal input/output ownership.
-const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const plain = (lines: readonly string[]) =>
+  stripTerminalSequences(lines.join('\n'));
 
 // This independent consumer imports no builtin tool feature or UI registration.
 interface ExampleModel {
@@ -55,7 +56,7 @@ class ExampleView implements PresentationView<ExampleModel> {
   invalidate(): void {
     this.text.invalidate();
   }
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     return this.text.render(width);
   }
 }

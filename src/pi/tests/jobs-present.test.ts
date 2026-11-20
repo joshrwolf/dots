@@ -34,7 +34,8 @@ initTheme('dark', false);
 const loadedTheme = getThemeByName('dark');
 assert.ok(loadedTheme);
 const theme: Theme = loadedTheme;
-const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const plain = (lines: readonly string[]) =>
+  stripTerminalSequences(lines.join('\n'));
 function fixture(): Job {
   return {
     version: 1,

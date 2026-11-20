@@ -421,7 +421,7 @@ class ActivityView implements PresentationView<ActivityModel> {
   invalidate(): void {
     this.view.invalidate();
   }
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     return width > 0 ? this.view.render(width) : [];
   }
 }

@@ -14,10 +14,10 @@ export class DetailView implements Component {
   // output) are not measured again; only the current frame's rows are retained.
   private cache:
     | {
-        content: string[];
+        content: readonly string[];
         caption: string;
         width: number;
-        lines: string[];
+        lines: readonly string[];
         framed: Map<string, string>;
       }
     | undefined;
@@ -37,7 +37,7 @@ export class DetailView implements Component {
     this.cache = undefined;
     this.child.invalidate();
   }
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     if (width <= 0) return [];
     const inset = width >= 8 ? 2 : 0;
     const room = width - inset;

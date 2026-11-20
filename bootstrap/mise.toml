@@ -69,7 +69,6 @@ exclude = ["*"]
 
 [vars]
 dots_source_root = "{{ config_source | canonicalize | dirname }}/.."
-dots_runtime_extra_filter = ""
 dots_cargo_home = "{{ env.CARGO_HOME | default(value=env.HOME ~ '/.cargo') }}"
 dots_rust_channel = "{{ read_toml(path='../rust-toolchain.toml')['toolchain']['channel'] }}"
 # Service managers start programs without shell activation: the agent needs
@@ -161,7 +160,7 @@ run = '{% if os() == "macos" %}if launchctl print "gui/$(id -u)/dev.mise.dots-sy
 [tasks."runtime:deps"]
 description = "Install the selected source-loaded runtime closure without development tools"
 dir = "{{ env.HOME }}"
-run = 'pnpm --dir "{{ vars.dots_source_root }}" --filter @joshrwolf/pi-dots... {% if vars.dots_runtime_extra_filter != "" %}--filter {{ vars.dots_runtime_extra_filter | quote }} {% endif %}install --prod --frozen-lockfile'
+run = 'pnpm --dir "{{ vars.dots_source_root }}" --filter @joshrwolf/pi-dots... install --prod --frozen-lockfile'
 
 [tasks."pi:install"]
 description = "Register the durable primary companion source without reloading sessions"

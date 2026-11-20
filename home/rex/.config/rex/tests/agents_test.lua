@@ -119,7 +119,7 @@ return {
 
   ["a shell command reads as what it runs"] = function()
     expect.equal(
-      agents.command("cd /home/me/.wt/x/dots/fix && node --no-warnings src/superfans/src/cli.ts"),
+      agents.command("cd /home/me/.wt/x/dots/fix && node --no-warnings src/tool/src/cli.ts"),
       "node --no-warnings cli.ts"
     )
     expect.equal(agents.command("cd a; cd b && FAST=1 X= cargo  build"), "cargo build")

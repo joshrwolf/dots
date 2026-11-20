@@ -23,7 +23,8 @@ import {summary} from '../extensions/jobs/protocol.ts';
 
 initTheme('dark', false);
 const tui = new TuiMainScreen(new ProcessTerminal());
-const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const plain = (lines: readonly string[]) =>
+  stripTerminalSequences(lines.join('\n'));
 function registration() {
   let resolver: ToolRendererResolver | undefined;
   let dispose = () => {};

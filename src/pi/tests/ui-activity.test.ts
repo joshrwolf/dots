@@ -34,7 +34,8 @@ import {jobFixture} from '../dev/scenarios.ts';
 import {SessionFixture, assistantMessage} from '../dev/sessions.ts';
 
 initTheme('dark', false);
-const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const plain = (lines: readonly string[]) =>
+  stripTerminalSequences(lines.join('\n'));
 const transcript: TranscriptOptions = {
   outputPad: 1,
   hideThinkingBlock: false,

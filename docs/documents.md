@@ -70,7 +70,7 @@ up the remote repository itself. A new machine recovers knowledge with
 unpublished candidates under `$XDG_DATA_HOME/dots/memory` stay machine-local.
 A workspace backup alone does not contain knowledge.
 
-For the machine-local catalog, briefs and outputs, stop all cooperating writers, including Pi parents/workers and Superfans bridges,
+For the machine-local catalog, briefs and outputs, stop all cooperating writers, including Pi parents and workers,
 for the entire backup or restore. A file-by-file online copy is not a consistent
 workspace backup. Retain the source until restoration is verified.
 

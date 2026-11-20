@@ -15,7 +15,8 @@ import {projectCodemode} from '../src/features/tools/codemode.ts';
 import type {ToolObservation} from '../src/host/tools.ts';
 
 initTheme('dark', false);
-const plain = (lines: string[]) => stripTerminalSequences(lines.join('\n'));
+const plain = (lines: readonly string[]) =>
+  stripTerminalSequences(lines.join('\n'));
 const header = {
   type: 'text' as const,
   text: 'Script completed\nWall time 0.1 seconds\nOutput:\n',
