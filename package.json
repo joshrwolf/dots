@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "description": "pnpm workspace for the TypeScript packages in dots",
-  "packageManager": "pnpm@12.16.1",
+  "packageManager": "pnpm@12.21.0",
   "scripts": {
     "typecheck:tooling": "tsc --noEmit",
     "lint": "eslint \"src/{pi,pi-kit}/**/*.{ts,mjs,js}\" eslint.config.mjs --max-warnings 0",
