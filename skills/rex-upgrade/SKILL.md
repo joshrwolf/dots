@@ -1,12 +1,9 @@
 ---
 name: rex-upgrade
-description: Upgrade Rex on this Mac (app and embedded server) and on Linux hosts running the dots Rex login service, then reopen Pi sessions. Use when the user asks to update or upgrade Rex, its servers or clients.
+description: Upgrade Rex on this Mac (app and embedded server) and on Linux hosts running the dots Rex login service, and check that Pi sessions resume. Use when the user asks to update or upgrade Rex, its servers or clients.
 ---
 
 # Rex upgrade
-
-Temporary: remove this skill once Rex keeps running programs across server
-upgrades or ships its own upgrade path for login-service hosts.
 
 A request to upgrade authorizes these restarts and the host bootstrap. Starting
 a stopped machine still needs the user's go-ahead.
@@ -27,20 +24,34 @@ a stopped machine still needs the user's go-ahead.
 
 ## Before any server restart
 
-A server restart ends every program in its sessions; Rex restores layout, IDs
-and directories only. Check that Pis are idle, then record each pane's block ID,
-directory and Pi session file in `~/.local/state/rex-restore/`. Global memory
-`wiki/rex-restore.md` has the capture method and pitfalls.
+A server restart ends every program in its sessions. Rex restores layout, IDs
+and directories, and starts again each program whose resume record a trust
+rule accepts; Pi reports its session for this, and dots' `init.lua` trusts
+`pi --session <uuid>`.
+
+- Check that Pis are idle.
+- For each pane running Pi (`rex block ls -A --json`, then
+  `rex block call -s <session> -b <block> program_status`), read
+  `rex block call -s <session> -b <block> program_resume_records`. The
+  `chosen` record should be `trusted` with `rule: pi`.
+- For each untrusted or missing record, note the pane and its Pi session ID
+  (from the record's `command`, or Pi's `/session`) in
+  `~/.local/state/rex-restore/`. Global memory
+  `wiki/rex-restore.md` has pitfalls, such as hosts whose login shell
+  re-execs another shell.
 
 ## Mac
 
 1. Update the app first (programs survive an app relaunch).
-2. The user restarts the server; this Pi ends with it, so the plan file must
+2. The user restarts the server; this Pi ends with it, so any notes must
    already exist.
 3. Expect the same host ID and session count in `rex server status`. With zero
    sessions, restart it with
    `--state-dir "$HOME/Library/Application Support/rex"`.
-4. Reopen Pis from the plan with `rex send -s <session> -b <block>`.
+4. Check resumes: `rex server logs` shows
+   `resuming saved program … program=pi rule=pi` for each, or
+   `not resuming saved program` with a `reason`. `program_status` on each
+   pane should show Pi again.
 
 ## Linux host
 
@@ -54,4 +65,11 @@ directory and Pi session file in `~/.local/state/rex-restore/`. Global memory
    stopped, and remote `server stop` is refused, so on the host run
    `rex --autostart=false -S unix:///run/user/$(id -u)/rex/server.sock server stop`.
 4. The next client connection starts the new server. Confirm version, host ID
-   and sessions, then reopen Pis.
+   and sessions, then check resumes with `program_status` on each Pi pane,
+   and the account server's log where the host keeps one.
+
+## Panes that did not resume
+
+Never type into a pane that runs or ran Pi (`rex send`, `rex block send`,
+`send-key`): it may be the user's live session. Tell the user, per pane, the
+session and tab and the exact command to run there: `pi --session <id>`.
