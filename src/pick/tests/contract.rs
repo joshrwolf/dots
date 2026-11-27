@@ -1,7 +1,8 @@
 //! The contract between the Rex configuration's Lua view builders and the
 //! picker: every view they build from the hand-authored snapshots must parse
-//! and prepare. Runs the real Lua in Rex's interpreter; tests/isolate.lua makes
-//! any Rex API call fail, so a running server is never touched.
+//! and prepare. Runs the real Lua in Rex's interpreter, which `rex do` reaches
+//! only through a server, so the test starts a disposable one; tests/isolate.lua
+//! makes any Rex API call fail.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -13,9 +14,56 @@ use dots_pick::spec::View;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// An address no server listens on, so the script still runs when no Rex server
-/// is up. A running server is reached regardless; isolation is in the Lua.
-const NO_SERVER: &str = "unix:///nonexistent/dots-pick-contract.sock";
+/// A Rex server of the test's own, with an empty config and no saved sessions,
+/// stopped and removed on drop. Every call names its socket with `-S`.
+struct Server {
+    rex: PathBuf,
+    dir: PathBuf,
+    address: String,
+}
+
+impl Server {
+    fn start(rex: PathBuf) -> Result<Self> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .subsec_nanos();
+        let dir = std::env::temp_dir().join(format!("pick-{}-{nanos}", std::process::id()));
+        std::fs::create_dir(&dir)?;
+        std::fs::write(dir.join("init.lua"), "")?;
+        let address = format!("unix://{}", dir.join("rex.sock").display());
+        let server = Self { rex, dir, address };
+        let mut command = server.command();
+        command
+            .args(["server", "start", "--restore=false", "--state-dir"])
+            .arg(server.dir.join("state"))
+            .arg("--config")
+            .arg(server.dir.join("init.lua"));
+        let output = dots_process::output(command, Duration::from_secs(20), 1024 * 1024)?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("starting a Rex server failed: {}", stderr.trim()).into());
+        }
+        Ok(server)
+    }
+
+    /// `rex` aimed at this server only.
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.rex);
+        command.args(["--autostart=false", "-S", &self.address]);
+        command
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let mut command = self.command();
+        command
+            .args(["server", "stop", "--discard", "--state-dir"])
+            .arg(self.dir.join("state"));
+        let _ = dots_process::output(command, Duration::from_secs(20), 1024 * 1024);
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
 
 /// The `rex` CLI: `REX` if set, else the Mac app's current server copy.
 fn rex() -> Result<PathBuf> {
@@ -36,12 +84,9 @@ fn rex() -> Result<PathBuf> {
 fn views() -> Result<serde_json::Map<String, serde_json::Value>> {
     let script =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../home/rex/.config/rex/tests/contract.lua");
-    let mut command = Command::new(rex()?);
-    command
-        .args(["--autostart=false", "do"])
-        .arg(script)
-        .arg("--json")
-        .env("REX_SERVER", NO_SERVER);
+    let server = Server::start(rex()?)?;
+    let mut command = server.command();
+    command.arg("do").arg(script).arg("--json");
     let output = dots_process::output(command, Duration::from_secs(20), 16 * 1024 * 1024)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

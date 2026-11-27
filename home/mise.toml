@@ -4,11 +4,10 @@
 "aqua:LuaLS/lua-language-server" = "3.19.2"
 "aqua:Kampfkarren/selene" = "0.32.0"
 
-# Rex Lua runs in Rex's own interpreter. REX_SERVER names an address no server
-# uses so scripts still run when no Rex server is up. When one is running,
-# `rex do` connects to it regardless; tests/isolate.lua keeps tests off it.
+# Rex Lua runs in Rex's own interpreter, which `rex do` reaches only through a
+# server, so the tests run on a disposable one with an empty config and no
+# saved sessions; tests/isolate.lua keeps them off its API.
 [tasks.check]
-env = { REX_SERVER = "unix:///nonexistent/dots-check.sock" }
 depends = ["//src/dots:skills-check"]
 dir = "{{config_root}}/.."
 run = [
@@ -16,6 +15,5 @@ run = [
   "stylua --check home/rex/.config/rex",
   "cd home/rex/.config/rex && selene --quiet .",
   't=$(mktemp -d) && trap "rm -rf $t" EXIT && lua-language-server --check=home/rex/.config/rex --checklevel=Hint --check_format=json --logpath="$t" >/dev/null && test "$(cat "$t/check.json")" = "[]" || { cat "$t/check.json"; exit 1; }',
-  "rex --autostart=false config check home/rex/.config/rex/init.lua",
-  "rex --autostart=false do home/rex/.config/rex/tests/run.lua",
+  't=$(mktemp -d) && s="unix://$t/rex.sock" && touch "$t/init.lua" && trap "rex -S $s --autostart=false server stop --discard --state-dir $t/state >/dev/null; rm -rf $t" EXIT && rex -S "$s" server start --state-dir "$t/state" --config "$t/init.lua" --restore=false >/dev/null && rex -S "$s" --autostart=false config check home/rex/.config/rex/init.lua && rex -S "$s" --autostart=false do home/rex/.config/rex/tests/run.lua',
 ]
