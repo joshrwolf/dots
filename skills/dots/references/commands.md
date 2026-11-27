@@ -956,7 +956,7 @@ Options:
 ## dots github watch add
 
 ```text
-Add a PR by URL, or update its entry: the original added time is kept, the checkout, agent session, and Rex session become the latest non-empty values, and the PR becomes due. The agent session is the invoking agent's: pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID. The Rex session is the one the work belongs to: $REX_SESSION in a Rex terminal, otherwise $DOTS_REX_SESSION, which Pi workers inherit from the session that started them. Then refreshes this PR only; a GitHub failure is a warning in the result and never fails the add.
+Add a PR by URL, or update its entry: the original added time is kept, the checkout, agent session, and Rex session become the latest non-empty values, and the PR becomes due. The agent session is the invoking agent's: pi-$PI_SESSION_ID, claude-$CLAUDE_CODE_SESSION_ID, or codex-$CODEX_SESSION_ID. The Rex session is the one holding the terminal the work belongs to, which rex whoami names: $REX_BLOCK in a Rex terminal, otherwise $DOTS_REX_BLOCK, which Pi workers inherit from the terminal that started them; when Rex cannot name it, the add warns and keeps no Rex session. Then refreshes this PR only; a GitHub failure is a warning in the result and never fails the add.
 
 Usage: dots github watch add [OPTIONS] <URL>
 

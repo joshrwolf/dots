@@ -122,7 +122,6 @@ test(
       'DOTS_WORKER_ID',
       'DOTS_WORKER_ROOT',
       'DOTS_WORKER_DEPTH',
-      'REX_SESSION',
       'REX_BLOCK',
     ])
       delete process.env[key];

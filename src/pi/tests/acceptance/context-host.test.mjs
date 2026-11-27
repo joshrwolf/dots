@@ -175,7 +175,7 @@ test(
             memory(pi, async () => ({...memorySections}));
             rex(
               pi,
-              {REX_SESSION: 'fixture'},
+              {REX_BLOCK: 'block:fixture'},
               async () => 'Neutral terminal orientation',
             );
             pi.on('session_before_compact', event => ({

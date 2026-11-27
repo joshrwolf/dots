@@ -18,9 +18,10 @@ dots github watch remove https://github.com/example/project/pull/7 --json
 Agents add the PRs they create or work on. `add` is idempotent: it records the
 current checkout (default: the working directory), the invoking agent
 session (Pi, Claude Code, or Codex), and the Rex session the work belongs
-to, then checks that PR once. The Rex session is `REX_SESSION` in a Rex
-terminal, otherwise `DOTS_REX_SESSION`, which Pi workers inherit from the
-session that started them, so a headless worker's PR names its top session. `list` and `show` read only the local cache: `show`
+to, then checks that PR once. The Rex session is the one holding the
+terminal in `REX_BLOCK`, or in `DOTS_REX_BLOCK`, which Pi workers inherit
+from the terminal that started them, so a headless worker's PR names its top
+session; `rex whoami` names it, and when it cannot, `add` warns. `list` and `show` read only the local cache: `show`
 prints one PR as plain text for a preview pane, including the description
 stored by its last check. `show --color` adds basic ANSI styling; set `COLUMNS`
 to a positive cell width to wrap either format. JSON output is unaffected.

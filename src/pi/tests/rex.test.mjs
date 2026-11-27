@@ -13,20 +13,20 @@ test('asks Rex for its orientation only inside a Rex terminal', async () => {
   assert.equal(await rexContext({}, run), undefined);
   assert.equal(calls.length, 0);
   assert.equal(
-    await rexContext({REX_SESSION: 'session:a', REX_BIN_DIR: '/opt/rex'}, run),
+    await rexContext({REX_BLOCK: 'block:a', REX_BIN_DIR: '/opt/rex'}, run),
     orientation.trim(),
   );
   assert.deepEqual(calls, [
     ['/opt/rex/rex', '__internal', 'session-start', '--agent', 'pi'],
   ]);
   assert.equal(
-    await rexContext({REX_SESSION: 'session:a'}, run),
+    await rexContext({REX_BLOCK: 'block:a'}, run),
     orientation.trim(),
   );
   // Workers share the terminal's session but do not own it.
   const asked = calls.length;
   assert.equal(
-    await rexContext({REX_SESSION: 'session:a', DOTS_WORKER_ID: 'w-1'}, run),
+    await rexContext({REX_BLOCK: 'block:a', DOTS_WORKER_ID: 'w-1'}, run),
     undefined,
   );
   assert.equal(calls.length, asked);
@@ -34,7 +34,7 @@ test('asks Rex for its orientation only inside a Rex terminal', async () => {
 });
 
 test('a failing or silent Rex adds nothing', async () => {
-  const env = {REX_SESSION: 'session:a'};
+  const env = {REX_BLOCK: 'block:a'};
   assert.equal(
     await rexContext(env, async () => {
       throw new Error('no server');
@@ -48,7 +48,7 @@ test('each run carries the orientation in an independent section', async () => {
   const handlers = new Map();
   register(
     {on: (name, handler) => handlers.set(name, handler)},
-    {REX_SESSION: 'session:a'},
+    {REX_BLOCK: 'block:a'},
     async () => orientation,
   );
   await handlers.get('session_start')(
@@ -86,7 +86,7 @@ test('by default Rex runs through the host process runner with its own bounds', 
       return results.shift();
     },
   };
-  register(pi, {REX_SESSION: 'session:a'});
+  register(pi, {REX_BLOCK: 'block:a'});
   const sections = () => {
     const event = {systemPromptOptions: {contextFiles: [], sections: {}}};
     handlers.get('before_agent_start')(event, {cwd: '/repo'});
@@ -113,7 +113,6 @@ test('centralized views use exact optional goal identities and native Rex action
     },
   };
   const env = {
-    REX_SESSION: 'session:fixture',
     REX_BLOCK: 'block:fixture',
     REX_BIN_DIR: '/fixture/bin',
   };

@@ -271,21 +271,18 @@ test('worker lifecycle against a scripted pi', {timeout: 60_000}, async t => {
       /No workers/,
     );
 
-    // A headless child never inherits its owner's terminal identity, only the session its work belongs to.
-    process.env.REX_SESSION = 'session:owner';
+    // A headless child never owns its owner's terminal; it only names it as the one its work belongs to.
     process.env.REX_BLOCK = 'block:owner';
     // spawn -> completion event wakes the owner with the child's final text
     const spawned = await h.call('worker_spawn', {
       label: 'one',
       task: 'count things',
     });
-    delete process.env.REX_SESSION;
     delete process.env.REX_BLOCK;
     const childEnvFile = path.join(tmpdir(), `dots-fake-pi-env-${spawned.id}`);
     assert.deepEqual(JSON.parse(readFileSync(childEnvFile, 'utf8')), {
-      rex: null,
       block: null,
-      dots: 'session:owner',
+      dots: 'block:owner',
     });
     rmSync(childEnvFile, {force: true});
     assert.ok(

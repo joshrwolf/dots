@@ -39,7 +39,6 @@ export interface Registration {
   sessionId: string;
   sessionFile?: string | undefined;
   sessionName?: string | undefined;
-  rexSession?: string | undefined;
   rexBlock?: string | undefined;
   cwd: string;
   socket: string;
@@ -219,7 +218,6 @@ export default function (
           sessionId: sm.getSessionId(),
           sessionFile: sm.getSessionFile(),
           sessionName: sm.getSessionName(),
-          rexSession: env.REX_SESSION,
           rexBlock: env.REX_BLOCK,
           cwd: sm.getCwd(),
         },

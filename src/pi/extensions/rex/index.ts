@@ -66,7 +66,7 @@ export async function openRexGoals(
   goal: {project: string; id: string} | undefined,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  if (!env.REX_SESSION || !env.REX_BLOCK || env.DOTS_WORKER_ID)
+  if (!env.REX_BLOCK || env.DOTS_WORKER_ID)
     throw new Error(
       'This view needs an interactive Rex terminal. Use dots task goal show for text inspection.',
     );
@@ -85,7 +85,7 @@ export async function rexContext(
 ): Promise<string | undefined> {
   // A worker is not the session's owner; the orientation (naming the session,
   // and so on) is for the agent the user talks to.
-  if (!env.REX_SESSION || env.DOTS_WORKER_ID) return undefined;
+  if (!env.REX_BLOCK || env.DOTS_WORKER_ID) return undefined;
   try {
     const text = (
       await run(rexBinary(env), [

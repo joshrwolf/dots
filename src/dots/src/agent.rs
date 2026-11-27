@@ -2,6 +2,13 @@
 //! sets for the shell commands it runs, the live runtime acting for it, and
 //! the Rex session its work belongs to.
 
+use std::path::PathBuf;
+use std::process::Command;
+use std::time::Duration;
+
+use anyhow::{Context as _, Result, ensure};
+use serde::Deserialize;
+
 /// Variables naming an agent session, with the prefix that keeps their IDs
 /// apart. When several are set (an agent started inside another), the first wins.
 const SESSIONS: [(&str, &str); 3] = [
@@ -76,25 +83,60 @@ fn names_runtime_of(owner: &str, session: Option<&str>) -> bool {
     }
 }
 
-/// The Rex session the invoking work belongs to, such as `session:<id>`.
+/// The Rex terminal the invoking work belongs to, such as `block:<id>`.
 ///
-/// A terminal in Rex sets `REX_SESSION`; a headless worker has none and gets
-/// `DOTS_REX_SESSION` from the session that started it.
-pub(crate) fn rex_session() -> Option<String> {
-    rex_session_from(|name| std::env::var(name).ok())
-}
-
-fn rex_session_from(get: impl Fn(&str) -> Option<String>) -> Option<String> {
-    ["REX_SESSION", "DOTS_REX_SESSION"].iter().find_map(|name| {
+/// A terminal in Rex sets `REX_BLOCK`; a headless worker has none and gets
+/// `DOTS_REX_BLOCK` from the terminal of the session that started it.
+fn rex_block_from(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    ["REX_BLOCK", "DOTS_REX_BLOCK"].iter().find_map(|name| {
         get(name)
             .map(|id| id.trim().to_owned())
             .filter(|id| !id.is_empty())
     })
 }
 
+/// The Rex session holding the invoking work's terminal, such as
+/// `session:<id>`; none outside Rex. Rex names it (`rex whoami`), so a failure
+/// to ask, or a terminal Rex no longer has, is an error.
+pub(crate) fn rex_session() -> Result<Option<String>> {
+    let Some(block) = rex_block_from(|name| std::env::var(name).ok()) else {
+        return Ok(None);
+    };
+    let rex = std::env::var_os("REX_BIN_DIR").map_or_else(
+        || PathBuf::from("rex"),
+        |dir| PathBuf::from(dir).join("rex"),
+    );
+    let mut command = Command::new(rex);
+    command
+        .args(["--autostart=false", "--timeout", "5s", "whoami", "--json"])
+        .env("REX_BLOCK", &block);
+    let output = dots_process::output(command, Duration::from_secs(10), 64 * 1024)
+        .context("running rex whoami")?;
+    ensure!(
+        output.status.success(),
+        "rex whoami failed ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    session_in(&output.stdout).map(Some)
+}
+
+/// The session `rex whoami --json` places its caller in.
+fn session_in(whoami: &[u8]) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Whoami {
+        session_id: Option<String>,
+    }
+    let whoami: Whoami = serde_json::from_slice(whoami).context("reading rex whoami")?;
+    whoami
+        .session_id
+        .filter(|id| !id.trim().is_empty())
+        .context("Rex has no session holding this terminal")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{owner_from, rex_session_from, session_from};
+    use super::{owner_from, rex_block_from, session_from, session_in};
 
     const NONCE: &str = "0123456789abcdef";
 
@@ -213,24 +255,34 @@ mod tests {
     }
 
     #[test]
-    fn a_terminal_rex_session_wins_over_an_inherited_one() {
+    fn a_terminal_rex_block_wins_over_an_inherited_one() {
         assert_eq!(
-            rex_session_from(env(&[
-                ("DOTS_REX_SESSION", "session:top"),
-                ("REX_SESSION", "session:here"),
+            rex_block_from(env(&[
+                ("DOTS_REX_BLOCK", "block:top"),
+                ("REX_BLOCK", "block:here"),
             ]))
             .as_deref(),
-            Some("session:here")
+            Some("block:here")
         );
         assert_eq!(
-            rex_session_from(env(&[
-                ("REX_SESSION", " "),
-                ("DOTS_REX_SESSION", "session:top")
-            ]))
-            .as_deref(),
-            Some("session:top")
+            rex_block_from(env(&[("REX_BLOCK", " "), ("DOTS_REX_BLOCK", "block:top")])).as_deref(),
+            Some("block:top")
         );
-        assert_eq!(rex_session_from(env(&[("DOTS_REX_SESSION", "")])), None);
-        assert_eq!(rex_session_from(env(&[])), None);
+        assert_eq!(rex_block_from(env(&[("DOTS_REX_BLOCK", "")])), None);
+        assert_eq!(rex_block_from(env(&[])), None);
+    }
+
+    #[test]
+    fn whoami_names_the_session_holding_the_terminal() {
+        assert_eq!(
+            session_in(br#"{"account":"me","session_id":"session:a","block_id":"block:b"}"#)
+                .unwrap(),
+            "session:a"
+        );
+        // Rex answers without a location for a block it no longer has.
+        for unplaced in [&br#"{"account":"me"}"#[..], br#"{"session_id":""}"#] {
+            assert!(session_in(unplaced).is_err());
+        }
+        assert!(session_in(b"not json").is_err());
     }
 }

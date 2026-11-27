@@ -26,8 +26,8 @@ pub(crate) struct Request<'request> {
     pub gh: &'request dyn github_watch::Gh,
     pub directory: &'request Path,
     pub session: Option<&'request str>,
-    /// The Rex session the work belongs to.
-    pub rex_session: Option<&'request str>,
+    /// Resolves the Rex session the work belongs to; only `add` asks.
+    pub rex_session: &'request dyn Fn() -> Result<Option<String>>,
     /// Current Unix time in seconds.
     pub clock: &'request dyn Fn() -> i64,
     pub json: bool,
@@ -107,12 +107,17 @@ pub(crate) fn run(request: &mut Request<'_>) -> Result<String> {
     match &request.command {
         WatchCommand::Add { url, checkout } => {
             let checkout = checkout_path(request.directory, checkout.as_deref())?;
+            let mut warnings = Vec::new();
+            let rex_session = (request.rex_session)().unwrap_or_else(|error| {
+                warnings.push(format!("added without its Rex session: {error:#}"));
+                None
+            });
             store.add(
                 &NewEntry {
                     url,
                     added_by: request.session,
                     checkout: Some(&checkout),
-                    rex_session: request.rex_session,
+                    rex_session: rex_session.as_deref(),
                 },
                 now,
             )?;
@@ -120,13 +125,9 @@ pub(crate) fn run(request: &mut Request<'_>) -> Result<String> {
             let entry = store
                 .get(url)?
                 .context("the added PR was removed concurrently")?;
-            let warnings: Vec<_> = refresh
-                .failures
-                .iter()
-                .map(|failure| {
-                    format!("added, but GitHub status is unavailable: {}", failure.error)
-                })
-                .collect();
+            warnings.extend(refresh.failures.iter().map(|failure| {
+                format!("added, but GitHub status is unavailable: {}", failure.error)
+            }));
             if request.json {
                 return Ok(crate::json::render(serde_json::json!({
                     "pr": Pr::from(&entry),
@@ -583,7 +584,7 @@ mod tests {
             gh,
             directory: &directory,
             session: Some("pi-session"),
-            rex_session: Some("session:work"),
+            rex_session: &|| Ok(Some("session:work".into())),
             clock: &|| NOW,
             json,
             out: &mut Vec::new(),
@@ -596,6 +597,37 @@ mod tests {
             "https://github.com/example/project/pull/{number}"
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn an_unresolved_rex_session_is_a_warning_on_add() {
+        let root = scratch();
+        let store = root.join("state").join(github_watch::STORE_PATH);
+        let directory = root.join("checkout");
+        let added: Value = serde_json::from_str(
+            &run(&mut Request {
+                command: WatchCommand::Add {
+                    url: url(7),
+                    checkout: None,
+                },
+                store: &store,
+                gh: &Reply(true),
+                directory: &directory,
+                session: None,
+                rex_session: &|| Err(anyhow::anyhow!("rex whoami failed")),
+                clock: &|| NOW,
+                json: true,
+                out: &mut Vec::new(),
+                sleep: &mut |_| false,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            added.pointer("/warnings"),
+            Some(&json!(["added without its Rex session: rex whoami failed"]))
+        );
+        assert_eq!(added.pointer("/pr/rex_session"), Some(&Value::Null));
     }
 
     #[test]

@@ -2,8 +2,8 @@
 
 Rex owns sessions, layout, focus, and program status; this Lua owns every Rex
 semantic in dots. Rust reaches Rex only by running these actions
-(`rex do <action> key=value`) or commands a view names; it never calls the Rex
-API itself.
+(`rex do <action> key=value`) or commands a view names, and asks `rex whoami`
+which session holds a terminal; it never calls the Rex API itself.
 
 ## Working with Rex
 

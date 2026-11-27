@@ -14,7 +14,7 @@ pane, one viewer per pane; the user toggles it with Ctrl+S then D.
 
 ## Show work for review
 
-From your own Rex terminal (`REX_SESSION` and `REX_BLOCK` set), open the viewer
+From your own Rex terminal (`REX_BLOCK` set), open the viewer
 beside your pane without taking focus, or point the one already there:
 
 ```sh

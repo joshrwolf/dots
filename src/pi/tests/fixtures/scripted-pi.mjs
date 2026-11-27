@@ -26,9 +26,8 @@ writeFileSync(
     'dots-fake-pi-env-' + (process.env.DOTS_WORKER_ID || 'root'),
   ),
   JSON.stringify({
-    rex: process.env.REX_SESSION ?? null,
     block: process.env.REX_BLOCK ?? null,
-    dots: process.env.DOTS_REX_SESSION ?? null,
+    dots: process.env.DOTS_REX_BLOCK ?? null,
   }),
 );
 // Each launch records its pid, so tests observe the process exit itself.

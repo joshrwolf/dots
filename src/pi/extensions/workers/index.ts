@@ -2788,7 +2788,7 @@ export default function (pi: ExtensionAPI, options: WorkersOptions = {}) {
           : {sessionFile: foreign.session_file}),
       };
     },
-    ...(process.env.REX_SESSION
+    ...(process.env.REX_BLOCK
       ? {
           openInRex: async (id: string) => {
             const snapshot = inspectionSource.read(id);

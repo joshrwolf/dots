@@ -237,7 +237,6 @@ fn watch(
     }
     let store = xdg::base("XDG_STATE_HOME", ".local/state")?.join(github_watch::STORE_PATH);
     let session = agent::session();
-    let rex_session = agent::rex_session();
     watch::run(&mut watch::Request {
         command,
         store: &store,
@@ -247,7 +246,7 @@ fn watch(
         },
         directory,
         session: session.as_deref(),
-        rex_session: rex_session.as_deref(),
+        rex_session: &agent::rex_session,
         clock: &|| time::OffsetDateTime::now_utc().unix_timestamp(),
         json,
         out,
