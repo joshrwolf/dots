@@ -4,9 +4,15 @@ local jumps = require("dots.jumps")
 local start = require("dots.start")
 
 local TERMINAL = "com.superlogical.terminal"
-local LEAVE = 'rex do "$HOME/.config/rex/scripts/leave.lua"'
+local LEAVE = "rex do go_leave"
 local PI = 'pi "$@"; zsh -i; ' .. LEAVE
 local SHELL_ONLY = "zsh -i; " .. LEAVE
+local SWITCH = [=[
+wt=()
+while (( $# )) && [[ $1 != -- ]]; do wt+=("$1"); shift; done
+shift
+dir=$(wt switch --no-cd "${wt[@]}" -x zsh -- -c 'print -r -- "$PWD" >&3' 3>&1 >&2) &&
+  cd "$dir" && exec "$@"]=]
 local DOTS = "/home/me/src/dots"
 local API = "/home/me/src/api"
 local ZOXIDE = "zoxide query --list"
@@ -99,11 +105,11 @@ end
 ---@param script? string
 ---@return string[]
 local function switch(args, prompt, script)
-  local argv = { "wt", "switch", "--no-cd" }
+  local argv = { "zsh", "-c", SWITCH, "zsh" }
   for _, arg in ipairs(args) do
     argv[#argv + 1] = arg
   end
-  for _, arg in ipairs({ "-x", "zsh", "--", "-ic", script or PI, "zsh" }) do
+  for _, arg in ipairs({ "--", "zsh", "-ic", script or PI, "zsh" }) do
     argv[#argv + 1] = arg
   end
   argv[#argv + 1] = prompt

@@ -44,7 +44,10 @@ memory or older notes.
 - Rex embeds gopher-lua: Lua 5.1 with no `bit`, `utf8`, `table.unpack`, or `//`.
   It accepts `goto` and `\x` escapes; do not use them. Leave byte and Unicode
   work to Rust.
-- `package.path` includes `./?.lua`; keep modules under `dots.*`.
+- Modules resolve only beside the running script, never from the working
+  directory or `LUA_PATH`: `init.lua` finds `dots.*` next to it, and
+  a script under `scripts/` that needs them adds its parent directory to
+  `package.path`.
 - `init.lua` runs at every load and reload and may only define bindings and
   actions; API calls fail there. Actions get 30 seconds and key functions 5.
 - Module state persists across actions within one load and resets on reload;
@@ -67,6 +70,12 @@ memory or older notes.
   process with its caller's environment, so one typed into a terminal gets
   the login shell's. Go's start keys run worktrunk as a terminal's
   `command`, so worktrunk and its hooks get the login shell's environment too.
+  Worktrunk exits before Pi starts, so only shells run Pi and Rex trusts its
+  resume report.
+- A terminal knows its block from `REX_BLOCK`; Rex sets no session
+  variable. `rex` commands and `-s` accept the block ID. An action run as
+  `rex do <action>` from a terminal gets that terminal's `ctx.session_id`,
+  which API calls need.
 - `rex.on`, timers, and `rex.wait` work only in `rex do` scripts, so
   long-running Lua lives in `scripts/`.
 

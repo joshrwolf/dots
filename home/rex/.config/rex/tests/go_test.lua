@@ -571,4 +571,24 @@ return {
     end
     expect.equal(installed.only("session.create"), {})
   end,
+
+  ["leaving a started tab ends its session when the tab is the last"] = function(t)
+    local actions = fake_rex.registered(t, go)
+    local fake = fake_rex.install(t, {
+      sessions = {
+        {
+          session_id = "s",
+          label = "work",
+          view = { session_id = "s", revision = 1, windows = { { window_id = "w1", layers = {} } } },
+        },
+      },
+    })
+    actions.go_leave.run({ session_id = "s", block_id = "b" }, {})
+    expect.equal(fake.only("session.destroy"), {
+      { method = "session.destroy", args = { session_id = "s" } },
+    })
+    expect.fails(function()
+      actions.go_leave.run({}, {})
+    end, "go_leave runs in a Rex terminal")
+  end,
 }

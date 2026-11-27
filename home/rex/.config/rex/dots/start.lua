@@ -4,9 +4,9 @@
 -- alone; a session already at the worktree is shown instead of a second one.
 -- A PR whose repo has no checkout is cloned where `dots.checkouts` places it.
 -- A new session's one terminal runs worktrunk, which creates or reuses the
--- worktree (hooks and approvals included) and starts Pi there; when Pi exits,
--- the terminal becomes a shell in the worktree, and when worktrunk fails, its
--- error stays on screen.
+-- worktree (hooks and approvals included) and exits; the terminal's shell then
+-- moves there and starts Pi. When Pi exits, the terminal becomes a shell in
+-- the worktree, and when worktrunk fails, its error stays on screen.
 local app = require("dots.app")
 local checkouts = require("dots.checkouts")
 local jumps = require("dots.jumps")
@@ -18,13 +18,24 @@ local snapshot = require("dots.snapshot")
 local SHELL = "com.superlogical.terminal.shell"
 -- zoxide lists directories most frecent first; this many are considered.
 local DIR_LIMIT = 200
+-- Runs `wt switch` with the arguments before `--`, then execs the rest in
+-- the worktree it selected. Only the `-x` program's output reaches fd 3, so
+-- worktrunk's own output and its hooks' stay on the terminal. Worktrunk does
+-- not exec its program, so it must exit before Pi starts: Rex trusts a
+-- program's resume report only when shells alone run it.
+local SWITCH = [=[
+wt=()
+while (( $# )) && [[ $1 != -- ]]; do wt+=("$1"); shift; done
+shift
+dir=$(wt switch --no-cd "${wt[@]}" -x zsh -- -c 'print -r -- "$PWD" >&3' 3>&1 >&2) &&
+  cd "$dir" && exec "$@"]=]
 -- What a start's terminal runs in the worktree, ending in an interactive
 -- shell; leaving that shell ends the session when its tab is the last one
--- (`scripts/leave.lua`), which Rex would otherwise keep with no windows.
--- Each is constant: user text reaches Pi as an argument and is never shell
--- code. A new session opens at the shell, for the user to start what it
--- needs; PR and issue starts run Pi with their prompt first.
-local LEAVE = 'rex do "$HOME/.config/rex/scripts/leave.lua"'
+-- (`go_leave`), which Rex would otherwise keep with no windows. Each is
+-- constant: user text reaches Pi as an argument and is never shell code. A
+-- new session opens at the shell, for the user to start what it needs; PR
+-- and issue starts run Pi with their prompt first.
+local LEAVE = "rex do go_leave"
 local SCRIPTS = {
   pi = 'pi "$@"; zsh -i; ' .. LEAVE,
   shell = "zsh -i; " .. LEAVE,
@@ -182,23 +193,21 @@ local function trim(text)
   return (text:match("^%s*(.-)%s*$"))
 end
 
----The `wt switch` command that switches to `target`, creating the branch
----when `create` is set, and then runs `run` there: Pi with `prompt`, if any,
----or just the shell. Every
----part is its own argument, so nothing is quoted. Worktrunk expands `{{ }}`
----templates in the arguments after `--`, so a prompt must not contain them;
----starts only pass URLs and issue IDs they have validated.
+---The command that switches to `target` with `wt switch`, creating the
+---branch when `create` is set, and then runs `run` there: Pi with `prompt`,
+---if any, or just the shell. Every part is its own argument, so nothing is
+---quoted.
 ---@param target string A branch or worktrunk shortcut such as `pr:12`.
 ---@param create boolean
 ---@param run "pi"|"shell"
 ---@param prompt? string Pi's, when `run` is `pi`.
 ---@return string[]
 function M.argv(target, create, run, prompt)
-  local argv = { "wt", "switch", "--no-cd" }
+  local argv = { "zsh", "-c", SWITCH, "zsh" }
   if create then
     argv[#argv + 1] = "--create"
   end
-  for _, arg in ipairs({ target, "-x", "zsh", "--", "-ic", SCRIPTS[run], "zsh" }) do
+  for _, arg in ipairs({ target, "--", "zsh", "-ic", SCRIPTS[run], "zsh" }) do
     argv[#argv + 1] = arg
   end
   if prompt then

@@ -29,9 +29,15 @@
 
 ---@class rex.TerminalOptions
 ---@field command? string[]
----@field shell? string
+---@field shell? string A shell such as /bin/zsh, or "none" to start `command` directly.
+---@field login? boolean Defaults to true.
+---@field interactive? boolean Whether the shell running `command` reads its interactive startup files.
 ---@field cwd? string
----@field exit? { on_completion: boolean }
+---@field exit? rex.TerminalExit
+
+---@class rex.TerminalExit
+---@field on_completion? boolean Close when the program exits; defaults to true.
+---@field quick_exit_threshold_ms? integer A failure within this long keeps the terminal open; defaults to 250.
 
 ---@class rex.BlockSpec
 ---@field flavor string
@@ -66,12 +72,6 @@
 ---@field windows rex.Window[]
 ---@field revision integer
 
----@class rex.NewWindowArgs
----@field layout rex.LayoutNode
----@field window_label? string
----@field focus? boolean
----@field session_id? string
-
 ---@class rex.FocusDirectionArgs
 ---@field direction "left"|"right"|"up"|"down"
 ---@field wrap? boolean
@@ -81,7 +81,6 @@
 -- without a helper here, such as `session.attach`, go through `rex.call`.
 ---@class rex.SessionApi
 ---@field view fun(args?: { session_id?: string }): (rex.View?, rex.Err)
----@field new_window fun(args: rex.NewWindowArgs): (table?, rex.Err)
 ---@field new_layer fun(args: table): (table?, rex.Err)
 ---@field new_split fun(args: table): (table?, rex.Err)
 ---@field close_layer fun(args: table): (table?, rex.Err)

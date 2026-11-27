@@ -360,6 +360,16 @@ function M.install()
       app.perform("client.host.switch", nil, ctx.session_id, ctx.client_id)
     end),
   })
+  rex.action({
+    name = "go_leave",
+    title = "Go: leave a started tab",
+    description = "Run by a started tab's shell as it exits: ends its session when that tab is the last",
+    category = "Navigation",
+    run = function(ctx)
+      local session = ctx.session_id or error("go_leave runs in a Rex terminal", 0)
+      must("leaving the session", sessions.leave(session))
+    end,
+  })
   rex.bind("cmd+p", "go")
 end
 

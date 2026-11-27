@@ -86,8 +86,8 @@ The session label names the repo, as in `api:ABC-123`. When a
 session already has a terminal at the worktree, Go shows it instead of
 starting another. Otherwise the new session runs
 worktrunk, which creates or reuses the worktree (hooks and approvals
-included) and starts Pi there; when Pi exits, the pane is a shell in the
-worktree. A malformed line, or Ctrl+O without a repo row, starts nothing:
+included); the pane's shell then starts Pi there, so Rex can resume it after
+a restart. When Pi exits, the pane is a shell in the worktree. A malformed line, or Ctrl+O without a repo row, starts nothing:
 the popup says why until you press Enter. When worktrunk fails, its error
 stays in the session. The keys are the `KEYS` table at the top of
 `dots/go.lua`.
@@ -126,9 +126,9 @@ work belongs to, recorded when an agent added it, or else the session working
 at its checkout; the preview sits below the list. Merged and closed PRs show
 only the 10 most recently checked. Enter goes to the recorded session while it
 is live, otherwise to the PR's checkout, in its session if it has one, or the
-link tab when there is none; Ctrl+O shows a clickable link and Ctrl+X stops
-watching. The link opens on the viewing client when clicked; no browser runs on
-the server. Close the link tab when finished.
+PR in the browser when there is none; Ctrl+O opens it in the browser and
+Ctrl+X stops watching. The browser is the Rex app's, on the device you are
+using; none runs on the server.
 
 In Rex terminals, zsh marks prompts (for prompt jumps and clearing what a
 crashed program left behind) and reports commands: working while one runs,
