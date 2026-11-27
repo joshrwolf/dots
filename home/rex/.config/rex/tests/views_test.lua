@@ -122,45 +122,6 @@ return {
     expect.equal(views.open_views.picker.client_id, "phone")
   end,
 
-  ["a link is clickable and remains visible after its command exits"] = function(t)
-    local fake = fake_rex.install(t, {})
-    t.stub(process, "which", function(name)
-      return name == "printf" and "/bin/printf" or nil
-    end)
-    local url = "https://github.com/example/project/pull/7"
-    views.link({ session_id = "s" }, url)
-    local created = fake.only("session.new_window")
-    expect.equal(#created, 1)
-    expect.equal(created[1].args.session_id, "s")
-    local options = created[1].args.layout.block.options
-    expect.equal(
-      options.command,
-      { "/bin/printf", "%s", "\27]8;;" .. url .. "\7" .. url .. "\27]8;;\7\n" }
-    )
-    expect.equal(options.shell, "none")
-    expect.equal(options.login, false)
-    expect.equal(options.exit, { on_completion = false })
-    expect.equal(fake.only("exec"), {})
-  end,
-
-  ["link refuses terminal control characters before creating a pane"] = function(t)
-    local fake = fake_rex.install(t, {})
-    expect.fails(function()
-      views.link({ session_id = "s" }, "https://example.test/\27]52;c;data\7")
-    end, "HTTPS URL")
-    expect.equal(fake.only("session.new_window"), {})
-  end,
-
-  ["link creation failures reach the caller"] = function(t)
-    fake_rex.install(t, { errors = { ["session.new_window"] = "session is gone" } })
-    t.stub(process, "which", function()
-      return "/bin/printf"
-    end)
-    expect.fails(function()
-      views.link({ session_id = "s" }, "https://example.test/pr")
-    end, "showing the link: session is gone")
-  end,
-
   ["scripts live beside the configuration"] = function()
     expect.equal(views.script("watch"):match("%.config/rex/scripts/watch%.lua$") ~= nil, true)
   end,

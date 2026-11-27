@@ -183,7 +183,7 @@ function M.view(list, snap, dots)
     prompt = "prs› ",
     accept = "prs_open",
     shortcuts = {
-      { key = "o", label = "link", action = "prs_link" },
+      { key = "o", label = "browser", action = "prs_link" },
       { key = "x", label = "unwatch", action = "prs_unwatch" },
     },
     groups = {
@@ -244,7 +244,7 @@ end
 
 ---Go to the session the PR's work belongs to while it is live; otherwise to
 ---the session at the PR's checkout, creating one if needed; without a
----checkout that still exists, show its clickable link.
+---checkout that still exists, open it in the browser.
 ---@param ctx rex.Context
 ---@param args { id: string }
 function M.open(ctx, args)
@@ -264,7 +264,7 @@ function M.open(ctx, args)
       return
     end
   end
-  views.link(ctx, args.id)
+  app.open_url(args.id, ctx.session_id, ctx.client_id)
 end
 
 function M.install()
@@ -297,11 +297,11 @@ function M.install()
   })
   rex.action({
     name = "prs_link",
-    title = "PRs: show link",
+    title = "PRs: open in the browser",
     category = "Navigation",
     args = { id = "string" },
     run = function(ctx, args)
-      views.link(ctx, args.id)
+      app.open_url(args.id, ctx.session_id, ctx.client_id)
     end,
   })
   rex.action({

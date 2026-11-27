@@ -230,7 +230,7 @@ return {
     expect.equal(#fake.only("client.perform"), 1)
   end,
 
-  ["open shows a link for a PR whose checkout is gone or unknown"] = function(t)
+  ["open shows a PR whose checkout is gone or unknown in the browser"] = function(t)
     local fake = install(t)
     prs.open(ctx, { id = url(6) })
     prs.open(ctx, { id = url(1) })
@@ -239,20 +239,22 @@ return {
       "test -d /gone",
       "dots github watch list --json",
     })
-    expect.equal(fake.only("session.create", "client.perform"), {})
-    local links = fake.only("session.new_window")
-    expect.equal(#links, 2)
-    expect.equal(links[1].args.layout.block.options.command[3]:find(url(6), 1, true) ~= nil, true)
-    expect.equal(links[2].args.layout.block.options.command[3]:find(url(1), 1, true) ~= nil, true)
+    expect.equal(fake.only("session.create"), {})
+    local opened = fake.only("client.perform")
+    expect.equal(
+      opened[1].args,
+      { client_id = "app", action = "client.url.open", args = { url = url(6) } }
+    )
+    expect.equal(opened[2].args.args, { url = url(1) })
   end,
 
-  ["link and unwatch act on the selected PR"] = function(t)
+  ["browser and unwatch act on the selected PR"] = function(t)
     local actions = fake_rex.registered(t, prs)
     local fake = install(t)
     actions.prs_link.run(ctx, { id = url(1) })
     actions.prs_unwatch.run(ctx, { id = url(3) })
     expect.equal(commands(fake), { "dots github watch remove " .. url(3) })
-    expect.equal(#fake.only("session.new_window"), 1)
+    expect.equal(fake.only("client.perform")[1].args.args, { url = url(1) })
     expect.fails(function()
       actions.prs_unwatch.run(ctx, { id = url(4) })
     end, "dots github watch remove: not watched")

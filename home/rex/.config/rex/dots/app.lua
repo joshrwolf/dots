@@ -70,4 +70,15 @@ function M.show(session_id, window_id, near_session, preferred)
   )
 end
 
+---Open a URL in the app's browser, on the device the app runs on.
+---@param url string
+---@param near_session? string
+---@param preferred? string
+function M.open_url(url, near_session, preferred)
+  if not url:match("^https://[!-~]+$") then
+    error("a URL to open must be HTTPS without spaces or control characters", 0)
+  end
+  M.perform("client.url.open", { url = url }, near_session, preferred)
+end
+
 return M

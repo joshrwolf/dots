@@ -185,33 +185,6 @@ function M.context(ctx)
   return origin
 end
 
----Show a clickable URL on the viewing client, without opening a server browser.
----@param ctx rex.Context
----@param url string
-function M.link(ctx, url)
-  if not url:match("^https://[!-~]+$") then
-    error("link must be an HTTPS URL without spaces or control characters", 0)
-  end
-  local printf = process.which("printf") or error("printf is not on the command path", 0)
-  local text = "\27]8;;" .. url .. "\7" .. url .. "\27]8;;\7\n"
-  must(
-    "showing the link",
-    rex.session.new_window({
-      session_id = ctx.session_id,
-      window_label = "link",
-      layout = rex.layout.block({
-        flavor = "com.superlogical.terminal.shell",
-        options = {
-          command = { printf, "%s", text },
-          shell = "none",
-          login = false,
-          exit = { on_completion = false },
-        },
-      }),
-    })
-  )
-end
-
 ---Closing a view: back to the pane it was opened from, while the view still
 ---shows. A view this load did not open, or whose pane has closed, leaves
 ---focus to Rex.

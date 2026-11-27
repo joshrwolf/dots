@@ -112,9 +112,6 @@ function M.install(t, fake)
       end
       return session.view
     end,
-    new_window = function()
-      return { window_id = "link", block_ids = { "link" } }
-    end,
     new_layer = function()
       return { layer_id = "layer", block_ids = { "picker" } }
     end,
