@@ -161,3 +161,14 @@ function rex.server(label) end
 ---@param level_or_message string
 ---@param message? string
 function rex.log(level_or_message, message) end
+
+---@param key string A setting, such as `resume.trust.pi`.
+---@param value any
+function rex.set(key, value) end
+
+---Argument matchers for `resume.trust` rule commands.
+---@class rex.Match
+---@field uuid any
+---@field id any
+---@field under fun(dir: string): any
+rex.match = {}

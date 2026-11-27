@@ -9,3 +9,7 @@ require("dots.prs").install()
 require("dots.workers").install()
 require("dots.goals").install()
 require("dots.diff").install()
+
+-- Pi reports its session through the Program Resume Protocol, so a server
+-- restart brings it back.
+rex.set("resume.trust.pi", { command = { "pi", "--session", rex.match.uuid } })
