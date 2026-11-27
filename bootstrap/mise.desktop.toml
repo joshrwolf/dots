@@ -5,7 +5,7 @@ login_shell = "zsh"
 ruby = "latest"
 
 [env]
-_.path = ["{{ env.MISE_BREW_CASK_OPT_APPDIR | default(value='/Applications') }}/Rex Beta.app/Contents/Helpers/Rex Server.rex/Contents/MacOS"]
+_.path = ["{{ env.MISE_BREW_CASK_OPT_APPDIR | default(value='/Applications') }}/Rex.app/Contents/Helpers/Rex Server.rex/Contents/MacOS"]
 
 [bootstrap.hooks.pre-packages]
 run = '"{{ mise_bin }}" -E "{{ mise_env | default(value=[]) | join(sep=",") }}" install ruby'
@@ -22,9 +22,9 @@ adopt = true
 "brew-cask:raycast" = { os = "macos" }
 
 [bootstrap.packages."macos-app:rex"]
-version = "0.1.0-1696"
-url = "https://blob.superlogical.com/public/rex-app/preview-arm64/Rex-0.1.0-1696.dmg"
-sha256 = "e500d137e4344b3d26e2f12fcfe11a25562f60eb563ac1c0a31ccd2ad6297248"
-artifact = "Rex Beta.app"
+version = "0.1.0-2181"
+url = "https://blob.superlogical.com/public/rex-app/preview-arm64/Rex-0.1.0-2181.dmg"
+sha256 = "5b6a680f4c37567370513a738bb301b655726c8817a86127413a4aeae1eb21d6"
+artifact = "Rex.app"
 os = "macos/arm64"
 adopt = true
