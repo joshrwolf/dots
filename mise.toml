@@ -12,7 +12,7 @@ locked = true
 # Rustup selects the Rust toolchain from rust-toolchain.toml.
 [tools]
 node = "26.13.1"
-pnpm = "12.21.0"
+pnpm = "12.23.0"
 "github:nextest-rs/nextest" = { version = "0.9.152", version_prefix = "cargo-nextest-" }
 "aqua:neovim/neovim" = "0.12.6"
 "aqua:max-sixty/worktrunk" = "0.81.0"

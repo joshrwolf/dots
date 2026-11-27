@@ -3,18 +3,18 @@
   "private": true,
   "type": "module",
   "description": "pnpm workspace for the TypeScript packages in dots",
-  "packageManager": "pnpm@12.21.0",
+  "packageManager": "pnpm@12.23.0",
   "scripts": {
     "typecheck:tooling": "tsc --noEmit",
     "lint": "eslint \"src/{pi,pi-kit}/**/*.{ts,mjs,js}\" eslint.config.mjs --max-warnings 0",
     "format:check": "prettier --check \"src/{pi,pi-kit}/**/*.{ts,mjs,js}\" eslint.config.mjs"
   },
   "devDependencies": {
-    "@types/node": "26.6.6",
+    "@types/node": "26.6.11",
     "eslint": "10.15.0",
     "prettier": "3.10.1",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.73.0",
+    "typescript-eslint": "8.74.0",
     "yaml": "2.9.1"
   }
 }
