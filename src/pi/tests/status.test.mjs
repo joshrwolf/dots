@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import register from '../extensions/status/index.ts';
 import {
-  agentStatusId,
   childRecords,
   formatClear,
   formatRecord,
@@ -127,34 +126,32 @@ test("reports follow the protocol's syntax and limits", () => {
   );
 });
 
-test('named root status carries a precise runtime identity and still names Pi', () => {
-  const agent = {
-    session: '01234567-89ab-7cde-8fab-0123456789ab',
-    owner: 'pi-01234567-89ab-7cde-8fab-0123456789ab-0123456789abcdef',
-  };
-  const id = agentStatusId(agent);
-  assert.equal(id, 'pi/0123456789ab7cde8fab0123456789ab/0123456789abcdef');
-  assert.equal(
-    formatRecord({state: 'working', id}),
-    `\x1b]7501;state=working:id=${id}:app=pi\x1b\\`,
-  );
-});
-
-test('runtime rotation withdraws the old identity and publishes the current one', () => {
-  const sessionId = '01234567-89ab-7cde-8fab-0123456789ab';
-  const first = bindAgent(sessionId, 'startup', {});
-  let second;
+test('the agent reports on the root record while jobs and workers are children', () => {
+  const agent = bindAgent('status-fixture', 'startup', {});
   try {
-    const h = host({sessionId});
-    assert.ok(h.writes.at(-1).includes(`id=${agentStatusId(first)}:app=pi`));
-    second = bindAgent(sessionId, 'resume', {});
+    const h = host();
     h.fire('agent_start');
-    assert.ok(h.writes.includes(formatClear()));
-    assert.ok(h.writes.at(-1).includes(`id=${agentStatusId(second)}:app=pi`));
+    publishActivity(h.events, 'jobs', [{id: 'job/j-1', title: 'cargo test'}]);
+    assert.ok(
+      h.writes.includes(formatRecord({state: 'working', message: 'docs'})),
+    );
+    assert.ok(
+      h.writes.includes(
+        formatRecord({state: 'working', id: 'job/j-1', title: 'cargo test'}),
+      ),
+    );
+    publishActivity(h.events, 'jobs', []);
+    h.fire('message_end', assistant('stop', undefined, 'Tests pass.'));
+    h.fire('agent_settled', {aborted: false});
+    h.settle();
+    assert.deepEqual(h.writes.slice(-2), [
+      formatClear('job/j-1'),
+      formatRecord({state: 'done', message: 'Tests pass.'}),
+    ]);
     h.fire('session_shutdown', {reason: 'switch'});
     assert.equal(h.writes.at(-1), formatClear());
   } finally {
-    endAgent(second ?? first, {});
+    endAgent(agent, {});
   }
 });
 
@@ -176,7 +173,6 @@ function host({
   name = 'docs',
   branch = [],
   workerId,
-  sessionId = 'status-fixture',
 } = {}) {
   const handlers = new Map();
   const listeners = new Map();
@@ -222,7 +218,6 @@ function host({
         mode,
         sessionManager: {
           getBranch: () => branch,
-          getSessionId: () => sessionId,
         },
       },
     );

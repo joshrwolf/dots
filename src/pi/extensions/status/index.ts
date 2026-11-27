@@ -5,7 +5,6 @@ import {
   type ActivitySnapshot,
 } from '../../src/host/activity.ts';
 import {
-  agentStatusId,
   childRecords,
   formatClear,
   formatRecord,
@@ -14,13 +13,13 @@ import {
   type StatusInputs,
   type StatusRecord,
 } from './model.ts';
-import {currentAgent} from '../../src/host/agent.ts';
 import {summaryLine} from '../../src/host/summary.ts';
 
 /**
  * Owns this terminal's program status (OSC 7501), counting the agent and the
  * jobs and workers it started: the session stays `working` until all of them
- * have settled. Jobs and workers publish their live items as child records.
+ * have settled. The agent reports on the root record, the only one Rex
+ * notifies for; jobs and workers publish their live items as child records.
  *
  * Pi's own reporter counts only the agent loop. `PI_PROGRAM_STATUS=0`, its
  * only switch, turns it off; Pi reads it when its terminal starts, after
@@ -86,7 +85,6 @@ export default function status(
   env.PI_PROGRAM_STATUS = '0';
 
   let enabled = false;
-  let sessionId: string | undefined;
   let running = false;
   let compacting = false;
   let rest: Rest = {state: 'idle'};
@@ -101,10 +99,6 @@ export default function status(
     pending?.cancel();
     pending = undefined;
     if (JSON.stringify(root) === JSON.stringify(lastRoot)) return;
-    if (lastRoot && lastRoot.id !== root.id) {
-      write(formatClear());
-      lastChildren.clear();
-    }
     lastRoot = root;
     write(formatRecord(root));
   };
@@ -124,13 +118,7 @@ export default function status(
       ...(sessionName === undefined ? {} : {sessionName}),
       ...(prompt === undefined ? {} : {prompt}),
     };
-    const agent = currentAgent();
-    const root: StatusRecord = {
-      ...rootRecord(inputs),
-      ...(agent && agent.session === sessionId
-        ? {id: agentStatusId(agent)}
-        : {}),
-    };
+    const root = rootRecord(inputs);
     const settling =
       (root.state === 'done' ||
         root.state === 'error' ||
@@ -163,11 +151,11 @@ export default function status(
 
   pi.on('session_start', (_event, ctx) => {
     enabled = ctx.mode === 'tui' && isTty() && !env.DOTS_WORKER_ID;
-    sessionId = ctx.sessionManager.getSessionId();
     prompt = latestPrompt(ctx.sessionManager.getBranch());
     // Withdraw shell status and any earlier runtime's records.
     if (enabled) write(formatClear());
     lastRoot = undefined;
+    lastChildren.clear();
     report();
   });
   pi.on('session_shutdown', () => {
